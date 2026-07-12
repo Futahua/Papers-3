@@ -236,7 +236,7 @@ Every component and section of revision 1, classified. Classifications: **direct
 | A13 | Companion window + global shortcut | proven Papers 1 behavior reuse (**Observed:** P1 — `main.rs:43, 339–350, 505–531, 650–662`; `tauri.conf.json`) + glue | Kept; silent-scope submission removed (V8) → §19.6 |
 | A14 | First-run setup panel with Nous-centric flow | partially **unnecessary reinvention** (provider surface; V6) | Rewritten as "Connect a model" through Hermes-supported mechanisms → §21 |
 | A15 | Direct `config.yaml` provider/model writes as primary path | **unnecessary reinvention** of Hermes' own supported surface (V14) | Model set/list via Hermes HTTP API (**Observed:** P1 — `hermes_provider_adapter.rs:218–276, 461–468`); file writes only for the pre-start safety guard under §21 file-safety rules |
-| A16 | `yaml` production dependency | licensed open-source reuse | Kept, but scope reduced to the guarded-config path only (A15) → §11 |
+| A16 | `yaml` production dependency | **conditional licensed open-source reuse** | **Do not add by default.** Add `yaml` only if the §21 implementation-time investigation proves that direct `config.yaml` modification is officially required and no Hermes default, supported API, launch option, or explicit Hermes-supported creator setting can satisfy the requirement. If that condition is not met, no YAML dependency, configuration writer, backup logic, or configuration-write tests are created. |
 | A17 | Fake Hermes test server (`ws` dev dependency) | licensed open-source reuse (test tooling) | Kept → §11, tests in §26 slices |
 | A18 | Failure matrix, security boundaries | necessary glue (integration safety, not orchestration) | Kept, rewritten to the honest-attribution format the creator direction requires → §24 |
 | A19 | Computer-use install port | proven Papers 1 behavior reuse (**Observed:** P1 — `runtime.rs:634–736`) | Un-deferred (V3): required in Slice 7 → §22 |
@@ -259,7 +259,9 @@ Only software this plan actually intends to use, invoke, or distribute. "Bundled
 | Hermes computer-use dependency (cua-driver-rs) | github.com/trycua/cua (release `cua-driver-rs-v0.7.0` — **Observed:** P1 — `hermes.lock.json` computerUse block) | Computer use, reached by Hermes (`HERMES_CUA_DRIVER_CMD`) | 0.7.0, archive SHA-256 `4411ee02…b6ef` | **License unresolved** — verify at the pinned release before Slice 7 | Active upstream | Downloaded at runtime, hash-verified, extracted privately (**Observed:** P1 — `runtime.rs:634–736`); not redistributed | Record after verification | none anticipated | Pinned; manual upgrades | The exact stack P1 validated on real Windows | none beyond the existing P1 install port | **Use — license verification is a Slice 7 entry gate** |
 | Node/Electron built-in `WebSocket` client (undici) | nodejs.org (bundled in Electron's Node ≥22) | Client connection to Hermes' local control channel | whatever Electron 43 bundles | MIT (part of Node/Electron distribution) | Yes | Bundled (already inside Electron) | covered by Electron's license file | none | follows Electron updates | Zero new dependency for a solved protocol | ~80-line request/response correlation (§14 G2) | **Use** (fallback below if the packaged build lacks it) |
 | `ws` | github.com/websockets/ws | Dev-only: the fake Hermes control-channel **server** for tests (Node has no built-in WS server); contingency production client if the built-in client is unavailable in the packaged app (Risk R2) | `^8`, exact version pinned in lockfile | MIT (verify at pinned version) | Yes | dev-only (contingency: bundled) | MIT text in repo; if promoted to production, include in distribution licenses | none | pin + audit via `npm audit` | Standard, tiny, maintained | none | **Use (dev-only); investigate before any production promotion** |
-| `yaml` | github.com/eemeli/yaml | Read-modify-write of Hermes' `config.yaml` **only** for the pre-start safety guard (§21), preserving unknown fields via its document API | `^2`, exact pin in lockfile | ISC (verify at pinned version) | Yes | Bundled | ISC text in distribution licenses | none | pin + audit | Round-trips unknown fields/comments — required by the creator's config-safety rules; hand-rolled YAML is the reinvention to avoid | ~40 lines around it | **Use** |
+| `yaml` | github.com/eemeli/yaml | **Conditional only:** safe read-modify-write of Hermes `config.yaml` if the §21 investigation proves direct modification is an unavoidable, documented compatibility requirement | No version selected unless activated; if activated, pin the exact version in the lockfile | ISC — verify at the selected version | Yes | Bundled **only if activated** | Preserve the ISC license text in the distribution if bundled | none | Pin and audit only if activated | Hand-written YAML parsing would be reinvention, but no parser is needed when Papers does not write Hermes configuration | Configuration-writing glue exists only if §21 step 4 is reached | **Conditional — omit from dependencies unless §21 proves it necessary** |
+
+> A conditional dependency is not installed, listed in `package.json`, tested, packaged, or distributed until its activation condition has been proven and recorded in the implementation PR.
 | `node:test` / `node:assert` | Node builtin | All automated tests (**Observed** P2 idiom: `app/package.json:11`) | builtin | Node license (MIT-family, ships with Electron/Node) | Yes | dev-only | none | none | follows Node | Already P2's framework | none | **Use** |
 | electron-builder (NSIS, per-user) | github.com/electron-userland/electron-builder | Packaging the finished Windows app (included because §27 completion requires an installable build) | latest stable, exact pin | MIT (verify); NSIS itself zlib license (verify) | Yes | dev-only (its output is the installer) | keep license texts; NSIS zlib permits redistribution | none | pin + audit | Standard Electron packaging; per-user install mode matches P1's verified choice (**Observed:** P1 — `tauri.conf.json` bundle) | config file only | **Use — verify licenses at pin during Slice 8 exit** |
 
@@ -630,7 +632,7 @@ P3 tree = imported P2 tree (§2, §12) + the following. Legacy code references (
 | `app/ui/app.js` | renderer (`render()` `1149–1152`; `loadWorld` `51–63`) | + restoration hop in `loadWorld` (enter `lastActiveBackpackId` when the response says it is readable; honest line otherwise). Only change to this file. | 1 |
 | `app/ui/index.html` | shell doc (`1–13`) | + `<div id="papers-ai">` + `<script src="papers-ai.js">` | 3 |
 | `app/ui/style.css` | product styles | + appended `.papers-ai-*` / `.companion-*` section reusing existing custom properties | 3–6 |
-| `app/package.json` | scripts + electron (`8–15`) | + `yaml` (prod), `ws` (dev); Slice 8 exit: packaging script + electron-builder (dev) | 2, 8 |
+| `app/package.json` | scripts + electron (`8–15`) | + `ws` (dev) for the fake Hermes test server. Add `yaml` as a production dependency only if the §21 investigation proves direct `config.yaml` modification is an unavoidable documented compatibility requirement; otherwise it is never added. Slice 8 exit: packaging script + electron-builder (dev). | 2, 8 |
 | `app/world/store.js` | world store | + one field write for `lastActiveBackpackId` in the existing entered-tracking path (`134–140`) — the only store change in the whole plan | 1 |
 
 ### 25.2 New files (maximum expected — consolidate or omit where a supported component already covers the responsibility; see §14)
@@ -682,11 +684,11 @@ Every slice ends with: all automated checks green (`cd app && npm test`), a manu
 **Slice 2 — Expose Hermes.**
 *Creator-visible result:* Papers can reach Hermes; one creator message produces one real Hermes response (in a minimal, honestly-labeled "Papers AI (preview)" panel); honest unavailable state otherwise.
 *Entry gate:* Hermes license verified (§11) — else the slice blocks.
-*Work:* lock file; G1 runtime (install/start/stop/health, §20–21 safety rules incl. the guarded-config file rules); G2 connection; G3 projection; minimal preview panel wired through a first cut of G5/G6 (`status`, `connect`, one send).
-*Reused upstream:* Hermes (downloaded, hash-verified), built-in WebSocket, `yaml`, `ws` (dev, fake). *License status:* per §11 table.
+**Work:** lock file; G1 runtime containing only installation, startup, shutdown, health, and lifecycle safety from §20; G2 connection; G3 public projection; minimal preview panel wired through a first cut of G5/G6 (`status`, `connect`, one send); perform the §21 investigation before designing any Hermes configuration-writing path. No `config.yaml` writer is part of Slice 2 by default.
+**Reused upstream:** Hermes (downloaded and hash-verified), Electron/Node’s built-in WebSocket client, and `ws` as a dev-only fake-server dependency. `yaml` is not included unless §21 step 4 is proven necessary. **License status:** per §11.
 *P1 references:* `runtime.rs`, `paths.rs`, `gateway_proxy.rs`, `gateway.ts`, `storage.rs:566–606`.
 *Minimum Papers code:* G1–G3 + stubs (~800 lines, the bulk of all glue).
-*Automated:* runtime unit tests (checksum refusal "Nothing was run"; partial-install preservation; guarded-config parse-or-refuse + unknown-field preservation + backup + atomicity); connection tests against the fake (correlation, timeouts, close handling, no token in any error text); projection/redaction tests (mirroring P1 — `storage.rs:657–709`).
+**Automated:** runtime unit tests for checksum refusal, partial-install preservation, startup, health, shutdown, and process cleanup; connection tests against the fake for correlation, timeouts, close handling, and token redaction; projection and reasoning-redaction tests. No configuration-write tests are created by default. If and only if §21 step 4 is activated, add focused tests proving parse-or-refuse behavior, unknown-field preservation, timestamped backup, atomic replacement, post-write validation, and refusal to overwrite malformed configuration.
 *Creator acceptance:* on the real machine: Connect installs and starts the pinned Hermes; one message → one real public response; quit Papers → no `hermes.exe` remains.
 *Rollback:* revert slice commits; delete `%LOCALAPPDATA%\Papers\runtime` returns to the honest unavailable state with zero data loss.
 *Non-goals:* conversations, scope, drawer polish, providers beyond readiness display.
@@ -726,10 +728,10 @@ Every slice ends with: all automated checks green (`cd app && npm test`), a manu
 **Slice 7 — Verify Hermes' existing capabilities.**
 *Creator-visible result:* Papers AI demonstrably performs Hermes-supported research, file work, coding-tool delegation, and computer use, with approvals surfacing in Papers.
 *Entry gate:* cua-driver license verified (§11).
-*Work:* §22 verification protocol; port P1's computer-use install + `HERMES_CUA_DRIVER_CMD`; enable computer use via Hermes' supported setup mechanism per the §21 order (direct config editing only if investigation proves it an officially required compatibility step, documented as such — not as Papers policy); record external-installation requirements honestly (which CLIs the creator must have for delegation).
+**Work:** verify and reuse P1’s pinned cua-driver installation and `HERMES_CUA_DRIVER_CMD` wiring. Enable computer use using the first available mechanism in the §21 order: Hermes defaults/setup, supported Hermes API or launch option, or an explicit Hermes-supported creator choice. Direct `config.yaml` modification is permitted only as the documented last resort defined in §21 and is not assumed in this slice.
 *Automated:* install-path unit tests (hash refusal, partial preservation) for the driver; the rest is manual by nature.
 *Creator acceptance:* one research task; one file task; one delegated coding task per available tool (Codex / Claude Code / OpenCode — recording any that are unavailable and why); the §22 computer-use validation task with its approval.
-*Rollback:* disable computer use through whichever supported mechanism enabled it (or revert the documented-compatibility config edit, if that path proved necessary) + remove the driver directory; earlier slices unaffected.
+**Rollback:** reverse computer-use enablement through the same Hermes-supported mechanism selected during implementation and remove the private driver directory. If the documented last-resort configuration-file path was used, restore the verified backup rather than constructing another configuration edit. Earlier slices remain unaffected.
 *Non-goals:* building or configuring any of these tools inside Papers.
 
 **Slice 8 — Unify the finished Papers AI experience.** *(Begins only after Slice-7 parity evidence per §23.1.)*
@@ -787,7 +789,7 @@ One commit sequence, mapping 1:1 onto slices (messages final; each independently
 |---|---|---|
 | C1 | `import: Papers 2 product tree from papers-real2 @ 54ecce58 (verbatim)` | imported tree + `PROVENANCE.md` |
 | C2 | `papers: restore the last active Backpack on launch` | S1 restoration + test |
-| C3 | `deps: yaml (config safety) and ws (test fake)` | package.json/lockfile |
+| C3 | `deps: ws (test fake); activate yaml only if §21 step 4 is proven` | package.json/lockfile only for activated dependencies |
 | C4 | `papers-ai: pinned Hermes identity and private lifecycle (install, start, health, stop)` | lock, G1 + tests |
 | C5 | `papers-ai: control-channel connection and public-event projection with reasoning redaction` | G2, G3, fake, tests |
 | C6 | `papers-ai: preview panel — one message, one Hermes response, honest unavailable state` | minimal G5/G6 cut + panel |
@@ -848,7 +850,7 @@ One commit sequence, mapping 1:1 onto slices (messages final; each independently
 3. Slice 1: §2 import (byte-identity check before committing) → `PROVENANCE.md` → C1; restoration → C2; `cd app && npm install && npm test` + `npm run smoke` green.
 4. On any machine with real data: back up the Papers world directory before first launch of P3 builds.
 5. Verify the Hermes license at the pinned commit (§11); record the finding in the license table; block Slice 2 until resolved.
-6. Slice 2: C3–C6 in order; run the checksum-refusal, guarded-config, and no-token-leak tests; real-machine acceptance (§26 S2) including the no-orphan-process check.
+6. Slice 2: C3–C6 in order; run the checksum-refusal and no-token-leak tests; add guarded-config tests only if §21 step 4 is activated; complete real-machine acceptance (§26 S2) including the no-orphan-process check.
 7. Slice 3: C7–C8; scope-lock and Backpack-switch tests green; `verify-papers-ai.js` passes.
 8. Slice 4: C9; approval/clarify round trips green.
 9. Slice 5: C10; envelope determinism, caps, identity-only-Backpack, no-imperative snapshot, and G7-only-world-import tests green.
@@ -868,7 +870,7 @@ One commit sequence, mapping 1:1 onto slices (messages final; each independently
 1. *Is this something the creator directly experiences?* Every slice ends in a creator-visible result (§26); §31 traces each requirement to its surface.
 2. *Does Hermes already own it?* Everything AI-shaped is Hermes' (§9); the audits (§4, §10) removed the two places rev-1 drifted (activity model, provider surface).
 3. *Does an existing installed product already own it?* Coding tools, computer use, Windows install mechanics — all reached as installed products through Hermes or PowerShell (§11, §22).
-4. *Does maintained, appropriately licensed open-source software already provide it?* Electron, WebSocket, `yaml`, `ws`, electron-builder — each in §11 with license status; the two unresolved licenses gate their slices.
+4. *Does maintained, appropriately licensed open-source software already provide it?* Electron, WebSocket, `ws`, and electron-builder — each in §11 with license status; `yaml` is conditional and is audited only if §21 step 4 activates it; the two unresolved licenses gate their slices.
 5. *Is Papers accidentally specifying AI behavior?* No: the context carries no imperatives (V12 snapshot test); no retry/pause prompts are fabricated (§19.6); no phases or progress are invented (§19.3).
 6. *Is Papers taking authority over Hermes session memory?* No: §17 makes Hermes authoritative, the cache a cache, and disagreement an honest visible state.
 7. *Present requirement or speculative abstraction?* Each glue module's build-vs-reuse record (§14) names its present §9 responsibility; §25.4 lists what was refused.
