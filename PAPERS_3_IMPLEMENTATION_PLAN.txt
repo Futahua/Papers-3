@@ -1,0 +1,887 @@
+# PAPERS 3 — IMPLEMENTATION PLAN (REVISED)
+## Papers 2 with Hermes attached to the Papers experience
+
+Document status: **Planning only. Revision 2.** No application code has been implemented; Papers 1 and Papers 2 were read, never modified.
+Prepared: 2026-07-12. Supersedes revision 1 of this file in full.
+
+**Governing principle:** Papers does not design the AI's behavior. Papers attaches Hermes to the Papers experience.
+
+**Highest-priority engineering rule:** Never reinvent a solved component. Use maintained, appropriately licensed open-source software or existing installed products, adding only the smallest Papers-specific glue. Non-reinvention changes the mechanism, never the required creator-visible outcome.
+
+Labels used throughout, as required:
+
+* **Observed:** verified in existing code at the inspected commits (cited `repo — path:lines — symbol`).
+* **Creator requirement:** the creator's explicit direction; highest authority.
+* **Binding decision:** resolution this plan commits to.
+* **Proposal:** recommended mechanism (replaceable if a better reuse path is proven).
+* **Deferred:** deliberately excluded from early slices but still required or optional as stated.
+* **Superseded:** older direction that no longer governs.
+* **Risk:** unresolved or potentially unstable.
+* **License unresolved:** must be verified before the dependent slice begins.
+
+Repository shorthand: **P3** = `Futahua/Papers-3` (active implementation repository); **P2** = `Futahua/papers-real2` (Papers 2 product reference, read-only); **P1** = `Futahua/papers-are-papers` (Papers 1 Hermes reference, read-only).
+
+---
+
+## 1. Executive product summary
+
+Papers 3 is the Papers 2 product — Backpacks first, one active Backpack, honest references to real things — with **Papers AI** attached: a Papers-native way to reach Hermes from anywhere in Papers. Hermes does the AI work: reasoning, planning, research, browsing, terminals, files, computer use, and delegation to coding tools such as Codex, Claude Code, and OpenCode. Papers contributes only what is uniquely Papers: the application shell, Backpacks, the active Backpack, conversation scope (`Global` or `This Backpack`), explicit resource sharing, a truthful display of Hermes' public output and requests, and the minimum lifecycle safety needed to start, reach, and stop a private Hermes reliably.
+
+The finished Papers 3 (§29-style completion in §27) is **one coherent Papers AI experience**: the creator opens Papers, lands in their last active Backpack, reaches Papers AI from anywhere, chooses a visible scope before the first message, shares resources deliberately, watches Hermes' public activity, answers approvals and clarifications, can always Stop, and finds their old Backpack conversations migrated into the new experience. Papers 2's current Claude-CLI/Ollama path may coexist **temporarily** during implementation; the finished product removes that competing creator-facing AI surface after Hermes parity, migration, and rollback are proven (§23, Slice 8).
+
+What Papers 3 deliberately does **not** contain: any Papers-designed AI behavior, any second agent framework, any provider catalogue, any orchestration or policy engine, any terminal or coding layer, any AI memory system competing with Hermes' sessions. Every such capability is reached through Hermes or an existing product, per the ownership boundary in §9 and the audits in §4 and §10.
+
+The implementation proceeds in eight experience-first slices (§26), each giving the creator a visible, testable improvement, each with a rollback point, starting from a verbatim, provenance-recorded import of the verified Papers 2 tree into this repository (§2, §12).
+
+---
+
+## 2. Repository roles and source-provenance decision
+
+| Repository | Role | Verified state |
+|---|---|---|
+| `Futahua/Papers-3` | **Active implementation repository.** The finished application is built here. Not merely a planning repository. | Currently contains `main` (empty root commit), this plan on `docs/papers-3-implementation-plan`, and draft PR #1. |
+| `Futahua/papers-real2` | **Papers 2 product reference. Read-only.** Canonical product foundation: Backpack experience, data model, visual identity, safety guarantees, creator workflows. | `main` @ `54ecce581eedf059592a7ae05739911939499291` — re-verified against `origin/main` on 2026-07-12; **matches the expected commit exactly; no mismatch.** |
+| `Futahua/papers-are-papers` | **Papers 1 Hermes reference. Read-only.** Proven Hermes integration behavior only; its application architecture, workbench, engine cockpit, and unrelated product concepts are not imported. | `main` @ `614f014118873fafef5511d00e270eca49e29f3e` — re-verified against `origin/main` on 2026-07-12; **matches the expected commit exactly; no mismatch.** |
+
+**Source-provenance decision (Binding decision).** The verified Papers 2 tree becomes P3's starting product tree by a **verbatim tree import, not a history merge**:
+
+1. In a P3 working clone, add P2 as a temporary remote and fetch commit `54ecce58…` only.
+2. Materialize that exact tree at the P3 root (`git restore --source=54ecce581eedf059592a7ae05739911939499291 --worktree --staged -- .` after `git read-tree`-style staging, or equivalently `git archive` from the fetched commit extracted into the clean tree).
+3. Verify byte-identity: `git diff --stat 54ecce58… HEAD -- .` over the imported paths must be empty before committing.
+4. Add `PROVENANCE.md` at the P3 root recording: source repository, source commit `54ecce581eedf059592a7ae05739911939499291`, import date, the verification command used, and the rule that P2 remains the read-only reference for that history.
+5. Commit as a single import commit whose message records the exact source commit; remove the temporary remote.
+
+Why not merge histories: P3 already has its own root commit, and merging unrelated roots (`--allow-unrelated-histories`) buries provenance in a merge knot instead of stating it; the full, unaltered history remains permanently available in P2 itself. Why not squash-copy without fetch: fetching the real commit lets the byte-identity check run against the true source object rather than a local checkout that could have drifted. (Creator requirement: preserve source provenance and record the exact Papers 2 source commit; do not blindly merge unrelated Git histories.)
+
+Ongoing rule: after the import, P2 and P1 are never written to; P3 is where all Papers 3 work happens.
+
+---
+
+## 3. Authority order
+
+When sources conflict, this order governs (Creator requirement):
+
+1. The creator's latest explicit direction — including this revision's instructions.
+2. Current Papers vision, founder, ontology, and corrected governing documents — **governing:** P2 — `DOCS/PROMPTER/PAPERS_FOUNDER_BRIEF.txt` (V4), `DOCS/PAPERS_ONTOLOGY_CLARIFICATION_V1.txt`, `DOCS/PAPERS_RECOVERY_MAP_V1.txt`, `README.md` hard rules, `AGENTS.md`.
+3. The creator-visible behavior of Papers 2 — **governing for product behavior:** the code at P2 @ `54ecce58…` as documented in §12.
+4. Proven Papers 1 Hermes integration behavior — **partially applicable:** only the integration mechanics enumerated in §13; everything else in P1 is **rejected for Papers 3** as product architecture (P2 — `README.md` "REAL = legacy v0 … reference only").
+5. Current supported Hermes behavior and documentation — **partially applicable:** the surfaces P1 exercised against Hermes 0.18.0 are treated as supported until re-verified (§13, §30 R1).
+6. Maintained, appropriately licensed open-source upstream behavior (§11).
+7. Historical proposals, abandoned branches, and earlier speculative plans — **historical.**
+
+**Superseded material (Binding decision).** Historical Papers-owned execution-controller concepts are superseded and rejected for Papers 3: custom patch controllers; repository leases; custom coding orchestration; provider-independent agent-host frameworks; custom completion receipts; custom process or terminal products; custom coding-agent protocols; custom agent policy engines. In the inspected repositories these appear as P1's self-edit/builder/policy stack (**historical/rejected:** P1 — `src-tauri/src/self_edit.rs`, `policy.rs`, `mcp.rs`, `src/inspect.ts`, `launcher/`) and P1's provider orchestration layer as a product surface (**historical/rejected:** P1 — `provider_catalog.rs`, `provider_service.rs`, `provider_state.rs`, `SettingsWizard.tsx`). The only preserved lessons are generally useful safety behaviors that directly support the approved Hermes attachment: exact visible previews before sharing (P2's native guard idiom — **Observed:** P2 — `app/main.js:156–192, 251–314`), reasoning redaction (**Observed:** P1 — `src-tauri/src/storage.rs:566–606`), hash-verified installs, and loopback-only, token-guarded local services (§13, §20).
+
+Revision 1 of this plan is itself **superseded** wherever §4 resolves against it. Documents are not averaged: each conflict below names one winner.
+
+---
+
+## 4. VISION CONFLICT AUDIT AND BINDING RESOLUTIONS
+
+Every known conflict or muddy detail between revision 1, the governing vision, and the creator's latest direction. Each resolution has been applied by rewriting the affected sections — no warning-plus-contradiction pairs remain.
+
+| # | Topic | Revision-1 statement | Conflicting governing statement | Sources | Authority | Classification | Binding resolution | Sections rewritten | Acceptance test |
+|---|---|---|---|---|---|---|---|---|---|
+| V1 | Which repository is Papers 3 | "P3 is `papers-real2`, continued in place on a feature branch." | "`Futahua/Papers-3` … is the real Papers 3 implementation repository. The finished application will be built here." | Creator direction §2 of this revision | 1 | direct contradiction | P3 is `Futahua/Papers-3`, seeded by a provenance-recorded verbatim import of P2 @ `54ecce58…` | §2, §12, §25, §26 Slice 1, §29 | P3 clone launches Papers with `npm start`; `PROVENANCE.md` names the source commit; imported tree byte-identical to source |
+| V2 | Scope-lock moment | "Locked at first **successful** submission … in `coordinator.send` immediately before `prompt.submit`" | "Scope locks when the first creator message is durably recorded by Papers immediately after the creator presses Send, before Hermes execution begins." | Creator direction §11 | 1 | direct contradiction | Lock on durable local record of the first message, before any Hermes call; Hermes failure never unlocks or retargets | §16, §19, §24 rows F3/F10, §26 Slice 3, §27, §31 | Kill the fake Hermes, send a first message: message visible, scope chip locked, retry offered, scope unchanged after retry |
+| V3 | Computer use | "Deferred … v1 configures toolset `[\"hermes-cli\"]` only" | "Computer use is required before Papers 3 is considered complete … through Hermes' existing licensed computer-use stack." | Creator direction §16 | 1 | scope ambiguity → now binding | Computer use verified through Hermes' stack (P1's proven pinned install mechanism) in Slice 7; still absent from early slices | §13, §22, §26 Slice 7, §27, §31 | A real Windows computer-use task initiated from Papers AI completes with its approval surfaced (P1 precedent: the Notepad `PAPERS_TYPED_OK` validation, P1 — `PROJECT_CONTEXT.md`) |
+| V4 | One finished AI experience | "Keep existing Backpack AI unchanged initially; unification … Deferred, gated" with no completion requirement | "The finished product must expose one coherent Papers AI experience through Hermes … remove the old creator-facing competing AI experience." | Creator direction §17–18, §29 | 1 | implementation overreach (treating a temporary state as finished) | Coexistence is temporary; Slice 8 (parity → migration → removal of the competing creator-facing surface) is required for completion | §23, §26 Slice 8, §27, §29 in §27, §31 | After Slice 8: exactly one creator-facing AI surface; old Backpack conversations available inside it; rollback tested |
+| V5 | Conversation migration | "The existing Backpack conversation … is deliberately not migrated in the initial attachment" (with no required later path) | "Migration is required before Papers 3 is considered complete, but only after Hermes parity is proven … idempotent, lossless, backed up, reversible." | Creator direction §18 | 1 | scope ambiguity | Migration designed now (§23), executed in Slice 8, never destructive to `conversation.json` | §23, §26 Slice 8, §27, §28 | Migrate a copy of real data twice: second run is a no-op; original files byte-identical; migrated conversation is the Backpack's default Papers AI conversation |
+| V6 | Provider identity | Setup panel centered on Nous sign-in; defaults `nous` / `stepfun/step-3.7-flash:free` presented as the path | "Do not hardcode Nous as the identity of Papers AI … A Nous sign-in shortcut may exist only as one Hermes-supported option." | Creator direction §15; P1 product law 12 analogue | 1 | creator-experience risk + implementation overreach | "Connect a model" uses Hermes-supported mechanisms generically; whatever Hermes reports is what Papers shows; Nous is one shortcut | §21, §19, §26 Slice 2/7, §31 | With a non-Nous provider configured in Hermes, Papers shows it ready and Papers AI works without any Papers-side provider knowledge |
+| V7 | Papers-owned activity model | Normalized event vocabulary with Papers-defined run states (`run-started` … `run-interrupted`), tool-card state machine | "Do not invent a Papers-owned AI activity model. Papers should display only public, non-reasoning information Hermes actually provides." | Creator direction §12 | 1 | implementation overreach | Replace event *normalization* with public event *projection*: render what Hermes says, group repetition visually, add only neutral integration status strings | §17 note, §19, §14 (glue), §10 | Every Activity line in the UI is traceable to a received public Hermes event or one of the six neutral status strings; no invented phases/percentages |
+| V8 | Companion first message | Companion input "first calls createConversation with scope defaulted by the coordinator's activeBackpack" (silent scope) | "The companion must not silently create and submit into a Backpack-scoped conversation." | Creator direction §11 | 1 | direct contradiction | Companion shows the proposed scope with a Global/This Backpack choice before its first submission, or requires selecting an existing conversation | §16.6, §19, §26 Slice 6, §31 | Fresh companion: Send is disabled until a scope is chosen or a conversation selected; the chosen scope is visible before submission |
+| V9 | Vocabulary | Creator-facing copy used "Hermes 0.18.0", "runtime", "gateway", "installed … listens on 127.0.0.1" | Ontology doc: "world"/"room" are implementation labels only; creator direction §9: no infrastructure words in product language | P2 — `DOCS/PAPERS_ONTOLOGY_CLARIFICATION_V1.txt`; creator direction §9 | 1–2 | terminology drift | Creator-facing vocabulary fixed in §6; infrastructure words only in code-reference sections; new APIs/records use `backpackId` | §6, §16, §19, §25 | Copy review: no forbidden term appears in any creator-facing string; new persisted records contain `backpackId`, never `roomId` |
+| V10 | Universal Backpack assumptions | Resource picker assumed every Backpack has "things"; drawer grouped by the current room structure | Founder brief: no universal Backpack interface/contents; "Backpacks may be anything" | P2 — `DOCS/PROMPTER/PAPERS_FOUNDER_BRIEF.txt`, `README.md`; creator direction §10 | 2 | scope ambiguity | Backpack-universal = identity/enter/leave/switch/active/scope only; resource enumeration is a narrow current-form compatibility adapter; identity-only Backpacks fully usable with Papers AI | §15, §18, §26 Slice 5 | A synthetic identity-only Backpack scopes a conversation and sends messages; the resource picker simply shows "This Backpack offers no selectable resources" |
+| V11 | Last-active-Backpack restoration | Absent (P2 always opens the world list — **Observed:** P2 — `app/ui/app.js:12–30, 51–63`) | "Papers restores the last active Backpack when it still exists and is readable. Otherwise … explains why restoration was not possible." | Creator direction §8; consistent with P1 — `PROJECT_CONTEXT.md` "the last active Backpack returns by default" (historical support) | 1 | creator-experience risk (missing requirement) | Restoration implemented in Slice 1 using the existing entry-tracking seam | §5, §12, §25, §26 Slice 1, §27, §31 | Enter a Backpack, quit, relaunch: same Backpack restored; delete its folder, relaunch: Backpack list plus an honest explanation |
+| V12 | Behavioral prompt content | Envelope header included instructive phrasing ("…are marked honestly") aimed at the model; §6 copy prescribed assistant behavior in places | "Papers must not construct a behavioral super-prompt … Hermes owns agent behavior." | Creator direction §5, §14 | 1 | implementation overreach | Context carries only the instruction, scope identity, minimal metadata, selected resources, and neutral factual framing ("The following is Papers context supplied by the creator"); no directives about how to treat it | §18 | Envelope snapshot test: rendered context contains no imperative sentence other than the creator's own instruction |
+| V13 | Papers-designed setup gating ("Tested working" machinery) | Persistent echo-test state gating status dots | Non-reinvention rule; §12 neutral status only | Creator direction §1, §12 | 1 | speculative over-design | Keep one optional manual "Run a live test" action (a normal Hermes message); its last result is a display line, not a gate | §21, §19 | Papers AI usable immediately once Hermes is connected, regardless of test history |
+| V14 | Dual-write of Hermes config as routine | Papers writes provider/model into `config.yaml` directly as the primary mechanism; approval mode/agent mode/toolsets set unconditionally by copying P1 | "Avoid direct editing of Hermes configuration files" unless unavoidable, with parser/backup/atomicity/refusal rules; do not impose approvals/agent-mode/toolset settings merely because Papers 1 did | Creator direction §15 (rev. 1); revision-3 correction #1 | 1 | implementation overreach | Prefer Hermes' supported HTTP surface (proven in P1: `POST /api/model/set`, `GET /api/model/options` — **Observed:** P1 — `src-tauri/src/hermes_provider_adapter.rs:218–276, 461–468`); any config-touching setting (model, approval mode, agent mode, toolsets) follows the §21 investigation order — Hermes defaults → official API/launch option → explicit creator choice via Hermes-supported semantics → direct config write only as a documented, upstream-proven compatibility requirement | §21, §20, §11 | Model selection round-trips through Hermes' API against the fake; any config-file write in the diff cites the exact upstream requirement it satisfies and passes the §21 safety tests |
+| V15 | P1 concepts leaking in | Rev-1 correctly excluded P1's workbench but still mirrored its session-rail/status vocabulary in places | Superseded-concepts list (§3) | Creator direction §3 | 1 | superseded historical direction | §3's rejected list is binding; P1 is cited only for the §13 mechanics | §3, §13 | Non-reinvention audit (§10) shows no component sourced from the rejected list |
+
+---
+
+## 5. Creator experience
+
+The planning center. Everything else in this document exists to produce exactly this, with the least Papers-specific code. (Creator requirement, all items.)
+
+1. The creator opens Papers.
+2. Papers restores the last active Backpack when it still exists and is readable.
+3. Otherwise, Papers shows the Backpack list and explains why restoration was not possible ("Your last Backpack \"<title>\" is no longer readable/was not found").
+4. Backpacks remain the primary working surface — the Papers AI drawer is a collapsible companion to the Backpack, never the shell (**Observed** precedent: P2 — `app/ui/style.css:151–152` "It must never grow into the shell").
+5. Papers AI is reachable from anywhere: a persistent shell-level button, the drawer, and `Ctrl+Alt+Q`.
+6. Before the first message, the creator clearly sees and may choose: **Global** or **This Backpack**.
+7. Scope becomes immutable by one deterministic rule (§16.2): it locks the moment Papers durably records the first message, after Send and before Hermes runs.
+8. The creator asks normally. No infrastructure concepts appear (§6).
+9. The creator may explicitly attach Papers resources, and sees exactly what will be shared before sending (byte counts, truncation, missing — the existing honest-preview idiom, **Observed:** P2 — `app/main.js:165–177`).
+10. Papers sends only the instruction, scope identity, minimal metadata, and the selected resources (§18).
+11. Hermes performs the work using its own behavior and tools. Papers adds nothing to how Hermes thinks, plans, researches, codes, browses, delegates, retries, or completes.
+12. Papers displays Hermes' public response and public requests as they arrive (§19).
+13. The creator may approve, clarify, or Stop at any time.
+14. Switching Backpacks never cancels, retargets, or recontextualizes an existing conversation.
+15. The companion accesses the same conversation and the same Hermes session — never a second AI.
+16. Conversations can be reopened through their Hermes session mapping; Hermes is the authority on AI memory (§17).
+17. Coding tools, research, file work, and computer use happen through Hermes (§22).
+18. Failures are attributed honestly: Papers, Hermes, model/provider, external tool, permissions, network, website, or computer use (§24).
+19. The creator is told whether retrying is useful, in each failure state (§24).
+20. Existing Papers data remains safe and reversible throughout all transition work (§23, §28).
+
+This plan does not describe Hermes' hidden internal workflow anywhere, and no section below prescribes one.
+
+---
+
+## 6. Product vocabulary
+
+**Creator-facing terms (the only ones that may appear in product copy):** Papers · Papers AI · Backpack · Global · This Backpack · Conversation · Activity · Approval · Clarification · Stop · Continue · Connect a model.
+
+**Never creator-facing:** World, room, engine, gateway, JSON-RPC, runtime, provider adapter, socket, port, session token, event normalization, process manager. (Binding decision; V9.)
+
+Code rules:
+
+* Legacy names (`WorldStore`, `worldDir`, `roomId`, the `room:*` IPC channels) remain only in existing P2 code and in this plan's code-reference sections (**Observed** rationale: P2 — `DOCS/PAPERS_ONTOLOGY_CLARIFICATION_V1.txt` — "room" is an implementation label only).
+* All new Papers 3 APIs, IPC channels, and persisted records use `backpackId`. Translation between `backpackId` and legacy `roomId` happens only inside the narrow compatibility adapter (§15).
+* New IPC namespace: `papersAI:*`; new preload namespace: `window.papersAI`; new storage folder: `<worldDir>/papers-ai/` (the folder lives beside existing data for compatibility; "worldDir" itself is a legacy code label).
+
+---
+
+## 7. Product invariants
+
+True at every slice boundary (each is Creator requirement or Binding decision as noted):
+
+1. Backpacks remain primary; one active Backpack at a time; Papers AI never becomes the shell. (Creator requirement)
+2. The last active Backpack is restored when readable; otherwise the Backpack list with an honest explanation. (Creator requirement)
+3. Existing Papers 2 data (world/Backpacks/things/notes/Desk/activity/conversations) remains readable and writable by the existing code, byte-compatible, at every slice. (Creator requirement)
+4. Every existing Backpack workflow works with Hermes absent, stopped, or broken; no `app/papers-ai/*` module loads on those paths (test-pinned, mirroring **Observed:** P2 — `app/test/world.test.js:585–594`). (Binding decision)
+5. Papers AI is globally reachable (button, drawer, `Ctrl+Alt+Q`). (Creator requirement)
+6. Scope is chosen visibly before the first message and locks by the §16.2 rule; it never silently changes; Backpack switching never retargets a conversation. (Creator requirement)
+7. Context is explicit and bounded; nothing is dumped (§18). (Creator requirement)
+8. Hermes owns all AI behavior (§9); Papers never specifies it. (Creator requirement)
+9. Papers displays only public, non-reasoning Hermes information; hidden reasoning is never persisted or displayed. (Creator requirement; mechanism **Observed:** P1 — `storage.rs:566–606`)
+10. Hermes is authoritative for AI memory; Papers keeps only navigation/display state and never overwrites or merges Hermes history (§17). (Creator requirement)
+11. Failures are visible, honestly attributed, and state whether retrying is useful (§24). (Creator requirement)
+12. Secrets (Hermes token, provider credentials) and raw infrastructure never reach a renderer; Hermes stays loopback-only. (Binding decision; mechanism **Observed:** P1 — `gateway_proxy.rs`, `runtime.rs:305–330`)
+13. No Hermes process outlives Papers; installation data, credentials, and runtime state are never committed. (Binding decision)
+14. Coexistence with the old AI path is temporary; the finished product has one Papers AI experience (§23). (Creator requirement)
+15. Every migration step is idempotent, lossless, backed up, reversible, and tested on copies of real data first (§23, §28). (Creator requirement)
+
+---
+
+## 8. Explicit non-goals
+
+Papers 3 will **not** build (Binding decision; V15, §3):
+
+* an agent framework, orchestration platform, or workflow engine;
+* a coding controller, patch protocol, terminal product, or process manager;
+* a policy engine, approval-policy system, or completion-receipt system;
+* a provider manager, provider catalogue, or model catalogue;
+* a tool router, tool framework, or computer-use engine;
+* an AI runtime or a replacement for Hermes, Codex, Claude Code, or OpenCode;
+* a second AI memory system or a Papers-owned session-history authority;
+* a Papers-designed AI activity model, progress model, or phase model;
+* behavioral prompts (personality, planning, research, coding, tool-selection, retry, delegation, success-criteria, workflow, computer-use, or provider instructions);
+* a browsing strategy or anti-bot bypass of any kind;
+* universal Backpack ontology (files/things/notes/Desk as universal capabilities);
+* speculative enterprise lifecycle machinery, extensibility layers, or "future-proof" abstractions;
+* new repositories, history merges, or edits to P1/P2.
+
+---
+
+## 9. Hermes / Papers ownership boundary
+
+The binding boundary (Creator requirement, reproduced as the contract every later section must satisfy):
+
+**Hermes owns:** AI behavior; reasoning and planning; prompts beyond the creator's instruction and explicitly supplied factual Papers context; agent sessions and resumable memory; provider and model execution; provider authentication; model discovery; research and browsing; terminal and process tools; file tools; computer use; tool selection and execution; delegation to Codex, Claude Code, OpenCode, and other supported tools; retries; approvals and clarifications as agent protocol concepts; tool errors; progress and execution events; interruption semantics; completion semantics; coding workflows; computer-use workflows.
+
+**Papers owns only:** the Papers application and Backpacks; the active Backpack; restoring the creator's last active Backpack; a Papers-native access point for Hermes; Global or Backpack conversation scope; displaying the proposed scope before the first message; explicitly selected Papers resources; passing the creator's instruction and minimal factual context to Hermes; displaying Hermes' public non-reasoning output and public events; forwarding Hermes approval requests to the creator and returning the creator's response; forwarding clarification requests and responses; forwarding Stop; mapping Papers conversations to Hermes sessions; preserving only the minimal public display state the Papers experience needs; keeping secrets and raw infrastructure out of the renderer; stating honestly when Hermes is unavailable; the minimum lifecycle integration required to start, reach, and stop Hermes safely.
+
+The integration model (Creator requirement):
+
+```
+Creator
+  ↓
+Papers interface
+  ↓
+Global or Backpack scope
+  ↓
+Explicitly selected Papers context
+  ↓
+Thin Papers-to-Hermes adapter
+  ↓
+Hermes
+  ↓
+Hermes sessions, models, tools, coding products,
+research, browsing and computer use
+```
+
+The adapter **translates**; it never orchestrates. It introduces no competing agent model, workflow engine, session-memory system, provider system, tool framework, or coding layer. The Papers-owned list is not expanded anywhere in this plan; every proposed component in §14/§25 maps onto exactly one Papers-owned bullet, and §10 proves nothing else slipped in.
+
+---
+
+## 10. NON-REINVENTION AUDIT
+
+Every component and section of revision 1, classified. Classifications: **direct Hermes reuse** · **proven Papers 1 behavior reuse** · **licensed open-source reuse** · **necessary Papers-specific glue** · **unnecessary reinvention** · **speculative over-design**. Everything in the last two classes has been deleted or rewritten in this revision — the "Disposition" column states where it went.
+
+| # | Revision-1 component / section | Classification | Disposition in this revision |
+|---|---|---|---|
+| A1 | Pinned Hermes lock + hash-verified installer + partial-install preservation + PATH filtering + env restore (rev-1 §9.1–9.6) | proven Papers 1 behavior reuse (**Observed:** P1 — `runtime.rs:141–272, 925–1021`) | Kept, unchanged in substance → §13, §20 |
+| A2 | Loopback serve, per-launch token, health loop, kill-on-quit (rev-1 §9.8–9.15) | proven Papers 1 behavior reuse (**Observed:** P1 — `runtime.rs:274–375, 811–849`; `main.rs:605–610`) | Kept as the *minimum lifecycle safety* — §20, §21 rules of creator direction honored |
+| A3 | WebSocket transport | licensed open-source reuse (Electron/Node built-in WebSocket client, undici) | Kept → §11, §14 (G2) |
+| A4 | JSON-RPC request/response correlation (~80 lines) | necessary Papers-specific glue, modeled on proven P1 code (**Observed:** P1 — `src/gateway.ts:64–152`) | Kept, minimized → §14 (G2); build-vs-reuse gate passed (generic JSON-RPC libraries do not speak Hermes' `method:"event"` framing without equal-size adapter code) |
+| A5 | Reasoning redaction | proven Papers 1 behavior reuse (**Observed:** P1 — `storage.rs:566–606`) | Kept → §14 (G3), §17 |
+| A6 | "Event normalization" into a Papers event vocabulary with run states (`run-started`…`run-interrupted`), synthesized run ids, tool-card state machine | **unnecessary reinvention** (a Papers-owned AI activity model; V7) | Rewritten as *public event projection*: render Hermes' public events (message/tool/approval/clarify/error) plus six neutral integration-status strings; visual grouping of repetitive events allowed; no Papers-defined phases → §14 (G3), §19 |
+| A7 | Conversation store as a full "projection" positioned as primary history | partially **unnecessary reinvention** (competing memory authority; V-§13 of creator direction) | Rewritten: Hermes authoritative; Papers keeps a minimal record + redacted *display cache*, prefers Hermes history when reachable, honest resync state on disagreement → §17 |
+| A8 | Immutable scope model | necessary Papers-specific glue (uniquely Papers: scope is a Papers product concept) | Kept, with the lock moment corrected (V2) → §16 |
+| A9 | Context envelope | necessary Papers-specific glue; reuses P2's truthful readers (**Observed:** P2 — `app/world/things.js:58–118`) | Kept, stripped of all behavioral framing (V12); resource enumeration moved behind the Backpack compatibility boundary (V10) → §15, §18 |
+| A10 | Coordinator "run lifecycle" state machine | partially **speculative over-design** (states beyond what the creator sees) | Reduced to: one in-flight submission per conversation + the public status string + forwarding; no internal run phases → §14 (G5) |
+| A11 | IPC surface (23 methods incl. `setAutoStart`, persisted echo-test gating, `renameConversation`, `deleteConversation`, trash) | partially **speculative over-design** | Trimmed to the minimum the §5 experience needs (§14 G6 lists the final set); rename/delete kept (real navigation needs), echo test demoted to an optional action (V13), auto-start kept as one boolean because launch-to-ready otherwise requires a manual step every session |
+| A12 | Drawer UI, approval card, clarify card, Stop | necessary Papers-specific glue (the Papers-native access point; uniquely Papers) | Kept, re-worded to §6 vocabulary; activity display simplified per A6 → §19 |
+| A13 | Companion window + global shortcut | proven Papers 1 behavior reuse (**Observed:** P1 — `main.rs:43, 339–350, 505–531, 650–662`; `tauri.conf.json`) + glue | Kept; silent-scope submission removed (V8) → §19.6 |
+| A14 | First-run setup panel with Nous-centric flow | partially **unnecessary reinvention** (provider surface; V6) | Rewritten as "Connect a model" through Hermes-supported mechanisms → §21 |
+| A15 | Direct `config.yaml` provider/model writes as primary path | **unnecessary reinvention** of Hermes' own supported surface (V14) | Model set/list via Hermes HTTP API (**Observed:** P1 — `hermes_provider_adapter.rs:218–276, 461–468`); file writes only for the pre-start safety guard under §21 file-safety rules |
+| A16 | `yaml` production dependency | **conditional licensed open-source reuse** | **Do not add by default.** Add `yaml` only if the §21 implementation-time investigation proves that direct `config.yaml` modification is officially required and no Hermes default, supported API, launch option, or explicit Hermes-supported creator setting can satisfy the requirement. If that condition is not met, no YAML dependency, configuration writer, backup logic, or configuration-write tests are created. |
+| A17 | Fake Hermes test server (`ws` dev dependency) | licensed open-source reuse (test tooling) | Kept → §11, tests in §26 slices |
+| A18 | Failure matrix, security boundaries | necessary glue (integration safety, not orchestration) | Kept, rewritten to the honest-attribution format the creator direction requires → §24 |
+| A19 | Computer-use install port | proven Papers 1 behavior reuse (**Observed:** P1 — `runtime.rs:634–736`) | Un-deferred (V3): required in Slice 7 → §22 |
+| A20 | "Optional later unification" of the old engine path | **superseded** (V4/V5) | Replaced by required Slice 8 transition + migration → §23 |
+| A21 | Packaging (electron-builder, NSIS per-user) | licensed open-source reuse | Kept for the finished product → §11, §26 Slice 8 exit |
+| A22 | Rev-1 module split (10 main-process modules: paths/lock/runtime/gateway/redact/events/conversations/context/coordinator/ipc) | partially **speculative over-design** (more seams than responsibilities) | Consolidated to 7 files with single Papers-owned responsibilities each → §14, §25 |
+
+**Build-versus-reuse gate** for every Papers 3 component that survives: see §14, where each glue module records its unique Papers-only responsibility, what was inspected in Hermes/P1/open source, why direct reuse is insufficient, approximate size, and its removal path.
+
+---
+
+## 11. OPEN-SOURCE REUSE AND LICENSE AUDIT
+
+Only software this plan actually intends to use, invoke, or distribute. "Bundled" = shipped inside the Papers installer; "downloaded" = fetched at runtime with user consent; "external" = separately installed product Papers never ships; "dev-only" = never distributed to creators.
+
+| Project | Upstream / official source | Exact purpose in Papers 3 | Version pin | License | Maintained? | Delivery | Attribution / redistribution / source-disclosure / modification obligations | Trademark concerns | Security & update policy | Why selected | Papers glue required | Decision |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Electron | electronjs.org / github.com/electron/electron | Application shell (already P2's foundation) | `^43.1.0` (**Observed:** P2 — `app/package.json:14`) | MIT (verify LICENSE file at the pinned version during Slice 1) | Yes (active releases) | Bundled | MIT: keep license text in distribution; no copyleft; unmodified use | Use name descriptively only | Track Electron security releases; pin minor | It is Papers 2 | none new | **Use** |
+| Hermes Agent 0.18.0 | github.com/NousResearch/hermes-agent (installer URL pinned at commit `7c1a0295…` — **Observed:** P1 — `hermes.lock.json`) | The AI: sessions, models, tools, research, browsing, terminals, files, computer use, delegation | package 0.18.0, tag `v2026.7.1`, commit `7c1a0295…`, installer SHA-256 `575a1504…62bcd` | **License unresolved** — the license file at the pinned commit was not verified during this planning pass; verify before Slice 2 begins | Actively developed (release tags observed) | Downloaded at runtime by Papers via its own official installer, hash-verified; never bundled or redistributed by Papers | To be recorded after license verification; local install-and-invoke (no redistribution) minimizes obligations either way | Do not brand Papers AI as "Hermes"; name it only in factual attribution ("powered by") if the license/trademark guidance allows | Pinned; upgrade policy `manual-after-compatibility-check` (**Observed:** P1 — `hermes.lock.json`) | The proven agent runtime P1 verified end-to-end on the creator's machine | runtime lifecycle + thin adapter (§14) | **Use — license verification is a Slice 2 entry gate** |
+| Hermes computer-use dependency (cua-driver-rs) | github.com/trycua/cua (release `cua-driver-rs-v0.7.0` — **Observed:** P1 — `hermes.lock.json` computerUse block) | Computer use, reached by Hermes (`HERMES_CUA_DRIVER_CMD`) | 0.7.0, archive SHA-256 `4411ee02…b6ef` | **License unresolved** — verify at the pinned release before Slice 7 | Active upstream | Downloaded at runtime, hash-verified, extracted privately (**Observed:** P1 — `runtime.rs:634–736`); not redistributed | Record after verification | none anticipated | Pinned; manual upgrades | The exact stack P1 validated on real Windows | none beyond the existing P1 install port | **Use — license verification is a Slice 7 entry gate** |
+| Node/Electron built-in `WebSocket` client (undici) | nodejs.org (bundled in Electron's Node ≥22) | Client connection to Hermes' local control channel | whatever Electron 43 bundles | MIT (part of Node/Electron distribution) | Yes | Bundled (already inside Electron) | covered by Electron's license file | none | follows Electron updates | Zero new dependency for a solved protocol | ~80-line request/response correlation (§14 G2) | **Use** (fallback below if the packaged build lacks it) |
+| `ws` | github.com/websockets/ws | Dev-only: the fake Hermes control-channel **server** for tests (Node has no built-in WS server); contingency production client if the built-in client is unavailable in the packaged app (Risk R2) | `^8`, exact version pinned in lockfile | MIT (verify at pinned version) | Yes | dev-only (contingency: bundled) | MIT text in repo; if promoted to production, include in distribution licenses | none | pin + audit via `npm audit` | Standard, tiny, maintained | none | **Use (dev-only); investigate before any production promotion** |
+| `yaml` | github.com/eemeli/yaml | **Conditional only:** safe read-modify-write of Hermes `config.yaml` if the §21 investigation proves direct modification is an unavoidable, documented compatibility requirement | No version selected unless activated; if activated, pin the exact version in the lockfile | ISC — verify at the selected version | Yes | Bundled **only if activated** | Preserve the ISC license text in the distribution if bundled | none | Pin and audit only if activated | Hand-written YAML parsing would be reinvention, but no parser is needed when Papers does not write Hermes configuration | Configuration-writing glue exists only if §21 step 4 is reached | **Conditional — omit from dependencies unless §21 proves it necessary** |
+
+> A conditional dependency is not installed, listed in `package.json`, tested, packaged, or distributed until its activation condition has been proven and recorded in the implementation PR.
+| `node:test` / `node:assert` | Node builtin | All automated tests (**Observed** P2 idiom: `app/package.json:11`) | builtin | Node license (MIT-family, ships with Electron/Node) | Yes | dev-only | none | none | follows Node | Already P2's framework | none | **Use** |
+| electron-builder (NSIS, per-user) | github.com/electron-userland/electron-builder | Packaging the finished Windows app (included because §27 completion requires an installable build) | latest stable, exact pin | MIT (verify); NSIS itself zlib license (verify) | Yes | dev-only (its output is the installer) | keep license texts; NSIS zlib permits redistribution | none | pin + audit | Standard Electron packaging; per-user install mode matches P1's verified choice (**Observed:** P1 — `tauri.conf.json` bundle) | config file only | **Use — verify licenses at pin during Slice 8 exit** |
+
+**Externally installed products reached through Hermes (never integrated, bundled, or managed by Papers):**
+
+| Product | Category | Note |
+|---|---|---|
+| Codex CLI | open-source per upstream publication — **verify before relying on it in acceptance docs**; the hosted models behind it are a **remotely provided service** | Verified only *through Hermes* in Slice 7 (§22) |
+| Claude Code | **proprietary installed product** (already P2's default engine backend — **Observed:** P2 — `app/engine/runtimes/claude-cli.js`) | Transitional P2 engine use continues until Slice 8; Hermes-delegated use verified in Slice 7 |
+| OpenCode | open-source per upstream publication — **verify license before acceptance docs** | Verified only through Hermes in Slice 7 |
+| Ollama | open-source server, locally installed (**Observed:** P2 — `app/engine/runtimes/ollama.js`) | Transitional P2 engine backend only; retired with Slice 8 |
+| PowerShell / Windows | proprietary OS components | Invoked as installed products for install/env tasks (P1-proven mechanics) |
+
+Rules applied (Creator requirement): a public GitHub repository is not assumed to be legally open source — hence the two explicit **License unresolved** gates; no dependency exists merely for architectural completeness — every row above is consumed by a named section; no dependency shopping lists — anything not in this table is not part of the plan. Any dependency whose verification fails is **rejected** and its slice blocks until an alternative passes the §10 gate.
+
+---
+
+## 12. Verified Papers 2 product reuse
+
+**What P3 starts from (Observed, at P2 @ `54ecce58…`).** The entire product is reused verbatim by the §2 import:
+
+* Electron main process and its world IPC surface — P2 — `app/main.js:31–429` (22 `ipcMain.handle` channels), window creation `447–468`, single-instance `479–482`, smoke mode `433–445, 485–494`.
+* Preload allowlist — P2 — `app/preload.js:8–32` (`window.papers`, 22 functions).
+* World storage: atomic JSON store — P2 — `app/world/store.js` (layout comment `14–23`, atomic `writeJson` `38–43`, rooms/things/artifacts/desk/activity/conversation methods throughout); truthful thing references and bounded readers — `app/world/things.js:11–118` (`MAX_TEXT_BYTES` 24 KiB, `MAX_FOLDER_ENTRIES` 200); guarded revision with exact-prompt fingerprints — `app/world/revision.js:37–75`.
+* The existing engine seam and runtimes (transitional) — P2 — `app/engine/index.js:21–87`, `app/engine/prompts.js`, `app/engine/runtimes/claude-cli.js`, `app/engine/runtimes/ollama.js`.
+* The complete Backpack UI — P2 — `app/ui/app.js` (world view `99–143`, room view `699–776`, Desk `416–462`, guard modal `1025–1140`, conversation panel `672–695`), visual identity — `app/ui/style.css:3–43`.
+* All tests — P2 — `app/test/world.test.js` (34 tests), `app/test/engine.test.js`; verify scripts — `app/scripts/verify-*.js`.
+* Governing docs — P2 — `DOCS/**`, `README.md`, `AGENTS.md` (imported unmodified; they continue to govern).
+
+**The one Papers 2 behavior change in Slice 1 (Creator requirement, V11): last-active-Backpack restoration.**
+
+* **Observed today:** Papers always opens the world list (P2 — `app/ui/app.js:12–30` — `state.view: 'world'`; `loadWorld` `51–63`); rooms already record `lastEnteredAt`/`previousEnteredAt` (P2 — `app/world/store.js:134–140` — `markRoomEntered`).
+* **Proposal (smallest change):** persist `lastActiveBackpackId` in `world.json` when a Backpack is entered (one line in the `room:get` handler path) and clear-or-ignore it when unreadable. On renderer start, `loadWorld()` checks a new field on the `world:get` response: if `lastActiveBackpackId` names a room whose `room.json` is readable, call the existing `enterRoom(...)`; otherwise render the world list with the honest line "Your last Backpack \"<title if known>\" could not be restored: <not found | unreadable>." No new store subsystem; reuses `getRoomRecord`'s existing honest failure (P2 — `app/world/store.js:115–119`).
+* This is the only edit to imported P2 behavior before Slice 2; it is covered by a new unit test and leaves all existing tests untouched and passing.
+
+**Safety guarantees preserved:** the exact-preview guard idiom for anything shared with an AI (P2 — `app/main.js:156–192, 372–395`), honest missing/recovered reality tracking (P2 — `app/world/store.js:211–227`), and the no-invented-output rule (P2 — `app/engine/runtimes/claude-cli.js:67–73`) carry into every Papers AI surface.
+
+---
+
+## 13. Verified Papers 1 / Hermes behavior reuse
+
+Only integration mechanics are reused; each is proven P1 behavior against Hermes 0.18.0 (P1 — `PROJECT_CONTEXT.md` records the on-machine verification). Everything else in P1 is historical/rejected (§3).
+
+**Reused (with the P1 proof):**
+
+1. **Pinned, verified install** — download the official installer pinned by commit, SHA-256 check, refuse on mismatch ("Nothing was run"), preserve partial installs, isolated `GIT_CONFIG_GLOBAL`, PATH filtering of package-manager shims, user-env snapshot/restore, install log. (P1 — `hermes.lock.json`; `src-tauri/src/runtime.rs:141–272, 925–1021`.)
+2. **Private serve lifecycle** — ephemeral loopback port (bind `127.0.0.1:0`), per-launch token (two UUIDv4s), `hermes serve --host 127.0.0.1 --port <p>` with `HERMES_HOME`, `HERMES_EXEC_ASK=1`, `HERMES_DASHBOARD_TUI=1` (mandatory for the control channel — **Observed:** P1 — `PROJECT_CONTEXT.md`), `HERMES_DASHBOARD_SESSION_TOKEN`; health poll `GET /api/status` 250 ms × 120; kill on exit. (P1 — `runtime.rs:274–375, 811–849`; `main.rs:605–610`.)
+3. **Authenticated control channel** — `ws://127.0.0.1:{port}/api/ws?token={token}`; token never reaches any renderer. (P1 — `runtime.rs:559–574`; `gateway_proxy.rs:30–123`.)
+4. **Hermes session & message interface** (the supported surface P1 exercised):
+   * `session.create {cols, source, title, cwd?}` → `{session_id, stored_session_id?}` (P1 — `use-agent.ts:469–496`);
+   * `session.resume {session_id, cols}` → `{session_id, messages[]}` (P1 — `use-agent.ts:639–683`);
+   * `prompt.submit {session_id, text}` (P1 — `use-agent.ts:514–518`, 1,800 s timeout);
+   * `session.interrupt {session_id}` (P1 — `use-agent.ts:558–567`);
+   * `approval.respond {choice: "once"|"deny", session_id}` (P1 — `use-agent.ts:595–608`);
+   * `clarify.respond {request_id, answer}` (P1 — `use-agent.ts:610–623`);
+   * public events `gateway.ready`, `message.start/delta/complete`, `tool.start/progress/generating/complete`, `approval.request`, `clarify.request`, `error` (P1 — `use-agent.ts:181–354`); JSON-RPC correlation and event framing (P1 — `src/gateway.ts:64–144`).
+5. **Reasoning redaction** — drop `reasoning.*`/`thinking.*`/`chain_of_thought.*` events; strip `reasoning`, `thinking`, `chain_of_thought`, `chainOfThought`, `cot` keys recursively before persisting or displaying. (P1 — `storage.rs:566–606` + tests `657–709`; incident record in `PROJECT_CONTEXT.md` 2026-07-07.)
+6. **Provider/model via Hermes' supported HTTP surface** — OAuth device-code start/poll per provider id (`/api/providers/oauth/{id}/start`, `/poll/{session}`), model listing (`/api/model/options`), model set (`/api/model/set`), sanitized readiness reads of `config.yaml`/`auth.json`. (P1 — `runtime.rs:377–459, 461–632`; `hermes_provider_adapter.rs:194–476`.) Used generically — no Papers provider catalogue (§21).
+7. **Approval mode, agent mode, and toolsets — investigated, never imposed by default.** P1 wrote `approvals: {mode: manual}` and `agent.yolo: false` directly into Hermes' config on every start (P1 — `runtime.rs:738–770`). Papers 3 does not copy that as a default; it is evidence that *a* Hermes config surface exists for this, not evidence Papers 3 must write it the same way. See §21 for the required investigation order and the documented-compatibility-requirement rule that governs any direct config write.
+8. **Computer-use stack reach** — pinned, hash-verified cua-driver download/extract, `HERMES_CUA_DRIVER_CMD` env. (P1 — `runtime.rs:634–736, 324`.) Slice 7.
+9. **Companion mechanics** — global `Ctrl+Alt+Q` toggle (tolerating registration failure), small always-on-top hidden-by-default window, bottom-right placement, Open-Papers affordance. (P1 — `main.rs:43, 339–360, 505–531, 650–662`; `tauri.conf.json`; `Companion.tsx`.) The `Ctrl+Alt+Q` choice itself avoids the creator's AHK conflicts (P1 — `PROJECT_CONTEXT.md`).
+
+**Explicitly not reused (historical/rejected, §3):** the three-column workbench and Work rail; session rail as product identity; Inspect/self-edit/builder/policy/MCP stack; recovery launcher; SQLite storage; provider wizard as a surface; BroadcastChannel renderer-to-renderer sync (replaced by main-process fan-out, which is smaller and keeps one source of truth); foreground-window targeting (Deferred: needs native access Electron lacks; not part of the required experience).
+
+**Risk note (Risk R1):** "supported Hermes behavior" here means "the surface P1 verifiably exercised against the pinned 0.18.0". Slice 2's first real exchange re-verifies it; any drift is handled by the honest-failure states of §24, never by Papers guessing.
+
+---
+
+## 14. Minimum Papers-specific glue
+
+**This is a maximum expected decomposition, not a mandatory architecture.** Seven main-process files, three UI files, two preload touchpoints are this plan's current best estimate, based on what this planning pass found in Hermes' and Papers 1's surfaces. Before creating any file listed here, the implementing agent must re-check, at implementation time: current Hermes APIs and surfaces; the Papers 1 implementation; Electron/Node built-ins; and licensed upstream components then available. **A proposed file must not be created when its responsibility can be handled safely by an existing supported component, or folded into a smaller neighboring module** — using fewer files and substantially less custom code than estimated here is expected and encouraged, provided the required creator-visible outcomes (§5) and safety boundaries (§7, §9, §18, §20) are preserved. Each entry below still answers the build-versus-reuse gate (Creator requirement §20 of the revision) as of this planning pass: unique Papers-only responsibility · what was inspected (Hermes / P1 / open source) · why direct reuse is insufficient · smallest adapter · approximate size · removal path. Everything here maps to a §9 Papers-owned bullet; nothing else may be added without re-running this gate — and conversely, any module here may be merged into fewer files or dropped in favor of a supported component without re-planning, as long as the mapping to §9/§18/§20 is documented in the diff.
+
+**G1 — `app/papers-ai/runtime.js` (+ committed `app/papers-ai/hermes.lock.json`).**
+*Responsibility (Papers-owned):* "the minimum lifecycle integration required to start, reach, and stop Hermes safely" — paths, verified install, serve start/stop, health, honest status.
+*Inspected:* Hermes has no self-installing Windows supervisor; P1 solved exactly this (`runtime.rs`, `paths.rs`); no open-source "Hermes installer" exists.
+*Why reuse is insufficient alone:* P1's implementation is Rust/Tauri; the behavior is reused, the language port is unavoidable glue.
+*Size:* ≈450 lines incl. messages. *Removal path:* if Hermes ships a supported Windows service/installer with a status API, this file shrinks to path discovery + that API.
+*Classification:* proven Papers 1 behavior reuse + necessary glue.
+
+**G2 — `app/papers-ai/connection.js`.**
+*Responsibility:* reach Hermes' control channel; correlate requests/responses; surface public event frames; honest connection states (`unavailable / starting / connected / stopping / failed`), all main-process only.
+*Inspected:* built-in WebSocket client (reused for the transport); generic JSON-RPC npm clients (rejected: Hermes' `method:"event"` framing and per-method timeouts would need adapter code equal in size to the whole module); P1 — `gateway.ts:64–152` + `gateway_proxy.rs` (behavior source).
+*Size:* ≈120 lines. *Removal path:* if Hermes publishes an official JS client, this file becomes that client plus ~20 lines.
+*Classification:* licensed open-source reuse (transport) + necessary glue (correlation).
+
+**G3 — `app/papers-ai/projection.js`.**
+*Responsibility:* redact private reasoning (P1 port) and project **public Hermes events** into what the drawer/companion render, unchanged in meaning; group repeated public tool events visually; emit the six neutral integration-status strings (`Connected`, `Waiting for Hermes`, `Hermes requested approval`, `Hermes requested clarification`, `Hermes stopped`, `Hermes is unavailable`).
+*Inspected:* Hermes owns event semantics (§9); P1 — `use-agent.ts:44–94, 181–354` (field usage), `storage.rs:566–606` (redaction).
+*Why glue at all:* something must decide *which* public fields to show and keep reasoning out — a display concern Papers owns.
+*Size:* ≈150 lines. *Removal path:* if Hermes ships a documented "public display event" stream, this collapses to the redaction guard.
+*Classification:* proven P1 reuse (redaction) + necessary glue (display projection). Replaces rev-1's normalization layer (audit A6).
+
+**G4 — `app/papers-ai/conversations.js`.**
+*Responsibility (Papers-owned):* map Papers conversations to Hermes sessions; hold immutable scope; hold the minimal §17 record + redacted display cache; atomic JSON persistence in the existing P2 idiom (**Observed:** P2 — `app/world/store.js:38–43`).
+*Inspected:* Hermes owns session memory (reused as the authority); no open-source "conversation index" is smaller than ~200 lines of JSON files.
+*Size:* ≈200 lines. *Removal path:* if Hermes exposes listable, titled, scope-taggable session metadata, Papers keeps only ids + scope.
+*Classification:* necessary Papers-specific glue.
+
+**G5 — `app/papers-ai/adapter.js`** — *the* thin Papers-to-Hermes adapter of §9's diagram.
+*Responsibility:* on Send — durably record the message (locking scope per §16.2), assemble §18 context, ensure/bind the Hermes session (`session.create`/`resume`), submit; forward approval/clarification responses and Stop; fan out projected events and status to both windows; enforce one in-flight submission per conversation. No workflow phases, no retries of Hermes' work, no policy.
+*Inspected:* this is the seam the creator direction itself mandates ("thin Papers-to-Hermes adapter"); P1 — `use-agent.ts` (orchestration-free parts).
+*Size:* ≈250 lines. *Removal path:* none — this *is* the attachment; it is the component everything else exists to keep small.
+*Classification:* necessary Papers-specific glue.
+
+**G6 — `app/papers-ai/ipc.js` + preload additions.**
+*Responsibility (Papers-owned):* keep secrets and raw infrastructure out of the renderer; expose the minimum `papersAI:*` surface. Final method set (each `{ok:true,…}|{ok:false,error}`; validation: id shapes, length caps, sender identity, path provenance via main-process dialogs only): `status` · `connect` (install-if-needed + start; streams neutral setup status) · `disconnect` · `connectModel` (§21) · `listConversations` · `createConversation {scope}` · `openConversation {conversationId}` (loads record + display cache; issues `session.resume` when connected) · `setScopeBeforeLock {conversationId, scope}` · `send {conversationId, text, resources[]}` · `stop {conversationId}` · `respondApproval {conversationId, approvalId, choice}` · `respondClarify {conversationId, requestId, answer}` · `pickResources {conversationId}` · `renameConversation` · `deleteConversation` (to `papers-ai/trash/`) · `openMain` · `hideCompanion` · `setAutoStart {enabled}`. One push channel `papersAI:update` carrying `{kind, conversationId?, …}` where kind ∈ public-projection kinds + `status`. Companion preload (`app/preload-companion.js`) exposes the strict subset: `status, listConversations, createConversation, openConversation, setScopeBeforeLock, send (text only), stop, openMain, hideCompanion, onUpdate`.
+*Size:* ≈150 lines + 30 preload. *Classification:* necessary glue (security boundary).
+
+**G7 — `app/papers-ai/backpack-compat.js`** — the Backpack compatibility boundary (§15).
+*Responsibility:* translate `backpackId` ↔ legacy `roomId`; answer "does this Backpack exist / what is its title" via the existing store (**Observed:** P2 — `app/world/store.js:115–119`); enumerate/read *current-form* Backpack resources by delegating to existing `listThings`/`refreshThings`/`readThingContent` (**Observed:** P2 — `app/world/store.js:162–227`, `app/world/things.js:58–118`). Returns "no selectable resources" for anything it cannot enumerate — never an error.
+*Size:* ≈80 lines. *Removal path:* replaced whenever a real Backpack contract exists; nothing else may import world internals.
+*Classification:* necessary glue (compatibility, uniquely Papers).
+
+**UI glue:** `app/ui/papers-ai.js` (drawer, rendered into a new sibling `#papers-ai` root so the existing wholesale re-render — **Observed:** P2 — `app/ui/app.js:1149–1152` — cannot destroy streaming display), `app/ui/companion.html` + `companion.js`, appended styles in `app/ui/style.css`. ≈600 lines total, all display.
+
+**Slice-8-only glue:** `app/papers-ai/migrate-conversations.js` (§23; ≈150 lines, one-time compatibility operation, removable after migration is complete and rollback-proven).
+
+Total new Papers-specific main-process code: ≈1,400 lines across the above — this plan's current estimate, and a **ceiling to consolidate below**, not a target to hit exactly (final review question 15 answered in the appendix).
+
+---
+
+## 15. Backpack compatibility boundary
+
+**Universal Backpack capabilities (the only ones Papers 3 may assume — Creator requirement):** a Backpack is identifiable, enterable, leaveable, switchable, trackable as active/inactive, and usable as a Papers AI conversation scope. Nothing else — not files, things, notes, Desk, artifacts, conversation panels, resource enumeration, or the current P2 room structure — is universal (those are features of the currently implemented Backpack form; **Observed:** P2 — `app/README.md` "experimental proving substrate"; `DOCS/PAPERS_BACKPACK_DESK_V1.txt` recovery correction).
+
+**The boundary (G7):** all Papers AI code sees Backpacks only through `backpack-compat.js`:
+
+* `getBackpack(backpackId) → {backpackId, title, readable} | {backpackId, readable:false, reason}`
+* `listSelectableResources(backpackId) → [{resourceId, displayName, kind, status, shareDetail}]` — implemented today by delegating to the existing room things (translation `backpackId`→`roomId` inside this file only); returns `[]` with `offersResources:false` for any Backpack the current form cannot enumerate.
+* `readResource(backpackId, resourceId)` — delegates to the existing truthful readers with their existing caps (**Observed:** P2 — `app/world/things.js:11–118`).
+
+**Identity-only Backpacks work (Creator requirement):** scope chip, conversations, sending, approvals — all function with `offersResources:false`; the picker shows "This Backpack offers no selectable resources," and the creator can still attach nothing or (in a Global conversation) use the native file dialog. Test-pinned in Slice 5.
+
+This adapter is the *entire* universal-vs-current-form firewall: no other Papers AI file may import `app/world/*`.
+
+---
+
+## 16. Papers AI conversation and scope model
+
+### 16.1 Record (persisted per conversation; full persistence rules in §17)
+
+`<worldDir>/papers-ai/conversations/<conversationId>.json` — fields: `schema:1`, `id` (`conv_…`, existing id helper — **Observed:** P2 — `app/world/ids.js:5–7`), `title` (first message, ≤70 chars, renameable), `scope` (`{kind:'global'}` or `{kind:'backpack', backpackId, titleAtLock}`), `scopeLockedAt`, `hermesSessionId|null`, `createdAt/updatedAt`, `publicStatus` (one of the §12-of-direction neutral strings plus `Idle`), `pendingApproval|null`, `pendingClarification|null`, `selectedResources[]` (references only), `displayCache[]` (§17), `lastFailure|null` (§24 shape).
+
+New records use `backpackId` exclusively (V9); `roomId` appears nowhere in `papers-ai/` files.
+
+### 16.2 The one deterministic scope rule (Creator requirement, V2)
+
+**Scope locks when the first creator message is durably recorded by Papers immediately after the creator presses Send, before Hermes execution begins.**
+
+Mechanically: `adapter.send()` first appends the creator entry (with the conversation's chosen scope) to the conversation record via an atomic write; the moment that write returns, `scopeLockedAt` is set in the same write. Only then does the adapter touch Hermes (`session.create` / `prompt.submit`). Consequences, all binding and test-pinned:
+
+* A Hermes connection or execution failure cannot make scope ambiguous — the message and locked scope are already on disk; the entry shows an honest failure state with Continue/retry (§24 F3).
+* A failed first submission never silently unlocks or retargets the conversation; retry re-uses the recorded message and scope.
+* The first message is always visibly associated with its scope (the chip sits above it).
+* The UI shows the lock: before lock the chip is a Global/This Backpack chooser labeled "(locks with your first message)"; after lock it is static with tooltip "Scope locked with the first message."
+* Switching the active Backpack never changes any existing conversation's scope (the adapter reads scope only from the record after lock; the active Backpack feeds only *defaults for new conversations*).
+
+### 16.3 Choosing scope
+
+New conversations default to `This Backpack` when created while a Backpack is active, else `Global`; the chooser is visible before the first Send (Creator requirement §8.6). `setScopeBeforeLock` is refused with an honest message once `scopeLockedAt` is set — there is no unlock API.
+
+### 16.4 Backpack changes, renames, deletion
+
+Rename: scope stores `backpackId`; the chip shows the live title via G7. Unreadable/missing Backpack: chip shows "Backpack no longer available: \"<titleAtLock>\""; conversation stays readable and usable; resource picking via that Backpack is disabled; context carries the honest one-line fact (§18). Switching Backpacks regroups the conversation list (This Backpack / Global / Other Backpacks) and nothing else.
+
+### 16.5 Session mapping and reopening
+
+`hermesSessionId` binds at first successful `session.create` (`stored_session_id ?? session_id` — **Observed:** P1 — `use-agent.ts:481–496`). Reopening a conversation with a binding issues `session.resume` when connected; a changed returned id rebinds; resume failure clears the binding and states plainly that the next message starts a fresh Hermes session with the same scope (§17.3, §24 F9). Hermes' resumable memory is the continuity; Papers never fabricates it.
+
+### 16.6 Companion rule (Creator requirement, V8)
+
+The companion never silently creates and submits into a Backpack-scoped conversation. Its empty state offers: (a) pick an existing conversation, or (b) a visible scope chooser (Global / This Backpack "<title>") that must be tapped before its first Send is enabled. The chosen scope is displayed at the moment of submission.
+
+---
+
+## 17. Minimal persistence and Hermes authority
+
+**Hermes is authoritative** for session history, resumable agent memory, tool state, and execution history (Creator requirement). Papers persists only what the Papers experience needs to navigate and render:
+
+* the §16.1 record fields (ids, scope, title, timestamps, public status, pending approval/clarification, selected-resource references);
+* a **redacted public display cache** (`displayCache[]`): the creator's messages, Hermes' public text, grouped public tool lines, and neutral status lines — exactly what the drawer rendered, so conversations remain readable immediately and offline. It is a cache, not memory: it is never sent back to Hermes, never merged into Hermes state, and never treated as the truth about what Hermes remembers.
+
+**Prefer Hermes when available (Creator requirement):** on reopen with a live connection, `session.resume`'s returned `messages[]` (**Observed:** P1 — `use-agent.ts:654–681`) is rendered as the authoritative public history for the messages it covers; the display cache fills gaps (tool lines, status lines) and serves offline reads.
+
+**Disagreement handling (Creator requirement):** if Hermes' returned history and the cache disagree materially (e.g., messages the cache has that Hermes lacks, or vice versa), Papers does not declare itself correct, does not overwrite Hermes, and does not merge speculatively. The conversation shows a visible resynchronization state: "Papers' saved view and Hermes' memory of this conversation differ. Showing Hermes' record; Papers' saved view is kept unchanged." — with an action to view the cached version. Both records persist until the creator moves on; nothing is deleted.
+
+**Redaction before persistence and display:** every event passes the G3 redaction guard (mechanism **Observed:** P1 — `storage.rs:566–606`); reasoning event types and fields never reach `displayCache`, the renderer, or logs. (Creator requirement: never display or persist hidden reasoning.)
+
+**Corruption:** an unreadable conversation file is listed as "unreadable conversation," never auto-deleted; delete = move to `papers-ai/trash/` (rename, same volume). Loader refuses `schema > 1` honestly.
+
+**What Papers deliberately does not store:** raw Hermes frames, event logs, provider data, tokens, model lists, tool state, or any second copy of Hermes session internals. (Non-reinvention: no second AI memory system — audit A7.)
+
+---
+
+## 18. Explicit Papers context
+
+**What one Send transmits to Hermes (Creator requirement; the complete list):**
+
+1. the creator's instruction, verbatim;
+2. scope identity: "Global" or the Backpack's id + title;
+3. minimal Backpack metadata: the Backpack description when present, capped 500 chars (**Observed** source field: P2 — `app/world/store.js:144–158`);
+4. resources explicitly selected **for that message**, read at send time through G7's truthful readers with their existing caps and honest truncation/missing markers (**Observed:** P2 — `app/world/things.js:58–118`);
+5. one line of neutral factual framing identifying the block as Papers context.
+
+Rendered deterministically (fixed order, attach-order resources) as plain text ahead of the instruction — the mechanism P1 proved for contextual prompts (**Observed:** P1 — `use-agent.ts:498` — `` `${context}\n\n${text}` ``):
+
+```
+[Papers context — supplied by the creator through Papers]
+Scope: Global — the creator's Papers workspace.        |or|  Scope: the Backpack "<title>".
+Backpack description: <text>                            (only when present)
+Selected resource 1 of N: <name> (<kind>, <status>, at <path>)
+<content as read, with the reader's own truncation/unreadable markers>
+[End of Papers context]
+
+<the creator's instruction>
+```
+
+**No behavioral super-prompt (Creator requirement, V12):** no personality, planning, research, coding, tool-selection, retry, delegation, success-criteria, workflow, computer-use, or provider instructions — the framing above contains no imperative addressed to the model, and a snapshot test enforces that (§26 Slice 5 checks).
+
+**Explicitness (Creator requirement):** nothing is inferred or dumped — not the complete Backpack, all files, Desk contents, activity history, notes, previously attached resources, or the whole workspace. Resources are chosen per message via the picker (Backpack scope: G7's list; Global scope: the native file dialog, main-process owned — pattern **Observed:** P2 — `app/main.js:62–73`), each chip showing the exact share detail before Send (wording **Observed:** P2 — `app/main.js:165–177`). Missing resources at send time are included as their honest missing/unreadable form, exactly as previewed.
+
+**Limits:** per-resource caps are the existing reader caps; per-message: ≤ 8 resources, ≤ 192 KiB rendered context — exceeding either is refused before sending with "That's more than one message can carry — remove something or send in parts." (Bounded, honest, no silent dropping.)
+
+**Unavailable scope:** when a Backpack-scoped conversation's Backpack is unreadable, item 2 becomes the honest fact "Scope: a Backpack that is no longer available in Papers (\"<titleAtLock>\")." and items 3–4 are omitted.
+
+---
+
+## 19. Thin Papers AI UI projection
+
+The UI is a projection of Hermes and integration status — it invents nothing (Creator requirement §12 of the revision). All copy uses §6 vocabulary. Visual identity: the existing paper palette and idioms (**Observed:** P2 — `app/ui/style.css:3–43`; template-string rendering + `esc()` as in `app/ui/app.js:32–38`).
+
+**19.1 Shell button.** A fixed, quiet "Papers AI" button with a status dot, visible in the Backpack list and inside any Backpack. Dot states map 1:1 to integration status: ready (`Connected`), working (`Waiting for Hermes`), attention (approval/clarification pending), unavailable.
+
+**19.2 Drawer.** Collapsible right-side overlay in its own `#papers-ai` root (mechanism note in §14): header (status word, conversation selector grouped This Backpack / Global / Other Backpacks, New conversation), scope chip (§16.2–16.3), conversation area, pending-request card slot, composer with attach and Stop/Continue. Open state in `localStorage['papers-ui:papers-ai-open']` (idiom **Observed:** P2 — `app/ui/app.js:29`).
+
+**19.3 Conversation display.** Creator messages; Hermes' public text streamed as it arrives (`message.delta` appended to a text node; final text from `message.complete` wins — behavior **Observed:** P1 — `use-agent.ts:215–253`); **Activity** lines for public tool events showing exactly Hermes' public tool name and status, visually grouped when repetitive (e.g. "Command — 6 updates") without reinterpreting meaning; neutral status lines otherwise. No thinking indicators beyond `Waiting for Hermes`, no percentages, no invented phases, no assumed retries or delegation (Creator requirement).
+
+**19.4 Approval.** An `approval.request` renders an Approval card: Hermes' public description, the exact command text when provided (verbatim, scrollable), buttons **Don't allow** / **Allow once** → forwarded as `approval.respond {choice}` (**Observed:** P1 — `use-agent.ts:294–318, 595–608`). Papers adds no risk scoring, no policy, no "always allow". Status becomes `Hermes requested approval`.
+
+**19.5 Clarification.** A `clarify.request` renders the question, Hermes' choices as buttons, and a free-text answer → `clarify.respond {request_id, answer}` (**Observed:** P1 — `use-agent.ts:320–338, 610–623`). Status `Hermes requested clarification`.
+
+**19.6 Stop / Continue.** Stop is always available during `Waiting for Hermes` → `session.interrupt` (**Observed:** P1 — `use-agent.ts:558–567`); the conversation shows "Hermes stopped" with Continue (which simply sends the creator's next message — Papers does not fabricate a resume instruction; rev-1's canned Pause prompt is removed as invented behavior).
+
+**19.7 Companion.** Small always-on-top window on `Ctrl+Alt+Q` (mechanics §13.9): status word + dot, active conversation title + scope chip, last public line or pending-request notice ("Hermes requested approval — open Papers to review": approvals are answered only in the drawer, keeping one exact approval surface), text input, Stop, Open Papers, Hide. First-message scope rule per §16.6. Same conversation, same Hermes session, no second AI (Creator requirement): the companion is a second subscriber to the same main-process adapter — it holds no connection, no session, no state of its own.
+
+**19.8 Connect a model / availability.** When Hermes is unavailable or no model is connected, the drawer shows the honest state and the relevant action (Connect / Connect a model — §21) instead of a composer that cannot work. Copy never mentions ports, tokens, runtimes, or gateways (V9).
+
+---
+
+## 20. Minimal Hermes lifecycle integration
+
+Integration safety only — no AI workflow state machines (Creator requirement §21 of the revision; audit A2/A10). Retained, each proven in P1 (§13 items 1–3):
+
+* **installed vs unavailable** — executable presence check (`<install>/venv/Scripts/hermes.exe` — **Observed:** P1 — `paths.rs:70–75`).
+* **starting** — spawn `hermes serve` loopback-only with the pinned env; health poll `GET /api/status` (250 ms × 120, honest timeout naming the log file — **Observed:** P1 — `runtime.rs:338–360`).
+* **connected** — authenticated control channel open (§13.3).
+* **stopping / process cleanup / safe shutdown** — on quit: best-effort `session.interrupt` for in-flight submissions (500 ms budget), close the channel, kill the child (**Observed:** P1 — `main.rs:605–610`, `runtime.rs:363–375`); child is never detached; Electron single-instance lock already prevents duplicate Papers (**Observed:** P2 — `app/main.js:479–482`).
+* **failed** — honest startup/connection errors naming the log; one bounded reconnect cycle (3 attempts, 1/2/4 s) when the channel drops while the process lives; one automatic restart attempt when the process dies unexpectedly; never a retry loop.
+* **authentication-token secrecy / local-only** — §13.2–13.3; token exists only inside G1/G2 memory; every bind and URL is `127.0.0.1`.
+* **abandoned processes** — port+token are per-launch and never persisted; an orphan from a crashed Papers is inert (no token holder) and a fresh start uses a fresh port. Deferred (not speculative machinery, just unneeded now): pid-file cleanup.
+
+Paths: root `%LOCALAPPDATA%\Papers` (override `PAPERS_HERMES_ROOT`), same private layout P1 proved (`data/hermes`, `runtime/hermes-agent`, `staging`, `logs` — **Observed:** P1 — `paths.rs:39–52`); the Papers world directory is untouched by any of this. Install identity is the committed lock (§11 Hermes row); checksum mismatch runs nothing (**Observed:** P1 — `runtime.rs:164–170`). Upgrades are manual-after-compatibility-check only.
+
+Removed from rev-1 (audit A10/A11): Papers-owned run-phase machine, persisted test gating, any state not visible to the creator as one of the neutral status words.
+
+---
+
+## 21. Provider / model setup through Hermes
+
+Creator-facing name: **Connect a model** (Creator requirement). Papers has no provider system, catalogue, or model list of its own (V6). Preference order, as mandated:
+
+1. **Open or initiate a Hermes-supported setup flow.** *Investigate first (Slice 2 task):* whether `hermes serve` exposes its own setup/dashboard UI that Papers can open in the browser (its TUI/dashboard mode suggests one — **Risk**, unverified). If yes, "Connect a model" simply opens it and then re-reads readiness.
+2. **Use supported Hermes setup APIs** (proven in P1, provider-generic): OAuth device-code start/poll per provider id (`POST /api/providers/oauth/{id}/start`, `GET /api/providers/oauth/{id}/poll/{sid}`), model listing `GET /api/model/options`, model selection `POST /api/model/set` (**Observed:** P1 — `runtime.rs:377–459`; `hermes_provider_adapter.rs:281–372, 218–276, 461–468`). Papers renders whatever Hermes reports — it hardcodes no provider or model names.
+3. **Reuse proven Papers 1 behavior** where 1–2 leave gaps: the device-code browser-open + poll loop is exactly P1's, generalized to the provider id Hermes reports. A **Nous sign-in shortcut may appear only as one option among whatever Hermes lists** — never as the identity of Papers AI.
+4. **Display only sanitized readiness:** provider name, model name, signed-in yes/no, "ready" yes/no — sourced from Hermes' surfaces or sanitized reads (**Observed:** P1 — `runtime.rs:461–499, 600–632`). Never keys, tokens, or auth-file contents.
+5. **Tiny compatibility action only where Hermes lacks a usable path** — none are currently known to be needed beyond the pre-start safety guard below.
+
+**Approval mode, agent mode, and toolsets are not Papers policy (Creator requirement).** Papers must not silently impose an approval mode, agent mode, or toolset selection by editing `config.yaml` merely because Papers 1 did so. For any such setting, Papers 3 follows this order and stops at the first step that satisfies the need:
+
+1. **Hermes' own defaults and supported setup.** Assume Hermes' shipped defaults are sound until an actual failure of the attachment proves otherwise; do not "fix" a setting Hermes has not shown to be a problem.
+2. **An official Hermes API or launch option** that achieves the same outcome — e.g. a `hermes serve` flag or a documented `/api/…` settings endpoint, if one exists at implementation time (re-check; §21's `Connect a model` investigation covers the same surfaces).
+3. **An explicit creator choice, presented through Hermes-supported semantics** — a setting Hermes' own setup/dashboard/API exposes to the creator, never a Papers-invented switch or a policy Papers decides on the creator's behalf.
+4. **Direct `config.yaml` modification — only when Hermes officially requires it** for this attachment to function at all (for example, if Hermes documents that its control channel or approval callbacks do not work without a specific config key set, or if steps 1–3 are verified absent). This is the last resort, not the default implementation path.
+
+Before any code writes to `config.yaml`, the implementing agent must identify and record the exact upstream requirement proving step 4 is necessary — a Hermes release note, a documented config schema entry, or an observed hard failure reproduced without the setting — and describe the resulting code as a **documented compatibility requirement**, never as "Papers' approval policy" or "Papers' agent-mode policy." If, by the time this is implemented, Hermes exposes an equivalent supported API or explicit creator-facing setting, that is used instead and no direct file write occurs.
+
+If direct modification remains the only way to keep a required behavior working, it must still (Creator requirement, all six): use the appropriately licensed `yaml` parser (§11); preserve unknown fields (document-API round-trip); write a timestamped backup beside the file before the first modification of a session; write atomically (tmp + rename — idiom **Observed:** P1 — `runtime.rs:588–598`; P2 — `app/world/store.js:38–43`); validate the re-parsed result contains the required keys and the original unknown keys before replacement; refuse to modify a malformed or unparseable file with an honest message ("Papers could not read Hermes' settings and will not overwrite them") — stricter than P1's fall-back-to-empty (**Observed** and rejected: P1 — `runtime.rs:741–748`). No secret ever appears in the file operations Papers performs, in logs, or in errors.
+
+---
+
+## 22. Coding-tool and computer-use verification
+
+Papers builds **no** integration for Codex, Claude Code, OpenCode, terminals, browsers, computer use, coding workflows, or repository operations — Hermes owns or integrates all of them (Creator requirement). Papers 3's work here is *verification only* (Slice 7):
+
+For each capability — research/browsing, file work, terminal work, delegation to Codex / Claude Code / OpenCode, computer use — verify through a real task started from Papers AI that:
+
+1. Hermes can reach the installed or supported tool (recording honestly which external installations the creator's machine needs, e.g. a Codex or Claude Code CLI sign-in that Hermes uses — external products per §11's second table);
+2. Hermes emits sufficient public output/status for Papers to display (if a tool runs silently, Papers shows only the neutral `Waiting for Hermes` — and the verification records that as a display limitation, not something Papers papers over);
+3. approvals and clarifications raised during the work reach the creator and their responses return (§19.4–19.5);
+4. failures remain attributable to Hermes or the external tool (§24 attribution), never absorbed or re-written by Papers;
+5. Papers adds no management layer — no per-tool UI, settings, or status pages.
+
+**Computer use — required for completion (Creator requirement, V3).** Acceptance criterion, verbatim: *Hermes' existing licensed computer-use stack is installed or reached through its supported mechanism, works from Papers AI, surfaces required approvals, and completes a real Windows validation task.* Mechanism: reuse P1's pinned, hash-verified cua-driver install and `HERMES_CUA_DRIVER_CMD` wiring (**Observed:** P1 — `runtime.rs:634–736, 324`). Enabling the `computer_use` toolset follows the same §21 investigation order — Hermes' own setup/defaults, then a supported API or launch option, then an explicit creator-facing choice Hermes exposes, and only then the documented-compatibility-requirement config edit — rather than copying P1's unconditional config write (**Observed reference point, to re-verify rather than copy:** P1 — `runtime.rs:754–763`). Papers verifies the driver reaches Hermes and that the resulting approvals surface correctly; it does not invent or own the toolset-enablement policy. License verification gate per §11. The validation task mirrors P1's proven pattern (a disposable, creator-approved, non-destructive Windows action — precedent: P1 — `PROJECT_CONTEXT.md`, the `PAPERS_TYPED_OK` Notepad check).
+
+Coding-tool acceptance likewise = verification of existing Hermes-supported capability, not integration development.
+
+---
+
+## 23. Existing Backpack AI transition and migration
+
+**Today (Observed):** the current Backpack form has four creator-facing AI actions through the engine seam — Backpack conversation reply (P2 — `app/main.js:354–367`), note from selected things (`400–428`), Desk synthesis (`196–236`), and guarded in-place note revision (`251–314`) — backed by the Claude CLI / Ollama runtimes (P2 — `app/engine/runtimes/*`). Conversations persist per Backpack in `conversation.json` (P2 — `app/world/store.js:516–533`).
+
+**Temporary coexistence (Binding decision, V4):** Slices 1–7 leave this path untouched and working. It is honestly labeled where it appears (the existing "Backpack conversation" panel keeps its name) and is **not** the finished experience.
+
+**Transition (Slice 8, required for completion; begins only after parity is proven):**
+
+1. **Parity proof.** For each of the four actions, perform the equivalent through Papers AI (the same material attached explicitly — the guard idiom's exact-preview promise is preserved by §18's chips) on real copies of the creator's data, and confirm with the creator that results are usable. Parity is a creator-experience judgment, recorded per action; no code is removed before it.
+2. **Routing.** Once parity holds, the Backpack surface's AI affordances invoke the same thin adapter (a Papers AI conversation scoped to that Backpack, resources pre-attached and previewed) — the smallest supported Hermes interaction, **not** a new Papers agent layer reproducing the old actions (Creator requirement). Note-keeping stays Papers-owned: when the creator asks for a note, the public Hermes response is saved through the existing artifact store (`addArtifact`/`updateArtifact` — **Observed:** P2 — `app/world/store.js:268–288, 433–465`) with honest provenance, exactly as today.
+3. **Migration of existing conversations** (`migrate-conversations.js`). **Before implementation, investigate whether Hermes officially supports a session-import or history-seeding mechanism** (an API or launch option that pre-loads a new session's actual memory with prior transcript). Use it, if it exists and is documented, so the imported history genuinely becomes part of Hermes' memory for the new session. Absent such a mechanism — the default assumption, since P1 exercised no such surface — migration has all creator-required properties, with the Hermes-memory boundary made explicit rather than implied:
+   * **idempotent:** per Backpack, a migration record (`papers-ai/migrations/<backpackId>.json` storing the source file's SHA-256 and the created conversation id) makes re-runs no-ops and blocks duplicate import;
+   * **lossless & non-destructive:** the original `conversation.json` is never deleted, overwritten, or rewritten; entries (`creator`/`ai`/`status` — **Observed** shape: P2 — `app/world/store.js:521–533`) are copied into a new Papers AI conversation's display cache as **visible historical conversation content only**;
+   * **Hermes-memory boundary stated honestly, not implied:** imported entries render in a clearly separate, labeled section — **"Earlier Backpack conversation"** — never mixed into the display as if they were live Papers AI turns; the new conversation's `hermesSessionId` starts `null`; the **first message the creator actually sends begins a genuinely new Hermes session**; Papers does not automatically resend the entire imported history as prompt context on that first message or any later one; no UI copy anywhere implies Hermes remembers the imported turns — if the creator wants Hermes to know about that history, they attach it explicitly as a resource (§18), exactly like any other Papers content;
+   * **backed up:** the whole `rooms/<id>/` conversation file is copied to `papers-ai/migrations/backup/` before the first migration touches anything;
+   * **reversible:** deleting the created conversation + migration record restores the pre-migration state exactly (originals untouched);
+   * **visibly reported:** a per-Backpack report (entries imported, source hash, destination id) shown to the creator;
+   * **scoped per Backpack** and **tested against copies of real data** before running on live data.
+4. **Default:** after successful validation, the migrated conversation may become that Backpack's default visible Papers AI conversation — the "Earlier Backpack conversation" labeling and the fresh-Hermes-session boundary above stay visible for as long as that imported section is present, so being the default view never implies Hermes remembers it.
+5. **Removal:** the old creator-facing surfaces (the `room:say` conversation panel and the engine-backed action buttons) are removed **only after** parity, migration, and rollback are proven; the engine seam itself stays internally present until the rollback window closes (§28), then is retired. Not a new AI-memory framework — a one-time compatibility operation (Creator requirement).
+
+---
+
+## 24. Failure and recovery experience
+
+Format per creator direction: what the creator sees · what Papers actually knows · attribution (Papers / Hermes / model-provider / external tool / permissions / network / website / computer use) · supported action · is retrying useful? · data preserved · logged · not known. Papers never invents Hermes' internal recovery strategy, and no state ends as a bare "done/failed/blocked/stopped."
+
+| # | Failure | Creator sees | Papers actually knows | Attribution | Supported action | Retry useful? | Data preserved | Logged | Not known |
+|---|---|---|---|---|---|---|---|---|---|
+| F1 | Hermes unavailable (not installed / not running) | "Papers AI isn't available yet — Hermes is not installed/running." + Connect | executable presence; process state | Papers (integration) | Connect (install/start) | Yes, after Connect | everything | no | nothing hidden |
+| F2 | Hermes startup failure (install error, checksum refusal, health timeout) | the specific honest message ("The installer didn't match its pinned fingerprint. Nothing was run." / "Hermes didn't become ready. See the log.") + Try again / Open log folder | exit codes, hash comparison, health-poll outcome | Papers↔Hermes boundary (stated which: verification = Papers-side guard; serve exit = Hermes-side, log named) | retry; open logs | Sometimes — stated per case (checksum: only after a fixed download; timeout: yes) | everything; partial installs preserved to `staging/` (**Observed:** P1 — `runtime.rs:242–257`) | install/serve logs (paths+codes only) | why Hermes failed internally (log may say) |
+| F3 | First-message send fails after scope lock | the message shown with "This didn't reach Hermes." + Try again; scope chip locked | the message is durably recorded; which call failed | Hermes or network (loopback) — stated | resend the recorded message | Yes | message + scope on disk (§16.2) | no | none |
+| F4 | Hermes disconnects mid-conversation | partial reply + "Hermes stopped unexpectedly — the reply above may be incomplete." then status per reconnect outcome | channel closed; whether the process lives | Hermes | wait for the bounded reconnect; then Try again / Connect | Yes, usually | partial public text cached; record intact | serve log | whether Hermes lost the work (its session memory decides on resume) |
+| F5 | Model not connected | "No model is connected yet." + Connect a model | Hermes' sanitized readiness | model/provider | Connect a model (§21) | Yes, after connecting | everything | no | provider internals |
+| F6 | Provider authentication expired | Hermes' public error text + "Your model sign-in may have expired." + Connect a model | the public error event; sanitized auth status | model/provider | re-run the Hermes-supported sign-in | Yes, after sign-in | conversation intact | no | provider-side reasons |
+| F7 | External coding tool unavailable (Codex/Claude Code/OpenCode) | Hermes' public tool error verbatim, attributed: "Hermes reported a problem with <tool>." | only the public event | external tool (via Hermes) | read the message; fix the external installation; ask again | Only after the external fix — stated | conversation intact | no | tool internals; Hermes' retry decisions |
+| F8 | Computer use unavailable | Hermes' public error + "Computer use isn't available yet." (+ during Slice 7: the install/verify state) | driver presence (Papers installed it) or Hermes' public error | computer use / Papers install step — stated which | re-run the Slice 7 install verification | Yes if install-side; unknown if Hermes-side (say so) | everything | install log | Hermes' computer-use internals |
+| F9 | Reopening a conversation Hermes no longer remembers | "Hermes no longer remembers this conversation. You can read it here; your next message starts fresh with the same scope." | resume call failed/errored | Hermes | continue (fresh session) or just read | Retrying resume: usually not — stated | display cache + record | no | why Hermes forgot (expiry/cleanup are Hermes-owned) |
+| F10 | App restart during an active conversation | on reopen: the conversation shows "Papers closed while Hermes was working. The reply may be incomplete." + Continue | a submission was in flight at quit (status on disk); best-effort Stop was sent | Papers | reopen; continue | Yes | record + cache + locked scope | no | whether Hermes finished after Papers quit (resume may reveal) |
+| F11 | Approval/clarification pending and unanswered | the card stays; status `Hermes requested approval/clarification`; companion shows the notice | the public request payload | Hermes (by design — waiting on the creator) | answer, or Stop | n/a — it waits | request persisted in the record | no | how long Hermes will wait (Hermes-owned) |
+| F12 | Selected resource missing at send | the chip turns missing before send; if sent, the context carries the honest missing line exactly as previewed | filesystem check result (**Observed** mechanism: P2 — `app/world/things.js:40–53`) | Papers (truthful reporting), reality (the file) | detach, or send with the honest gap | n/a | reference kept; nothing invented | no | where the file went |
+| F13 | Migration failure (Slice 8) | "Migration of \"<Backpack>\" stopped: <reason>. Nothing was changed — your original conversation is untouched." + report | which step failed; backups exist; idempotency record state | Papers | fix cause; re-run (idempotent) | Yes | originals + backups always | migration report | none — the operation is fully observable |
+| F14 | Website block / anti-bot challenge during Hermes browsing | Hermes' public failure information, verbatim, attributed to the website | only the public event | website (via Hermes) | ask Hermes to try differently, or handle it manually | Unknown — Papers says "Hermes reported the site blocked it; retrying may or may not help." | conversation intact | no | Hermes' browsing strategy (deliberately: Papers designs none) |
+| F15 | Permissions problem (e.g. install blocked, file unreadable) | the honest OS-level message with the path | the OS error code | permissions | fix permissions; retry | Yes, after the fix | everything | relevant log | none |
+
+---
+
+## 25. File-by-file P3 implementation map
+
+P3 tree = imported P2 tree (§2, §12) + the following. Legacy code references (`roomId`, `WorldStore`) appear here only as code labels (§6).
+
+**Provisional, not required (§14).** The tables below describe the maximum expected new/modified files. Before creating any file in §25.2, re-verify against current Hermes APIs, the Papers 1 implementation, Electron/Node built-ins, and licensed upstream components; consolidate or omit any file whose responsibility a supported component already covers safely. Each slice's required outcome is its creator-visible result and safety boundary (§26) — not this specific file count or file list.
+
+### 25.1 Files imported from P2 and then modified
+
+| Path (in P3) | Existing responsibility (Observed at P2 @ `54ecce58…`) | Change | Slice |
+|---|---|---|---|
+| `app/main.js` | startup, world IPC (`31–429`), window (`447–468`), single-instance (`479–482`) | + record `lastActiveBackpackId` on `room:get` / include in `world:get` (§12); + construct the adapter, register `papersAI:*`, companion window + `Ctrl+Alt+Q`, `before-quit` shutdown hook; failures here must never block the Backpack product (invariant 4) | 1 (restore), 2–3 (wiring), 6 (companion) |
+| `app/preload.js` | `window.papers` (`8–32`) | + `window.papersAI` (G6 surface) | 3 |
+| `app/ui/app.js` | renderer (`render()` `1149–1152`; `loadWorld` `51–63`) | + restoration hop in `loadWorld` (enter `lastActiveBackpackId` when the response says it is readable; honest line otherwise). Only change to this file. | 1 |
+| `app/ui/index.html` | shell doc (`1–13`) | + `<div id="papers-ai">` + `<script src="papers-ai.js">` | 3 |
+| `app/ui/style.css` | product styles | + appended `.papers-ai-*` / `.companion-*` section reusing existing custom properties | 3–6 |
+| `app/package.json` | scripts + electron (`8–15`) | + `ws` (dev) for the fake Hermes test server. Add `yaml` as a production dependency only if the §21 investigation proves direct `config.yaml` modification is an unavoidable documented compatibility requirement; otherwise it is never added. Slice 8 exit: packaging script + electron-builder (dev). | 2, 8 |
+| `app/world/store.js` | world store | + one field write for `lastActiveBackpackId` in the existing entered-tracking path (`134–140`) — the only store change in the whole plan | 1 |
+
+### 25.2 New files (maximum expected — consolidate or omit where a supported component already covers the responsibility; see §14)
+
+| Path | Responsibility (build-vs-reuse record in §14) | Slice |
+|---|---|---|
+| `PROVENANCE.md` | source repository + exact commit + verification record (§2) | 1 |
+| `app/papers-ai/hermes.lock.json` | pinned Hermes + computer-use identity (values from P1's lock, field-for-field) | 2 |
+| `app/papers-ai/runtime.js` | G1 lifecycle safety | 2 |
+| `app/papers-ai/connection.js` | G2 control channel | 2 |
+| `app/papers-ai/projection.js` | G3 public projection + redaction | 2 |
+| `app/papers-ai/conversations.js` | G4 records + display cache | 3 |
+| `app/papers-ai/adapter.js` | G5 thin adapter (scope lock, context assembly per §18, session mapping, forwarding, fan-out) | 3–5 |
+| `app/papers-ai/ipc.js` | G6 IPC + validation | 3 |
+| `app/papers-ai/backpack-compat.js` | G7 compatibility boundary | 5 |
+| `app/ui/papers-ai.js` | drawer projection | 3–5 |
+| `app/ui/companion.html`, `app/ui/companion.js`, `app/preload-companion.js` | companion projection + least-privilege bridge | 6 |
+| `app/papers-ai/migrate-conversations.js` | one-time migration (§23) | 8 |
+| `app/test/fakes/fake-hermes.js` | scripted fake Hermes (HTTP `/api/status`, token-checked control channel, scripted sessions/events/approvals/clarifications; provider endpoints for §21 tests) | 2 |
+| `app/test/papers-ai-*.test.js` (runtime, connection, projection, conversations, adapter, ipc, backpack-compat, restore, migration) | automated checks per slice | 1–8 |
+| `app/scripts/verify-papers-ai.js` | headless end-to-end check against the fake (idiom **Observed:** P2 — `app/scripts/verify-slice1.js`) | 3 |
+
+### 25.3 Imported-and-untouched (must diff clean against the import commit until their named slice, if any)
+
+`app/world/things.js`, `app/world/revision.js`, `app/world/ids.js`, `app/engine/**` (until Slice 8 retirement), `app/test/world.test.js`, `app/test/engine.test.js`, `app/scripts/verify-*.js` (existing three), `DOCS/**`, `README.md`, `AGENTS.md`, `app/README.md` (gains a Papers AI section only at Slice 8 exit).
+
+### 25.4 Not created (rejected by the audits)
+
+No paths for: activity-model/normalization module, provider catalogue, policy engine, run-state machine, second memory store, terminal/coding integrations, pause-prompt fabrication, foreground-app targeting. (§8, §10.)
+
+---
+
+## 26. Experience-first implementation slices
+
+Every slice ends with: all automated checks green (`cd app && npm test`), a manual creator acceptance, and a clean rollback point (its commits touch only its files). No architecture-only phases.
+
+**Slice 1 — Establish Papers 3.**
+*Creator-visible result:* Papers 3 launches from `Futahua/Papers-3`; existing Papers 2 behavior and data work unchanged; Papers restores the last active Backpack.
+*Work:* §2 provenance import (byte-identity verified) · `PROVENANCE.md` · last-active-Backpack restoration (§12) with its honest fallback. No Hermes work.
+*Reused upstream:* Electron (MIT) — the imported product itself. *License status:* Electron verify-at-pin.
+*P3 files:* import commit; `PROVENANCE.md`; `app/main.js`, `app/world/store.js`, `app/ui/app.js` (restoration only); `app/test/papers-ai-restore.test.js`.
+*P2/P1 references:* P2 — `app/world/store.js:134–140`, `app/ui/app.js:51–63`.
+*Minimum Papers code:* ~40 lines + test.
+*Automated:* full imported suite green; new restore test (restores when readable; honest list when deleted/corrupt).
+*Creator acceptance:* enter a Backpack, quit, relaunch → same Backpack; remove it → list + explanation; existing world data intact.
+*Rollback:* revert to the import commit (or pre-import empty main).
+*Non-goals:* anything Hermes.
+
+**Slice 2 — Expose Hermes.**
+*Creator-visible result:* Papers can reach Hermes; one creator message produces one real Hermes response (in a minimal, honestly-labeled "Papers AI (preview)" panel); honest unavailable state otherwise.
+*Entry gate:* Hermes license verified (§11) — else the slice blocks.
+**Work:** lock file; G1 runtime containing only installation, startup, shutdown, health, and lifecycle safety from §20; G2 connection; G3 public projection; minimal preview panel wired through a first cut of G5/G6 (`status`, `connect`, one send); perform the §21 investigation before designing any Hermes configuration-writing path. No `config.yaml` writer is part of Slice 2 by default.
+**Reused upstream:** Hermes (downloaded and hash-verified), Electron/Node’s built-in WebSocket client, and `ws` as a dev-only fake-server dependency. `yaml` is not included unless §21 step 4 is proven necessary. **License status:** per §11.
+*P1 references:* `runtime.rs`, `paths.rs`, `gateway_proxy.rs`, `gateway.ts`, `storage.rs:566–606`.
+*Minimum Papers code:* G1–G3 + stubs (~800 lines, the bulk of all glue).
+**Automated:** runtime unit tests for checksum refusal, partial-install preservation, startup, health, shutdown, and process cleanup; connection tests against the fake for correlation, timeouts, close handling, and token redaction; projection and reasoning-redaction tests. No configuration-write tests are created by default. If and only if §21 step 4 is activated, add focused tests proving parse-or-refuse behavior, unknown-field preservation, timestamped backup, atomic replacement, post-write validation, and refusal to overwrite malformed configuration.
+*Creator acceptance:* on the real machine: Connect installs and starts the pinned Hermes; one message → one real public response; quit Papers → no `hermes.exe` remains.
+*Rollback:* revert slice commits; delete `%LOCALAPPDATA%\Papers\runtime` returns to the honest unavailable state with zero data loss.
+*Non-goals:* conversations, scope, drawer polish, providers beyond readiness display.
+
+**Slice 3 — Papers AI surface.**
+*Creator-visible result:* Papers AI available from the shell button and drawer everywhere; Global / This Backpack visible and chosen before the first message; a real conversation streams; Stop works; scope locks by the §16.2 rule and is visibly locked.
+*Work:* G4 conversations; G5 adapter (durable-record-then-submit ordering); G6 full IPC; drawer (§19.1–19.3, 19.6); `verify-papers-ai.js`.
+*Automated:* scope-lock tests (lock on durable record; Hermes-down first send keeps message + lock + retry; `setScopeBeforeLock` refused after lock); Backpack-switch-during-stream test (nothing retargets/cancels); one-in-flight-per-conversation; restart-during-work → F10 state.
+*Creator acceptance:* full conversation from the drawer; switch Backpacks mid-reply and watch it continue; Stop mid-reply → "Hermes stopped" + Continue.
+*Rollback:* revert slice commits (drawer is additive; `#papers-ai` root removal restores rev-Slice-2 UI).
+*Non-goals:* resources, approvals rendering (arrive next), companion.
+
+**Slice 4 — Hermes requests.**
+*Creator-visible result:* approvals and clarifications reach the creator and their responses return to Hermes; Hermes errors shown honestly with attribution.
+*Work:* §19.4–19.5 cards; forwarding via G5; F-state rendering for F4–F7.
+*Automated:* fake-driven approval (allow/deny) and clarify (choice/free-text) round trips carrying the right `session_id`/`request_id`; error-event attribution strings; pending state persisted across restart (F11).
+*Creator acceptance:* a real Hermes task that requests approval; deny once, allow once; answer one clarification.
+*Rollback:* revert slice commits.
+*Non-goals:* any Papers-side approval policy (none, ever).
+
+**Slice 5 — Explicit Papers context.**
+*Creator-visible result:* the creator can intentionally share a Papers resource, sees exactly what will be shared, and identity-only Backpacks still work.
+*Work:* G7 backpack-compat; picker + chips (§18); envelope assembly in G5; the no-imperative snapshot test (V12).
+*Automated:* envelope determinism (two builds byte-equal); caps + refusals; honest missing-resource form; identity-only Backpack conversation works with `offersResources:false`; `backpackId`-only in new records; no `app/world/*` import outside G7 (lint-style test).
+*Creator acceptance:* attach a real file, read the chip's share detail, send, and confirm the reply reflects exactly that content.
+*Rollback:* revert slice commits.
+*Non-goals:* auto-attachment of anything; universal Backpack ontology.
+
+**Slice 6 — Companion.**
+*Creator-visible result:* `Ctrl+Alt+Q` opens quick access to the same Papers AI conversation; scope is visible before its first message; no second AI or session.
+*Work:* companion window + shortcut (P1 mechanics §13.9); `companion.html/js`; least-privilege preload; §16.6 scope chooser.
+*Automated:* companion preload key-set equality with G6's subset; first-send disabled until scope chosen/conversation selected; same-conversation fan-out (event delivered to both windows).
+*Creator acceptance:* toggle from another app; watch a live reply mirror the drawer; send from the companion into the same conversation; Stop from the companion; shortcut collision (pre-register the key) degrades to a logged notice, Papers still starts.
+*Rollback:* revert slice commits (window + shortcut are additive).
+*Non-goals:* approvals answered in the companion; foreground-app targeting.
+
+**Slice 7 — Verify Hermes' existing capabilities.**
+*Creator-visible result:* Papers AI demonstrably performs Hermes-supported research, file work, coding-tool delegation, and computer use, with approvals surfacing in Papers.
+*Entry gate:* cua-driver license verified (§11).
+**Work:** verify and reuse P1’s pinned cua-driver installation and `HERMES_CUA_DRIVER_CMD` wiring. Enable computer use using the first available mechanism in the §21 order: Hermes defaults/setup, supported Hermes API or launch option, or an explicit Hermes-supported creator choice. Direct `config.yaml` modification is permitted only as the documented last resort defined in §21 and is not assumed in this slice.
+*Automated:* install-path unit tests (hash refusal, partial preservation) for the driver; the rest is manual by nature.
+*Creator acceptance:* one research task; one file task; one delegated coding task per available tool (Codex / Claude Code / OpenCode — recording any that are unavailable and why); the §22 computer-use validation task with its approval.
+**Rollback:** reverse computer-use enablement through the same Hermes-supported mechanism selected during implementation and remove the private driver directory. If the documented last-resort configuration-file path was used, restore the verified backup rather than constructing another configuration edit. Earlier slices remain unaffected.
+*Non-goals:* building or configuring any of these tools inside Papers.
+
+**Slice 8 — Unify the finished Papers AI experience.** *(Begins only after Slice-7 parity evidence per §23.1.)*
+*Creator-visible result:* one coherent Papers AI experience; existing Backpack conversations preserved and available inside it; no competing creator-facing AI system.
+*Work:* §23 parity proof → routing → migration (idempotent, lossless, backed up, reversible, reported, per-Backpack, rehearsed on copies) → default-conversation switch → removal of old creator-facing surfaces → packaging (electron-builder, §11) → `app/README.md` Papers AI section.
+*Automated:* migration tests on fixture copies (twice-run no-op; originals byte-identical; report contents; rollback restores exactly; imported entries render under "Earlier Backpack conversation" with `hermesSessionId: null`; the first real send after migration does not include the imported transcript in the Hermes-bound context unless the creator explicitly attached it); post-removal suite (world tests still green; engine tests retained until retirement, then removed with the engine in the same commit).
+*Creator acceptance:* real-data migration on a backed-up copy first, then live; each old action exercised through Papers AI; packaged installer per §27.
+*Rollback:* §28 — the routing/removal commits revert independently; migration reverses by record deletion; originals never changed.
+*Non-goals:* reproducing old actions in a Papers agent layer; removing anything before parity + rollback are proven.
+
+---
+
+## 27. Acceptance plan
+
+**Early usable Papers 3** = Slices 1–7 accepted; temporary coexistence with the old Backpack AI path is expected and honestly labeled.
+
+**Finished Papers 3** — all binary, each tested as noted (Creator requirement, complete list):
+
+1. P3 contains the working product (Slice 1 import; packaged build from Slice 8). — packaged install test
+2. Existing Papers 2 data remains usable (byte-compatible; old world dir opens). — data-diff test §26 S1
+3. Last-active-Backpack restoration works (incl. honest fallback). — S1 tests
+4. Papers AI is globally accessible (button, drawer, companion). — S3/S6 acceptance
+5. Global and This Backpack scopes work. — S3 tests
+6. Scope never silently changes (lock rule; Backpack switching inert; companion rule). — S3/S6 tests
+7. Hermes conversations resume through their session mapping; honest F9 when not. — S3 tests + real-machine check
+8. Approvals and clarifications work end-to-end. — S4 tests + real task
+9. Explicit resource sharing works, exactly as previewed; identity-only Backpacks work. — S5 tests
+10. The companion shares the same conversation and session. — S6 tests
+11. Hermes-supported coding tools verified through Papers AI. — S7 record
+12. Hermes-supported computer use verified per the §22 criterion. — S7 record
+13. Existing Backpack AI actions have reached parity through Hermes. — S8 parity record
+14. Existing Backpack conversations migrated safely (idempotent, lossless, reversible, reported). — S8 tests + live run
+15. The old creator-facing competing AI experience has been removed. — S8 review: exactly one AI surface
+16. Rollback remains tested (§28 rehearsals executed). — S8 exit
+17. No custom Papers AI behavior framework was introduced. — final §10-style audit of the diff: every `app/papers-ai/*` file maps to a §9 Papers-owned bullet
+18. No hidden reasoning is persisted or displayed; no secret reaches a renderer, log, or IPC payload. — redaction + deep-scan tests
+19. All imported P2 tests pass unmodified until their subsystem is retired with them. — CI
+20. All failure states of §24 render with attribution and a retry-usefulness statement. — per-state tests/manual
+
+---
+
+## 28. Rollback plan
+
+* **Slice granularity:** every slice's commits revert cleanly in reverse order; rehearse `git revert` of each slice head on a scratch branch with the suite green (executor checklist step 24).
+* **Runtime rollback:** deleting `%LOCALAPPDATA%\Papers\runtime` (and `data/hermes` if desired) returns Papers to the honest unavailable state; world data is untouched by design (§20).
+* **Data rollback:** the world directory is backed up before any real-data testing (checklist step 4) and before Slice 8's live migration; migration reversal = delete created conversations + migration records (originals were never modified); backups retained under `papers-ai/migrations/backup/`.
+* **Transition rollback:** the Slice 8 routing and removal land as separate commits; reverting them restores the old surfaces, whose storage (`conversation.json`, engine seam) was retained through the rollback window. The window closes — and the engine path is deleted — only after the creator signs off on the unified experience in real use.
+* **Scope of no-rollback:** nothing in this plan performs an irreversible operation on user data; the only destructive act anywhere is the creator manually emptying `papers-ai/trash/`.
+
+## 29. Commit plan
+
+One commit sequence, mapping 1:1 onto slices (messages final; each independently reviewable because it contains one behavior and its tests):
+
+| # | Message | Contents |
+|---|---|---|
+| C1 | `import: Papers 2 product tree from papers-real2 @ 54ecce58 (verbatim)` | imported tree + `PROVENANCE.md` |
+| C2 | `papers: restore the last active Backpack on launch` | S1 restoration + test |
+| C3 | `deps: ws (test fake); activate yaml only if §21 step 4 is proven` | package.json/lockfile only for activated dependencies |
+| C4 | `papers-ai: pinned Hermes identity and private lifecycle (install, start, health, stop)` | lock, G1 + tests |
+| C5 | `papers-ai: control-channel connection and public-event projection with reasoning redaction` | G2, G3, fake, tests |
+| C6 | `papers-ai: preview panel — one message, one Hermes response, honest unavailable state` | minimal G5/G6 cut + panel |
+| C7 | `papers-ai: conversations with visible, durably-locked scope` | G4, G5 send path, tests |
+| C8 | `papers-ai: drawer — streaming, Activity, Stop` | UI + verify script |
+| C9 | `papers-ai: approvals and clarifications forwarded to and from the creator` | S4 |
+| C10 | `papers-ai: explicit resource sharing through the Backpack compatibility boundary` | G7, picker, envelope, tests |
+| C11 | `papers-ai: companion on Ctrl+Alt+Q sharing the same conversation` | S6 |
+| C12 | `papers-ai: verify Hermes computer use via its pinned driver; record capability verification` | S7 |
+| C13 | `papers-ai: route Backpack AI actions through Hermes after parity` | S8 routing |
+| C14 | `papers-ai: migrate existing Backpack conversations (idempotent, lossless, reversible)` | migration + tests |
+| C15 | `papers: remove the superseded creator-facing AI surface` | removal (post-validation) |
+| C16 | `build: package Papers 3 for Windows` | electron-builder config |
+| C17 | `docs: describe Papers AI in app/README.md` | docs |
+
+## 30. Risk register
+
+| # | Risk | Prob. | Impact | Mitigation | Fallback | Validated |
+|---|---|---|---|---|---|---|
+| R1 | Hermes 0.18.0 surface differs from P1's exercised behavior | Low | High | everything cited from code that ran against the pin; fake encodes it; Slice 2 re-verifies for real | honest §24 failure states; pin never auto-upgraded | S2 |
+| R2 | Built-in WebSocket client missing in packaged Electron | Low | Medium | first S2 task spikes it | promote `ws` (§11 contingency row) | S2 |
+| R3 | Hermes or cua license verification fails | Low | High | §11 gates before S2/S7 | dependent slice blocks; alternatives investigated; nothing shipped un-verified | S2/S7 entry |
+| R4 | Config-file guard corrupts Hermes settings | Low | High | §21 six rules (parse-or-refuse, unknown-field preservation, backup, atomic, validate, no secrets) + tests | restore the automatic backup | S2 |
+| R5 | Scope-lock regression via an untested path | Low | High | no unlock API exists; adapter reads scope only from the record post-lock; S3 tests drive Hermes-down and Backpack-switch cases | — | S3 |
+| R6 | Coexisting P1 install at `%LOCALAPPDATA%\Papers` (same root) | Medium | Medium | own port+token per app; `PAPERS_HERMES_ROOT` override; note "don't run both" | change the default root constant | S2 acceptance on the real machine |
+| R7 | Parity judgment stalls Slice 8 | Medium | Medium | parity is per-action; migrate/remove only what passed; coexistence remains honest meanwhile | finished-state criteria simply remain unmet — never silently redefined | S8 |
+| R8 | Migration edge cases on real data | Medium | High | rehearse on copies; idempotency record; originals never written | delete created records; backups | S8 tests + rehearsal |
+| R9 | Orphan `hermes serve` after a Papers crash | Medium | Low | non-detached child; per-launch port/token make orphans inert | manual kill; deferred pid cleanup | S2 manual |
+| R10 | Drawer overlay harms small-window Backpack use | Medium | Low | dismissible overlay; acceptance passes at small sizes | CSS-only full-height sheet below ~900 px | S3 |
+| R11 | Hermes provides no public events for some long work | Medium | Low | neutral `Waiting for Hermes` is the honest display; recorded as a limitation in S7 | none needed — inventing progress is forbidden | S7 |
+
+## 31. VISION TRACEABILITY MATRIX
+
+| Creator-visible requirement | Governing source | Responsible | Reused capability | Papers glue | Slice | P3 files | Acceptance test | Conflicting older material | Binding resolution |
+|---|---|---|---|---|---|---|---|---|---|
+| Papers 3 built in `Futahua/Papers-3` from verified P2 | Creator direction §2 | P3 repo | P2 tree (verbatim) | provenance import | 1 | import + `PROVENANCE.md` | §27.1–2 | rev-1 V1 | §2 |
+| Last active Backpack restored | Creator direction §8.2–3 | Papers | existing entered-tracking (P2 — `store.js:134–140`) | ~40 lines | 1 | `main.js`, `store.js`, `app.js` | §27.3 | absent in rev-1 (V11) | §12 |
+| Backpacks primary; AI never the shell | Founder brief; direction §8.4 | Papers | P2 UI unchanged | drawer as overlay | 3 | `papers-ai.js` | §27.4 + visual review | — | §19 |
+| Papers AI reachable anywhere | direction §8.5 | Papers | — | button/drawer/companion | 3, 6 | ui files | §27.4 | — | §19 |
+| Scope visible, chosen, deterministically locked | direction §8.6–7, §11 | Papers | — | §16.2 rule in G5 | 3 | `adapter.js`, `conversations.js` | §27.5–6 | rev-1 lock-at-submit (V2) | §16 |
+| No infrastructure concepts shown | direction §8.8, §9 | Papers | — | §6 vocabulary | all | all UI copy | V9 copy review | rev-1 copy (V9) | §6 |
+| Explicit resource sharing, previewed | direction §8.9–10, §14 | Papers | P2 truthful readers (`things.js:58–118`) | G7 + chips | 5 | `backpack-compat.js` | §27.9 | rev-1 universal things (V10) | §15, §18 |
+| Hermes does the work; Papers adds no behavior | direction §5–7 | Hermes | Hermes 0.18.0 | thin adapter only | 2+ | `adapter.js` | §27.17 + V12 snapshot test | rev-1 activity model (V7), framing (V12) | §9, §18, §19 |
+| Public output, approvals, clarifications, Stop | direction §8.12–13 | Hermes→Papers | P1 request/event surface (§13.4) | projection + cards | 3–4 | `projection.js`, UI | §27.8 | — | §19 |
+| Backpack switching never retargets | direction §8.14 | Papers | — | record-sourced scope | 3 | `adapter.js` | §27.6 | — | §16.4 |
+| Companion = same conversation/session, scope-safe | direction §8.15, §11 | Papers | P1 companion mechanics (§13.9) | projection window | 6 | companion files | §27.10 + §26 S6 | rev-1 silent companion scope (V8) | §16.6, §19.7 |
+| Conversations reopen via Hermes sessions | direction §8.16, §13 | Hermes | `session.resume` (§13.4) | mapping only | 3 | `conversations.js` | §27.7 | rev-1 projection-as-primary (A7) | §17 |
+| Coding tools + computer use via Hermes | direction §16–17, §8.17 | Hermes | Hermes toolsets; P1 cua install (`runtime.rs:634–736`) | verification only; toolset/approval config investigated per §21 order, not imposed | 7 | S7 record | §27.11–12 | rev-1 deferral (V3) | §22 |
+| Honest failures + retry guidance | direction §8.18–19, §24 | Papers | — | §24 states | all | UI + adapter | §27.20 | — | §24 |
+| One finished AI experience; migration; old surface removed | direction §17–18, §29 | Papers | Hermes sessions; P2 artifact store | routing + one-time migration | 8 | `migrate-conversations.js` | §27.13–15 | rev-1 optional unification (V4/V5) | §23 |
+| Data safe and reversible throughout | direction §8.20, §18 | Papers | P2 atomic-write idiom | backups + idempotency | all | §28 | §27.2, 14, 16 | — | §17, §23, §28 |
+| Connect a model, provider-neutral | direction §15 | Hermes | Hermes setup APIs (§13.6) | readiness display | 2, 7 | `runtime.js`, UI | §27 via V6 test | rev-1 Nous-centric (V6) | §21 |
+
+## 32. Final executor checklist
+
+1. Verify P2 `main` = `54ecce581eedf059592a7ae05739911939499291` and P1 `main` = `614f014118873fafef5511d00e270eca49e29f3e`; stop and report on any drift.
+2. Work only in a P3 clone; never write to P1/P2.
+3. Slice 1: §2 import (byte-identity check before committing) → `PROVENANCE.md` → C1; restoration → C2; `cd app && npm install && npm test` + `npm run smoke` green.
+4. On any machine with real data: back up the Papers world directory before first launch of P3 builds.
+5. Verify the Hermes license at the pinned commit (§11); record the finding in the license table; block Slice 2 until resolved.
+6. Slice 2: C3–C6 in order; run the checksum-refusal and no-token-leak tests; add guarded-config tests only if §21 step 4 is activated; complete real-machine acceptance (§26 S2) including the no-orphan-process check.
+7. Slice 3: C7–C8; scope-lock and Backpack-switch tests green; `verify-papers-ai.js` passes.
+8. Slice 4: C9; approval/clarify round trips green.
+9. Slice 5: C10; envelope determinism, caps, identity-only-Backpack, no-imperative snapshot, and G7-only-world-import tests green.
+10. Slice 6: C11; companion subset/preload equality and first-send scope-gate tests green; manual shortcut-collision check.
+11. Verify the cua-driver license (§11); block Slice 7 until resolved.
+12. Slice 7: C12; run the §22 verification protocol; record capability results (incl. which external CLIs were available) in the S7 record.
+13. Slice 8 entry: parity record per §23.1 signed by the creator.
+14. Slice 8: C13 (routing) → rehearse migration on copies → C14 → live migration with report → creator validation → C15 (removal) → C16 (packaging; verify electron-builder/NSIS licenses at pin) → C17 (docs).
+15. Final diff review: file list equals §25 exactly; deep-scan for secrets/token/port strings in IPC payloads and logs; confirm no forbidden vocabulary in creator-facing strings.
+16. Rollback rehearsal: revert each slice head on a scratch branch with the suite green; delete the runtime directory and confirm the honest unavailable state; reverse a migration on a copy.
+17. Confirm §27's twenty criteria one by one with the creator on the packaged Windows build; record pass/fail; Papers 3 is finished only when all pass.
+
+---
+
+## Appendix — Final review questions, answered
+
+1. *Is this something the creator directly experiences?* Every slice ends in a creator-visible result (§26); §31 traces each requirement to its surface.
+2. *Does Hermes already own it?* Everything AI-shaped is Hermes' (§9); the audits (§4, §10) removed the two places rev-1 drifted (activity model, provider surface).
+3. *Does an existing installed product already own it?* Coding tools, computer use, Windows install mechanics — all reached as installed products through Hermes or PowerShell (§11, §22).
+4. *Does maintained, appropriately licensed open-source software already provide it?* Electron, WebSocket, `ws`, and electron-builder — each in §11 with license status; `yaml` is conditional and is audited only if §21 step 4 activates it; the two unresolved licenses gate their slices.
+5. *Is Papers accidentally specifying AI behavior?* No: the context carries no imperatives (V12 snapshot test); no retry/pause prompts are fabricated (§19.6); no phases or progress are invented (§19.3).
+6. *Is Papers taking authority over Hermes session memory?* No: §17 makes Hermes authoritative, the cache a cache, and disagreement an honest visible state.
+7. *Present requirement or speculative abstraction?* Each glue module's build-vs-reuse record (§14) names its present §9 responsibility; §25.4 lists what was refused.
+8. *Is the proposed custom code uniquely Papers-specific?* Yes — scope, Backpack compatibility, the access surfaces, and lifecycle safety; each with a removal path if upstream absorbs it (§14).
+9. *Is the license verified?* Verified-at-pin steps are in the checklist; two are explicitly **License unresolved** and gate their slices (§11).
+10. *Does the plan preserve existing user data?* Yes — byte-compatible import, read-only world access from Papers AI code, non-destructive migration, backups (§17, §23, §28).
+11. *Is the change reversible?* Every slice, the runtime, and the migration have rehearsed rollbacks (§28).
+12. *Is the scope visible and deterministic?* One rule, §16.2, visible before and after lock, tested including failure cases.
+13. *Does the creator understand what is happening?* §6 vocabulary, §19 projection, §24 attribution with retry guidance.
+14. *Is any failure becoming a black box?* §24 forbids bare done/failed/blocked/stopped; every row states what is known, unknown, and useful to retry.
+15. *Can the same result be achieved with less Papers-specific code?* Very likely yes, and the plan says so directly: the consolidation pass (A22) reduced rev-1's ten modules to a ≈1,400-line, seven-module *estimate* (§14), and §14/§25 now bind that estimate as a maximum to re-check and cut down at implementation time — against current Hermes APIs, Papers 1, Electron/Node built-ins, and licensed upstream components — not as a target to build exactly. Only what §5's creator-visible outcomes and §7/§9/§18/§20's safety boundaries actually require should survive.
+16. *Is temporary coexistence being described as the finished product?* No — §27 separates early usable slices from finished Papers 3, and finish requires unification, migration, and removal (V4/V5).
+
+*End of revised plan. Planning output only; no application code was implemented and neither reference repository was modified.*
