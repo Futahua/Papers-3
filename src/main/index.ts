@@ -105,6 +105,7 @@ async function bootstrap(): Promise<void> {
     preloadPath: path.join(preloadDir, 'program.cjs'),
     protocolHandler: programProtocolHandler,
     onStatusChange: (status) => facade.emitProgramStatus(status),
+    onEscapeToHost: () => hostView?.webContents.focus(),
   });
 
   const adapter = new HermesAdapter(paths);

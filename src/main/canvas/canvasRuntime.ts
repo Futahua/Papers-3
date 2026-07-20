@@ -25,6 +25,8 @@ export interface CanvasRuntimeOptions {
   /** Handler serving papers-program:// for program partition sessions. */
   protocolHandler: ProgramProtocolHandler;
   onStatusChange: (status: ProgramStatus) => void;
+  /** Escape inside a program surface returns focus to the host frame. */
+  onEscapeToHost?: () => void;
 }
 
 interface ActiveProgram {
@@ -152,6 +154,12 @@ export class CanvasRuntime {
       if (!url.startsWith(`${programOrigin}/`)) event.preventDefault();
     });
     contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+    contents.on('before-input-event', (_event, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape') {
+        this.options.onEscapeToHost?.();
+      }
+    });
 
     contents.on('render-process-gone', (_event, details) => {
       this.handleCrash(manifest.id, `renderer gone: ${details.reason} (exit ${details.exitCode})`);

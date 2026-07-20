@@ -270,8 +270,8 @@ describe('vertical kill test', () => {
         30_000,
         'last-active backpack restored after relaunch',
       );
-      // Counter state must also have survived the full restart.
-      await evalInHost(relaunched.app, clickScript('.program-card', 'Kill Test'));
+      // The last active program must auto-restore (done-criterion 4) and its
+      // state must have survived the full restart.
       await waitFor(
         () =>
           evalInProgram<boolean>(
@@ -279,7 +279,7 @@ describe('vertical kill test', () => {
             `document.getElementById('counter')?.textContent === '2'`,
           ),
         30_000,
-        'program state restored after relaunch',
+        'last-active program and state restored after relaunch',
       );
     } finally {
       await relaunched.close();

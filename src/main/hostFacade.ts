@@ -24,8 +24,14 @@ import type { PermissionStore } from './capabilities/permissionStore';
 import type { HermesAdapter } from './hermes/hermesAdapter';
 import type { AgentRunService, InvocationPreview } from './agents/runService';
 import type { PermissionPrompter } from './capabilities/capabilityBroker';
-import { backpackDir, type PapersPaths } from './persistence/paths';
+import { AtomicJsonStore } from './persistence/atomicStore';
+import { backpackDir, canvasFile, type PapersPaths } from './persistence/paths';
 import type { HostFacade } from './ipc/hostIpc';
+
+interface CanvasPersistedState {
+  schemaVersion: 1;
+  lastActiveProgramId: string | null;
+}
 
 export interface FacadeDeps {
   hostContents: () => WebContents | null;
@@ -104,6 +110,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.emitBackpacksChanged();
   }
 
+  private canvasStore(backpackId: string): AtomicJsonStore {
+    return new AtomicJsonStore(canvasFile(this.deps.paths, backpackId), {
+      recoveryDir: this.deps.paths.recoveryDir,
+    });
+  }
+
+  private async persistLastProgram(backpackId: string, programId: string | null): Promise<void> {
+    const state: CanvasPersistedState = { schemaVersion: 1, lastActiveProgramId: programId };
+    await this.canvasStore(backpackId).save(state);
+  }
+
   async enterBackpack(id: string): Promise<{ backpack: BackpackSummary }> {
     const backpack = this.deps.registry.find(id);
     if (!backpack) throw new Error(`Backpack ${id} not found`);
@@ -115,6 +132,18 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     await this.deps.registry.markEntered(id);
     await this.deps.runService().loadBackpackRuns(id);
     this.emitBackpacksChanged();
+
+    // Restore the Backpack's last active program (done-criterion 4). A crash
+    // or quarantine here must not block entering the Backpack itself.
+    const report = await this.canvasStore(id).load<CanvasPersistedState>();
+    const lastProgram = report.value?.lastActiveProgramId ?? null;
+    if (lastProgram && this.deps.catalog().programs.has(lastProgram)) {
+      try {
+        await this.startProgram(lastProgram);
+      } catch {
+        // Recovery UI reflects the failure; the frame stays usable.
+      }
+    }
     return { backpack };
   }
 
@@ -151,12 +180,18 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const manifest = this.deps.catalog().programs.get(programId);
     if (!manifest) throw new Error(`Program ${programId} not found`);
     await this.deps.runtime.start(this.currentBackpackId, manifest);
+    await this.persistLastProgram(this.currentBackpackId, programId);
   }
 
   async stopProgram(): Promise<void> {
     const active = this.deps.runtime.activeProgram;
     await this.deps.runtime.stopActive();
-    if (active) this.deps.canvasState.onProgramStopped(active.programId);
+    if (active) {
+      this.deps.canvasState.onProgramStopped(active.programId);
+      if (this.currentBackpackId) {
+        await this.persistLastProgram(this.currentBackpackId, null);
+      }
+    }
   }
 
   async restartProgram(programId: string): Promise<void> {
