@@ -224,6 +224,7 @@ async function init() {
 
   window.addEventListener('resize', resize);
   resize();
+  document.body.dataset.ready = 'true';
 }
 
 init().catch((err) => {

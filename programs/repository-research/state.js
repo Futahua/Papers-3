@@ -37,6 +37,8 @@ export const state = freshState();
 /** The raw loaded object; spread on save so unknown fields survive. */
 let loadedRaw = null;
 let saveTimer = null;
+let saveInFlight = null;
+let saveRequested = false;
 let saveStatusCb = null;
 const listeners = new Set();
 
@@ -73,7 +75,10 @@ function notify() {
 /** Structural mutation: re-render views and schedule a save. */
 export function mutated() {
   notify();
-  scheduleSave();
+  // Structural changes (new evidence, task, artifact, etc.) must cross the
+  // IPC boundary immediately. The creator may switch programs on the next
+  // click, destroying this renderer before a debounce would fire.
+  void saveNow();
 }
 
 /** Text-input mutation: save without re-rendering (keeps focus in fields). */
@@ -89,22 +94,43 @@ function scheduleSave() {
 export async function saveNow() {
   clearTimeout(saveTimer);
   saveTimer = null;
-  const payload = { ...(loadedRaw || {}), schemaVersion: 1 };
-  for (const key of DATA_KEYS) payload[key] = state[key];
-  try {
-    if (saveStatusCb) saveStatusCb('saving');
-    await papers.state.save(payload);
-    loadedRaw = payload;
-    if (saveStatusCb) saveStatusCb('saved');
-  } catch (err) {
-    console.error('state.save failed', err);
-    if (saveStatusCb) saveStatusCb('error');
+  if (saveInFlight) {
+    saveRequested = true;
+    await saveInFlight;
+    if (saveRequested) {
+      saveRequested = false;
+      await saveNow();
+    }
     return;
   }
+
+  const payload = { ...(loadedRaw || {}), schemaVersion: 1 };
+  for (const key of DATA_KEYS) payload[key] = state[key];
+  saveInFlight = (async () => {
+    try {
+      if (saveStatusCb) saveStatusCb('saving');
+      await papers.state.save(payload);
+      loadedRaw = payload;
+      if (saveStatusCb) saveStatusCb('saved');
+    } catch (err) {
+      console.error('state.save failed', err);
+      if (saveStatusCb) saveStatusCb('error');
+      return;
+    }
+    try {
+      await publishSummary();
+    } catch (err) {
+      console.error('summary.publish failed', err);
+    }
+  })();
   try {
-    await publishSummary();
-  } catch (err) {
-    console.error('summary.publish failed', err);
+    await saveInFlight;
+  } finally {
+    saveInFlight = null;
+  }
+  if (saveRequested) {
+    saveRequested = false;
+    await saveNow();
   }
 }
 
