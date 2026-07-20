@@ -1,0 +1,7 @@
+(node:50820) electron: Failed to load URL: file:///D:/Letters/MatTroiSeConMoc/PAPERS%203/Papers-3/out/main/out/renderer/index.html with error: ERR_FILE_NOT_FOUND
+(Use `electron --trace-warnings ...` to show where the warning was created)
+(node:50820) UnhandledPromiseRejectionWarning: Error: ERR_FILE_NOT_FOUND (-6) loading 'file:///D:/Letters/MatTroiSeConMoc/PAPERS%203/Papers-3/out/main/out/renderer/index.html'
+    at rejectAndCleanup (node:electron/js2c/browser_init:2:90161)
+    at WebContents.finishListener (node:electron/js2c/browser_init:2:90323)
+    at WebContents.emit (node:events:509:28)
+(node:50820) UnhandledPromiseRejectionWarning: Unhandled promise rejection. This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). To terminate the node process on unhandled promise rejection, use the CLI flag `--unhandled-rejections=strict` (see https://nodejs.org/api/cli.html#cli_unhandled_rejections_mode). (rejection id: 5)

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Kill Test</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Kill Test program</h1>
+      <p class="sub">
+        Sandboxed program surface. Everything here runs behind the narrow Papers Program API.
+      </p>
+
+      <section>
+        <h2>Identity</h2>
+        <pre id="identity">loading…</pre>
+      </section>
+
+      <section>
+        <h2>Persistent state</h2>
+        <p>Counter survives restarts through <code>papers.state</code>:</p>
+        <div class="row">
+          <button id="increment">Increment counter</button>
+          <span id="counter">…</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Capability broker</h2>
+        <div class="row">
+          <button id="clipboard">Copy timestamp to clipboard (prompts)</button>
+          <span id="clipboard-result"></span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Exact Hermes invocation</h2>
+        <p>
+          Invokes Hermes with one shared note (hash-verified). The host shows the exact preview
+          before anything is sent.
+        </p>
+        <div class="row">
+          <button id="invoke">Invoke: Summarize the shared note</button>
+          <button id="cancel" disabled>Cancel run</button>
+        </div>
+        <pre id="run-log">(no run yet)</pre>
+        <h3>Result proposal</h3>
+        <pre id="result">(none)</pre>
+      </section>
+
+      <section class="danger-zone">
+        <h2>Crash isolation</h2>
+        <p>Kills this renderer process for real (OOM). The Canvas frame must survive.</p>
+        <button id="crash">Crash this program</button>
+      </section>
+    </main>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>
