@@ -22,6 +22,12 @@ async function writeProgram(id: string, manifest: unknown, entry = 'index.html')
   if (entry) await fs.writeFile(path.join(dir, entry), '<!doctype html>', 'utf8');
 }
 
+async function writeAsset(id: string, relativePath: string, content: string): Promise<void> {
+  const target = path.join(root, id, relativePath);
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  await fs.writeFile(target, content, 'utf8');
+}
+
 const validManifest = (id: string): Record<string, unknown> => ({
   id,
   name: 'Valid Program',
@@ -77,5 +83,35 @@ describe('loadProgramCatalog', () => {
     await writeProgram('extra-fields', { ...validManifest('extra-fields'), nodeAccess: true });
     const catalog = await loadProgramCatalog(root);
     expect(catalog.programs.size).toBe(0);
+  });
+
+  it('rejects HTML entries that reference a missing local script or stylesheet', async () => {
+    await writeProgram('missing-script', validManifest('missing-script'));
+    await writeAsset(
+      'missing-script',
+      'index.html',
+      '<!doctype html><link rel="stylesheet" href="style.css"><script type="module" src="main.js"></script>',
+    );
+    await writeAsset('missing-script', 'style.css', 'body { color: black }');
+
+    const catalog = await loadProgramCatalog(root);
+    expect(catalog.programs.size).toBe(0);
+    expect(catalog.issues[0]?.problem).toContain('main.js');
+  });
+
+  it('follows static ES-module imports and accepts a complete local asset graph', async () => {
+    await writeProgram('complete-program', validManifest('complete-program'));
+    await writeAsset(
+      'complete-program',
+      'index.html',
+      '<!doctype html><link rel="stylesheet" href="style.css"><script type="module" src="main.js"></script>',
+    );
+    await writeAsset('complete-program', 'style.css', 'body { color: black }');
+    await writeAsset('complete-program', 'main.js', "import { start } from './lib/start.js'; start();");
+    await writeAsset('complete-program', 'lib/start.js', 'export function start() {}');
+
+    const catalog = await loadProgramCatalog(root);
+    expect([...catalog.programs.keys()]).toEqual(['complete-program']);
+    expect(catalog.issues).toHaveLength(0);
   });
 });
