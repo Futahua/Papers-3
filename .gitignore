@@ -14,3 +14,5 @@ playwright-report/
 # Environment files
 .env
 .env.*
+out.txt
+err.txt
