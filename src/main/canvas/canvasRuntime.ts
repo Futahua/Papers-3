@@ -7,7 +7,11 @@ import { WebContentsView, session, type BaseWindow, type WebContents } from 'ele
 import * as path from 'node:path';
 
 import type { ProgramManifest, ProgramRunState, ProgramStatus } from '@shared/types';
-import { PROGRAM_SCHEME } from '../security/programScheme';
+import {
+  PROGRAM_SCHEME,
+  installProgramProtocolOnSession,
+  type ProgramProtocolHandler,
+} from '../security/programScheme';
 
 export interface ProgramSenderIdentity {
   backpackId: string;
@@ -18,6 +22,8 @@ export interface ProgramSenderIdentity {
 export interface CanvasRuntimeOptions {
   window: BaseWindow;
   preloadPath: string;
+  /** Handler serving papers-program:// for program partition sessions. */
+  protocolHandler: ProgramProtocolHandler;
   onStatusChange: (status: ProgramStatus) => void;
 }
 
@@ -117,11 +123,19 @@ export class CanvasRuntime {
     // durable state must flow through the state API, never renderer storage.
     const programSession = session.fromPartition(`program:${backpackId}:${manifest.id}`);
     programSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+    installProgramProtocolOnSession(programSession, this.options.protocolHandler);
+    // Sandboxed renderers get their preload through the session API
+    // (webPreferences.preload does not reach sandboxed custom partitions).
+    if (!programSession.getPreloadScripts().some((s) => s.filePath === this.options.preloadPath)) {
+      programSession.registerPreloadScript({
+        type: 'frame',
+        filePath: this.options.preloadPath,
+      });
+    }
 
     const view = new WebContentsView({
       webPreferences: {
         session: programSession,
-        preload: this.options.preloadPath,
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true,
@@ -158,7 +172,13 @@ export class CanvasRuntime {
     view.setBounds(this.bounds);
 
     const entry = manifest.entry.replace(/\\/g, '/');
-    await contents.loadURL(`${programOrigin}/${entry}`);
+    try {
+      await contents.loadURL(`${programOrigin}/${entry}`);
+    } catch (err) {
+      await this.stopActive();
+      this.setStatus(manifest.id, { state: 'crashed' });
+      throw new Error(`program ${manifest.id} failed to load: ${String(err)}`);
+    }
     this.setStatus(manifest.id, { state: 'running' });
   }
 

@@ -58,8 +58,11 @@ export interface ProgramSchemeOptions {
   isKnownProgram: (programId: string) => boolean;
 }
 
-export function installProgramProtocolHandler(options: ProgramSchemeOptions): void {
-  protocol.handle(PROGRAM_SCHEME, async (request) => {
+export type ProgramProtocolHandler = (request: Request) => Promise<Response>;
+
+/** Build the handler once; register it on every session that loads programs. */
+export function createProgramProtocolHandler(options: ProgramSchemeOptions): ProgramProtocolHandler {
+  return async (request) => {
     const denied = (status: number, reason: string) =>
       new Response(`Denied: ${reason}`, {
         status,
@@ -109,5 +112,22 @@ export function installProgramProtocolHandler(options: ProgramSchemeOptions): vo
         'x-content-type-options': 'nosniff',
       },
     });
-  });
+  };
+}
+
+/** Register the handler on a session (default or partition) exactly once. */
+export function installProgramProtocolOnSession(
+  ses: Electron.Session,
+  handler: ProgramProtocolHandler,
+): void {
+  if (!ses.protocol.isProtocolHandled(PROGRAM_SCHEME)) {
+    ses.protocol.handle(PROGRAM_SCHEME, handler);
+  }
+}
+
+/** Convenience for the default session. */
+export function installProgramProtocolHandler(options: ProgramSchemeOptions): ProgramProtocolHandler {
+  const handler = createProgramProtocolHandler(options);
+  protocol.handle(PROGRAM_SCHEME, handler);
+  return handler;
 }

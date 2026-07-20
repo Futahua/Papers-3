@@ -20,8 +20,11 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 export async function launchPapers(existingUserData?: string): Promise<LaunchedApp> {
   const userDataDir =
     existingUserData ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'papers3-e2e-')));
+  // PAPERS_E2E_EXE switches the suite to a packaged binary (win-unpacked or
+  // installed) so the same tests validate the packaged application.
+  const packagedExe = process.env['PAPERS_E2E_EXE'];
   const app = await electron.launch({
-    args: [repoRoot],
+    ...(packagedExe ? { executablePath: packagedExe, args: [] } : { args: [repoRoot] }),
     cwd: repoRoot,
     env: {
       ...process.env,

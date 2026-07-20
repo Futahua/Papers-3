@@ -52,7 +52,7 @@ async function bootstrap(): Promise<void> {
   const programsRoot = defaultProgramsRoot(app.getAppPath(), app.isPackaged, process.resourcesPath);
   let catalog: ProgramCatalog = await loadProgramCatalog(programsRoot);
 
-  installProgramProtocolHandler({
+  const programProtocolHandler = installProgramProtocolHandler({
     programsRoot,
     isKnownProgram: (programId) => catalog.programs.has(programId),
   });
@@ -99,6 +99,7 @@ async function bootstrap(): Promise<void> {
   const runtime = new CanvasRuntime({
     window: mainWindow,
     preloadPath: path.join(preloadDir, 'program.cjs'),
+    protocolHandler: programProtocolHandler,
     onStatusChange: (status) => facade.emitProgramStatus(status),
   });
 

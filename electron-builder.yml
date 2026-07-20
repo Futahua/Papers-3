@@ -1,0 +1,30 @@
+appId: com.futahua.papers3
+productName: Papers 3
+copyright: Copyright © 2026 Futahua
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+
+extraResources:
+  - from: programs
+    to: programs
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: Papers3-Setup-${version}.${ext}
+
+nsis:
+  oneClick: true
+  perMachine: false
+  # Uninstall must preserve creator data (PapersData under %APPDATA%/Papers 3).
+  deleteAppDataOnUninstall: false
+  artifactName: Papers3-Setup-${version}.${ext}
