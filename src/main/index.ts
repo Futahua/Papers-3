@@ -11,7 +11,11 @@ import { loadProgramCatalog, type ProgramCatalog } from './canvas/programLoader'
 import { CapabilityBroker } from './capabilities/capabilityBroker';
 import { registerCoreExecutors } from './capabilities/coreExecutors';
 import { PermissionStore } from './capabilities/permissionStore';
+import { registerExternalExecutors } from './external/externalBridge';
+import { GitService } from './git/gitService';
 import { HermesAdapter } from './hermes/hermesAdapter';
+import { ResourceService } from './resources/resourceService';
+import { registerResourceExecutors } from './resources/resourceExecutors';
 import { AgentRunService } from './agents/runService';
 import { PapersHostFacade } from './hostFacade';
 import { registerHostIpc } from './ipc/hostIpc';
@@ -143,6 +147,10 @@ async function bootstrap(): Promise<void> {
   });
 
   registerCoreExecutors({ broker, paths, facade });
+  const gitService = new GitService();
+  const resourceService = new ResourceService(paths);
+  registerResourceExecutors({ broker, resources: resourceService, git: gitService, paths });
+  registerExternalExecutors({ broker, resources: resourceService });
 
   adapter.on('health-changed', () => facade.emitHermesHealth());
 

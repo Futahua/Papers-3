@@ -29,19 +29,4 @@ export function registerCoreExecutors(deps: CoreExecutorDeps): void {
     },
   });
 
-  deps.broker.register({
-    capability: 'external.open',
-    policy: 'prompt',
-    argumentsSchema: z
-      .object({
-        target: z.literal('url'),
-        url: z.string().url().max(2_000),
-      })
-      .strict(),
-    summarize: (args) => `Open ${(args as { url: string }).url} in the default browser`,
-    execute: async (args) => {
-      await deps.facade.openExternalUrl((args as { url: string }).url);
-      return { ok: true };
-    },
-  });
 }
