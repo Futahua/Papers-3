@@ -117,7 +117,7 @@ export const agentInvocationSchema = z
     permissions: z.array(capabilitySchema).max(16),
     execution: z
       .object({
-        cwd: z.string().max(500).optional(),
+        resourceId: z.string().min(1).max(128).optional(),
         hermesProjectId: z.string().max(128).optional(),
         preferredWorker: z.enum(['hermes', 'codex', 'opencode']).optional(),
       })

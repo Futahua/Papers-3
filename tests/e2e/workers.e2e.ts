@@ -9,6 +9,7 @@
  */
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -36,11 +37,14 @@ interface LaneResult {
   worker: string;
   runId: string;
   sessionId: string | null;
+  finalState: string;
   durationMs: number;
   interventions: number;
   checksPassed: boolean;
   diffStat: string;
   baseRepoCleanAfter: boolean;
+  papersRepoUnchanged: boolean;
+  delegationProven: boolean;
   summarySnippet: string;
 }
 
@@ -49,6 +53,19 @@ const laneResults: LaneResult[] = [];
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', args, { cwd, windowsHide: true, timeout: 120_000 });
   return stdout.trim();
+}
+
+async function papersWorkspaceFingerprint(): Promise<string> {
+  const status = await git(repoRoot, 'status', '--porcelain=v1', '-uall');
+  const trackedDiff = await git(repoRoot, 'diff', '--binary', 'HEAD', '--', '.');
+  const untrackedRaw = await git(repoRoot, 'ls-files', '--others', '--exclude-standard', '-z');
+  const untracked = untrackedRaw.split('\0').filter(Boolean).sort();
+  const hash = createHash('sha256').update(status).update('\0').update(trackedDiff);
+  for (const relativePath of untracked) {
+    hash.update('\0').update(relativePath).update('\0');
+    hash.update(await fs.readFile(path.join(repoRoot, relativePath)));
+  }
+  return hash.digest('hex');
 }
 
 beforeAll(async () => {
@@ -100,14 +117,44 @@ beforeAll(async () => {
     `(async () => {
       const b = await window.papersHost.backpacks.create('Worker Lab', 'canvas');
       await window.papersHost.backpacks.enter(b.id);
-      await window.papersHost.programs.start('kill-test');
+      await window.papersHost.programs.start('repository-research');
       return true;
     })()`,
   );
   await waitFor(
-    () => evalInProgram<boolean>(app, `document.getElementById('counter') !== null`),
+    () => evalInProgram<boolean>(app, `document.body.dataset.ready === 'true'`),
     20_000,
-    'kill-test program ready',
+    'Repository Research program ready',
+  );
+
+  // Register the fixture through the real capability boundary. Worker
+  // execution later references the granted worktree resource, never a path
+  // supplied directly by sandboxed program code.
+  await evalInProgram(
+    app,
+    `(async () => {
+      const identity = await window.papers.identity();
+      window.__workerBase = window.papers.capabilities.request({
+        invocationId: crypto.randomUUID(),
+        backpackId: identity.backpackId,
+        programId: identity.programId,
+        capability: 'resources.register',
+        arguments: { type: 'git-repository', path: ${JSON.stringify(repo)}, name: 'Worker fixture' },
+        reason: 'Register the disposable worker fixture',
+      });
+      return true;
+    })()`,
+  );
+  await waitFor(
+    () => evalInHost<boolean>(app, `(document.querySelector('.modal')?.textContent ?? '').includes('resources.register')`),
+    20_000,
+    'worker fixture registration permission',
+  );
+  await evalInHost(app, clickScript('.modal footer button', 'Allow for this program'));
+  await waitFor(
+    () => evalInProgram<boolean>(app, `window.__workerBase.then((value) => Boolean(value?.resourceId))`),
+    20_000,
+    'worker fixture registered',
   );
 }, 120_000);
 
@@ -124,10 +171,38 @@ async function runLane(
   worktreeName: string,
 ): Promise<void> {
   const { app } = launched;
-  const worktreesRoot = `${repo}-papers-worktrees`;
-  await git(repo, 'worktree', 'add', '-b', `papers/${worktreeName}`, path.join(worktreesRoot, worktreeName), 'HEAD');
-  const worktree = path.join(worktreesRoot, worktreeName);
   const baseHead = await git(repo, 'rev-parse', 'HEAD');
+  const papersBefore = await papersWorkspaceFingerprint();
+
+  await evalInProgram(
+    app,
+    `(async () => {
+      const identity = await window.papers.identity();
+      const base = await window.__workerBase;
+      window.__workerWorktree = window.papers.capabilities.request({
+        invocationId: crypto.randomUUID(),
+        backpackId: identity.backpackId,
+        programId: identity.programId,
+        capability: 'resources.create',
+        arguments: { kind: 'git-worktree', resourceId: base.resourceId, name: ${JSON.stringify(worktreeName)} },
+        reason: 'Create an isolated worktree for this worker lane',
+      });
+      return true;
+    })()`,
+  );
+  if (laneResults.length === 0) {
+    await waitFor(
+      () => evalInHost<boolean>(app, `(document.querySelector('.modal')?.textContent ?? '').includes('resources.create')`),
+      20_000,
+      `${lane}: worktree permission`,
+    );
+    await evalInHost(app, clickScript('.modal footer button', 'Allow for this program'));
+  }
+  const worktreeInfo = await evalInProgram<{ resourceId: string; worktreePath: string }>(
+    app,
+    `window.__workerWorktree`,
+  );
+  const worktree = worktreeInfo.worktreePath;
 
   const started = Date.now();
   let interventions = 0;
@@ -144,10 +219,12 @@ async function runLane(
       const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
       const identity = await window.papers.identity();
       window.__laneDone = null;
+      window.__laneRunId = null;
+      window.__laneResult = null;
       window.papers.events.onResultProposal((p) => { window.__laneResult = p; });
       window.papers.agent.invoke({
         version: 1,
-        origin: { backpackId: identity.backpackId, programId: identity.programId, commandId: 'kill-test.worker-lane' },
+        origin: { backpackId: identity.backpackId, programId: identity.programId, commandId: 'repository-research.worker-lane' },
         action: {
           id: 'implement-task',
           label: ${JSON.stringify(`Worker lane: ${lane}`)},
@@ -164,7 +241,7 @@ async function runLane(
         }],
         destination: { programId: identity.programId, type: 'result-display' },
         permissions: ['agent.invoke'],
-        execution: { cwd: ${JSON.stringify(worktree)}, preferredWorker: ${JSON.stringify(worker)} },
+        execution: { resourceId: ${JSON.stringify(worktreeInfo.resourceId)}, preferredWorker: ${JSON.stringify(worker)} },
       }).then(
         (r) => { window.__laneRunId = r.runId; },
         (e) => { window.__laneDone = 'invoke-rejected: ' + String(e && e.message || e); },
@@ -195,6 +272,10 @@ async function runLane(
     `${lane}: run accepted`,
   );
   const runId = await evalInProgram<string>(app, `window.__laneRunId`);
+  expect(
+    laneResults.some((previous) => previous.runId === runId),
+    `${lane}: every lane must have its own Papers run`,
+  ).toBe(false);
 
   // Pump: approve any pending interaction (Hermes terminal/edit approvals).
   const deadline = Date.now() + 20 * 60_000;
@@ -247,23 +328,34 @@ async function runLane(
   const baseCleanAfter =
     (await git(repo, 'status', '--porcelain')) === '' &&
     (await git(repo, 'rev-parse', 'HEAD')) === baseHead;
+  const papersRepoUnchanged = (await papersWorkspaceFingerprint()) === papersBefore;
+  const summary = run?.result?.summary ?? '';
+  const delegationProven = worker === 'hermes' || (
+    /"delegationSucceeded"\s*:\s*true/.test(summary) &&
+    !/manual fix|applied directly|fallback/i.test(summary)
+  );
 
   laneResults.push({
     lane,
     worker,
     runId,
     sessionId: run?.sessionId ?? null,
+    finalState: run?.state ?? finalState,
     durationMs: Date.now() - started,
     interventions,
     checksPassed,
     diffStat,
     baseRepoCleanAfter: baseCleanAfter,
-    summarySnippet: (run?.result?.summary ?? JSON.stringify(run?.failure ?? '')).slice(0, 600),
+    papersRepoUnchanged,
+    delegationProven,
+    summarySnippet: (summary || JSON.stringify(run?.failure ?? '')).slice(0, 600),
   });
 
   expect(finalState, `${lane} final state`).toBe('completed');
   expect(checksPassed, `${lane}: node test.js must pass in the worktree`).toBe(true);
   expect(baseCleanAfter, `${lane}: base repository untouched`).toBe(true);
+  expect(papersRepoUnchanged, `${lane}: Papers source checkout untouched`).toBe(true);
+  expect(delegationProven, `${lane}: the selected worker itself must complete the task`).toBe(true);
 }
 
 describe('worker lanes (real integrations)', () => {

@@ -301,7 +301,10 @@ export async function runAction(actionId, selection) {
     permissions: ['agent.invoke'],
   };
   if (action.id === 'implement-task' && task && task.worktree) {
-    invocation.execution = { cwd: task.worktree.worktreePath, preferredWorker: task.worker || 'hermes' };
+    invocation.execution = {
+      resourceId: task.worktree.resourceId,
+      preferredWorker: task.worker || 'hermes',
+    };
   }
 
   let ref;

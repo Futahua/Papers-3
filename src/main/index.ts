@@ -121,6 +121,9 @@ async function bootstrap(): Promise<void> {
     logFile: path.join(paths.root, 'logs', 'capability-log.jsonl'),
   });
 
+  const gitService = new GitService();
+  const resourceService = new ResourceService(paths);
+
   const runService: AgentRunService = new AgentRunService({
     paths,
     adapter,
@@ -133,6 +136,13 @@ async function bootstrap(): Promise<void> {
       }
     },
     defaultCwd: (backpackId) => facade.defaultRunCwd(backpackId),
+    resolveExecutionCwd: async (backpackId, programId, resourceId) => {
+      const resource = await resourceService.requireGranted(backpackId, programId, resourceId);
+      if (resource.type !== 'git-worktree') {
+        throw new Error('agent execution resource is not a git worktree');
+      }
+      return path.resolve(resource.path);
+    },
   });
 
   const facade = new PapersHostFacade({
@@ -148,8 +158,6 @@ async function bootstrap(): Promise<void> {
   });
 
   registerCoreExecutors({ broker, paths, facade, stateService });
-  const gitService = new GitService();
-  const resourceService = new ResourceService(paths);
   registerResourceExecutors({ broker, resources: resourceService, git: gitService, paths });
   registerExternalExecutors({ broker, resources: resourceService });
 

@@ -90,11 +90,19 @@ export async function fixtureStatus(targetDir = defaultTarget) {
   const head = await git(targetDir, ['rev-parse', 'HEAD']);
   const status = await git(targetDir, ['status', '--porcelain']);
   const worktrees = await git(targetDir, ['worktree', 'list', '--porcelain']);
+  const pushUrl = await git(targetDir, ['remote', 'get-url', '--push', 'origin']).catch(() => '(no origin)');
   console.log(`Fixture: ${targetDir}`);
   console.log(`HEAD: ${head} ${head === LOGSEQ_PINNED_COMMIT ? '(pinned ✔)' : '(NOT PINNED ✘)'}`);
   console.log(`Base checkout clean: ${status.length === 0}`);
+  console.log(`Push URL: ${pushUrl} ${pushUrl === 'DISABLED-no-push' ? '(disabled ✔)' : '(NOT DISABLED ✘)'}`);
   console.log(worktrees);
-  return { present: true, commit: head, pinned: head === LOGSEQ_PINNED_COMMIT, clean: status.length === 0 };
+  return {
+    present: true,
+    commit: head,
+    pinned: head === LOGSEQ_PINNED_COMMIT,
+    clean: status.length === 0,
+    pushDisabled: pushUrl === 'DISABLED-no-push',
+  };
 }
 
 export async function cleanupFixture(targetDir = defaultTarget) {

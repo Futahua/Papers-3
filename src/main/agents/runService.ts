@@ -50,6 +50,12 @@ export interface RunServiceOptions {
   notifyProgram: (programId: string, channel: string, payload: unknown) => void;
   /** Default working directory for sessions of a given backpack. */
   defaultCwd: (backpackId: string) => string;
+  /** Resolve and authorize a program-selected git-worktree resource. */
+  resolveExecutionCwd: (
+    backpackId: string,
+    programId: string,
+    resourceId: string,
+  ) => Promise<string>;
 }
 
 const MAX_EVENTS_PER_RUN = 500;
@@ -174,15 +180,42 @@ export class AgentRunService {
     raw: unknown,
   ): Promise<{ runId: string; sessionId: string | null }> {
     const invocation = this.validate(originBackpackId, originProgramId, raw);
+    if (invocation.execution?.preferredWorker || invocation.execution?.resourceId) {
+      const resourceId = invocation.execution.resourceId;
+      if (!resourceId) {
+        throw new Error('worker execution requires a granted git-worktree resource');
+      }
+      const cwd = await this.options.resolveExecutionCwd(
+        originBackpackId,
+        originProgramId,
+        resourceId,
+      );
+      invocation.execution = { ...invocation.execution, cwd };
+    }
     const runId = `run-${randomUUID()}`;
     // eslint-disable-next-line prefer-const
     let { prompt, disclosures } = AgentRunService.composePrompt(invocation);
 
+    // Hermes also receives the ACP process directory in its system context.
+    // State the host-resolved boundary explicitly so model-authored absolute
+    // paths agree with the per-session tool cwd.
+    const trustedCwd = invocation.execution?.cwd ?? this.options.defaultCwd(originBackpackId);
+    prompt += [
+      '',
+      '## Execution boundary',
+      `The host-resolved working directory for this run is exactly: ${trustedCwd}`,
+      'Use this directory as the only filesystem workspace. Before the first filesystem or terminal action, verify the working directory. Use paths relative to it and do not read or write the Papers application source checkout.',
+    ].join('\n');
+    disclosures = [
+      ...disclosures,
+      `Hermes will run with the host-resolved working directory “${trustedCwd}”.`,
+    ];
+
     // Worker delegation: the exact CLI instruction is part of the previewed
     // prompt (plan section 16, decision D-007).
     const worker = invocation.execution?.preferredWorker;
-    if ((worker === 'codex' || worker === 'opencode') && invocation.execution?.cwd) {
-      prompt += `\n${await buildWorkerDelegationBlock(worker, invocation.execution.cwd)}`;
+    if (worker === 'codex' || worker === 'opencode') {
+      prompt += `\n${await buildWorkerDelegationBlock(worker, trustedCwd)}`;
       disclosures = [
         ...disclosures,
         `Hermes will be instructed to delegate implementation to the ${worker} CLI inside the isolated worktree.`,

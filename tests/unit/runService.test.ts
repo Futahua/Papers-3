@@ -104,6 +104,10 @@ beforeEach(async () => {
     notifyProgram: (programId, channel, payload) =>
       notifications.push({ programId, channel, payload }),
     defaultCwd: () => dir,
+    resolveExecutionCwd: async (_backpackId, _programId, resourceId) => {
+      if (resourceId !== 'res-worktree') throw new Error('resource not granted');
+      return 'D:\\tmp\\worktree';
+    },
   });
 });
 
@@ -253,14 +257,48 @@ describe('AgentRunService', () => {
       'bp-1',
       'prog-a',
       invocation({
-        execution: { cwd: 'D:\\tmp\\worktree', preferredWorker: 'opencode' },
+        execution: { resourceId: 'res-worktree', preferredWorker: 'opencode' },
       }),
     );
     await waitState(runId, 'completed');
     const prompt = previews[0]?.composedPrompt ?? '';
     expect(prompt).toContain('Worker delegation (OpenCode)');
-    expect(prompt).toContain('opencode run --dir "D:\\tmp\\worktree"');
+    expect(prompt).toContain(
+      'host-resolved working directory for this run is exactly: D:\\tmp\\worktree',
+    );
+    expect(prompt).toContain('opencode run --pure --dir "D:\\tmp\\worktree"');
+    expect(prompt).toContain("<<'PAPERS_OPENCODE_TASK'");
+    expect(prompt).toContain('Do not edit files yourself or use a fallback');
+    expect(prompt).toContain('OPENCODE_CONFIG_CONTENT');
+    expect(prompt).toContain('"external_directory":"deny"');
+    expect(prompt).toContain('"git push *":"deny"');
     expect(previews[0]?.disclosures.join(' ')).toContain('opencode');
+  });
+
+  it('rejects a program-supplied execution path instead of trusting it', async () => {
+    await expect(
+      service.invoke(
+        'bp-1',
+        'prog-a',
+        invocation({
+          execution: { cwd: 'D:\\outside-the-grant', preferredWorker: 'hermes' },
+        }),
+      ),
+    ).rejects.toThrow(/execution.*unrecognized key.*cwd/i);
+    expect(previews).toHaveLength(0);
+  });
+
+  it('rejects execution through a worktree resource not granted to the program', async () => {
+    await expect(
+      service.invoke(
+        'bp-1',
+        'prog-a',
+        invocation({
+          execution: { resourceId: 'res-not-granted', preferredWorker: 'codex' },
+        }),
+      ),
+    ).rejects.toThrow(/resource not granted/);
+    expect(previews).toHaveLength(0);
   });
 
   it('marks interrupted runs failed on reload (restart honesty)', async () => {
@@ -278,6 +316,9 @@ describe('AgentRunService', () => {
       onRunsChanged: () => undefined,
       notifyProgram: () => undefined,
       defaultCwd: () => dir,
+      resolveExecutionCwd: async () => {
+        throw new Error('not used');
+      },
     });
     await second.loadBackpackRuns('bp-1');
     const restored = second.get(runId);

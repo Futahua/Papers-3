@@ -183,6 +183,9 @@ export interface AgentInvocation {
   };
   permissions: string[];
   execution?: {
+    /** Granted git-worktree resource selected by program code. */
+    resourceId?: string;
+    /** Host-resolved path recorded after validation; never accepted from program code. */
     cwd?: string;
     hermesProjectId?: string;
     preferredWorker?: 'hermes' | 'codex' | 'opencode';
