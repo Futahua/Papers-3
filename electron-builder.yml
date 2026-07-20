@@ -25,6 +25,6 @@ win:
 nsis:
   oneClick: true
   perMachine: false
-  # Uninstall must preserve creator data (PapersData under %APPDATA%/Papers 3).
+  # Uninstall must preserve creator data (PapersData under Electron's %APPDATA%/papers3).
   deleteAppDataOnUninstall: false
   artifactName: Papers3-Setup-${version}.${ext}
