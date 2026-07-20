@@ -60,6 +60,10 @@ interface PapersProgramBridge {
     cancel(runId: string): Promise<void>;  // own runs only
   };
 
+  summary: {
+    publish(value: unknown): Promise<void>; // explicit shared summary, ≤200kB; requires storage.write-own
+  };
+
   events: {
     onCommand(cb): unsubscribe;          // { commandId } — shelf/host asked to run a command
     onRunUpdate(cb): unsubscribe;        // { runId, state, sessionId } for own runs
@@ -119,6 +123,10 @@ Fails if the path is not a Git repository. Never copies the repository.
 - `{ target: 'url', url }` (http/https only)
 - `{ target: 'resource', resourceId }` — open granted file with default app
 - `{ target: 'show-in-folder', resourceId }`
+
+### program.read-shared-summary (prompted)
+`{ sourceProgramId }` → `{ sourceProgramId, summary }` — only what the source program has
+explicitly published via `papers.summary.publish`; never its full state.
 
 ### external.launch-approved (prompted)
 `{ application: 'libreoffice-writer' | 'libreoffice-calc', resourceId }` →

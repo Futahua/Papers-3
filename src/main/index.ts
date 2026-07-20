@@ -146,7 +146,7 @@ async function bootstrap(): Promise<void> {
     paths,
   });
 
-  registerCoreExecutors({ broker, paths, facade });
+  registerCoreExecutors({ broker, paths, facade, stateService });
   const gitService = new GitService();
   const resourceService = new ResourceService(paths);
   registerResourceExecutors({ broker, resources: resourceService, git: gitService, paths });

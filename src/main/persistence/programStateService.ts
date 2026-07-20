@@ -38,4 +38,36 @@ export class ProgramStateService {
     }
     await this.storeFor(backpackId, programId).save(value);
   }
+
+  // ------------------------------------------------------- shared summaries
+  // A program explicitly publishes a summary object; Papers stores it opaquely
+  // and serves it only to programs granted program.read-shared-summary.
+
+  private summaryStoreFor(backpackId: string, programId: string): AtomicJsonStore {
+    const key = `summary:${backpackId}/${programId}`;
+    let store = this.stores.get(key);
+    if (!store) {
+      const file = programStateFile(this.paths, backpackId, programId).replace(
+        /state\.json$/,
+        'shared-summary.json',
+      );
+      store = new AtomicJsonStore(file, { recoveryDir: this.paths.recoveryDir });
+      this.stores.set(key, store);
+    }
+    return store;
+  }
+
+  async publishSummary(backpackId: string, programId: string, value: unknown): Promise<void> {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new Error('summary is not serializable');
+    if (Buffer.byteLength(serialized, 'utf8') > 200_000) {
+      throw new Error('summary exceeds 200000 bytes');
+    }
+    await this.summaryStoreFor(backpackId, programId).save(value);
+  }
+
+  async readSummary(backpackId: string, programId: string): Promise<unknown> {
+    const report = await this.summaryStoreFor(backpackId, programId).load<unknown>();
+    return report.value;
+  }
 }

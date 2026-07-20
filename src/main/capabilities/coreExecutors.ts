@@ -9,11 +9,13 @@ import { z } from 'zod';
 import type { CapabilityBroker } from './capabilityBroker';
 import type { PapersPaths } from '../persistence/paths';
 import type { PapersHostFacade } from '../hostFacade';
+import type { ProgramStateService } from '../persistence/programStateService';
 
 export interface CoreExecutorDeps {
   broker: CapabilityBroker;
   paths: PapersPaths;
   facade: PapersHostFacade;
+  stateService: ProgramStateService;
 }
 
 export function registerCoreExecutors(deps: CoreExecutorDeps): void {
@@ -29,4 +31,21 @@ export function registerCoreExecutors(deps: CoreExecutorDeps): void {
     },
   });
 
+  deps.broker.register({
+    capability: 'program.read-shared-summary',
+    policy: 'prompt',
+    argumentsSchema: z
+      .object({ sourceProgramId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/) })
+      .strict(),
+    summarize: (args, identity) =>
+      `Let ${identity.programId} read the summary that "${(args as { sourceProgramId: string }).sourceProgramId}" explicitly publishes (never its full state)`,
+    execute: async (args, identity) => {
+      const source = (args as { sourceProgramId: string }).sourceProgramId;
+      if (source === identity.programId) throw new Error('a program already owns its own summary');
+      return {
+        sourceProgramId: source,
+        summary: await deps.stateService.readSummary(identity.backpackId, source),
+      };
+    },
+  });
 }

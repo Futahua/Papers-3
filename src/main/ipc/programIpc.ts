@@ -101,6 +101,12 @@ export function registerProgramIpc(deps: ProgramIpcDeps): void {
     deps.canvasState.setCommands(identity.programId, commands);
   });
 
+  ipcMain.handle('program:summary:publish', async (event, value: unknown) => {
+    const identity = identify(event);
+    requireDeclared(identity, 'storage.write-own');
+    await deps.stateService.publishSummary(identity.backpackId, identity.programId, value);
+  });
+
   ipcMain.handle('program:capability:request', async (event, request: unknown) => {
     const identity = identify(event);
     try {

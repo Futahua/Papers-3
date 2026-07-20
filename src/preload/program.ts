@@ -42,6 +42,12 @@ const api = {
     cancel: (runId: string) => ipcRenderer.invoke('program:agent:cancel', runId),
   },
 
+  summary: {
+    /** Publish this program's explicit shared summary (readable by programs
+     *  holding program.read-shared-summary). */
+    publish: (value: unknown) => ipcRenderer.invoke('program:summary:publish', value),
+  },
+
   events: {
     /** Host or shelf asked the program to run one of its registered commands. */
     onCommand: subscribe('program:command'),

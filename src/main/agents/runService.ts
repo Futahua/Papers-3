@@ -27,6 +27,7 @@ import { AtomicJsonStore } from '../persistence/atomicStore';
 import { runFile, runsDir, type PapersPaths } from '../persistence/paths';
 import type { HermesAdapter } from '../hermes/hermesAdapter';
 import type { SessionUpdatePayload } from '../hermes/acpClient';
+import { buildWorkerDelegationBlock } from './workerCommands';
 
 export interface InvocationPreview {
   previewId: string;
@@ -174,7 +175,19 @@ export class AgentRunService {
   ): Promise<{ runId: string; sessionId: string | null }> {
     const invocation = this.validate(originBackpackId, originProgramId, raw);
     const runId = `run-${randomUUID()}`;
-    const { prompt, disclosures } = AgentRunService.composePrompt(invocation);
+    // eslint-disable-next-line prefer-const
+    let { prompt, disclosures } = AgentRunService.composePrompt(invocation);
+
+    // Worker delegation: the exact CLI instruction is part of the previewed
+    // prompt (plan section 16, decision D-007).
+    const worker = invocation.execution?.preferredWorker;
+    if ((worker === 'codex' || worker === 'opencode') && invocation.execution?.cwd) {
+      prompt += `\n${await buildWorkerDelegationBlock(worker, invocation.execution.cwd)}`;
+      disclosures = [
+        ...disclosures,
+        `Hermes will be instructed to delegate implementation to the ${worker} CLI inside the isolated worktree.`,
+      ];
+    }
 
     const preview: InvocationPreview = {
       previewId: randomUUID(),
