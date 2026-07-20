@@ -477,6 +477,8 @@ export class AgentRunService {
     this.persistTimers.set(runId, timer);
   }
 
+  private readonly inflightPersists = new Set<Promise<void>>();
+
   private async persist(runId: string, immediate: boolean, retryOf?: string): Promise<void> {
     const snapshot = this.runs.get(runId);
     if (!snapshot) return;
@@ -496,7 +498,22 @@ export class AgentRunService {
     const store = new AtomicJsonStore(runFile(this.options.paths, snapshot.backpackId, runId), {
       recoveryDir: this.options.paths.recoveryDir,
     });
-    await store.save(record);
+    const write = store.save(record);
+    this.inflightPersists.add(write);
+    try {
+      await write;
+    } finally {
+      this.inflightPersists.delete(write);
+    }
+  }
+
+  /** Persist all dirty runs and wait for outstanding writes (shutdown/tests). */
+  async flush(): Promise<void> {
+    const dirty = [...this.persistTimers.keys()];
+    for (const timer of this.persistTimers.values()) clearTimeout(timer);
+    this.persistTimers.clear();
+    await Promise.all(dirty.map((runId) => this.persist(runId, false)));
+    await Promise.all([...this.inflightPersists]);
   }
 
   /** Load persisted runs for a backpack (restart restoration). */

@@ -82,6 +82,39 @@ const createArgs = z.discriminatedUnion('kind', [
     .strict(),
 ]);
 
+/**
+ * Structural verification of generated documents (plan section 17.2): a
+ * malformed document must fail here, not when the creator opens it.
+ */
+export function validateArtifactContent(fileName: string, content: string): void {
+  if (fileName.toLowerCase().endsWith('.fodt')) {
+    if (!content.trimStart().startsWith('<?xml')) {
+      throw new Error('generated .fodt is not XML');
+    }
+    if (!content.includes('office:document') || !content.includes('office:body')) {
+      throw new Error('generated .fodt is missing required OpenDocument elements');
+    }
+    for (const tag of ['office:document', 'office:body', 'office:text']) {
+      const opens = content.split(`<${tag}`).length - 1;
+      const closes = content.split(`</${tag}>`).length - 1;
+      if (opens !== closes) {
+        throw new Error(`generated .fodt has unbalanced <${tag}> elements`);
+      }
+    }
+    // Interpolated text must be escaped: raw ampersands break the XML.
+    if (/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/.test(content)) {
+      throw new Error('generated .fodt contains unescaped ampersands');
+    }
+  }
+  if (fileName.toLowerCase().endsWith('.json')) {
+    try {
+      JSON.parse(content);
+    } catch (err) {
+      throw new Error(`generated .json is invalid: ${String(err)}`);
+    }
+  }
+}
+
 export interface ResourceExecutorDeps {
   broker: CapabilityBroker;
   resources: ResourceService;
@@ -223,6 +256,7 @@ export function registerResourceExecutors(deps: ResourceExecutorDeps): void {
       }
 
       // artifact-file
+      validateArtifactContent(a.fileName, a.content);
       const dir = programArtifactsDir(paths, identity.backpackId, identity.programId);
       await fs.mkdir(dir, { recursive: true });
       const target = path.join(dir, a.fileName);

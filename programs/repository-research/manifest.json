@@ -1,0 +1,16 @@
+{
+  "id": "repository-research",
+  "name": "Repository Research",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "index.html",
+  "stateSchemaVersion": 1,
+  "capabilities": [
+    "storage.read-own", "storage.write-own",
+    "resources.read-granted", "resources.create", "resources.register",
+    "clipboard.write", "external.open", "external.launch-approved",
+    "agent.invoke", "agent.cancel-own"
+  ],
+  "description": "Treat a real repository as research material: select exact files and regions, capture hash-provenanced evidence, link notes, invoke precise Hermes actions, delegate coding tasks to isolated worktrees, and produce an editable report.",
+  "accentColor": "#2f6f4f"
+}
