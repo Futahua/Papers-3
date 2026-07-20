@@ -105,21 +105,21 @@ describe('Repository Research primary workflow', () => {
 
       // Register the disposable repository through the real program and host
       // permission boundary.
+      await evalInProgram(app, setInput('input[placeholder^="Absolute path"]', fixtureRoot));
+      await evalInProgram(app, setInput('input[placeholder^="Display name"]', 'Tiny Fixture'));
       await evalInProgram(app, clickScript('button', 'Register repository'));
-      await waitFor(
-        () => evalInProgram<boolean>(app, `document.querySelector('#modal-root .modal') !== null`),
-        5_000,
-        'repository modal',
-      );
-      await evalInProgram(app, setInput('#modal-root input[placeholder*="path"]', fixtureRoot));
-      await evalInProgram(app, setInput('#modal-root input[placeholder*="Display"]', 'Tiny Fixture'));
-      await evalInProgram(app, clickScript('#modal-root footer button', 'Register'));
       await waitFor(
         () => evalInHost<boolean>(app, `(document.querySelector('.modal')?.textContent ?? '').includes('resources.register')`),
         10_000,
         'repository permission',
       );
       await evalInHost(app, clickScript('.modal footer button', 'Allow for this program'));
+      await waitFor(
+        () => evalInProgram<boolean>(app, `(document.querySelector('#content')?.textContent ?? '').includes('Tiny Fixture')`),
+        20_000,
+        'repository registered',
+      );
+      await evalInProgram(app, clickScript('.nav-btn', 'Explorer'));
       await waitFor(
         () => evalInProgram<boolean>(app, `document.querySelector('.nav-btn.active')?.dataset.view === 'explorer'`),
         20_000,
@@ -142,21 +142,21 @@ describe('Repository Research primary workflow', () => {
         document.querySelector('tr[data-line="4"] .gutter button').dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
         return true;
       })()`);
-      await evalInProgram(app, clickScript('button', 'Capture lines 1–4'));
+      await evalInProgram(app, clickScript('button', 'Capture evidence'));
+      await evalInProgram(app, clickScript('.nav-btn', 'Evidence'));
       await waitFor(
-        () => evalInProgram<boolean>(app, `(document.querySelector('#tray')?.textContent ?? '').includes('src/core.ts:1-4')`),
+        () => evalInProgram<boolean>(app, `(document.querySelector('#content')?.textContent ?? '').includes('src/core.ts:1-4')`),
         10_000,
-        'hash-provenanced evidence selected',
+        'hash-provenanced evidence captured',
       );
 
       // Add a creator note.
       await evalInProgram(app, clickScript('.nav-btn', 'Notes'));
       await evalInProgram(app, clickScript('button', 'New note'));
-      await evalInProgram(app, setInput('#modal-root input', 'Backpack boundary'));
-      await evalInProgram(app, setInput('#modal-root textarea', 'Entering a Backpack is not the same as invoking an agent action.'));
-      await evalInProgram(app, clickScript('#modal-root footer button', 'Create'));
+      await evalInProgram(app, setInput('.two-col .card input[type="text"]', 'Backpack boundary'));
+      await evalInProgram(app, setInput('.two-col .card textarea', 'Entering a Backpack is not the same as invoking an agent action.'));
       await waitFor(
-        () => evalInProgram<boolean>(app, `(document.querySelector('#content')?.textContent ?? '').includes('Backpack boundary')`),
+        () => evalInProgram<boolean>(app, `document.querySelector('.two-col .card input[type="text"]')?.value === 'Backpack boundary' && document.querySelector('.two-col .card textarea')?.value.includes('invoking an agent action')`),
         5_000,
         'note created',
       );
@@ -164,15 +164,15 @@ describe('Repository Research primary workflow', () => {
       // Build an editable FODT artifact with the captured evidence attached.
       await evalInProgram(app, clickScript('.nav-btn', 'Draft'));
       await evalInProgram(app, clickScript('button', 'New draft'));
-      await evalInProgram(app, setInput('#modal-root input', 'Repository Architecture Report'));
-      await evalInProgram(app, clickScript('#modal-root footer button', 'Create'));
       await waitFor(
         () => evalInProgram<boolean>(app, `document.querySelector('.section-card') !== null`),
         5_000,
         'draft editor',
       );
+      await evalInProgram(app, setInput('.two-col > .stack > .card:first-child input[type="text"]', 'Repository Architecture Report'));
       await evalInProgram(app, `(() => {
-        const box = document.querySelector('.section-card input[type="checkbox"]');
+        const boxes = [...document.querySelectorAll('.section-card input[type="checkbox"]')];
+        const box = boxes.at(-1);
         box.click();
         return box.checked;
       })()`);
@@ -183,6 +183,7 @@ describe('Repository Research primary workflow', () => {
         'artifact permission',
       );
       await evalInHost(app, clickScript('.modal footer button', 'Allow for this program'));
+      await evalInProgram(app, clickScript('.nav-btn', 'Artifacts'));
       await waitFor(
         () => evalInProgram<boolean>(app, `(document.querySelector('#content')?.textContent ?? '').includes('Repository Architecture Report') && (document.querySelector('#content')?.textContent ?? '').includes('.fodt')`),
         20_000,
