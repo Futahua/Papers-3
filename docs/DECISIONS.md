@@ -43,6 +43,12 @@ OpenCode CLI **1.14.28** is installed with credentials for Ollama Cloud, OpenRou
 
 Electron **43.1.1** (current stable; `WebContentsView` is the supported embedding API), electron-vite **5.0.0** + vite **7.3.6** (electron-vite 5 peer-depends on vite ≤7, verified during install), electron-builder **26.15.3** (NSIS Windows installer), TypeScript **5.9.3** (TS 7.x is the new Go-port major; 5.9 chosen for ecosystem compatibility), React **19.2.7** for the host renderer, zod **4.4.3** for boundary validation, vitest **4.1.10** for automated tests. All versions exact-pinned in `package.json`; `package-lock.json` committed.
 
+## D-008 — Worktree location and OpenCode worker flags (2026-07-20)
+
+Disposable coding worktrees are created in `<repository>-papers-worktrees/<name>` beside the base repository (never inside it, never inside PapersData): fixture-derived trees stay with the fixture, big checkouts stay out of creator data, and the location is disclosed verbatim in the resources.create permission prompt. Worktree branches are namespaced `papers/<name>`; removal deletes both worktree and branch and never touches the base checkout.
+
+The OpenCode worker lane runs `opencode run --dir <worktree> -m opencode/big-pickle --dangerously-skip-permissions`. The skip-permissions flag is confined to the disposable worktree, and the exact command is (a) shown in the Papers invocation preview and (b) still gated by Hermes' own dangerous-command approval, which surfaces in the Agent Runs panel. Codex uses `codex exec --cd <worktree> --sandbox workspace-write` (its own sandbox, no bypass). Worker model pinned to `opencode/big-pickle` for provider diversity versus Codex's ChatGPT account (§16.3).
+
 ## D-006 — Git operations via system `git` CLI (2026-07-20)
 
 Repository inspection and worktree management use the installed `git` (2.53.0.windows.2) through `execFile` with structured argument arrays (no shell strings), rather than a bundled Git library. Rationale: the plan requires structured process arguments and worktree operations; system git is already a product dependency for the workflow and avoids shipping a second Git implementation.
