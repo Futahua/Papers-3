@@ -26,6 +26,8 @@ These facts do not make the corrected product behavior complete.
   authoritative plan.
 - The Papers shell visibly reuses Papers 1's theme without importing its obsolete agent
   workbench behavior or restyling Hermes internally.
+- The installed creator profile contains no seeded or test Backpack, and automated tests
+  prove they use isolated temporary profiles.
 
 No source-code review by the creator is required. The creator audits what the product
 claims by clicking it and observing the visible result.

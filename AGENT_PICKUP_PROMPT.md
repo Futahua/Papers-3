@@ -32,6 +32,10 @@ The product is simple:
 9. Remove the fake entered environment, `(machine wide complex capability)`, folder and
    cover behavior, hardcoded programs, Runs and validation UI from production.
 10. Keep historical engineering fixtures available only with PAPERS_ENABLE_FIXTURES=1.
+11. Ship with no sample, demo or testing Backpack. Automated tests must use isolated
+    temporary user data and must never write into the creator's production profile. The
+    old pre-release `First` test Backpack is not creator content; ensure it is absent in
+    the final installed handoff without adding permanent name-based deletion logic.
 
 Reuse Papers 1's visual theme because the creator explicitly likes its feel. Read
 `Futahua/papers-are-papers` `src/styles.css` and the shell markup in `src/App.tsx`, then

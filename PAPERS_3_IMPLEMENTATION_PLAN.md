@@ -118,6 +118,7 @@ The next implementation is complete when the installed product provides:
 6. no folder picker, cover picker, working-directory change or fake Backpack canvas;
 7. no production Programs, Agent Runs, invocation validation or Papers-owned Hermes UI;
 8. a packaged and installed build that the creator can change incrementally through use.
+9. no sample or test Backpacks; only Backpacks explicitly named by the creator.
 
 ## Required visual language
 
@@ -148,6 +149,10 @@ its own interface and styling.
   implement speculative Tool internals.
 - Keep historical program/ACP demonstrations behind `PAPERS_ENABLE_FIXTURES=1` and out
   of all production screens.
+- Never seed a production Backpack. Run every automated test with an isolated temporary
+  Electron user-data directory. Before the installed handoff, remove the known pre-release
+  `First` test Backpack from the creator profile after making a recoverable backup; do not
+  implement a permanent migration that deletes Backpacks merely because of their names.
 - Keep PowerToys optional and out of this build. It is neither a Backpack definition nor
   a readiness requirement.
 - Reuse Hermes rather than recreating its chat, attachments, history, models, settings,
@@ -170,6 +175,7 @@ source code:
 10. The creator can continue using global Hermes and request changes as real needs emerge.
 11. Basic, Backpacks, Tools, Settings and warnings visibly use the Papers 1 theme rather
     than the current Papers 3 styling or an unrelated redesign.
+12. No test or sample Backpack appears; the list contains only names the creator added.
 
 ## Deferred on purpose
 
