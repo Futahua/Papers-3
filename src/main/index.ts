@@ -138,6 +138,8 @@ async function bootstrap(): Promise<void> {
   });
 
   // Keep a docked Hermes window aligned to Papers as it moves or resizes.
+  // setDockBounds also raises Hermes above Papers (non-topmost) so it follows
+  // Papers to the front without becoming globally always-on-top.
   const realignHermesDock = (): void => {
     if (!mainWindow) return;
     const { width } = mainWindow.getContentBounds();
@@ -145,6 +147,10 @@ async function bootstrap(): Promise<void> {
   };
   mainWindow.on('resize', realignHermesDock);
   mainWindow.on('move', realignHermesDock);
+  // When Papers is activated, raise the docked Hermes above it (moveTop), so
+  // clicking Papers keeps the pair together — but only via non-topmost raise, so
+  // switching to another application leaves both windows ordinary.
+  mainWindow.on('focus', () => hermesSurface.onPapersActivated());
 
   hostView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   hostView.webContents.on('will-navigate', (event, url) => {

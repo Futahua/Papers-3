@@ -38,6 +38,39 @@ observable facts are recorded here.
   Hermes `hello`+`move`+`focus` reports → Papers→Hermes `setBounds` control reply
   `{ok:true}`.
 
+### Security + reliability hardening (2026-07-22)
+
+The loopback dock channel is authenticated and hardened both directions:
+- **Shared token.** Papers generates a random `HERMES_DESKTOP_PAPERS_DOCK_TOKEN` per launch.
+  Every report and every control request carries it (`X-Papers-Dock-Token`); the other side
+  requires it (constant-time compare) and returns **401** on missing/incorrect. The token is
+  never logged. Verified: 401 with no token and with a wrong token, on BOTH the Papers report
+  server and the Hermes control server; authed reports are accepted.
+- **Input limits.** Request bodies are capped (**413** oversized), unknown operations are
+  rejected (**400**), only `setBounds`/`focus`/`minimize`/`raise` are allowed, and every
+  bound is validated as a finite, in-range screen coordinate (**422** on NaN / absurd
+  coords). Verified with the security harness (401/401/413/400/422/422/200/200 all as
+  expected).
+- **No global always-on-top.** `setAlwaysOnTop` was removed. Docking now uses a `raise` op
+  (BrowserWindow.moveTop()) that lifts Hermes above Papers in the normal z-order. Verified:
+  the docked Hermes has `WS_EX_TOPMOST=False`, and when Chrome was focused over the docked
+  region **Chrome covered Hermes** (Hermes did not stay on top of another application).
+- **Occupied port 9119.** Papers persists its backend session token and, if 9119 is already
+  in use, adopts it ONLY after authenticating a protected endpoint (`/api/sessions`) with the
+  stored token (proving Papers-owned). Verified: a foreign/empty token returns 401 → Papers
+  reports an actionable conflict and never silently starts a second backend.
+
+### Real human native-drag acceptance (2026-07-22)
+
+Verified by actually dragging the Hermes window by its real title bar (not programmatic
+`SetWindowPos`):
+- **Drag off the strip → detaches** (window ended at x=366, off the dock).
+- **Drag to the Papers edge → redocks** (window snapped to the strip x=934, w=538).
+- **Cross-monitor**: the window was moved onto the top monitor (y=-700, negative coords) and
+  the seam handled the multi-monitor / negative coordinates without error.
+- **After docking, no global always-on-top** (confirmed via WS_EX_TOPMOST and the Chrome
+  overlap test above).
+
 ## Problem 3 — Papers Light / Papers Dark skin
 
 - The theme picker (Appearance / Cmd-K → Change theme) lists **Papers** under both LIGHT and
