@@ -1,4 +1,4 @@
-# Papers 3 — current acceptance status
+# Papers — current acceptance status
 
 ## Already verified in the present shell
 

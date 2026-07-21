@@ -1,4 +1,4 @@
-# Papers 3 — current architecture boundary
+# Papers — current architecture boundary
 
 The production shell has four concepts:
 
@@ -39,3 +39,15 @@ be honest and empty, but it must not be replaced with speculative architecture.
 
 The program sandbox, ACP adapter, Agent Runs and demonstration workflows load only with
 `PAPERS_ENABLE_FIXTURES=1`. They are not part of production Papers.
+
+## Evolving synchronization boundary
+
+The installed master folder may be carried by Syncthing, but executable files, durable
+creator work and live machine state are different kinds of data. Papers does not freeze
+a speculative schema before real Backpacks exist. Each useful feature must identify its
+data owner and sync behavior using [the data inventory](SYNCTHING_AND_DATA.md).
+
+Durable creator-authored work defaults toward survival. Caches, locks, credentials,
+browser profiles, live database journals and installations default toward machine-local
+state. Ambiguous data is preserved and documented until real use makes the decision
+auditable.

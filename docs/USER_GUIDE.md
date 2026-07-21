@@ -1,4 +1,4 @@
-# Papers 3 — visible behavior guide
+# Papers — visible behavior guide
 
 This describes the intended next installed build. Items not yet implemented remain
 listed in [`docs/ACCEPTANCE.md`](ACCEPTANCE.md).

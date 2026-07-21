@@ -11,19 +11,23 @@ does not change Hermes's working directory, conversation or context automaticall
 
 The installed product is self-contained beneath one master folder: `Papers/App`
 contains the application and `Papers/Data` contains its persistent runtime state.
+The master folder also contains `HERMES.md`, the native Hermes pickup instruction for
+building Backpacks without making Hermes Backpack-scoped.
 
 The older Repository Research, Visual Dashboard and Kill Test programs are retained
 only as opt-in integration fixtures. They are not visible in the production app.
 
 ## Current status
 
-The existing shell proves Hermes hosting and Backpack persistence, but still contains
-incorrect folder-oriented and simulated-environment assumptions. The next build restores
-Basic, makes creation name-only, shows an honest warning for empty Backpacks, restores the
-global Tools destination and removes all automatic Backpack context from Hermes.
+The installed shell provides Basic, name-only Backpack creation, the honest empty
+Backpack warning, a global Tools destination and the existing global Hermes interface.
+The next useful features will be shaped by the creator's first real Backpack rather than
+by adding speculative framework screens.
 
 - [Product definition](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Syncthing and evolving data](docs/SYNCTHING_AND_DATA.md)
+- [Hermes pickup instructions](HERMES.md)
 - [User guide](docs/USER_GUIDE.md)
 - [Implementation plan](PAPERS_3_IMPLEMENTATION_PLAN.md)
 - [Implementation-agent pickup prompt](AGENT_PICKUP_PROMPT.md)

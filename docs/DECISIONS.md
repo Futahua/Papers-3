@@ -1,4 +1,4 @@
-# Papers 3 — consequential decisions
+# Papers — consequential decisions
 
 ## D-001 — Existing products are the product boundary (2026-07-21)
 
@@ -79,3 +79,19 @@ from `Futahua/papers-are-papers/src/styles.css`.
 
 This is visual reuse only. Papers 1's custom agent workbench, Work rail, provider wizard,
 Inspect, approval and self-edit behaviors do not return. Hermes keeps its existing UI.
+
+## D-010 — Sync classification evolves with real features (2026-07-21)
+
+The Papers master folder lives inside Syncthing, but the creator cannot know every future
+feature or which of its data should survive across machines before using it. Papers will
+not answer this uncertainty by syncing all live runtime state or by ignoring all data.
+
+For each real feature, durable creator-authored work defaults toward sync and survival;
+caches, locks, credentials, installations and process state default toward machine-local;
+ambiguous data is preserved and recorded until use makes its value clear. Every durable
+feature must update `docs/SYNCTHING_AND_DATA.md` with ownership, location, sync behavior,
+secret status, concurrency limits and recovery.
+
+Hermes uses the `HERMES.md` in the Papers master folder as its native pickup instruction
+when the creator points Hermes at that folder. Papers does not automatically change the
+global Hermes working directory to force this context.

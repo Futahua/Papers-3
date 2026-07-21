@@ -1,4 +1,4 @@
-# Papers 3 — product definition
+# Papers — product definition
 
 The authoritative plain-language behavior is in
 [`PAPERS_3_IMPLEMENTATION_PLAN.md`](../PAPERS_3_IMPLEMENTATION_PLAN.md). This document
