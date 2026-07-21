@@ -29,15 +29,17 @@ exactly **two compact SVG toggles**: a sidebar toggle (dock/hide) and a window t
 (detach/hide). Each shows its active/inactive state, carries a tooltip and accessible name,
 and is a true toggle (clicking again hides without terminating Hermes or its session).
 
-Docked and detached are two placements of the same real Hermes. Drag docking is provided
-through a Papers-drawn grab handle (drag the docked edge inward to detach) and a right-edge
-dock target (bring a detached Hermes back), the handoff-approved equivalent to OS free-drag,
-which Papers cannot intercept on a foreign window.
+Docked and detached are two placements of the same real Hermes, with **real
+native-window snap-docking** (2026-07-22 correction, replacing the earlier fake-drag
+overlay the creator rejected): Hermes reports its own window position to Papers over a
+loopback seam, so dragging the detached window toward the Papers edge shows a narrow edge
+highlight (no overlay covering Papers) and snaps it into the strip on release; dragging a
+docked window off detaches it; a docked window stays fully visible beside Papers (never
+behind) and follows Papers as it moves/resizes. The two SVG toggles remain as fallbacks.
 
-Evidence: the installed shell shows the two symbol controls and none of the old controls;
-the sidebar toggle docked/hid the real Hermes; tooltips read "Dock Hermes as a sidebar" /
-"Open Hermes as a window". A regression test asserts exactly two toggles, their accessible
-names and initial state, and the absence of the old pill/buttons.
+Evidence (installed product): a window dragged to x≈1102 snapped to the dock strip
+(x=1094, w=538); moving Papers 280→80 tracked Hermes 1094→894; docking survives restart.
+See `docs/evidence/hermes-batch/README.md`.
 
 Remaining for the creator: confirm the toggles and drag docking feel natural in use.
 
@@ -48,9 +50,14 @@ Remaining for the creator: confirm the toggles and drag docking feel natural in 
 **Papers Dark** modes is added to Hermes Desktop as a new theme. It keeps original Hermes
 layout, density and proportions and only: lifts too-faint secondary text, warms the primary
 text to a readable off-white, keeps the deep navy-black dark canvas, and nudges undersized
-interface/conversation text up ~1–2px. No fintech/prismatic redesign. Evidence: the theme
-appears as "Papers" in Appearance (Light and Dark); selecting Papers Dark rendered the deep
-navy-black Hermes with clearly readable text — recognizably Hermes, only calmer. See
+interface/conversation text up ~1–2px. No fintech/prismatic redesign. **Papers Light was
+corrected (2026-07-22)** after the creator found it washed out: the light skin now
+suppresses the background illustration/watermark, uses an opaque warm-neutral canvas, and
+re-mixes every text tier toward the canvas so conversation, thinking, tool and metadata text
+is readable. Dark is unchanged. Evidence: the theme appears as "Papers" in Appearance (Light
+and Dark); Papers Dark renders the deep navy-black Hermes with clearly readable text, and a
+real Papers Light turn shows the user message, "Thinking" label, tool-call line (with
+timing), reply with inline-code chips and sidebar/session titles all readable. See
 `docs/evidence/hermes-batch/`. Remaining for the creator: read real conversations in both
 modes and confirm the readability improvement.
 
