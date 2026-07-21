@@ -1,67 +1,56 @@
-# Pickup prompt — finish Papers for first use
+# Pickup prompt — build the honest Papers base
 
-Use this prompt with a capable coding agent running locally on the creator's Windows
-machine. Local execution is required because final acceptance uses the installed Hermes,
-PowerToys, file pickers, Electron views and packaged application.
+Run this locally on the creator's Windows machine.
 
 ```text
 Continue Papers 3 in D:\Letters\MatTroiSeConMoc\PAPERS 3\Papers-3 on the existing
 agent/implement-papers3-v1 branch and draft PR #3.
 
-Your objective is to deliver the installed, creator-usable first-Backpack release—not a
-prototype, framework, plan, or engineering demonstration. Read every current repository
-document before changing code, especially PAPERS_3_IMPLEMENTATION_PLAN.md, then execute
-that plan completely through release acceptance. Treat that file and the creator's
-feedback as authoritative over older code and evidence.
+Read PAPERS_3_IMPLEMENTATION_PLAN.md completely before changing code. It is the current
+plain-language product contract and overrides older plans, prototypes and assumptions.
+Also read Futahua/papers-are-papers PROJECT_CONTEXT.md for the original definitions of
+Basic, Backpacks, Tools and global AI, but follow the creator's newer instructions in the
+Papers 3 plan when they differ.
 
-The product boundary is strict:
-- Backpacks are visual working contexts and work without PowerToys, scenes, canvases,
-  programs or conversations.
-- Hermes is the AI product. Use the installed Hermes Dashboard `/chat` and Hermes Desktop
-  wholesale. Do not build chat, attachments, history, settings, permissions, run UI,
-  invocation validation, context inspectors or agent orchestration in Papers.
-- The normal workflow is create Backpack → enter → prompt Hermes → optionally attach a
-  file/image → receive reply. A Backpack folder is optional and is passed to Hermes
-  Desktop via `--cwd`.
-- PowerToys Workspaces is an optional post-release enhancement. Never block first use on
-  it. If integrated, read its existing data read-only and launch its official executable;
-  do not implement window management.
-- Historical programs and ACP infrastructure are fixtures only and must be invisible
-  unless PAPERS_ENABLE_FIXTURES=1.
+Implement the usable base described there through packaged, installed, human-visible
+acceptance. Do not design the first Backpack's contents. The creator will shape it while
+using the product.
 
-Work autonomously and persistently. Inspect the current implementation, reuse existing
-open-source or installed products when they genuinely shorten the path, and make all
-normal implementation decisions yourself. Do not stop at a partial milestone, ask the
-non-coder creator to review source, or claim readiness from unit tests alone. Do not
-replace the task with further planning. Preserve unrelated creator data and never test
-destructive file modification on real creator files.
+Non-negotiable behavior:
+- Basic is permanent and contains Backpacks, Tools and Settings.
+- Hermes is one global interface. Use the existing Hermes Dashboard `/chat` and plain
+  Hermes Desktop product. Backpack activity must not change its working directory,
+  conversation or context automatically.
+- Add Backpack asks only for a name and creates no folder, cover, canvas, program,
+  conversation or hidden contents.
+- Entering a newly created Backpack shows exactly: `Nothing here yet. Create something
+  under “Backpack name”.`
+- A Backpack is a machine-wide environment or lens, not a boxed app, folder workspace,
+  project, canvas or PowerToys scene.
+- Tools is a permanent global destination. Tools may eventually represent programs,
+  shortcuts, scripts, automation, locations, synchronization and utilities shared across
+  Backpacks. Its exact contract is undecided, so show an honest empty state and do not
+  invent a marketplace, registry architecture or Backpack-specific Tool system.
+- Historical programs, ACP, Runs and validation UI remain invisible unless
+  PAPERS_ENABLE_FIXTURES=1.
 
-Finish the entire first-release path described in PAPERS_3_IMPLEMENTATION_PLAN.md:
-- compact first-Backpack creation with required name, optional folder and optional cover;
-- genuinely visual gallery and entered Backpack without placeholder text;
-- real universal Hermes sidebar, automatically visible on first entry and remembered;
-- real Hermes Desktop pop-out receiving the Backpack folder;
-- safe Open folder behavior;
-- clear missing-Hermes recovery;
-- real icon, product metadata, packaging and installation;
-- automated regression coverage plus manual human-visible validation at common display
-  scales;
-- real Hermes prompt/reply, attachment, and disposable-file modification evidence;
-- non-technical usage documentation and screenshots.
+Remove current production behavior and documentation that associates a Backpack folder
+with Hermes or passes `--cwd` during Backpack entry/pop-out. Keep manual context selection
+inside Hermes itself. Remove the shipped `(machine wide complex capability)` placeholder
+and any fake environment that makes an empty Backpack appear implemented.
 
-You may refactor or delete obsolete production-facing code when that reduces complexity,
-but retain the explicitly gated fixture regressions unless they materially obstruct the
-release. Prefer the smallest dependable implementation. No new abstraction is a
-deliverable.
+Make normal technical decisions autonomously, but do not answer the explicitly open
+Backpack-content, Tool-contract or Data-Source questions with code. Do not ask the
+non-coder creator to review source. Validate behavior through the visible application.
 
-Run all relevant type, unit, build, product E2E, packaged-app and fixture checks. Install
-and walk through the packaged build on this machine. Fix every problem you encounter in
-the primary workflow. Record honest evidence and remaining non-blocking limitations.
+Run type checks, unit tests, production build, product E2E, packaged-app tests and fixture
+regressions. Install the package locally. Verify the ten human-acceptance statements in
+PAPERS_3_IMPLEMENTATION_PLAN.md, including that Hermes remains global and Backpack entry
+does not change its context. Capture concise screenshots of Basic, Backpacks, the empty
+warning, Tools and global Hermes.
 
-When the release acceptance list passes, explicitly stage only your intended changes,
-commit them, push the existing branch, and update draft PR #3 with the final visible
-outcome, validation and any remaining optional work. Leave the worktree clean. Your final
-response must tell the creator, in non-technical language, exactly how to launch Papers
-and create the first Backpack; include the installer path and screenshots. Do not call it
-finished if any required acceptance step remains.
+Fix primary-workflow failures until acceptance passes. Then explicitly stage only the
+intended changes, commit, push the existing branch and update draft PR #3. Leave the
+worktree clean. In the final handoff, explain only what the creator can now click and see,
+what was tested, and which product questions remain deliberately unanswered.
 ```

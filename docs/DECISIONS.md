@@ -12,9 +12,9 @@ log, which remain available in Git history.
 
 ## D-002 — Backpacks are machine-wide environments (2026-07-21)
 
-A Backpack is not a Canvas. It can span application windows, folders, browser destinations,
-documents, multiple monitors, Hermes and an optional Papers surface. Entering one activates
-an environment; it does not automatically invoke an agent or share all Backpack content.
+A Backpack is not a Canvas. It can eventually span application windows, folders, browser
+destinations, documents, multiple monitors and Papers surfaces. It does not own or scope
+Hermes. Entering an empty Backpack currently warns that no contents exist.
 
 ## D-003 — Hermes UI is reused, not recreated (2026-07-21)
 
@@ -25,17 +25,17 @@ The installed Hermes Agent already provides:
   conversation history, voice, settings, models and credentials;
 - `hermes desktop --cwd <folder>` for an initial project directory.
 
-Decision: production Papers embeds the dashboard chat and launches Hermes Desktop. Papers
-does not own chat messages, session state, agent approvals or settings. The ACP integration
-is a fixture only.
+Decision: production Papers embeds the dashboard chat and launches Hermes Desktop without
+Backpack-derived arguments. The `--cwd` capability exists but is not inferred from a
+Backpack. Papers does not own chat messages, session state, agent approvals or settings.
+The ACP integration is a fixture only.
 
-## D-004 — Desktop scenes are an optional PowerToys enhancement (2026-07-21)
+## D-004 — PowerToys proposal (deferred, 2026-07-21)
 
-The creator's Windows machine already has Microsoft PowerToys Workspaces, including its
-editor, snapshot tool, launcher and window arranger. Papers will associate Backpacks with
-existing PowerToys scenes rather than implement window capture, application launch or
-placement. A Backpack never requires PowerToys or a scene. First use, Hermes, folder
-context and visual identity must work when PowerToys is missing or has no saved scenes.
+The creator's Windows machine has Microsoft PowerToys Workspaces. It was considered for
+optional desktop arrangement, but it is not part of the current build or Backpack
+definition. No PowerToys integration should be implemented before real Backpack behavior
+creates a demonstrated need for it.
 
 ## D-005 — Historical programs are opt-in fixtures (2026-07-21)
 
@@ -49,9 +49,23 @@ Automated tests establish engineering confidence but cannot establish usefulness
 readiness requires the non-coder human acceptance script in the authoritative plan. Papers
 must not call itself complete while its primary everyday workflow remains absent.
 
-## D-007 — First useful Backpack outranks platform completeness (2026-07-21)
+## D-007 — Folder/cover first-Backpack proposal (superseded, 2026-07-21)
 
-The immediate release is a compact creation flow, visual Backpack identity, optional
-folder, real Hermes sidebar/Desktop, persistence and installed-build acceptance. Tray
-switching, scene restoration, resource collections and future extensibility are deferred
-when they threaten this path. No abstraction or optional integration is a release outcome.
+This proposal treated a compact name/folder/cover flow as the first useful Backpack. D-008
+supersedes it: creation is name-only, Hermes stays global, and no contents are invented
+before the creator shapes the Backpack through use.
+
+## D-008 — Global Hermes and name-only Backpacks (2026-07-21)
+
+The creator corrected the first-Backpack plan. Hermes is global and Backpack interaction
+must not change its working directory, conversation or context automatically. Creating a
+Backpack asks only for a name and creates no folder, cover, canvas or contents. Entering a
+new empty Backpack displays `Nothing here yet. Create something under “name”.`
+
+A Backpack is a machine-wide environment or lens that may later contain several pages,
+views, features and uses of shared Tools. It is not a single boxed application to enter
+and leave. Basic remains permanent with Backpacks, Tools and Settings. Tools are global
+reusable machine capabilities; their exact contract remains explicitly undecided.
+
+This decision supersedes the folder/cover first-release flow and any automatic
+`hermes desktop --cwd <Backpack folder>` behavior in earlier Papers 3 documents.

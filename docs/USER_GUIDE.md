@@ -1,41 +1,36 @@
-# Papers 3 — user guide
+# Papers 3 — visible behavior guide
 
-## Backpacks
+This describes the intended next installed build. Items not yet implemented remain
+listed in [`docs/ACCEPTANCE.md`](ACCEPTANCE.md).
 
-The opening view shows your Backpacks as visual working environments. Create one with a
-name and, if useful, choose a folder and cover image. Enter it, rename it or archive it.
-A Backpack does not need a canvas or saved desktop scene.
+## Basic
 
-Inside a Backpack, **Choose folder** associates an optional working folder. Papers does
-not scan or import that folder. **Hermes window** passes it to Hermes Desktop as the
-initial working directory.
+Basic is always available. It opens Backpacks, Tools or Settings.
 
 ## Hermes
 
-Hermes is available everywhere:
+Open Hermes from anywhere in Papers. It is global: selecting or entering a Backpack does
+not change its folder, conversation or context. Attach files and images or name paths
+inside Hermes when you want to provide context.
 
-- **Hermes sidebar** opens Hermes Dashboard's existing chat interface inside Papers.
-- **Hermes window** opens the existing native Hermes Desktop product.
+## Backpacks
 
-Use Hermes normally: type a prompt, attach files or images in Hermes, mention paths,
-receive replies and continue the conversation. Conversation history, models, settings,
-tool activity and approvals are Hermes features and remain in Hermes.
+Click `Add Backpack` and give it a name. Nothing else is created automatically.
 
-Papers does not require an additional preview or structured workflow before sending a
-normal prompt.
+Until real contents have been made for it, clicking `Enter` shows:
 
-## Optional desktop environments
+> Nothing here yet. Create something under “Backpack name”.
 
-Papers can later associate a Backpack with an existing Microsoft PowerToys Workspaces
-scene to launch and arrange applications. This is optional. Creating and using a Backpack
-with Hermes never requires PowerToys.
+A future Backpack may reach across the whole machine and contain several ways of working.
+It is not a project folder or a single page.
 
-## Test fixtures
+## Tools
 
-Repository Research, Visual Dashboard and Kill Test are engineering fixtures. They are
-hidden in normal builds. Developers can expose them with:
+Tools is a permanent global destination. Tools will represent reusable capabilities such
+as programs, shortcuts, scripts, automation, locations and utilities. Its exact behavior
+has not yet been decided, so the first honest screen may contain no configured Tools.
 
-```powershell
-$env:PAPERS_ENABLE_FIXTURES='1'
-npm start
-```
+## Engineering fixtures
+
+Repository Research, Visual Dashboard, Kill Test, ACP and Agent Runs are not product
+features and are absent from normal builds.

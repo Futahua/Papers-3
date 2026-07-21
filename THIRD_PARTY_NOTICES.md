@@ -26,7 +26,7 @@ Every dependency and reused asset with provenance and license.
 
 | Product | Version observed | Interface | Boundary |
 |---|---|---|---|
-| Hermes Agent | 0.16.0 (2026.6.5) | Existing Dashboard `/chat` and Hermes Desktop; ACP fixtures only | Never vendored; Hermes owns chat, sessions, configuration, tools and updates |
+| Hermes Agent | 0.16.0 (2026.6.5) | Global existing Dashboard `/chat` and plain Hermes Desktop; ACP fixtures only | Never Backpack-scoped or vendored; Hermes owns chat, sessions, configuration, tools and updates |
 | Microsoft PowerToys Workspaces | installed with PowerToys | Optional read-only scene discovery and official launcher by ID | Never required or bundled; PowerToys owns capture, application launch and window arrangement |
 | Codex CLI | 0.145.0-alpha.18 (Desktop-bundled) | CLI, invoked by Hermes | Not bundled; user's config untouched |
 | OpenCode CLI | 1.14.28 | CLI, invoked by Hermes | Not bundled |

@@ -1,54 +1,41 @@
-# Papers 3 — architecture
+# Papers 3 — current architecture boundary
 
-## Production path
+The production shell has four concepts:
 
 ```text
-Papers Electron shell
-├── BackpackRegistry
-│   └── identity, archive state, optional folder/cover, Hermes visibility
-├── visual Backpack chooser / entered environment
-├── HermesSurface (thin adapter)
-│   ├── sidebar → existing `hermes dashboard` at http://127.0.0.1:9119/chat
-│   └── pop-out → existing `hermes desktop [--cwd <folder>]`
-└── optional desktop scene adapter
-    └── read PowerToys scenes; launch selected scene by ID
+Papers
+├── Basic
+│   ├── Backpacks
+│   ├── Tools
+│   └── Settings
+├── Global Hermes sidebar / Hermes window
+├── Backpack names and future contents
+└── Global Tools (contract still open)
 ```
 
-Papers hosts Hermes Dashboard in a sandboxed `WebContentsView`. It does not parse,
-translate or persist Hermes messages. The pop-out command launches Hermes Desktop,
-which shares Hermes's own configuration, sessions, skills and memory.
+## Global Hermes boundary
 
-The optional folder stored on a Backpack is passed to Hermes Desktop as its initial
-working directory. It is an association, not an implicit dump of Backpack content.
+Papers hosts the existing Hermes Dashboard `/chat` and may open plain Hermes Desktop.
+Backpack interaction does not provide a working directory, start a conversation, reset a
+session or limit Hermes context. Hermes owns its own chat, attachments, models, settings,
+history and tools.
 
-PowerToys is not part of the production critical path. When present, Papers may read
-`%LOCALAPPDATA%\Microsoft\PowerToys\Workspaces\workspaces.json` without modifying it
-and launch `PowerToys.WorkspacesLauncher.exe <workspace-id>`. Missing PowerToys, a
-missing scene file or no saved scenes leaves the Backpack fully functional.
+## Backpack boundary
 
-## Existing-product rule
+Papers currently persists Backpack identity and whether real contents exist. New
+Backpacks contain only a name. `Enter` checks for genuine contents; when none exist it
+shows the required warning rather than creating a fake environment.
 
-Before implementing a capability in Papers:
+The future contents contract is intentionally absent. No folder, canvas, scene or program
+runtime may become that contract by implementation accident.
 
-1. Determine whether Hermes, Windows, PowerToys, Directory Opus, the default browser,
-   LibreOffice or another installed product already provides it.
-2. Prefer launch, focus, deep link, documented CLI or local supported surface.
-3. Store only the association Papers needs to restore the environment.
-4. Implement a Papers-owned surface only when no suitable product exists.
+## Tool boundary
+
+Tools are global reusable capabilities. Their exact discovery, persistence, configuration
+and enable/disable contract is not yet decided. The permanent Tools screen may therefore
+be honest and empty, but it must not be replaced with speculative architecture.
 
 ## Fixture boundary
 
-The earlier program sandbox, capability broker, ACP adapter, AgentRunService and
-Repository Research workflow remain in the source tree solely as integration evidence.
-They are loaded only with `PAPERS_ENABLE_FIXTURES=1`. Production does not start ACP,
-show programs, display Agent Runs, or mediate Hermes permissions.
-
-This boundary keeps proven experiments available without allowing sunk implementation
-effort to determine the product.
-
-## Persistence
-
-Creator-owned Papers metadata remains under `%APPDATA%\papers3\PapersData`. Cover paths
-refer to creator-owned images; Papers does not copy them. Hermes data remains in Hermes's
-own home. PowerToys scene definitions remain owned by PowerToys. Papers stores references,
-not duplicate databases or imported copies.
+The program sandbox, ACP adapter, Agent Runs and demonstration workflows load only with
+`PAPERS_ENABLE_FIXTURES=1`. They are not part of production Papers.

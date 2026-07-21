@@ -1,191 +1,165 @@
-# Papers 3 — first-Backpack release plan
+# Papers 3 — current product truth and next build
 
-Status: authoritative after creator review on 2026-07-21. The immediate objective is
-not a framework or a demonstration. It is an installed Papers build that lets the
-creator make and use the first real Backpack with AI on this Windows machine.
+This is the plain-language source of truth. If the application does something not
+described here, it is not justified by this plan.
 
-## 1. Release outcome
+## What Papers is
 
-From a fresh launch, a non-coder can create a Backpack, optionally choose a folder and
-cover image, enter it, talk to the existing Hermes interface, attach files or images,
-and open Hermes Desktop pointed at the chosen folder. The Backpack persists after a
-restart and is recognizable in a visual gallery.
+Papers is a personal layer across the whole Windows machine.
 
-That path is the release. Desktop-scene restoration, trays, plug-ins, program runtimes,
-agent orchestration and generalized resource systems cannot delay it.
+It always has:
 
-## 2. Product boundary
+- **Basic** — the permanent menu containing Backpacks, Tools and Settings;
+- **Hermes** — one global AI interface available everywhere;
+- **Backpacks** — named environments that can eventually present different ways of
+  working with the same machine, files, knowledge and Tools;
+- **Tools** — reusable machine-wide capabilities.
 
-- A Backpack is a named, visual working context. It does not require a PowerToys scene,
-  folder, canvas, program or conversation.
-- Hermes is the AI product. Papers embeds or launches it and does not reproduce it.
-- The ordinary interface is: prompt, optional Hermes attachments, reply.
-- A folder is the only Papers-level context aid in the first release. It is passed to
-  Hermes Desktop with `--cwd`; paths can also be named in prompts.
-- Papers may open existing folders, files, URLs and applications through Windows. It
-  does not become their editor or file manager.
-- PowerToys Workspaces is an optional enhancement, never a dependency or onboarding
-  requirement.
-- No Papers-owned action catalogue, invocation validation, Runs screen, permissions
-  layer, model picker, message store or modular program UI may appear in production.
+Papers is not a collection of project folders or boxed mini-applications.
 
-## 3. Reuse decisions
+## Exactly what the visible controls do
 
-| Capability | Existing owner | Papers does only |
-|---|---|---|
-| Chat, attachments, history, settings, tools, approvals | Hermes Dashboard/Desktop | Host `/chat`; launch Desktop |
-| Folder-scoped AI work | Hermes Desktop | Pass `--cwd <folder>` |
-| Folder/file opening | Windows shell / Directory Opus when registered | Ask the OS to open the path |
-| Optional window-scene restoration | PowerToys Workspaces | Read existing scenes; launch one by ID |
-| Documents and websites | Existing default applications | Open the target |
+### Add Backpack
 
-Do not vendor or fork these products merely to change their appearance. Prefer their
-installed releases and stable command or file boundaries. Reuse source code only when
-an installed integration cannot satisfy a release requirement and the copied portion is
-small, licensed, attributed and cheaper to maintain.
+1. The creator clicks `Add Backpack`.
+2. Papers asks only for a name.
+3. Papers adds that name to the Backpack list.
+4. Papers does not create a folder, choose a cover, start an application, change Hermes,
+   create a canvas or invent contents.
 
-## 4. Exact first-release experience
+Adding the name reserves an environment that can be shaped later through actual use.
 
-### First launch
+### Enter an empty Backpack
 
-Show the Backpack gallery immediately. If it is empty, show one dominant action:
-`Create your first Backpack`. Hermes remains reachable globally, but the empty state
-must not explain architecture or show engineering fixtures.
+Until something has genuinely been created under that Backpack's name, `Enter` displays:
 
-### Creation
+> Nothing here yet. Create something under “Backpack name”.
 
-Use one compact flow:
+Dismissing the warning returns to the existing Papers shell. It does not pretend that an
+empty page is a working Backpack.
 
-1. name — required;
-2. folder — optional, selectable with the native folder picker;
-3. cover image — optional, selectable with the native file picker.
+### Enter a non-empty Backpack
 
-Do not add templates, types, programs, capability choices or PowerToys setup. Create
-the Backpack immediately. A missing cover receives a restrained generated visual.
+This is deliberately not specified yet. A future Backpack may contain several pages,
+views, features and uses of global Tools, and may reach across other Windows programs.
+The behavior will be defined when the creator makes the first real one through use.
 
-### Gallery
-
-Each Backpack is a large, recognizable visual tile using its cover or generated visual.
-The primary action is entering it. Rename, change cover/folder and archive are secondary
-and visually quiet. The gallery must remain useful with one Backpack.
-
-### Entered Backpack
-
-The surface carries the Backpack's visual identity and only a few clear controls:
-
-- Hermes sidebar, open by default on first entry and remembered thereafter;
-- `Open folder` when a folder exists;
-- `Hermes window`, which launches `hermes desktop --cwd <folder>` when possible;
-- `Backpacks`, which returns to the gallery.
-
-Remove the `(machine wide complex capability)` placeholder from the shipped experience.
-Do not turn the entered view into a dashboard of decisions.
+It must never be reduced to opening one folder, one canvas, one application or one
+PowerToys scene.
 
 ### Hermes
 
-The sidebar is the real Hermes Dashboard `/chat` surface. Do not place a Papers prompt
-box over it. The pop-out is the real Hermes Desktop application. Display a short, human
-error only when Hermes is missing or cannot start, including one actionable recovery.
+Hermes is the same global AI before, during and after any Backpack interaction.
 
-## 5. Implementation order
+Papers must not automatically:
 
-Work continuously through these gates. Do not stop after scaffolding or ask the creator
-to review code.
+- give Hermes a Backpack folder;
+- change Hermes's working directory;
+- start a separate Backpack conversation;
+- limit Hermes to the active Backpack;
+- inject all Backpack contents into a prompt;
+- reset Hermes when Backpacks change.
 
-### Gate A — complete the first Backpack
+The ordinary flow remains prompt, optional attachments, reply. If the creator wants
+Hermes to work on a folder or file, they can attach it, name its path or explicitly ask
+for that context. Papers does not infer it from a Backpack name.
 
-- Extend Backpack persistence with an optional cover image and remembered sidebar state.
-- Replace the current multi-card creation controls with the compact creation flow.
-- Implement native cover-image selection and validation without copying the image.
-- Make the gallery and entered view visually coherent at common Windows display scales.
-- Add `Open folder` through Electron's safe shell boundary.
-- Open Hermes automatically on first Backpack entry and preserve the creator's later
-  open/closed preference.
-- Keep all legacy programs unavailable unless `PAPERS_ENABLE_FIXTURES=1`.
+### Tools
 
-### Gate B — make AI use undeniable
+A Tool is a capability available across the system. Known examples include installed
+programs, shortcuts, scripts, automation helpers, mounted locations, synchronization and
+machine utilities.
 
-- Exercise the installed Hermes v0.16.0, not a mock.
-- Verify a real prompt and reply in the embedded sidebar.
-- Verify Hermes's existing file and image attachment controls manually.
-- Verify `Hermes window` launches with the Backpack folder as `--cwd`.
-- In a disposable acceptance folder, ask Hermes to modify a named file and verify the
-  file actually changes. Never use creator files for destructive tests.
-- Confirm Papers shutdown does not kill a Hermes process it did not start.
+Tools are not owned by one Backpack. Several Backpacks may use the same Tool. A Tool may
+be enabled or disabled independently of Backpacks.
 
-### Gate C — make it installable and understandable
+The exact Tool contract is still undecided. The next build must restore the permanent
+`Tools` destination and describe an empty state honestly. It must not fabricate a tool
+marketplace, registry format or Backpack-specific permission system to fill the space.
 
-- Add a real application icon and correct product metadata.
-- Package and install the NSIS build on this machine.
-- Confirm creator data survives app update/reinstall.
-- Validate first launch, Backpack creation, restart persistence and Hermes use from the
-  installed build.
-- Remove or hide dead product controls and placeholder language encountered during the
-  walkthrough.
-- Capture screenshots of the empty gallery, creation flow, populated gallery, entered
-  Backpack and Hermes sidebar as acceptance evidence.
+## What is confirmed
 
-### Gate D — optional PowerToys enhancement
+- Basic is permanent and contains Backpacks, Tools and Settings.
+- Hermes is global and uses the existing Hermes product.
+- Backpacks are machine-wide environments or lenses, not data silos or project folders.
+- Backpacks may overlap and use the same files and Tools.
+- Adding a Backpack asks for its name and creates no contents.
+- Entering an empty Backpack shows the explicit warning above.
+- Tools are reusable machine capabilities and are not unnecessarily locked to Backpacks.
+- The creator will shape Backpacks and Tools incrementally while using Papers.
 
-Only begin this after Gates A–C pass.
+## What is not decided
 
-- Detect PowerToys without failing when absent.
-- Read its existing `%LOCALAPPDATA%\Microsoft\PowerToys\Workspaces\workspaces.json`
-  read-only and tolerate missing/corrupt files.
-- Let an existing scene be associated with a Backpack through a secondary setting.
-- Launch it using `PowerToys.WorkspacesLauncher.exe <workspace-id>`.
-- Offer the official Workspaces editor for creating or editing scenes; do not implement
-  window capture or placement.
-- If no scene exists, hide this feature or explain it in one sentence. The Backpack
-  remains fully usable.
+- What the first real Backpack contains.
+- What data structure represents Backpack contents.
+- What entering a non-empty Backpack changes visibly across the machine.
+- The exact Tool contract, discovery rules and enable/disable behavior.
+- The exact Data Source contract.
 
-The current machine has PowerToys installed but no `workspaces.json`, so the no-scene
-path is mandatory and is the default acceptance path.
+These are open product questions, not implementation tasks. An agent must not silently
+answer them by building familiar project, folder, canvas or plug-in abstractions.
 
-Verified upstream boundaries:
+## Next build — the usable base
 
-- [Hermes Desktop source and product surface](https://github.com/NousResearch/hermes-agent/tree/main/apps/desktop)
-- [PowerToys workspace storage reader](https://github.com/microsoft/PowerToys/blob/main/src/modules/Workspaces/WorkspacesCsharpLibrary/Data/WorkspacesStorage.cs)
-- [PowerToys official launch-by-ID service](https://github.com/microsoft/PowerToys/blob/main/src/modules/Workspaces/Workspaces.ModuleServices/WorkspaceService.cs)
+The next implementation is complete when the installed product provides:
 
-## 6. Release acceptance
+1. a stable permanent Basic control with Backpacks, Tools and Settings;
+2. the real existing Hermes interface globally as a sidebar, with optional separate
+   Hermes window;
+3. a Backpack list with `Add Backpack`, name-only creation and the exact empty warning;
+4. an honest Tools destination that preserves the global definition without pretending
+   the undecided Tool contract exists;
+5. persistent Backpack names and normal application settings;
+6. no folder picker, cover picker, working-directory change or fake Backpack canvas;
+7. no production Programs, Agent Runs, invocation validation or Papers-owned Hermes UI;
+8. a packaged and installed build that the creator can change incrementally through use.
 
-The agent, not the creator, establishes the engineering evidence. The creator evaluates
-the visible product.
+## Implementation instructions
 
-The release is ready only when all of the following are true in the installed build:
+- Remove the folder/cover-centered first-Backpack flow from production plans and UI.
+- Stop passing Backpack state or a Backpack-derived `--cwd` to Hermes Desktop. A manually
+  chosen Hermes context belongs to Hermes, not to Backpack entry.
+- Keep the real Hermes Dashboard `/chat` sidebar and plain `hermes desktop` pop-out.
+- Add or restore the permanent Basic navigation: Backpacks, Tools, Settings.
+- Make Backpack creation name-only and persist the name safely.
+- Track whether genuine Backpack contents exist. Until a real content contract is later
+  confirmed, every newly created Backpack is empty and `Enter` shows the warning.
+- Do not create placeholder content merely to bypass the warning.
+- Show Tools as a real permanent destination with an honest empty/undecided state. Do not
+  implement speculative Tool internals.
+- Keep historical program/ACP demonstrations behind `PAPERS_ENABLE_FIXTURES=1` and out
+  of all production screens.
+- Keep PowerToys optional and out of this build. It is neither a Backpack definition nor
+  a readiness requirement.
+- Reuse Hermes rather than recreating its chat, attachments, history, models, settings,
+  permissions or tools.
 
-1. A first-time user can create a Backpack without documentation.
-2. Name, optional folder and optional cover are sufficient; nothing technical is asked.
-3. The Backpack is visually recognizable and persists after restart.
-4. Entering it presents Hermes immediately without a Papers-owned agent workflow.
-5. A real prompt receives a real Hermes reply.
-6. A real image and file can be attached using Hermes's existing controls.
-7. Hermes Desktop opens against the Backpack folder and can modify a disposable file.
-8. The folder can be opened in the user's existing file manager.
-9. No programs, Runs, validation flows or Papers agent permissions are visible.
-10. Missing PowerToys or missing scenes does not degrade any of the above.
-11. The product works at 100%, 125% and 150% display scaling without clipped primary
-    controls.
-12. An installer, screenshots, test results and a concise non-technical usage guide are
-    present in the repository or release evidence.
+## Human acceptance
 
-## 7. Deferred until after first use
+In the installed build, the creator can verify every current promise without reading
+source code:
 
-- automatic desktop-scene capture or arrangement beyond optional PowerToys association;
-- tray/global hotkey switching;
-- multiple resource collections and per-object commands;
-- canvases, internal programs and plug-in architecture;
-- custom agent protocol, orchestration or run visualization;
-- synchronized sidebar/pop-out state beyond what Hermes itself provides;
-- speculative abstractions for other workspace providers.
+1. Basic is always reachable and visibly contains Backpacks, Tools and Settings.
+2. Hermes can open from the general shell and remains the same global product.
+3. Creating a Backpack asks only for a name.
+4. Creation does not ask for or create a folder, cover, canvas, Tool or conversation.
+5. Entering the new Backpack shows `Nothing here yet. Create something under “name”.`
+6. Entering it does not change Hermes's conversation or working directory.
+7. Tools is reachable globally and does not imply it belongs to a Backpack.
+8. No Programs, Runs, validation workflow or hardcoded demonstration buttons appear.
+9. Restarting Papers preserves the Backpack name.
+10. The creator can continue using global Hermes and request changes as real needs emerge.
 
-These are not rejected forever. They are forbidden from delaying the first useful
-Backpack.
+## Deferred on purpose
 
-## 8. Fixture policy
+- first Backpack contents;
+- automatic folder context;
+- visual covers and scene previews;
+- PowerToys integration;
+- Tool registry and lifecycle;
+- Data Source contract;
+- canvases, pages and generated Backpack features;
+- self-edit and specialized agent workflows beyond existing product integration.
 
-The historical program sandbox, ACP client, worker lanes, Repository Research, Visual
-Dashboard, Kill Test and Logseq flow are engineering fixtures only. Preserve their tests
-while cheap, load them only with `PAPERS_ENABLE_FIXTURES=1`, and do not extend them for
-product work.
+The absence of these is honest. Inventing them before use would make the product less
+auditable, not more finished.

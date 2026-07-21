@@ -1,25 +1,23 @@
 # Papers 3
 
-Papers is a visual switchboard for machine-wide working environments called
-**Backpacks**. Entering a Backpack can bring together existing applications,
-folders, documents, browser destinations and an optional Hermes workspace across
-the Windows desktop. Papers coordinates those products; it does not rebuild them.
+Papers is a personal layer across the Windows machine. Its permanent Basic control
+contains Backpacks, Tools and Settings. Backpacks are named machine-wide environments
+or lenses, not project folders or boxed applications. Tools are reusable capabilities
+across the system.
 
-Hermes is universal rather than a Backpack-specific program. Papers embeds the
-existing Hermes Dashboard `/chat` surface in a sidebar and can launch the existing
-Hermes Desktop application as a separate window. Hermes continues to own chat,
-attachments, sessions, history, models, settings, tools and approvals.
+Hermes is global rather than Backpack-specific. Papers embeds the existing Hermes
+Dashboard `/chat` surface and can launch Hermes Desktop separately. Backpack activity
+does not change Hermes's working directory, conversation or context automatically.
 
 The older Repository Research, Visual Dashboard and Kill Test programs are retained
 only as opt-in integration fixtures. They are not visible in the production app.
 
 ## Current status
 
-The aligned shell now provides visual Backpack selection, neutral machine-wide
-environment entry, optional folder association, the official Hermes chat sidebar,
-and Hermes Desktop pop-out. The immediate release target is the complete first-Backpack
-experience: compact creation, visual identity, real Hermes use, packaging and non-coder
-acceptance. PowerToys scene restoration is optional and cannot delay first use.
+The existing shell proves Hermes hosting and Backpack persistence, but still contains
+incorrect folder-oriented and simulated-environment assumptions. The next build restores
+Basic, makes creation name-only, shows an honest warning for empty Backpacks, restores the
+global Tools destination and removes all automatic Backpack context from Hermes.
 
 - [Product definition](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
