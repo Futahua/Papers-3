@@ -3,22 +3,26 @@
 The production shell has four concepts:
 
 ```text
-Papers
+Papers  (slim theme-matched title bar; native window controls only)
 ├── Basic
 │   ├── Backpacks
 │   ├── Tools
 │   └── Settings
-├── Global Hermes sidebar / Hermes window
+├── Global Hermes — the real Hermes Desktop, docked or detached (two SVG toggles)
 ├── Backpack names and future contents
 └── Global Tools (contract still open)
 ```
 
 ## Global Hermes boundary
 
-Papers hosts the existing Hermes Dashboard `/chat` and may open plain Hermes Desktop.
-Backpack interaction does not provide a working directory, start a conversation, reset a
-session or limit Hermes context. Hermes owns its own chat, attachments, models, settings,
-history and tools.
+Papers runs exactly one Hermes backend (`hermes dashboard` on 127.0.0.1:9119 with a
+Papers-generated session token) and shows the **real Hermes Desktop** against it in two
+placements — docked as a sidebar or detached as a window — controlled by two SVG toggles.
+There is no separate embedded Dashboard `/chat`. The Papers↔Hermes docking channel is a
+loopback seam authenticated with a per-launch shared token (see D-011…D-015 and
+`docs/evidence/hermes-batch/`). Backpack interaction does not provide a working directory,
+start a conversation, reset a session or limit Hermes context. Hermes owns its own chat,
+attachments, models, settings, history and tools.
 
 ## Backpack boundary
 

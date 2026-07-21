@@ -33,15 +33,22 @@ describe('production Papers shell', () => {
   it('shows Basic with Backpacks, Tools and Settings and hosts Hermes own chat', async () => {
     const { app } = launched;
 
-    // The permanent Basic control is present with the Papers wordmark.
+    // The shell uses a slim custom title bar (no wordmark, no File/Edit/View/
+    // Window menu). The permanent Basic control shows only the section name.
     await waitFor(
-      () => evalInHost<boolean>(app, `document.querySelector('.wordmark')?.textContent?.includes('Papers') === true`),
+      () =>
+        evalInHost<boolean>(
+          app,
+          `document.querySelector('.titlebar') !== null &&
+           document.querySelector('.wordmark') === null &&
+           (document.querySelector('.titlebar .pill-button')?.textContent ?? '').trim() === 'Backpacks'`,
+        ),
       20_000,
-      'Papers wordmark',
+      'slim title bar with section-name control (no wordmark)',
     );
 
-    // Open Basic and confirm it contains Backpacks, Tools and Settings.
-    await evalInHost(app, clickScript('.pill-button', 'Basic'));
+    // Open the Basic menu and confirm it contains Backpacks, Tools and Settings.
+    await evalInHost(app, clickScript('.pill-button', 'Backpacks'));
     await waitFor(
       () =>
         evalInHost<boolean>(
@@ -101,7 +108,7 @@ describe('production Papers shell', () => {
     );
 
     // Tools is a real permanent destination with an honest empty state.
-    await evalInHost(app, clickScript('.pill-button', 'Basic'));
+    await evalInHost(app, clickScript('.pill-button', 'Backpacks'));
     await evalInHost(app, clickScript('.basic-row', 'Tools'));
     await waitFor(
       () => evalInHost<boolean>(app, `document.querySelector('.tools-empty') !== null && document.querySelector('.pane-head h1')?.textContent === 'Tools'`),
@@ -112,7 +119,7 @@ describe('production Papers shell', () => {
     expect(await evalInHost<boolean>(app, `!document.querySelector('.tools-empty').textContent.includes('Backpack ')`)).toBe(true);
 
     // The Backpack name persists (still listed after navigating away and back).
-    await evalInHost(app, clickScript('.pill-button', 'Basic'));
+    await evalInHost(app, clickScript('.pill-button', 'Tools'));
     await evalInHost(app, clickScript('.basic-row', 'Backpacks'));
     await waitFor(
       () => evalInHost<boolean>(app, `(document.querySelector('.backpack-card .name')?.textContent ?? '') === 'Visual Writing'`),

@@ -1,7 +1,7 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, WebContentsView, app, session } from 'electron';
+import { BaseWindow, Menu, WebContentsView, app, session } from 'electron';
 import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -54,8 +54,10 @@ if (!process.env['PAPERS_TEST_USER_DATA'] && !app.requestSingleInstanceLock()) {
 let mainWindow: BaseWindow | null = null;
 let hostView: WebContentsView | null = null;
 
-/** Width of the Papers top bar band the docked Hermes window sits below. */
-const TOP_BAR_HEIGHT = 48;
+/** Height of the slim custom title bar / native window-controls overlay. */
+const TITLE_BAR_HEIGHT = 40;
+/** Papers band the docked Hermes window sits below (the slim title bar). */
+const TOP_BAR_HEIGHT = TITLE_BAR_HEIGHT;
 /** Fraction of Papers width the docked Hermes sidebar occupies (clamped). */
 const DOCK_WIDTH_FRACTION = 0.4;
 const DOCK_MIN_WIDTH = 380;
@@ -101,7 +103,15 @@ async function bootstrap(): Promise<void> {
     isKnownProgram: (programId) => catalog.programs.has(programId),
   });
 
+  // No native application menu — Papers has no File/Edit/View/Window menu; the
+  // shell is entirely the Papers UI.
+  Menu.setApplicationMenu(null);
+
   // ------------------------------------------------------------------ window
+  // Frameless with a slim title-bar overlay: the OS paints only the standard
+  // minimize / maximize / close controls flush in the top-right, and the rest
+  // of the top band is Papers' own theme-matched bar (with an invisible drag
+  // region). PAPERS_TITLEBAR_HEIGHT keeps the renderer and the overlay in sync.
   mainWindow = new BaseWindow({
     width: 1360,
     height: 860,
@@ -109,6 +119,12 @@ async function bootstrap(): Promise<void> {
     minHeight: 600,
     title: 'Papers',
     backgroundColor: '#efede7',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#efede7',
+      symbolColor: '#20201e',
+      height: TITLE_BAR_HEIGHT,
+    },
   });
 
   const preloadDir = path.join(app.getAppPath(), 'out', 'preload');
@@ -218,6 +234,13 @@ async function bootstrap(): Promise<void> {
     hermesSurface,
     runService: () => runService,
     paths,
+    setTitleBarOverlay: (color, symbolColor) => {
+      // Repaint the native window controls to match the active Papers theme.
+      mainWindow?.setTitleBarOverlay?.({ color, symbolColor, height: TITLE_BAR_HEIGHT });
+      // Keep the surrounding window background in step so a theme switch has no
+      // flash of the old colour behind the controls.
+      mainWindow?.setBackgroundColor(color);
+    },
   });
 
   registerCoreExecutors({ broker, paths, facade, stateService });

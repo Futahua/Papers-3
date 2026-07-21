@@ -14,7 +14,6 @@ export function SettingsPane(): React.JSX.Element {
     <div className="pane">
       <div className="pane-inner">
         <div className="pane-head">
-          <p className="eyebrow">Basic</p>
           <h1>Settings</h1>
           <p>Papers application settings. Hermes keeps its own settings inside the Hermes product.</p>
         </div>

@@ -29,19 +29,21 @@ exactly **two compact SVG toggles**: a sidebar toggle (dock/hide) and a window t
 (detach/hide). Each shows its active/inactive state, carries a tooltip and accessible name,
 and is a true toggle (clicking again hides without terminating Hermes or its session).
 
-Docked and detached are two placements of the same real Hermes, with **real
-native-window snap-docking** (2026-07-22 correction, replacing the earlier fake-drag
-overlay the creator rejected): Hermes reports its own window position to Papers over a
-loopback seam, so dragging the detached window toward the Papers edge shows a narrow edge
-highlight (no overlay covering Papers) and snaps it into the strip on release; dragging a
-docked window off detaches it; a docked window stays fully visible beside Papers (never
-behind) and follows Papers as it moves/resizes. The two SVG toggles remain as fallbacks.
+Docked and detached are two placements of the same real Hermes. Docking is a **deliberate
+action through the two SVG toggles** (2026-07-22, per creator preference — D-015): the
+sidebar toggle docks the real Hermes window flush against Papers, the window toggle detaches
+it. Dragging a detached Hermes never docks it — the creator can leave it wherever they drop
+it — so there is no drag activation zone and no edge highlight. Papers keeps a *docked*
+window aligned and raised above Papers (non-topmost, so it never covers other apps) as
+Papers moves/resizes, using the real window position reported over an authenticated loopback
+seam; dragging a docked window off its strip frees it.
 
-Evidence (installed product): a window dragged to x≈1102 snapped to the dock strip
-(x=1094, w=538); moving Papers 280→80 tracked Hermes 1094→894; docking survives restart.
-See `docs/evidence/hermes-batch/README.md`.
+Evidence (installed product): the two symbol controls dock/hide the real Hermes; the docked
+window stays fully visible beside Papers and tracks Papers on move/resize; it stays above
+Papers but goes behind another app when that app is focused (no global always-on-top). See
+`docs/evidence/hermes-batch/README.md`.
 
-Remaining for the creator: confirm the toggles and drag docking feel natural in use.
+Remaining for the creator: confirm the toggles feel natural in use.
 
 ## 3 — Define how far the Hermes interface can be customized
 

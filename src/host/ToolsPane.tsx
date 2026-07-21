@@ -12,7 +12,6 @@ export function ToolsPane(): React.JSX.Element {
     <div className="pane">
       <div className="pane-inner">
         <div className="pane-head">
-          <p className="eyebrow">Basic</p>
           <h1>Tools</h1>
           <p>
             Reusable capabilities available across your whole machine — installed programs,

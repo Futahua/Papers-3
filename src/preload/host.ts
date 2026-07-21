@@ -47,6 +47,8 @@ const api = {
     setProgramBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke('host:layout:set-program-bounds', bounds),
     setOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-overlay', active),
+    setTitleBarOverlay: (color: string, symbolColor: string) =>
+      ipcRenderer.invoke('host:layout:set-titlebar', color, symbolColor),
   },
 
   permissions: {

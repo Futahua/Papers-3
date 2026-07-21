@@ -7,19 +7,18 @@
  * `HERMES_DESKTOP_REMOTE_URL` + `HERMES_DESKTOP_REMOTE_TOKEN`. The desktop then
  * connects to the single backend and never spawns its own.
  *
- * Docking uses a real seam, not simulated drag. Papers passes
- * `HERMES_DESKTOP_PAPERS_DOCK_URL` (a loopback endpoint Papers listens on) plus
- * `HERMES_DESKTOP_PAPERS_DOCK_TOKEN` (a random shared secret). The Hermes main
- * process reports its OWN window bounds on every move/resize (phase 'move' while
- * dragging, 'settle' on release) and accepts `setBounds`/`focus`/`minimize`/
- * `raise` commands back. Both directions authenticate with the token (401 on
- * mismatch), cap the body size, and validate bounds; the token is never logged.
- * So Papers always knows where the real Hermes window is (DPI- and multi-
- * monitor-correct, from Electron `getBounds()`), shows a narrow dock highlight
- * only when the dragged window nears the Papers docking edge, docks on release,
- * detaches when the docked window is dragged away, and keeps a docked window
- * aligned + raised above Papers (via non-topmost moveTop, never global
- * always-on-top, so it does not cover unrelated apps) on Papers move/resize.
+ * Docking is a DELIBERATE action via the sidebar SVG toggle: dragging a
+ * detached Hermes window never docks it (the creator can leave it anywhere).
+ * Papers passes `HERMES_DESKTOP_PAPERS_DOCK_URL` (a loopback endpoint Papers
+ * listens on) plus `HERMES_DESKTOP_PAPERS_DOCK_TOKEN` (a random shared secret).
+ * The Hermes main process reports its OWN window bounds on move/resize and
+ * accepts `setBounds`/`focus`/`minimize`/`raise` commands back. Both directions
+ * authenticate with the token (401 on mismatch), cap the body size, and validate
+ * bounds; the token is never logged. So Papers always knows where the real
+ * Hermes window is (DPI- and multi-monitor-correct, from Electron `getBounds()`)
+ * to keep a DOCKED window aligned + raised above Papers (via non-topmost
+ * moveTop, never global always-on-top) on Papers move/resize; dragging a docked
+ * window off its strip frees it. There is no drag-to-dock and no edge highlight.
  *
  * Papers does NOT reimplement chat, sessions, attachments, models, settings,
  * tool rendering, approvals, voice or file browsing. It launches, focuses and
@@ -39,8 +38,6 @@ export interface HermesSurfaceState {
   placement: HermesPlacement;
   status: HermesStatus;
   detail?: string;
-  /** false = no highlight; true = show the narrow dock-edge highlight. */
-  dockHint?: boolean;
 }
 
 export interface SurfaceBounds {
@@ -61,9 +58,15 @@ const DASHBOARD_HOST = '127.0.0.1';
 const DASHBOARD_PORT = 9119;
 const DASHBOARD_ORIGIN = `http://${DASHBOARD_HOST}:${DASHBOARD_PORT}`;
 const BACKEND_START_TIMEOUT_MS = 120_000;
-/** How close (px) the dragged Hermes window's left edge must come to the Papers
- *  dock edge before we offer to dock. */
-const DOCK_THRESHOLD_PX = 90;
+/**
+ * Docking is a deliberate action via the sidebar SVG toggle — Papers never
+ * docks a window merely because it was dragged near the edge, so the creator can
+ * leave a detached Hermes anywhere. This slop only governs the opposite: while
+ * DOCKED, dragging the window more than this far (in DIP; Electron bounds are
+ * device-independent on Windows) off its strip frees it, so a drag wins over
+ * Papers' realignment instead of the window snapping back.
+ */
+const DOCK_DETACH_SLOP_DIP = 24;
 /** Hard cap on any loopback request body (reports and control replies are tiny). */
 const DOCK_MAX_BODY = 4096;
 
@@ -89,7 +92,6 @@ export class HermesSurface {
   private placement: HermesPlacement = 'closed';
   private status: HermesStatus = 'idle';
   private detail: string | undefined;
-  private dockHint = false;
 
   /** Papers-relative dock strip the docked window should occupy. */
   private dockBounds: SurfaceBounds | null = null;
@@ -103,9 +105,6 @@ export class HermesSurface {
   private reportPort: number | null = null;
   /** Timestamp until which we ignore move echoes caused by our own setBounds. */
   private suppressReportsUntil = 0;
-  /** Fires when the dragged window has stopped moving near the dock edge, so we
-   *  dock even if the OS never sends a terminal 'moved' event. */
-  private settleTimer: NodeJS.Timeout | null = null;
 
   /** Shared secret for the Papers<->Hermes loopback channel. Generated per
    *  desktop launch, passed to Hermes via env, required on every report and
@@ -121,7 +120,7 @@ export class HermesSurface {
   ) {}
 
   get state(): HermesSurfaceState {
-    const base: HermesSurfaceState = { placement: this.placement, status: this.status, dockHint: this.dockHint };
+    const base: HermesSurfaceState = { placement: this.placement, status: this.status };
     if (this.detail !== undefined) base.detail = this.detail;
     return base;
   }
@@ -129,7 +128,6 @@ export class HermesSurface {
   private setState(next: Partial<HermesSurfaceState>): void {
     if (next.placement !== undefined) this.placement = next.placement;
     if (next.status !== undefined) this.status = next.status;
-    if (next.dockHint !== undefined) this.dockHint = next.dockHint;
     if (this.status === 'error') {
       if (next.detail !== undefined) this.detail = next.detail;
     } else {
@@ -214,41 +212,20 @@ export class HermesSurface {
       this.desktopExited = true;
       this.controlPort = null;
       this.hermesRect = null;
-      this.setState({ placement: 'closed', status: 'idle', dockHint: false });
+      this.setState({ placement: 'closed', status: 'idle' });
       return;
     }
     if (msg.bounds) this.hermesRect = msg.bounds;
 
     const isSelfMove = Date.now() < this.suppressReportsUntil;
 
-    // While the user drags the DETACHED window, show a dock highlight when it
-    // nears the Papers dock edge, and dock it when the drag settles inside the
-    // threshold. We honour the OS 'moved' (settle) event AND a movement-stopped
-    // debounce, because a programmatic/edge-case move may only emit 'move'.
-    if (this.placement === 'detached' && !isSelfMove && msg.bounds) {
-      const near = this.nearDockEdge(msg.bounds);
-      const rect = msg.bounds;
-      if (msg.phase === 'move') {
-        if (near !== this.dockHint) this.setState({ dockHint: near });
-        if (this.settleTimer) clearTimeout(this.settleTimer);
-        this.settleTimer = setTimeout(() => {
-          this.settleTimer = null;
-          if (this.placement === 'detached' && this.nearDockEdge(rect)) {
-            this.setState({ dockHint: false });
-            void this.dock(this.dockBounds ?? this.defaultDockBounds());
-          }
-        }, 260);
-      } else if (msg.phase === 'settle') {
-        if (this.settleTimer) {
-          clearTimeout(this.settleTimer);
-          this.settleTimer = null;
-        }
-        this.setState({ dockHint: false });
-        if (near) void this.dock(this.dockBounds ?? this.defaultDockBounds());
-      }
-    }
+    // Dragging a DETACHED window does NOT dock it — the creator can leave Hermes
+    // wherever they drop it. Docking is a deliberate action via the sidebar SVG
+    // toggle. So there is no drag-to-dock and no edge highlight here.
 
-    // While DOCKED, if the user drags the window off the strip, detach.
+    // While DOCKED, dragging the window off the strip frees it (so a drag
+    // wins over Papers' realignment instead of the window snapping back). Only
+    // the toggle re-docks it.
     if (
       this.placement === 'docked' &&
       !isSelfMove &&
@@ -256,7 +233,7 @@ export class HermesSurface {
       (msg.phase === 'move' || msg.phase === 'settle') &&
       this.draggedOffStrip(msg.bounds)
     ) {
-      this.setState({ placement: 'detached', dockHint: false });
+      this.setState({ placement: 'detached' });
     }
   }
 
@@ -283,18 +260,13 @@ export class HermesSurface {
     return { x: Math.max(0, c.width - width), y: 48, width, height: Math.max(400, c.height - 48) };
   }
 
-  /** True when the dragged window's left edge is near the Papers dock edge. */
-  private nearDockEdge(rect: Rect): boolean {
-    const c = this.contentRect();
-    const dockLeftAbs = c.x + (this.dockBounds ?? this.defaultDockBounds()).x;
-    const verticallyOverlapping = rect.y < c.y + c.height && rect.y + rect.height > c.y;
-    return verticallyOverlapping && Math.abs(rect.x - dockLeftAbs) <= DOCK_THRESHOLD_PX;
-  }
-
   /** True when a docked window has been dragged meaningfully off its strip. */
   private draggedOffStrip(rect: Rect): boolean {
     const target = this.absoluteDockRect(this.dockBounds ?? this.defaultDockBounds());
-    return Math.abs(rect.x - target.x) > DOCK_THRESHOLD_PX || Math.abs(rect.y - target.y) > DOCK_THRESHOLD_PX;
+    return (
+      Math.abs(rect.x - target.x) > DOCK_DETACH_SLOP_DIP ||
+      Math.abs(rect.y - target.y) > DOCK_DETACH_SLOP_DIP
+    );
   }
 
   // --------------------------------------------------------- Hermes control
@@ -535,7 +507,7 @@ export class HermesSurface {
       if (this.desktopProcess === child) this.desktopProcess = null;
       this.controlPort = null;
       this.hermesRect = null;
-      this.setState({ placement: 'closed', status: 'idle', dockHint: false });
+      this.setState({ placement: 'closed', status: 'idle' });
     });
 
     const ok = await this.waitForControl(60_000);
@@ -559,7 +531,7 @@ export class HermesSurface {
           void this.moveHermesTo(this.absoluteDockRect(this.dockBounds ?? bounds), { raise: true });
         }
       }, 400);
-      this.setState({ placement: 'docked', status: 'ready', dockHint: false });
+      this.setState({ placement: 'docked', status: 'ready' });
     } catch (error) {
       this.setState({ status: 'error', detail: message(error) });
     }
@@ -585,7 +557,7 @@ export class HermesSurface {
   async hideDock(): Promise<void> {
     if (this.placement !== 'docked') return;
     await this.controlHermes({ op: 'minimize' });
-    this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle', dockHint: false });
+    this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle' });
   }
 
   /** Detach Hermes into a free-floating window. */
@@ -594,7 +566,7 @@ export class HermesSurface {
       this.setState({ status: 'starting' });
       await this.ensureDesktop();
       await this.controlHermes({ op: 'focus' });
-      this.setState({ placement: 'detached', status: 'ready', dockHint: false });
+      this.setState({ placement: 'detached', status: 'ready' });
     } catch (error) {
       this.setState({ status: 'error', detail: message(error) });
     }
@@ -605,16 +577,12 @@ export class HermesSurface {
   async hideDetached(): Promise<void> {
     if (this.placement !== 'detached') return;
     await this.controlHermes({ op: 'minimize' });
-    this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle', dockHint: false });
+    this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle' });
   }
 
   // ------------------------------------------------------------------ close
 
   shutdown(): void {
-    if (this.settleTimer) {
-      clearTimeout(this.settleTimer);
-      this.settleTimer = null;
-    }
     if (this.reportServer) {
       try {
         this.reportServer.close();
@@ -642,7 +610,7 @@ export class HermesSurface {
     this.backendProcess = null;
     this.backendToken = null;
     this.dockToken = null;
-    this.setState({ placement: 'closed', status: 'idle', dockHint: false });
+    this.setState({ placement: 'closed', status: 'idle' });
   }
 
   /** Informational: which display the real Hermes window currently sits on. */

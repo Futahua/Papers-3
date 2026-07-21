@@ -43,9 +43,6 @@ export interface HermesSurfaceStatus {
   placement: HermesPlacement;
   status: HermesStatusKind;
   detail?: string;
-  /** true → show the narrow dock-edge highlight (a detached window is being
-   *  dragged toward the Papers docking edge). */
-  dockHint?: boolean;
 }
 
 export interface HostErrorPayload {
@@ -85,6 +82,7 @@ interface HostBridge {
   layout: {
     setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setOverlayActive(active: boolean): Promise<void>;
+    setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
   };
   permissions: {
     list(): Promise<

@@ -28,6 +28,7 @@ export interface HostFacade {
 
   setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): void;
   setOverlayActive(active: boolean): void;
+  setTitleBarOverlay(color: string, symbolColor: string): void;
 
   listPermissions(): unknown;
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
@@ -61,6 +62,9 @@ const boundsSchema = z
     height: z.number().int().min(0).max(20_000),
   })
   .strict();
+
+/** Only #rrggbb / #rgb hex colours — the titleBarOverlay repaint takes no other form. */
+const colorSchema = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
 
 const idSchema = z.string().min(1).max(128);
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
@@ -114,6 +118,9 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:layout:set-overlay', (_e, active) =>
     facade.setOverlayActive(z.boolean().parse(active)),
+  );
+  handle('host:layout:set-titlebar', (_e, color, symbolColor) =>
+    facade.setTitleBarOverlay(colorSchema.parse(color), colorSchema.parse(symbolColor)),
   );
 
   handle('host:permissions:list', () => facade.listPermissions());

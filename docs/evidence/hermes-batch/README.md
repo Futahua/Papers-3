@@ -20,7 +20,16 @@ observable facts are recorded here.
 - The installed top bar shows exactly two compact SVG symbol controls (sidebar + window)
   and none of the old controls (dotted status pill, "Hermes window" button, "Hermes"
   button). Tooltips: "Dock Hermes as a sidebar" / "Open Hermes as a window".
-- **Real snap-docking (rebuilt 2026-07-22).** The earlier Papers-side "fake drag" overlay
+
+> **Superseded (2026-07-22, D-015): docking is toggle-only.** At the creator's request,
+> drag-to-dock was removed entirely — dragging a detached Hermes no longer docks it and
+> there is no activation zone or edge highlight. Docking/detaching is done only via the two
+> SVG toggles. Papers still keeps a *docked* window aligned + raised above Papers on
+> move/resize, and dragging a docked window off its strip frees it. The drag-docking notes
+> below are kept as a record of the intermediate iteration and its verification.
+
+- **Real snap-docking (intermediate iteration, later superseded).** The earlier Papers-side
+  "fake drag" overlay
   was removed. Hermes Desktop now reports its OWN window bounds to Papers over a loopback
   seam (`HERMES_DESKTOP_PAPERS_DOCK_URL`) on every move/resize, and accepts `setBounds`
   commands back. Verified end-to-end:
@@ -114,3 +123,21 @@ Verified by actually dragging the Hermes window by its real title bar (not progr
   it reproduces identically on clean `HEAD` with all Hermes-batch changes stashed, and this
   batch touches none of the Canvas runtime / program-restart path it exercises. It is a
   historical `PAPERS_ENABLE_FIXTURES=1` engineering fixture, not a creator-facing feature.
+
+## Shell chrome — slim theme-matched title bar (2026-07-22, D-014)
+
+The creator flagged the generic dark Electron title bar, the P/PAPERS wordmark, the
+File/Edit/View/Window menu, the stacked pane headers and the dividing lines as "ugly" and
+not part of Papers. Fixed and verified in the installed product:
+
+- The window is frameless (`titleBarStyle: 'hidden'`); the OS paints only the standard
+  minimize/maximize/close controls in a reserved top-right inset, coloured to match the
+  active Papers theme (`titleBarOverlay`, driven from `--titlebar-bg`/`--titlebar-symbol`).
+- No application menu (`Menu.setApplicationMenu(null)`), no wordmark. The Basic control
+  shows only the section name ("Backpacks"/"Tools"/"Settings").
+- The whole title-bar band is an invisible OS drag region; the window still moves normally
+  (verified: dragging the empty title-bar area moved the window from x=272 to x=-44). The
+  Basic menu still opens.
+- No dividing line under the title bar, and the Backpacks pane drops its heading,
+  description and horizontal divider so content begins right below the slim bar. The top now
+  reads as one continuous Papers surface rather than a desktop wrapper.

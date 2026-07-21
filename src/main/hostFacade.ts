@@ -45,6 +45,8 @@ export interface FacadeDeps {
   hermesSurface: HermesSurface;
   runService: () => AgentRunService;
   paths: PapersPaths;
+  /** Repaint the native window-controls overlay to match the active theme. */
+  setTitleBarOverlay: (color: string, symbolColor: string) => void;
 }
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
@@ -224,6 +226,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   setOverlayActive(active: boolean): void {
     this.deps.runtime.setOverlayVisible(!active);
+  }
+
+  /** Match the native min/maximize/close overlay to the active Papers theme. */
+  setTitleBarOverlay(color: string, symbolColor: string): void {
+    this.deps.setTitleBarOverlay(color, symbolColor);
   }
 
   // ----------------------------------------------------------- permissions

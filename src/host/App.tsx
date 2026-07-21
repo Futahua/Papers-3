@@ -8,8 +8,9 @@ import { EmptyBackpackWarning } from './EmptyBackpackWarning';
 import { HermesControls } from './HermesControls';
 
 /** Papers content-relative docked-Hermes rectangle. Must match the main
- *  process dock geometry so the host UI reserves the same strip. */
-const TOP_BAR_HEIGHT = 48;
+ *  process dock geometry (the slim title-bar height) so the host UI reserves
+ *  the same strip. */
+const TOP_BAR_HEIGHT = 40;
 function dockWidthOf(w: number): number {
   return Math.max(380, Math.min(620, Math.round(w * 0.4)));
 }
@@ -66,6 +67,23 @@ export function App(): React.JSX.Element {
     return () => subs.forEach((unsub) => unsub());
   }, [refreshBackpacks]);
 
+  // Match the native window-controls overlay to the active Papers theme, and
+  // follow the system light/dark preference so the title bar always reads as
+  // part of Papers. Papers ships a warm-paper light theme today; if a dark
+  // theme is added this simply follows it.
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const apply = (): void => {
+      const styles = getComputedStyle(document.documentElement);
+      const bar = styles.getPropertyValue('--titlebar-bg').trim() || '#efede7';
+      const symbol = styles.getPropertyValue('--titlebar-symbol').trim() || '#20201e';
+      void host().layout.setTitleBarOverlay(bar, symbol).catch(() => undefined);
+    };
+    apply();
+    media.addEventListener('change', apply);
+    return () => media.removeEventListener('change', apply);
+  }, []);
+
   // True toggles: dock/hide the sidebar and detach/hide the window. Hiding
   // never terminates Hermes; the same session returns on the next open.
   const toggleDock = useCallback(() => {
@@ -106,28 +124,24 @@ export function App(): React.JSX.Element {
   };
 
   const hermesBusy = hermes.status === 'starting';
-  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
-  useEffect(() => {
-    const onResize = (): void => setViewportWidth(window.innerWidth);
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
 
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="topbar-left" ref={basicRef}>
-          <div className="wordmark">
-            <span className="glyph">P</span>
-            Papers
-          </div>
+      {/* Slim title bar: the whole band is an invisible OS drag region (so the
+          window still moves), with interactive controls opting out. It replaces
+          the generic dark Electron title bar and menu; the native
+          minimize/maximize/close controls are painted by the OS in the reserved
+          top-right inset. No wordmark, no File/Edit/View/Window menu. */}
+      <header className="titlebar">
+        <div className="titlebar-left" ref={basicRef}>
           <button
             className={`pill-button${basicOpen ? ' active' : ''}`}
             aria-haspopup="menu"
             aria-expanded={basicOpen}
+            aria-label={`${VIEW_LABEL[view]} — open Basic menu`}
             onClick={() => setBasicOpen((v) => !v)}
           >
-            Basic · {VIEW_LABEL[view]}
+            {VIEW_LABEL[view]}
           </button>
           {basicOpen && (
             <div className="basic-menu" role="menu">
@@ -170,15 +184,17 @@ export function App(): React.JSX.Element {
           )}
         </div>
 
-        <div className="topbar-center" />
+        <div className="titlebar-drag" />
 
-        <div className="topbar-actions">
+        <div className="titlebar-actions">
           <HermesControls
             placement={hermes.placement}
             busy={hermesBusy}
             onToggleDock={toggleDock}
             onToggleWindow={toggleWindow}
           />
+          {/* Reserved inset the OS paints the native min/maximize/close over. */}
+          <div className="titlebar-window-controls" aria-hidden="true" />
         </div>
       </header>
 
@@ -190,16 +206,6 @@ export function App(): React.JSX.Element {
 
       {enteredBackpack && (
         <EmptyBackpackWarning backpackName={enteredBackpack.name} onDismiss={() => setEntered(null)} />
-      )}
-
-      {/* Narrow dock-edge highlight — shown only while a detached Hermes window
-          is dragged toward the Papers docking edge (driven by the real window's
-          reported position). Dropping the window there docks it; there is no
-          permanent overlay covering Papers. */}
-      {hermes.dockHint && (
-        <div className="hermes-dock-edge" style={{ width: dockWidthOf(viewportWidth) }} aria-hidden="true">
-          <span className="hermes-dock-edge-label">Release to dock Hermes</span>
-        </div>
       )}
 
       {hermes.status === 'error' && hermes.detail && (

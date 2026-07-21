@@ -137,3 +137,33 @@ theme data plus one narrow theme-loading seam in Hermes Desktop, on a tracking b
 run through a documented source-based rebuild command, never by overwriting the only
 working build. If theme loading fails, Hermes falls back to its stock appearance rather
 than failing to start.
+
+## D-014 — Slim theme-matched title bar, no wordmark or menu (2026-07-22)
+
+The creator rejected the generic dark Electron title bar, the P/PAPERS wordmark, the
+File/Edit/View/Window menu and the stacked decorative pane headers (eyebrow + pill + big
+title + description + divider) as "ugly" and not part of Papers.
+
+Decision: the Papers window is frameless (`titleBarStyle: 'hidden'`) with a slim
+theme-matched title bar. The OS paints only the standard minimize/maximize/close controls
+in a reserved top-right inset (`titleBarOverlay`, colour driven from the active Papers
+theme so the two always match); the rest of the band is Papers' own bar with an invisible
+drag region so the window still moves. There is no application menu
+(`Menu.setApplicationMenu(null)`) and no wordmark. The Basic control shows only the current
+section name ("Backpacks"/"Tools"/"Settings"). Panes start their content near the top: the
+Backpacks pane drops its heading, description and the horizontal divider entirely (the pill
+already labels the section); other panes keep a single heading with no divider.
+
+## D-015 — Docking is a deliberate toggle, not drag-to-dock (2026-07-22)
+
+An earlier iteration docked the real Hermes window when it was dragged to a Papers edge.
+The creator found even a tight edge-sliver activation unnecessary and preferred to leave a
+detached Hermes wherever it is dropped.
+
+Decision: docking and detaching are done only through the two SVG toggles (sidebar / window).
+Dragging a detached Hermes never docks it; there is no drag activation zone and no edge
+highlight. Papers still keeps a *docked* window aligned and raised above Papers (non-topmost
+moveTop) as Papers moves/resizes, and dragging a docked window off its strip frees it so the
+drag wins over realignment. This supersedes the "drag docking / dock target / edge sliver"
+parts of the earlier docking notes; the one-backend surface and non-topmost raise (D-011,
+D-012 and the security hardening) are unchanged.

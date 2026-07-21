@@ -30,6 +30,13 @@
   --shadow: 0 24px 70px rgba(38, 35, 29, 0.13);
   --mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
   --serif: Georgia, "Times New Roman", serif;
+
+  /* Slim title bar. --titlebar-bg / --titlebar-symbol are also read by the main
+     process to paint the native window-controls overlay so the two match. Must
+     stay a plain #hex (the overlay repaint accepts only hex). */
+  --titlebar-height: 40px;
+  --titlebar-bg: #efede7;
+  --titlebar-symbol: #20201e;
 }
 
 * {
@@ -73,7 +80,7 @@ input:focus-visible {
 .app {
   position: relative;
   display: grid;
-  grid-template-rows: 68px minmax(0, 1fr);
+  grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
   width: 100%;
   height: 100%;
   background:
@@ -83,53 +90,57 @@ input:focus-visible {
   background-size: 56px 56px;
 }
 
-/* ------------------------------------------------------------------ topbar */
+/* --------------------------------------------------------------- title bar */
+/* A slim bar that reads as part of Papers, not a generic desktop chrome. The
+   whole band is an OS drag region; interactive children opt out. The native
+   minimize/maximize/close controls are painted by the OS over the reserved
+   top-right inset. Colour follows the active Papers theme (--titlebar-bg). */
 
-.topbar {
+.titlebar {
+  -webkit-app-region: drag;
   z-index: 20;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  min-width: 0;
-  padding: 0 18px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(239, 237, 231, 0.9);
-  backdrop-filter: blur(20px);
-}
-
-.topbar-left {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
+  padding: 0 12px;
+  background: var(--titlebar-bg);
 }
 
-.wordmark {
+.titlebar-left {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--ink);
+  min-width: 0;
 }
 
-.wordmark .glyph {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  background: var(--ink);
-  color: var(--raised);
-  place-items: center;
-  font-family: var(--serif);
-  font-size: 13px;
+/* The flexible middle stays a drag handle so the window moves normally. */
+.titlebar-drag {
+  flex: 1;
+  align-self: stretch;
+  min-width: 0;
 }
 
-.topbar-center {
-  justify-self: center;
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+/* Reserved space under the OS-painted window controls (min/maximize/close). */
+.titlebar-window-controls {
+  width: 140px;
+  height: 1px;
+  pointer-events: none;
+}
+
+/* Anything clickable in the title bar must opt out of the drag region. */
+.titlebar .pill-button,
+.titlebar .basic-menu,
+.titlebar .hermes-controls,
+.titlebar button {
+  -webkit-app-region: no-drag;
 }
 
 .topbar-actions {
@@ -330,17 +341,15 @@ input:focus-visible {
 .pane-inner {
   width: min(880px, calc(100% - 64px));
   margin: 0 auto;
-  padding: 46px 0 90px;
+  padding: 28px 0 90px;
 }
 
 .pane-head {
-  margin-bottom: 26px;
-  padding-bottom: 22px;
-  border-bottom: 1px solid var(--line);
+  margin-bottom: 24px;
 }
 
 .pane-head h1 {
-  margin: 9px 0 0;
+  margin: 0;
   font-family: var(--serif);
   font-size: clamp(32px, 4vw, 46px);
   font-weight: 400;
@@ -825,43 +834,4 @@ input:focus-visible {
     animation: none !important;
     transition: none !important;
   }
-}
-
-/* ------------------------------------------------ Hermes dock-edge hint */
-/* A narrow highlight along the Papers docking edge, shown ONLY while the real
-   detached Hermes window is dragged near that edge. It never covers Papers
-   content — it is a thin guide strip that fades in, then the real window drops
-   into place. Docking itself is driven by the actual Hermes window position. */
-.hermes-dock-edge {
-  position: fixed;
-  top: 48px;
-  right: 0;
-  bottom: 0;
-  pointer-events: none;
-  z-index: 40;
-  border-left: 2px solid var(--green);
-  background: linear-gradient(
-    to right,
-    rgba(78, 112, 90, 0.16),
-    rgba(78, 112, 90, 0.05) 42%,
-    transparent
-  );
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  animation: hermes-dock-edge-in 120ms ease;
-}
-.hermes-dock-edge-label {
-  margin-top: 14px;
-  padding: 4px 12px;
-  border-radius: 999px;
-  background: var(--green);
-  color: #fbfaf6;
-  font-size: 12px;
-  font-weight: 650;
-  box-shadow: 0 6px 18px rgba(38, 35, 29, 0.16);
-}
-@keyframes hermes-dock-edge-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
 }
