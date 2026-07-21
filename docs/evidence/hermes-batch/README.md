@@ -15,24 +15,42 @@ observable facts are recorded here.
   only 9119 listening — no duplicate backend. The docked window is the polished React
   Hermes, connected ("Gateway ready").
 
-## Problem 2 — two SVG toggles, no duplicate controls
+## Problem 2 — two SVG toggles, real native-window snap-docking
 
 - The installed top bar shows exactly two compact SVG symbol controls (sidebar + window)
   and none of the old controls (dotted status pill, "Hermes window" button, "Hermes"
-  button).
-- Tooltips confirmed: "Dock Hermes as a sidebar" and "Open Hermes as a window". The sidebar
-  toggle showed an active (highlighted) state once Hermes was docked.
-- Drag docking: a grab handle on the docked edge (drag inward to detach) and a right-edge
-  dock target (bring a detached window back).
+  button). Tooltips: "Dock Hermes as a sidebar" / "Open Hermes as a window".
+- **Real snap-docking (rebuilt 2026-07-22).** The earlier Papers-side "fake drag" overlay
+  was removed. Hermes Desktop now reports its OWN window bounds to Papers over a loopback
+  seam (`HERMES_DESKTOP_PAPERS_DOCK_URL`) on every move/resize, and accepts `setBounds`
+  commands back. Verified end-to-end:
+  - A detached Hermes window dragged toward the Papers docking edge is detected by its real
+    reported position; a **narrow edge highlight** appears (no permanent overlay covering
+    Papers), and on settle Papers snaps it into the dock strip. Measured: window moved to
+    x≈1102 near the edge → Papers repositioned it to the exact strip x=1094, w=538.
+  - **Docked Hermes stays fully visible beside Papers** (kept above Papers via
+    always-on-top), never behind it.
+  - **Moving Papers keeps Hermes aligned**: Papers moved from x=280→80 and Hermes tracked
+    from x=1094→894, staying flush against the new dock edge.
+  - Dragging a docked window off the strip detaches it.
+  - The two SVG toggles remain as reliable fallback controls.
+- The seam round-trip was also proven headlessly (`seam-harness`): report-server bind →
+  Hermes `hello`+`move`+`focus` reports → Papers→Hermes `setBounds` control reply
+  `{ok:true}`.
 
 ## Problem 3 — Papers Light / Papers Dark skin
 
 - The theme picker (Appearance / Cmd-K → Change theme) lists **Papers** under both LIGHT and
   DARK, exactly where a built-in theme appears.
-- Selecting **Papers Dark** rendered the real Hermes Desktop in the deep navy-black skin
-  with warm, clearly-readable primary text and legible (no longer washed-out) secondary
-  text — same Hermes layout and density, only calmer and easier to read. The docked Hermes
-  beside Papers used this skin.
+- **Papers Dark** renders the real Hermes Desktop in the deep navy-black skin with warm,
+  clearly-readable primary text and legible secondary text — same Hermes layout and density.
+- **Papers Light (corrected 2026-07-22).** The earlier washed-out Light mode is fixed: the
+  background illustration/watermark is suppressed for Light, the canvas is an opaque
+  warm-neutral, and every text tier is re-mixed toward the canvas colour so it no longer
+  depends on background bleed. Verified with a real turn: the user message, the "Thinking"
+  label, the tool-call line ("Ran · printf …", with its "1.2s" timing), the reply with
+  inline-code path chips, the sidebar labels and session titles are all distinct and
+  readable. Dark was left unchanged.
 
 ## Problem 4 — updateable skin
 

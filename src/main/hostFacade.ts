@@ -350,8 +350,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   /** Hide the docked placement without terminating Hermes or its session. */
-  hideHermesDock(): void {
-    this.deps.hermesSurface.hideDock();
+  hideHermesDock(): Promise<void> {
+    return this.deps.hermesSurface.hideDock();
   }
 
   /** Detach Hermes into a free-floating window (same experience, same session). */
@@ -362,8 +362,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   /** Hide the detached window without terminating Hermes or its session. */
-  hideHermesWindow(): void {
-    this.deps.hermesSurface.hideDetached();
+  hideHermesWindow(): Promise<void> {
+    return this.deps.hermesSurface.hideDetached();
   }
 
   defaultRunCwd(backpackId: string): string {

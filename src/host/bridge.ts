@@ -43,6 +43,9 @@ export interface HermesSurfaceStatus {
   placement: HermesPlacement;
   status: HermesStatusKind;
   detail?: string;
+  /** true → show the narrow dock-edge highlight (a detached window is being
+   *  dragged toward the Papers docking edge). */
+  dockHint?: boolean;
 }
 
 export interface HostErrorPayload {

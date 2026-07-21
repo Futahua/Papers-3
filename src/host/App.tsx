@@ -6,10 +6,9 @@ import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
 import { EmptyBackpackWarning } from './EmptyBackpackWarning';
 import { HermesControls } from './HermesControls';
-import { HermesDockZone } from './HermesDockZone';
 
 /** Papers content-relative docked-Hermes rectangle. Must match the main
- *  process `dockBoundsFor` so the host UI reserves the same strip. */
+ *  process dock geometry so the host UI reserves the same strip. */
 const TOP_BAR_HEIGHT = 48;
 function dockWidthOf(w: number): number {
   return Math.max(380, Math.min(620, Math.round(w * 0.4)));
@@ -193,12 +192,15 @@ export function App(): React.JSX.Element {
         <EmptyBackpackWarning backpackName={enteredBackpack.name} onDismiss={() => setEntered(null)} />
       )}
 
-      <HermesDockZone
-        placement={hermes.placement}
-        dockWidth={dockWidthOf(viewportWidth)}
-        onDetach={() => void host().hermes.showWindow().then(setHermes)}
-        onDock={() => void host().hermes.dock(dockBounds()).then(setHermes)}
-      />
+      {/* Narrow dock-edge highlight — shown only while a detached Hermes window
+          is dragged toward the Papers docking edge (driven by the real window's
+          reported position). Dropping the window there docks it; there is no
+          permanent overlay covering Papers. */}
+      {hermes.dockHint && (
+        <div className="hermes-dock-edge" style={{ width: dockWidthOf(viewportWidth) }} aria-hidden="true">
+          <span className="hermes-dock-edge-label">Release to dock Hermes</span>
+        </div>
+      )}
 
       {hermes.status === 'error' && hermes.detail && (
         <div className="error-banner hermes-error">

@@ -48,9 +48,9 @@ export interface HostFacade {
   hermesSurfaceStatus(): unknown;
   dockHermes(bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
   setHermesDockBounds(bounds: { x: number; y: number; width: number; height: number }): void;
-  hideHermesDock(): void;
+  hideHermesDock(): Promise<void>;
   showHermesWindow(): Promise<unknown>;
-  hideHermesWindow(): void;
+  hideHermesWindow(): Promise<void>;
 }
 
 const boundsSchema = z
