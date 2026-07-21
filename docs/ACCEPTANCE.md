@@ -22,12 +22,15 @@ not proof of product usefulness.
 
 ## Required before calling the product ready
 
-- Associate and launch real PowerToys Workspaces scenes.
-- Replace schematic Backpack previews with useful scene previews.
-- Add unobtrusive tray/global switching behavior.
+- Complete the compact name/folder/cover creation flow.
+- Replace schematic previews and placeholder text with useful Backpack identity.
+- Open Hermes automatically on first entry and remember its later visibility.
 - Exercise file and image attachment in the embedded Hermes surface manually.
 - Exercise a real file modification in a selected folder through Hermes Desktop.
-- Verify sidebar-to-pop-out continuity to the degree Hermes itself supports.
+- Add safe `Open folder` behavior, a real application icon and final product metadata.
 - Install the package and complete the plan's non-coder human acceptance script.
+
+PowerToys scene association and tray/global switching are optional post-release work.
+Their absence must not block the first useful Backpack.
 
 No source-code review by the creator is required for acceptance.

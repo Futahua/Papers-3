@@ -12,7 +12,7 @@ conversation or automatic AI context. It may involve:
 
 - existing application windows across one or more monitors;
 - folders, files and browser destinations;
-- a PowerToys Workspaces desktop scene;
+- an optional PowerToys Workspaces desktop scene;
 - a Hermes conversation or workspace;
 - an optional Papers-owned surface when no existing product fits.
 
@@ -42,7 +42,7 @@ inside Hermes is sufficient. A creator can also name paths directly in the promp
 Papers owns:
 
 - visual Backpack identity, selection and persistence;
-- associations to existing workspace scenes and resources;
+- associations to existing resources and optional workspace scenes;
 - entering, leaving, restoring and switching environments;
 - hosting or launching existing product surfaces.
 
@@ -51,14 +51,16 @@ Papers does not own:
 - chat, session history, attachments, models, tools, approvals or agent settings;
 - file browsers, editors, document production or browser automation already supplied
   by installed products;
-- window capture and arrangement already supplied by PowerToys Workspaces;
+- optional window capture and arrangement already supplied by PowerToys Workspaces;
 - a modular application ecosystem as a prerequisite for ordinary use.
 
 ## Visual direction
 
 The furthest-back Papers view is a gallery of Backpacks represented by recognizable
-desktop scenes, not a text-heavy project list. Entering one moves into the real
-desktop environment rather than navigating into another application-shaped box.
+covers or restrained generated identities, not a text-heavy project list. An optional
+desktop scene can enrich that identity later, but is not what makes a Backpack real.
+Entering one moves into its working context rather than a program launcher.
 
-An empty Backpack is valid and deliberately neutral. A canvas is an optional surface,
+An empty Backpack is valid. Its first useful form is a recognizable cover, optional
+folder and immediate Hermes access. A canvas and desktop scene are optional surfaces,
 never the definition of a Backpack.

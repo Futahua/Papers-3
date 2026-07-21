@@ -5,13 +5,13 @@
 ```text
 Papers Electron shell
 ├── BackpackRegistry
-│   └── names, archive state, last-entered state, optional folder association
-├── visual Backpack chooser / neutral environment surface
+│   └── identity, archive state, optional folder/cover, Hermes visibility
+├── visual Backpack chooser / entered environment
 ├── HermesSurface (thin adapter)
 │   ├── sidebar → existing `hermes dashboard` at http://127.0.0.1:9119/chat
 │   └── pop-out → existing `hermes desktop [--cwd <folder>]`
-└── desktop scenes (next slice)
-    └── Microsoft PowerToys Workspaces association and launch
+└── optional desktop scene adapter
+    └── read PowerToys scenes; launch selected scene by ID
 ```
 
 Papers hosts Hermes Dashboard in a sandboxed `WebContentsView`. It does not parse,
@@ -20,6 +20,11 @@ which shares Hermes's own configuration, sessions, skills and memory.
 
 The optional folder stored on a Backpack is passed to Hermes Desktop as its initial
 working directory. It is an association, not an implicit dump of Backpack content.
+
+PowerToys is not part of the production critical path. When present, Papers may read
+`%LOCALAPPDATA%\Microsoft\PowerToys\Workspaces\workspaces.json` without modifying it
+and launch `PowerToys.WorkspacesLauncher.exe <workspace-id>`. Missing PowerToys, a
+missing scene file or no saved scenes leaves the Backpack fully functional.
 
 ## Existing-product rule
 
@@ -43,6 +48,7 @@ effort to determine the product.
 
 ## Persistence
 
-Creator-owned Papers metadata remains under `%APPDATA%\papers3\PapersData`. Hermes data
-remains in Hermes's own home. PowerToys scene definitions remain owned by PowerToys.
-Papers stores references, not duplicate databases or imported copies.
+Creator-owned Papers metadata remains under `%APPDATA%\papers3\PapersData`. Cover paths
+refer to creator-owned images; Papers does not copy them. Hermes data remains in Hermes's
+own home. PowerToys scene definitions remain owned by PowerToys. Papers stores references,
+not duplicate databases or imported copies.

@@ -29,11 +29,13 @@ Decision: production Papers embeds the dashboard chat and launches Hermes Deskto
 does not own chat messages, session state, agent approvals or settings. The ACP integration
 is a fixture only.
 
-## D-004 — Desktop scenes delegate to PowerToys Workspaces (2026-07-21)
+## D-004 — Desktop scenes are an optional PowerToys enhancement (2026-07-21)
 
 The creator's Windows machine already has Microsoft PowerToys Workspaces, including its
 editor, snapshot tool, launcher and window arranger. Papers will associate Backpacks with
-PowerToys scenes rather than implement window capture, application launch or placement.
+existing PowerToys scenes rather than implement window capture, application launch or
+placement. A Backpack never requires PowerToys or a scene. First use, Hermes, folder
+context and visual identity must work when PowerToys is missing or has no saved scenes.
 
 ## D-005 — Historical programs are opt-in fixtures (2026-07-21)
 
@@ -46,3 +48,10 @@ is enabled only with `PAPERS_ENABLE_FIXTURES=1` for regression testing.
 Automated tests establish engineering confidence but cannot establish usefulness. Release
 readiness requires the non-coder human acceptance script in the authoritative plan. Papers
 must not call itself complete while its primary everyday workflow remains absent.
+
+## D-007 — First useful Backpack outranks platform completeness (2026-07-21)
+
+The immediate release is a compact creation flow, visual Backpack identity, optional
+folder, real Hermes sidebar/Desktop, persistence and installed-build acceptance. Tray
+switching, scene restoration, resource collections and future extensibility are deferred
+when they threaten this path. No abstraction or optional integration is a release outcome.

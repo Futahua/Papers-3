@@ -17,13 +17,15 @@ only as opt-in integration fixtures. They are not visible in the production app.
 
 The aligned shell now provides visual Backpack selection, neutral machine-wide
 environment entry, optional folder association, the official Hermes chat sidebar,
-and Hermes Desktop pop-out. Desktop-scene capture/launch is the next slice and will
-delegate to Microsoft PowerToys Workspaces rather than implement window management.
+and Hermes Desktop pop-out. The immediate release target is the complete first-Backpack
+experience: compact creation, visual identity, real Hermes use, packaging and non-coder
+acceptance. PowerToys scene restoration is optional and cannot delay first use.
 
 - [Product definition](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [User guide](docs/USER_GUIDE.md)
 - [Implementation plan](PAPERS_3_IMPLEMENTATION_PLAN.md)
+- [Implementation-agent pickup prompt](AGENT_PICKUP_PROMPT.md)
 - [Acceptance status](docs/ACCEPTANCE.md)
 
 ```powershell

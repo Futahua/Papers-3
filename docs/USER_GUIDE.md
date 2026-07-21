@@ -2,8 +2,9 @@
 
 ## Backpacks
 
-The opening view shows your Backpacks as visual working environments. Create one,
-enter it, rename it or archive it. A Backpack does not have to contain a Papers canvas.
+The opening view shows your Backpacks as visual working environments. Create one with a
+name and, if useful, choose a folder and cover image. Enter it, rename it or archive it.
+A Backpack does not need a canvas or saved desktop scene.
 
 Inside a Backpack, **Choose folder** associates an optional working folder. Papers does
 not scan or import that folder. **Hermes window** passes it to Hermes Desktop as the
@@ -23,11 +24,11 @@ tool activity and approvals are Hermes features and remain in Hermes.
 Papers does not require an additional preview or structured workflow before sending a
 normal prompt.
 
-## Desktop environments
+## Optional desktop environments
 
-The current build establishes the Backpack identity and Hermes integration. The next
-product slice associates each Backpack with a Microsoft PowerToys Workspaces scene so
-entering it can launch and arrange existing applications across the desktop.
+Papers can later associate a Backpack with an existing Microsoft PowerToys Workspaces
+scene to launch and arrange applications. This is optional. Creating and using a Backpack
+with Hermes never requires PowerToys.
 
 ## Test fixtures
 
