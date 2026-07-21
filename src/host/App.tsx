@@ -150,7 +150,7 @@ export function App(): React.JSX.Element {
         <div className="topbar-center" />
 
         <div className="topbar-actions">
-          <span className={`hermes-badge${hermesReady ? ' ready' : hermes.state === 'unavailable' || hermes.state === 'disconnected' ? '' : ''}`}>
+          <span className={`hermes-badge${hermesReady ? ' ready' : ''}`}>
             <i />
             {hermesLabel}
           </span>
