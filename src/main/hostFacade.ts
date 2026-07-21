@@ -45,6 +45,8 @@ export interface FacadeDeps {
   hermesSurface: HermesSurface;
   runService: () => AgentRunService;
   paths: PapersPaths;
+  /** Repaint the native window-controls overlay to match the active theme. */
+  setTitleBarOverlay: (color: string, symbolColor: string) => void;
 }
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
@@ -226,6 +228,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.runtime.setOverlayVisible(!active);
   }
 
+  /** Match the native min/maximize/close overlay to the active Papers theme. */
+  setTitleBarOverlay(color: string, symbolColor: string): void {
+    this.deps.setTitleBarOverlay(color, symbolColor);
+  }
+
   // ----------------------------------------------------------- permissions
   listPermissions(): unknown {
     return this.deps.permissionStore.listGrants();
@@ -339,22 +346,31 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.hermesSurface.state;
   }
 
-  showHermesSurface(bounds: SurfaceBounds): Promise<unknown> {
-    return this.deps.hermesSurface.show(bounds);
+  /** Dock the real Hermes Desktop window at Papers-relative bounds. */
+  dockHermes(bounds: SurfaceBounds): Promise<unknown> {
+    return this.deps.hermesSurface.dock(bounds);
   }
 
-  hideHermesSurface(): void {
-    this.deps.hermesSurface.hide();
+  /** Keep the docked Hermes window aligned as Papers moves/resizes. */
+  setHermesDockBounds(bounds: SurfaceBounds): void {
+    this.deps.hermesSurface.setDockBounds(bounds);
   }
 
-  setHermesSurfaceBounds(bounds: SurfaceBounds): void {
-    this.deps.hermesSurface.setBounds(bounds);
+  /** Hide the docked placement without terminating Hermes or its session. */
+  hideHermesDock(): Promise<void> {
+    return this.deps.hermesSurface.hideDock();
   }
 
-  async openHermesDesktop(): Promise<unknown> {
+  /** Detach Hermes into a free-floating window (same experience, same session). */
+  showHermesWindow(): Promise<unknown> {
     // Hermes stays global. Entering a Backpack never changes Hermes's working
-    // directory, so Desktop launches with no Backpack-derived context.
-    return this.deps.hermesSurface.openDesktop();
+    // directory, so the window launches with no Backpack-derived context.
+    return this.deps.hermesSurface.showDetached();
+  }
+
+  /** Hide the detached window without terminating Hermes or its session. */
+  hideHermesWindow(): Promise<void> {
+    return this.deps.hermesSurface.hideDetached();
   }
 
   defaultRunCwd(backpackId: string): string {

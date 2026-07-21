@@ -45,16 +45,6 @@ export function BackpacksPane(props: {
   return (
     <div className="pane">
       <div className="pane-inner">
-        <div className="pane-head">
-          <p className="eyebrow">Basic</p>
-          <h1>Backpacks</h1>
-          <p>
-            Named environments that reach across your whole machine, its files, knowledge and Tools.
-            A Backpack is not a folder or a boxed application — it is a way of working you shape
-            through use.
-          </p>
-        </div>
-
         {error && <div className="inline-error">{error}</div>}
 
         <div className="create-row">

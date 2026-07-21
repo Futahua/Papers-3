@@ -95,3 +95,75 @@ secret status, concurrency limits and recovery.
 Hermes uses the `HERMES.md` in the Papers master folder as its native pickup instruction
 when the creator points Hermes at that folder. Papers does not automatically change the
 global Hermes working directory to force this context.
+
+## D-011 — One Hermes backend, real Hermes Desktop in both placements (2026-07-21)
+
+The prior build ran two Hermes backends for one experience: Papers embedded the terminal
+`hermes dashboard /chat` (port 9119) in its sidebar, while `hermes desktop` spawned a
+second identical `hermes dashboard` backend on another port behind the polished React UI.
+Same data, two frontends, two Python backends. This was the central defect (PROBLEMS.md 1).
+
+Proven from the Hermes Desktop source (`apps/desktop/electron/main.cjs`): the desktop's
+own local backend is literally `hermes dashboard --no-open --host 127.0.0.1 --port <n>`
+with a per-launch `HERMES_DASHBOARD_SESSION_TOKEN`, and the desktop honours
+`HERMES_DESKTOP_REMOTE_URL` + `HERMES_DESKTOP_REMOTE_TOKEN` to connect to an existing
+token-auth backend instead of spawning its own.
+
+Decision: Papers starts exactly one `hermes dashboard` backend (127.0.0.1:9119) with a
+Papers-generated session token, then launches the real Hermes Desktop app pointed at that
+backend via the two env vars. Both the docked sidebar placement and the detached window
+are the same real Hermes Desktop frontend on the same single backend. The terminal `/chat`
+embedding is removed entirely.
+
+## D-012 — Papers-managed snap-dock, not window reparenting (2026-07-21)
+
+Hermes Desktop exposes no companion/dock mode and no renderer set-bounds IPC; it is a
+frameless top-level Electron `BrowserWindow` in its own process. Native cross-process
+window reparenting on Windows (`SetParent`) is fragile through focus, keyboard input, DPI,
+sleep/wake and crash — the handoff permits it only if demonstrably stable.
+
+Decision (creator-approved): Papers manages the real Hermes Desktop window as a placement
+it positions flush against its docking edge ("docked sidebar"), keeps aligned on Papers
+move/resize, and offers a visible dock target when the detached window is dragged back.
+Hermes remains a real, independently-stable window the whole time; docking never destroys
+the session. This is the handoff's "Papers-managed Hermes window that visually docks
+without cloning the UI."
+
+## D-013 — Restrained skin as external theme data on a Hermes tracking branch (2026-07-21)
+
+The Papers Light/Dark skin (HERMES_SKIN.md, PROBLEMS.md 3-4) lives as versioned external
+theme data plus one narrow theme-loading seam in Hermes Desktop, on a tracking branch of
+`NousResearch/hermes-agent` that can be rebased onto selected upstream releases. Updates
+run through a documented source-based rebuild command, never by overwriting the only
+working build. If theme loading fails, Hermes falls back to its stock appearance rather
+than failing to start.
+
+## D-014 — Slim theme-matched title bar, no wordmark or menu (2026-07-22)
+
+The creator rejected the generic dark Electron title bar, the P/PAPERS wordmark, the
+File/Edit/View/Window menu and the stacked decorative pane headers (eyebrow + pill + big
+title + description + divider) as "ugly" and not part of Papers.
+
+Decision: the Papers window is frameless (`titleBarStyle: 'hidden'`) with a slim
+theme-matched title bar. The OS paints only the standard minimize/maximize/close controls
+in a reserved top-right inset (`titleBarOverlay`, colour driven from the active Papers
+theme so the two always match); the rest of the band is Papers' own bar with an invisible
+drag region so the window still moves. There is no application menu
+(`Menu.setApplicationMenu(null)`) and no wordmark. The Basic control shows only the current
+section name ("Backpacks"/"Tools"/"Settings"). Panes start their content near the top: the
+Backpacks pane drops its heading, description and the horizontal divider entirely (the pill
+already labels the section); other panes keep a single heading with no divider.
+
+## D-015 — Docking is a deliberate toggle, not drag-to-dock (2026-07-22)
+
+An earlier iteration docked the real Hermes window when it was dragged to a Papers edge.
+The creator found even a tight edge-sliver activation unnecessary and preferred to leave a
+detached Hermes wherever it is dropped.
+
+Decision: docking and detaching are done only through the two SVG toggles (sidebar / window).
+Dragging a detached Hermes never docks it; there is no drag activation zone and no edge
+highlight. Papers still keeps a *docked* window aligned and raised above Papers (non-topmost
+moveTop) as Papers moves/resizes, and dragging a docked window off its strip frees it so the
+drag wins over realignment. This supersedes the "drag docking / dock target / edge sliver"
+parts of the earlier docking notes; the one-backend surface and non-topmost raise (D-011,
+D-012 and the security hardening) are unchanged.

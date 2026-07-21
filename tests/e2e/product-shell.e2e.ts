@@ -5,7 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { clickScript, evalInHost, launchPapers, programViewCount, waitFor, type LaunchedApp } from './helpers';
+import { clickScript, evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
 
 let launched: LaunchedApp;
 
@@ -33,15 +33,22 @@ describe('production Papers shell', () => {
   it('shows Basic with Backpacks, Tools and Settings and hosts Hermes own chat', async () => {
     const { app } = launched;
 
-    // The permanent Basic control is present with the Papers wordmark.
+    // The shell uses a slim custom title bar (no wordmark, no File/Edit/View/
+    // Window menu). The permanent Basic control shows only the section name.
     await waitFor(
-      () => evalInHost<boolean>(app, `document.querySelector('.wordmark')?.textContent?.includes('Papers') === true`),
+      () =>
+        evalInHost<boolean>(
+          app,
+          `document.querySelector('.titlebar') !== null &&
+           document.querySelector('.wordmark') === null &&
+           (document.querySelector('.titlebar .pill-button')?.textContent ?? '').trim() === 'Backpacks'`,
+        ),
       20_000,
-      'Papers wordmark',
+      'slim title bar with section-name control (no wordmark)',
     );
 
-    // Open Basic and confirm it contains Backpacks, Tools and Settings.
-    await evalInHost(app, clickScript('.pill-button', 'Basic'));
+    // Open the Basic menu and confirm it contains Backpacks, Tools and Settings.
+    await evalInHost(app, clickScript('.pill-button', 'Backpacks'));
     await waitFor(
       () =>
         evalInHost<boolean>(
@@ -101,7 +108,7 @@ describe('production Papers shell', () => {
     );
 
     // Tools is a real permanent destination with an honest empty state.
-    await evalInHost(app, clickScript('.pill-button', 'Basic'));
+    await evalInHost(app, clickScript('.pill-button', 'Backpacks'));
     await evalInHost(app, clickScript('.basic-row', 'Tools'));
     await waitFor(
       () => evalInHost<boolean>(app, `document.querySelector('.tools-empty') !== null && document.querySelector('.pane-head h1')?.textContent === 'Tools'`),
@@ -112,7 +119,7 @@ describe('production Papers shell', () => {
     expect(await evalInHost<boolean>(app, `!document.querySelector('.tools-empty').textContent.includes('Backpack ')`)).toBe(true);
 
     // The Backpack name persists (still listed after navigating away and back).
-    await evalInHost(app, clickScript('.pill-button', 'Basic'));
+    await evalInHost(app, clickScript('.pill-button', 'Tools'));
     await evalInHost(app, clickScript('.basic-row', 'Backpacks'));
     await waitFor(
       () => evalInHost<boolean>(app, `(document.querySelector('.backpack-card .name')?.textContent ?? '') === 'Visual Writing'`),
@@ -120,17 +127,36 @@ describe('production Papers shell', () => {
       'Backpack name retained',
     );
 
-    // Hermes opens globally from the shell and embeds Hermes own /chat surface.
-    await evalInHost(app, clickScript('.pill-button.solid', 'Hermes'));
-    await waitFor(async () => (await programViewCount(app)) === 1, 150_000, 'official Hermes view', 500);
-    const hermesUrl = await app.evaluate(async ({ BaseWindow }) => {
-      const win = BaseWindow.getAllWindows()[0];
-      const views = win?.contentView.children as Electron.WebContentsView[];
-      return views.at(-1)?.webContents.getURL() ?? '';
-    });
-    expect(hermesUrl).toMatch(/^http:\/\/127\.0\.0\.1:9119\/chat/);
+    // Hermes controls: exactly two compact SVG toggles (sidebar + window),
+    // and NONE of the old redundant controls — no dotted status pill, no
+    // "Hermes window" / "Hermes" text buttons, no embedded /chat surface.
+    expect(
+      await evalInHost<number>(app, `document.querySelectorAll('.hermes-controls .hermes-toggle').length`),
+    ).toBe(2);
 
-    await evalInHost(app, clickScript('.hermes-dock button', 'Close'));
-    await waitFor(async () => (await programViewCount(app)) === 0, 10_000, 'Hermes view closed');
+    // Each toggle carries an accessible name and starts inactive (Hermes closed).
+    const toggleState = await evalInHost<{ labels: string[]; pressed: string[] }>(
+      app,
+      `(() => {
+        const btns = [...document.querySelectorAll('.hermes-controls .hermes-toggle')];
+        return {
+          labels: btns.map((b) => b.getAttribute('aria-label') ?? ''),
+          pressed: btns.map((b) => b.getAttribute('aria-pressed') ?? ''),
+        };
+      })()`,
+    );
+    expect(toggleState.labels.some((l) => /sidebar/i.test(l))).toBe(true);
+    expect(toggleState.labels.some((l) => /window/i.test(l))).toBe(true);
+    expect(toggleState.pressed).toEqual(['false', 'false']);
+
+    // The obsolete duplicate Hermes UI is gone from the shell.
+    expect(
+      await evalInHost<boolean>(
+        app,
+        `document.querySelector('.hermes-badge') === null &&
+         document.querySelector('.hermes-dock') === null &&
+         ![...document.querySelectorAll('button')].some((b) => (b.textContent ?? '').trim() === 'Hermes window')`,
+      ),
+    ).toBe(true);
   }, 240_000);
 });

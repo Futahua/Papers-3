@@ -47,6 +47,8 @@ const api = {
     setProgramBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke('host:layout:set-program-bounds', bounds),
     setOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-overlay', active),
+    setTitleBarOverlay: (color: string, symbolColor: string) =>
+      ipcRenderer.invoke('host:layout:set-titlebar', color, symbolColor),
   },
 
   permissions: {
@@ -75,12 +77,15 @@ const api = {
   hermes: {
     health: () => ipcRenderer.invoke('host:hermes:health'),
     surfaceStatus: () => ipcRenderer.invoke('host:hermes:surface-status'),
-    show: (bounds: { x: number; y: number; width: number; height: number }) =>
-      ipcRenderer.invoke('host:hermes:show', bounds),
-    hide: () => ipcRenderer.invoke('host:hermes:hide'),
-    setBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
-      ipcRenderer.invoke('host:hermes:set-bounds', bounds),
-    openDesktop: () => ipcRenderer.invoke('host:hermes:open-desktop'),
+    // Dock/detach the one real Hermes Desktop window. Docked and detached are
+    // placements of the same experience; hiding never terminates the session.
+    dock: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('host:hermes:dock', bounds),
+    setDockBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('host:hermes:set-dock-bounds', bounds),
+    hideDock: () => ipcRenderer.invoke('host:hermes:hide-dock'),
+    showWindow: () => ipcRenderer.invoke('host:hermes:show-window'),
+    hideWindow: () => ipcRenderer.invoke('host:hermes:hide-window'),
   },
 
   events: {
@@ -92,6 +97,7 @@ const api = {
     onInvocationPreview: subscribe('host:event:invocation-preview'),
     onRunsChanged: subscribe('host:event:runs-changed'),
     onHermesHealth: subscribe('host:event:hermes-health'),
+    onHermesSurface: subscribe('host:event:hermes-surface'),
     onHostError: subscribe('host:event:host-error'),
   },
 };

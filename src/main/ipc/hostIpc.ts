@@ -28,6 +28,7 @@ export interface HostFacade {
 
   setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): void;
   setOverlayActive(active: boolean): void;
+  setTitleBarOverlay(color: string, symbolColor: string): void;
 
   listPermissions(): unknown;
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
@@ -46,10 +47,11 @@ export interface HostFacade {
 
   hermesHealth(): unknown;
   hermesSurfaceStatus(): unknown;
-  showHermesSurface(bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
-  hideHermesSurface(): void;
-  setHermesSurfaceBounds(bounds: { x: number; y: number; width: number; height: number }): void;
-  openHermesDesktop(): Promise<unknown>;
+  dockHermes(bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
+  setHermesDockBounds(bounds: { x: number; y: number; width: number; height: number }): void;
+  hideHermesDock(): Promise<void>;
+  showHermesWindow(): Promise<unknown>;
+  hideHermesWindow(): Promise<void>;
 }
 
 const boundsSchema = z
@@ -60,6 +62,9 @@ const boundsSchema = z
     height: z.number().int().min(0).max(20_000),
   })
   .strict();
+
+/** Only #rrggbb / #rgb hex colours — the titleBarOverlay repaint takes no other form. */
+const colorSchema = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
 
 const idSchema = z.string().min(1).max(128);
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
@@ -114,6 +119,9 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:layout:set-overlay', (_e, active) =>
     facade.setOverlayActive(z.boolean().parse(active)),
   );
+  handle('host:layout:set-titlebar', (_e, color, symbolColor) =>
+    facade.setTitleBarOverlay(colorSchema.parse(color), colorSchema.parse(symbolColor)),
+  );
 
   handle('host:permissions:list', () => facade.listPermissions());
   handle('host:permissions:revoke', (_e, backpackId, programId, capability) =>
@@ -156,10 +164,11 @@ export function registerHostIpc(facade: HostFacade): void {
 
   handle('host:hermes:health', () => facade.hermesHealth());
   handle('host:hermes:surface-status', () => facade.hermesSurfaceStatus());
-  handle('host:hermes:show', (_e, bounds) => facade.showHermesSurface(boundsSchema.parse(bounds)));
-  handle('host:hermes:hide', () => facade.hideHermesSurface());
-  handle('host:hermes:set-bounds', (_e, bounds) =>
-    facade.setHermesSurfaceBounds(boundsSchema.parse(bounds)),
+  handle('host:hermes:dock', (_e, bounds) => facade.dockHermes(boundsSchema.parse(bounds)));
+  handle('host:hermes:set-dock-bounds', (_e, bounds) =>
+    facade.setHermesDockBounds(boundsSchema.parse(bounds)),
   );
-  handle('host:hermes:open-desktop', () => facade.openHermesDesktop());
+  handle('host:hermes:hide-dock', () => facade.hideHermesDock());
+  handle('host:hermes:show-window', () => facade.showHermesWindow());
+  handle('host:hermes:hide-window', () => facade.hideHermesWindow());
 }

@@ -19,7 +19,6 @@ import { BackpackHome } from './BackpackHome';
 import { CanvasFrame } from './CanvasFrame';
 import { InvocationPreviewModal, PermissionPromptModal, PermissionsPanel } from './Modals';
 import { RunsPanel } from './RunsPanel';
-import { HermesDock } from './HermesDock';
 
 /**
  * FixtureApp — the historical program/ACP/Canvas demonstration surface.
@@ -46,7 +45,6 @@ export function FixtureApp(): React.JSX.Element {
   const [runsOpen, setRunsOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [hostErrors, setHostErrors] = useState<HostErrorPayload[]>([]);
-  const [hermesOpen, setHermesOpen] = useState(false);
 
   const refreshCatalog = useCallback(async () => {
     setCatalog(await host().programs.catalog());
@@ -101,7 +99,7 @@ export function FixtureApp(): React.JSX.Element {
   }, [refreshBackpacks, refreshCatalog, refreshRuns]);
 
   const overlayActive =
-    permissionPrompts.length > 0 || invocationPreviews.length > 0 || runsOpen || permissionsOpen || hermesOpen;
+    permissionPrompts.length > 0 || invocationPreviews.length > 0 || runsOpen || permissionsOpen;
 
   useEffect(() => {
     void host().layout.setOverlayActive(overlayActive);
@@ -171,11 +169,8 @@ export function FixtureApp(): React.JSX.Element {
             await refreshCatalog();
             await refreshRuns();
           }}
-          onOpenHermes={() => setHermesOpen(true)}
         />
       )}
-
-      {hermesOpen && <HermesDock onClose={() => setHermesOpen(false)} />}
 
       {runsOpen && <RunsPanel runs={runList} onClose={() => setRunsOpen(false)} onChanged={refreshRuns} />}
 

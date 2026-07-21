@@ -36,11 +36,14 @@ export interface SaveStatusPayload {
   detail: string | null;
 }
 
-export type HermesSurfaceStatus =
-  | { state: 'idle' }
-  | { state: 'starting' }
-  | { state: 'ready'; url: string }
-  | { state: 'error'; detail: string };
+export type HermesPlacement = 'closed' | 'docked' | 'detached';
+export type HermesStatusKind = 'idle' | 'starting' | 'ready' | 'error';
+
+export interface HermesSurfaceStatus {
+  placement: HermesPlacement;
+  status: HermesStatusKind;
+  detail?: string;
+}
 
 export interface HostErrorPayload {
   component: string;
@@ -79,6 +82,7 @@ interface HostBridge {
   layout: {
     setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setOverlayActive(active: boolean): Promise<void>;
+    setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
   };
   permissions: {
     list(): Promise<
@@ -102,10 +106,15 @@ interface HostBridge {
   hermes: {
     health(): Promise<HermesHealth>;
     surfaceStatus(): Promise<HermesSurfaceStatus>;
-    show(bounds: { x: number; y: number; width: number; height: number }): Promise<HermesSurfaceStatus>;
-    hide(): Promise<void>;
-    setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
-    openDesktop(): Promise<{ opened: true; workspacePath: string | null }>;
+    /** Dock the real Hermes Desktop window at Papers-relative bounds. */
+    dock(bounds: { x: number; y: number; width: number; height: number }): Promise<HermesSurfaceStatus>;
+    setDockBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+    /** Hide the docked placement; Hermes and its session stay alive. */
+    hideDock(): Promise<void>;
+    /** Show the same Hermes as a detached window. */
+    showWindow(): Promise<HermesSurfaceStatus>;
+    /** Hide the detached window; Hermes and its session stay alive. */
+    hideWindow(): Promise<void>;
   };
   events: {
     onBackpacksChanged(cb: (p: BackpacksList) => void): () => void;
@@ -116,6 +125,7 @@ interface HostBridge {
     onInvocationPreview(cb: (p: InvocationPreviewPayload) => void): () => void;
     onRunsChanged(cb: (p: AgentRunSnapshot) => void): () => void;
     onHermesHealth(cb: (p: HermesHealth) => void): () => void;
+    onHermesSurface(cb: (p: HermesSurfaceStatus) => void): () => void;
     onHostError(cb: (p: HostErrorPayload) => void): () => void;
   };
 }

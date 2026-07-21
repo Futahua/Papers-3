@@ -30,6 +30,9 @@ by adding speculative framework screens.
 - [Hermes pickup instructions](HERMES.md)
 - [User guide](docs/USER_GUIDE.md)
 - [Acceptance status](docs/ACCEPTANCE.md)
+- [Creator-reported problems](docs/PROBLEMS.md)
+- [Hermes skin specification](docs/HERMES_SKIN.md)
+- [Hermes batch implementation handoff](docs/HERMES_BATCH_HANDOFF.md)
 
 ```powershell
 npm install
