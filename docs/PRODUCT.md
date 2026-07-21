@@ -1,23 +1,64 @@
-# Papers 3 — Product
+# Papers 3 — product definition
 
-Papers 3 gives work persistent places called **Backpacks**. Papers itself stays narrow: identify → expose → enter → leave → restore → switch.
+## One sentence
 
-The first finished Backpack type is the **Canvas Backpack** — a persistent programmable workbench that transforms into purpose-built **programs** while preserving:
+Papers is a visual switchboard for entering, restoring and switching machine-wide
+working environments called Backpacks.
 
-- a stable host frame (leave, identity, launcher, save status, permissions, agent runs, recovery);
-- one active primary program at a time;
-- sandboxed, independently styled program surfaces;
-- program-owned data, selection, and commands;
-- a permission-based capability broker;
-- exact, previewable Hermes invocations — never an implicit "send this Backpack to the AI";
-- Hermes-supervised Codex and OpenCode coding workers in isolated Git worktrees;
-- external application integration (LibreOffice, file browser, URLs);
-- crash isolation, persistence, and recovery.
+## Backpack
 
-The primary first-party program is **Repository Research and Production**: register a real repository, browse and select exact files/regions, capture evidence with commit/path/hash provenance, link notes and topics, invoke precise agent actions, delegate approved coding tasks to workers in disposable worktrees, and assemble an editable report opened in LibreOffice Writer.
+A Backpack is an organizational and restoration boundary, not a canvas, program,
+conversation or automatic AI context. It may involve:
 
-A small second program, **Visual Dashboard**, proves program isolation and styling freedom against explicitly shared summary data.
+- existing application windows across one or more monitors;
+- folders, files and browser destinations;
+- a PowerToys Workspaces desktop scene;
+- a Hermes conversation or workspace;
+- an optional Papers-owned surface when no existing product fits.
 
-The end-to-end demonstration uses a disposable pinned checkout of `logseq/logseq` (commit `a4963dca579f42817135d8473166a03fa7ea2409`, AGPL-3.0) as external research material — never imported into Papers, never pushed to.
+Entering a Backpack activates its environment. Papers should then recede so the
+creator works in their actual applications.
 
-The authoritative scope, boundaries, and acceptance criteria are in [PAPERS_3_IMPLEMENTATION_PLAN.md](../PAPERS_3_IMPLEMENTATION_PLAN.md).
+## Hermes
+
+Hermes is one universal machine-wide capability. It is reachable from the Backpack
+chooser and from every active Backpack as:
+
+- an embedded sidebar using Hermes Dashboard's existing `/chat` interface; or
+- the existing Hermes Desktop application in its own window.
+
+The ordinary flow is intentionally unremarkable:
+
+```text
+prompt → optionally attach files/images → optionally choose a folder → send → reply
+```
+
+Papers does not add an invocation builder, action catalogue, validation ceremony or
+second permission system around that flow. The visible attachment/workspace state
+inside Hermes is sufficient. A creator can also name paths directly in the prompt.
+
+## Product boundary
+
+Papers owns:
+
+- visual Backpack identity, selection and persistence;
+- associations to existing workspace scenes and resources;
+- entering, leaving, restoring and switching environments;
+- hosting or launching existing product surfaces.
+
+Papers does not own:
+
+- chat, session history, attachments, models, tools, approvals or agent settings;
+- file browsers, editors, document production or browser automation already supplied
+  by installed products;
+- window capture and arrangement already supplied by PowerToys Workspaces;
+- a modular application ecosystem as a prerequisite for ordinary use.
+
+## Visual direction
+
+The furthest-back Papers view is a gallery of Backpacks represented by recognizable
+desktop scenes, not a text-heavy project list. Entering one moves into the real
+desktop environment rather than navigating into another application-shaped box.
+
+An empty Backpack is valid and deliberately neutral. A canvas is an optional surface,
+never the definition of a Backpack.

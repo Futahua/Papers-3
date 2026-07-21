@@ -10,7 +10,11 @@
 // Backpacks
 // ---------------------------------------------------------------------------
 
-export type BackpackType = 'canvas';
+/**
+ * Backpacks are machine-wide working environments. `canvas` is retained only
+ * so data created by the earlier integration prototype remains readable.
+ */
+export type BackpackType = 'environment' | 'canvas';
 
 export interface BackpackSummary {
   id: string;
@@ -19,6 +23,8 @@ export interface BackpackSummary {
   createdAt: string;
   lastEnteredAt: string | null;
   archived: boolean;
+  /** Optional folder passed to the existing Hermes Desktop product on launch. */
+  workspacePath: string | null;
 }
 
 export interface BackpackRegistryState {

@@ -4,7 +4,7 @@
  * the HostFacade IPC contract.
  */
 import { randomUUID } from 'node:crypto';
-import { shell, type WebContents } from 'electron';
+import { dialog, shell, type WebContents } from 'electron';
 
 import type {
   AgentRunSnapshot,
@@ -22,6 +22,7 @@ import type { CanvasSessionState } from './canvas/canvasState';
 import type { ProgramCatalog } from './canvas/programLoader';
 import type { PermissionStore } from './capabilities/permissionStore';
 import type { HermesAdapter } from './hermes/hermesAdapter';
+import type { HermesSurface, SurfaceBounds } from './hermes/hermesSurface';
 import type { AgentRunService, InvocationPreview } from './agents/runService';
 import type { PermissionPrompter } from './capabilities/capabilityBroker';
 import { AtomicJsonStore } from './persistence/atomicStore';
@@ -41,6 +42,7 @@ export interface FacadeDeps {
   catalog: () => ProgramCatalog;
   permissionStore: PermissionStore;
   adapter: HermesAdapter;
+  hermesSurface: HermesSurface;
   runService: () => AgentRunService;
   paths: PapersPaths;
 }
@@ -92,7 +94,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async createBackpack(name: string, _type: string): Promise<BackpackSummary> {
-    const summary = await this.deps.registry.create(name, 'canvas');
+    const summary = await this.deps.registry.create(name, _type === 'canvas' ? 'canvas' : 'environment');
     this.emitBackpacksChanged();
     return summary;
   }
@@ -130,18 +132,22 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     }
     this.currentBackpackId = id;
     await this.deps.registry.markEntered(id);
-    await this.deps.runService().loadBackpackRuns(id);
     this.emitBackpacksChanged();
 
-    // Restore the Backpack's last active program (done-criterion 4). A crash
-    // or quarantine here must not block entering the Backpack itself.
-    const report = await this.canvasStore(id).load<CanvasPersistedState>();
-    const lastProgram = report.value?.lastActiveProgramId ?? null;
-    if (lastProgram && this.deps.catalog().programs.has(lastProgram)) {
-      try {
-        await this.startProgram(lastProgram);
-      } catch {
-        // Recovery UI reflects the failure; the frame stays usable.
+    const fixturePrograms = this.deps.catalog().programs;
+    if (fixturePrograms.size > 0) {
+      await this.deps.runService().loadBackpackRuns(id);
+
+      // Legacy fixture mode restores its last test program. Product-mode
+      // Backpacks are environments and never enter the program runtime.
+      const report = await this.canvasStore(id).load<CanvasPersistedState>();
+      const lastProgram = report.value?.lastActiveProgramId ?? null;
+      if (lastProgram && fixturePrograms.has(lastProgram)) {
+        try {
+          await this.startProgram(lastProgram);
+        } catch {
+          // Recovery UI reflects the failure; the frame stays usable.
+        }
       }
     }
     return { backpack };
@@ -156,6 +162,26 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   lastActiveBackpackId(): string | null {
     return this.deps.registry.lastActiveBackpackId;
+  }
+
+  async chooseWorkspace(): Promise<string | null> {
+    if (!this.currentBackpackId) throw new Error('Enter a Backpack before choosing its workspace');
+    const result = await dialog.showOpenDialog({
+      title: 'Choose the folder associated with this Backpack',
+      properties: ['openDirectory'],
+    });
+    const selected = result.canceled ? null : (result.filePaths[0] ?? null);
+    if (selected) {
+      await this.deps.registry.setWorkspace(this.currentBackpackId, selected);
+      this.emitBackpacksChanged();
+    }
+    return selected;
+  }
+
+  async clearWorkspace(): Promise<void> {
+    if (!this.currentBackpackId) throw new Error('No Backpack is active');
+    await this.deps.registry.setWorkspace(this.currentBackpackId, null);
+    this.emitBackpacksChanged();
   }
 
   // -------------------------------------------------------------- programs
@@ -327,6 +353,29 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   hermesHealth(): unknown {
     return this.deps.adapter.health;
+  }
+
+  hermesSurfaceStatus(): unknown {
+    return this.deps.hermesSurface.state;
+  }
+
+  showHermesSurface(bounds: SurfaceBounds): Promise<unknown> {
+    return this.deps.hermesSurface.show(bounds);
+  }
+
+  hideHermesSurface(): void {
+    this.deps.hermesSurface.hide();
+  }
+
+  setHermesSurfaceBounds(bounds: SurfaceBounds): void {
+    this.deps.hermesSurface.setBounds(bounds);
+  }
+
+  async openHermesDesktop(): Promise<unknown> {
+    const workspacePath = this.currentBackpackId
+      ? this.deps.registry.find(this.currentBackpackId)?.workspacePath ?? null
+      : null;
+    return this.deps.hermesSurface.openDesktop(workspacePath);
   }
 
   defaultRunCwd(backpackId: string): string {

@@ -18,6 +18,8 @@ export interface HostFacade {
   enterBackpack(id: string): Promise<unknown>;
   leaveBackpack(): Promise<void>;
   lastActiveBackpackId(): string | null;
+  chooseWorkspace(): Promise<string | null>;
+  clearWorkspace(): Promise<void>;
 
   programCatalog(): unknown;
   startProgram(programId: string): Promise<void>;
@@ -45,6 +47,11 @@ export interface HostFacade {
   composedPrompt(runId: string): string;
 
   hermesHealth(): unknown;
+  hermesSurfaceStatus(): unknown;
+  showHermesSurface(bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
+  hideHermesSurface(): void;
+  setHermesSurfaceBounds(bounds: { x: number; y: number; width: number; height: number }): void;
+  openHermesDesktop(): Promise<unknown>;
 }
 
 const boundsSchema = z
@@ -78,7 +85,7 @@ export function registerHostIpc(facade: HostFacade): void {
 
   handle('host:backpacks:list', () => facade.listBackpacks());
   handle('host:backpacks:create', (_e, name, type) =>
-    facade.createBackpack(backpackNameSchema.parse(name), z.literal('canvas').parse(type)),
+    facade.createBackpack(backpackNameSchema.parse(name), z.enum(['environment', 'canvas']).parse(type)),
   );
   handle('host:backpacks:rename', (_e, id, name) =>
     facade.renameBackpack(idSchema.parse(id), backpackNameSchema.parse(name)),
@@ -89,6 +96,8 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpacks:enter', (_e, id) => facade.enterBackpack(idSchema.parse(id)));
   handle('host:backpacks:leave', () => facade.leaveBackpack());
   handle('host:backpacks:last-active', () => facade.lastActiveBackpackId());
+  handle('host:backpacks:choose-workspace', () => facade.chooseWorkspace());
+  handle('host:backpacks:clear-workspace', () => facade.clearWorkspace());
 
   handle('host:programs:catalog', () => facade.programCatalog());
   handle('host:programs:start', (_e, programId) => facade.startProgram(idSchema.parse(programId)));
@@ -150,4 +159,11 @@ export function registerHostIpc(facade: HostFacade): void {
   );
 
   handle('host:hermes:health', () => facade.hermesHealth());
+  handle('host:hermes:surface-status', () => facade.hermesSurfaceStatus());
+  handle('host:hermes:show', (_e, bounds) => facade.showHermesSurface(boundsSchema.parse(bounds)));
+  handle('host:hermes:hide', () => facade.hideHermesSurface());
+  handle('host:hermes:set-bounds', (_e, bounds) =>
+    facade.setHermesSurfaceBounds(boundsSchema.parse(bounds)),
+  );
+  handle('host:hermes:open-desktop', () => facade.openHermesDesktop());
 }

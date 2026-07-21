@@ -19,6 +19,8 @@ import { BackpackHome } from './BackpackHome';
 import { CanvasFrame } from './CanvasFrame';
 import { InvocationPreviewModal, PermissionPromptModal, PermissionsPanel } from './Modals';
 import { RunsPanel } from './RunsPanel';
+import { HermesDock } from './HermesDock';
+import { WorkspaceFrame } from './WorkspaceFrame';
 
 export function App(): React.JSX.Element {
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });
@@ -37,6 +39,7 @@ export function App(): React.JSX.Element {
   const [runsOpen, setRunsOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [hostErrors, setHostErrors] = useState<HostErrorPayload[]>([]);
+  const [hermesOpen, setHermesOpen] = useState(false);
 
   const refreshCatalog = useCallback(async () => {
     setCatalog(await host().programs.catalog());
@@ -113,7 +116,7 @@ export function App(): React.JSX.Element {
   }, []);
 
   const overlayActive =
-    permissionPrompts.length > 0 || invocationPreviews.length > 0 || runsOpen || permissionsOpen;
+    permissionPrompts.length > 0 || invocationPreviews.length > 0 || runsOpen || permissionsOpen || hermesOpen;
 
   useEffect(() => {
     void host().layout.setOverlayActive(overlayActive);
@@ -134,36 +137,51 @@ export function App(): React.JSX.Element {
   const waitingRuns = runList.filter(
     (r) => r.state === 'waiting-approval' || r.state === 'waiting-clarification',
   ).length;
+  const fixtureMode = catalog.programs.length > 0;
 
   return (
     <div className="app">
       {activeBackpack ? (
-        <CanvasFrame
-          backpack={activeBackpack}
-          catalog={catalog}
-          shelf={shelf}
-          saveStatus={saveStatus}
-          hermes={hermes}
-          busyRuns={busyRuns}
-          waitingRuns={waitingRuns}
-          onLeave={async () => {
-            await host().backpacks.leave();
-            await refreshBackpacks();
-            await refreshCatalog();
-          }}
-          onOpenRuns={() => setRunsOpen((v) => !v)}
-          onOpenPermissions={() => setPermissionsOpen(true)}
-          onCatalogChanged={refreshCatalog}
-        />
+        fixtureMode ? (
+          <CanvasFrame
+            backpack={activeBackpack}
+            catalog={catalog}
+            shelf={shelf}
+            saveStatus={saveStatus}
+            hermes={hermes}
+            busyRuns={busyRuns}
+            waitingRuns={waitingRuns}
+            onLeave={async () => {
+              await host().backpacks.leave();
+              await refreshBackpacks();
+              await refreshCatalog();
+            }}
+            onOpenRuns={() => setRunsOpen((v) => !v)}
+            onOpenPermissions={() => setPermissionsOpen(true)}
+            onCatalogChanged={refreshCatalog}
+          />
+        ) : (
+          <WorkspaceFrame
+            backpack={activeBackpack}
+            onChanged={refreshBackpacks}
+            onOpenHermes={() => setHermesOpen(true)}
+            onLeave={async () => {
+              await host().backpacks.leave();
+              await refreshBackpacks();
+            }}
+          />
+        )
       ) : (
         <BackpackHome list={backpacks} onChanged={refreshBackpacks} onEntered={async () => {
           await refreshBackpacks();
           await refreshCatalog();
           await refreshRuns();
-        }} />
+        }} onOpenHermes={() => setHermesOpen(true)} />
       )}
 
-      {runsOpen && (
+      {hermesOpen && <HermesDock onClose={() => setHermesOpen(false)} />}
+
+      {fixtureMode && runsOpen && (
         <RunsPanel
           runs={runList}
           onClose={() => setRunsOpen(false)}
@@ -171,9 +189,9 @@ export function App(): React.JSX.Element {
         />
       )}
 
-      {permissionsOpen && <PermissionsPanel onClose={() => setPermissionsOpen(false)} />}
+      {fixtureMode && permissionsOpen && <PermissionsPanel onClose={() => setPermissionsOpen(false)} />}
 
-      {permissionPrompts.length > 0 && permissionPrompts[0] && (
+      {fixtureMode && permissionPrompts.length > 0 && permissionPrompts[0] && (
         <PermissionPromptModal
           prompt={permissionPrompts[0]}
           onDecided={(promptId) =>
@@ -182,7 +200,7 @@ export function App(): React.JSX.Element {
         />
       )}
 
-      {invocationPreviews.length > 0 && invocationPreviews[0] && (
+      {fixtureMode && invocationPreviews.length > 0 && invocationPreviews[0] && (
         <InvocationPreviewModal
           preview={invocationPreviews[0]}
           onDecided={(previewId) =>

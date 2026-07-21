@@ -17,7 +17,10 @@ export interface LaunchedApp {
 
 const repoRoot = path.resolve(__dirname, '..', '..');
 
-export async function launchPapers(existingUserData?: string): Promise<LaunchedApp> {
+export async function launchPapers(
+  existingUserData?: string,
+  options: { fixtures?: boolean } = { fixtures: true },
+): Promise<LaunchedApp> {
   const userDataDir =
     existingUserData ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'papers3-e2e-')));
   // PAPERS_E2E_EXE switches the suite to a packaged binary (win-unpacked or
@@ -29,6 +32,7 @@ export async function launchPapers(existingUserData?: string): Promise<LaunchedA
     env: {
       ...process.env,
       PAPERS_TEST_USER_DATA: userDataDir,
+      PAPERS_ENABLE_FIXTURES: options.fixtures === false ? '0' : '1',
       ELECTRON_ENABLE_LOGGING: '1',
     },
   });

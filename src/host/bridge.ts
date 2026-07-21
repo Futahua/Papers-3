@@ -36,6 +36,12 @@ export interface SaveStatusPayload {
   detail: string | null;
 }
 
+export type HermesSurfaceStatus =
+  | { state: 'idle' }
+  | { state: 'starting' }
+  | { state: 'ready'; url: string }
+  | { state: 'error'; detail: string };
+
 export interface HostErrorPayload {
   component: string;
   what: string;
@@ -55,6 +61,8 @@ interface HostBridge {
     enter(id: string): Promise<{ backpack: BackpackSummary }>;
     leave(): Promise<void>;
     lastActive(): Promise<string | null>;
+    chooseWorkspace(): Promise<string | null>;
+    clearWorkspace(): Promise<void>;
   };
   programs: {
     catalog(): Promise<CatalogInfo>;
@@ -89,6 +97,11 @@ interface HostBridge {
   };
   hermes: {
     health(): Promise<HermesHealth>;
+    surfaceStatus(): Promise<HermesSurfaceStatus>;
+    show(bounds: { x: number; y: number; width: number; height: number }): Promise<HermesSurfaceStatus>;
+    hide(): Promise<void>;
+    setBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+    openDesktop(): Promise<{ opened: true; workspacePath: string | null }>;
   };
   events: {
     onBackpacksChanged(cb: (p: BackpacksList) => void): () => void;

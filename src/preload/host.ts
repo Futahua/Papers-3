@@ -24,6 +24,8 @@ const api = {
     enter: (id: string) => ipcRenderer.invoke('host:backpacks:enter', id),
     leave: () => ipcRenderer.invoke('host:backpacks:leave'),
     lastActive: () => ipcRenderer.invoke('host:backpacks:last-active'),
+    chooseWorkspace: () => ipcRenderer.invoke('host:backpacks:choose-workspace'),
+    clearWorkspace: () => ipcRenderer.invoke('host:backpacks:clear-workspace'),
   },
 
   programs: {
@@ -67,6 +69,13 @@ const api = {
 
   hermes: {
     health: () => ipcRenderer.invoke('host:hermes:health'),
+    surfaceStatus: () => ipcRenderer.invoke('host:hermes:surface-status'),
+    show: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('host:hermes:show', bounds),
+    hide: () => ipcRenderer.invoke('host:hermes:hide'),
+    setBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('host:hermes:set-bounds', bounds),
+    openDesktop: () => ipcRenderer.invoke('host:hermes:open-desktop'),
   },
 
   events: {

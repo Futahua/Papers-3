@@ -14,6 +14,7 @@ import { PermissionStore } from './capabilities/permissionStore';
 import { registerExternalExecutors } from './external/externalBridge';
 import { GitService } from './git/gitService';
 import { HermesAdapter } from './hermes/hermesAdapter';
+import { HermesSurface } from './hermes/hermesSurface';
 import { ResourceService } from './resources/resourceService';
 import { registerResourceExecutors } from './resources/resourceExecutors';
 import { AgentRunService } from './agents/runService';
@@ -54,7 +55,10 @@ async function bootstrap(): Promise<void> {
   await permissionStore.initialize();
 
   const programsRoot = defaultProgramsRoot(app.getAppPath(), app.isPackaged, process.resourcesPath);
-  let catalog: ProgramCatalog = await loadProgramCatalog(programsRoot);
+  const fixtureMode = process.env['PAPERS_ENABLE_FIXTURES'] === '1';
+  let catalog: ProgramCatalog = fixtureMode
+    ? await loadProgramCatalog(programsRoot)
+    : { programs: new Map(), issues: [] };
 
   const programProtocolHandler = installProgramProtocolHandler({
     programsRoot,
@@ -89,6 +93,10 @@ async function bootstrap(): Promise<void> {
   };
   fitHost();
   mainWindow.on('resize', fitHost);
+
+  // The production Hermes experience is the existing Hermes product. Papers
+  // only hosts its official dashboard surface or launches Hermes Desktop.
+  const hermesSurface = new HermesSurface(mainWindow);
 
   hostView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   hostView.webContents.on('will-navigate', (event, url) => {
@@ -153,6 +161,7 @@ async function bootstrap(): Promise<void> {
     catalog: () => catalog,
     permissionStore,
     adapter,
+    hermesSurface,
     runService: () => runService,
     paths,
   });
@@ -201,10 +210,13 @@ async function bootstrap(): Promise<void> {
     });
   }
 
-  // Connect to Hermes in the background; the app is usable without it.
-  void adapter.connect().catch(() => {
-    /* health event carries the failure detail */
-  });
+  // ACP is retained only for the opt-in legacy integration fixtures. The
+  // production UI never recreates Hermes sessions or approvals inside Papers.
+  if (fixtureMode) {
+    void adapter.connect().catch(() => {
+      /* health event carries the fixture failure detail */
+    });
+  }
 
   // ---------------------------------------------------------------- load UI
   const devUrl = process.env['ELECTRON_RENDERER_URL'];
@@ -215,6 +227,7 @@ async function bootstrap(): Promise<void> {
   }
 
   mainWindow.on('closed', () => {
+    hermesSurface.shutdown();
     mainWindow = null;
     hostView = null;
   });

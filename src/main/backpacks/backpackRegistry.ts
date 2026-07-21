@@ -46,6 +46,12 @@ export class BackpackRegistry {
     const report = await this.store.load<BackpackRegistryState>();
     this.lastLoadReport = report;
     this.state = report.value ?? structuredClone(emptyState);
+    // Schema v1 predates machine-wide environments and workspace association.
+    // Keep old creator data readable without a destructive migration.
+    this.state.backpacks = this.state.backpacks.map((backpack) => ({
+      ...backpack,
+      workspacePath: typeof backpack.workspacePath === 'string' ? backpack.workspacePath : null,
+    }));
     return report;
   }
 
@@ -80,6 +86,7 @@ export class BackpackRegistry {
       createdAt: new Date().toISOString(),
       lastEnteredAt: null,
       archived: false,
+      workspacePath: null,
     };
     this.state.backpacks.push(summary);
     await fs.mkdir(backpackDir(this.paths, summary.id), { recursive: true });
@@ -107,6 +114,13 @@ export class BackpackRegistry {
     if (archived && this.state.lastActiveBackpackId === id) {
       this.state.lastActiveBackpackId = null;
     }
+    await this.persist();
+  }
+
+  async setWorkspace(id: string, workspacePath: string | null): Promise<void> {
+    const entry = this.state.backpacks.find((b) => b.id === id);
+    if (!entry) throw new Error(`Backpack ${id} not found`);
+    entry.workspacePath = workspacePath;
     await this.persist();
   }
 

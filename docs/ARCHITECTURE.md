@@ -1,39 +1,48 @@
-# Papers 3 — Architecture
+# Papers 3 — architecture
 
-Electron 43 + TypeScript. One `BaseWindow` hosts two layers of `WebContentsView`:
+## Production path
 
 ```text
-Electron main process (src/main)
-├── backpacks/    BackpackRegistry — identity, enter/leave, last-active
-├── canvas/       CanvasRuntime + ProgramLoader — program views, lifecycle, crash isolation
-├── capabilities/ CapabilityBroker + PermissionStore — validated grants, prompts
-├── persistence/  AtomicJsonStore + PapersData layout + RecoveryService
-├── hermes/       HermesAdapter — ACP client over stdio to `hermes acp`
-├── agents/       AgentRunService — immutable invocations, run projection, results
-├── external/     ExternalApplicationBridge — LibreOffice, file browser, URLs
-└── git/          GitService — repo info + disposable worktrees via system git
-
-Host renderer (src/host, React)        — Backpack switcher, Canvas frame, launcher,
-                                          top shelf, Agent Runs, permission prompts,
-                                          result previews, failure recovery
-Sandboxed program renderers (programs/) — one WebContentsView per active program:
-                                          contextIsolation, sandbox:true, no node,
-                                          custom papers-program:// scheme, narrow
-                                          PapersProgramAPI preload
+Papers Electron shell
+├── BackpackRegistry
+│   └── names, archive state, last-entered state, optional folder association
+├── visual Backpack chooser / neutral environment surface
+├── HermesSurface (thin adapter)
+│   ├── sidebar → existing `hermes dashboard` at http://127.0.0.1:9119/chat
+│   └── pop-out → existing `hermes desktop [--cwd <folder>]`
+└── desktop scenes (next slice)
+    └── Microsoft PowerToys Workspaces association and launch
 ```
 
-## Boundary rules
+Papers hosts Hermes Dashboard in a sandboxed `WebContentsView`. It does not parse,
+translate or persist Hermes messages. The pop-out command launches Hermes Desktop,
+which shares Hermes's own configuration, sessions, skills and memory.
 
-- Renderers never receive raw `ipcRenderer`, Node, filesystem, shell, process, credential, or Electron APIs. Preloads expose explicit methods only.
-- Every privileged request is validated in the main process: sender WebContents identity → program identity → manifest capability declaration → grant → zod argument schema → constrained execution → structured result/error.
-- Program HTML/JS loads only from the packaged `programs/` directory through the `papers-program://` scheme; navigation and window creation are denied.
-- Secrets and transport details stay in the main process. Programs receive opaque run/session references.
-- Hermes owns model reasoning, sessions, approvals, and workers. Papers projects public events only.
+The optional folder stored on a Backpack is passed to Hermes Desktop as its initial
+working directory. It is an association, not an implicit dump of Backpack content.
+
+## Existing-product rule
+
+Before implementing a capability in Papers:
+
+1. Determine whether Hermes, Windows, PowerToys, Directory Opus, the default browser,
+   LibreOffice or another installed product already provides it.
+2. Prefer launch, focus, deep link, documented CLI or local supported surface.
+3. Store only the association Papers needs to restore the environment.
+4. Implement a Papers-owned surface only when no suitable product exists.
+
+## Fixture boundary
+
+The earlier program sandbox, capability broker, ACP adapter, AgentRunService and
+Repository Research workflow remain in the source tree solely as integration evidence.
+They are loaded only with `PAPERS_ENABLE_FIXTURES=1`. Production does not start ACP,
+show programs, display Agent Runs, or mediate Hermes permissions.
+
+This boundary keeps proven experiments available without allowing sunk implementation
+effort to determine the product.
 
 ## Persistence
 
-`PapersData/` under Electron `userData` (survives uninstall by default): atomic temp+rename writes, `.backup` last-known-good, corrupt files quarantined into `recovery/` with reasons, schema versions everywhere, no destructive migration. See `src/main/persistence/`.
-
-## Source layout limits
-
-No file over ~700 lines without a recorded decision; one authoritative owner per state concept; no abstraction without an active consumer.
+Creator-owned Papers metadata remains under `%APPDATA%\papers3\PapersData`. Hermes data
+remains in Hermes's own home. PowerToys scene definitions remain owned by PowerToys.
+Papers stores references, not duplicate databases or imported copies.

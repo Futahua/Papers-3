@@ -60,29 +60,137 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 9vh;
+  padding: 0 0 36px;
   gap: 18px;
   overflow-y: auto;
 }
-.home h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: 0.4px; }
+.home h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: 0.4px; }
+.home h2 { font-size: 26px; font-weight: 500; margin: 0 0 6px; }
 .home .subtitle { color: var(--text-dim); margin: 0; }
-.backpack-list { width: min(520px, 88vw); display: flex; flex-direction: column; gap: 8px; }
-.backpack-card {
+.home-bar {
+  width: 100%;
+  min-height: 54px;
+  padding: 0 14px;
   display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.home-bar .spacer { flex: 1; }
+.home-intro { width: min(980px, 92vw); padding-top: 7vh; }
+.backpack-list {
+  width: min(980px, 92vw);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.backpack-card {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px 16px;
+  min-height: 118px;
 }
 .backpack-card:hover { border-color: var(--accent); }
 .backpack-card .name { font-weight: 600; }
 .backpack-card .meta { color: var(--text-dim); font-size: 12px; }
 .backpack-card .spacer { flex: 1; }
 .backpack-card.archived { opacity: 0.55; }
-.home .create-row { display: flex; gap: 8px; width: min(520px, 88vw); }
+.home .create-row { display: flex; gap: 8px; width: min(980px, 92vw); }
 .home .create-row input { flex: 1; }
+.scene-preview {
+  width: 82px;
+  height: 66px;
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.scene-window { position: absolute; border: 1px solid #48505e; background: #252a33; border-radius: 3px; }
+.scene-window.wide { left: 7px; top: 7px; width: 68px; height: 20px; }
+.scene-window.left { left: 7px; top: 32px; width: 32px; height: 27px; }
+.scene-window.right { right: 7px; top: 32px; width: 32px; height: 27px; }
+
+/* ----------------------------------------------- machine-wide environment */
+.environment-frame { height: 100%; display: flex; flex-direction: column; }
+.environment-bar {
+  min-height: 54px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.environment-bar .spacer { flex: 1; }
+.environment-bar .backpack-name { font-weight: 600; }
+.workspace-chip {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+.environment-space {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  letter-spacing: .035em;
+}
+.environment-error { position: absolute; left: 16px; bottom: 16px; color: var(--danger); }
+
+/* ------------------------------------------------ existing Hermes product */
+.hermes-dock {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(560px, 48vw);
+  min-width: 420px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  z-index: 60;
+  box-shadow: -18px 0 48px rgba(0, 0, 0, .22);
+}
+.hermes-dock header {
+  height: 48px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+.hermes-dock header .spacer { flex: 1; }
+.hermes-mark { color: var(--accent); font-size: 18px; }
+.hermes-surface { flex: 1; position: relative; min-height: 0; }
+.hermes-notice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-dim);
+  padding: 24px;
+  text-align: center;
+}
+.hermes-notice.error { color: var(--danger); }
+
+@media (max-width: 760px) {
+  .hermes-dock { width: 100%; min-width: 0; }
+  .environment-bar { flex-wrap: wrap; padding-block: 8px; }
+  .backpack-card { grid-template-columns: 72px minmax(0, 1fr); }
+  .backpack-card > button { grid-column: auto; }
+}
 
 /* --------------------------------------------------------------- frame */
 .frame { display: flex; flex-direction: column; height: 100%; }

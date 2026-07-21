@@ -6,6 +6,7 @@ export function BackpackHome(props: {
   list: BackpacksList;
   onChanged: () => Promise<void>;
   onEntered: () => Promise<void>;
+  onOpenHermes?: () => void;
 }): React.JSX.Element {
   const [name, setName] = useState('');
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -27,8 +28,16 @@ export function BackpackHome(props: {
 
   return (
     <div className="home">
-      <h1>Papers</h1>
-      <p className="subtitle">Enter a Backpack to continue its work, or create a new one.</p>
+      <header className="home-bar">
+        <h1>Papers</h1>
+        <span className="spacer" />
+        <button onClick={() => void host().hermes.openDesktop()}>Hermes window</button>
+        {props.onOpenHermes && <button className="primary" onClick={props.onOpenHermes}>Hermes sidebar</button>}
+      </header>
+      <div className="home-intro">
+        <h2>Backpacks</h2>
+        <p className="subtitle">Visual working environments spanning your desktop.</p>
+      </div>
 
       <div className="create-row">
         <input
@@ -38,7 +47,7 @@ export function BackpackHome(props: {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && name.trim()) {
               void run(async () => {
-                await host().backpacks.create(name.trim(), 'canvas');
+                await host().backpacks.create(name.trim(), 'environment');
                 setName('');
               });
             }
@@ -49,7 +58,7 @@ export function BackpackHome(props: {
           disabled={!name.trim()}
           onClick={() =>
             run(async () => {
-              await host().backpacks.create(name.trim(), 'canvas');
+              await host().backpacks.create(name.trim(), 'environment');
               setName('');
             })
           }
@@ -68,6 +77,11 @@ export function BackpackHome(props: {
         )}
         {visible.map((backpack) => (
           <div key={backpack.id} className={`backpack-card${backpack.archived ? ' archived' : ''}`}>
+            <div className="scene-preview" aria-hidden="true">
+              <span className="scene-window wide" />
+              <span className="scene-window left" />
+              <span className="scene-window right" />
+            </div>
             {renaming === backpack.id ? (
               <>
                 <input
@@ -100,10 +114,11 @@ export function BackpackHome(props: {
                 <div>
                   <div className="name">{backpack.name}</div>
                   <div className="meta">
-                    Canvas Backpack
+                    Machine-wide environment
                     {backpack.lastEnteredAt
                       ? ` · last entered ${new Date(backpack.lastEnteredAt).toLocaleString()}`
                       : ' · never entered'}
+                    {backpack.workspacePath ? ` · ${backpack.workspacePath}` : ''}
                     {backpack.archived ? ' · archived' : ''}
                   </div>
                 </div>

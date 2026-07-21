@@ -46,6 +46,17 @@ describe('BackpackRegistry', () => {
     expect(second.lastActiveBackpackId).toBe(created.id);
   });
 
+  it('associates an optional desktop workspace without redefining the Backpack', async () => {
+    const first = await freshRegistry();
+    const created = await first.create('Writing', 'environment');
+    await first.setWorkspace(created.id, 'D:\\Letters\\Writing');
+
+    const second = await freshRegistry();
+    expect(second.find(created.id)?.workspacePath).toBe('D:\\Letters\\Writing');
+    await second.setWorkspace(created.id, null);
+    expect(second.find(created.id)?.workspacePath).toBeNull();
+  });
+
   it('clears last-active when leaving and when archiving the active backpack', async () => {
     const registry = await freshRegistry();
     const created = await registry.create('Active', 'canvas');
