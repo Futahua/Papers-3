@@ -33,6 +33,21 @@ The product is simple:
    cover behavior, hardcoded programs, Runs and validation UI from production.
 10. Keep historical engineering fixtures available only with PAPERS_ENABLE_FIXTURES=1.
 
+Reuse Papers 1's visual theme because the creator explicitly likes its feel. Read
+`Futahua/papers-are-papers` `src/styles.css` and the shell markup in `src/App.tsx`, then
+copy/adapt the actual visual primitives into Papers 3:
+
+- warm paper palette (`#efede7`, `#e7e3da`, `#fbfaf6`, `#20201e`);
+- muted green accent (`#4e705a`), fine dark borders and restrained shadows;
+- Segoe UI Variable body type with compact Cascadia-style labels;
+- faint 56px paper grid, translucent blurred top bar, rounded pills and menus;
+- calm, tactile desktop-software density rather than a glossy web dashboard.
+
+Reuse the theme, not Papers 1's old behavior. Do not bring over its custom agent
+workbench, Work rail, provider wizard, Inspect, self-edit or approval systems. Apply the
+theme consistently to Basic, Backpacks, Tools, Settings, warnings and the Hermes frame
+without restyling the Hermes product inside its own surface.
+
 Use existing products and ordinary Windows security boundaries. Do not add UI or systems
 not required above. Make technical decisions yourself; do not ask the non-coder creator
 to inspect source.

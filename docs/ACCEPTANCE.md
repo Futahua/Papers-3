@@ -22,8 +22,10 @@ These facts do not make the corrected product behavior complete.
   are absent from the shipped experience.
 - No Backpack folder is passed to `hermes desktop --cwd`.
 - Restart preserves names and normal settings.
-- The packaged and installed build passes the ten-item human acceptance list in the
+- The packaged and installed build passes the human acceptance list in the
   authoritative plan.
+- The Papers shell visibly reuses Papers 1's theme without importing its obsolete agent
+  workbench behavior or restyling Hermes internally.
 
 No source-code review by the creator is required. The creator audits what the product
 claims by clicking it and observing the visible result.

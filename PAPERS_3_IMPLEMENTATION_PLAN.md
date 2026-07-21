@@ -119,6 +119,20 @@ The next implementation is complete when the installed product provides:
 7. no production Programs, Agent Runs, invocation validation or Papers-owned Hermes UI;
 8. a packaged and installed build that the creator can change incrementally through use.
 
+## Required visual language
+
+Reuse Papers 1's theme from `Futahua/papers-are-papers`, especially `src/styles.css` and
+the permanent shell in `src/App.tsx`. This is an explicit creator preference, not a loose
+reference.
+
+Keep its warm paper colors, faint grid, translucent top bar, fine borders, rounded menus
+and pills, restrained shadow, muted green accent, Segoe UI Variable body text and compact
+monospaced labels. Adapt those primitives to the corrected Papers 3 screens.
+
+Do not copy Papers 1's agent workbench behavior, Work rail, provider setup, Inspect,
+self-edit or approval UI. The reuse is visual only. The existing Hermes surface retains
+its own interface and styling.
+
 ## Implementation instructions
 
 - Remove the folder/cover-centered first-Backpack flow from production plans and UI.
@@ -154,6 +168,8 @@ source code:
 8. No Programs, Runs, validation workflow or hardcoded demonstration buttons appear.
 9. Restarting Papers preserves the Backpack name.
 10. The creator can continue using global Hermes and request changes as real needs emerge.
+11. Basic, Backpacks, Tools, Settings and warnings visibly use the Papers 1 theme rather
+    than the current Papers 3 styling or an unrelated redesign.
 
 ## Deferred on purpose
 

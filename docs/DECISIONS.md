@@ -69,3 +69,13 @@ reusable machine capabilities; their exact contract remains explicitly undecided
 
 This decision supersedes the folder/cover first-release flow and any automatic
 `hermes desktop --cwd <Backpack folder>` behavior in earlier Papers 3 documents.
+
+## D-009 — Reuse Papers 1's visual theme (2026-07-21)
+
+The creator likes the feel of Papers 1 and wants it carried forward. Papers 3 will reuse
+the actual warm paper palette, faint grid, translucent permanent top bar, fine borders,
+rounded controls, restrained shadows, muted green accent and compact desktop typography
+from `Futahua/papers-are-papers/src/styles.css`.
+
+This is visual reuse only. Papers 1's custom agent workbench, Work rail, provider wizard,
+Inspect, approval and self-edit behaviors do not return. Hermes keeps its existing UI.
