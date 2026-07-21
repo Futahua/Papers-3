@@ -2,7 +2,7 @@
  * Papers — Electron main process bootstrap and composition root.
  */
 import { BaseWindow, Menu, WebContentsView, app, session } from 'electron';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
@@ -107,6 +107,12 @@ async function bootstrap(): Promise<void> {
   // shell is entirely the Papers UI.
   Menu.setApplicationMenu(null);
 
+  // App icon: packaged copies it to <resources>/icon.png; dev reads assets/.
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(app.getAppPath(), 'assets', 'icon.png');
+  const appIcon = existsSync(iconPath) ? iconPath : undefined;
+
   // ------------------------------------------------------------------ window
   // Frameless with a slim title-bar overlay: the OS paints only the standard
   // minimize / maximize / close controls flush in the top-right, and the rest
@@ -119,6 +125,7 @@ async function bootstrap(): Promise<void> {
     minHeight: 600,
     title: 'Papers',
     backgroundColor: '#efede7',
+    ...(appIcon ? { icon: appIcon } : {}),
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: '#efede7',

@@ -13,10 +13,13 @@ files:
 extraResources:
   - from: programs
     to: programs
+  - from: assets/icon.png
+    to: icon.png
 
 asar: true
 
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch: [x64]
