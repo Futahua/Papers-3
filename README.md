@@ -9,6 +9,9 @@ Hermes is global rather than Backpack-specific. Papers embeds the existing Herme
 Dashboard `/chat` surface and can launch Hermes Desktop separately. Backpack activity
 does not change Hermes's working directory, conversation or context automatically.
 
+The installed product is self-contained beneath one master folder: `Papers/App`
+contains the application and `Papers/Data` contains its persistent runtime state.
+
 The older Repository Research, Visual Dashboard and Kill Test programs are retained
 only as opt-in integration fixtures. They are not visible in the production app.
 

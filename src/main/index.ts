@@ -33,14 +33,14 @@ registerProgramSchemePrivileges();
 
 app.setName('Papers');
 
-// Keep every Papers-owned runtime file off C:. Tests provide their own isolated
-// directory; installed builds use a persistent sibling of the install folder;
-// development uses a private directory inside the D: checkout.
+// Keep every Papers-owned runtime file off C:. The packaged application lives
+// in <Papers>/App and stores persistent state in <Papers>/Data, leaving one
+// self-contained Papers master folder. Tests and development remain isolated.
 if (process.env['PAPERS_TEST_USER_DATA']) {
   app.setPath('userData', process.env['PAPERS_TEST_USER_DATA']);
 } else {
   const papersDataDir = app.isPackaged
-    ? path.resolve(path.dirname(process.execPath), '..', 'Papers Data')
+    ? path.resolve(path.dirname(process.execPath), '..', 'Data')
     : path.join(app.getAppPath(), '.papers-dev-data');
   mkdirSync(papersDataDir, { recursive: true });
   app.setPath('userData', papersDataDir);
