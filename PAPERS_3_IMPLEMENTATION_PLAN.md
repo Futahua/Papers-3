@@ -64,6 +64,11 @@ The ordinary flow remains prompt, optional attachments, reply. If the creator wa
 Hermes to work on a folder or file, they can attach it, name its path or explicitly ask
 for that context. Papers does not infer it from a Backpack name.
 
+Hermes may use its own installed file, terminal, browser, computer-use and coding tools
+under ordinary Windows permissions. Papers does not add a special self-edit, delegation,
+validation, rebuild or relaunch system around those actions. They remain normal Hermes
+work, including when the creator explicitly asks Hermes to change Papers itself.
+
 ### Tools
 
 A Tool is a capability available across the system. Known examples include installed
@@ -160,6 +165,7 @@ source code:
 - Data Source contract;
 - canvases, pages and generated Backpack features;
 - self-edit and specialized agent workflows beyond existing product integration.
+- Papers-owned orchestration around Hermes or coding agents.
 
 The absence of these is honest. Inventing them before use would make the product less
 auditable, not more finished.
