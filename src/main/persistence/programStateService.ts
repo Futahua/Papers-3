@@ -1,6 +1,6 @@
 /**
- * Program state persistence — isolated per Backpack and program identity
- * (plan section 10). Programs own their state shape; Papers stores it
+ * Program state persistence — isolated per Backpack and program identity.
+ * Programs own their state shape; Papers stores it
  * opaquely with atomic writes and backup/quarantine behavior.
  */
 import { AtomicJsonStore } from './atomicStore';

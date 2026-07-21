@@ -1,6 +1,6 @@
 /**
- * CapabilityBroker — the single gate for every privileged program request
- * (plan section 11): identity validation, schema validation, grant checks,
+ * CapabilityBroker — the single gate for every privileged program request:
+ * identity validation, schema validation, grant checks,
  * prompting, constrained execution, structured errors, non-secret logging.
  */
 import { randomUUID } from 'node:crypto';

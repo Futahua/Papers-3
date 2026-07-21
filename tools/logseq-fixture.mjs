@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Logseq demonstration fixture (plan section 20).
+ * Logseq demonstration fixture.
  *
  * Creates a disposable shallow checkout of logseq/logseq at the pinned commit
  * OUTSIDE the Papers source tree and outside PapersData, verifies the pin,

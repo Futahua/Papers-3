@@ -1,7 +1,7 @@
 # Papers — visible behavior guide
 
-This describes the intended next installed build. Items not yet implemented remain
-listed in [`docs/ACCEPTANCE.md`](ACCEPTANCE.md).
+This describes the current installed build. Verified behavior is recorded in
+[`ACCEPTANCE.md`](ACCEPTANCE.md).
 
 ## Basic
 

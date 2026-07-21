@@ -1,6 +1,6 @@
 /**
  * BackpackRegistry — owns Backpack identity, creation, rename, archive,
- * enter/leave bookkeeping, and last-active restoration (plan section 5.1).
+ * enter/leave bookkeeping, and last-active restoration.
  */
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';

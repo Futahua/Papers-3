@@ -312,7 +312,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   /**
    * Inspect in Hermes: no stable per-session deep link is documented for
    * Hermes Desktop, so open/focus the Desktop and give the creator the
-   * authoritative session id to find/inspect (plan section 15 fallback).
+   * authoritative session id to find or inspect.
    */
   async inspectRunInHermes(runId: string): Promise<{ sessionId: string | null; opened: boolean }> {
     const run = this.deps.runService().get(runId);

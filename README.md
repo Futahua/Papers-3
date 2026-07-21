@@ -29,8 +29,6 @@ by adding speculative framework screens.
 - [Syncthing and evolving data](docs/SYNCTHING_AND_DATA.md)
 - [Hermes pickup instructions](HERMES.md)
 - [User guide](docs/USER_GUIDE.md)
-- [Implementation plan](PAPERS_3_IMPLEMENTATION_PLAN.md)
-- [Implementation-agent pickup prompt](AGENT_PICKUP_PROMPT.md)
 - [Acceptance status](docs/ACCEPTANCE.md)
 
 ```powershell

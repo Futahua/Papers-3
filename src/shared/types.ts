@@ -136,7 +136,7 @@ export interface CapabilityError {
 }
 
 // ---------------------------------------------------------------------------
-// Agent invocation (plan section 13)
+// Agent invocation
 // ---------------------------------------------------------------------------
 
 export interface ProgramReference {
@@ -199,7 +199,7 @@ export interface AgentInvocation {
 }
 
 // ---------------------------------------------------------------------------
-// Agent runs (plan sections 14, 15)
+// Agent runs
 // ---------------------------------------------------------------------------
 
 export type AgentRunState =

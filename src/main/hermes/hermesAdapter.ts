@@ -1,5 +1,5 @@
 /**
- * HermesAdapter (plan section 12) — owns connection startup, health, session
+ * HermesAdapter — owns connection startup, health, session
  * creation, turn submission, public-event subscription, approval forwarding,
  * cancellation, and structured result receipt. Nothing else.
  *

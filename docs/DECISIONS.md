@@ -46,7 +46,7 @@ is enabled only with `PAPERS_ENABLE_FIXTURES=1` for regression testing.
 ## D-006 — Acceptance is human-facing (2026-07-21)
 
 Automated tests establish engineering confidence but cannot establish usefulness. Release
-readiness requires the non-coder human acceptance script in the authoritative plan. Papers
+readiness requires the non-coder human acceptance path in `docs/ACCEPTANCE.md`. Papers
 must not call itself complete while its primary everyday workflow remains absent.
 
 ## D-007 — Folder/cover first-Backpack proposal (superseded, 2026-07-21)
