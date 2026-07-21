@@ -1,5 +1,5 @@
-appId: com.futahua.papers3
-productName: Papers 3
+appId: com.futahua.papers
+productName: Papers
 copyright: Copyright © 2026 Futahua
 
 directories:
@@ -20,11 +20,12 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  artifactName: Papers3-Setup-${version}.${ext}
+  artifactName: Papers-Setup-${version}.${ext}
 
 nsis:
-  oneClick: true
+  oneClick: false
   perMachine: false
-  # Uninstall must preserve creator data (PapersData under Electron's %APPDATA%/papers3).
-  deleteAppDataOnUninstall: false
-  artifactName: Papers3-Setup-${version}.${ext}
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: false
+  createStartMenuShortcut: false
+  artifactName: Papers-Setup-${version}.${ext}

@@ -1,4 +1,4 @@
-# Papers 3
+# Papers
 
 Papers is a personal layer across the Windows machine. Its permanent Basic control
 contains Backpacks, Tools and Settings. Backpacks are named machine-wide environments

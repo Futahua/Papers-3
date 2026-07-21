@@ -1,5 +1,5 @@
 /**
- * Shared contract types for Papers 3.
+ * Shared contract types for Papers.
  *
  * These types cross the main <-> renderer boundary. Papers validates their
  * structure (see schemas.ts) but never interprets program-specific payloads

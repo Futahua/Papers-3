@@ -1,7 +1,7 @@
 {
-  "name": "papers3",
+  "name": "papers",
   "version": "1.0.0",
-  "description": "Papers 3 — a visual switchboard for machine-wide working environments",
+  "description": "Papers — a personal layer across the Windows machine",
   "main": "out/main/index.js",
   "type": "module",
   "private": true,

@@ -17,7 +17,7 @@ const VIEW_LABEL: Record<BasicView, string> = {
 };
 
 /**
- * Papers 3 production shell.
+ * Papers production shell.
  *
  * Basic is the permanent control that reaches Backpacks, Tools and Settings.
  * Hermes is global — a sidebar embedding the existing Hermes Dashboard /chat,

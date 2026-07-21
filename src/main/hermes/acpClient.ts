@@ -257,7 +257,7 @@ export class AcpClient extends EventEmitter {
     return this.request<InitializeResult>('initialize', {
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-      clientInfo: { name: 'papers3', version: '1.0.0' },
+      clientInfo: { name: 'papers', version: '1.0.0' },
     });
   }
 

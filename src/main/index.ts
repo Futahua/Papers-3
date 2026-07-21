@@ -1,7 +1,8 @@
 /**
- * Papers 3 — Electron main process bootstrap and composition root.
+ * Papers — Electron main process bootstrap and composition root.
  */
 import { BaseWindow, WebContentsView, app, session } from 'electron';
+import { mkdirSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
@@ -30,10 +31,19 @@ import {
 
 registerProgramSchemePrivileges();
 
-// Test harnesses point userData at a disposable directory so creator data is
-// never touched by fixtures (plan section 27).
+app.setName('Papers');
+
+// Keep every Papers-owned runtime file off C:. Tests provide their own isolated
+// directory; installed builds use a persistent sibling of the install folder;
+// development uses a private directory inside the D: checkout.
 if (process.env['PAPERS_TEST_USER_DATA']) {
   app.setPath('userData', process.env['PAPERS_TEST_USER_DATA']);
+} else {
+  const papersDataDir = app.isPackaged
+    ? path.resolve(path.dirname(process.execPath), '..', 'Papers Data')
+    : path.join(app.getAppPath(), '.papers-dev-data');
+  mkdirSync(papersDataDir, { recursive: true });
+  app.setPath('userData', papersDataDir);
 }
 
 // Papers is a single-instance application (except under isolated test homes).
@@ -71,8 +81,8 @@ async function bootstrap(): Promise<void> {
     height: 860,
     minWidth: 900,
     minHeight: 600,
-    title: 'Papers 3',
-    backgroundColor: '#14161a',
+    title: 'Papers',
+    backgroundColor: '#efede7',
   });
 
   const preloadDir = path.join(app.getAppPath(), 'out', 'preload');
@@ -236,7 +246,7 @@ async function bootstrap(): Promise<void> {
 app.whenReady().then(() =>
   bootstrap().catch((err) => {
     // Surface bootstrap failures instead of dying silently.
-    console.error('[papers3] bootstrap failed:', err);
+    console.error('[papers] bootstrap failed:', err);
   }),
 );
 
