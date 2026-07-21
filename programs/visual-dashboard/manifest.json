@@ -1,0 +1,15 @@
+{
+  "id": "visual-dashboard",
+  "name": "Visual Dashboard",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "index.html",
+  "stateSchemaVersion": 1,
+  "capabilities": [
+    "storage.read-own",
+    "storage.write-own",
+    "program.read-shared-summary"
+  ],
+  "description": "Isolation proof: a radically different visual language rendering only the summary data Repository Research explicitly shares.",
+  "accentColor": "#c33bff"
+}

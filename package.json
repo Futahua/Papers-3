@@ -1,0 +1,44 @@
+{
+  "name": "papers",
+  "version": "1.0.0",
+  "description": "Papers — a personal layer across the Windows machine",
+  "main": "out/main/index.js",
+  "type": "module",
+  "private": true,
+  "author": "Futahua",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "electron-vite build && vitest run --config vitest.e2e.config.ts",
+    "test:e2e:product": "electron-vite build && vitest run --config vitest.e2e.config.ts tests/e2e/product-shell.e2e.ts",
+    "test:e2e:fixtures": "electron-vite build && vitest run --config vitest.e2e.config.ts tests/e2e/killtest.e2e.ts tests/e2e/repository-workflow.e2e.ts",
+    "demo:seed": "node tools/seed-demo-backpack.mjs",
+    "fixture:logseq": "node tools/logseq-fixture.mjs setup",
+    "fixture:logseq:status": "node tools/logseq-fixture.mjs status",
+    "fixture:logseq:cleanup": "node tools/logseq-fixture.mjs cleanup",
+    "package": "electron-vite build && electron-builder --win",
+    "package:dir": "electron-vite build && electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "electron": "43.1.1",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "playwright-core": "1.61.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "zod": "4.4.3"
+  }
+}

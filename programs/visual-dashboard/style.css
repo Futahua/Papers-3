@@ -1,0 +1,47 @@
+/* Deliberately alien to both the host frame and Repository Research:
+   near-black stage, neon vector HUD, monospace everything. */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: #07080c;
+  color: #d5f7ff;
+  font-family: 'Cascadia Code', Consolas, monospace;
+  overflow: hidden;
+}
+#stage { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+#hud {
+  position: fixed;
+  top: 14px;
+  left: 16px;
+  z-index: 2;
+  background: rgba(7, 8, 12, 0.72);
+  border: 1px solid rgba(120, 240, 255, 0.35);
+  border-radius: 4px;
+  padding: 10px 14px;
+  backdrop-filter: blur(3px);
+}
+#hud h1 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  letter-spacing: 5px;
+  color: #7df3ff;
+  text-shadow: 0 0 12px rgba(125, 243, 255, 0.7);
+}
+#hud h1 span { color: #ff5ad0; }
+#status { font-size: 11px; color: #7fa3ad; max-width: 300px; }
+#controls { margin-top: 8px; display: flex; gap: 8px; }
+button {
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  background: transparent;
+  color: #7df3ff;
+  border: 1px solid #7df3ff;
+  border-radius: 2px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover { background: rgba(125, 243, 255, 0.15); box-shadow: 0 0 10px rgba(125, 243, 255, 0.4); }

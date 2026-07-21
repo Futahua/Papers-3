@@ -1,0 +1,19 @@
+node_modules/
+out/
+dist/
+release/
+coverage/
+*.log
+.DS_Store
+Thumbs.db
+# Local-only workspaces (never committed)
+.local/
+.papers-dev-data/
+# Test artifacts
+test-results/
+playwright-report/
+# Environment files
+.env
+.env.*
+out.txt
+err.txt

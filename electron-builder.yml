@@ -1,0 +1,31 @@
+appId: com.futahua.papers
+productName: Papers
+copyright: Copyright © 2026 Futahua
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+
+extraResources:
+  - from: programs
+    to: programs
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: Papers-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: false
+  createStartMenuShortcut: false
+  artifactName: Papers-Setup-${version}.${ext}
