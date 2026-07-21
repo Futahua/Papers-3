@@ -95,3 +95,45 @@ secret status, concurrency limits and recovery.
 Hermes uses the `HERMES.md` in the Papers master folder as its native pickup instruction
 when the creator points Hermes at that folder. Papers does not automatically change the
 global Hermes working directory to force this context.
+
+## D-011 — One Hermes backend, real Hermes Desktop in both placements (2026-07-21)
+
+The prior build ran two Hermes backends for one experience: Papers embedded the terminal
+`hermes dashboard /chat` (port 9119) in its sidebar, while `hermes desktop` spawned a
+second identical `hermes dashboard` backend on another port behind the polished React UI.
+Same data, two frontends, two Python backends. This was the central defect (PROBLEMS.md 1).
+
+Proven from the Hermes Desktop source (`apps/desktop/electron/main.cjs`): the desktop's
+own local backend is literally `hermes dashboard --no-open --host 127.0.0.1 --port <n>`
+with a per-launch `HERMES_DASHBOARD_SESSION_TOKEN`, and the desktop honours
+`HERMES_DESKTOP_REMOTE_URL` + `HERMES_DESKTOP_REMOTE_TOKEN` to connect to an existing
+token-auth backend instead of spawning its own.
+
+Decision: Papers starts exactly one `hermes dashboard` backend (127.0.0.1:9119) with a
+Papers-generated session token, then launches the real Hermes Desktop app pointed at that
+backend via the two env vars. Both the docked sidebar placement and the detached window
+are the same real Hermes Desktop frontend on the same single backend. The terminal `/chat`
+embedding is removed entirely.
+
+## D-012 — Papers-managed snap-dock, not window reparenting (2026-07-21)
+
+Hermes Desktop exposes no companion/dock mode and no renderer set-bounds IPC; it is a
+frameless top-level Electron `BrowserWindow` in its own process. Native cross-process
+window reparenting on Windows (`SetParent`) is fragile through focus, keyboard input, DPI,
+sleep/wake and crash — the handoff permits it only if demonstrably stable.
+
+Decision (creator-approved): Papers manages the real Hermes Desktop window as a placement
+it positions flush against its docking edge ("docked sidebar"), keeps aligned on Papers
+move/resize, and offers a visible dock target when the detached window is dragged back.
+Hermes remains a real, independently-stable window the whole time; docking never destroys
+the session. This is the handoff's "Papers-managed Hermes window that visually docks
+without cloning the UI."
+
+## D-013 — Restrained skin as external theme data on a Hermes tracking branch (2026-07-21)
+
+The Papers Light/Dark skin (HERMES_SKIN.md, PROBLEMS.md 3-4) lives as versioned external
+theme data plus one narrow theme-loading seam in Hermes Desktop, on a tracking branch of
+`NousResearch/hermes-agent` that can be rebased onto selected upstream releases. Updates
+run through a documented source-based rebuild command, never by overwriting the only
+working build. If theme loading fails, Hermes falls back to its stock appearance rather
+than failing to start.

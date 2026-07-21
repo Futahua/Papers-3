@@ -54,6 +54,32 @@ if (!process.env['PAPERS_TEST_USER_DATA'] && !app.requestSingleInstanceLock()) {
 let mainWindow: BaseWindow | null = null;
 let hostView: WebContentsView | null = null;
 
+/** Width of the Papers top bar band the docked Hermes window sits below. */
+const TOP_BAR_HEIGHT = 48;
+/** Fraction of Papers width the docked Hermes sidebar occupies (clamped). */
+const DOCK_WIDTH_FRACTION = 0.4;
+const DOCK_MIN_WIDTH = 380;
+const DOCK_MAX_WIDTH = 620;
+
+/**
+ * The docked Hermes rectangle in Papers content coordinates: a right-hand strip
+ * below the top bar. The renderer and main process must agree on this so the
+ * host UI leaves room for the docked window and Papers realignment matches.
+ */
+function dockBoundsFor(contentWidth: number): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
+  const width = Math.max(DOCK_MIN_WIDTH, Math.min(DOCK_MAX_WIDTH, Math.round(contentWidth * DOCK_WIDTH_FRACTION)));
+  const height = Math.max(
+    400,
+    Math.round((mainWindow?.getContentBounds().height ?? 860) - TOP_BAR_HEIGHT),
+  );
+  return { x: Math.max(0, contentWidth - width), y: TOP_BAR_HEIGHT, width, height };
+}
+
 async function bootstrap(): Promise<void> {
   const baseDir = app.getPath('userData');
   const paths = papersPaths(baseDir);
@@ -104,9 +130,21 @@ async function bootstrap(): Promise<void> {
   fitHost();
   mainWindow.on('resize', fitHost);
 
-  // The production Hermes experience is the existing Hermes product. Papers
-  // only hosts its official dashboard surface or launches Hermes Desktop.
-  const hermesSurface = new HermesSurface(mainWindow);
+  // The production Hermes experience IS the existing Hermes Desktop product.
+  // Papers runs one Hermes backend and positions the real Hermes Desktop
+  // window as a docked sidebar or a detached window — never a second chat UI.
+  const hermesSurface = new HermesSurface(mainWindow, (state) => {
+    hostView?.webContents.send('host:event:hermes-surface', state);
+  });
+
+  // Keep a docked Hermes window aligned to Papers as it moves or resizes.
+  const realignHermesDock = (): void => {
+    if (!mainWindow) return;
+    const { width } = mainWindow.getContentBounds();
+    hermesSurface.setDockBounds(dockBoundsFor(width));
+  };
+  mainWindow.on('resize', realignHermesDock);
+  mainWindow.on('move', realignHermesDock);
 
   hostView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   hostView.webContents.on('will-navigate', (event, url) => {

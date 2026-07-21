@@ -13,6 +13,8 @@ This is the pickup file for building Papers and its Backpacks. Hermes loads
 - Architecture boundary: `docs/ARCHITECTURE.md` in the source repository
 - Consequential decisions: `docs/DECISIONS.md` in the source repository
 - Syncthing and data policy: `docs/SYNCTHING_AND_DATA.md` in the source repository
+- Creator-reported problems, in priority order: `docs/PROBLEMS.md` in the source repository
+- Current Hermes batch handoff: `docs/HERMES_BATCH_HANDOFF.md` in the source repository
 
 If the source checkout is unavailable on a synced machine, obtain the canonical
 repository instead of editing packaged files under `App`. Inspect the active branch,
@@ -41,7 +43,8 @@ open pull request and recent commits before continuing existing work.
 
 1. Treat the creator's prompt, attachments and named files as the working specification.
 2. Read the current repository documents and inspect the installed behavior before
-   changing it. Do not revive superseded plans from history.
+   changing it. Start with open items in `docs/PROBLEMS.md`; do not revive superseded
+   plans from history.
 3. Identify the existing product or Windows capability that already does most of the
    work. Build the smallest real, useful connection through Papers.
 4. Do not turn every decision into UI. Prefer the simple interaction already requested:

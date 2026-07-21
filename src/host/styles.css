@@ -176,36 +176,54 @@ input:focus-visible {
   background: #2c2c29;
 }
 
-.hermes-badge {
+/* Two compact SVG placement toggles for the one global Hermes experience. */
+.hermes-controls {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  height: 28px;
-  padding: 0 10px;
+  gap: 4px;
+  padding: 3px;
   border: 1px solid var(--line);
   border-radius: 999px;
+  background: rgba(251, 250, 246, 0.72);
+}
+
+.hermes-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
   color: var(--muted);
-  font-family: var(--mono);
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
 }
 
-.hermes-badge i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--faint);
+.hermes-toggle:hover {
+  background: var(--raised-strong);
+  color: var(--ink);
 }
 
-.hermes-badge.ready i {
-  background: var(--green);
-  box-shadow: 0 0 0 3px rgba(78, 112, 90, 0.13);
+.hermes-toggle.active {
+  background: var(--raised-strong);
+  border-color: var(--green);
+  color: var(--green);
 }
 
-.hermes-badge.error i {
-  background: var(--red);
+.hermes-toggle.busy {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.hermes-toggle:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
 }
 
 /* --------------------------------------------------------------- Basic menu */
@@ -807,4 +825,72 @@ input:focus-visible {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* --------------------------------------------------- Hermes drag docking */
+/* Grip on the docked sidebar's inner edge — drag inward to detach. */
+.hermes-grip {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 76px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-right: none;
+  border-radius: 7px 0 0 7px;
+  background: rgba(251, 250, 246, 0.92);
+  cursor: ew-resize;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: -6px 0 18px rgba(38, 35, 29, 0.08);
+}
+.hermes-grip:hover { background: var(--raised-strong); }
+.hermes-grip.armed { border-color: var(--green); background: var(--green-soft); }
+.hermes-grip .grip-dots {
+  width: 4px;
+  height: 34px;
+  background-image: radial-gradient(currentColor 1px, transparent 1.4px);
+  background-size: 4px 7px;
+  color: var(--faint);
+  opacity: 0.85;
+}
+.hermes-grip:hover .grip-dots,
+.hermes-grip.armed .grip-dots { color: var(--green); }
+
+/* Right-edge dock target shown while Hermes is a detached window. */
+.hermes-dock-target {
+  position: fixed;
+  top: 48px;
+  right: 0;
+  bottom: 0;
+  margin: 0;
+  padding: 0;
+  border: 2px dashed var(--line-strong);
+  border-right: none;
+  border-radius: 12px 0 0 12px;
+  background: rgba(229, 238, 231, 0.28);
+  color: var(--muted);
+  cursor: copy;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.hermes-dock-target.hover {
+  background: rgba(229, 238, 231, 0.6);
+  border-color: var(--green);
+  color: var(--green);
+}
+.hermes-dock-target .dock-target-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 650;
 }

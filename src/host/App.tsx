@@ -1,12 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { HermesHealth } from '@shared/types';
-import { host, type BackpacksList, type HostErrorPayload } from './bridge';
+import { host, type BackpacksList, type HermesSurfaceStatus, type HostErrorPayload } from './bridge';
 import { BackpacksPane } from './BackpacksPane';
 import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
 import { EmptyBackpackWarning } from './EmptyBackpackWarning';
-import { HermesDock } from './HermesDock';
+import { HermesControls } from './HermesControls';
+import { HermesDockZone } from './HermesDockZone';
+
+/** Papers content-relative docked-Hermes rectangle. Must match the main
+ *  process `dockBoundsFor` so the host UI reserves the same strip. */
+const TOP_BAR_HEIGHT = 48;
+function dockWidthOf(w: number): number {
+  return Math.max(380, Math.min(620, Math.round(w * 0.4)));
+}
+function dockBounds(): { x: number; y: number; width: number; height: number } {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const width = dockWidthOf(w);
+  return { x: Math.max(0, w - width), y: TOP_BAR_HEIGHT, width, height: Math.max(400, h - TOP_BAR_HEIGHT) };
+}
 
 type BasicView = 'backpacks' | 'tools' | 'settings';
 
@@ -29,9 +42,8 @@ export function App(): React.JSX.Element {
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });
   const [view, setView] = useState<BasicView>('backpacks');
   const [basicOpen, setBasicOpen] = useState(false);
-  const [hermesOpen, setHermesOpen] = useState(false);
   const [entered, setEntered] = useState<string | null>(null);
-  const [hermes, setHermes] = useState<HermesHealth>({ state: 'unavailable', detail: 'starting' });
+  const [hermes, setHermes] = useState<HermesSurfaceStatus>({ placement: 'closed', status: 'idle' });
   const [hostErrors, setHostErrors] = useState<HostErrorPayload[]>([]);
   const basicRef = useRef<HTMLDivElement | null>(null);
 
@@ -42,18 +54,30 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     void refreshBackpacks();
     void host()
-      .hermes.health()
+      .hermes.surfaceStatus()
       .then(setHermes)
       .catch(() => undefined);
 
     const bridge = host();
     const subs = [
       bridge.events.onBackpacksChanged(setBackpacks),
-      bridge.events.onHermesHealth(setHermes),
+      bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),
     ];
     return () => subs.forEach((unsub) => unsub());
   }, [refreshBackpacks]);
+
+  // True toggles: dock/hide the sidebar and detach/hide the window. Hiding
+  // never terminates Hermes; the same session returns on the next open.
+  const toggleDock = useCallback(() => {
+    if (hermes.placement === 'docked') void host().hermes.hideDock().then(() => undefined);
+    else void host().hermes.dock(dockBounds()).then(setHermes);
+  }, [hermes.placement]);
+
+  const toggleWindow = useCallback(() => {
+    if (hermes.placement === 'detached') void host().hermes.hideWindow().then(() => undefined);
+    else void host().hermes.showWindow().then(setHermes);
+  }, [hermes.placement]);
 
   // The Hermes surface (a native view) must sit behind renderer overlays.
   useEffect(() => {
@@ -82,13 +106,13 @@ export function App(): React.JSX.Element {
     setBasicOpen(false);
   };
 
-  const hermesReady = hermes.state === 'connected';
-  const hermesLabel =
-    hermes.state === 'connected'
-      ? 'Hermes ready'
-      : hermes.state === 'starting'
-        ? 'Hermes starting'
-        : 'Hermes';
+  const hermesBusy = hermes.status === 'starting';
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const onResize = (): void => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   return (
     <div className="app">
@@ -150,16 +174,12 @@ export function App(): React.JSX.Element {
         <div className="topbar-center" />
 
         <div className="topbar-actions">
-          <span className={`hermes-badge${hermesReady ? ' ready' : ''}`}>
-            <i />
-            {hermesLabel}
-          </span>
-          <button className="pill-button" onClick={() => void host().hermes.openDesktop()}>
-            Hermes window
-          </button>
-          <button className="pill-button solid" onClick={() => setHermesOpen(true)}>
-            Hermes
-          </button>
+          <HermesControls
+            placement={hermes.placement}
+            busy={hermesBusy}
+            onToggleDock={toggleDock}
+            onToggleWindow={toggleWindow}
+          />
         </div>
       </header>
 
@@ -173,7 +193,24 @@ export function App(): React.JSX.Element {
         <EmptyBackpackWarning backpackName={enteredBackpack.name} onDismiss={() => setEntered(null)} />
       )}
 
-      {hermesOpen && <HermesDock onClose={() => setHermesOpen(false)} />}
+      <HermesDockZone
+        placement={hermes.placement}
+        dockWidth={dockWidthOf(viewportWidth)}
+        onDetach={() => void host().hermes.showWindow().then(setHermes)}
+        onDock={() => void host().hermes.dock(dockBounds()).then(setHermes)}
+      />
+
+      {hermes.status === 'error' && hermes.detail && (
+        <div className="error-banner hermes-error">
+          <div className="content">
+            <div className="title">Hermes</div>
+            <div className="detail">{hermes.detail}</div>
+          </div>
+          <button className="secondary" onClick={() => void host().hermes.showWindow().then(setHermes)}>
+            Retry
+          </button>
+        </div>
+      )}
 
       {hostErrors.length > 0 && hostErrors[0] && (
         <div className="error-banner">

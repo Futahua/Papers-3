@@ -5,7 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { clickScript, evalInHost, launchPapers, programViewCount, waitFor, type LaunchedApp } from './helpers';
+import { clickScript, evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
 
 let launched: LaunchedApp;
 
@@ -120,17 +120,36 @@ describe('production Papers shell', () => {
       'Backpack name retained',
     );
 
-    // Hermes opens globally from the shell and embeds Hermes own /chat surface.
-    await evalInHost(app, clickScript('.pill-button.solid', 'Hermes'));
-    await waitFor(async () => (await programViewCount(app)) === 1, 150_000, 'official Hermes view', 500);
-    const hermesUrl = await app.evaluate(async ({ BaseWindow }) => {
-      const win = BaseWindow.getAllWindows()[0];
-      const views = win?.contentView.children as Electron.WebContentsView[];
-      return views.at(-1)?.webContents.getURL() ?? '';
-    });
-    expect(hermesUrl).toMatch(/^http:\/\/127\.0\.0\.1:9119\/chat/);
+    // Hermes controls: exactly two compact SVG toggles (sidebar + window),
+    // and NONE of the old redundant controls — no dotted status pill, no
+    // "Hermes window" / "Hermes" text buttons, no embedded /chat surface.
+    expect(
+      await evalInHost<number>(app, `document.querySelectorAll('.hermes-controls .hermes-toggle').length`),
+    ).toBe(2);
 
-    await evalInHost(app, clickScript('.hermes-dock button', 'Close'));
-    await waitFor(async () => (await programViewCount(app)) === 0, 10_000, 'Hermes view closed');
+    // Each toggle carries an accessible name and starts inactive (Hermes closed).
+    const toggleState = await evalInHost<{ labels: string[]; pressed: string[] }>(
+      app,
+      `(() => {
+        const btns = [...document.querySelectorAll('.hermes-controls .hermes-toggle')];
+        return {
+          labels: btns.map((b) => b.getAttribute('aria-label') ?? ''),
+          pressed: btns.map((b) => b.getAttribute('aria-pressed') ?? ''),
+        };
+      })()`,
+    );
+    expect(toggleState.labels.some((l) => /sidebar/i.test(l))).toBe(true);
+    expect(toggleState.labels.some((l) => /window/i.test(l))).toBe(true);
+    expect(toggleState.pressed).toEqual(['false', 'false']);
+
+    // The obsolete duplicate Hermes UI is gone from the shell.
+    expect(
+      await evalInHost<boolean>(
+        app,
+        `document.querySelector('.hermes-badge') === null &&
+         document.querySelector('.hermes-dock') === null &&
+         ![...document.querySelectorAll('button')].some((b) => (b.textContent ?? '').trim() === 'Hermes window')`,
+      ),
+    ).toBe(true);
   }, 240_000);
 });

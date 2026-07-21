@@ -39,12 +39,12 @@ export function SettingsPane(): React.JSX.Element {
             <span className="label">Hermes</span>
             <strong>The existing Hermes product</strong>
             <small>
-              Hermes is global and runs as its own application. Papers embeds the Hermes Dashboard
-              chat as a sidebar and can pop out the Hermes Desktop window. Its models, permissions and
-              tools are configured inside Hermes.
+              Hermes is global and runs as its own application. Papers shows the real Hermes Desktop
+              in two placements — docked as a sidebar or as a detached window — using the two symbol
+              controls in the top bar. Its models, permissions and tools are configured inside Hermes.
             </small>
             <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-              <button className="secondary" onClick={() => void host().hermes.openDesktop()}>
+              <button className="secondary" onClick={() => void host().hermes.showWindow()}>
                 Open Hermes window
               </button>
             </div>

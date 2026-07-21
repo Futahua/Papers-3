@@ -6,7 +6,6 @@ export function BackpackHome(props: {
   list: BackpacksList;
   onChanged: () => Promise<void>;
   onEntered: () => Promise<void>;
-  onOpenHermes?: () => void;
 }): React.JSX.Element {
   const [name, setName] = useState('');
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -31,8 +30,7 @@ export function BackpackHome(props: {
       <header className="home-bar">
         <h1>Papers</h1>
         <span className="spacer" />
-        <button onClick={() => void host().hermes.openDesktop()}>Hermes window</button>
-        {props.onOpenHermes && <button className="primary" onClick={props.onOpenHermes}>Hermes sidebar</button>}
+        <button onClick={() => void host().hermes.showWindow()}>Hermes window</button>
       </header>
       <div className="home-intro">
         <h2>Backpacks</h2>

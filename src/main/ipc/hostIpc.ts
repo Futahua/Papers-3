@@ -46,10 +46,11 @@ export interface HostFacade {
 
   hermesHealth(): unknown;
   hermesSurfaceStatus(): unknown;
-  showHermesSurface(bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
-  hideHermesSurface(): void;
-  setHermesSurfaceBounds(bounds: { x: number; y: number; width: number; height: number }): void;
-  openHermesDesktop(): Promise<unknown>;
+  dockHermes(bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
+  setHermesDockBounds(bounds: { x: number; y: number; width: number; height: number }): void;
+  hideHermesDock(): void;
+  showHermesWindow(): Promise<unknown>;
+  hideHermesWindow(): void;
 }
 
 const boundsSchema = z
@@ -156,10 +157,11 @@ export function registerHostIpc(facade: HostFacade): void {
 
   handle('host:hermes:health', () => facade.hermesHealth());
   handle('host:hermes:surface-status', () => facade.hermesSurfaceStatus());
-  handle('host:hermes:show', (_e, bounds) => facade.showHermesSurface(boundsSchema.parse(bounds)));
-  handle('host:hermes:hide', () => facade.hideHermesSurface());
-  handle('host:hermes:set-bounds', (_e, bounds) =>
-    facade.setHermesSurfaceBounds(boundsSchema.parse(bounds)),
+  handle('host:hermes:dock', (_e, bounds) => facade.dockHermes(boundsSchema.parse(bounds)));
+  handle('host:hermes:set-dock-bounds', (_e, bounds) =>
+    facade.setHermesDockBounds(boundsSchema.parse(bounds)),
   );
-  handle('host:hermes:open-desktop', () => facade.openHermesDesktop());
+  handle('host:hermes:hide-dock', () => facade.hideHermesDock());
+  handle('host:hermes:show-window', () => facade.showHermesWindow());
+  handle('host:hermes:hide-window', () => facade.hideHermesWindow());
 }
