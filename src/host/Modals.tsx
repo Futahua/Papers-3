@@ -153,7 +153,7 @@ export function PermissionsPanel(props: { onClose: () => void }): React.JSX.Elem
       <div className="modal" style={{ width: 'min(640px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
         <header>Permissions</header>
         <div className="body">
-          {grants.length === 0 && <p style={{ color: 'var(--text-dim)' }}>No standing grants.</p>}
+          {grants.length === 0 && <p style={{ color: '#9aa1af' }}>No standing grants.</p>}
           {grants.map((grant, i) => (
             <div key={i} className="run-card">
               <div className="row">

@@ -15,17 +15,22 @@ function subscribe(channel: string): (listener: Listener) => () => void {
 }
 
 const api = {
+  // Historical program/ACP demonstrations are exposed only when Papers is
+  // launched with PAPERS_ENABLE_FIXTURES=1. Production renders never see them.
+  fixtureMode: process.env['PAPERS_ENABLE_FIXTURES'] === '1',
+
   backpacks: {
     list: () => ipcRenderer.invoke('host:backpacks:list'),
-    create: (name: string, type: string) => ipcRenderer.invoke('host:backpacks:create', name, type),
+    // Name-only creation. Every production Backpack is a machine-wide
+    // environment; the legacy 'canvas' type is only ever passed by fixtures.
+    create: (name: string, type: string = 'environment') =>
+      ipcRenderer.invoke('host:backpacks:create', name, type),
     rename: (id: string, name: string) => ipcRenderer.invoke('host:backpacks:rename', id, name),
     setArchived: (id: string, archived: boolean) =>
       ipcRenderer.invoke('host:backpacks:set-archived', id, archived),
     enter: (id: string) => ipcRenderer.invoke('host:backpacks:enter', id),
     leave: () => ipcRenderer.invoke('host:backpacks:leave'),
     lastActive: () => ipcRenderer.invoke('host:backpacks:last-active'),
-    chooseWorkspace: () => ipcRenderer.invoke('host:backpacks:choose-workspace'),
-    clearWorkspace: () => ipcRenderer.invoke('host:backpacks:clear-workspace'),
   },
 
   programs: {

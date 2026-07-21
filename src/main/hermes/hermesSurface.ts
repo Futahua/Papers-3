@@ -6,7 +6,6 @@
  * /chat surface; pop-out launches Hermes Desktop with an optional cwd.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { promises as fs } from 'node:fs';
 import { shell, WebContentsView, type BaseWindow } from 'electron';
 
 export type HermesSurfaceState =
@@ -151,20 +150,21 @@ export class HermesSurface {
     }
   }
 
-  async openDesktop(workspacePath: string | null): Promise<{ opened: true; workspacePath: string | null }> {
-    if (workspacePath) {
-      const stat = await fs.stat(workspacePath);
-      if (!stat.isDirectory()) throw new Error('The selected Hermes workspace is not a folder');
-    }
-    const args = ['desktop'];
-    if (workspacePath) args.push('--cwd', workspacePath);
-    const child = spawn('hermes', args, {
+  /**
+   * Launch the existing Hermes Desktop as its own window.
+   *
+   * Hermes is global: Papers never derives a working directory from a Backpack
+   * and never passes `--cwd`. A Hermes context (folder, file, path) belongs to
+   * Hermes and is chosen by the creator inside Hermes itself.
+   */
+  async openDesktop(): Promise<{ opened: true }> {
+    const child = spawn('hermes', ['desktop'], {
       detached: true,
       windowsHide: true,
       stdio: 'ignore',
     });
     child.unref();
-    return { opened: true, workspacePath };
+    return { opened: true };
   }
 
   shutdown(): void {

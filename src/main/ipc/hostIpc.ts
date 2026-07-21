@@ -18,8 +18,6 @@ export interface HostFacade {
   enterBackpack(id: string): Promise<unknown>;
   leaveBackpack(): Promise<void>;
   lastActiveBackpackId(): string | null;
-  chooseWorkspace(): Promise<string | null>;
-  clearWorkspace(): Promise<void>;
 
   programCatalog(): unknown;
   startProgram(programId: string): Promise<void>;
@@ -96,8 +94,6 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpacks:enter', (_e, id) => facade.enterBackpack(idSchema.parse(id)));
   handle('host:backpacks:leave', () => facade.leaveBackpack());
   handle('host:backpacks:last-active', () => facade.lastActiveBackpackId());
-  handle('host:backpacks:choose-workspace', () => facade.chooseWorkspace());
-  handle('host:backpacks:clear-workspace', () => facade.clearWorkspace());
 
   handle('host:programs:catalog', () => facade.programCatalog());
   handle('host:programs:start', (_e, programId) => facade.startProgram(idSchema.parse(programId)));

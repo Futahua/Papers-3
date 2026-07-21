@@ -37,7 +37,7 @@ export function HermesDock(props: { onClose: () => void }): React.JSX.Element {
   return (
     <aside className="hermes-dock" aria-label="Hermes">
       <header>
-        <span className="hermes-mark">☤</span>
+        <span className="hermes-mark" aria-hidden="true">H</span>
         <strong>Hermes</strong>
         <span className="spacer" />
         <button
@@ -47,18 +47,20 @@ export function HermesDock(props: { onClose: () => void }): React.JSX.Element {
             void host().hermes.openDesktop().catch((error) => setPopoutError(String(error)));
           }}
         >
-          Pop out
+          Open window
         </button>
         <button className="ghost" onClick={props.onClose}>Close</button>
       </header>
       {popoutError && <div className="hermes-notice error">{popoutError}</div>}
       <div className="hermes-surface" ref={surfaceRef}>
-        {status.state === 'starting' && <div className="hermes-notice">Starting the existing Hermes interface…</div>}
+        {status.state === 'starting' && (
+          <div className="hermes-notice">Starting the existing Hermes interface…</div>
+        )}
         {status.state === 'error' && (
           <div className="hermes-notice error">
             <strong>Hermes could not open.</strong>
             <span>{status.detail}</span>
-            <button onClick={() => void host().hermes.show(surfaceBounds()).then(setStatus)}>
+            <button className="secondary" onClick={() => void host().hermes.show(surfaceBounds()).then(setStatus)}>
               Try again
             </button>
           </div>

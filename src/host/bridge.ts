@@ -53,16 +53,20 @@ export interface HostErrorPayload {
 }
 
 interface HostBridge {
+  /** True only when launched with PAPERS_ENABLE_FIXTURES=1 (historical demos). */
+  fixtureMode: boolean;
   backpacks: {
     list(): Promise<BackpacksList>;
-    create(name: string, type: string): Promise<BackpackSummary>;
+    /**
+     * Name-only creation. Papers creates no folder, cover, canvas or context.
+     * `type` is passed only by historical fixtures; production omits it.
+     */
+    create(name: string, type?: string): Promise<BackpackSummary>;
     rename(id: string, name: string): Promise<void>;
     setArchived(id: string, archived: boolean): Promise<void>;
     enter(id: string): Promise<{ backpack: BackpackSummary }>;
     leave(): Promise<void>;
     lastActive(): Promise<string | null>;
-    chooseWorkspace(): Promise<string | null>;
-    clearWorkspace(): Promise<void>;
   };
   programs: {
     catalog(): Promise<CatalogInfo>;
@@ -118,13 +122,7 @@ interface HostBridge {
 
 declare global {
   interface Window {
-    papersHost: {
-      [K in keyof HostBridge]: {
-        [M in keyof HostBridge[K]]: HostBridge[K][M] extends (...args: infer A) => infer R
-          ? (...args: A) => R
-          : never;
-      };
-    };
+    papersHost: HostBridge;
   }
 }
 

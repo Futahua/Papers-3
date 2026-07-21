@@ -4,7 +4,7 @@
  * the HostFacade IPC contract.
  */
 import { randomUUID } from 'node:crypto';
-import { dialog, shell, type WebContents } from 'electron';
+import { shell, type WebContents } from 'electron';
 
 import type {
   AgentRunSnapshot,
@@ -162,26 +162,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   lastActiveBackpackId(): string | null {
     return this.deps.registry.lastActiveBackpackId;
-  }
-
-  async chooseWorkspace(): Promise<string | null> {
-    if (!this.currentBackpackId) throw new Error('Enter a Backpack before choosing its workspace');
-    const result = await dialog.showOpenDialog({
-      title: 'Choose the folder associated with this Backpack',
-      properties: ['openDirectory'],
-    });
-    const selected = result.canceled ? null : (result.filePaths[0] ?? null);
-    if (selected) {
-      await this.deps.registry.setWorkspace(this.currentBackpackId, selected);
-      this.emitBackpacksChanged();
-    }
-    return selected;
-  }
-
-  async clearWorkspace(): Promise<void> {
-    if (!this.currentBackpackId) throw new Error('No Backpack is active');
-    await this.deps.registry.setWorkspace(this.currentBackpackId, null);
-    this.emitBackpacksChanged();
   }
 
   // -------------------------------------------------------------- programs
@@ -372,10 +352,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async openHermesDesktop(): Promise<unknown> {
-    const workspacePath = this.currentBackpackId
-      ? this.deps.registry.find(this.currentBackpackId)?.workspacePath ?? null
-      : null;
-    return this.deps.hermesSurface.openDesktop(workspacePath);
+    // Hermes stays global. Entering a Backpack never changes Hermes's working
+    // directory, so Desktop launches with no Backpack-derived context.
+    return this.deps.hermesSurface.openDesktop();
   }
 
   defaultRunCwd(backpackId: string): string {
