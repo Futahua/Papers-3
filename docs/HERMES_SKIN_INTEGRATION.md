@@ -91,3 +91,17 @@ state, not versioned data. Until upstream accepts a generic "load a theme from a
 file" seam, the Papers skin is carried as the three-change `papers-skin` branch above. That
 branch is deliberately tiny and rebaseable; the preferred long-term step is to contribute
 the external-theme-file loader upstream so the Papers skin can travel as pure data.
+
+## Publish location of the Hermes-side change
+
+The Hermes-side overlay is **published as data + patch in this Papers repository** (the
+`hermes-skin/` directory, on the canonical `Futahua/Papers-3`), which is the authoritative,
+version-controlled source. `update-hermes-skin.mjs` deterministically reproduces the branch
+from it, so there is no separate source-of-truth to lose.
+
+On this machine the working branch is `papers-skin` in the clone
+`…\HermesAI\hermes-papers-skin` (commit `439007ab8`, one commit on top of upstream
+`NousResearch/hermes-agent` `3ffbdfbcc`, with `upstream` set to the GitHub remote). To
+publish it to GitHub, push that branch to a Hermes fork the creator controls and open a PR
+for the external-theme-file loader described above; until a fork exists, the Papers-repo
+`hermes-skin/` copy is the canonical, rebuildable record.
