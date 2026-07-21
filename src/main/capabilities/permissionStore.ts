@@ -1,6 +1,6 @@
 /**
  * PermissionStore — persisted "Allow for this program" grants plus
- * revocation (plan section 11). Allow-once decisions are never persisted.
+ * revocation. Allow-once decisions are never persisted.
  */
 import type { PermissionGrant, PermissionsState } from '@shared/types';
 import { AtomicJsonStore } from '../persistence/atomicStore';

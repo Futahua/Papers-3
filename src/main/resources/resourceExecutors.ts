@@ -83,7 +83,7 @@ const createArgs = z.discriminatedUnion('kind', [
 ]);
 
 /**
- * Structural verification of generated documents (plan section 17.2): a
+ * Structural verification of generated documents: a
  * malformed document must fail here, not when the creator opens it.
  */
 export function validateArtifactContent(fileName: string, content: string): void {

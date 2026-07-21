@@ -1,5 +1,5 @@
 /**
- * Visual Dashboard — isolation proof program (plan section 21).
+ * Visual Dashboard — isolation proof program.
  * Reads ONLY the summary Repository Research explicitly publishes; renders it
  * with Canvas 2D in a deliberately different visual language; persists its own
  * preferences; requests no filesystem or machine capability.

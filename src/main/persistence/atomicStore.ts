@@ -1,5 +1,5 @@
 /**
- * Atomic, versioned, human-inspectable JSON persistence (plan section 10).
+ * Atomic, versioned, human-inspectable JSON persistence.
  *
  * Guarantees:
  * - temp-file plus rename writes (never partial main files);

@@ -1,5 +1,5 @@
 /**
- * PapersData directory layout (plan section 10).
+ * PapersData directory layout.
  * All functions are pure so tests can target a temporary base directory.
  */
 import * as path from 'node:path';

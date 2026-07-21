@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Sample Backpack creator (plan sections 24-F, 30).
+ * Sample Backpack creator for opt-in fixture testing.
  *
  * Creates the "Logseq Repository Lab" Canvas Backpack in the creator's
  * PapersData and registers the pinned Logseq fixture checkout as a granted

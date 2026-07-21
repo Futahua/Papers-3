@@ -1,6 +1,6 @@
 /**
  * Program preload — the ONLY bridge between a sandboxed program renderer and
- * Papers. Exposes the narrow PapersProgramAPI (plan section 9); never raw
+ * Papers. Exposes the narrow PapersProgramAPI; never raw
  * ipcRenderer, Node, or Electron APIs. Program identity is resolved by the
  * main process from the sender, never trusted from renderer arguments.
  */

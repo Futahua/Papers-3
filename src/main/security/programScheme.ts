@@ -3,7 +3,7 @@
  *
  * Serves exclusively packaged first-party program files from the programs
  * root. Rejects traversal, absolute paths, and unknown programs. Applies a
- * restrictive Content Security Policy to every response (plan section 7).
+ * restrictive Content Security Policy to every response.
  */
 import { protocol, net } from 'electron';
 import * as path from 'node:path';

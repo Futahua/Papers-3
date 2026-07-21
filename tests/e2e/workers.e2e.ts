@@ -1,5 +1,5 @@
 /**
- * Worker comparison (plan section 16.3, done-criteria 15-17): the same real
+ * Worker comparison: the same real
  * coding task through (1) Hermes directly, (2) Hermes -> Codex CLI, and
  * (3) Hermes -> OpenCode CLI, each in its own disposable git worktree of a
  * throwaway fixture repository. Evidence is written to

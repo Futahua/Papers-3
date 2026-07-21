@@ -2,7 +2,7 @@
  * IPC surface for sandboxed program renderers. Every handler resolves the
  * caller's identity from the main-process sender registry; renderer-supplied
  * identity is never trusted. Arguments are schema-validated here even though
- * programs are first-party (plan section 7).
+ * programs are first-party.
  */
 import { ipcMain, type IpcMainInvokeEvent } from 'electron';
 import { z } from 'zod';

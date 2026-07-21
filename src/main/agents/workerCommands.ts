@@ -1,5 +1,5 @@
 /**
- * Worker delegation (plan section 16, decision D-007): Hermes supervises the
+ * Worker delegation: Hermes supervises the
  * Codex/OpenCode CLIs through its own terminal tool. Papers only composes the
  * exact, inspectable instruction — shown verbatim in the invocation preview —
  * and never runs the worker CLIs itself.

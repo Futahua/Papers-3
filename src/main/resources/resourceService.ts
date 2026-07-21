@@ -1,7 +1,7 @@
 /**
  * ResourceService — per-Backpack registry of granted external resources
  * (repositories, worktrees, artifacts). A program can only touch a resource
- * that was explicitly registered and granted to it (plan sections 10, 11).
+ * that was explicitly registered and granted to it.
  * Registering never copies the resource into Papers data.
  */
 import { randomUUID } from 'node:crypto';

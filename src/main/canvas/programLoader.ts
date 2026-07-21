@@ -1,7 +1,7 @@
 /**
  * ProgramLoader — discovers and validates bundled first-party program
  * packages. Only programs whose manifest validates are loadable; nothing is
- * ever downloaded or loaded from arbitrary local folders (plan section 7).
+ * ever downloaded or loaded from arbitrary local folders.
  */
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';

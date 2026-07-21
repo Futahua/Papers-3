@@ -1,17 +1,12 @@
 # Papers — current acceptance status
 
-## Already verified in the present shell
+## Verified in the installed shell
 
 - Production can host the real Hermes Dashboard `/chat` surface.
 - Papers can open Hermes Desktop.
 - Backpack names persist.
 - Programs, Runs and Papers agent permissions can remain absent from production.
 - The packaged Electron shell can launch and pass its existing product E2E.
-
-These facts do not make the corrected product behavior complete.
-
-## Required for the corrected usable base
-
 - Permanent Basic navigation visibly containing Backpacks, Tools and Settings.
 - Hermes remains global and is never given Backpack-derived working context.
 - `Add Backpack` asks only for a name.
@@ -22,12 +17,17 @@ These facts do not make the corrected product behavior complete.
   are absent from the shipped experience.
 - No Backpack folder is passed to `hermes desktop --cwd`.
 - Restart preserves names and normal settings.
-- The packaged and installed build passes the human acceptance list in the
-  authoritative plan.
 - The Papers shell visibly reuses Papers 1's theme without importing its obsolete agent
   workbench behavior or restyling Hermes internally.
 - The installed creator profile contains no seeded or test Backpack, and automated tests
   prove they use isolated temporary profiles.
 
-No source-code review by the creator is required. The creator audits what the product
-claims by clicking it and observing the visible result.
+## Human acceptance
+
+The creator can verify the present promise by clicking through Basic, creating a named
+Backpack, observing the exact empty warning, opening global Tools, opening Hermes before
+and after Backpack interaction, restarting Papers and confirming the name remains. No
+source-code review is required.
+
+Future usefulness is accepted through real Backpack use, not by accumulating speculative
+framework screens or declaring undecided behavior complete.

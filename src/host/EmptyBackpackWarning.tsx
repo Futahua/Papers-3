@@ -6,7 +6,7 @@ import React from 'react';
  * Until something has genuinely been created under a Backpack's name, Enter
  * shows this exact warning and nothing else. Papers does not pretend an empty
  * page is a working Backpack, and dismissing returns to the existing shell.
- * The message text is contractual (implementation plan, acceptance 5).
+ * The message text is part of the product contract and human acceptance path.
  */
 export function EmptyBackpackWarning(props: {
   backpackName: string;

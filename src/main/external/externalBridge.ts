@@ -1,5 +1,5 @@
 /**
- * ExternalApplicationBridge (plan section 17) — verified open/launch for
+ * ExternalApplicationBridge — verified open and launch behavior for
  * files, URLs, the system file browser, and LibreOffice. Paths are validated
  * against granted resources; processes launch with structured argument
  * arrays; opening a document never implies it was saved.

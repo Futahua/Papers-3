@@ -1,5 +1,5 @@
 /**
- * Phase A vertical kill test (plan section 24, Phase A) against the built
+ * Vertical kill test against the built
  * application and the REAL installed Hermes:
  *
  * - sandboxed program loads;

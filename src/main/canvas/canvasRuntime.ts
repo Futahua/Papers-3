@@ -1,7 +1,7 @@
 /**
  * CanvasRuntime — owns the sandboxed program surface: one active primary
  * program per Backpack, loaded in its own WebContentsView, crash-isolated
- * from the host frame (plan sections 5.2, 7).
+ * from the host frame.
  */
 import { WebContentsView, session, type BaseWindow, type WebContents } from 'electron';
 import * as path from 'node:path';

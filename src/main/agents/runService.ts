@@ -1,6 +1,5 @@
 /**
- * AgentRunService — exact agent invocation and run observation
- * (plan sections 13, 14, 15).
+ * AgentRunService — exact agent invocation and run observation.
  *
  * Validates invocations structurally (schema, hashes, sizes, destination,
  * declared permissions), requires a host-side preview confirmation, records
@@ -212,7 +211,7 @@ export class AgentRunService {
     ];
 
     // Worker delegation: the exact CLI instruction is part of the previewed
-    // prompt (plan section 16, decision D-007).
+    // prompt shown to the creator.
     const worker = invocation.execution?.preferredWorker;
     if (worker === 'codex' || worker === 'opencode') {
       prompt += `\n${await buildWorkerDelegationBlock(worker, trustedCwd)}`;

@@ -1,7 +1,7 @@
 /**
  * GitService — bounded repository inspection and disposable worktree
  * management through the system `git` CLI with structured argument arrays
- * (never shell strings; plan sections 17, 19).
+ * rather than shell strings.
  */
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
