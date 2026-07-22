@@ -15,6 +15,10 @@ extraResources:
     to: programs
   - from: assets/icon.png
     to: icon.png
+  - from: hermes-skin/papers-integration.patch
+    to: hermes-integration/papers-integration.patch
+  - from: hermes-skin/papers-theme-plugin.js
+    to: hermes-integration/papers-theme-plugin.js
 
 asar: true
 

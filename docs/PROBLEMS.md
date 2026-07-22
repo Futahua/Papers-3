@@ -100,16 +100,13 @@ interfaces.
 
 ## 4 — Hermes must keep receiving upstream improvements without losing the Papers skin
 
-**Awaiting creator acceptance (updateable path implemented and verified, 2026-07-21).**
-The skin is versioned data (`hermes-skin/papers-theme.json`) plus a three-change overlay on
-a `papers-skin` branch of a clean Hermes clone (theme import, one registry entry, a scoped
-type-bump CSS block). A documented command, `hermes-skin/update-hermes-skin.mjs`, fetches
-upstream, rebases the overlay, rebuilds the renderer, verifies the theme is present, and
-swaps it into the live install while keeping the previous build as a timestamped rollback —
-never touching Hermes sessions, credentials or config. Verified: the themed renderer built
-from the branch and, when swapped into the live Hermes, loaded cleanly with the Papers theme
-selectable. Full details in `docs/HERMES_SKIN_INTEGRATION.md`. Remaining for the creator:
-run the update command against a future upstream release when one is chosen.
+**Implemented; awaiting creator acceptance (2026-07-22).** The first real update attempt
+proved that a Papers-owned backend keeps Windows files locked. Papers now handles the
+stop/update/rebuild/relaunch sequence from Hermes' existing Updates button. The skin moved
+to Hermes' supported disk-plugin system, while the only source overlay left is the native
+docking/update handoff. The interrupted update was repaired, Hermes was updated from 0.16.0
+to 0.19.0, the Python environment was reinstalled successfully, and the current Desktop
+package rebuilt successfully. Full details are in `docs/HERMES_SKIN_INTEGRATION.md`.
 
 The original open notes, kept for context:
 
@@ -117,11 +114,11 @@ Desired architecture:
 
 - Treat upstream Hermes as the changing core and the Papers skin as a small user-owned
   overlay.
-- Keep the skin's light/dark tokens and assets outside generated Hermes installation
-  files, under version control in a stable location.
-- Add only one narrow Hermes integration seam that loads the external Papers theme.
-  Prefer Hermes's existing `DesktopTheme` token model; do not fork chat behavior merely
-  to change appearance.
+- Keep the skin's light/dark tokens and readability CSS outside generated Hermes
+  installation files, under version control in a stable location.
+- Deliver the skin through Hermes' supported Desktop Plugin SDK. The installed
+  `desktop-plugins/papers-theme/plugin.js` survives upstream source updates and appears
+  in Hermes' normal theme picker; no theme-loader fork is required.
 - When a component contains a hard-coded default color, convert that component to use a
   theme token through a small isolated patch. Avoid accumulating a second frontend.
 - Keep any later layout experiments as separate, named patches so a skin change never
@@ -129,22 +126,18 @@ Desired architecture:
 
 Update workflow:
 
-1. Fetch a selected upstream Hermes release.
-2. Merge or rebase it into the maintained Papers-compatible Hermes branch.
-3. Reapply the small theme-loader and any still-required compatibility patches.
-4. Build Hermes Desktop and test both Papers Light and Papers Dark across the component
+1. Start the update from Hermes' existing Settings → Updates surface.
+2. Papers closes its Hermes Desktop and backend processes so Windows releases the files.
+3. Run Hermes' official updater, then reapply only the small native docking/update handoff.
+4. Reinstall the Papers disk-theme plugin and build Hermes Desktop.
+5. Test both Papers Light and Papers Dark across the component
    coverage in `HERMES_SKIN.md`.
-5. Launch the updated build only after sessions, configuration and creator data locations
+6. Launch the updated build only after sessions, configuration and creator data locations
    have been preserved.
-6. Record any upstream change that required adapting the theme; never silently discard
+7. Record any upstream change that required adapting the integration; never silently discard
    the creator's current skin.
 
-The ordinary official binary updater cannot be assumed to preserve a modified frontend:
-it may replace the customized files with the stock build. Hermes updates should therefore
-run through this source-based rebuild workflow, ideally automated for the agent, rather
-than by editing packaged files after every release.
-
-Preferred long-term improvement: contribute or maintain a generic Hermes feature that
-loads user themes from a supported external theme file. If upstream accepts that seam,
-the Papers skin can survive normal upgrades as data rather than as a recurring source
-patch. Until then, a small tracking fork is acceptable; a permanently frozen fork is not.
+This workflow is automated by Papers. The official updater still owns the Hermes update;
+Papers only supplies the Windows stop/update/rebuild/relaunch handoff that prevents the
+running backend from locking `hermes.exe` and native Python modules. The theme already uses
+Hermes' supported plugin boundary, so no tracking fork or frozen Hermes version is needed.
