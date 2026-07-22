@@ -294,3 +294,84 @@ index 6c7e1483c..1fc32359d 100644
      const started = await updateHermes()
  
      if (!started.ok) {
+diff --git a/apps/desktop/src/app/session/hooks/use-session-list-actions.test.tsx b/apps/desktop/src/app/session/hooks/use-session-list-actions.test.tsx
+index 0147d45e4..6487fd82b 100644
+--- a/apps/desktop/src/app/session/hooks/use-session-list-actions.test.tsx
++++ b/apps/desktop/src/app/session/hooks/use-session-list-actions.test.tsx
+@@ -160,6 +160,48 @@ describe('refreshSessions identity + loading hygiene', () => {
+     off()
+     expect(loadingStates).toEqual([false, true, false])
+   })
++
++  it('keeps an earlier successful refresh when a newer overlapping request fails', async () => {
++    let resolveFirst!: (value: SidebarSessionsResponse) => void
++    let rejectSecond!: (reason: Error) => void
++
++    listSidebarSessions
++      .mockImplementationOnce(
++        () =>
++          new Promise<SidebarSessionsResponse>(resolve => {
++            resolveFirst = resolve
++          })
++      )
++      .mockImplementationOnce(
++        () =>
++          new Promise<SidebarSessionsResponse>((_resolve, reject) => {
++            rejectSecond = reject
++          })
++      )
++
++    const { result } = renderHook(() => useSessionListActions({ profileScope: 'default' }))
++    let first!: Promise<void>
++    let second!: Promise<void>
++
++    act(() => {
++      first = result.current.refreshSessions()
++      second = result.current.refreshSessions()
++    })
++
++    await act(async () => {
++      resolveFirst(sidebar({ sessions: [row('survivor')], total: 1, profile_totals: { default: 1 } }))
++      await first
++    })
++
++    expect($sessions.get().map(session => session.id)).toEqual(['survivor'])
++
++    await act(async () => {
++      rejectSecond(new Error('transient refresh failure'))
++      await expect(second).rejects.toThrow('transient refresh failure')
++    })
++
++    expect($sessions.get().map(session => session.id)).toEqual(['survivor'])
++  })
+ })
+ 
+ describe('refreshSessions batches slices into one request', () => {
+diff --git a/apps/desktop/src/app/session/hooks/use-session-list-actions.ts b/apps/desktop/src/app/session/hooks/use-session-list-actions.ts
+index 38850cad3..cd0b16bcf 100644
+--- a/apps/desktop/src/app/session/hooks/use-session-list-actions.ts
++++ b/apps/desktop/src/app/session/hooks/use-session-list-actions.ts
+@@ -74,6 +74,7 @@ interface UseSessionListActionsArgs {
+  *  wires into the sidebar and refresh effects. */
+ export function useSessionListActions({ profileScope }: UseSessionListActionsArgs) {
+   const refreshSessionsRequestRef = useRef(0)
++  const lastAppliedRefreshRequestRef = useRef(0)
+ 
+   // Messaging-platform sessions as their own slice, fetched separately from
+   // local recents so each platform renders a self-managed section and never
+@@ -177,7 +178,14 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
+         messagingExclude: MESSAGING_EXCLUDED_SOURCES
+       })
+ 
+-      if (refreshSessionsRequestRef.current === requestId) {
++      // Apply every successful response newer than the last success we painted.
++      // A later request may already be in flight and still fail; rejecting this
++      // usable response merely because that request started leaves a cold
++      // sidebar permanently empty. If the later request succeeds it naturally
++      // supersedes this one, while an older response that finishes after a
++      // newer success remains ignored.
++      if (requestId >= lastAppliedRefreshRequestRef.current) {
++        lastAppliedRefreshRequestRef.current = requestId
+         const recents = result.recents
+ 
+         // Signature-gate the swap (same pattern as cron/messaging): a refresh
