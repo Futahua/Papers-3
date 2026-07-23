@@ -17,6 +17,7 @@ import { GitService } from './git/gitService';
 import { HermesAdapter } from './hermes/hermesAdapter';
 import { HermesSurface } from './hermes/hermesSurface';
 import { isHermesUpdateHelper, runHermesUpdateHelper } from './hermes/hermesUpdater';
+import { startPhoneConnector } from './hermes/phoneConnector';
 import { ResourceService } from './resources/resourceService';
 import { registerResourceExecutors } from './resources/resourceExecutors';
 import { AgentRunService } from './agents/runService';
@@ -349,6 +350,11 @@ async function bootstrap(): Promise<void> {
       // A malformed status file must never prevent Papers from starting.
     }
   }
+
+  // Start the phone connector ("Run on Computer") so the Apers Android app can
+  // auto-discover this PC on the LAN and run tasks on the same Hermes. Best
+  // effort, own single-instance, decoupled from the Hermes Desktop surface.
+  startPhoneConnector();
 
   mainWindow.on('closed', () => {
     hermesSurface.shutdown();
