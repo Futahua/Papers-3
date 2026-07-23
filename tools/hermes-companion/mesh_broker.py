@@ -40,7 +40,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import pairing as pr
 import handoff_server as hs
@@ -57,6 +57,7 @@ MAX_RESULT_CHARS = 64 * 1024  # per-result cap, to avoid an abnormally long outp
 LEGACY_MESH_TASK_MARKER = "📱 [Phone dispatch] "
 CHAT_PROMPT_PREFIX = "__APERS_CHAT_V1__:"
 CHAT_RESULT_PREFIX = "__APERS_CHAT_RESULT_V1__:"
+CHAT_PROGRESS_PREFIX = "__APERS_PROGRESS_V1__\n"
 CONTROL_LIST_CONVERSATION = "__desktop_sessions__"
 CONTROL_BIND_CONVERSATION = "__desktop_bind__"
 CONTROL_NEW_CONVERSATION = "__desktop_new__"
@@ -71,6 +72,71 @@ QUIET_NOISE_RE = re.compile(
 # in the peer and keeps connecting with it. If the broker picks a new port on every restart, the
 # phone can't reach it (shows offline, dispatch fails). 51379 is a high port that avoids common services.
 DEFAULT_PORT = 51379
+
+_ACTION_PROMPT_RE = re.compile(
+    r"\b(?:build|browse|check|connect|create|debug|delete|deploy|diagnose|"
+    r"download|edit|fetch|find|fix|implement|inspect|install|look\s+up|make|"
+    r"merge|open|patch|push|read|remove|rename|research|run|search|send|test|"
+    r"update|upload|verify|write|work\s+on)\b",
+    re.IGNORECASE,
+)
+_CURRENT_INFO_RE = re.compile(
+    r"\b(?:current|currently|latest|live|news|online|price|score|today|"
+    r"tomorrow|weather)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_direct_conversation(prompt: str) -> bool:
+    """Conservatively identify short turns that should not receive tool schemas.
+
+    Every actionable or current-information request keeps the normal full Hermes
+    toolset. The direct path is intentionally narrow: casual follow-ups such as
+    "why did that take 30 seconds?" avoid an unsolicited multi-tool investigation.
+    """
+    text = re.sub(r"\s+", " ", str(prompt or "")).strip()
+    if not text or len(text) > 420:
+        return False
+    if any(marker in text for marker in ("```", "://", "\\", "/")):
+        return False
+    if _ACTION_PROMPT_RE.search(text) or _CURRENT_INFO_RE.search(text):
+        return False
+    lowered = text.lower()
+    return (
+        lowered.startswith(("why ", "how ", "explain ", "tell me "))
+        or lowered in {
+            "hi", "hello", "hey", "thanks", "thank you", "ok", "okay",
+            "yes", "no", "good", "nice", "cool", "what do you mean",
+        }
+    )
+
+
+def _tool_activity(tool_name: str, arguments: object = None) -> tuple[str, str]:
+    """Return a compact, user-facing activity label and optional detail."""
+    name = str(tool_name or "tool").strip()
+    labels = {
+        "search_files": "Searching files",
+        "read_file": "Reading a file",
+        "write_file": "Writing a file",
+        "apply_patch": "Editing files",
+        "terminal": "Running a command",
+        "execute_command": "Running a command",
+        "browser": "Using the browser",
+        "web_search": "Searching the web",
+        "search_web": "Searching the web",
+        "load_skill": "Loading a skill",
+        "delegate_task": "Delegating work",
+    }
+    label = labels.get(name, name.replace("_", " ").strip().capitalize())
+    if not isinstance(arguments, dict):
+        return label, ""
+    detail = ""
+    for key in ("path", "pattern", "query", "command", "url", "skill", "task"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            detail = re.sub(r"\s+", " ", value).strip()
+            break
+    return label, detail[:180]
 
 
 def _repair_legacy_phone_titles(home: str) -> int:
@@ -618,8 +684,20 @@ class MeshBroker:
             conversation_id = task.get("conversation_id")
             session_id = self.store.conversation_session(
                 task["from_did"], conversation_id)
+
+            def report_progress(event: dict) -> None:
+                if not conversation_id:
+                    return
+                body = CHAT_PROGRESS_PREFIX + json.dumps(
+                    event, ensure_ascii=False, separators=(",", ":"))
+                self.store.add_result(
+                    task["id"], task["from_did"], True,
+                    f"{CHAT_RESULT_PREFIX}{conversation_id}\n{body}",
+                    conversation_id=conversation_id,
+                    session_id=session_id)
+
             ok, text, next_session_id = self._run_hermes(
-                task["prompt"], session_id)
+                task["prompt"], session_id, report_progress)
             if ok and conversation_id and next_session_id:
                 self.store.set_conversation_session(
                     task["from_did"], conversation_id, next_session_id)
@@ -637,26 +715,167 @@ class MeshBroker:
             self.store.finish_task(task["id"])
             print(f"[mesh] ⇧ result placed in the phone inbox, waiting for the phone to poll it", flush=True)
 
-    def _run_hermes(self, prompt: str,
-                    session_id: str | None = None) -> tuple[bool, str, str | None]:
+    def _run_hermes(
+        self,
+        prompt: str,
+        session_id: str | None = None,
+        progress_callback: Callable[[dict], None] | None = None,
+    ) -> tuple[bool, str, str | None]:
         env = dict(os.environ)
         if self.home:
             env["HERMES_HOME"] = self.home
+        state_db = os.path.join(
+            self.home or os.path.expanduser("~/.hermes"), "state.db")
+        started_at = time.time()
+        observed_session_id = session_id
+        last_message_id = 0
+        seen_events: set[str] = set()
+
+        def emit(phase: str, label: str, detail: str = "",
+                 tool: str = "", call_id: str = "") -> None:
+            if not progress_callback:
+                return
+            progress_callback({
+                "phase": phase,
+                "label": label,
+                "detail": detail[:180],
+                "tool": tool,
+                "call_id": call_id,
+                "elapsed": round(time.time() - started_at, 1),
+                "started_at": started_at,
+            })
+
+        def discover_session() -> str | None:
+            nonlocal observed_session_id
+            if observed_session_id or not os.path.isfile(state_db):
+                return observed_session_id
+            conn = None
+            try:
+                conn = sqlite3.connect(state_db, timeout=1)
+                row = conn.execute(
+                    "SELECT s.id FROM sessions s JOIN messages m "
+                    "ON m.session_id=s.id WHERE s.source='cli' "
+                    "AND s.started_at>=? AND m.role='user' AND m.content=? "
+                    "ORDER BY s.started_at DESC LIMIT 1",
+                    (started_at - 2, prompt),
+                ).fetchone()
+                if row:
+                    observed_session_id = str(row[0])
+            except sqlite3.Error:
+                pass
+            finally:
+                if conn is not None:
+                    conn.close()
+            return observed_session_id
+
+        def inspect_activity() -> None:
+            nonlocal last_message_id
+            active_session = discover_session()
+            if not active_session or not os.path.isfile(state_db):
+                return
+            conn = None
+            try:
+                conn = sqlite3.connect(state_db, timeout=1)
+                if last_message_id == 0:
+                    baseline = conn.execute(
+                        "SELECT COALESCE(MAX(id),0) FROM messages "
+                        "WHERE session_id=? AND timestamp<?",
+                        (active_session, started_at - 0.5),
+                    ).fetchone()
+                    last_message_id = int(baseline[0] if baseline else 0)
+                rows = conn.execute(
+                    "SELECT id, role, tool_name, tool_call_id, tool_calls "
+                    "FROM messages WHERE session_id=? AND id>? ORDER BY id",
+                    (active_session, last_message_id),
+                ).fetchall()
+            except sqlite3.Error:
+                return
+            finally:
+                if conn is not None:
+                    conn.close()
+            for message_id, role, tool_name, tool_call_id, tool_calls in rows:
+                last_message_id = max(last_message_id, int(message_id))
+                if role == "assistant" and tool_calls:
+                    try:
+                        calls = json.loads(tool_calls)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        calls = []
+                    for call in calls if isinstance(calls, list) else []:
+                        function = call.get("function") or {}
+                        name = str(function.get("name") or "tool")
+                        call_key = str(
+                            call.get("call_id") or call.get("id") or message_id)
+                        event_key = "start:" + call_key
+                        if event_key in seen_events:
+                            continue
+                        seen_events.add(event_key)
+                        try:
+                            arguments = json.loads(
+                                function.get("arguments") or "{}")
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            arguments = {}
+                        label, detail = _tool_activity(name, arguments)
+                        emit("tool_started", label, detail, name, call_key)
+                elif role == "tool":
+                    call_key = str(tool_call_id or message_id)
+                    event_key = "done:" + call_key
+                    if event_key in seen_events:
+                        continue
+                    seen_events.add(event_key)
+                    label, _ = _tool_activity(str(tool_name or "tool"))
+                    emit("tool_completed", label, "", str(tool_name or ""),
+                         call_key)
+
         try:
             cmd = self.hermes_cmd + [prompt]
             if session_id and "--query" in self.hermes_cmd:
                 cmd += ["--resume", session_id]
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True,
-                encoding="utf-8", errors="replace",
-                env=env, timeout=900)  # 15-minute cap (long-running agent tasks)
+            if _is_direct_conversation(prompt) and "--toolsets" not in self.hermes_cmd:
+                # An explicit unknown toolset resolves to an empty schema in
+                # Hermes. The warning is filtered from quiet output below.
+                # Actionable prompts never take this path and retain every tool.
+                cmd += ["--toolsets", "none"]
+            emit("thinking", "Hermes is thinking")
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace", env=env)
+            stdout_parts: list[str] = []
+            stderr_parts: list[str] = []
+
+            def drain(stream, destination: list[str]) -> None:
+                if stream is not None:
+                    destination.append(stream.read())
+
+            stdout_thread = threading.Thread(
+                target=drain, args=(proc.stdout, stdout_parts), daemon=True)
+            stderr_thread = threading.Thread(
+                target=drain, args=(proc.stderr, stderr_parts), daemon=True)
+            stdout_thread.start()
+            stderr_thread.start()
+            deadline = started_at + 900
+            while proc.poll() is None:
+                inspect_activity()
+                if time.time() >= deadline:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                    stdout_thread.join(timeout=2)
+                    stderr_thread.join(timeout=2)
+                    return False, "task timed out (>15 minutes)", (
+                        observed_session_id or session_id)
+                time.sleep(0.35)
+            stdout_thread.join(timeout=2)
+            stderr_thread.join(timeout=2)
+            inspect_activity()
+            stdout = "".join(stdout_parts)
+            stderr_text = "".join(stderr_parts)
             out = "\n".join(
-                line for line in (proc.stdout or "").splitlines()
+                line for line in stdout.splitlines()
                 if not QUIET_NOISE_RE.match(line.strip())
             ).strip()
-            stderr = (proc.stderr or "").strip()
+            stderr = stderr_text.strip()
             match = SESSION_ID_RE.search("\n" + stderr)
-            next_session_id = match.group(1) if match else session_id
+            next_session_id = (
+                match.group(1) if match else observed_session_id or session_id)
             if proc.returncode != 0:
                 return False, (out + "\n" + stderr).strip()[:MAX_RESULT_CHARS] \
                     or f"hermes exited {proc.returncode}", next_session_id
@@ -665,8 +884,6 @@ class MeshBroker:
             return False, (
                 f"hermes command not found: {self.hermes_cmd[0]} "
                 "(ensure it's installed and on PATH)"), session_id
-        except subprocess.TimeoutExpired:
-            return False, "task timed out (>15 minutes)", session_id
         except Exception as e:  # noqa: BLE001
             return False, f"execution error: {e}", session_id
 
