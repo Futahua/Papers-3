@@ -17,6 +17,16 @@ available; Tailscale carries the same encrypted pairing over mobile data.
   transcript, or explicitly start a new Desktop session. These control messages
   use the existing paired NaCl-encrypted push/poll channel and never reach the
   model.
+- While a phone turn is running, the connector publishes encrypted progress
+  events from Hermes' own session database (thinking, tool start, and tool
+  completion) before publishing the final answer. The phone acknowledges each
+  event without completing the task, so long-running work no longer appears
+  frozen.
+- Short, clearly conversational follow-ups use a deliberately narrow direct
+  route with no tool schema. Action requests, current-information questions,
+  URLs, paths, and substantial prompts retain the complete configured Hermes
+  toolset. This prevents casual questions from launching unsolicited file/log
+  investigations without weakening actual remote work.
 - New phone-started sessions use the real first prompt as their Desktop title.
   On startup, the connector repairs only untitled legacy sessions whose first
   user message contains the old `[Phone dispatch]` transport marker.
