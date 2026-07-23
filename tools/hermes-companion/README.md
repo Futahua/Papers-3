@@ -13,15 +13,17 @@ available; Tailscale carries the same encrypted pairing over mobile data.
   `~/.hermes` home Papers' dashboard uses. Phone conversations resume a durable
   Hermes session instead of creating unrelated one-shot sessions.
 - The phone's main Desktop destination can list real Hermes sessions, bind its
-  current conversation to a selected stable session id, load the visible text
-  transcript, or explicitly start a new Desktop session. These control messages
-  use the existing paired NaCl-encrypted push/poll channel and never reach the
-  model.
+  current conversation to a selected stable session id, load the transcript
+  (including assistant tool calls and linked tool results), or explicitly start
+  a new Desktop session. These control messages use the existing paired
+  NaCl-encrypted push/poll channel and never reach the model.
 - While a phone turn is running, the connector publishes encrypted progress
-  events from Hermes' own session database (thinking, tool start, and tool
-  completion) before publishing the final answer. The phone acknowledges each
-  event without completing the task, so long-running work no longer appears
-  frozen.
+  events from Hermes' own session database (thinking, tool start with bounded
+  arguments, and tool completion with bounded output) before publishing the
+  final answer. The phone acknowledges each event without completing the task
+  and stores the same assistant-tool/result sequence used by its native
+  Worklogs. Live progress therefore settles into the ordinary collapsible mobile
+  Worklog and survives app reloads and later Desktop-session rebinding.
 - Short, clearly conversational follow-ups use a deliberately narrow direct
   route with no tool schema. Action requests, current-information questions,
   URLs, paths, and substantial prompts retain the complete configured Hermes
