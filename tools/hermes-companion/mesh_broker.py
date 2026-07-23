@@ -139,6 +139,55 @@ def _tool_activity(tool_name: str, arguments: object = None) -> tuple[str, str]:
     return label, detail[:180]
 
 
+def _bounded_activity_value(value: object, limit: int = 2400) -> object:
+    """Keep progress payloads useful without letting tool args/results flood polling."""
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return str(value)[:limit]
+    if len(encoded) <= limit:
+        return value
+    if isinstance(value, dict):
+        bounded = {}
+        for key, item in value.items():
+            bounded[str(key)[:80]] = (
+                re.sub(r"\s+", " ", str(item)).strip()[:500])
+            if len(json.dumps(
+                    bounded, ensure_ascii=False, separators=(",", ":"))) >= limit:
+                break
+        return bounded
+    return encoded[:limit]
+
+
+def _bounded_tool_calls(calls: list) -> list:
+    """Preserve OpenAI tool-call shape while bounding argument payloads."""
+    bounded = []
+    for call in calls[:16]:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function") or {}
+        raw_arguments = function.get("arguments") or "{}"
+        try:
+            arguments = json.loads(raw_arguments) if isinstance(
+                raw_arguments, str) else raw_arguments
+        except (TypeError, ValueError, json.JSONDecodeError):
+            arguments = {}
+        call_id = str(
+            call.get("id") or call.get("call_id") or uuid.uuid4().hex)
+        bounded.append({
+            "id": call_id,
+            "call_id": call_id,
+            "type": "function",
+            "function": {
+                "name": str(function.get("name") or "tool")[:160],
+                "arguments": json.dumps(
+                    _bounded_activity_value(arguments),
+                    ensure_ascii=False, separators=(",", ":")),
+            },
+        })
+    return bounded
+
+
 def _repair_legacy_phone_titles(home: str) -> int:
     """Give old marker-prefixed phone sessions a clean Desktop title.
 
@@ -577,16 +626,43 @@ class MeshBroker:
                 key=lambda item: float(item.get("timestamp") or 0)):
             role = message.get("role")
             content = str(message.get("content") or "").strip()
-            if role not in ("user", "assistant") or not content:
-                continue
             if message.get("active") == 0:
                 continue
-            visible.append({
+            entry = {
                 "role": role,
                 "content": content[:2400],
                 "timestamp": message.get("timestamp") or 0,
-            })
-        visible = visible[-48:]
+            }
+            if role == "assistant":
+                raw_calls = message.get("tool_calls")
+                try:
+                    calls = json.loads(raw_calls) if raw_calls else []
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    calls = []
+                if isinstance(calls, list) and calls:
+                    entry["tool_calls"] = _bounded_tool_calls(calls)
+                reasoning = str(
+                    message.get("reasoning_content")
+                    or message.get("reasoning") or "").strip()
+                if reasoning:
+                    entry["reasoning"] = reasoning[:2400]
+                if not content and not entry.get("tool_calls") and not reasoning:
+                    continue
+            elif role == "tool":
+                call_id = str(message.get("tool_call_id") or "").strip()
+                if not call_id:
+                    continue
+                entry["tool_call_id"] = call_id
+                entry["name"] = str(message.get("tool_name") or "")[:160]
+            elif role == "user":
+                if not content:
+                    continue
+            else:
+                continue
+            visible.append(entry)
+        visible = visible[-96:]
+        while visible and visible[0].get("role") != "user":
+            visible.pop(0)
         preview = next(
             (self._clean_session_text(item["content"])
              for item in visible if item["role"] == "user"), "")
@@ -610,6 +686,9 @@ class MeshBroker:
         while result["messages"] and len(json.dumps(
                 result, ensure_ascii=False, separators=(",", ":"))) > budget:
             result["messages"].pop(0)
+            while (result["messages"]
+                   and result["messages"][0].get("role") != "user"):
+                result["messages"].pop(0)
         return result
 
     @staticmethod
@@ -728,14 +807,15 @@ class MeshBroker:
             self.home or os.path.expanduser("~/.hermes"), "state.db")
         started_at = time.time()
         observed_session_id = session_id
+        observed_answer = ""
         last_message_id = 0
         seen_events: set[str] = set()
 
         def emit(phase: str, label: str, detail: str = "",
-                 tool: str = "", call_id: str = "") -> None:
+                 tool: str = "", call_id: str = "", **extra) -> None:
             if not progress_callback:
                 return
-            progress_callback({
+            event = {
                 "phase": phase,
                 "label": label,
                 "detail": detail[:180],
@@ -743,7 +823,9 @@ class MeshBroker:
                 "call_id": call_id,
                 "elapsed": round(time.time() - started_at, 1),
                 "started_at": started_at,
-            })
+            }
+            event.update(extra)
+            progress_callback(event)
 
         def discover_session() -> str | None:
             nonlocal observed_session_id
@@ -769,7 +851,7 @@ class MeshBroker:
             return observed_session_id
 
         def inspect_activity() -> None:
-            nonlocal last_message_id
+            nonlocal last_message_id, observed_answer
             active_session = discover_session()
             if not active_session or not os.path.isfile(state_db):
                 return
@@ -784,7 +866,7 @@ class MeshBroker:
                     ).fetchone()
                     last_message_id = int(baseline[0] if baseline else 0)
                 rows = conn.execute(
-                    "SELECT id, role, tool_name, tool_call_id, tool_calls "
+                    "SELECT id, role, tool_name, tool_call_id, tool_calls, content "
                     "FROM messages WHERE session_id=? AND id>? ORDER BY id",
                     (active_session, last_message_id),
                 ).fetchall()
@@ -793,7 +875,8 @@ class MeshBroker:
             finally:
                 if conn is not None:
                     conn.close()
-            for message_id, role, tool_name, tool_call_id, tool_calls in rows:
+            for (message_id, role, tool_name, tool_call_id,
+                 tool_calls, content) in rows:
                 last_message_id = max(last_message_id, int(message_id))
                 if role == "assistant" and tool_calls:
                     try:
@@ -815,7 +898,11 @@ class MeshBroker:
                         except (TypeError, ValueError, json.JSONDecodeError):
                             arguments = {}
                         label, detail = _tool_activity(name, arguments)
-                        emit("tool_started", label, detail, name, call_key)
+                        emit(
+                            "tool_started", label, detail, name, call_key,
+                            args=_bounded_activity_value(arguments))
+                elif role == "assistant" and str(content or "").strip():
+                    observed_answer = str(content).strip()
                 elif role == "tool":
                     call_key = str(tool_call_id or message_id)
                     event_key = "done:" + call_key
@@ -824,7 +911,8 @@ class MeshBroker:
                     seen_events.add(event_key)
                     label, _ = _tool_activity(str(tool_name or "tool"))
                     emit("tool_completed", label, "", str(tool_name or ""),
-                         call_key)
+                         call_key,
+                         result=str(content or "")[:2400])
 
         try:
             cmd = self.hermes_cmd + [prompt]
@@ -837,7 +925,8 @@ class MeshBroker:
                 cmd += ["--toolsets", "none"]
             emit("thinking", "Hermes is thinking")
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cmd, stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", errors="replace", env=env)
             stdout_parts: list[str] = []
             stderr_parts: list[str] = []
@@ -868,10 +957,13 @@ class MeshBroker:
             inspect_activity()
             stdout = "".join(stdout_parts)
             stderr_text = "".join(stderr_parts)
-            out = "\n".join(
+            cli_out = "\n".join(
                 line for line in stdout.splitlines()
                 if not QUIET_NOISE_RE.match(line.strip())
             ).strip()
+            # This is the exact answer Hermes Desktop renders. Quiet CLI stdout
+            # can append decorative progress after it, which is not chat text.
+            out = observed_answer or cli_out
             stderr = stderr_text.strip()
             match = SESSION_ID_RE.search("\n" + stderr)
             next_session_id = (
