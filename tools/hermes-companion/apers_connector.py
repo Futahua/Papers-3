@@ -8,19 +8,20 @@ connect with no terminal, no QR and no typed pairing code:
   pull / push_session — the exact protocol the phone binary already speaks
   (4-byte framed JSON, NaCl box, pair-once trust in ~/.hermes/mesh/peers.json).
 - UDP discovery responder on 48856: the phone broadcasts "APERS_MESH_DISCOVER_V1"
-  on the LAN; we reply with the same JSON the pairing QR would contain
-  (v1: did / pk / host / port). Receiving a probe opens the pairing window for
-  180 s, so pairing is zero-touch while a phone is actively looking.
+  on the LAN; we reply with the same JSON the pairing QR would contain. When
+  Tailscale is present, the reply also includes its 100.x address in `alts`, so
+  the same pairing continues to work away from the home network.
 - mDNS: advertises both `_hermes-mesh._tcp.` (companion stock) and
   `_hermes-handoff._tcp.` (what the phone's stock rediscovery fallback resolves,
   TXT did=<device id>) for the same broker port.
 - Tasks run through the SAME Hermes the creator already uses: the hermes-agent
-  venv CLI (`hermes -z <prompt>`) against the default ~/.hermes home — the home
-  Papers' 127.0.0.1:9119 dashboard uses. No second dashboard/backend is started,
-  no port is taken besides the companion's own.
+  venv CLI (`hermes chat --quiet --query <prompt>`) against the default
+  ~/.hermes home. Each phone conversation resumes one canonical Hermes session.
+  No second dashboard/backend is started.
 
-LAN-only. Nothing leaves the network; auth.json/.env are never read or sent
-(the vendored exporter only touches state.db + memories/).
+Payloads remain NaCl encrypted end-to-end. Tailscale supplies reachability only;
+auth.json/.env are never read or sent (the exporter only touches state.db +
+memories/).
 
 Logs to ~/.hermes/mesh/connector.log. Single instance is enforced by the fixed
 TCP port (a second launch exits quietly).
@@ -65,8 +66,8 @@ def _log(msg: str) -> None:
 def _hermes_cmd() -> list[str]:
     exe = os.environ.get("APERS_HERMES_EXE") or DEFAULT_HERMES_EXE
     if os.path.isfile(exe):
-        return [exe, "-z"]
-    return ["hermes", "-z"]  # PATH fallback
+        return [exe, "chat", "--quiet", "--query"]
+    return ["hermes", "chat", "--quiet", "--query"]  # PATH fallback
 
 
 def _discovery_loop(broker) -> None:
@@ -94,6 +95,7 @@ def _discovery_loop(broker) -> None:
                 "pk": broker.identity.public_b64,
                 "host": broker.host,
                 "port": broker.port,
+                "alts": broker.alternate_hosts,
             },
             separators=(",", ":"),
         ).encode("utf-8")
@@ -143,7 +145,8 @@ def main() -> int:
         raise
 
     _log(
-        f"connector up: did={broker.identity.device_id} broker={broker.host}:{broker.port} "
+        f"connector up: did={broker.identity.device_id} "
+        f"broker={broker.host}:{broker.port} alts={broker.alternate_hosts or 'none'} "
         f"hermes={' '.join(cmd)} home={_home()}"
     )
     _advertise_handoff_alias(broker)

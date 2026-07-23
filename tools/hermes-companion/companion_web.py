@@ -56,6 +56,14 @@ def _read_history(db_path: str, limit: int = 20):
         conn.close()
 
 
+def _display_result(text: str) -> str:
+    """Hide the transport envelope from the human-facing companion history."""
+    if text.startswith("__APERS_CHAT_RESULT_V1__:"):
+        _, separator, body = text.partition("\n")
+        return body if separator else ""
+    return text
+
+
 class _Handler(BaseHTTPRequestHandler):
     broker = None  # injected via partial
 
@@ -90,11 +98,14 @@ class _Handler(BaseHTTPRequestHandler):
         by_ref = {r["ref"]: r for r in results}
         for t in tasks:
             r = by_ref.get(t["id"])
-            t["result"] = r["text"] if r else None
+            t["result"] = _display_result(r["text"]) if r else None
             t["result_ok"] = r["ok"] if r else None
             t["id"] = t["id"][:8]  # short id for display (association already done)
         return {
             "bind": f"{b.host}:{b.port}",
+            "alternate_endpoints": [
+                f"{host}:{b.port}" for host in b.alternate_hosts
+            ],
             "device_id": b.identity.device_id,
             "paired": [d[:8] for d in paired],
             "paired_count": len(paired),

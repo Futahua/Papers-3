@@ -25,7 +25,7 @@ from __future__ import annotations
 import base64
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import nacl.public
 import nacl.utils
@@ -97,35 +97,44 @@ class PeerInfo:
     host: str
     port: int
     session_id: str | None = None  # only carried by handoff QR (v2); None for pure pairing QR (v1)
+    alternate_hosts: list[str] = field(default_factory=list)
 
 
-def build_pair_qr(identity: DeviceIdentity, host: str, port: int) -> str:
-    """Produce pure pairing QR content (v1, for trust establishment). Contains only the
-    public key, never the private key."""
-    return json.dumps({
-        "v": QR_SCHEMA,
+def _endpoint_payload(identity: DeviceIdentity, host: str, port: int,
+                      alternate_hosts: list[str] | None = None) -> dict:
+    payload = {
         "did": identity.device_id,
         "pk": identity.public_b64,
         "host": host,
         "port": port,
-    }, separators=(",", ":"))
+    }
+    alts = [value for value in dict.fromkeys(alternate_hosts or [])
+            if value and value != host]
+    if alts:
+        payload["alts"] = alts
+    return payload
+
+
+def build_pair_qr(identity: DeviceIdentity, host: str, port: int,
+                  alternate_hosts: list[str] | None = None) -> str:
+    """Produce pure pairing QR content (v1, for trust establishment). Contains only the
+    public key, never the private key."""
+    payload = _endpoint_payload(identity, host, port, alternate_hosts)
+    payload["v"] = QR_SCHEMA
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def build_handoff_qr(identity: DeviceIdentity, host: str, port: int,
-                     session_id: str) -> str:
+                     session_id: str,
+                     alternate_hosts: list[str] | None = None) -> str:
     """Produce handoff QR content (v2): pairing info + a specified session_id. The phone's
     first scan completes pairing + selects the session to receive at once. Contains only
     the public key, never the private key."""
     if not session_id:
         raise ValueError("handoff QR requires a session_id")
-    return json.dumps({
-        "v": HANDOFF_QR_SCHEMA,
-        "did": identity.device_id,
-        "pk": identity.public_b64,
-        "host": host,
-        "port": port,
-        "sid": session_id,
-    }, separators=(",", ":"))
+    payload = _endpoint_payload(identity, host, port, alternate_hosts)
+    payload.update({"v": HANDOFF_QR_SCHEMA, "sid": session_id})
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def parse_qr(s: str) -> PeerInfo:
@@ -146,8 +155,11 @@ def parse_qr(s: str) -> PeerInfo:
         sid = d.get("sid")
         if not sid:
             raise ValueError("handoff QR (v2) is missing sid")
+    alts = [value for value in d.get("alts", [])
+            if isinstance(value, str) and value and value != d["host"]]
     return PeerInfo(device_id=d["did"], public_key=pk,
-                    host=d["host"], port=int(d["port"]), session_id=sid)
+                    host=d["host"], port=int(d["port"]), session_id=sid,
+                    alternate_hosts=list(dict.fromkeys(alts)))
 
 
 # Backward-compatibility alias: older callers/tests use parse_pair_qr; now unified to

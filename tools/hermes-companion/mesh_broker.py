@@ -18,16 +18,20 @@ Protocol (one op per connection, following the handoff handshake+auth model):
        push  {op:"push", task:{id,prompt,created_at}}  → enqueue work; reply {ok, id}
        poll  {op:"poll"}                                → reply Box(broker_sk→client_pk)({ok, results:[...]})
        ack   {op:"ack", ids:[...]}                      → delete received results; reply {ok}
-  worker thread: take a pending task → run `hermes -z <prompt>` oneshot → write result to outbox (to=originator did).
+    worker thread: take a pending task → run a quiet Hermes chat query, resuming the
+    canonical conversation session when present → write result to outbox.
 
-🔴 Security: the broker binds to a LAN IP by default (not 0.0.0.0); only accepts public keys of
-   paired nodes; payload is NaCl e2e; the payload never contains credentials (only the task prompt
-   and result text). The private key never leaves the machine.
+🔴 Security: the broker binds only to specific LAN and optional private Tailscale addresses
+   (not 0.0.0.0); only accepts public keys of paired nodes; payload is NaCl e2e; the payload
+   never contains credentials (only the task prompt and result text). The private key never
+   leaves the machine.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import socket
 import sys
 import sqlite3
@@ -49,9 +53,14 @@ PROTO = 1
 MAX_RESULT_CHARS = 64 * 1024  # per-result cap, to avoid an abnormally long output blowing up notification/transport
 # Phone-dispatched conversations start with this prefix, so the desktop hermes (sessions list /
 # browse / resume) can recognize the source at a glance.
-# It's a plain prompt string, called via `hermes -z` as usual — it doesn't touch upstream packages
-# or change the state.db schema, so upstream updates are unaffected.
+# It's a plain prompt string passed to `hermes chat --quiet --query`; it doesn't touch upstream
+# packages or change the Hermes state.db schema, so upstream updates are unaffected.
 MESH_TASK_MARKER = "📱 [Phone dispatch] "
+CHAT_PROMPT_PREFIX = "__APERS_CHAT_V1__:"
+CHAT_RESULT_PREFIX = "__APERS_CHAT_RESULT_V1__:"
+CHAT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
+SESSION_ID_RE = re.compile(r"(?:^|\n)session_id:\s*([^\s]+)", re.IGNORECASE)
+QUIET_NOISE_RE = re.compile(r"^Warning: Unknown toolsets: .+$")
 # Fixed default port (⚠️ must be fixed, not random): after pairing, the phone app stores host:port
 # in the peer and keeps connecting with it. If the broker picks a new port on every restart, the
 # phone can't reach it (shows offline, dispatch fails). 51379 is a high port that avoids common services.
@@ -78,38 +87,66 @@ class MeshStore:
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS tasks("
                 "id TEXT PRIMARY KEY, from_did TEXT NOT NULL, prompt TEXT NOT NULL,"
-                "status TEXT NOT NULL DEFAULT 'pending', created REAL NOT NULL)")
+                "status TEXT NOT NULL DEFAULT 'pending', created REAL NOT NULL,"
+                "conversation_id TEXT)")
             self._db.execute(
                 "CREATE TABLE IF NOT EXISTS results("
                 "id TEXT PRIMARY KEY, ref TEXT NOT NULL, to_did TEXT NOT NULL,"
                 "ok INTEGER NOT NULL, text TEXT NOT NULL, created REAL NOT NULL,"
-                "delivered INTEGER NOT NULL DEFAULT 0)")
+                "delivered INTEGER NOT NULL DEFAULT 0, conversation_id TEXT,"
+                "session_id TEXT)")
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS conversations("
+                "owner_did TEXT NOT NULL, conversation_id TEXT NOT NULL,"
+                "session_id TEXT, created REAL NOT NULL, updated REAL NOT NULL,"
+                "PRIMARY KEY(owner_did, conversation_id))")
         # migration: add the delivered column to old dbs (ignore if it already exists) → ack now marks as
         # delivered instead of deleting, so results can be retained in the console
         with self._lock:
-            try:
-                with self._db:
-                    self._db.execute(
-                        "ALTER TABLE results ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0")
-            except sqlite3.OperationalError:
-                pass
+            for statement in (
+                "ALTER TABLE results ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE results ADD COLUMN conversation_id TEXT",
+                "ALTER TABLE results ADD COLUMN session_id TEXT",
+                "ALTER TABLE tasks ADD COLUMN conversation_id TEXT",
+            ):
+                try:
+                    with self._db:
+                        self._db.execute(statement)
+                except sqlite3.OperationalError:
+                    pass
 
-    def add_task(self, task_id: str, from_did: str, prompt: str) -> None:
+    def add_task(self, task_id: str, from_did: str, prompt: str,
+                 conversation_id: str | None = None) -> None:
         with self._lock, self._db:
             self._db.execute(
-                "INSERT OR IGNORE INTO tasks(id, from_did, prompt, status, created) "
-                "VALUES(?,?,?,'pending',?)", (task_id, from_did, prompt, time.time()))
+                "INSERT OR IGNORE INTO tasks("
+                "id, from_did, prompt, status, created, conversation_id"
+                ") VALUES(?,?,?,'pending',?,?)",
+                (task_id, from_did, prompt, time.time(), conversation_id))
+            if conversation_id:
+                now = time.time()
+                self._db.execute(
+                    "INSERT OR IGNORE INTO conversations("
+                    "owner_did, conversation_id, session_id, created, updated"
+                    ") VALUES(?,?,NULL,?,?)",
+                    (from_did, conversation_id, now, now))
 
     def claim_next_task(self) -> Optional[dict]:
         """Atomically take one pending task → mark running, return {id, from_did, prompt}. None if none."""
         with self._lock, self._db:
             row = self._db.execute(
-                "SELECT id, from_did, prompt FROM tasks WHERE status='pending' "
+                "SELECT id, from_did, prompt, conversation_id "
+                "FROM tasks WHERE status='pending' "
                 "ORDER BY created LIMIT 1").fetchone()
             if not row:
                 return None
             self._db.execute("UPDATE tasks SET status='running' WHERE id=?", (row[0],))
-            return {"id": row[0], "from_did": row[1], "prompt": row[2]}
+            return {
+                "id": row[0],
+                "from_did": row[1],
+                "prompt": row[2],
+                "conversation_id": row[3],
+            }
 
     def finish_task(self, task_id: str) -> None:
         with self._lock, self._db:
@@ -122,19 +159,51 @@ class MeshStore:
             cur = self._db.execute("UPDATE tasks SET status='pending' WHERE status='running'")
             return cur.rowcount
 
-    def add_result(self, ref: str, to_did: str, ok: bool, text: str) -> None:
+    def conversation_session(self, owner_did: str,
+                             conversation_id: str | None) -> str | None:
+        if not conversation_id:
+            return None
+        with self._lock:
+            row = self._db.execute(
+                "SELECT session_id FROM conversations "
+                "WHERE owner_did=? AND conversation_id=?",
+                (owner_did, conversation_id)).fetchone()
+        return row[0] if row and row[0] else None
+
+    def set_conversation_session(self, owner_did: str, conversation_id: str | None,
+                                 session_id: str | None) -> None:
+        if not conversation_id or not session_id:
+            return
+        now = time.time()
         with self._lock, self._db:
             self._db.execute(
-                "INSERT INTO results(id, ref, to_did, ok, text, created) VALUES(?,?,?,?,?,?)",
-                (uuid.uuid4().hex, ref, to_did, 1 if ok else 0, text[:MAX_RESULT_CHARS], time.time()))
+                "INSERT INTO conversations("
+                "owner_did, conversation_id, session_id, created, updated"
+                ") VALUES(?,?,?,?,?) "
+                "ON CONFLICT(owner_did, conversation_id) DO UPDATE SET "
+                "session_id=excluded.session_id, updated=excluded.updated",
+                (owner_did, conversation_id, session_id, now, now))
+
+    def add_result(self, ref: str, to_did: str, ok: bool, text: str,
+                   conversation_id: str | None = None,
+                   session_id: str | None = None) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO results("
+                "id, ref, to_did, ok, text, created, conversation_id, session_id"
+                ") VALUES(?,?,?,?,?,?,?,?)",
+                (uuid.uuid4().hex, ref, to_did, 1 if ok else 0,
+                 text[:MAX_RESULT_CHARS], time.time(), conversation_id, session_id))
 
     def pending_results(self, to_did: str) -> list[dict]:
         """Results pending phone pickup: return only not-yet-delivered (delivered=0) ones, to avoid duplicate notifications."""
         with self._lock, self._db:
             rows = self._db.execute(
-                "SELECT id, ref, ok, text, created FROM results "
+                "SELECT id, ref, ok, text, created, conversation_id, session_id "
+                "FROM results "
                 "WHERE to_did=? AND delivered=0 ORDER BY created", (to_did,)).fetchall()
-        return [{"id": r[0], "ref": r[1], "ok": bool(r[2]), "text": r[3], "created": r[4]}
+        return [{"id": r[0], "ref": r[1], "ok": bool(r[2]), "text": r[3],
+                 "created": r[4], "conversation_id": r[5], "session_id": r[6]}
                 for r in rows]
 
     def mark_delivered(self, ids: list[str], to_did: str) -> None:
@@ -156,12 +225,15 @@ class MeshBroker:
     peers: hs.PeerStore
     store: MeshStore
     # command to run a task; {prompt} is passed by the worker as an argument (no shell string concatenation, injection-safe)
-    hermes_cmd: list[str] = field(default_factory=lambda: ["hermes", "-z"])
+    hermes_cmd: list[str] = field(
+        default_factory=lambda: ["hermes", "chat", "--quiet", "--query"])
     home: Optional[str] = None
-    host: str = ""          # binds to a LAN IP by default (see start); never 0.0.0.0
+    host: str = ""          # primary advertised address (LAN by default)
+    alternate_hosts: list[str] = field(default_factory=list)
     port: int = 0           # 0 = auto-select
 
     _sock: Optional[socket.socket] = None
+    _socks: list[socket.socket] = field(default_factory=list)
     _running: bool = False
     _zc = None
     _zc_info = None
@@ -247,9 +319,23 @@ class MeshBroker:
         if not prompt:
             hs._send_frame(conn, json.dumps({"ok": False, "err": "empty prompt"}).encode())
             return
+        conversation_id = None
+        if prompt.startswith(CHAT_PROMPT_PREFIX):
+            header, separator, body = prompt.partition("\n")
+            candidate = header[len(CHAT_PROMPT_PREFIX):].strip()
+            if separator and CHAT_ID_RE.fullmatch(candidate):
+                conversation_id = candidate
+                prompt = body.strip()
+            if not prompt:
+                hs._send_frame(conn, json.dumps({"ok": False, "err": "empty prompt"}).encode())
+                return
         tid = task.get("id") or uuid.uuid4().hex
-        self.store.add_task(tid, cdid, prompt)
-        hs._send_frame(conn, json.dumps({"ok": True, "id": tid}).encode())
+        self.store.add_task(tid, cdid, prompt, conversation_id)
+        hs._send_frame(conn, json.dumps({
+            "ok": True,
+            "id": tid,
+            "conversation_id": conversation_id,
+        }).encode())
 
     def _op_poll(self, conn, cpk: bytes, cdid: str):
         results = self.store.pending_results(cdid)
@@ -313,63 +399,110 @@ class MeshBroker:
             print(f"[mesh] ▶ received task {task['id'][:8]} from={task['from_did'][:8]}: "
                   f"{task['prompt'][:80]}  → running {' '.join(self.hermes_cmd)} …", flush=True)
             t0 = time.time()
-            # add an identifiable prefix → the desktop session history shows at a glance it's phone-dispatched; an independent session, no shared context.
-            ok, text = self._run_hermes(MESH_TASK_MARKER + task["prompt"])
+            conversation_id = task.get("conversation_id")
+            session_id = self.store.conversation_session(
+                task["from_did"], conversation_id)
+            prompt = task["prompt"] if session_id else MESH_TASK_MARKER + task["prompt"]
+            ok, text, next_session_id = self._run_hermes(prompt, session_id)
+            if ok and conversation_id and next_session_id:
+                self.store.set_conversation_session(
+                    task["from_did"], conversation_id, next_session_id)
             print(f"[mesh] {'✓' if ok else '✗'} task {task['id'][:8]} done ({time.time()-t0:.1f}s)"
                   f": {text[:100].replace(chr(10), ' ')}", flush=True)
-            self.store.add_result(task["id"], task["from_did"], ok, text)
+            result_text = text
+            if conversation_id:
+                # The Android background worker must leave main-chat replies in the
+                # encrypted inbox for the WebUI bridge, which owns rendering + ACK.
+                result_text = f"{CHAT_RESULT_PREFIX}{conversation_id}\n{text}"
+            self.store.add_result(
+                task["id"], task["from_did"], ok, result_text,
+                conversation_id=conversation_id,
+                session_id=next_session_id or session_id)
             self.store.finish_task(task["id"])
             print(f"[mesh] ⇧ result placed in the phone inbox, waiting for the phone to poll it", flush=True)
 
-    def _run_hermes(self, prompt: str) -> tuple[bool, str]:
+    def _run_hermes(self, prompt: str,
+                    session_id: str | None = None) -> tuple[bool, str, str | None]:
         env = dict(os.environ)
         if self.home:
             env["HERMES_HOME"] = self.home
         try:
+            cmd = self.hermes_cmd + [prompt]
+            if session_id and "--query" in self.hermes_cmd:
+                cmd += ["--resume", session_id]
             proc = subprocess.run(
-                self.hermes_cmd + [prompt], capture_output=True, text=True,
+                cmd, capture_output=True, text=True,
                 env=env, timeout=900)  # 15-minute cap (long-running agent tasks)
-            out = (proc.stdout or "").strip()
+            out = "\n".join(
+                line for line in (proc.stdout or "").splitlines()
+                if not QUIET_NOISE_RE.match(line.strip())
+            ).strip()
+            stderr = (proc.stderr or "").strip()
+            match = SESSION_ID_RE.search("\n" + stderr)
+            next_session_id = match.group(1) if match else session_id
             if proc.returncode != 0:
-                return False, (out + "\n" + (proc.stderr or "")).strip()[:MAX_RESULT_CHARS] \
-                    or f"hermes exited {proc.returncode}"
-            return True, out or "(no output)"
+                return False, (out + "\n" + stderr).strip()[:MAX_RESULT_CHARS] \
+                    or f"hermes exited {proc.returncode}", next_session_id
+            return True, out or "(no output)", next_session_id
         except FileNotFoundError:
-            return False, f"hermes command not found: {self.hermes_cmd[0]} (ensure it's installed and on PATH)"
+            return False, (
+                f"hermes command not found: {self.hermes_cmd[0]} "
+                "(ensure it's installed and on PATH)"), session_id
         except subprocess.TimeoutExpired:
-            return False, "task timed out (>15 minutes)"
+            return False, "task timed out (>15 minutes)", session_id
         except Exception as e:  # noqa: BLE001
-            return False, f"execution error: {e}"
+            return False, f"execution error: {e}", session_id
 
     # ---- lifecycle ----
     def start(self, advertise: bool = True) -> int:
-        bind_host = self.host or hs._local_ip()  # LAN IP; never 0.0.0.0
-        self.host = bind_host
-        self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        if sys.platform == "win32":
-            # On Windows SO_REUSEADDR lets a second process silently bind the same
-            # port (breaking the fixed-port single-instance guarantee); demand
-            # exclusive ownership so a second launch gets EADDRINUSE instead.
-            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        else:
-            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind((bind_host, self.port))
-        self.port = self._sock.getsockname()[1]
-        self._sock.listen(8)
+        self.host = self.host or hs._local_ip()
+        requested_hosts = list(dict.fromkeys(
+            [self.host] + [h for h in self.alternate_hosts if h and h != self.host]))
+        bound_hosts: list[str] = []
+        requested_port = self.port
+        first_error: OSError | None = None
+        for bind_host in requested_hosts:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                if sys.platform == "win32":
+                    sock.setsockopt(
+                        socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                else:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((bind_host, requested_port))
+                if not self._socks:
+                    self.port = sock.getsockname()[1]
+                    requested_port = self.port
+                sock.listen(8)
+                self._socks.append(sock)
+                bound_hosts.append(bind_host)
+            except OSError as exc:
+                sock.close()
+                first_error = first_error or exc
+                print(f"[mesh] ! could not bind alternate endpoint {bind_host}: "
+                      f"{exc}", flush=True)
+        if not self._socks:
+            raise first_error or OSError("no broker endpoint could be bound")
+        self._sock = self._socks[0]
+        self.host = bound_hosts[0]
+        self.alternate_hosts = bound_hosts[1:]
         self._running = True
         requeued = self.store.requeue_running()  # crash recovery: restore tasks stuck running last time back to pending
         if requeued:
             print(f"[mesh] re-enqueued {requeued} unfinished task(s) from last time")
 
-        def accept_loop():
+        def accept_loop(sock: socket.socket):
             while self._running:
                 try:
-                    conn, _ = self._sock.accept()
+                    conn, _ = sock.accept()
                 except OSError:
                     break
                 threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
 
-        threading.Thread(target=accept_loop, name="mesh-accept", daemon=True).start()
+        for index, sock in enumerate(self._socks):
+            threading.Thread(
+                target=accept_loop, args=(sock,),
+                name=f"mesh-accept-{index}", daemon=True).start()
         threading.Thread(target=self._worker_loop, name="mesh-worker", daemon=True).start()
         if advertise:
             self._advertise()
@@ -396,26 +529,56 @@ class MeshBroker:
                 self._zc.close()
             except Exception:  # noqa: BLE001
                 pass
-        if self._sock:
+        for sock in self._socks:
             try:
-                self._sock.close()
+                sock.close()
             except OSError:
                 pass
+        self._socks.clear()
+        self._sock = None
 
     def pair_qr(self) -> str:
         """Pure pairing QR (for the phone to scan to establish trust). Reuses the handoff v1 schema."""
-        return pr.build_pair_qr(self.identity, self.host, self.port)
+        return pr.build_pair_qr(
+            self.identity, self.host, self.port, self.alternate_hosts)
 
     def handoff_qr(self, session_id: str) -> str:
         """Handoff QR: pairing info + the specified session_id. The phone's first scan both pairs and
         selects the conversation to receive. With the unified server, handoff and collaboration share
         this identity; scanning this QR both establishes trust and specifies the handoff session."""
-        return pr.build_handoff_qr(self.identity, self.host, self.port, session_id)
+        return pr.build_handoff_qr(
+            self.identity, self.host, self.port, session_id,
+            self.alternate_hosts)
 
 
 # ── Standalone launch (one-line desktop command) ──────────────────────────────
 
 _MESH_SUBDIR = "mesh"  # ~/.hermes/mesh/ (mesh identity + peer list, a trust domain separate from handoff)
+
+
+def _tailscale_ipv4() -> str | None:
+    """Return this machine's Tailscale IPv4 when the CLI is installed.
+
+    This is discovery only: traffic still uses the same paired, NaCl-encrypted
+    broker protocol. No Tailscale credentials are read by the companion.
+    """
+    candidates = [shutil.which("tailscale")]
+    if sys.platform == "win32":
+        candidates.append(r"C:\Program Files\Tailscale\tailscale.exe")
+    for executable in dict.fromkeys(path for path in candidates if path):
+        try:
+            proc = subprocess.run(
+                [executable, "ip", "-4"],
+                capture_output=True, text=True, timeout=3)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode != 0:
+            continue
+        for line in proc.stdout.splitlines():
+            value = line.strip()
+            if value.startswith("100.") and value.count(".") == 3:
+                return value
+    return None
 
 
 def serve(home: Optional[str] = None, advertise: bool = True,
@@ -428,13 +591,21 @@ def serve(home: Optional[str] = None, advertise: bool = True,
     peers = hs.PeerStore(os.path.join(cfg, "peers.json"))
     store = MeshStore(os.path.join(cfg, "queue.db"))
     cmd = hermes_cmd or _default_hermes_cmd()
-    # host source priority: argument > MESH_HOST env var > auto LAN (_local_ip).
-    # For cross-network (phone on 4G / a different Wi-Fi), use Tailscale: MESH_HOST=<your 100.x> or --host.
-    bind_host = host or os.environ.get("MESH_HOST", "")
+    # Primary address source priority: argument > MESH_HOST > auto LAN. When
+    # Tailscale is available, bind it as a second endpoint and include it in the
+    # same pairing record. The Android client already remembers `alts` and tries
+    # the last-good address first, so Wi-Fi ↔ mobile-data transitions are automatic.
+    bind_host = host or os.environ.get("MESH_HOST", "") or hs._local_ip()
+    alternate_hosts: list[str] = []
+    if os.environ.get("APERS_DISABLE_TAILSCALE") != "1":
+        tailscale_host = _tailscale_ipv4()
+        if tailscale_host and tailscale_host != bind_host:
+            alternate_hosts.append(tailscale_host)
     # the port is fixed (see DEFAULT_PORT): the port stored in the phone peer must stay valid, not random.
     bind_port = port if port is not None else int(os.environ.get("MESH_PORT", DEFAULT_PORT))
     broker = MeshBroker(identity=identity, peers=peers, store=store,
-                        hermes_cmd=cmd, home=home, host=bind_host, port=bind_port)
+                        hermes_cmd=cmd, home=home, host=bind_host,
+                        alternate_hosts=alternate_hosts, port=bind_port)
     broker.start(advertise=advertise)
     return broker
 
@@ -442,7 +613,7 @@ def serve(home: Optional[str] = None, advertise: bool = True,
 def _default_hermes_cmd() -> list[str]:
     if os.environ.get("HERMES_MESH_CMD"):
         return os.environ["HERMES_MESH_CMD"].split()
-    return ["hermes", "-z"]
+    return ["hermes", "chat", "--quiet", "--query"]
 
 
 def add_peer_from_phone(broker: MeshBroker, phone_did: str, phone_pk_b64: str) -> None:
