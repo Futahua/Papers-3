@@ -51,20 +51,63 @@ from i18n import t            # i18n for user-facing CLI output (English fallbac
 SERVICE_TYPE = "_hermes-mesh._tcp.local."
 PROTO = 1
 MAX_RESULT_CHARS = 64 * 1024  # per-result cap, to avoid an abnormally long output blowing up notification/transport
-# Phone-dispatched conversations start with this prefix, so the desktop hermes (sessions list /
-# browse / resume) can recognize the source at a glance.
-# It's a plain prompt string passed to `hermes chat --quiet --query`; it doesn't touch upstream
-# packages or change the Hermes state.db schema, so upstream updates are unaffected.
-MESH_TASK_MARKER = "📱 [Phone dispatch] "
+# Kept only to clean the titles/previews of sessions created by older companion
+# versions. New phone messages are sent to Hermes verbatim, so session names stay
+# useful and do not expose transport details in the Desktop sidebar.
+LEGACY_MESH_TASK_MARKER = "📱 [Phone dispatch] "
 CHAT_PROMPT_PREFIX = "__APERS_CHAT_V1__:"
 CHAT_RESULT_PREFIX = "__APERS_CHAT_RESULT_V1__:"
+CONTROL_LIST_CONVERSATION = "__desktop_sessions__"
+CONTROL_BIND_CONVERSATION = "__desktop_bind__"
+CONTROL_NEW_CONVERSATION = "__desktop_new__"
+CONTROL_LIST_PROMPT = "__APERS_LIST_DESKTOP_SESSIONS_V1__"
+CONTROL_BIND_PROMPT = "__APERS_BIND_DESKTOP_SESSION_V1__"
+CONTROL_NEW_PROMPT = "__APERS_NEW_DESKTOP_SESSION_V1__"
 CHAT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 SESSION_ID_RE = re.compile(r"(?:^|\n)session_id:\s*([^\s]+)", re.IGNORECASE)
-QUIET_NOISE_RE = re.compile(r"^Warning: Unknown toolsets: .+$")
+QUIET_NOISE_RE = re.compile(
+    r"^(?:Warning: Unknown toolsets: .+|↪ restored workspace dir: .+)$")
 # Fixed default port (⚠️ must be fixed, not random): after pairing, the phone app stores host:port
 # in the peer and keeps connecting with it. If the broker picks a new port on every restart, the
 # phone can't reach it (shows offline, dispatch fails). 51379 is a high port that avoids common services.
 DEFAULT_PORT = 51379
+
+
+def _repair_legacy_phone_titles(home: str) -> int:
+    """Give old marker-prefixed phone sessions a clean Desktop title.
+
+    Only sessions with no explicit title and a first user message carrying the
+    companion's former marker are touched. The original message remains intact,
+    so this is a presentation repair rather than a transcript rewrite.
+    """
+    state_db = os.path.join(home, "state.db")
+    if not os.path.isfile(state_db):
+        return 0
+    conn = sqlite3.connect(state_db, timeout=10)
+    try:
+        rows = conn.execute(
+            "SELECT s.id, first_message.content "
+            "FROM sessions s JOIN messages first_message ON "
+            "first_message.id=("
+            " SELECT m.id FROM messages m WHERE m.session_id=s.id "
+            " AND m.role='user' ORDER BY m.timestamp LIMIT 1"
+            ") WHERE (s.title IS NULL OR TRIM(s.title)='') "
+            "AND first_message.content LIKE ?",
+            (LEGACY_MESH_TASK_MARKER + "%",),
+        ).fetchall()
+        updates = []
+        for session_id, content in rows:
+            clean = re.sub(r"\s+", " ", str(content)).strip()
+            clean = clean[len(LEGACY_MESH_TASK_MARKER):].lstrip()
+            if clean:
+                updates.append((clean[:120], session_id))
+        if updates:
+            with conn:
+                conn.executemany(
+                    "UPDATE sessions SET title=? WHERE id=?", updates)
+        return len(updates)
+    finally:
+        conn.close()
 
 
 # ── Queue store (SQLite, enough for personal scale) ─────────────────────────────
@@ -172,7 +215,7 @@ class MeshStore:
 
     def set_conversation_session(self, owner_did: str, conversation_id: str | None,
                                  session_id: str | None) -> None:
-        if not conversation_id or not session_id:
+        if not conversation_id:
             return
         now = time.time()
         with self._lock, self._db:
@@ -330,12 +373,185 @@ class MeshBroker:
                 hs._send_frame(conn, json.dumps({"ok": False, "err": "empty prompt"}).encode())
                 return
         tid = task.get("id") or uuid.uuid4().hex
+        if self._handle_chat_control(tid, cdid, conversation_id, prompt):
+            hs._send_frame(conn, json.dumps({
+                "ok": True,
+                "id": tid,
+                "conversation_id": conversation_id,
+            }).encode())
+            return
         self.store.add_task(tid, cdid, prompt, conversation_id)
         hs._send_frame(conn, json.dumps({
             "ok": True,
             "id": tid,
             "conversation_id": conversation_id,
         }).encode())
+
+    def _handle_chat_control(self, tid: str, cdid: str,
+                             conversation_id: str | None, prompt: str) -> bool:
+        """Handle phone session-management commands without involving the model.
+
+        These commands still travel through the paired NaCl-encrypted push/poll
+        channel. Their results use the normal chat envelope so Android's
+        background worker leaves them for the WebUI to consume and acknowledge.
+        """
+        command, separator, raw_payload = prompt.partition("\n")
+        expected = {
+            CONTROL_LIST_CONVERSATION: CONTROL_LIST_PROMPT,
+            CONTROL_BIND_CONVERSATION: CONTROL_BIND_PROMPT,
+            CONTROL_NEW_CONVERSATION: CONTROL_NEW_PROMPT,
+        }
+        if conversation_id not in expected or command != expected[conversation_id]:
+            return False
+        try:
+            payload = json.loads(raw_payload) if separator and raw_payload else {}
+            if not isinstance(payload, dict):
+                raise ValueError("control payload must be an object")
+            phone_conversation = str(payload.get("conversation_id") or "")
+            if not CHAT_ID_RE.fullmatch(phone_conversation):
+                raise ValueError("invalid conversation_id")
+
+            if conversation_id == CONTROL_LIST_CONVERSATION:
+                result = {
+                    "sessions": self._desktop_session_catalog(),
+                    "selected_session_id": self.store.conversation_session(
+                        cdid, phone_conversation),
+                }
+            elif conversation_id == CONTROL_BIND_CONVERSATION:
+                session_id = str(payload.get("session_id") or "")
+                if not CHAT_ID_RE.fullmatch(session_id):
+                    raise ValueError("invalid session_id")
+                session = self._desktop_session_history(session_id)
+                if session is None:
+                    raise ValueError("desktop session not found")
+                self.store.set_conversation_session(
+                    cdid, phone_conversation, session_id)
+                result = session
+            else:
+                self.store.set_conversation_session(cdid, phone_conversation, None)
+                result = {"conversation_id": phone_conversation, "cleared": True}
+            self._add_control_result(
+                tid, cdid, conversation_id, True, result)
+        except Exception as exc:  # noqa: BLE001 — return a bounded control error
+            self._add_control_result(
+                tid, cdid, conversation_id, False, {"error": str(exc)})
+        return True
+
+    def _add_control_result(self, ref: str, to_did: str,
+                            conversation_id: str, ok: bool, value: dict) -> None:
+        body = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        text = f"{CHAT_RESULT_PREFIX}{conversation_id}\n{body}"
+        self.store.add_result(
+            ref, to_did, ok, text, conversation_id=conversation_id)
+
+    def _desktop_session_catalog(self, limit: int = 40) -> list[dict]:
+        """Return bounded, top-level Desktop session summaries from a safe snapshot."""
+        home = self.home or os.path.expanduser("~/.hermes")
+        state_db = os.path.join(home, "state.db")
+        if not os.path.isfile(state_db):
+            raise FileNotFoundError(f"state.db not found: {state_db}")
+        snap = de._snapshot(state_db)
+        try:
+            conn = sqlite3.connect(snap)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT s.id, s.title, s.source, s.started_at, s.message_count, "
+                "MAX(m.timestamp) AS last_active, "
+                "(SELECT content FROM messages first_message "
+                " WHERE first_message.session_id=s.id "
+                " AND first_message.role='user' "
+                " ORDER BY first_message.timestamp LIMIT 1) AS preview "
+                "FROM sessions s LEFT JOIN messages m ON m.session_id=s.id "
+                "WHERE COALESCE(s.archived,0)=0 "
+                "AND s.parent_session_id IS NULL "
+                "AND COALESCE(s.message_count,0)>0 "
+                "GROUP BY s.id "
+                "ORDER BY COALESCE(MAX(m.timestamp),s.started_at) DESC LIMIT ?",
+                (max(1, min(limit, 80)),),
+            ).fetchall()
+            sessions = []
+            for row in rows:
+                preview = self._clean_session_text(row["preview"])
+                title = self._clean_session_text(row["title"]) or preview
+                sessions.append({
+                    "id": row["id"],
+                    "title": (title or "Untitled session")[:120],
+                    "preview": preview[:220],
+                    "source": row["source"] or "desktop",
+                    "started_at": row["started_at"],
+                    "last_active": row["last_active"] or row["started_at"],
+                    "message_count": row["message_count"] or 0,
+                })
+            return sessions
+        finally:
+            try:
+                conn.close()
+            except UnboundLocalError:
+                pass
+            try:
+                os.remove(snap)
+            except OSError:
+                pass
+
+    def _desktop_session_history(self, session_id: str) -> dict | None:
+        """Return the visible text transcript for a Desktop session chain."""
+        home = self.home or os.path.expanduser("~/.hermes")
+        bundle = de.export_for_handoff(
+            home, session_id, source_device=self.identity.device_id,
+            include_memory=False)
+        if bundle is None:
+            return None
+        sessions = bundle.get("sessions") or []
+        selected = next(
+            (item for item in sessions if item.get("id") == session_id),
+            sessions[0] if sessions else {})
+        visible = []
+        for message in sorted(
+                bundle.get("messages") or [],
+                key=lambda item: float(item.get("timestamp") or 0)):
+            role = message.get("role")
+            content = str(message.get("content") or "").strip()
+            if role not in ("user", "assistant") or not content:
+                continue
+            if message.get("active") == 0:
+                continue
+            visible.append({
+                "role": role,
+                "content": content[:2400],
+                "timestamp": message.get("timestamp") or 0,
+            })
+        visible = visible[-48:]
+        preview = next(
+            (self._clean_session_text(item["content"])
+             for item in visible if item["role"] == "user"), "")
+        title = self._clean_session_text(selected.get("title")) or preview
+        result = {
+            "session": {
+                "id": session_id,
+                "title": (title or "Untitled session")[:120],
+                "source": selected.get("source") or "desktop",
+                "started_at": selected.get("started_at"),
+                "last_active": visible[-1]["timestamp"] if visible else
+                    selected.get("started_at"),
+                "message_count": selected.get("message_count") or len(visible),
+            },
+            "messages": visible,
+        }
+        # add_result() enforces a hard character cap. Keep the JSON valid by
+        # removing the oldest visible rows before it reaches that boundary
+        # instead of letting add_result() truncate the serialized payload.
+        budget = MAX_RESULT_CHARS - 2048
+        while result["messages"] and len(json.dumps(
+                result, ensure_ascii=False, separators=(",", ":"))) > budget:
+            result["messages"].pop(0)
+        return result
+
+    @staticmethod
+    def _clean_session_text(value) -> str:
+        text = re.sub(r"\s+", " ", str(value or "")).strip()
+        if text.startswith(LEGACY_MESH_TASK_MARKER):
+            text = text[len(LEGACY_MESH_TASK_MARKER):].lstrip()
+        return text
 
     def _op_poll(self, conn, cpk: bytes, cdid: str):
         results = self.store.pending_results(cdid)
@@ -402,8 +618,8 @@ class MeshBroker:
             conversation_id = task.get("conversation_id")
             session_id = self.store.conversation_session(
                 task["from_did"], conversation_id)
-            prompt = task["prompt"] if session_id else MESH_TASK_MARKER + task["prompt"]
-            ok, text, next_session_id = self._run_hermes(prompt, session_id)
+            ok, text, next_session_id = self._run_hermes(
+                task["prompt"], session_id)
             if ok and conversation_id and next_session_id:
                 self.store.set_conversation_session(
                     task["from_did"], conversation_id, next_session_id)
@@ -432,6 +648,7 @@ class MeshBroker:
                 cmd += ["--resume", session_id]
             proc = subprocess.run(
                 cmd, capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
                 env=env, timeout=900)  # 15-minute cap (long-running agent tasks)
             out = "\n".join(
                 line for line in (proc.stdout or "").splitlines()
@@ -585,6 +802,10 @@ def serve(home: Optional[str] = None, advertise: bool = True,
           hermes_cmd: Optional[list[str]] = None, host: str = "",
           port: int = DEFAULT_PORT) -> MeshBroker:
     home = home or os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    repaired = _repair_legacy_phone_titles(home)
+    if repaired:
+        print(f"[mesh] repaired {repaired} legacy phone session title(s)",
+              flush=True)
     cfg = os.path.join(home, _MESH_SUBDIR)
     os.makedirs(cfg, exist_ok=True)
     identity = pr.load_or_create_identity(os.path.join(cfg, "id.key"))

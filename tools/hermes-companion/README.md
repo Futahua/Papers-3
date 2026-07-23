@@ -12,6 +12,14 @@ available; Tailscale carries the same encrypted pairing over mobile data.
   hermes-agent venv CLI (`hermes chat --quiet --query`) against the same
   `~/.hermes` home Papers' dashboard uses. Phone conversations resume a durable
   Hermes session instead of creating unrelated one-shot sessions.
+- The phone's main Desktop destination can list real Hermes sessions, bind its
+  current conversation to a selected stable session id, load the visible text
+  transcript, or explicitly start a new Desktop session. These control messages
+  use the existing paired NaCl-encrypted push/poll channel and never reach the
+  model.
+- New phone-started sessions use the real first prompt as their Desktop title.
+  On startup, the connector repairs only untitled legacy sessions whose first
+  user message contains the old `[Phone dispatch]` transport marker.
 - If Tailscale is installed, the connector automatically advertises and binds
   its 100.x address as an alternate endpoint. Install and sign in to Tailscale
   on the phone once; the app then fails over between Wi-Fi and mobile data.
