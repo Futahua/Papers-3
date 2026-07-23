@@ -51,22 +51,33 @@ $lnk.Description = 'Hermes phone connector (Run on Computer) — starts silently
 $lnk.Save()
 Write-Host "==> logon autostart: $lnkPath"
 
-# Firewall rules (best effort; needs admin)
+# Firewall rules — REQUIRED so the phone (a different device on the LAN) can reach
+# the connector. Loopback isn't enough. Scope = Any profile because home Wi-Fi is
+# often categorised Public. Needs admin: self-elevate JUST this step with one UAC
+# click (nothing else in the install needs admin).
+$fwCmd = @"
+`$ErrorActionPreference='SilentlyContinue'
+foreach (`$n in 'Hermes Connector mesh tcp','Hermes Connector discovery udp','Hermes Connector py','Hermes Connector pyw') {
+  Get-NetFirewallRule -DisplayName `$n -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+}
+New-NetFirewallRule -DisplayName 'Hermes Connector mesh tcp'      -Direction Inbound -Action Allow -Protocol TCP -LocalPort 51379 -Profile Any | Out-Null
+New-NetFirewallRule -DisplayName 'Hermes Connector discovery udp' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 48856 -Profile Any | Out-Null
+New-NetFirewallRule -DisplayName 'Hermes Connector py'  -Direction Inbound -Action Allow -Program '$venvPy'  -Profile Any | Out-Null
+New-NetFirewallRule -DisplayName 'Hermes Connector pyw' -Direction Inbound -Action Allow -Program '$venvPyW' -Profile Any | Out-Null
+"@
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
            ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if ($isAdmin) {
-    foreach ($r in @(
-        @{Name='Hermes Connector (mesh tcp)'; Proto='TCP'; Port=51379},
-        @{Name='Hermes Connector (discovery udp)'; Proto='UDP'; Port=48856})) {
-        netsh advfirewall firewall delete rule name="$($r.Name)" | Out-Null
-        netsh advfirewall firewall add rule name="$($r.Name)" dir=in action=allow `
-            program="$venvPy" protocol=$($r.Proto) localport=$($r.Port) profile=private | Out-Null
-        netsh advfirewall firewall add rule name="$($r.Name) w" dir=in action=allow `
-            program="$venvPyW" protocol=$($r.Proto) localport=$($r.Port) profile=private | Out-Null
+try {
+    if ($isAdmin) {
+        Invoke-Expression $fwCmd
+    } else {
+        Write-Host '==> adding firewall rules (approve the one Windows UAC prompt)…'
+        $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($fwCmd))
+        Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile -EncodedCommand $enc"
     }
-    Write-Host '==> firewall rules added (private profile)'
-} else {
-    Write-Host '==> no admin: skipped firewall rules (allow the one-time Windows prompt instead)'
+    Write-Host '==> firewall rules added (Any profile)'
+} catch {
+    Write-Host "==> firewall step skipped ($($_.Exception.Message)). The phone may not reach this PC until you allow Python through Windows Firewall (private+public)."
 }
 
 Write-Host '==> starting connector now'
