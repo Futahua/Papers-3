@@ -61,9 +61,11 @@ CHAT_PROGRESS_PREFIX = "__APERS_PROGRESS_V1__\n"
 CONTROL_LIST_CONVERSATION = "__desktop_sessions__"
 CONTROL_BIND_CONVERSATION = "__desktop_bind__"
 CONTROL_NEW_CONVERSATION = "__desktop_new__"
+CONTROL_PORT_CONVERSATION = "__desktop_port__"
 CONTROL_LIST_PROMPT = "__APERS_LIST_DESKTOP_SESSIONS_V1__"
 CONTROL_BIND_PROMPT = "__APERS_BIND_DESKTOP_SESSION_V1__"
 CONTROL_NEW_PROMPT = "__APERS_NEW_DESKTOP_SESSION_V1__"
+CONTROL_PORT_PROMPT = "__APERS_PORT_PHONE_SESSION_V1__"
 CHAT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 SESSION_ID_RE = re.compile(r"(?:^|\n)session_id:\s*([^\s]+)", re.IGNORECASE)
 QUIET_NOISE_RE = re.compile(
@@ -515,6 +517,7 @@ class MeshBroker:
             CONTROL_LIST_CONVERSATION: CONTROL_LIST_PROMPT,
             CONTROL_BIND_CONVERSATION: CONTROL_BIND_PROMPT,
             CONTROL_NEW_CONVERSATION: CONTROL_NEW_PROMPT,
+            CONTROL_PORT_CONVERSATION: CONTROL_PORT_PROMPT,
         }
         if conversation_id not in expected or command != expected[conversation_id]:
             return False
@@ -542,9 +545,17 @@ class MeshBroker:
                 self.store.set_conversation_session(
                     cdid, phone_conversation, session_id)
                 result = session
-            else:
+            elif conversation_id == CONTROL_NEW_CONVERSATION:
                 self.store.set_conversation_session(cdid, phone_conversation, None)
                 result = {"conversation_id": phone_conversation, "cleared": True}
+            else:
+                session_id = self._port_phone_session(
+                    phone_conversation, payload)
+                self.store.set_conversation_session(
+                    cdid, phone_conversation, session_id)
+                result = self._desktop_session_history(session_id)
+                if result is None:
+                    raise RuntimeError("ported Desktop session could not be loaded")
             self._add_control_result(
                 tid, cdid, conversation_id, True, result)
         except Exception as exc:  # noqa: BLE001 — return a bounded control error
@@ -690,6 +701,188 @@ class MeshBroker:
                    and result["messages"][0].get("role") != "user"):
                 result["messages"].pop(0)
         return result
+
+    def _port_phone_session(self, phone_conversation: str,
+                            payload: dict) -> str:
+        """Create a normal resumable CLI session from a bounded phone transcript."""
+        raw_messages = payload.get("messages")
+        if not isinstance(raw_messages, list) or not raw_messages:
+            raise ValueError("phone transcript is empty")
+        if len(json.dumps(raw_messages, ensure_ascii=False)) > 56 * 1024:
+            raise ValueError("phone transcript is too large")
+
+        messages = []
+        for raw in raw_messages[-96:]:
+            if not isinstance(raw, dict):
+                continue
+            role = str(raw.get("role") or "")
+            if role not in {"user", "assistant", "tool"}:
+                continue
+            content = str(raw.get("content") or "")[:12000]
+            entry = {
+                "role": role,
+                "content": content,
+                "timestamp": raw.get("timestamp"),
+                "active": 1,
+                "compacted": 0,
+            }
+            if role == "assistant":
+                calls = raw.get("tool_calls")
+                if isinstance(calls, list) and calls:
+                    entry["tool_calls"] = json.dumps(
+                        _bounded_tool_calls(calls), ensure_ascii=False)
+                reasoning = str(raw.get("reasoning") or "")[:12000]
+                if reasoning:
+                    entry["reasoning_content"] = reasoning
+                if not content and not entry.get("tool_calls") and not reasoning:
+                    continue
+                if content:
+                    entry["finish_reason"] = "stop"
+            elif role == "tool":
+                call_id = str(raw.get("tool_call_id") or "")[:200]
+                if not call_id:
+                    continue
+                entry["tool_call_id"] = call_id
+                entry["tool_name"] = str(
+                    raw.get("name") or raw.get("tool_name") or "")[:160]
+            elif not content:
+                continue
+            messages.append(entry)
+        while messages and messages[0]["role"] != "user":
+            messages.pop(0)
+        if not messages:
+            raise ValueError("phone transcript has no user messages")
+
+        home = self.home or os.path.expanduser("~/.hermes")
+        state_db = os.path.join(home, "state.db")
+        if not os.path.isfile(state_db):
+            raise FileNotFoundError(f"state.db not found: {state_db}")
+        now = time.time()
+        title = self._clean_session_text(payload.get("title"))
+        if not title:
+            title = next((
+                self._clean_session_text(item["content"])
+                for item in messages if item["role"] == "user"), "")
+        title = (title or "Phone conversation")[:100]
+        model = str(payload.get("model") or "")[:160] or None
+        workspace = str(payload.get("workspace") or "")[:1024]
+        port_id = str(
+            payload.get("port_id") or phone_conversation)[:160]
+        if not CHAT_ID_RE.fullmatch(port_id):
+            raise ValueError("invalid port_id")
+
+        conn = sqlite3.connect(state_db, timeout=10)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            existing_rows = conn.execute(
+                "SELECT id, origin_json FROM sessions "
+                "WHERE origin_json IS NOT NULL "
+                "ORDER BY started_at DESC LIMIT 200"
+            ).fetchall()
+            for existing in existing_rows:
+                try:
+                    origin = json.loads(existing["origin_json"] or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if (origin.get("kind") == "apers_phone_port"
+                        and origin.get("port_id") == port_id):
+                    conn.rollback()
+                    return str(existing["id"])
+
+            session_columns = {
+                row["name"] for row in conn.execute(
+                    "PRAGMA table_info(sessions)").fetchall()
+            }
+            message_columns = {
+                row["name"] for row in conn.execute(
+                    "PRAGMA table_info(messages)").fetchall()
+            }
+            template = conn.execute(
+                "SELECT * FROM sessions "
+                "WHERE COALESCE(archived,0)=0 AND parent_session_id IS NULL "
+                "ORDER BY started_at DESC LIMIT 1"
+            ).fetchone()
+            template = dict(template) if template else {}
+
+            session_id = (
+                time.strftime("%Y%m%d_%H%M%S", time.localtime(now))
+                + "_" + uuid.uuid4().hex[:6])
+            while conn.execute(
+                    "SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone():
+                session_id = (
+                    time.strftime("%Y%m%d_%H%M%S", time.localtime(now))
+                    + "_" + uuid.uuid4().hex[:6])
+
+            timestamps = []
+            for index, message in enumerate(messages):
+                try:
+                    stamp = float(message.get("timestamp") or 0)
+                except (TypeError, ValueError):
+                    stamp = 0
+                if stamp <= 0:
+                    stamp = now - (len(messages) - index) * 0.01
+                if timestamps and stamp <= timestamps[-1]:
+                    stamp = timestamps[-1] + 0.001
+                timestamps.append(stamp)
+                message["timestamp"] = stamp
+
+            cwd = workspace if workspace and os.path.isdir(workspace) else (
+                template.get("cwd") or os.getcwd())
+            session_values = {
+                "id": session_id,
+                "source": "cli",
+                "model": model or template.get("model"),
+                "model_config": template.get("model_config"),
+                "system_prompt": template.get("system_prompt"),
+                "started_at": timestamps[0] if timestamps else now,
+                "message_count": len(messages),
+                "tool_call_count": sum(
+                    1 for item in messages if item.get("tool_calls")),
+                "cwd": cwd,
+                "billing_provider": template.get("billing_provider"),
+                "billing_base_url": template.get("billing_base_url"),
+                "billing_mode": template.get("billing_mode"),
+                "pricing_version": template.get("pricing_version"),
+                "title": title,
+                "rewind_count": 0,
+                "archived": 0,
+                "origin_json": json.dumps({
+                    "kind": "apers_phone_port",
+                    "conversation_id": phone_conversation,
+                    "port_id": port_id,
+                }, separators=(",", ":")),
+                "profile_name": template.get("profile_name"),
+            }
+            session_values = {
+                key: value for key, value in session_values.items()
+                if key in session_columns
+            }
+            keys = list(session_values)
+            conn.execute(
+                f"INSERT INTO sessions ({','.join(keys)}) "
+                f"VALUES ({','.join('?' for _ in keys)})",
+                [session_values[key] for key in keys],
+            )
+            for message in messages:
+                values = {"session_id": session_id, **message}
+                values = {
+                    key: value for key, value in values.items()
+                    if key in message_columns
+                }
+                keys = list(values)
+                conn.execute(
+                    f"INSERT INTO messages ({','.join(keys)}) "
+                    f"VALUES ({','.join('?' for _ in keys)})",
+                    [values[key] for key in keys],
+                )
+            conn.commit()
+            return session_id
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     @staticmethod
     def _clean_session_text(value) -> str:
