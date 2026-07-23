@@ -62,10 +62,14 @@ CONTROL_LIST_CONVERSATION = "__desktop_sessions__"
 CONTROL_BIND_CONVERSATION = "__desktop_bind__"
 CONTROL_NEW_CONVERSATION = "__desktop_new__"
 CONTROL_PORT_CONVERSATION = "__desktop_port__"
+CONTROL_RENAME_CONVERSATION = "__desktop_rename__"
+CONTROL_ARCHIVE_CONVERSATION = "__desktop_archive__"
 CONTROL_LIST_PROMPT = "__APERS_LIST_DESKTOP_SESSIONS_V1__"
 CONTROL_BIND_PROMPT = "__APERS_BIND_DESKTOP_SESSION_V1__"
 CONTROL_NEW_PROMPT = "__APERS_NEW_DESKTOP_SESSION_V1__"
 CONTROL_PORT_PROMPT = "__APERS_PORT_PHONE_SESSION_V1__"
+CONTROL_RENAME_PROMPT = "__APERS_RENAME_DESKTOP_SESSION_V1__"
+CONTROL_ARCHIVE_PROMPT = "__APERS_ARCHIVE_DESKTOP_SESSION_V1__"
 CHAT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 SESSION_ID_RE = re.compile(r"(?:^|\n)session_id:\s*([^\s]+)", re.IGNORECASE)
 QUIET_NOISE_RE = re.compile(
@@ -518,6 +522,8 @@ class MeshBroker:
             CONTROL_BIND_CONVERSATION: CONTROL_BIND_PROMPT,
             CONTROL_NEW_CONVERSATION: CONTROL_NEW_PROMPT,
             CONTROL_PORT_CONVERSATION: CONTROL_PORT_PROMPT,
+            CONTROL_RENAME_CONVERSATION: CONTROL_RENAME_PROMPT,
+            CONTROL_ARCHIVE_CONVERSATION: CONTROL_ARCHIVE_PROMPT,
         }
         if conversation_id not in expected or command != expected[conversation_id]:
             return False
@@ -548,7 +554,7 @@ class MeshBroker:
             elif conversation_id == CONTROL_NEW_CONVERSATION:
                 self.store.set_conversation_session(cdid, phone_conversation, None)
                 result = {"conversation_id": phone_conversation, "cleared": True}
-            else:
+            elif conversation_id == CONTROL_PORT_CONVERSATION:
                 session_id = self._port_phone_session(
                     phone_conversation, payload)
                 self.store.set_conversation_session(
@@ -556,6 +562,27 @@ class MeshBroker:
                 result = self._desktop_session_history(session_id)
                 if result is None:
                     raise RuntimeError("ported Desktop session could not be loaded")
+            elif conversation_id == CONTROL_RENAME_CONVERSATION:
+                session_id = str(payload.get("session_id") or "")
+                if not CHAT_ID_RE.fullmatch(session_id):
+                    raise ValueError("invalid session_id")
+                title = self._rename_desktop_session(
+                    session_id, payload.get("title"))
+                result = {"session_id": session_id, "title": title}
+            else:
+                session_id = str(payload.get("session_id") or "")
+                if not CHAT_ID_RE.fullmatch(session_id):
+                    raise ValueError("invalid session_id")
+                archived = bool(payload.get("archived", True))
+                self._archive_desktop_session(session_id, archived)
+                if (archived and self.store.conversation_session(
+                        cdid, phone_conversation) == session_id):
+                    self.store.set_conversation_session(
+                        cdid, phone_conversation, None)
+                result = {
+                    "session_id": session_id,
+                    "archived": archived,
+                }
             self._add_control_result(
                 tid, cdid, conversation_id, True, result)
         except Exception as exc:  # noqa: BLE001 — return a bounded control error
@@ -701,6 +728,55 @@ class MeshBroker:
                    and result["messages"][0].get("role") != "user"):
                 result["messages"].pop(0)
         return result
+
+    def _rename_desktop_session(self, session_id: str, raw_title) -> str:
+        """Rename a Desktop session through the same encrypted control channel."""
+        title = self._clean_session_text(raw_title)[:100]
+        if not title:
+            raise ValueError("session title is empty")
+        state_db = os.path.join(
+            self.home or os.path.expanduser("~/.hermes"), "state.db")
+        if not os.path.isfile(state_db):
+            raise FileNotFoundError(f"state.db not found: {state_db}")
+        conn = sqlite3.connect(state_db, timeout=10)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            updated = conn.execute(
+                "UPDATE sessions SET title=? WHERE id=?",
+                (title, session_id),
+            ).rowcount
+            if not updated:
+                raise ValueError("desktop session not found")
+            conn.commit()
+            return title
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _archive_desktop_session(
+            self, session_id: str, archived: bool = True) -> None:
+        """Archive or restore a Desktop session without invoking the model."""
+        state_db = os.path.join(
+            self.home or os.path.expanduser("~/.hermes"), "state.db")
+        if not os.path.isfile(state_db):
+            raise FileNotFoundError(f"state.db not found: {state_db}")
+        conn = sqlite3.connect(state_db, timeout=10)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            updated = conn.execute(
+                "UPDATE sessions SET archived=? WHERE id=?",
+                (1 if archived else 0, session_id),
+            ).rowcount
+            if not updated:
+                raise ValueError("desktop session not found")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _port_phone_session(self, phone_conversation: str,
                             payload: dict) -> str:
