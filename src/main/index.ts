@@ -1,8 +1,8 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, Menu, WebContentsView, app, session } from 'electron';
-import { existsSync, mkdirSync } from 'node:fs';
+import { BaseWindow, Menu, Notification, WebContentsView, app, session } from 'electron';
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
@@ -16,6 +16,8 @@ import { registerExternalExecutors } from './external/externalBridge';
 import { GitService } from './git/gitService';
 import { HermesAdapter } from './hermes/hermesAdapter';
 import { HermesSurface } from './hermes/hermesSurface';
+import { isHermesUpdateHelper, runHermesUpdateHelper } from './hermes/hermesUpdater';
+import { startPhoneConnector } from './hermes/phoneConnector';
 import { ResourceService } from './resources/resourceService';
 import { registerResourceExecutors } from './resources/resourceExecutors';
 import { AgentRunService } from './agents/runService';
@@ -29,7 +31,9 @@ import {
   registerProgramSchemePrivileges,
 } from './security/programScheme';
 
-registerProgramSchemePrivileges();
+const hermesUpdateHelperMode = isHermesUpdateHelper();
+
+if (!hermesUpdateHelperMode) registerProgramSchemePrivileges();
 
 app.setName('Papers');
 
@@ -47,7 +51,11 @@ if (process.env['PAPERS_TEST_USER_DATA']) {
 }
 
 // Papers is a single-instance application (except under isolated test homes).
-if (!process.env['PAPERS_TEST_USER_DATA'] && !app.requestSingleInstanceLock()) {
+if (
+  !hermesUpdateHelperMode &&
+  !process.env['PAPERS_TEST_USER_DATA'] &&
+  !app.requestSingleInstanceLock()
+) {
   app.quit();
 }
 
@@ -310,6 +318,44 @@ async function bootstrap(): Promise<void> {
     await hostView.webContents.loadFile(path.join(app.getAppPath(), 'out', 'renderer', 'index.html'));
   }
 
+  // The detached updater writes one result before it reopens Papers. Success is
+  // a quiet native notification; failure is kept visible in Papers with the log
+  // path so a non-coder never has to inspect a terminal to understand it.
+  const updateResultPath = path.join(baseDir, 'hermes-update-result.json');
+  if (existsSync(updateResultPath)) {
+    try {
+      const result = JSON.parse(readFileSync(updateResultPath, 'utf8')) as {
+        ok?: boolean;
+        detail?: string;
+        logPath?: string;
+      };
+      unlinkSync(updateResultPath);
+      if (result.ok) {
+        new Notification({
+          title: 'Hermes updated',
+          body: result.detail ?? 'Hermes and its Papers integration are ready.',
+        }).show();
+      } else {
+        hostView.webContents.send('host:event:host-error', {
+          component: 'hermes',
+          what: 'Hermes did not finish updating.',
+          known: result.detail ?? 'The update helper reported an unknown error.',
+          intact: 'Your conversations, settings, credentials and Backpacks were not changed.',
+          retryUseful: true,
+          inspect: result.logPath ? `Update log: ${result.logPath}` : 'See the Papers Data folder.',
+          recover: 'Open Hermes again and retry the update from its Settings page.',
+        });
+      }
+    } catch {
+      // A malformed status file must never prevent Papers from starting.
+    }
+  }
+
+  // Start the phone connector ("Run on Computer") so the Apers Android app can
+  // auto-discover this PC on the LAN and run tasks on the same Hermes. Best
+  // effort, own single-instance, decoupled from the Hermes Desktop surface.
+  startPhoneConnector();
+
   mainWindow.on('closed', () => {
     hermesSurface.shutdown();
     mainWindow = null;
@@ -317,12 +363,18 @@ async function bootstrap(): Promise<void> {
   });
 }
 
-app.whenReady().then(() =>
-  bootstrap().catch((err) => {
+app.whenReady().then(() => {
+  if (hermesUpdateHelperMode) {
+    return runHermesUpdateHelper().catch((err) => {
+      console.error('[papers] Hermes update helper failed:', err);
+      app.quit();
+    });
+  }
+  return bootstrap().catch((err) => {
     // Surface bootstrap failures instead of dying silently.
     console.error('[papers] bootstrap failed:', err);
-  }),
-);
+  });
+});
 
 app.on('window-all-closed', () => {
   app.quit();

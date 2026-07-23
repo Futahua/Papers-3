@@ -1,107 +1,63 @@
-# Hermes skin integration — how the Papers skin is applied and kept updateable
+# Hermes integration and updates
 
-This documents how the Papers Light/Dark skin (see [`HERMES_SKIN.md`](HERMES_SKIN.md))
-is applied to the real Hermes Desktop and how it survives upstream Hermes updates.
-It satisfies creator-reported problems 3 and 4 in [`PROBLEMS.md`](PROBLEMS.md).
+Papers launches the real Hermes Desktop and one Hermes backend. It does not
+recreate chat, sessions, attachments, tools, approvals, models, settings or the
+agent loop.
 
-## Design: upstream core, small owned overlay
+## What Papers owns
 
-Hermes Desktop already has a clean theme token model (`apps/desktop/src/themes/types.ts`,
-`DesktopTheme`) and adding a theme is "add it to `presets.ts` — no other code changes
-needed." The Papers skin uses exactly that seam, so the creator-owned skin stays a small
-overlay on an unmodified core:
+Only two small additions sit around upstream Hermes:
 
-- **The theme is data, not a fork.** The single source of truth is
-  [`hermes-skin/papers-theme.json`](../hermes-skin/papers-theme.json) in *this* Papers
-  repository — versioned, outside any generated Hermes file. It defines the coordinated
-  **Papers Light** (`colors`) and **Papers Dark** (`darkColors`) palettes plus typography.
+1. `hermes-skin/papers-integration.patch` adds the native-window docking channel
+   and lets Hermes hand an update request to Papers.
+2. `hermes-skin/papers-theme-plugin.js` is a normal Hermes disk plugin. It
+   contributes Papers Light and Papers Dark through Hermes' official Desktop
+   Plugin SDK and adds the restrained readability CSS requested by the creator.
 
-- **One narrow theme-loading seam.** On the Hermes side the entire integration is:
-  1. `apps/desktop/src/themes/papers-theme.json` — a copy of the versioned data above.
-  2. Two lines in `apps/desktop/src/themes/presets.ts`: `import papersThemeData from
-     './papers-theme.json'` and one `papers: papersTheme` entry in `BUILTIN_THEMES`. The
-     theme then appears everywhere a built-in does (Appearance settings, Cmd-K palette,
-     `/skin`) with no per-surface wiring.
-  3. A small scoped CSS block in `apps/desktop/src/styles.css` under
-     `:root[data-hermes-theme='papers']` that nudges undersized interface/conversation
-     text up ~1–2px and lifts line-height — the readability half of the same restrained
-     change. Colours/contrast come from the theme data.
+The theme plugin is installed under
+`<HERMES_HOME>/desktop-plugins/papers-theme/plugin.js`. It is outside the Hermes
+source checkout, so an upstream update does not overwrite it.
 
-  Nothing else in Hermes is modified. Chat, sessions, models, approvals, attachments,
-  voice and the backend are untouched.
+## Normal update experience
 
-- **Fallback.** If the theme data is malformed the theme registry simply keeps the
-  built-ins; Hermes still starts. The skin is never allowed to block Hermes.
+Use **Settings → Updates** inside Hermes as usual. When Hermes is running through
+Papers, the button follows this sequence:
 
-## Where things live
+1. Hermes sends an authenticated update request to Papers.
+2. Papers opens a small visible update window and closes Papers, Hermes Desktop
+   and the Papers-owned Hermes backend so Windows releases their files.
+3. The helper runs Hermes' existing `hermes update --yes` command. Papers does
+   not implement or imitate the Hermes updater.
+4. The helper reapplies the small integration patch, reinstalls the official
+   disk-theme plugin and asks Hermes to rebuild its Desktop package.
+5. Papers reopens. Success produces a native notification; failure produces a
+   visible Papers error with the log location.
 
-| Item | Location |
-|---|---|
-| Versioned theme data (source of truth) | `hermes-skin/papers-theme.json` (Papers repo) |
-| Update / build / verify command | `hermes-skin/update-hermes-skin.mjs` (Papers repo) |
-| Maintained Hermes branch with the seam | branch `papers-skin` in the clean Hermes clone |
-| Clean Hermes clone (disposable build tree) | `…\HermesAI\hermes-papers-skin` |
-| Live Hermes Desktop (never edited in place) | `…\.hermes\hermes-agent\apps\desktop` |
-| Rollback copies of previous `dist/` | `…\Programs\_PapersHermesRollback\` |
+Hermes conversations, `state.db`, credentials, configuration and Papers data are
+not modified by the Papers handoff.
 
-The `papers-skin` branch has `upstream` set to `https://github.com/NousResearch/hermes-agent`.
-It carries **only** the three small changes above on top of upstream `main`, so it rebases
-cleanly onto selected upstream releases.
+The update log lives at `<Papers>/Data/hermes-update.log`.
 
-## Updating Hermes without losing the skin
+## Manual recovery
 
-Do **not** trust the stock binary updater to preserve a customized frontend — it can
-replace the built files with the stock build. Update through the source path instead:
+If the machine shuts down during an update, close Papers and Hermes, then run
+from the Papers source repository:
 
-```
-node hermes-skin/update-hermes-skin.mjs --ref upstream/main      # full: build + install
-node hermes-skin/update-hermes-skin.mjs --check-only             # build + verify only
+```text
+node hermes-skin/update-hermes-skin.mjs --check-only
+node hermes-skin/update-hermes-skin.mjs --repair --build
 ```
 
-The script, in the disposable clone (never the live install):
+The first command only checks. The second reapplies the Papers integration and
+rebuilds Hermes without touching user data. If upstream changed the exact source
+around the small patch, it fails clearly instead of producing a partially
+patched application.
 
-1. Fetches the selected upstream ref and rebases `papers-skin` onto it.
-2. Re-copies `papers-theme.json` and re-asserts the loader import, the registry entry and
-   the type-bump CSS still apply (it stops with an exact message if upstream changed the
-   shape of the files, so the patch can be updated deliberately).
-3. Builds the Hermes Desktop renderer (`dist/`).
-4. Verifies the Papers theme is present in the built assets.
-5. Only then swaps the new `dist/` into the live install, moving the previous `dist/` to a
-   timestamped folder under `_PapersHermesRollback\` so the last working build is always
-   recoverable.
+## Files that must remain versioned
 
-Hermes sessions (`state.db`), credentials (`.env`), and configuration (`config.yaml`) are
-never touched by this process.
+- `hermes-skin/papers-integration.patch`
+- `hermes-skin/papers-theme-plugin.js`
+- `src/main/hermes/hermesUpdater.ts`
 
-## Recovery
-
-- **A build fails:** the live install is left exactly as it was; the script prints the
-  failing step. Fix the patch (or the rebase conflict) in the clone and re-run.
-- **The new skin misbehaves after install:** restore the previous renderer by copying the
-  most recent `_PapersHermesRollback\hermes-dist-*` back over
-  `…\apps\desktop\dist`, then restart Hermes.
-- **Whole-app rollback:** the pre-integration Hermes Desktop build and Papers app are
-  preserved under `_PapersHermesRollback\<stamp>\`.
-
-## What stays patched (and why it isn't upstream yet)
-
-Hermes Desktop does not yet expose a supported *external theme file* loader — user themes
-are stored in the renderer's `localStorage` (converted VS Code themes), which is per-machine
-state, not versioned data. Until upstream accepts a generic "load a theme from an external
-file" seam, the Papers skin is carried as the three-change `papers-skin` branch above. That
-branch is deliberately tiny and rebaseable; the preferred long-term step is to contribute
-the external-theme-file loader upstream so the Papers skin can travel as pure data.
-
-## Publish location of the Hermes-side change
-
-The Hermes-side overlay is **published as data + patch in this Papers repository** (the
-`hermes-skin/` directory, on the canonical `Futahua/Papers-3`), which is the authoritative,
-version-controlled source. `update-hermes-skin.mjs` deterministically reproduces the branch
-from it, so there is no separate source-of-truth to lose.
-
-On this machine the working branch is `papers-skin` in the clone
-`…\HermesAI\hermes-papers-skin` (commit `439007ab8`, one commit on top of upstream
-`NousResearch/hermes-agent` `3ffbdfbcc`, with `upstream` set to the GitHub remote). To
-publish it to GitHub, push that branch to a Hermes fork the creator controls and open a PR
-for the external-theme-file loader described above; until a fork exists, the Papers-repo
-`hermes-skin/` copy is the canonical, rebuildable record.
+These files are bundled into every packaged Papers build. No local tracking
+clone or unpublished Hermes branch is required anymore.

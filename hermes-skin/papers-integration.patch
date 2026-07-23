@@ -1,0 +1,377 @@
+diff --git a/apps/desktop/electron/main.ts b/apps/desktop/electron/main.ts
+index 5ea4c9e16..975507d3a 100644
+--- a/apps/desktop/electron/main.ts
++++ b/apps/desktop/electron/main.ts
+@@ -8162,6 +8162,182 @@ function closePetOverlay() {
+   petOverlayWindow = null
+ }
+ 
++// ─── Papers companion-window seam ──────────────────────────────────────────
++// This is the only native integration Papers carries in Hermes. It is inert
++// unless Papers launches Hermes with an authenticated loopback endpoint.
++type PapersDockPayload = {
++  phase: string
++  bounds?: Electron.Rectangle
++  controlPort?: number | null
++  maximized?: boolean
++  minimized?: boolean
++  focused?: boolean
++  display?: number | null
++}
++
++let papersDockPost: ((payload: PapersDockPayload) => Promise<boolean>) | null = null
++
++function installPapersDockReporter(win: BrowserWindow) {
++  const dockUrl = process.env.HERMES_DESKTOP_PAPERS_DOCK_URL
++  const dockToken = process.env.HERMES_DESKTOP_PAPERS_DOCK_TOKEN
++
++  if (!dockUrl || !dockToken || !win || win.isDestroyed()) return
++
++  let endpoint: URL
++
++  try {
++    endpoint = new URL(dockUrl)
++  } catch {
++    return
++  }
++
++  const post = (payload: PapersDockPayload): Promise<boolean> =>
++    new Promise(resolvePost => {
++      try {
++        const body = Buffer.from(JSON.stringify(payload))
++        const req = http.request(
++          {
++            hostname: endpoint.hostname,
++            port: endpoint.port,
++            path: endpoint.pathname || '/',
++            method: 'POST',
++            headers: {
++              'content-type': 'application/json',
++              'content-length': body.length,
++              'x-papers-dock-token': dockToken
++            },
++            timeout: 1000
++          },
++          res => {
++            res.resume()
++            res.once('end', () => resolvePost(Boolean(res.statusCode && res.statusCode >= 200 && res.statusCode < 300)))
++          }
++        )
++
++        req.once('error', () => resolvePost(false))
++        req.once('timeout', () => {
++          req.destroy()
++          resolvePost(false)
++        })
++        req.end(body)
++      } catch {
++        resolvePost(false)
++      }
++    })
++
++  papersDockPost = post
++
++  const report = (phase: string) => {
++    if (win.isDestroyed()) return
++    const bounds = win.getBounds()
++
++    void post({
++      phase,
++      bounds,
++      maximized: win.isMaximized(),
++      minimized: win.isMinimized(),
++      focused: win.isFocused(),
++      display: (() => {
++        try {
++          return screen.getDisplayMatching(bounds).id
++        } catch {
++          return null
++        }
++      })()
++    })
++  }
++
++  let moveTimer: NodeJS.Timeout | null = null
++  const scheduleMove = () => {
++    if (moveTimer) return
++    moveTimer = setTimeout(() => {
++      moveTimer = null
++      report('move')
++    }, 16)
++  }
++
++  win.on('move', scheduleMove)
++  win.on('resize', scheduleMove)
++  win.on('moved', () => report('settle'))
++  win.on('resized', () => report('settle'))
++  win.on('maximize', () => report('settle'))
++  win.on('unmaximize', () => report('settle'))
++  win.on('restore', () => report('settle'))
++  win.on('minimize', () => report('settle'))
++  win.on('focus', () => report('focus'))
++  win.on('show', () => report('settle'))
++
++  const server = http.createServer((req, res) => {
++    if (req.method !== 'POST' || req.headers['x-papers-dock-token'] !== dockToken) {
++      res.writeHead(req.method === 'POST' ? 401 : 405)
++      res.end()
++      return
++    }
++
++    let raw = ''
++    req.on('data', chunk => {
++      raw += chunk
++      if (raw.length > 4096) req.destroy()
++    })
++    req.on('end', () => {
++      try {
++        const command = JSON.parse(raw || '{}')
++
++        if (win.isDestroyed()) {
++          res.writeHead(410)
++          res.end()
++          return
++        }
++
++        if (command.op === 'setBounds' && command.bounds) {
++          const next = command.bounds
++          const valid = [next.x, next.y, next.width, next.height].every(Number.isFinite)
++
++          if (!valid || next.width < 320 || next.height < 300) throw new Error('Invalid window bounds')
++          if (win.isMaximized()) win.unmaximize()
++          if (win.isMinimized()) win.restore()
++          win.setBounds({
++            x: Math.round(next.x),
++            y: Math.round(next.y),
++            width: Math.round(next.width),
++            height: Math.round(next.height)
++          })
++          if (command.focus) win.focus()
++          if (command.raise) win.moveTop()
++        } else if (command.op === 'focus') {
++          if (win.isMinimized()) win.restore()
++          win.show()
++          win.focus()
++        } else if (command.op === 'minimize') {
++          win.minimize()
++        } else if (command.op === 'raise') {
++          win.moveTop()
++        }
++
++        res.writeHead(200, { 'content-type': 'application/json' })
++        res.end(JSON.stringify({ ok: true, bounds: win.getBounds() }))
++      } catch (error) {
++        res.writeHead(400, { 'content-type': 'application/json' })
++        res.end(JSON.stringify({ ok: false, error: String(error) }))
++      }
++    })
++  })
++
++  server.on('error', () => {})
++  server.listen(0, '127.0.0.1', () => {
++    const address = server.address()
++    const controlPort = address && typeof address === 'object' ? address.port : null
++
++    void post({ phase: 'hello', controlPort, bounds: win.getBounds() })
++  })
++  win.once('closed', () => {
++    papersDockPost = null
++    void post({ phase: 'closed' })
++    server.close()
++  })
++  report('settle')
++}
++
+ function createWindow() {
+   const icon = getAppIconPath()
+   const savedWindowState = readWindowState()
+@@ -8280,6 +8456,7 @@ function createWindow() {
+   })
+ 
+   wireCommonWindowHandlers(mainWindow, zoomWiringForWindowKind('chat'))
++  installPapersDockReporter(mainWindow)
+ 
+   mainWindow.webContents.on('render-process-gone', (_event, details) => {
+     rememberLog(`[renderer] render-process-gone reason=${details?.reason} exitCode=${details?.exitCode}`)
+@@ -9953,6 +10130,28 @@ ipcMain.handle('hermes:updates:apply', async (_event, payload) =>
+   }))
+ )
+ 
++ipcMain.handle('hermes:papers:update', async () => {
++  if (!papersDockPost) {
++    return { ok: false, error: 'papers-unavailable', message: 'Papers is not connected.' }
++  }
++
++  const delivered = await papersDockPost({ phase: 'update-request' })
++
++  if (!delivered) {
++    return { ok: false, error: 'papers-unavailable', message: 'Papers did not accept the update request.' }
++  }
++
++  emitUpdateProgress({
++    stage: 'restart',
++    message: 'Papers is closing Hermes, updating it, and reopening both applications.',
++    percent: 100
++  })
++  isQuittingForHandoff = true
++  setTimeout(() => app.quit(), 1200)
++
++  return { ok: true, handedOff: true, message: 'Papers update helper started.' }
++})
++
+ ipcMain.handle('hermes:updates:branch:get', async () => readDesktopUpdateConfig())
+ 
+ ipcMain.handle('hermes:updates:branch:set', async (_event, name) => {
+diff --git a/apps/desktop/electron/preload.ts b/apps/desktop/electron/preload.ts
+index 7652a7688..6c440787c 100644
+--- a/apps/desktop/electron/preload.ts
++++ b/apps/desktop/electron/preload.ts
+@@ -264,6 +264,12 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
+       return () => ipcRenderer.removeListener('hermes:updates:progress', listener)
+     }
+   },
++  papers: process.env.HERMES_DESKTOP_PAPERS_DOCK_URL
++    ? {
++        managed: true,
++        update: () => ipcRenderer.invoke('hermes:papers:update')
++      }
++    : undefined,
+   themes: {
+     fetchMarketplace: id => ipcRenderer.invoke('hermes:vscode-theme:fetch', id),
+     searchMarketplace: query => ipcRenderer.invoke('hermes:vscode-theme:search', query)
+diff --git a/apps/desktop/src/global.d.ts b/apps/desktop/src/global.d.ts
+index d9d9af1ee..d747fca4b 100644
+--- a/apps/desktop/src/global.d.ts
++++ b/apps/desktop/src/global.d.ts
+@@ -224,6 +224,10 @@ declare global {
+         setBranch: (name: string) => Promise<{ branch: string }>
+         onProgress: (callback: (payload: DesktopUpdateProgress) => void) => () => void
+       }
++      papers?: {
++        managed: true
++        update: () => Promise<DesktopUpdateApplyResult>
++      }
+       uninstall: {
+         summary: () => Promise<DesktopUninstallSummary>
+         run: (mode: DesktopUninstallMode) => Promise<DesktopUninstallResult>
+diff --git a/apps/desktop/src/store/updates.ts b/apps/desktop/src/store/updates.ts
+index 6c7e1483c..1fc32359d 100644
+--- a/apps/desktop/src/store/updates.ts
++++ b/apps/desktop/src/store/updates.ts
+@@ -536,6 +536,35 @@ export async function applyBackendUpdate(): Promise<DesktopUpdateApplyResult> {
+   })
+ 
+   try {
++    // A Papers-launched Hermes uses a Papers-owned remote backend. On Windows,
++    // that backend cannot replace its own mapped runtime files. Hand the update
++    // to Papers, which closes both processes, runs Hermes' official updater,
++    // reapplies its tiny visual/window overlay, and reopens the pair.
++    const papers = window.hermesDesktop?.papers
++
++    if (papers?.managed) {
++      $backendUpdateApply.set({
++        ...IDLE,
++        applying: true,
++        stage: 'restart',
++        message: 'Papers is closing Hermes, updating it, and reopening both applications.'
++      })
++
++      const result = await papers.update()
++
++      if (!result.ok) {
++        $backendUpdateApply.set({
++          ...IDLE,
++          applying: false,
++          stage: 'error',
++          error: result.error ?? 'papers-update-failed',
++          message: result.message ?? 'Papers could not start the Hermes updater.'
++        })
++      }
++
++      return result
++    }
++
+     const started = await updateHermes()
+ 
+     if (!started.ok) {
+diff --git a/apps/desktop/src/app/session/hooks/use-session-list-actions.test.tsx b/apps/desktop/src/app/session/hooks/use-session-list-actions.test.tsx
+index 0147d45e4..6487fd82b 100644
+--- a/apps/desktop/src/app/session/hooks/use-session-list-actions.test.tsx
++++ b/apps/desktop/src/app/session/hooks/use-session-list-actions.test.tsx
+@@ -160,6 +160,48 @@ describe('refreshSessions identity + loading hygiene', () => {
+     off()
+     expect(loadingStates).toEqual([false, true, false])
+   })
++
++  it('keeps an earlier successful refresh when a newer overlapping request fails', async () => {
++    let resolveFirst!: (value: SidebarSessionsResponse) => void
++    let rejectSecond!: (reason: Error) => void
++
++    listSidebarSessions
++      .mockImplementationOnce(
++        () =>
++          new Promise<SidebarSessionsResponse>(resolve => {
++            resolveFirst = resolve
++          })
++      )
++      .mockImplementationOnce(
++        () =>
++          new Promise<SidebarSessionsResponse>((_resolve, reject) => {
++            rejectSecond = reject
++          })
++      )
++
++    const { result } = renderHook(() => useSessionListActions({ profileScope: 'default' }))
++    let first!: Promise<void>
++    let second!: Promise<void>
++
++    act(() => {
++      first = result.current.refreshSessions()
++      second = result.current.refreshSessions()
++    })
++
++    await act(async () => {
++      resolveFirst(sidebar({ sessions: [row('survivor')], total: 1, profile_totals: { default: 1 } }))
++      await first
++    })
++
++    expect($sessions.get().map(session => session.id)).toEqual(['survivor'])
++
++    await act(async () => {
++      rejectSecond(new Error('transient refresh failure'))
++      await expect(second).rejects.toThrow('transient refresh failure')
++    })
++
++    expect($sessions.get().map(session => session.id)).toEqual(['survivor'])
++  })
+ })
+ 
+ describe('refreshSessions batches slices into one request', () => {
+diff --git a/apps/desktop/src/app/session/hooks/use-session-list-actions.ts b/apps/desktop/src/app/session/hooks/use-session-list-actions.ts
+index 38850cad3..cd0b16bcf 100644
+--- a/apps/desktop/src/app/session/hooks/use-session-list-actions.ts
++++ b/apps/desktop/src/app/session/hooks/use-session-list-actions.ts
+@@ -74,6 +74,7 @@ interface UseSessionListActionsArgs {
+  *  wires into the sidebar and refresh effects. */
+ export function useSessionListActions({ profileScope }: UseSessionListActionsArgs) {
+   const refreshSessionsRequestRef = useRef(0)
++  const lastAppliedRefreshRequestRef = useRef(0)
+ 
+   // Messaging-platform sessions as their own slice, fetched separately from
+   // local recents so each platform renders a self-managed section and never
+@@ -177,7 +178,14 @@ export function useSessionListActions({ profileScope }: UseSessionListActionsArg
+         messagingExclude: MESSAGING_EXCLUDED_SOURCES
+       })
+ 
+-      if (refreshSessionsRequestRef.current === requestId) {
++      // Apply every successful response newer than the last success we painted.
++      // A later request may already be in flight and still fail; rejecting this
++      // usable response merely because that request started leaves a cold
++      // sidebar permanently empty. If the later request succeeds it naturally
++      // supersedes this one, while an older response that finishes after a
++      // newer success remains ignored.
++      if (requestId >= lastAppliedRefreshRequestRef.current) {
++        lastAppliedRefreshRequestRef.current = requestId
+         const recents = result.recents
+ 
+         // Signature-gate the swap (same pattern as cron/messaging): a refresh

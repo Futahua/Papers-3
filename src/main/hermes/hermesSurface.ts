@@ -28,8 +28,10 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, request, type Server } from 'node:http';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { app, type BaseWindow, screen } from 'electron';
+
+import { launchHermesUpdateHelper } from './hermesUpdater';
 
 export type HermesPlacement = 'closed' | 'docked' | 'detached';
 export type HermesStatus = 'idle' | 'starting' | 'ready' | 'error';
@@ -81,6 +83,13 @@ function resolveHermesDesktopExe(): string | null {
   return null;
 }
 
+function resolveHermesRoot(desktopExe: string): string {
+  const configured = process.env['PAPERS_HERMES_ROOT'];
+  if (configured) return resolve(configured);
+  // <root>/apps/desktop/release/win-unpacked/Hermes.exe
+  return resolve(dirname(desktopExe), '..', '..', '..', '..');
+}
+
 export class HermesSurface {
   private backendProcess: ChildProcess | null = null;
   private backendToken: string | null = null;
@@ -110,6 +119,7 @@ export class HermesSurface {
    *  desktop launch, passed to Hermes via env, required on every report and
    *  control request in both directions. Never logged. */
   private dockToken: string | null = null;
+  private updateHandedOff = false;
   /** True while another Papers-level activation should raise the docked Hermes
    *  above Papers (moveTop) without making it globally topmost. */
   private lastRaiseAt = 0;
@@ -205,6 +215,10 @@ export class HermesSurface {
     bounds?: Rect;
     controlPort?: number;
   }): void {
+    if (msg.phase === 'update-request') {
+      this.beginManagedUpdate();
+      return;
+    }
     if (msg.phase === 'hello' && typeof msg.controlPort === 'number') {
       this.controlPort = msg.controlPort;
     }
@@ -235,6 +249,40 @@ export class HermesSurface {
     ) {
       this.setState({ placement: 'detached' });
     }
+  }
+
+  /**
+   * Hermes' normal remote-backend updater cannot replace its Windows runtime
+   * while the Papers-owned dashboard is using it. The Papers-patched desktop
+   * reports an update request here; a separate visible Papers helper then waits
+   * for both apps to exit, runs Hermes' own updater, restores the tiny Papers
+   * overlay and relaunches Papers.
+   */
+  private beginManagedUpdate(): void {
+    if (this.updateHandedOff) return;
+    const desktopExe = resolveHermesDesktopExe();
+    if (!desktopExe) {
+      this.setState({ status: 'error', detail: 'Hermes Desktop could not be located for updating.' });
+      return;
+    }
+    const launched = launchHermesUpdateHelper(
+      resolveHermesRoot(desktopExe),
+      [this.desktopProcess?.pid, this.backendProcess?.pid].filter(
+        (pid): pid is number => typeof pid === 'number',
+      ),
+    );
+    if (!launched) {
+      this.setState({
+        status: 'error',
+        detail: 'The Papers Hermes update helper is missing. Reinstall Papers and try again.',
+      });
+      return;
+    }
+    this.updateHandedOff = true;
+    this.setState({ status: 'starting' });
+    // Give the authenticated loopback response time to reach Hermes before the
+    // normal Papers shutdown releases the desktop/backend file locks.
+    setTimeout(() => app.quit(), 600);
   }
 
   // ------------------------------------------------------------- geometry
