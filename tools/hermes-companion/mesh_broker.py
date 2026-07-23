@@ -609,6 +609,7 @@ class MeshBroker:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT s.id, s.title, s.source, s.started_at, s.message_count, "
+                "s.cwd, s.git_repo_root, "
                 "MAX(m.timestamp) AS last_active, "
                 "(SELECT content FROM messages first_message "
                 " WHERE first_message.session_id=s.id "
@@ -626,6 +627,15 @@ class MeshBroker:
             for row in rows:
                 preview = self._clean_session_text(row["preview"])
                 title = self._clean_session_text(row["title"]) or preview
+                workspace = str(
+                    row["git_repo_root"] or row["cwd"] or "").strip()
+                workspace_id = (
+                    os.path.normcase(os.path.normpath(workspace))
+                    if workspace else "")
+                workspace_name = (
+                    os.path.basename(workspace_id.rstrip("\\/"))
+                    or workspace_id
+                    or "Unassigned")
                 sessions.append({
                     "id": row["id"],
                     "title": (title or "Untitled session")[:120],
@@ -634,6 +644,8 @@ class MeshBroker:
                     "started_at": row["started_at"],
                     "last_active": row["last_active"] or row["started_at"],
                     "message_count": row["message_count"] or 0,
+                    "workspace_id": workspace_id,
+                    "workspace_name": workspace_name[:120],
                 })
             return sessions
         finally:
