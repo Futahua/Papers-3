@@ -81,6 +81,13 @@ QUIET_NOISE_RE = re.compile(
 # phone can't reach it (shows offline, dispatch fails). 51379 is a high port that avoids common services.
 DEFAULT_PORT = 51379
 
+# Windows spawns a console window for every console subprocess. The companion is
+# a background service (North Star: zero terminal on PC) and every remote message
+# spawns one hermes run, so without this a console flashes up on each message.
+# stdout/stderr are piped in both call sites, so nothing is lost by hiding it.
+# 0 on non-Windows keeps Popen(creationflags=...) valid everywhere.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
 _ACTION_PROMPT_RE = re.compile(
     r"\b(?:build|browse|check|connect|create|debug|delete|deploy|diagnose|"
     r"download|edit|fetch|find|fix|implement|inspect|install|look\s+up|make|"
@@ -1276,7 +1283,8 @@ class MeshBroker:
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding="utf-8", errors="replace", env=env)
+                text=True, encoding="utf-8", errors="replace", env=env,
+                creationflags=NO_WINDOW)
             stdout_parts: list[str] = []
             stderr_parts: list[str] = []
 
@@ -1454,7 +1462,8 @@ def _tailscale_ipv4() -> str | None:
         try:
             proc = subprocess.run(
                 [executable, "ip", "-4"],
-                capture_output=True, text=True, timeout=3)
+                capture_output=True, text=True, timeout=3,
+                creationflags=NO_WINDOW)
         except (OSError, subprocess.SubprocessError):
             continue
         if proc.returncode != 0:
