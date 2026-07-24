@@ -447,7 +447,10 @@ class MeshBroker:
                 print(f"[mesh] ✗ rejected {_peer} did={cdid[:8]}: not paired and pairing window closed", flush=True)
                 hs._send_frame(conn, json.dumps({"ok": False, "err": "not paired"}).encode())
                 return
-            hs._send_frame(conn, json.dumps({"ok": True, "proto": PROTO, "paired": paired}).encode())
+            hs._send_frame(conn, json.dumps({
+                "ok": True, "proto": PROTO, "paired": paired,
+                "did": self.identity.device_id,
+            }).encode())
 
             # Encrypted request: a successful box_decrypt(broker_sk, cpk) means the peer holds the private
             # key for cpk (authenticating that public key) and encrypted to broker_pk (proving it scanned
