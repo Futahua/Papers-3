@@ -64,12 +64,14 @@ CONTROL_NEW_CONVERSATION = "__desktop_new__"
 CONTROL_PORT_CONVERSATION = "__desktop_port__"
 CONTROL_RENAME_CONVERSATION = "__desktop_rename__"
 CONTROL_ARCHIVE_CONVERSATION = "__desktop_archive__"
+CONTROL_CANCEL_CONVERSATION = "__desktop_cancel__"
 CONTROL_LIST_PROMPT = "__APERS_LIST_DESKTOP_SESSIONS_V1__"
 CONTROL_BIND_PROMPT = "__APERS_BIND_DESKTOP_SESSION_V1__"
 CONTROL_NEW_PROMPT = "__APERS_NEW_DESKTOP_SESSION_V1__"
 CONTROL_PORT_PROMPT = "__APERS_PORT_PHONE_SESSION_V1__"
 CONTROL_RENAME_PROMPT = "__APERS_RENAME_DESKTOP_SESSION_V1__"
 CONTROL_ARCHIVE_PROMPT = "__APERS_ARCHIVE_DESKTOP_SESSION_V1__"
+CONTROL_CANCEL_PROMPT = "__APERS_CANCEL_TASK_V1__"
 CHAT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 SESSION_ID_RE = re.compile(r"(?:^|\n)session_id:\s*([^\s]+)", re.IGNORECASE)
 QUIET_NOISE_RE = re.compile(
@@ -316,6 +318,19 @@ class MeshStore:
         with self._lock, self._db:
             self._db.execute("UPDATE tasks SET status='done' WHERE id=?", (task_id,))
 
+    def drop_pending_tasks(self, conversation_id: str) -> int:
+        """Cancel not-yet-started tasks for a conversation so a Stop tapped while
+        one is still queued removes it too. Marks them 'done' (never runs).
+        Returns how many were dropped."""
+        if not conversation_id:
+            return 0
+        with self._lock, self._db:
+            cur = self._db.execute(
+                "UPDATE tasks SET status='done' "
+                "WHERE status='pending' AND conversation_id=?",
+                (conversation_id,))
+            return cur.rowcount or 0
+
     def requeue_running(self) -> int:
         """On startup, restore tasks stuck in 'running' back to 'pending' (crash recovery for a
         mid-flight broker restart, at-least-once). Returns the number of tasks re-enqueued."""
@@ -402,6 +417,12 @@ class MeshBroker:
     _zc = None
     _zc_info = None
     _pairing_until: float = 0.0   # pairing-window expiry timestamp (time.time()); before this, not open
+    # Cancel support for "Stop mid-run": the worker publishes the run currently
+    # executing so the connection thread (which handles the cancel control op)
+    # can signal it. Keyed by the phone conversation_id; value is a threading
+    # Event the worker's poll loop watches to kill the hermes subprocess.
+    _active_lock: threading.Lock = field(default_factory=threading.Lock)
+    _active_cancels: dict = field(default_factory=dict)
 
     # ---- pairing window ----
     def open_pairing(self, window_sec: int = 300) -> None:
@@ -524,6 +545,7 @@ class MeshBroker:
             CONTROL_PORT_CONVERSATION: CONTROL_PORT_PROMPT,
             CONTROL_RENAME_CONVERSATION: CONTROL_RENAME_PROMPT,
             CONTROL_ARCHIVE_CONVERSATION: CONTROL_ARCHIVE_PROMPT,
+            CONTROL_CANCEL_CONVERSATION: CONTROL_CANCEL_PROMPT,
         }
         if conversation_id not in expected or command != expected[conversation_id]:
             return False
@@ -535,7 +557,28 @@ class MeshBroker:
             if not CHAT_ID_RE.fullmatch(phone_conversation):
                 raise ValueError("invalid conversation_id")
 
-            if conversation_id == CONTROL_LIST_CONVERSATION:
+            if conversation_id == CONTROL_CANCEL_CONVERSATION:
+                # Stop mid-run: signal the running task for this conversation, and
+                # leave a "pending" marker so a task that hasn't been claimed yet
+                # is cancelled the moment the worker picks it up. Also drop any
+                # queued (unstarted) task for this conversation.
+                cancelled = False
+                with self._active_lock:
+                    event = self._active_cancels.get(phone_conversation)
+                    if event is not None and event != "pending":
+                        event.set()
+                        cancelled = True
+                    else:
+                        # No active run yet — arm a pending cancel for the next
+                        # run that starts under this conversation.
+                        self._active_cancels[phone_conversation] = "pending"
+                dropped = self.store.drop_pending_tasks(phone_conversation)
+                result = {
+                    "conversation_id": phone_conversation,
+                    "cancelled": cancelled,
+                    "dropped": dropped,
+                }
+            elif conversation_id == CONTROL_LIST_CONVERSATION:
                 result = {
                     "sessions": self._desktop_session_catalog(),
                     "selected_session_id": self.store.conversation_session(
@@ -1056,12 +1099,33 @@ class MeshBroker:
                     conversation_id=conversation_id,
                     session_id=session_id)
 
-            ok, text, next_session_id = self._run_hermes(
-                task["prompt"], session_id, report_progress)
+            # Publish a cancel token for this run so a "Stop" control op arriving
+            # on a connection thread can interrupt it. Keyed by conversation_id;
+            # a run without a conversation_id is not cancellable from the phone.
+            cancel_event = threading.Event()
+            if conversation_id:
+                with self._active_lock:
+                    # If a cancel raced in before the worker claimed the task,
+                    # honor it immediately.
+                    if self._active_cancels.pop(conversation_id, None) == "pending":
+                        cancel_event.set()
+                    self._active_cancels[conversation_id] = cancel_event
+            try:
+                ok, text, next_session_id = self._run_hermes(
+                    task["prompt"], session_id, report_progress, cancel_event)
+            finally:
+                if conversation_id:
+                    with self._active_lock:
+                        # Only clear if it's still our event (a later run may have
+                        # replaced it).
+                        if self._active_cancels.get(conversation_id) is cancel_event:
+                            self._active_cancels.pop(conversation_id, None)
+            if cancel_event.is_set():
+                ok, text = False, "Task stopped."
             if ok and conversation_id and next_session_id:
                 self.store.set_conversation_session(
                     task["from_did"], conversation_id, next_session_id)
-            print(f"[mesh] {'✓' if ok else '✗'} task {task['id'][:8]} done ({time.time()-t0:.1f}s)"
+            print(f"[mesh] {'✓' if ok else ('■ stopped' if cancel_event.is_set() else '✗')} task {task['id'][:8]} done ({time.time()-t0:.1f}s)"
                   f": {text[:100].replace(chr(10), ' ')}", flush=True)
             result_text = text
             if conversation_id:
@@ -1080,6 +1144,7 @@ class MeshBroker:
         prompt: str,
         session_id: str | None = None,
         progress_callback: Callable[[dict], None] | None = None,
+        cancel_event: "threading.Event | None" = None,
     ) -> tuple[bool, str, str | None]:
         env = dict(os.environ)
         if self.home:
@@ -1225,6 +1290,16 @@ class MeshBroker:
             deadline = started_at + 900
             while proc.poll() is None:
                 inspect_activity()
+                if cancel_event is not None and cancel_event.is_set():
+                    # Stop requested from the phone: kill the running hermes turn.
+                    # The session is created with --resume, so the conversation
+                    # survives the kill and can be continued afterward.
+                    proc.kill()
+                    proc.wait(timeout=5)
+                    stdout_thread.join(timeout=2)
+                    stderr_thread.join(timeout=2)
+                    return False, "Task stopped.", (
+                        observed_session_id or session_id)
                 if time.time() >= deadline:
                     proc.kill()
                     proc.wait(timeout=5)
