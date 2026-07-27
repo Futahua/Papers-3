@@ -44,6 +44,22 @@ A hand-copied install has no Windows record, so an updater would create a *secon
 rather than upgrade. Each machine needs the real installer run once; after that, updating is
 automatic.
 
+### `InstallLocation` is empty, and that is fine
+
+The NSIS uninstall entry leaves `InstallLocation` blank on both machines, while
+`UninstallString` and `DisplayIcon` carry the correct path. This was flagged during the
+laptop rollout as a possible repeat of the pre-installer problem. It is not: neither Papers
+nor `electron-updater` reads `InstallLocation` (checked against
+`node_modules/electron-updater/out`). The updater runs the downloaded installer, which
+locates its own target through the NSIS keys it wrote. The empty field is cosmetic — do not
+spend time on it again, and do not write code that depends on it.
+
+### Both machines were verified identical (2026-07-27)
+
+Desktop and laptop each report version `1.1.1`, commit `54ddeb2`, and the **same build
+timestamp** `2026-07-27T06:58:54.777Z`. Matching timestamps mean the same binary, which is
+stronger evidence than a matching commit alone.
+
 ---
 
 # Original findings (2026-07-27, before the above was built)

@@ -13,6 +13,11 @@ Open Hermes from anywhere in Papers. It is global: selecting or entering a Backp
 not change its folder, conversation or context. Attach files and images or name paths
 inside Hermes when you want to provide context.
 
+**Hermes does not start when Papers opens.** It starts the first time you open it with one
+of the two symbol toggles, and can take up to a minute that first time. This is deliberate —
+Papers never forces Hermes open — so a quiet Papers with no Hermes running is working
+correctly, not stalled.
+
 ## Backpacks
 
 Click `Add Backpack` and give it a name. Nothing else is created automatically.
