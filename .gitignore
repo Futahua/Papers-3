@@ -17,3 +17,7 @@ playwright-report/
 .env.*
 out.txt
 err.txt
+# Vite writes a temporary config bundle into the repo root while loading the TS
+# config. It is deleted immediately, but it exists during the build — long enough
+# to make a clean tree look dirty to anything inspecting git status mid-build.
+electron.vite.config.*.mjs
