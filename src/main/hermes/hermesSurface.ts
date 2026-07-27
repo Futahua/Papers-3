@@ -26,11 +26,18 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer, request, type Server } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { app, type BaseWindow, screen } from 'electron';
 
+import {
+  describeMissingHermes,
+  findHermes,
+  rememberHermesLocation,
+  resolveHermesRoot,
+  type HermesLookup,
+} from './hermesLocation';
 import { launchHermesUpdateHelper } from './hermesUpdater';
 
 export type HermesPlacement = 'closed' | 'docked' | 'detached';
@@ -72,22 +79,18 @@ const DOCK_DETACH_SLOP_DIP = 24;
 /** Hard cap on any loopback request body (reports and control replies are tiny). */
 const DOCK_MAX_BODY = 4096;
 
-function resolveHermesDesktopExe(): string | null {
-  const candidates = [
-    process.env['PAPERS_HERMES_DESKTOP_EXE'],
-    'D:\\LapSlop brotherhood\\Programs\\Assistant\\HermesAI\\.hermes\\hermes-agent\\apps\\desktop\\release\\win-unpacked\\Hermes.exe',
-  ].filter((value): value is string => Boolean(value));
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
+/**
+ * Locate Hermes on this machine, remembering a fresh answer so a later move
+ * heals itself. See `hermesLocation.ts` for the order of rules; nothing here
+ * depends on the folder layout of the machine that produced the build.
+ */
+function lookUpHermes(): HermesLookup {
+  const dataDir = app.getPath('userData');
+  const lookup = findHermes(dataDir, dirname(app.getPath('exe')));
+  if (lookup.location && lookup.location.source !== 'remembered') {
+    rememberHermesLocation(dataDir, lookup.location);
   }
-  return null;
-}
-
-function resolveHermesRoot(desktopExe: string): string {
-  const configured = process.env['PAPERS_HERMES_ROOT'];
-  if (configured) return resolve(configured);
-  // <root>/apps/desktop/release/win-unpacked/Hermes.exe
-  return resolve(dirname(desktopExe), '..', '..', '..', '..');
+  return lookup;
 }
 
 export class HermesSurface {
@@ -260,13 +263,13 @@ export class HermesSurface {
    */
   private beginManagedUpdate(): void {
     if (this.updateHandedOff) return;
-    const desktopExe = resolveHermesDesktopExe();
-    if (!desktopExe) {
-      this.setState({ status: 'error', detail: 'Hermes Desktop could not be located for updating.' });
+    const { location, attempts } = lookUpHermes();
+    if (!location) {
+      this.setState({ status: 'error', detail: describeMissingHermes(attempts) });
       return;
     }
     const launched = launchHermesUpdateHelper(
-      resolveHermesRoot(desktopExe),
+      resolveHermesRoot(location),
       [this.desktopProcess?.pid, this.backendProcess?.pid].filter(
         (pid): pid is number => typeof pid === 'number',
       ),
@@ -518,8 +521,9 @@ export class HermesSurface {
       return;
     }
 
-    const exe = resolveHermesDesktopExe();
-    if (!exe) throw new Error('Hermes Desktop is not installed where Papers expects it.');
+    const { location, attempts } = lookUpHermes();
+    if (!location) throw new Error(describeMissingHermes(attempts));
+    const exe = location.desktopExe;
     const token = await this.ensureBackend();
     const reportPort = await this.ensureReportServer();
     // Fresh random docking secret for this launch, authenticating both
