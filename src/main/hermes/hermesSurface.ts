@@ -35,6 +35,7 @@ import {
   describeMissingHermes,
   findHermes,
   rememberHermesLocation,
+  resolveHermesCommand,
   resolveHermesRoot,
   type HermesLookup,
 } from './hermesLocation';
@@ -455,18 +456,42 @@ export class HermesSurface {
       }
 
       const token = randomBytes(32).toString('base64url');
+      // Run the interpreter that sits beside the Hermes we located, rather than
+      // a bare `hermes` from PATH: PATH is machine setup a build cannot carry,
+      // and a process started before the venv was added to PATH inherits a
+      // stale one. Falls back to PATH when there is no venv to point at.
+      const { location } = lookUpHermes();
+      const command = location ? resolveHermesCommand(resolveHermesRoot(location)) : 'hermes';
+      // Keep stderr so a failure can say WHY. With `stdio: 'ignore'` the reason
+      // was thrown away and every failure looked identical.
       const child = spawn(
-        'hermes',
+        command,
         ['dashboard', '--host', DASHBOARD_HOST, '--port', String(DASHBOARD_PORT), '--no-open'],
-        { windowsHide: true, stdio: 'ignore', env: { ...process.env, HERMES_DASHBOARD_SESSION_TOKEN: token } },
+        {
+          windowsHide: true,
+          stdio: ['ignore', 'ignore', 'pipe'],
+          env: { ...process.env, HERMES_DASHBOARD_SESSION_TOKEN: token },
+        },
       );
+      // Keep only the tail; this is for a human-readable failure, not a log.
+      let backendStderr = '';
+      child.stderr?.on('data', (chunk: Buffer) => {
+        backendStderr = `${backendStderr}${chunk.toString()}`.slice(-2000);
+      });
       this.backendProcess = child;
       this.backendToken = token;
       // Persist so a relaunched Papers can prove ownership of a still-running
       // backend it started (rather than being locked out of its own port).
       this.writeStoredBackendToken(token);
       child.once('error', (error) =>
-        this.setState({ status: 'error', detail: `Could not start Hermes: ${error.message}` }),
+        this.setState({
+          status: 'error',
+          detail:
+            `Papers could not start the Hermes backend.\n\nIt tried to run: ${command}\n\n${error.message}` +
+            (command === 'hermes'
+              ? '\n\nPapers fell back to looking for “hermes” on PATH because it could not find a Hermes installation to run it from.'
+              : ''),
+        }),
       );
       child.once('exit', () => {
         if (this.backendProcess === child) {
@@ -477,10 +502,21 @@ export class HermesSurface {
       const deadline = Date.now() + BACKEND_START_TIMEOUT_MS;
       while (Date.now() < deadline) {
         if (await this.dashboardResponds()) return token;
-        if (child.exitCode !== null) throw new Error('Hermes backend exited before it became ready.');
+        if (child.exitCode !== null) {
+          throw new Error(
+            `The Hermes backend stopped before it was ready.\n\nPapers ran: ${command}\n\n` +
+              (backendStderr.trim()
+                ? `Hermes reported:\n${backendStderr.trim()}`
+                : 'Hermes gave no reason. Running that command yourself in a terminal will usually show why.'),
+          );
+        }
         await new Promise((r) => setTimeout(r, 350));
       }
-      throw new Error('Hermes backend did not become ready in time.');
+      throw new Error(
+        `The Hermes backend did not become ready within ${Math.round(BACKEND_START_TIMEOUT_MS / 1000)} seconds.\n\n` +
+          `Papers ran: ${command}` +
+          (backendStderr.trim() ? `\n\nHermes reported:\n${backendStderr.trim()}` : ''),
+      );
     })().finally(() => {
       this.backendStartPromise = null;
     });

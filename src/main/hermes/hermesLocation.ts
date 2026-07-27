@@ -207,6 +207,25 @@ export function describeMissingHermes(attempts: Attempt[]): string {
 }
 
 /**
+ * The `hermes` command that runs the backend.
+ *
+ * Papers used to spawn a bare `'hermes'` and rely on PATH. That is machine
+ * setup a build cannot carry: on a machine whose PATH lacks the venv `Scripts`
+ * folder — or in any process started before that PATH entry was added — the
+ * backend dies instantly and Papers reports only "exited before it became
+ * ready", naming neither the command nor a path. It is the same defect D-016
+ * fixed for Hermes Desktop, one layer down.
+ *
+ * The interpreter lives beside the code we have already located, so prefer
+ * `<hermesRoot>\venv\Scripts\hermes.exe` and fall back to PATH only when that is
+ * absent (a differently-arranged Hermes, where PATH may still be right).
+ */
+export function resolveHermesCommand(hermesRoot: string): string {
+  const venvExe = join(hermesRoot, 'venv', 'Scripts', 'hermes.exe');
+  return existsSync(venvExe) ? venvExe : 'hermes';
+}
+
+/**
  * The Hermes source root, honouring `PAPERS_HERMES_ROOT` for a deliberate
  * override. The override is resolved to `hermes-agent` when it was pointed at
  * the `.hermes` home instead — that is the easy mistake to make, and the update

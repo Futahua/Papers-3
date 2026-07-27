@@ -7,6 +7,7 @@ import {
   describeMissingHermes,
   findHermes,
   rememberHermesLocation,
+  resolveHermesCommand,
   resolveHermesRoot,
 } from '../../src/main/hermes/hermesLocation';
 
@@ -29,7 +30,9 @@ async function makeHermes(name: string, withVenv = false): Promise<string> {
   await fs.mkdir(path.dirname(exe), { recursive: true });
   await fs.writeFile(exe, 'stand-in for Hermes.exe');
   if (withVenv) {
-    await fs.mkdir(path.join(home, 'hermes-agent', 'venv', 'Scripts'), { recursive: true });
+    const scripts = path.join(home, 'hermes-agent', 'venv', 'Scripts');
+    await fs.mkdir(scripts, { recursive: true });
+    await fs.writeFile(path.join(scripts, 'hermes.exe'), 'stand-in for the backend launcher');
   }
   return exe;
 }
@@ -139,6 +142,29 @@ describe('findHermes', () => {
     // The old bug: a build-time absolute path that is correct on one computer.
     const { location } = findHermes(null, null, {});
     expect(location).toBeNull();
+  });
+});
+
+describe('resolveHermesCommand', () => {
+  it('runs the interpreter beside the located Hermes rather than trusting PATH', async () => {
+    await makeHermes('HermesAI', true);
+    const home = path.join(dir, 'HermesAI', '.hermes');
+    const { location } = findHermes(null, null, { HERMES_HOME: home });
+
+    const command = resolveHermesCommand(resolveHermesRoot(location!, {}));
+
+    // PATH is machine setup a build cannot carry; the venv sits beside the code
+    // we already found, so it is the trustworthy answer.
+    expect(command).toBe(path.join(home, 'hermes-agent', 'venv', 'Scripts', 'hermes.exe'));
+  });
+
+  it('falls back to PATH when there is no venv to point at', async () => {
+    // A differently-arranged Hermes: Desktop present, no venv beside it.
+    await makeHermes('HermesAI', false);
+    const home = path.join(dir, 'HermesAI', '.hermes');
+    const { location } = findHermes(null, null, { HERMES_HOME: home });
+
+    expect(resolveHermesCommand(resolveHermesRoot(location!, {}))).toBe('hermes');
   });
 });
 
