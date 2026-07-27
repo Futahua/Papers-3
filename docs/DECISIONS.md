@@ -154,6 +154,40 @@ section name ("Backpacks"/"Tools"/"Settings"). Panes start their content near th
 Backpacks pane drops its heading, description and the horizontal divider entirely (the pill
 already labels the section); other panes keep a single heading with no divider.
 
+## D-019 — Papers updates itself from its public GitHub releases (2026-07-27)
+
+Updating Papers meant building on one machine and hand-copying a folder to the other, and
+nothing in the product knew a newer version existed. With two machines this made "are these
+the same Papers?" a manual chore even after D-017 made it *answerable*.
+
+An auto-updater was initially argued against as speculative architecture for a
+single-creator product. The creator overrode this and asked for frictionless updating,
+choosing the conventional path over a bespoke one. Two facts made the standard path cheap:
+the repository is **public**, so no token ships inside the application, and Papers already
+resolved its profile relative to its own executable, so an installer-managed location needed
+no code change.
+
+Decision: `electron-updater` against the public `Futahua/Papers-3` releases.
+`npm run release` builds and publishes; installed copies check on launch and download in the
+background.
+
+Two deliberate restraints, both following the D-011 principle that Papers must not disturb a
+live Hermes:
+
+- **Never install unasked.** `autoInstallOnAppQuit` is off, so quitting Papers never swaps
+  the application underneath a running Hermes. Restarting is the creator's choice.
+- **Never interrupt.** A failed or offline check resolves quietly to "up to date"; only a
+  downloaded, ready update surfaces. The reason is retained so an explicit check can explain
+  itself — silence and failure must not be indistinguishable to someone asking directly.
+
+The version field, frozen at `1.0.0` since the beginning, now moves per release: an updater
+compares versions, so a static one can never offer an update. D-017's commit stamp remains
+the identity mechanism; the version is what the updater compares.
+
+Consequence for both machines: Papers must be installed once by its own installer, pointed
+at the existing `App` folder so `Data` stays beside it. A hand-copied install has no Windows
+record and would receive a second copy rather than an upgrade.
+
 ## D-018 — The Hermes backend runs from the located install, not from PATH (2026-07-27)
 
 D-016 removed the build-time path for Hermes *Desktop*, but the *backend* was still

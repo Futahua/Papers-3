@@ -1,4 +1,52 @@
-# How Papers updates itself — findings
+# How Papers updates itself
+
+**Papers now updates itself (2026-07-27, v1.1.1).** The investigation that led here is kept
+below, because it records why the shape is what it is.
+
+## How it works now
+
+A packaged Papers checks its GitHub releases shortly after launch, downloads a newer version
+in the background, and shows **Restart and update** in Settings when one is ready.
+
+- It **never restarts on its own.** `autoInstallOnAppQuit` is off, so closing Papers can
+  never swap the application underneath a live Hermes. The creator chooses the moment.
+- It **never interrupts.** Offline, rate-limited, or no release yet all resolve quietly to
+  "up to date". Only a genuine downloaded update surfaces. The reason is still kept, so a
+  direct "Check for updates" can explain itself.
+- The repository is public, so the feed is read anonymously and **no token ships inside the
+  application**.
+
+### Publishing a new version
+
+On the desktop:
+
+1. Bump `version` in `package.json`.
+2. `npm run release` — builds the installer and uploads it with the update feed.
+3. **Publish the draft release**, which `electron-builder` leaves as a draft. Do this only
+   *after* the uploads finish; publishing early yields a release missing `latest.yml`, and
+   an installed Papers then silently finds nothing.
+
+Both machines pick it up on their next launch.
+
+### The install must be installer-made
+
+Papers resolves its profile relative to its own executable (`src/main/index.ts`:
+`<exe folder>\..\Data`), so `App` and `Data` must stay siblings. The installer is therefore
+pointed at the existing `App` folder:
+
+```
+Papers-Setup-<version>.exe /S /D=<full path to App>
+```
+
+`deleteAppDataOnUninstall: false` keeps an update from removing the profile.
+
+A hand-copied install has no Windows record, so an updater would create a *second* Papers
+rather than upgrade. Each machine needs the real installer run once; after that, updating is
+automatic.
+
+---
+
+# Original findings (2026-07-27, before the above was built)
 
 Investigated 2026-07-27 against commit `67c4597` and the installed build at
 `D:\Letters\MatTroiSeConMoc\Papers\App`. This describes **Papers' own** updating.
