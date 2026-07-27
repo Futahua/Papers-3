@@ -22,7 +22,7 @@
  * is shipped inside the application.
  */
 import { app, type WebContents } from 'electron';
-import type { UpdateInfo } from 'electron-updater';
+import type { AppUpdater, UpdateInfo } from 'electron-updater';
 
 export type UpdateStage = 'idle' | 'checking' | 'downloading' | 'ready' | 'unavailable';
 
@@ -38,6 +38,22 @@ export interface UpdateState {
 
 /** How long after launch to look, so startup is never delayed by the network. */
 const FIRST_CHECK_DELAY_MS = 8_000;
+
+/**
+ * `electron-updater` is CommonJS. Under this project's ESM build a dynamic
+ * import puts its exports on `.default`, so reading `autoUpdater` off the module
+ * namespace directly yields `undefined` and every call fails with an error that
+ * looks nothing like an update problem. Normalise both shapes here once.
+ */
+async function loadAutoUpdater(): Promise<AppUpdater> {
+  const mod = (await import('electron-updater')) as unknown as {
+    autoUpdater?: AppUpdater;
+    default?: { autoUpdater?: AppUpdater };
+  };
+  const updater = mod.autoUpdater ?? mod.default?.autoUpdater;
+  if (!updater) throw new Error('electron-updater did not provide an autoUpdater.');
+  return updater;
+}
 
 export class PapersUpdater {
   private state: UpdateState = { stage: 'idle' };
@@ -72,7 +88,7 @@ export class PapersUpdater {
 
     void (async () => {
       // Imported lazily so a development run never loads the updater at all.
-      const { autoUpdater } = await import('electron-updater');
+      const autoUpdater = await loadAutoUpdater();
 
       // The creator chooses when to restart; Papers manages a live Hermes and
       // must not be replaced underneath it without warning.
@@ -103,10 +119,11 @@ export class PapersUpdater {
         }),
       );
 
-      autoUpdater.on('error', () => {
-        // Offline, rate-limited, or no releases yet. None of that is worth
-        // interrupting the creator over — Papers keeps working as it is.
-        this.setState({ stage: 'unavailable' });
+      autoUpdater.on('error', (error: Error) => {
+        // Offline, rate-limited, or no releases yet. Not worth interrupting the
+        // creator over — Papers keeps working as it is — but the reason is kept
+        // so "Check for updates" can explain itself when asked directly.
+        this.setState({ stage: 'unavailable', detail: error.message });
       });
 
       setTimeout(() => {
@@ -122,10 +139,13 @@ export class PapersUpdater {
     }
     this.start();
     try {
-      const { autoUpdater } = await import('electron-updater');
+      const autoUpdater = await loadAutoUpdater();
       await autoUpdater.checkForUpdates();
-    } catch {
-      this.setState({ stage: 'unavailable' });
+    } catch (error) {
+      this.setState({
+        stage: 'unavailable',
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
     return this.state;
   }
@@ -136,7 +156,7 @@ export class PapersUpdater {
    */
   async installNow(): Promise<void> {
     if (this.state.stage !== 'ready') return;
-    const { autoUpdater } = await import('electron-updater');
+    const autoUpdater = await loadAutoUpdater();
     // isSilent=false shows the installer, isForceRunAfter=true reopens Papers.
     autoUpdater.quitAndInstall(false, true);
   }
