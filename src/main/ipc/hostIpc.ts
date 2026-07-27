@@ -11,6 +11,8 @@ import type { PermissionDecision } from '@shared/types';
 export interface HostFacade {
   isHostSender(sender: WebContents): boolean;
 
+  buildIdentity(): unknown;
+
   listBackpacks(): unknown;
   createBackpack(name: string, type: string): Promise<unknown>;
   renameBackpack(id: string, name: string): Promise<void>;
@@ -85,6 +87,8 @@ export function registerHostIpc(facade: HostFacade): void {
       return handler(event, ...args);
     });
   };
+
+  handle('host:app:build-identity', () => facade.buildIdentity());
 
   handle('host:backpacks:list', () => facade.listBackpacks());
   handle('host:backpacks:create', (_e, name, type) =>

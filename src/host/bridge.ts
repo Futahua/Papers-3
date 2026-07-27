@@ -55,9 +55,28 @@ export interface HostErrorPayload {
   recover: string;
 }
 
+/** Which build Papers is, and where it runs from. See `src/main/buildIdentity.ts`. */
+export interface BuildIdentity {
+  version: string;
+  /** Short git commit, or `unknown` for a build made before commit stamping. */
+  commit: string;
+  branch: string;
+  builtAt: string;
+  packaged: boolean;
+  installDir: string;
+  dataDir: string;
+  machine: string;
+  /** One short line, e.g. `1.0.0 · a1b2c3d · MINH-DESKTOP`. */
+  summary: string;
+}
+
 interface HostBridge {
   /** True only when launched with PAPERS_ENABLE_FIXTURES=1 (historical demos). */
   fixtureMode: boolean;
+  app: {
+    /** Identify this build so two machines can be compared. */
+    buildIdentity(): Promise<BuildIdentity>;
+  };
   backpacks: {
     list(): Promise<BackpacksList>;
     /**

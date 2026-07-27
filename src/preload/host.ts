@@ -19,6 +19,12 @@ const api = {
   // launched with PAPERS_ENABLE_FIXTURES=1. Production renders never see them.
   fixtureMode: process.env['PAPERS_ENABLE_FIXTURES'] === '1',
 
+  app: {
+    // Which build this is and where it runs from, so two machines running
+    // Papers can be told apart and compared.
+    buildIdentity: () => ipcRenderer.invoke('host:app:build-identity'),
+  },
+
   backpacks: {
     list: () => ipcRenderer.invoke('host:backpacks:list'),
     // Name-only creation. Every production Backpack is a machine-wide

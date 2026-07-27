@@ -642,6 +642,25 @@ input:focus-visible {
   word-break: break-all;
 }
 
+/* Build facts: a compact label/value list that stays readable when a long
+   Windows path has to wrap. */
+.build-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 12px;
+  margin: 2px 0 0;
+}
+
+.build-facts dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.build-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
 /* ---------------------------------------------------- empty-Backpack warning */
 
 .warning-scrim {

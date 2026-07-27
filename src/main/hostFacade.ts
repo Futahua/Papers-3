@@ -16,6 +16,7 @@ import type {
   SaveStatus,
   ShelfContribution,
 } from '@shared/types';
+import { buildIdentity } from './buildIdentity';
 import type { BackpackRegistry } from './backpacks/backpackRegistry';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
@@ -336,6 +337,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (this.deps.runtime.activeProgram?.programId !== run.programId) {
       await this.startProgram(run.programId);
     }
+  }
+
+  /** Which build this is and where it runs from, for telling machines apart. */
+  buildIdentity(): unknown {
+    return buildIdentity();
   }
 
   hermesHealth(): unknown {
