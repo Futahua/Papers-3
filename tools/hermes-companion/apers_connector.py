@@ -49,8 +49,47 @@ DEFAULT_HERMES_EXE = (
 )
 
 
+def _reg_env(name: str) -> str:
+    """Read a user environment variable from the registry (Windows).
+
+    A process inherits its environment when it starts, so a long-lived parent
+    holds a SNAPSHOT of HERMES_HOME from before any move, and every child it
+    spawns inherits that stale copy. The registry always holds the current
+    value, so it is consulted first.
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            return str(winreg.QueryValueEx(key, name)[0] or "")
+    except OSError:
+        return ""
+
+
+def _is_hermes_home(path: str) -> bool:
+    """A real Hermes home contains config.yaml. Anything else is a wrong guess."""
+    return bool(path) and os.path.isfile(os.path.join(path, "config.yaml"))
+
+
 def _home() -> str:
-    return os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    """The Hermes home, never inventing a new one at a stale location.
+
+    Candidates in order; the first that is genuinely a Hermes home wins. When
+    none qualifies, fall back to the documented default rather than to a stale
+    value: creating ``mesh/`` under a folder Hermes has moved out of silently
+    resurrects a whole directory tree there, complete with a SECOND device
+    identity that then competes with the real one.
+    """
+    for candidate in (
+        _reg_env("HERMES_HOME"),
+        os.environ.get("HERMES_HOME", ""),
+        os.path.expanduser("~/.hermes"),
+    ):
+        if _is_hermes_home(candidate):
+            return candidate
+    return os.path.expanduser("~/.hermes")
 
 
 def _log_path() -> str:
@@ -64,9 +103,17 @@ def _log(msg: str) -> None:
 
 
 def _hermes_cmd() -> list[str]:
-    exe = os.environ.get("APERS_HERMES_EXE") or DEFAULT_HERMES_EXE
-    if os.path.isfile(exe):
-        return [exe, "chat", "--quiet", "--query"]
+    # Registry first, for the same reason as _home(): an inherited
+    # APERS_HERMES_EXE can point at where hermes USED to live. Every candidate
+    # is checked on disk, so a stale one is skipped rather than trusted.
+    for exe in (
+        _reg_env("APERS_HERMES_EXE"),
+        os.environ.get("APERS_HERMES_EXE", ""),
+        os.path.join(_home(), "hermes-agent", "venv", "Scripts", "hermes.exe"),
+        DEFAULT_HERMES_EXE,
+    ):
+        if exe and os.path.isfile(exe):
+            return [exe, "chat", "--quiet", "--query"]
     return ["hermes", "chat", "--quiet", "--query"]  # PATH fallback
 
 
@@ -137,7 +184,11 @@ def main() -> int:
 
     cmd = _hermes_cmd()
     try:
-        broker = mb.serve(hermes_cmd=cmd)
+        # Pass the validated home explicitly. Without it mesh_broker repeats its
+        # own os.environ["HERMES_HOME"] lookup and lands on the stale inherited
+        # value, creating mesh/ — and a second device identity — under a folder
+        # Hermes has already moved out of. Fixing _home() alone is NOT enough.
+        broker = mb.serve(hermes_cmd=cmd, home=_home())
     except OSError as e:
         if e.errno == errno.EADDRINUSE:
             _log("connector already running (companion port busy) — exiting")
