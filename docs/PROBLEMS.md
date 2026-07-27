@@ -35,6 +35,29 @@ effect** — the fix is in the source, not in the running `App\`. After that, th
 machine-local settings (`PAPERS_HERMES_DESKTOP_EXE`, `PAPERS_HERMES_ROOT`) can be deleted
 from Windows; confirm Hermes still opens from Papers without them.
 
+## 0a — Hermes failed to start even after Papers found it
+
+**Corrected in source; needs a rebuild before the creator can judge it (2026-07-27).**
+
+Found on the laptop while checking the correction above. Papers located Hermes correctly,
+then Hermes still would not start, reporting only "the backend exited before it became
+ready" — which said nothing about what went wrong.
+
+Two separate things: Papers opens the Hermes *window*, and separately starts the Hermes
+*engine* behind it. Problem 0 fixed how Papers finds the window. The engine was still being
+started by name, trusting Windows to know where `hermes` lives. On a machine where Windows
+did not know — or in a program opened before Windows was told — the engine died instantly.
+
+Correction: Papers now starts the engine from the Hermes folder it just located, instead of
+asking Windows to find it. And when starting does fail, the message now says exactly what
+Papers tried to run and what Hermes said about it.
+
+Demonstrated by deliberately hiding Hermes from Windows entirely and opening Papers: Hermes
+started normally. Before this change that was a guaranteed failure.
+
+Remaining for the creator: after the rebuild, open Hermes from Papers and confirm it comes
+up. It may take up to a minute the first time.
+
 ## 0b — You cannot tell whether both machines are running the same Papers
 
 **Corrected in source; needs a rebuild before the creator can judge it (2026-07-27).**
@@ -54,6 +77,12 @@ Papers. If it differs, they are not, and the folder lines show which copy is whi
 Two marks worth knowing: **`+local`** means that build included edits that were not saved to
 the project, so it matches no other machine exactly; **`unknown`** means the build is older
 than this feature.
+
+Note on `+local`: builds made on 2026-07-27 before commit `3af4591` showed this mark even
+from a clean checkout, for two unrelated reasons that both looked like real edits (a
+temporary file the build tool writes into the project, and a dependency list that rewrote
+itself during install). Both are fixed. If a build still shows `+local` now, it means what
+it says.
 
 Demonstrated in the running app: the card renders in Settings and correctly reported
 `1.0.0 · 67c4597+local · SlopTop` for a build made from commit `67c4597` with edits in

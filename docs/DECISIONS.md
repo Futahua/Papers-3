@@ -154,6 +154,31 @@ section name ("Backpacks"/"Tools"/"Settings"). Panes start their content near th
 Backpacks pane drops its heading, description and the horizontal divider entirely (the pill
 already labels the section); other panes keep a single heading with no divider.
 
+## D-018 — The Hermes backend runs from the located install, not from PATH (2026-07-27)
+
+D-016 removed the build-time path for Hermes *Desktop*, but the *backend* was still
+spawned as a bare `hermes`, resolved through PATH. Found on the laptop during the D-016
+verification: Desktop resolution succeeded, and Hermes still failed to start.
+
+PATH is machine setup a build cannot carry. Worse, it is not even stable within a machine —
+a process started before the venv was added to PATH inherits a stale copy, so the same
+build works or fails depending on when the launching shell started. Papers reported only
+"exited before it became ready", naming neither the command nor a path, because
+`stdio: 'ignore'` discarded the reason.
+
+Decision: the backend runs `<hermesRoot>\venv\Scripts\hermes.exe` — the interpreter beside
+the code Papers has already located — falling back to a bare `hermes` only when no venv is
+present, for a differently-arranged Hermes where PATH may still be correct. Backend stderr
+is captured (tail only) and every failure names the exact command Papers ran plus whatever
+Hermes reported.
+
+Verified with PATH deliberately reduced to the bare Windows system directories: the backend
+reaches ready, which was a guaranteed failure before.
+
+The general rule, now applied twice: **anything a build needs to find must be derived at
+run time from something Papers can see, never from a path or PATH entry baked in at package
+time or inherited from an ambient environment.**
+
 ## D-017 — A build identifies itself by commit, not by version (2026-07-27)
 
 Papers runs on two machines and every copy ever built reported version `1.0.0`.
