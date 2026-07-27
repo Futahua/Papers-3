@@ -21,3 +21,5 @@ err.txt
 # config. It is deleted immediately, but it exists during the build — long enough
 # to make a clean tree look dirty to anything inspecting git status mid-build.
 electron.vite.config.*.mjs
+# Python bytecode from the companion connector
+__pycache__/
