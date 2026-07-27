@@ -19,9 +19,33 @@ function git(...args: string[]): string {
   }
 }
 
+/**
+ * True when tracked files differ from HEAD. `git diff --quiet` reports this
+ * through its exit status (1 = differences), which `git()` cannot distinguish
+ * from git being absent — so run it separately and read the failure.
+ */
+function hasLocalEdits(): boolean {
+  try {
+    execFileSync('git', ['diff', '--quiet', 'HEAD', '--'], {
+      cwd: __dirname,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function buildStamp(): Record<string, string> {
   const commit = git('rev-parse', '--short', 'HEAD');
-  const dirty = commit && git('status', '--porcelain');
+  // Only TRACKED files decide dirtiness. A plain `git status --porcelain` also
+  // lists untracked paths, and packaging writes `release/` inside the repo while
+  // this very build is being stamped — so every packaged build would falsely
+  // mark itself `+local`, which is precisely the signal that must stay
+  // trustworthy. `diff HEAD` ignores untracked and ignored files entirely.
+  // `commit` is empty when git is unavailable, in which case the build reports
+  // `unknown` and dirtiness is not consulted at all.
+  const dirty = commit !== '' && hasLocalEdits();
   return {
     __PAPERS_COMMIT__: JSON.stringify(commit ? (dirty ? `${commit}+local` : commit) : ''),
     __PAPERS_BRANCH__: JSON.stringify(git('rev-parse', '--abbrev-ref', 'HEAD')),
