@@ -16,8 +16,36 @@
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-$hermesPython = 'D:\LapSlop brotherhood\Programs\Assistant\HermesAI\.hermes\hermes-agent\venv\Scripts\python.exe'
-if (-not (Test-Path $hermesPython)) { throw "hermes-agent python not found: $hermesPython" }
+# Find the hermes-agent python on THIS machine. A hardcoded path is correct on
+# exactly one computer and wrong everywhere else, which is the same defect D-016
+# fixed in Papers itself.
+#
+# The registry is read before $env:HERMES_HOME for the reason apers_connector.py
+# does the same: a process inherits its environment at start, so a shell opened
+# before Hermes moved still hands out the old value. A candidate only counts if
+# it is a real Hermes home, identified by config.yaml.
+function Get-HermesHome {
+    $candidates = @(
+        (Get-ItemProperty -Path 'HKCU:\Environment' -Name HERMES_HOME -ErrorAction SilentlyContinue).HERMES_HOME
+        $env:HERMES_HOME
+        (Join-Path $env:USERPROFILE '.hermes')
+    )
+    foreach ($c in $candidates) {
+        if ($c -and (Test-Path (Join-Path $c 'config.yaml'))) { return $c }
+    }
+    return $null
+}
+
+$hermesHome = Get-HermesHome
+if (-not $hermesHome) {
+    throw "Could not find a Hermes home (a folder containing config.yaml). Set HERMES_HOME and reopen this window."
+}
+
+$hermesPython = Join-Path $hermesHome 'hermes-agent\venv\Scripts\python.exe'
+if (-not (Test-Path $hermesPython)) {
+    throw "hermes-agent python not found under $hermesHome : $hermesPython"
+}
+Write-Host "==> using hermes-agent python from $hermesHome"
 
 $meshDir   = Join-Path $env:USERPROFILE '.hermes\mesh'
 $venvDir   = Join-Path $meshDir 'venv'
