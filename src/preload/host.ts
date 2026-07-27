@@ -23,6 +23,10 @@ const api = {
     // Which build this is and where it runs from, so two machines running
     // Papers can be told apart and compared.
     buildIdentity: () => ipcRenderer.invoke('host:app:build-identity'),
+    // Papers updating itself from its GitHub releases.
+    updateStatus: () => ipcRenderer.invoke('host:app:update-status'),
+    checkForUpdate: () => ipcRenderer.invoke('host:app:check-for-update'),
+    installUpdate: () => ipcRenderer.invoke('host:app:install-update'),
   },
 
   backpacks: {
@@ -105,6 +109,7 @@ const api = {
     onHermesHealth: subscribe('host:event:hermes-health'),
     onHermesSurface: subscribe('host:event:hermes-surface'),
     onHostError: subscribe('host:event:host-error'),
+    onUpdateStatus: subscribe('host:event:update-status'),
   },
 };
 

@@ -1,6 +1,82 @@
 import React from 'react';
 
-import { host, type BuildIdentity } from './bridge';
+import { host, type BuildIdentity, type UpdateState } from './bridge';
+
+/**
+ * "Updates" — Papers keeping itself current.
+ *
+ * Papers checks its GitHub releases shortly after launch. This card stays quiet
+ * unless something is actually happening: a newer version downloading, or one
+ * downloaded and waiting for the creator to restart. Papers never restarts
+ * itself, because it may be managing a live Hermes at the time.
+ */
+function UpdatesCard(): React.JSX.Element {
+  const [update, setUpdate] = React.useState<UpdateState>({ stage: 'idle' });
+  const [checking, setChecking] = React.useState(false);
+
+  React.useEffect(() => {
+    let live = true;
+    void host()
+      .app.updateStatus()
+      .then((value) => {
+        if (live) setUpdate(value);
+      })
+      .catch(() => {
+        /* An older build with no updater; leave the card idle. */
+      });
+    const stop = host().events.onUpdateStatus((value) => setUpdate(value));
+    return () => {
+      live = false;
+      stop();
+    };
+  }, []);
+
+  const check = React.useCallback((): void => {
+    setChecking(true);
+    void host()
+      .app.checkForUpdate()
+      .then((value) => setUpdate(value))
+      .catch(() => undefined)
+      .finally(() => setChecking(false));
+  }, []);
+
+  const ready = update.stage === 'ready';
+  const downloading = update.stage === 'downloading';
+
+  return (
+    <div className="settings-card">
+      <span className="label">Updates</span>
+      <strong>
+        {ready
+          ? `Papers ${update.version ?? ''} is ready to install`
+          : downloading
+            ? `Downloading Papers ${update.version ?? ''}…`
+            : 'Papers is up to date'}
+      </strong>
+      {downloading && typeof update.percent === 'number' ? (
+        <div className="update-track">
+          <div className="update-bar" style={{ width: `${Math.max(3, update.percent)}%` }} />
+        </div>
+      ) : null}
+      <small>
+        {ready
+          ? 'Restart Papers to finish updating. Your Backpacks, settings and Hermes are not affected.'
+          : downloading
+            ? 'Papers is downloading in the background. You can keep working.'
+            : 'Papers checks for a newer version shortly after it opens, and downloads it in the background.'}
+      </small>
+      <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+        {ready ? (
+          <button onClick={() => void host().app.installUpdate()}>Restart and update</button>
+        ) : (
+          <button className="secondary" onClick={check} disabled={checking || downloading}>
+            {checking ? 'Checking…' : 'Check for updates'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /** Show the build time in the reader's own locale; leave `unknown` alone. */
 function readableTime(value: string): string {
@@ -113,6 +189,8 @@ export function SettingsPane(): React.JSX.Element {
         </div>
 
         <div className="settings-grid">
+          <UpdatesCard />
+
           <ThisBuildCard />
 
           <div className="settings-card">

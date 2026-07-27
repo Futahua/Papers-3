@@ -70,12 +70,26 @@ export interface BuildIdentity {
   summary: string;
 }
 
+/** Where Papers is in checking for, downloading, or holding a newer version. */
+export type UpdateStage = 'idle' | 'checking' | 'downloading' | 'ready' | 'unavailable';
+
+export interface UpdateState {
+  stage: UpdateStage;
+  version?: string;
+  percent?: number;
+  detail?: string;
+}
+
 interface HostBridge {
   /** True only when launched with PAPERS_ENABLE_FIXTURES=1 (historical demos). */
   fixtureMode: boolean;
   app: {
     /** Identify this build so two machines can be compared. */
     buildIdentity(): Promise<BuildIdentity>;
+    updateStatus(): Promise<UpdateState>;
+    checkForUpdate(): Promise<UpdateState>;
+    /** Restart into the downloaded update; only acts once stage is `ready`. */
+    installUpdate(): Promise<void>;
   };
   backpacks: {
     list(): Promise<BackpacksList>;
@@ -146,6 +160,7 @@ interface HostBridge {
     onHermesHealth(cb: (p: HermesHealth) => void): () => void;
     onHermesSurface(cb: (p: HermesSurfaceStatus) => void): () => void;
     onHostError(cb: (p: HostErrorPayload) => void): () => void;
+    onUpdateStatus(cb: (p: UpdateState) => void): () => void;
   };
 }
 

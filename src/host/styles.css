@@ -642,6 +642,21 @@ input:focus-visible {
   word-break: break-all;
 }
 
+/* Update download progress. */
+.update-track {
+  height: 4px;
+  margin: 4px 0 2px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--line);
+}
+
+.update-bar {
+  height: 100%;
+  background: var(--accent, #526b5a);
+  transition: width 0.3s ease;
+}
+
 /* Build facts: a compact label/value list that stays readable when a long
    Windows path has to wrap. */
 .build-facts {

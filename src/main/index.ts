@@ -22,6 +22,7 @@ import { ResourceService } from './resources/resourceService';
 import { registerResourceExecutors } from './resources/resourceExecutors';
 import { AgentRunService } from './agents/runService';
 import { PapersHostFacade } from './hostFacade';
+import { PapersUpdater } from './papersUpdater';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
 import { papersPaths } from './persistence/paths';
@@ -238,8 +239,11 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  const updater = new PapersUpdater(() => hostView?.webContents ?? null);
+
   const facade = new PapersHostFacade({
     hostContents: () => hostView?.webContents ?? null,
+    updater,
     registry,
     runtime,
     canvasState,
@@ -317,6 +321,10 @@ async function bootstrap(): Promise<void> {
   } else {
     await hostView.webContents.loadFile(path.join(app.getAppPath(), 'out', 'renderer', 'index.html'));
   }
+
+  // Look for a newer Papers once the interface is up. Silent unless a real
+  // update is downloaded and ready; a packaged build only.
+  updater.start();
 
   // The detached updater writes one result before it reopens Papers. Success is
   // a quiet native notification; failure is kept visible in Papers with the log

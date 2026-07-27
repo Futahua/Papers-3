@@ -17,6 +17,7 @@ import type {
   ShelfContribution,
 } from '@shared/types';
 import { buildIdentity } from './buildIdentity';
+import type { PapersUpdater } from './papersUpdater';
 import type { BackpackRegistry } from './backpacks/backpackRegistry';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
@@ -37,6 +38,7 @@ interface CanvasPersistedState {
 
 export interface FacadeDeps {
   hostContents: () => WebContents | null;
+  updater: PapersUpdater;
   registry: BackpackRegistry;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
@@ -342,6 +344,18 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   /** Which build this is and where it runs from, for telling machines apart. */
   buildIdentity(): unknown {
     return buildIdentity();
+  }
+
+  updateStatus(): unknown {
+    return this.deps.updater.current;
+  }
+
+  checkForUpdate(): Promise<unknown> {
+    return this.deps.updater.checkNow();
+  }
+
+  installUpdate(): Promise<void> {
+    return this.deps.updater.installNow();
   }
 
   hermesHealth(): unknown {

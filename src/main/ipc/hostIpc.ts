@@ -12,6 +12,9 @@ export interface HostFacade {
   isHostSender(sender: WebContents): boolean;
 
   buildIdentity(): unknown;
+  updateStatus(): unknown;
+  checkForUpdate(): Promise<unknown>;
+  installUpdate(): Promise<void>;
 
   listBackpacks(): unknown;
   createBackpack(name: string, type: string): Promise<unknown>;
@@ -89,6 +92,9 @@ export function registerHostIpc(facade: HostFacade): void {
   };
 
   handle('host:app:build-identity', () => facade.buildIdentity());
+  handle('host:app:update-status', () => facade.updateStatus());
+  handle('host:app:check-for-update', () => facade.checkForUpdate());
+  handle('host:app:install-update', () => facade.installUpdate());
 
   handle('host:backpacks:list', () => facade.listBackpacks());
   handle('host:backpacks:create', (_e, name, type) =>

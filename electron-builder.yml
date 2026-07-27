@@ -22,6 +22,14 @@ extraResources:
 
 asar: true
 
+# Where a packaged Papers looks for newer versions, and where `npm run release`
+# uploads them. The repository is public, so an installed Papers reads the feed
+# anonymously — no token ships inside the application.
+publish:
+  provider: github
+  owner: Futahua
+  repo: Papers-3
+
 # electron-builder embeds win.icon into the exe during a full (NSIS) build, but a
 # `--dir` pack can skip that rcedit step and leave the stock Electron atom on the exe.
 # This hook re-embeds build/icon.ico into the packed Papers.exe for every pack path.
@@ -41,3 +49,8 @@ nsis:
   createDesktopShortcut: false
   createStartMenuShortcut: false
   artifactName: Papers-Setup-${version}.${ext}
+  # Papers keeps its runtime profile in a `Data` folder BESIDE the install
+  # (see src/main/index.ts — userData is resolved relative to the executable).
+  # Uninstalling must therefore never remove the parent folder's `Data`; an
+  # update reinstalls over the same directory and the profile survives.
+  deleteAppDataOnUninstall: false

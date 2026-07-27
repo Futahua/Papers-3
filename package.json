@@ -1,6 +1,6 @@
 {
   "name": "papers",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Papers — a personal layer across the Windows machine",
   "main": "out/main/index.js",
   "type": "module",
@@ -22,7 +22,8 @@
     "fixture:logseq:status": "node tools/logseq-fixture.mjs status",
     "fixture:logseq:cleanup": "node tools/logseq-fixture.mjs cleanup",
     "package": "electron-vite build && electron-builder --win",
-    "package:dir": "electron-vite build && electron-builder --win --dir"
+    "package:dir": "electron-vite build && electron-builder --win --dir",
+    "release": "electron-vite build && electron-builder --win --publish always"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
@@ -37,6 +38,7 @@
     "vitest": "4.1.10"
   },
   "dependencies": {
+    "electron-updater": "6.8.9",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "zod": "4.4.3"
