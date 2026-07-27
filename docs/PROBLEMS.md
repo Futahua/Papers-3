@@ -3,6 +3,67 @@
 This is the plain-language work list, in creator priority order. A problem stays here
 until the creator can use and judge the correction in the installed product.
 
+## 0 — "Hermes Desktop is not installed where Papers expects it"
+
+**Corrected in source; needs a rebuild before the creator can judge it (2026-07-27).**
+
+What happened: after Hermes was moved to `D:\Letters\MatTroiSeConMoc\HermesAI\.hermes`,
+Papers showed a banner saying Hermes was not installed where it expected — and never said
+which folder it had looked in. The cause was a single folder path written into Papers when
+it was built, pointing at wherever Hermes sat on the machine that produced that build. Any
+build was therefore correct on one computer only, and the laptop would have failed the same
+way with a different path.
+
+Correction: Papers now works out where Hermes is each time it starts, and remembers what it
+found. It uses, in order, a deliberate override, the place it found Hermes last time, the
+`HERMES_HOME` setting that Hermes' own installer creates, and finally a short look in the
+ordinary places — including a `HermesAI` folder sitting beside Papers itself. Because Papers
+remembers a location only after successfully using it, moving Hermes again heals itself on
+the next launch.
+
+If Hermes genuinely is not there, the banner now lists every folder Papers looked in, so a
+wrong path is visible at a glance.
+
+Demonstrated on this machine against the real Hermes install: with no settings at all,
+Papers finds Hermes at its new location; with only `HERMES_HOME`, it finds it and correctly
+identifies the `hermes-agent` folder the Hermes updater needs. A stale `HERMES_HOME` left
+over in an already-running program was also observed, and Papers still finds Hermes despite
+it. Eleven automated checks cover these paths.
+
+Remaining for the creator: **Papers must be rebuilt and reinstalled for this to take
+effect** — the fix is in the source, not in the running `App\`. After that, the two
+machine-local settings (`PAPERS_HERMES_DESKTOP_EXE`, `PAPERS_HERMES_ROOT`) can be deleted
+from Windows; confirm Hermes still opens from Papers without them.
+
+## 0b — You cannot tell whether both machines are running the same Papers
+
+**Corrected in source; needs a rebuild before the creator can judge it (2026-07-27).**
+
+Every copy of Papers ever built reported version `1.0.0`. So if the two machines started
+behaving differently, there was no way to check whether they were even running the same
+build — and comparing the version numbers actively misled, because they always matched.
+
+Correction: Settings now opens with a **This build** card. It shows the version, the exact
+code the build was made from, when it was built, which computer it is running on, and the
+folders it uses. A **Copy build details** button puts all of it on the clipboard.
+
+To compare the two machines: open Settings on each and read the middle line, e.g.
+`1.0.0 · 67c4597 · SlopTop`. If the middle part matches, both machines are running the same
+Papers. If it differs, they are not, and the folder lines show which copy is which.
+
+Two marks worth knowing: **`+local`** means that build included edits that were not saved to
+the project, so it matches no other machine exactly; **`unknown`** means the build is older
+than this feature.
+
+Demonstrated in the running app: the card renders in Settings and correctly reported
+`1.0.0 · 67c4597+local · SlopTop` for a build made from commit `67c4597` with edits in
+progress. Five automated checks cover it, including the case that matters most — two
+different builds that both call themselves `1.0.0` are correctly reported as different.
+
+Remaining for the creator: **Papers must be rebuilt and reinstalled on both machines** for
+this to appear. After that, confirm the two machines report the same commit — and if they
+do not, that is the real answer to any "it works here but not there" difference.
+
 ## 1 — Hermes looks like two different products
 
 **Awaiting creator acceptance (implemented and verified in the installed product,

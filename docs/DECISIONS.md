@@ -154,6 +154,64 @@ section name ("Backpacks"/"Tools"/"Settings"). Panes start their content near th
 Backpacks pane drops its heading, description and the horizontal divider entirely (the pill
 already labels the section); other panes keep a single heading with no divider.
 
+## D-017 — A build identifies itself by commit, not by version (2026-07-27)
+
+Papers runs on two machines and every copy ever built reported version `1.0.0`.
+Nothing else distinguished one build from another, so "are these two machines running
+the same Papers?" could not be answered from inside the product — and comparing versions
+gave a false *yes* even when the builds were completely different.
+
+Bumping the version was considered and rejected as the primary answer. It depends on a
+release discipline that does not exist here (no tags, no releases, no CI), and a forgotten
+bump reintroduces exactly the false match. The commit is derived automatically and cannot
+drift from the code it names.
+
+Decision: `electron.vite.config.ts` stamps the short commit, branch and build time into the
+main process at package time, and Settings shows them in a "This build" card alongside the
+machine name, install folder and data folder. A build made with uncommitted edits is marked
+`+local`, because it matches no other machine exactly; a build made without git reports
+`unknown` rather than inventing a value.
+
+The split follows D-016: the commit is a property of the BUILD, so baking it in is correct.
+Paths and machine name are properties of a MACHINE and are read at run time.
+
+The version field remains `1.0.0` and is still shown. Bumping it on real releases stays
+worth doing, but it is no longer what tells two machines apart.
+
+## D-016 — Hermes is located at run time, never baked into a build (2026-07-27)
+
+Papers located Hermes Desktop through a single absolute path written into the source
+(`D:\LapSlop brotherhood\Programs\Assistant\HermesAI\.hermes\...`). That path was
+whatever the packaging machine happened to use, so every build was correct on exactly
+one computer. When Hermes moved, Papers showed "Hermes Desktop is not installed where
+Papers expects it" and the banner never said which path it had tried. Papers runs on two
+machines with different roots (`D:\Letters\...` and `C:\This is Minh\...`), so a
+build-time path is wrong by construction.
+
+Decision: Papers resolves Hermes at run time in `src/main/hermes/hermesLocation.ts`,
+taking the first hit from: an explicit `PAPERS_HERMES_DESKTOP_EXE` override; the location
+Papers itself resolved and remembered last time (kept in the Papers data folder, written
+only after a successful resolution, so a move self-heals); `HERMES_HOME`, which the Hermes
+installer already sets on every machine; then a short probe of ordinary locations,
+including a `HermesAI\.hermes` beside the Papers installation. No layout from the build
+machine survives in the build.
+
+`HERMES_HOME` alone was rejected as the sole rule: a process started before Hermes moves
+keeps a stale copy of it, which was observed on the primary machine. Remembering plus
+probing survives that; a single source of truth would not have.
+
+When every rule misses, the banner lists each path tried and what suggested it, so a
+moved folder is visible at a glance instead of requiring a search.
+
+The Hermes root is now derived from the executable rather than configured separately, so
+the two cannot disagree. A `PAPERS_HERMES_ROOT` pointing at the `.hermes` home is
+corrected to the `hermes-agent` folder beneath it — the machine-local stopgap was set that
+way, and it would have sent the update helper looking for `venv\Scripts\hermes.exe` one
+level too high.
+
+This removes the need for the per-machine `PAPERS_HERMES_DESKTOP_EXE` and
+`PAPERS_HERMES_ROOT` environment variables. They remain supported as deliberate overrides.
+
 ## D-015 — Docking is a deliberate toggle, not drag-to-dock (2026-07-22)
 
 An earlier iteration docked the real Hermes window when it was dragged to a Papers edge.
