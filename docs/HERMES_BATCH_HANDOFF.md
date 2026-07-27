@@ -1,6 +1,15 @@
 # Hermes integration batch — implementation handoff
 
-## Copy-paste pickup prompt
+> **Completed and superseded (2026-07-27).** This batch shipped: its work is recorded in
+> PROBLEMS.md 1–4 and D-011 through D-015. It is kept as the record of that batch, not as
+> live instructions.
+>
+> **Do not follow the paths below.** Every `D:\LapSlop brotherhood\...` location in this
+> document is dead — Papers and Hermes have both moved, and Papers no longer depends on any
+> recorded path (D-016). For where things actually are, read `HERMES.md` at the repository
+> root; for how Papers locates Hermes, read `src/main/hermes/hermesLocation.ts`.
+
+## Copy-paste pickup prompt (historical)
 
 You are taking ownership of the first real Papers/Hermes product correction. Work on the
 machine, implement the entire batch described in this document, test the human-visible

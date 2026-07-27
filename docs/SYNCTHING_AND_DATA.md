@@ -2,18 +2,30 @@
 
 ## Current answer
 
-The installed Papers master folder lives inside a Syncthing folder. The fixed Windows
-application under `Papers/App` can be copied, but the current `Papers/Data` directory is
-a mixed Electron profile containing caches, locks, browser state and eventually Papers
-domain data. It is not yet a safe multi-machine, simultaneous-write data model.
+**The Papers master folder is not synchronized (verified 2026-07-27).** The only folder
+shared by Syncthing on the primary machine is `D:\WORK brotherhood`; `Papers/` sits outside
+it. An earlier version of this document assumed the master folder lived inside a Syncthing
+folder — it does not, and the caution below is therefore about what must *stay* true rather
+than a situation to unwind.
 
-Hermes is also a local runtime, not merely a folder of portable files. A synchronized
-copy does not reproduce machine PATH entries, Python runtimes, services or an available
-local port. Its live credentials, sessions and databases must not be treated as ordinary
-shared documents.
+This is the right boundary, and it should be kept:
 
-This limitation is recorded rather than hidden. Papers remains usable on this machine
-while its sync boundary is shaped by real Backpack features.
+- `Papers/Data` is a mixed Electron profile holding caches, locks, browser state, a live
+  SQLite journal and the Hermes session token. It is not a safe multi-machine,
+  simultaneous-write data model, and syncing it would risk corrupting live state.
+- `Papers/App` is a running application binary. Sync propagates files as they finish, so a
+  mid-sync `App` is a half-replaced application; Windows also locks the executable while
+  Papers runs, which turns an attempted sync into a retry loop.
+
+**Papers is distributed by its own updater instead** (D-019): each machine installs from the
+published GitHub release, so the application arrives complete or not at all. See
+[UPDATING_PAPERS.md](UPDATING_PAPERS.md).
+
+Hermes is likewise a local runtime, not a folder of portable files. A synchronized copy
+does not reproduce Python runtimes, an editable pip install, services or an available local
+port. Its live credentials, sessions and databases must not be treated as ordinary shared
+documents. Papers locates Hermes at run time on each machine (D-016) rather than carrying a
+path between them.
 
 ## Policy for features built later
 
@@ -41,12 +53,15 @@ platform in advance.
 
 ```text
 Papers/
-├── App/                 fixed installed application; copyable
+├── App/                 installed application; replaced by the updater, not by hand
 ├── Shared/              future durable creator work, introduced only when needed
-├── Data/                current mixed local runtime; not multi-writer safe
-├── Migration Backup/    recoverable retired material
-└── HERMES.md            synced pickup instructions for building Backpacks
+├── Data/                mixed local runtime; machine-local, not multi-writer safe
+└── HERMES.md            pickup instructions for building Backpacks
 ```
+
+`Migration Backup/` appeared in an earlier version of this diagram. It does not exist on
+the primary machine (verified 2026-07-27) and is not created by anything; the migration it
+referred to is long finished.
 
 `Shared` is a reserved direction, not a requirement to build an empty framework now.
 The first feature that produces genuinely durable creator data should establish its
@@ -62,16 +77,26 @@ Update this table whenever a real feature creates persistent data.
 | Electron runtime profile | `Papers/Data` | Electron/Papers host | Machine-local direction | May contain web state | No | Recreated; preserve unknown files during migration |
 | Backpack registry and records | `Papers/Data/PapersData` when created | Papers | Undecided until first useful Backpack contents | No by design | Current JSON store is not conflict-mergeable | Atomic backups and recovery directory |
 | Migration material | `Papers/Migration Backup` | Creator | Archive; no runtime dependency | Possibly | No | Original moved material |
-| Hermes runtime and state | Discovered from the local `hermes` command | Hermes | Install/configure per machine unless Hermes provides supported sync | Yes | No raw multi-machine writers | Hermes-owned recovery/export mechanisms |
+| Hermes runtime and state | Resolved per machine by `hermesLocation.ts` (D-016); the backend runs from `<hermesRoot>\venv\Scripts\hermes.exe` (D-018) | Hermes | Install/configure per machine unless Hermes provides supported sync | Yes | No raw multi-machine writers | Hermes-owned recovery/export mechanisms |
+| Hermes session token | `Papers/Data/hermes-backend-token` | Papers | **Machine-local. Never sync** | **Yes** | One Papers per machine | Regenerated on next launch; delete freely |
+| Resolved Hermes location | `Papers/Data/hermes-location.json` | Papers | **Machine-local. Never sync** — it names one machine's folders | No | No | Rewritten automatically on next successful resolution; delete freely |
+| Downloaded Papers updates | `Papers/Data/papers-updater` (electron-updater cache) | electron-updater | Machine-local cache | No | No | Re-downloaded from the GitHub release |
 
 ## Current Syncthing caution
 
-Syncthing ignore patterns are relative to the Syncthing root and its `.stignore` file is
-local to each device. On the primary machine, the observed active `hermes` command is
-under `Programs/Assistant/HermesAI/...`; older ignore rules aimed at
-`Programs/HermesAI/...` do not cover that active location. Correcting exclusions must be
-done deliberately on every trusted device after deciding which Hermes-owned information
-should survive and by what supported mechanism.
+The Papers master folder is outside Syncthing today, so nothing needs unwinding. **Keep it
+that way**: do not add `Papers/` to a synchronized folder, and in particular never sync
+`Papers/Data` (live SQLite state and the Hermes token) or `Papers/App` (a running binary
+that Windows locks). Papers is distributed by its updater instead.
 
-Do not open Papers or Hermes concurrently on a second synced machine until the live data
-paths have been separated or excluded there.
+Syncthing ignore patterns are relative to the Syncthing root and `.stignore` is local to
+each device, so an exclusion added on one machine does not protect another. Any future
+decision to bring part of `Papers/` into sync must be made deliberately on every trusted
+device, and must name what is included rather than relying on an ignore rule to exclude the
+dangerous parts.
+
+Earlier revisions of this section referenced a Hermes install under
+`Programs/Assistant/HermesAI/...`. That path is obsolete — Hermes has moved, and Papers no
+longer depends on any recorded path (D-016).
+
+Do not open Papers or Hermes concurrently against the same live data on two machines.

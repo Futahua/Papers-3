@@ -48,15 +48,17 @@ automatic.
 
 # Original findings (2026-07-27, before the above was built)
 
-Investigated 2026-07-27 against commit `67c4597` and the installed build at
-`D:\Letters\MatTroiSeConMoc\Papers\App`. This describes **Papers' own** updating.
+Investigated 2026-07-27 against commit `67c4597`. **Everything from here down describes the
+state before the updater above was built, and is kept only as the record of why.** For how
+updating works now, read the section above.
+
 Hermes updating is a separate, working mechanism documented in
 `HERMES_SKIN_INTEGRATION.md` and PROBLEMS.md 4.
 
-## The finding in one line
+## The finding in one line (as of `67c4597`)
 
-**Papers has no self-update mechanism of any kind.** Nothing is broken or
-half-wired; the capability was never built.
+**Papers had no self-update mechanism of any kind.** Nothing was broken or
+half-wired; the capability had never been built.
 
 ## What was checked
 

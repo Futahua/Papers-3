@@ -2,8 +2,13 @@
 
 ## Verified in the installed shell
 
-- Production can host the real Hermes Dashboard `/chat` surface.
+- Production runs one Hermes backend and shows the real Hermes Desktop docked or detached
+  (D-011). The earlier `/chat` embedding was removed, not retained.
 - Papers can open Hermes Desktop.
+- Papers locates Hermes on each machine at run time, with no per-machine settings (D-016),
+  and starts the backend from that install rather than PATH (D-018).
+- Settings reports which build is running, so two machines can be compared (D-017).
+- Papers finds, downloads and installs its own updates from its GitHub releases (D-019).
 - Backpack names persist.
 - Programs, Runs and Papers agent permissions can remain absent from production.
 - The packaged Electron shell can launch and pass its existing product E2E.

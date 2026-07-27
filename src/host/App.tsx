@@ -33,10 +33,10 @@ const VIEW_LABEL: Record<BasicView, string> = {
  * Papers production shell.
  *
  * Basic is the permanent control that reaches Backpacks, Tools and Settings.
- * Hermes is global — a sidebar embedding the existing Hermes Dashboard /chat,
- * plus a button that pops out the existing Hermes Desktop window. Nothing here
- * starts a Backpack conversation, changes Hermes's working directory, or
- * fabricates Backpack contents.
+ * Hermes is global — the real Hermes Desktop in two placements, docked beside
+ * Papers or detached, driven by the two symbol toggles in the top bar (D-011,
+ * D-015). Nothing here starts a Backpack conversation, changes Hermes's working
+ * directory, or fabricates Backpack contents.
  */
 export function App(): React.JSX.Element {
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });

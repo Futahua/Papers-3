@@ -5,9 +5,10 @@ contains Backpacks, Tools and Settings. Backpacks are named machine-wide environ
 or lenses, not project folders or boxed applications. Tools are reusable capabilities
 across the system.
 
-Hermes is global rather than Backpack-specific. Papers embeds the existing Hermes
-Dashboard `/chat` surface and can launch Hermes Desktop separately. Backpack activity
-does not change Hermes's working directory, conversation or context automatically.
+Hermes is global rather than Backpack-specific. Papers runs one Hermes backend and shows
+the real Hermes Desktop in two placements — docked beside Papers or as a detached window —
+using the two symbol toggles in the top bar (D-011, D-012). Backpack activity does not
+change Hermes's working directory, conversation or context automatically.
 
 The installed product is self-contained beneath one master folder: `Papers/App`
 contains the application and `Papers/Data` contains its persistent runtime state.
@@ -26,6 +27,8 @@ by adding speculative framework screens.
 
 - [Product definition](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Consequential decisions](docs/DECISIONS.md)
+- [How Papers updates itself](docs/UPDATING_PAPERS.md)
 - [Syncthing and evolving data](docs/SYNCTHING_AND_DATA.md)
 - [Hermes pickup instructions](HERMES.md)
 - [User guide](docs/USER_GUIDE.md)
@@ -40,6 +43,10 @@ npm run typecheck
 npm test
 npm run build
 ```
+
+Papers updates itself from its GitHub releases. To publish a new version, bump `version`
+in `package.json`, run `npm run release`, then publish the draft release GitHub creates —
+only after its uploads finish. See [How Papers updates itself](docs/UPDATING_PAPERS.md).
 
 Set `PAPERS_ENABLE_FIXTURES=1` only when exercising the historical program and ACP
 integration suites.

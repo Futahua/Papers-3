@@ -14,7 +14,9 @@ This is the pickup file for building Papers and its Backpacks. Hermes loads
 - Consequential decisions: `docs/DECISIONS.md` in the source repository
 - Syncthing and data policy: `docs/SYNCTHING_AND_DATA.md` in the source repository
 - Creator-reported problems, in priority order: `docs/PROBLEMS.md` in the source repository
-- Current Hermes batch handoff: `docs/HERMES_BATCH_HANDOFF.md` in the source repository
+- How Papers updates itself: `docs/UPDATING_PAPERS.md` in the source repository
+- Completed Hermes batch, kept as record: `docs/HERMES_BATCH_HANDOFF.md`. Its paths are
+  dead; do not follow them.
 
 If the source checkout is unavailable on a synced machine, obtain the canonical
 repository instead of editing packaged files under `App`. Inspect the active branch,
@@ -53,6 +55,11 @@ open pull request and recent commits before continuing existing work.
 6. Preserve unrelated creator data and changes. Make migrations reversible.
 7. Test the human-visible path, rebuild the installed product, launch it, and explain
    what the creator can now do. Publish source changes to the canonical repository.
+8. To put a change on the creator's machines, bump `version` in `package.json` and run
+   `npm run release`, then publish the draft release GitHub creates — only once its uploads
+   have finished, or installed copies see a release with no update feed and silently find
+   nothing. Both machines then offer the update themselves; never hand-copy a build over an
+   installed `App` folder. See `docs/UPDATING_PAPERS.md`.
 
 ## Data and Syncthing rule
 

@@ -30,6 +30,19 @@ Tools is a permanent global destination. Tools will represent reusable capabilit
 as programs, shortcuts, scripts, automation, locations and utilities. Its exact behavior
 has not yet been decided, so the first honest screen may contain no configured Tools.
 
+## Settings
+
+Settings opens with two cards.
+
+**Updates** — Papers looks for a newer version shortly after it opens and downloads it in
+the background. When one is ready it offers **Restart and update**. Papers never restarts
+on its own, because it may be running Hermes at the time.
+
+**This build** — which version of Papers this is, including the exact code it was built
+from, the computer's name and the folders it uses. To check whether two computers are
+running the same Papers, compare the middle part of the top line. **Copy build details**
+puts all of it on the clipboard.
+
 ## Engineering fixtures
 
 Repository Research, Visual Dashboard, Kill Test, ACP and Agent Runs are not product
