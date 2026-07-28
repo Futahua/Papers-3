@@ -1,5 +1,43 @@
 # Hermes phone connector ("Run on Computer" PC side)
 
+> **After moving the Hermes home, restart every long-lived process.** A process
+> inherits its environment at launch and keeps that snapshot for life, so anything
+> started before the move keeps handing the old `HERMES_HOME` to its children —
+> invisibly, since nothing appears in its command line. On 2026-07-28 this made the
+> connector rebuild a whole directory tree under the abandoned path and mint a
+> second device identity there (breaking phone pairing), while a Hermes Desktop
+> from before the move read an empty `state.db` at the dead path and showed a blank,
+> flashing session list. The connector now resolves its home from the registry and
+> rejects any candidate lacking `config.yaml`, but that only helps at start-up. See
+> D-020.
+
+## Diagnosing a broken pairing
+
+`CryptoError: An error occurred trying to decrypt the message` means the two sides
+hold mismatched keys. Before changing anything, know which signals are worthless:
+
+| Signal | Proves |
+| --- | --- |
+| Phone shows the PC green | The port is reachable. Nothing about decryption. |
+| `op=pair … ok: True` | Only that the frame arrived — see `_op_pair`, which returns ok and **writes nothing** when did+pubkey already match. |
+| `op=push` / `op=ack` in the log | A frame arrived. Not that its payload decrypted. |
+| **A new task appears** | **The only sound proof.** Check `/api/status` or `queue.db`. |
+
+If re-pairing reports success but `peers.json` keeps its old mtime, the phone is
+presenting an identity the broker already trusts, so pairing is a no-op. Deleting the
+`peers.json` entry does not help — the phone re-registers the same one. The cure is to
+force a **new** device identity on the phone (`adb shell pm clear <package>`), which
+falls through to the real pairing path.
+
+Two costs of `pm clear`, both hit on 2026-07-28:
+
+1. It also deletes the app's unpacked Linux runtime (`files/usr/bin/bash`, python3,
+   `hermes-webui/`). Neither relaunch nor `adb install -r` rebuilds it; recovery took a
+   full uninstall, fresh install, then opening the Desktop surface once to bootstrap.
+2. **Update the phone app first.** Before apers-android rev 68 (`f955c34`) a fresh
+   install dead-ended at "Computer not linked" with no way to add one, so wiping an
+   older build strands it with no route back to pairing.
+
 Lets the Apers Android app find this PC and run tasks on the creator's existing
 Hermes — no terminal, QR scanning, or pairing codes. Local Wi-Fi is used when
 available; Tailscale carries the same encrypted pairing over mobile data.

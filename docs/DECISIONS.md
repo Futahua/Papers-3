@@ -154,6 +154,31 @@ section name ("Backpacks"/"Tools"/"Settings"). Panes start their content near th
 Backpacks pane drops its heading, description and the horizontal divider entirely (the pill
 already labels the section); other panes keep a single heading with no divider.
 
+## D-020 — Resolving paths at run time does not reach processes already running (2026-07-28)
+
+D-016 and D-018 removed recorded paths from Papers, and `b7d2787` removed the last one from
+the companion connector. All three fix what a process resolves **when it starts**. None of
+them reach a process that is **already running**.
+
+A process inherits its environment at launch and keeps that snapshot for life. After Hermes
+was relocated, every long-lived process started beforehand went on handing the old
+`HERMES_HOME` to its children, and nothing in its command line revealed it. Two consequences
+were observed:
+
+- The connector rebuilt a whole directory tree under the abandoned path and minted a second
+  device identity there, breaking the phone pairing. Fixed at the source in `b7d2787`.
+- Hermes Desktop, running since before the move, read the phantom's empty 180 KB `state.db`
+  while the real 5.1 MB one sat untouched — presenting as an empty, flashing session list
+  with no error anywhere.
+
+Decision: relocating a Hermes home is not complete until every process that predates the
+move has been restarted. Code-level resolution is necessary but not sufficient, and this
+step belongs in any relocation procedure rather than being rediscovered from symptoms.
+
+The general form, now seen three times: **a path captured at any moment — build time,
+process start, or first write — is wrong as soon as the thing it names moves.** Resolution
+must happen at the point of use, and anything holding an older resolution must be restarted.
+
 ## D-019 — Papers updates itself from its public GitHub releases (2026-07-27)
 
 Updating Papers meant building on one machine and hand-copying a folder to the other, and

@@ -498,7 +498,26 @@ class MeshBroker:
     def _op_pair(self, conn, cdid: str, cpk: bytes):
         """Add the phone's public key to trust (reverse pairing). Already paired → idempotent pass-through
         (re-scanning the handoff QR shouldn't fail just because the pairing window expired); if unpaired,
-        it must be within the time-limited window, rejected outside it."""
+        it must be within the time-limited window, rejected outside it.
+
+        WHEN RE-PAIRING APPEARS TO DO NOTHING, THIS IS WHY. The idempotent branch
+        matches on device id AND public key, so a phone presenting an unchanged
+        pair of both is told ``ok: True`` and NOTHING IS WRITTEN — peers.json keeps
+        its old mtime. That is correct here (there is nothing to change), but it
+        makes a real fault indistinguishable from success: if the phone's message
+        crypto has diverged for any other reason, every re-pair reports ok while
+        the session stays broken, and deleting the peers.json entry does not help
+        because the phone simply re-registers the same identity.
+
+        Observed 2026-07-28: three re-pairs in a row returned ok, wrote nothing,
+        and left a continuous CryptoError stream. The cure was to force a NEW
+        device identity on the phone (clearing its app data), which fell through
+        to the real pairing path below and wrote a fresh entry.
+
+        Diagnosing pairing: do not trust ``ok: True``, a reachable port, or an
+        ``op=push`` frame in the log — none of them prove a payload decrypted.
+        The only sound check is whether a NEW TASK APPEARS.
+        """
         if self.peers.is_paired(cdid, cpk):
             hs._send_frame(conn, json.dumps({"ok": True, "did": self.identity.device_id}).encode())
             return
