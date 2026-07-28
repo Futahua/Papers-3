@@ -6,7 +6,9 @@
 #   1. venv at   %USERPROFILE%\.hermes\mesh\venv   (created from the hermes-agent venv python)
 #   2. code at   %USERPROFILE%\.hermes\mesh\companion\   (copied from this folder)
 #   3. startup   "Hermes Connector.lnk" in the user's shell:startup folder
-#      (pythonw, silent, logs to %USERPROFILE%\.hermes\mesh\connector.log)
+#      (pythonw, silent). The venv and code live under %USERPROFILE%\.hermes\mesh,
+#      but the connector LOGS under the Hermes home it resolves at run time —
+#      <HERMES_HOME>\mesh\connector.log — which is often somewhere else entirely.
 #   4. firewall  inbound allow rules for the venv python (TCP 51379, UDP 48856),
 #      private profile only — skipped without admin (Windows will prompt once instead).
 #   5. starts the connector now.
@@ -111,4 +113,16 @@ try {
 Write-Host '==> starting connector now'
 Start-Process -FilePath $venvPyW -ArgumentList ('"' + (Join-Path $codeDir 'apers_connector.py') + '"') -WorkingDirectory $codeDir
 Start-Sleep -Seconds 3
-Get-Content (Join-Path $meshDir 'connector.log') -Tail 8
+
+# The connector logs under the home IT resolves, which is not necessarily
+# %USERPROFILE%\.hermes — the venv and code live there, but the log follows the
+# real Hermes home. Reading $meshDir here ended a perfectly successful install
+# with a red PathNotFound, the last place the old assumption survived.
+$connectorLog = Join-Path $hermesHome 'mesh\connector.log'
+if (-not (Test-Path $connectorLog)) { $connectorLog = Join-Path $meshDir 'connector.log' }
+if (Test-Path $connectorLog) {
+    Write-Host "==> connector log: $connectorLog"
+    Get-Content $connectorLog -Tail 8
+} else {
+    Write-Host "==> connector started; no log yet at $connectorLog (give it a moment, then check that path)"
+}
