@@ -6,8 +6,8 @@ import { host, type BackpacksList } from './bridge';
  * Backpacks — a name-only list of machine-wide environments.
  *
  * Creating a Backpack asks for a name and nothing else: no folder, cover,
- * canvas, Tool or conversation. Entering is handled by the shell, which shows
- * the honest empty-Backpack warning until a real content contract exists.
+ * canvas, Tool or conversation. Entering is handled by the shell; contents are
+ * added explicitly inside the Backpack.
  */
 export function BackpacksPane(props: {
   list: BackpacksList;

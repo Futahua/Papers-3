@@ -1,11 +1,12 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, Menu, Notification, WebContentsView, app, session } from 'electron';
+import { BaseWindow, Menu, Notification, WebContentsView, app, session, shell } from 'electron';
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
+import { BackpackButtonStore } from './backpacks/backpackButtonStore';
 import { CanvasRuntime, defaultProgramsRoot } from './canvas/canvasRuntime';
 import { CanvasSessionState } from './canvas/canvasState';
 import { loadProgramCatalog, type ProgramCatalog } from './canvas/programLoader';
@@ -97,6 +98,12 @@ async function bootstrap(): Promise<void> {
 
   const registry = new BackpackRegistry(baseDir);
   const registryReport = await registry.initialize();
+  const sharedDir = process.env['PAPERS_TEST_USER_DATA'] || !app.isPackaged
+    ? path.join(baseDir, 'Shared')
+    : path.resolve(baseDir, '..', 'Shared');
+  const buttonStore = new BackpackButtonStore({ dataDir: baseDir, sharedDir }, (target) =>
+    shell.openPath(target),
+  );
 
   const permissionStore = new PermissionStore(paths);
   await permissionStore.initialize();
@@ -245,6 +252,7 @@ async function bootstrap(): Promise<void> {
     hostContents: () => hostView?.webContents ?? null,
     updater,
     registry,
+    buttonStore,
     runtime,
     canvasState,
     catalog: () => catalog,

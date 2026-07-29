@@ -23,6 +23,11 @@ export interface HostFacade {
   enterBackpack(id: string): Promise<unknown>;
   leaveBackpack(): Promise<void>;
   lastActiveBackpackId(): string | null;
+  listBackpackButtons(backpackId: string): Promise<unknown>;
+  createBackpackButton(backpackId: string, label: string, target: string): Promise<unknown>;
+  removeBackpackButton(backpackId: string, buttonId: string): Promise<void>;
+  launchBackpackButton(backpackId: string, buttonId: string): Promise<void>;
+  pickBackpackButtonTarget(kind: 'file' | 'folder'): Promise<string | null>;
 
   programCatalog(): unknown;
   startProgram(programId: string): Promise<void>;
@@ -72,6 +77,8 @@ const boundsSchema = z
 const colorSchema = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
 
 const idSchema = z.string().min(1).max(128);
+const buttonLabelSchema = z.string().trim().min(1).max(120);
+const targetPathSchema = z.string().min(1).max(32_767);
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
 
 export function registerHostIpc(facade: HostFacade): void {
@@ -109,6 +116,25 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpacks:enter', (_e, id) => facade.enterBackpack(idSchema.parse(id)));
   handle('host:backpacks:leave', () => facade.leaveBackpack());
   handle('host:backpacks:last-active', () => facade.lastActiveBackpackId());
+  handle('host:backpacks:buttons:list', (_e, backpackId) =>
+    facade.listBackpackButtons(idSchema.parse(backpackId)),
+  );
+  handle('host:backpacks:buttons:create', (_e, backpackId, label, target) =>
+    facade.createBackpackButton(
+      idSchema.parse(backpackId),
+      buttonLabelSchema.parse(label),
+      targetPathSchema.parse(target),
+    ),
+  );
+  handle('host:backpacks:buttons:remove', (_e, backpackId, buttonId) =>
+    facade.removeBackpackButton(idSchema.parse(backpackId), idSchema.parse(buttonId)),
+  );
+  handle('host:backpacks:buttons:launch', (_e, backpackId, buttonId) =>
+    facade.launchBackpackButton(idSchema.parse(backpackId), idSchema.parse(buttonId)),
+  );
+  handle('host:backpacks:buttons:pick-target', (_e, kind) =>
+    facade.pickBackpackButtonTarget(z.enum(['file', 'folder']).parse(kind)),
+  );
 
   handle('host:programs:catalog', () => facade.programCatalog());
   handle('host:programs:start', (_e, programId) => facade.startProgram(idSchema.parse(programId)));

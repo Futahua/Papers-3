@@ -22,12 +22,17 @@ correctly, not stalled.
 
 Click `Add Backpack` and give it a name. Nothing else is created automatically.
 
-Until real contents have been made for it, clicking `Enter` shows:
+Click `Enter` to open it. An empty Backpack says:
 
-> Nothing here yet. Create something under “Backpack name”.
+> Nothing here yet.
 
-A future Backpack may reach across the whole machine and contain several ways of working.
-It is not a project folder or a single page.
+Choose `Add button`, give the button a name, then choose or type the path to an existing
+Windows shortcut, script, application, file or folder. Clicking the saved button asks
+Windows to open or run that target. Removing a button removes only the Papers association;
+it never deletes the target.
+
+A Backpack may reach across the whole machine and contain several ways of working. Launch
+buttons are its first content type, not a rule that every Backpack is only a launcher.
 
 ## Tools
 

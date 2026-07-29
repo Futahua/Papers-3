@@ -16,7 +16,11 @@
 - Hermes remains global and is never given Backpack-derived working context.
 - `Add Backpack` asks only for a name.
 - New Backpacks create no folder, cover, canvas, conversation or fake contents.
-- `Enter` on an empty Backpack shows the exact required warning.
+- `Enter` opens the Backpack; an empty one says `Nothing here yet.` and offers `Add button`.
+- A creator can name a button, choose or type an existing Windows shortcut, script,
+  application, file or folder, and launch it from the Backpack.
+- Button definitions persist under `Shared/backpacks/<id>/buttons.json`; automated product
+  E2E proves a real `.cmd` target executes, not merely that a tile renders.
 - Tools is a global destination with an honest state and no invented Tool contract.
 - The `(machine wide complex capability)` placeholder and simulated entered environment
   are absent from the shipped experience.
@@ -29,10 +33,10 @@
 
 ## Human acceptance
 
-The creator can verify the present promise by clicking through Basic, creating a named
-Backpack, observing the exact empty warning, opening global Tools, opening Hermes before
-and after Backpack interaction, restarting Papers and confirming the name remains. No
-source-code review is required.
+The creator can verify the present promise by entering a Backpack, adding a named button
+for an existing shortcut or script, clicking it and seeing the real target open or run.
+Returning to Papers and reopening the Backpack must preserve the button. Hermes remains
+global before and after this interaction. No source-code review is required.
 
 Future usefulness is accepted through real Backpack use, not by accumulating speculative
 framework screens or declaring undecided behavior complete.

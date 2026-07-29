@@ -4,10 +4,11 @@
  * the HostFacade IPC contract.
  */
 import { randomUUID } from 'node:crypto';
-import { shell, type WebContents } from 'electron';
+import { dialog, shell, type WebContents } from 'electron';
 
 import type {
   AgentRunSnapshot,
+  BackpackButton,
   BackpackSummary,
   PendingPermissionPrompt,
   PermissionDecision,
@@ -19,6 +20,7 @@ import type {
 import { buildIdentity } from './buildIdentity';
 import type { PapersUpdater } from './papersUpdater';
 import type { BackpackRegistry } from './backpacks/backpackRegistry';
+import type { BackpackButtonStore } from './backpacks/backpackButtonStore';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
 import type { ProgramCatalog } from './canvas/programLoader';
@@ -40,6 +42,7 @@ export interface FacadeDeps {
   hostContents: () => WebContents | null;
   updater: PapersUpdater;
   registry: BackpackRegistry;
+  buttonStore: BackpackButtonStore;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
@@ -167,6 +170,45 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   lastActiveBackpackId(): string | null {
     return this.deps.registry.lastActiveBackpackId;
+  }
+
+  async listBackpackButtons(backpackId: string): Promise<BackpackButton[]> {
+    this.requireUsableBackpack(backpackId);
+    return this.deps.buttonStore.list(backpackId);
+  }
+
+  async createBackpackButton(
+    backpackId: string,
+    label: string,
+    target: string,
+  ): Promise<BackpackButton> {
+    this.requireUsableBackpack(backpackId);
+    return this.deps.buttonStore.create(backpackId, label, target);
+  }
+
+  async removeBackpackButton(backpackId: string, buttonId: string): Promise<void> {
+    this.requireUsableBackpack(backpackId);
+    await this.deps.buttonStore.remove(backpackId, buttonId);
+  }
+
+  async launchBackpackButton(backpackId: string, buttonId: string): Promise<void> {
+    this.requireUsableBackpack(backpackId);
+    await this.deps.buttonStore.launch(backpackId, buttonId);
+  }
+
+  async pickBackpackButtonTarget(kind: 'file' | 'folder'): Promise<string | null> {
+    const result = await dialog.showOpenDialog({
+      title: kind === 'file' ? 'Choose a shortcut, script, app, or file' : 'Choose a folder',
+      properties: [kind === 'file' ? 'openFile' : 'openDirectory'],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  }
+
+  private requireUsableBackpack(id: string): BackpackSummary {
+    const backpack = this.deps.registry.find(id);
+    if (!backpack) throw new Error(`Backpack ${id} not found`);
+    if (backpack.archived) throw new Error('Cannot change an archived Backpack');
+    return backpack;
   }
 
   // -------------------------------------------------------------- programs

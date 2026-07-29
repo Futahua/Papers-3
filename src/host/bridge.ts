@@ -3,6 +3,7 @@
  */
 import type {
   AgentRunSnapshot,
+  BackpackButton,
   BackpackSummary,
   HermesHealth,
   PendingPermissionPrompt,
@@ -103,6 +104,11 @@ interface HostBridge {
     enter(id: string): Promise<{ backpack: BackpackSummary }>;
     leave(): Promise<void>;
     lastActive(): Promise<string | null>;
+    listButtons(backpackId: string): Promise<BackpackButton[]>;
+    createButton(backpackId: string, label: string, target: string): Promise<BackpackButton>;
+    removeButton(backpackId: string, buttonId: string): Promise<void>;
+    launchButton(backpackId: string, buttonId: string): Promise<void>;
+    pickButtonTarget(kind: 'file' | 'folder'): Promise<string | null>;
   };
   programs: {
     catalog(): Promise<CatalogInfo>;

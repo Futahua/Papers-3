@@ -4,7 +4,7 @@ import { host, type BackpacksList, type HermesSurfaceStatus, type HostErrorPaylo
 import { BackpacksPane } from './BackpacksPane';
 import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
-import { EmptyBackpackWarning } from './EmptyBackpackWarning';
+import { BackpackWorkspace } from './BackpackWorkspace';
 import { HermesControls } from './HermesControls';
 
 /** Papers content-relative docked-Hermes rectangle. Must match the main
@@ -123,6 +123,33 @@ export function App(): React.JSX.Element {
     setBasicOpen(false);
   };
 
+  const enterBackpack = (id: string): void => {
+    void host()
+      .backpacks.enter(id)
+      .then(() => setEntered(id))
+      .catch((err) =>
+        setHostErrors((prev) => [
+          ...prev,
+          {
+            component: 'Backpack',
+            what: 'The Backpack could not be opened.',
+            known: String(err instanceof Error ? err.message : err),
+            intact: 'Its saved contents were not changed.',
+            retryUseful: true,
+            inspect: 'Open the Backpack again after checking its target files.',
+            recover: 'Retry, or return to the Backpacks list.',
+          },
+        ]),
+      );
+  };
+
+  const leaveBackpack = (): void => {
+    void host()
+      .backpacks.leave()
+      .catch(() => undefined)
+      .finally(() => setEntered(null));
+  };
+
   const hermesBusy = hermes.status === 'starting';
 
   return (
@@ -199,13 +226,13 @@ export function App(): React.JSX.Element {
       </header>
 
       {view === 'backpacks' && (
-        <BackpacksPane list={backpacks} onChanged={refreshBackpacks} onEnter={(id) => setEntered(id)} />
+        <BackpacksPane list={backpacks} onChanged={refreshBackpacks} onEnter={enterBackpack} />
       )}
       {view === 'tools' && <ToolsPane />}
       {view === 'settings' && <SettingsPane />}
 
       {enteredBackpack && (
-        <EmptyBackpackWarning backpackName={enteredBackpack.name} onDismiss={() => setEntered(null)} />
+        <BackpackWorkspace backpack={enteredBackpack} onDismiss={leaveBackpack} />
       )}
 
       {hermes.status === 'error' && hermes.detail && (
