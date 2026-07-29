@@ -26,10 +26,9 @@ eventually span multiple pages, views, features, programs, files and Tools. Back
 overlap and use the same real information.
 
 A Backpack is not a folder, project, canvas, sealed application, data silo, conversation
-or PowerToys scene. Creating one reserves its name only. Entering an empty one truthfully
-displays `Nothing here yet.` and offers the first real content: creator-named buttons that
-launch existing Windows shortcuts, scripts, applications, files or folders. A button is an
-association with that existing target; Papers does not copy, own or recreate it.
+or PowerToys scene. Creating one currently reserves its name only. Entering an empty one
+truthfully displays `Nothing here yet. Create something under “name”.` and returns to the
+shell when dismissed.
 
 ## Tool
 
@@ -44,8 +43,7 @@ the permanent Tools destination without pretending its internals have been decid
 
 - Basic remains reachable and contains Backpacks, Tools and Settings.
 - Backpack creation asks only for a name and creates no folder, cover, canvas, Tool,
-  conversation or invented contents. Contents are added explicitly after entering it.
-- A Backpack may contain creator-named launch buttons for existing Windows targets.
+  conversation or invented contents.
 - Backpacks may eventually span applications, windows, files, pages and shared Tools.
 - Hermes remains one existing global product with its own interface and capabilities.
 - Production contains no Programs, Agent Runs, invocation-validation workflow or seeded
@@ -55,7 +53,7 @@ the permanent Tools destination without pretending its internals have been decid
 
 ## Deliberately open
 
-The exact Tool lifecycle, the Data Source contract, PowerToys integration and Backpack
-contents beyond launch buttons will be decided through real creator use. They are product
-questions, not permission to silently impose a familiar folder, canvas, plug-in or project
-abstraction.
+The first useful Backpack contents, the exact Tool lifecycle, the Data Source contract,
+PowerToys integration and the behavior of entering a non-empty Backpack will be decided
+through real creator use. They are product questions, not permission to silently impose
+a familiar folder, canvas, plug-in or project abstraction.

@@ -26,14 +26,12 @@ attachments, models, settings, history and tools.
 
 ## Backpack boundary
 
-Papers persists Backpack identity separately from its contents. New Backpacks contain only
-a name. Entering one opens its environment and, when empty, says so plainly while offering
-to add a launch button. Button definitions live as human-readable JSON under
-`Shared/backpacks/<id>/buttons.json`; clicking one asks Windows to open the already-existing
-shortcut, script, application, file or folder.
+Papers currently persists Backpack identity and whether real contents exist. New
+Backpacks contain only a name. `Enter` checks for genuine contents; when none exist it
+shows the required warning rather than creating a fake environment.
 
-Launch buttons are one real content type, not the entire Backpack contract. No folder,
-canvas, scene or program runtime may become that contract by implementation accident.
+The future contents contract is intentionally absent. No folder, canvas, scene or program
+runtime may become that contract by implementation accident.
 
 ## Tool boundary
 

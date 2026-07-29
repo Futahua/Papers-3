@@ -41,15 +41,6 @@ const api = {
     enter: (id: string) => ipcRenderer.invoke('host:backpacks:enter', id),
     leave: () => ipcRenderer.invoke('host:backpacks:leave'),
     lastActive: () => ipcRenderer.invoke('host:backpacks:last-active'),
-    listButtons: (backpackId: string) => ipcRenderer.invoke('host:backpacks:buttons:list', backpackId),
-    createButton: (backpackId: string, label: string, target: string) =>
-      ipcRenderer.invoke('host:backpacks:buttons:create', backpackId, label, target),
-    removeButton: (backpackId: string, buttonId: string) =>
-      ipcRenderer.invoke('host:backpacks:buttons:remove', backpackId, buttonId),
-    launchButton: (backpackId: string, buttonId: string) =>
-      ipcRenderer.invoke('host:backpacks:buttons:launch', backpackId, buttonId),
-    pickButtonTarget: (kind: 'file' | 'folder') =>
-      ipcRenderer.invoke('host:backpacks:buttons:pick-target', kind),
   },
 
   programs: {

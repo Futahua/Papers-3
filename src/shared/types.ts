@@ -33,20 +33,6 @@ export interface BackpackRegistryState {
   lastActiveBackpackId: string | null;
 }
 
-/** A creator-authored button that delegates launching to Windows. */
-export interface BackpackButton {
-  id: string;
-  label: string;
-  /** Absolute file, folder, shortcut, executable, or script path. */
-  target: string;
-  createdAt: string;
-}
-
-export interface BackpackButtonsState {
-  schemaVersion: 1;
-  buttons: BackpackButton[];
-}
-
 // ---------------------------------------------------------------------------
 // Programs
 // ---------------------------------------------------------------------------

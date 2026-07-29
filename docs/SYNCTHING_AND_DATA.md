@@ -63,8 +63,9 @@ Papers/
 the primary machine (verified 2026-07-27) and is not created by anything; the migration it
 referred to is long finished.
 
-`Shared` now contains the first genuinely durable creator data: Backpack launch-button
-definitions. It remains deliberately small rather than becoming a speculative data platform.
+`Shared` is a reserved direction, not a requirement to build an empty framework now.
+The first feature that produces genuinely durable creator data should establish its
+smallest useful contents and migration from any earlier location.
 
 ## Data inventory
 
@@ -75,7 +76,6 @@ Update this table whenever a real feature creates persistent data.
 | Packaged Papers application | `Papers/App` | Papers release | Copyable fixed version | No | Do not replace while running | Reinstall/rebuild |
 | Electron runtime profile | `Papers/Data` | Electron/Papers host | Machine-local direction | May contain web state | No | Recreated; preserve unknown files during migration |
 | Backpack registry and records | `Papers/Data/PapersData` when created | Papers | Undecided until first useful Backpack contents | No by design | Current JSON store is not conflict-mergeable | Atomic backups and recovery directory |
-| Backpack launch buttons | `Papers/Shared/backpacks/<id>/buttons.json` | Creator | Durable and syncable definition; absolute Windows target may be machine-specific | No | One writer at a time; JSON is not conflict-mergeable | Adjacent `.backup`; corrupt main quarantined under `Data/PapersData/recovery/<id>` |
 | Migration material | `Papers/Migration Backup` | Creator | Archive; no runtime dependency | Possibly | No | Original moved material |
 | Hermes runtime and state | Resolved per machine by `hermesLocation.ts` (D-016); the backend runs from `<hermesRoot>\venv\Scripts\hermes.exe` (D-018) | Hermes | Install/configure per machine unless Hermes provides supported sync | Yes | No raw multi-machine writers | Hermes-owned recovery/export mechanisms |
 | Hermes session token | `Papers/Data/hermes-backend-token` | Papers | **Machine-local. Never sync** | **Yes** | One Papers per machine | Regenerated on next launch; delete freely |

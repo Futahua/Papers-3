@@ -1,22 +1,5 @@
 # Papers — consequential decisions
 
-## D-021 — The first Backpack content is a Windows launch button (2026-07-29)
-
-The creator defined the first Backpack, “As you Go,” as something built incrementally and
-asked first for buttons that act as shortcuts to scripts and other existing machine targets.
-
-Decision: entering a Backpack opens a restrained Backpack surface. It may contain
-creator-named launch buttons whose targets are existing Windows shortcuts, scripts,
-applications, files or folders. Papers stores only the association and delegates opening to
-Windows; it does not copy the target, invent a program runtime or turn the Backpack into a
-folder. Empty Backpacks still say `Nothing here yet.` and offer `Add button`.
-
-Button definitions are durable creator-authored data in
-`Shared/backpacks/<backpack-id>/buttons.json`. Absolute targets are necessarily
-machine-specific: another machine may receive the definition but must have the same target
-path before the button can work. Corrupt definitions are preserved through the existing
-atomic backup/recovery path. This is one content type, not a final Backpack or Tool contract.
-
 ## D-001 — Existing products are the product boundary (2026-07-21)
 
 The creator explicitly rejected Papers-owned agent validation workflows, modular agent

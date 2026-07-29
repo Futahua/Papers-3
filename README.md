@@ -11,8 +11,7 @@ using the two symbol toggles in the top bar (D-011, D-012). Backpack activity do
 change Hermes's working directory, conversation or context automatically.
 
 The installed product is self-contained beneath one master folder: `Papers/App`
-contains the application, `Papers/Data` contains its machine-local runtime state, and
-`Papers/Shared` contains durable creator-authored Backpack button definitions.
+contains the application and `Papers/Data` contains its persistent runtime state.
 The master folder also contains `HERMES.md`, the native Hermes pickup instruction for
 building Backpacks without making Hermes Backpack-scoped.
 
@@ -21,10 +20,10 @@ only as opt-in integration fixtures. They are not visible in the production app.
 
 ## Current status
 
-The installed shell provides Basic, name-only Backpack creation, Backpack buttons that
-launch existing Windows targets, a global Tools destination and the existing global Hermes
-interface. Further contents will be shaped by real Backpack use rather than speculative
-framework screens.
+The installed shell provides Basic, name-only Backpack creation, the honest empty
+Backpack warning, a global Tools destination and the existing global Hermes interface.
+The next useful features will be shaped by the creator's first real Backpack rather than
+by adding speculative framework screens.
 
 - [Product definition](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)

@@ -4,20 +4,13 @@
  * the creator sees in the shipped product.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { promises as fs } from 'node:fs';
-import * as path from 'node:path';
 
 import { clickScript, evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
 
 let launched: LaunchedApp;
-let launchScript: string;
-let launchMarker: string;
 
 beforeAll(async () => {
   launched = await launchPapers(undefined, { fixtures: false });
-  launchScript = path.join(launched.userDataDir, 'backpack-button.cmd');
-  launchMarker = path.join(launched.userDataDir, 'backpack-button-launched.txt');
-  await fs.writeFile(launchScript, `@echo launched>"${launchMarker}"\r\n`, 'utf8');
 }, 120_000);
 
 afterAll(async () => {
@@ -95,56 +88,23 @@ describe('production Papers shell', () => {
       ),
     ).toBe(true);
 
-    // Enter the empty Backpack. It stays honest, but now offers the first real
-    // content: creator-authored buttons that delegate to Windows.
+    // Enter the empty Backpack → the exact honest warning, quoting the name.
     await evalInHost(app, clickScript('.backpack-card button', 'Enter'));
     await waitFor(
       () =>
         evalInHost<boolean>(
           app,
-          `document.querySelector('.backpack-workspace h1')?.textContent === 'Visual Writing' &&
-           document.querySelector('.buttons-empty')?.textContent?.includes('Nothing here yet.') === true`,
+          `document.querySelector('.warning-message')?.textContent?.trim() === 'Nothing here yet. Create something under \\u201cVisual Writing\\u201d.'`,
         ),
       10_000,
-      'empty Backpack workspace',
+      'exact empty-Backpack warning',
     );
-
-    // Add a real Windows script target with a creator-facing name.
-    await evalInHost(app, clickScript('.buttons-empty button', 'Add button'));
-    await evalInHost(app, setInput('.button-editor input[name="label"]', 'Launch proof'));
-    await evalInHost(app, setInput('.button-editor input[name="target"]', launchScript));
-    await evalInHost(app, clickScript('.button-editor button', 'Save button'));
+    // Dismiss returns to the shell (warning gone, Backpacks list intact).
+    await evalInHost(app, clickScript('.warning-card button', 'Back to Papers'));
     await waitFor(
-      () =>
-        evalInHost<boolean>(
-          app,
-          `document.querySelector('.launch-button .label')?.textContent === 'Launch proof' &&
-           document.querySelector('.buttons-empty') === null`,
-        ),
+      () => evalInHost<boolean>(app, `document.querySelector('.warning-scrim') === null && document.querySelectorAll('.backpack-card').length === 1`),
       10_000,
-      'created launch button',
-    );
-
-    // Clicking the button delegates to Windows; the script proves it really ran.
-    await evalInHost(app, clickScript('.launch-button', 'Launch proof'));
-    await waitFor(
-      async () => {
-        try {
-          return (await fs.readFile(launchMarker, 'utf8')).trim() === 'launched';
-        } catch {
-          return false;
-        }
-      },
-      10_000,
-      'Backpack button target to launch',
-    );
-
-    // Leaving returns to the permanent Papers shell.
-    await evalInHost(app, clickScript('.backpack-workspace button', 'Back to Papers'));
-    await waitFor(
-      () => evalInHost<boolean>(app, `document.querySelector('.backpack-workspace') === null && document.querySelectorAll('.backpack-card').length === 1`),
-      10_000,
-      'Backpack workspace dismissed',
+      'warning dismissed',
     );
 
     // Tools is a real permanent destination with an honest empty state.
