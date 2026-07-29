@@ -159,4 +159,124 @@ describe('production Papers shell', () => {
       ),
     ).toBe(true);
   }, 240_000);
+
+  it('deletes an archived Backpack only after confirming that exact name', async () => {
+    const { app } = launched;
+    const backpackName = 'Temporary deletion check';
+    const card = `(name) => [...document.querySelectorAll('.backpack-card')].find((item) =>
+      item.querySelector('.name')?.textContent?.trim() === name
+    )`;
+
+    await evalInHost(app, setInput('.create-row input', backpackName));
+    await evalInHost(app, clickScript('.create-row button', 'Add Backpack'));
+    await waitFor(
+      () => evalInHost<boolean>(app, `Boolean((${card})(${JSON.stringify(backpackName)}))`),
+      10_000,
+      'temporary Backpack card',
+    );
+
+    // Active Backpacks may be entered, renamed, or archived, but never deleted.
+    expect(
+      await evalInHost<boolean>(
+        app,
+        `(() => {
+          const item = (${card})(${JSON.stringify(backpackName)});
+          return ![...item.querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Delete');
+        })()`,
+      ),
+    ).toBe(true);
+
+    await evalInHost(
+      app,
+      `(() => [...(${card})(${JSON.stringify(backpackName)}).querySelectorAll('button')]
+        .find((button) => button.textContent?.trim() === 'Archive')?.click())()`,
+    );
+    await waitFor(
+      () =>
+        evalInHost<boolean>(
+          app,
+          `[...document.querySelectorAll('.pane-footer button')].some((button) => button.textContent?.trim() === 'Show archived')`,
+        ),
+      10_000,
+      'archived Backpack control',
+    );
+    await evalInHost(app, clickScript('.pane-footer button', 'Show archived'));
+    await waitFor(
+      () =>
+        evalInHost<boolean>(
+          app,
+          `(() => {
+            const item = (${card})(${JSON.stringify(backpackName)});
+            return Boolean(item) && [...item.querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Delete');
+          })()`,
+        ),
+      10_000,
+      'Delete action for archived Backpack',
+    );
+
+    const clickCardAction = (label: string): string =>
+      `(() => [...(${card})(${JSON.stringify(backpackName)}).querySelectorAll('button')]
+        .find((button) => button.textContent?.trim() === ${JSON.stringify(label)})?.click())()`;
+    await evalInHost(app, clickCardAction('Delete'));
+    await waitFor(
+      () =>
+        evalInHost<boolean>(
+          app,
+          `(${card})(${JSON.stringify(backpackName)})?.textContent?.includes('Delete “${backpackName}”?') ?? false`,
+        ),
+      10_000,
+      'named deletion confirmation',
+    );
+    // Restoring dismisses the confirmation; an active card must never retain
+    // a destructive action from its archived state.
+    await evalInHost(app, clickCardAction('Restore'));
+    await waitFor(
+      () =>
+        evalInHost<boolean>(
+          app,
+          `(() => {
+            const item = (${card})(${JSON.stringify(backpackName)});
+            return Boolean(item) && !item.textContent?.includes('Delete Backpack') &&
+              ![...item.querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Delete');
+          })()`,
+        ),
+      10_000,
+      'restored Backpack without stale deletion controls',
+    );
+    await evalInHost(app, clickCardAction('Archive'));
+    await waitFor(
+      () =>
+        evalInHost<boolean>(
+          app,
+          `[...(${card})(${JSON.stringify(backpackName)}).querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Delete')`,
+        ),
+      10_000,
+      're-archived Backpack delete action',
+    );
+    await evalInHost(app, clickCardAction('Delete'));
+    await evalInHost(app, clickCardAction('Cancel'));
+    expect(await evalInHost<boolean>(app, `Boolean((${card})(${JSON.stringify(backpackName)}))`)).toBe(true);
+
+    await evalInHost(app, clickCardAction('Delete'));
+    await evalInHost(app, clickCardAction('Delete Backpack'));
+    await waitFor(
+      () => evalInHost<boolean>(app, `!(${card})(${JSON.stringify(backpackName)})`),
+      10_000,
+      'removed Backpack card',
+    );
+
+    // A fresh application process reads the same isolated profile and still
+    // must not restore the deleted Backpack.
+    const profile = launched.userDataDir;
+    await launched.close();
+    launched = await launchPapers(profile, { fixtures: false });
+    await waitFor(
+      () => evalInHost<boolean>(launched.app, `document.querySelector('.backpack-list') !== null`),
+      20_000,
+      'restarted production shell',
+    );
+    expect(
+      await evalInHost<boolean>(launched.app, `![...document.querySelectorAll('.backpack-card .name')].some((name) => name.textContent?.trim() === ${JSON.stringify(backpackName)})`),
+    ).toBe(true);
+  }, 120_000);
 });

@@ -465,6 +465,10 @@ input:focus-visible {
   opacity: 0.6;
 }
 
+.backpack-card:has(.delete-confirmation) {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+}
+
 .backpack-card .mark {
   display: grid;
   width: 40px;
@@ -503,6 +507,37 @@ input:focus-visible {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.delete-confirmation {
+  grid-column: 2 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 2px;
+  color: var(--ink);
+}
+
+.delete-confirmation strong {
+  font-size: 13px;
+}
+
+.delete-confirmation p {
+  max-width: 500px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.destructive {
+  color: #8a3e34;
+}
+
+.secondary.destructive {
+  border-color: rgba(138, 62, 52, 0.42);
+  background: #fff7f4;
 }
 
 .backpack-card .rename-input {

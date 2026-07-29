@@ -117,6 +117,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.emitBackpacksChanged();
   }
 
+  async removeBackpack(id: string): Promise<void> {
+    await this.deps.registry.remove(id);
+    if (this.currentBackpackId === id) this.currentBackpackId = null;
+    this.emitBackpacksChanged();
+  }
+
   private canvasStore(backpackId: string): AtomicJsonStore {
     return new AtomicJsonStore(canvasFile(this.deps.paths, backpackId), {
       recoveryDir: this.deps.paths.recoveryDir,

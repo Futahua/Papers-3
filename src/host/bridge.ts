@@ -100,6 +100,7 @@ interface HostBridge {
     create(name: string, type?: string): Promise<BackpackSummary>;
     rename(id: string, name: string): Promise<void>;
     setArchived(id: string, archived: boolean): Promise<void>;
+    remove(id: string): Promise<void>;
     enter(id: string): Promise<{ backpack: BackpackSummary }>;
     leave(): Promise<void>;
     lastActive(): Promise<string | null>;

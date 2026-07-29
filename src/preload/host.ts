@@ -38,6 +38,7 @@ const api = {
     rename: (id: string, name: string) => ipcRenderer.invoke('host:backpacks:rename', id, name),
     setArchived: (id: string, archived: boolean) =>
       ipcRenderer.invoke('host:backpacks:set-archived', id, archived),
+    remove: (id: string) => ipcRenderer.invoke('host:backpacks:remove', id),
     enter: (id: string) => ipcRenderer.invoke('host:backpacks:enter', id),
     leave: () => ipcRenderer.invoke('host:backpacks:leave'),
     lastActive: () => ipcRenderer.invoke('host:backpacks:last-active'),

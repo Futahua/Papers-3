@@ -75,7 +75,7 @@ Update this table whenever a real feature creates persistent data.
 |---|---|---|---|---|---|---|
 | Packaged Papers application | `Papers/App` | Papers release | Copyable fixed version | No | Do not replace while running | Reinstall/rebuild |
 | Electron runtime profile | `Papers/Data` | Electron/Papers host | Machine-local direction | May contain web state | No | Recreated; preserve unknown files during migration |
-| Backpack registry and records | `Papers/Data/PapersData` when created | Papers | Undecided until first useful Backpack contents | No by design | Current JSON store is not conflict-mergeable | Atomic backups and recovery directory |
+| Backpack registry and records | `Papers/Data/PapersData` when created | Papers | Undecided until first useful Backpack contents | No by design | Current JSON store is not conflict-mergeable | Atomic backups; deleted Backpack records move to `Papers/Data/PapersData/recovery/deleted-backpacks` |
 | Migration material | `Papers/Migration Backup` | Creator | Archive; no runtime dependency | Possibly | No | Original moved material |
 | Hermes runtime and state | Resolved per machine by `hermesLocation.ts` (D-016); the backend runs from `<hermesRoot>\venv\Scripts\hermes.exe` (D-018) | Hermes | Install/configure per machine unless Hermes provides supported sync | Yes | No raw multi-machine writers | Hermes-owned recovery/export mechanisms |
 | Hermes session token | `Papers/Data/hermes-backend-token` | Papers | **Machine-local. Never sync** | **Yes** | One Papers per machine | Regenerated on next launch; delete freely |

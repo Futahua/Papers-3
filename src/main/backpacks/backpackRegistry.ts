@@ -4,6 +4,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import * as path from 'node:path';
 
 import type { BackpackRegistryState, BackpackSummary, BackpackType } from '@shared/types';
 import { AtomicJsonStore, type LoadReport } from '../persistence/atomicStore';
@@ -14,6 +15,8 @@ const emptyState: BackpackRegistryState = {
   backpacks: [],
   lastActiveBackpackId: null,
 };
+
+const generatedBackpackId = /^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function validateRegistry(value: unknown): string | null {
   if (typeof value !== 'object' || value === null) return 'not an object';
@@ -115,6 +118,45 @@ export class BackpackRegistry {
       this.state.lastActiveBackpackId = null;
     }
     await this.persist();
+  }
+
+  /**
+   * Remove an archived Backpack from Papers while preserving its internal
+   * record under recovery. External files and applications are never touched.
+   */
+  async remove(id: string): Promise<void> {
+    if (!generatedBackpackId.test(id)) throw new Error('Invalid Backpack id');
+    const index = this.state.backpacks.findIndex((backpack) => backpack.id === id);
+    if (index === -1) throw new Error(`Backpack ${id} not found`);
+    const entry = this.state.backpacks[index]!;
+    if (!entry.archived) throw new Error('Archive the Backpack before deleting it');
+
+    const source = backpackDir(this.paths, id);
+    const deletedRoot = path.join(this.paths.recoveryDir, 'deleted-backpacks');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const preserved = path.join(deletedRoot, `${id}-${stamp}-${randomUUID()}`);
+    let moved = false;
+
+    await fs.mkdir(deletedRoot, { recursive: true });
+    try {
+      await fs.rename(source, preserved);
+      moved = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+
+    const previousActive = this.state.lastActiveBackpackId;
+    this.state.backpacks.splice(index, 1);
+    if (previousActive === id) this.state.lastActiveBackpackId = null;
+
+    try {
+      await this.persist();
+    } catch (error) {
+      this.state.backpacks.splice(index, 0, entry);
+      this.state.lastActiveBackpackId = previousActive;
+      if (moved) await fs.rename(preserved, source);
+      throw error;
+    }
   }
 
   async setWorkspace(id: string, workspacePath: string | null): Promise<void> {

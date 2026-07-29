@@ -17,6 +17,7 @@ export function BackpacksPane(props: {
   const [name, setName] = useState('');
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -134,11 +135,51 @@ export function BackpacksPane(props: {
                     </button>
                     <button
                       className="ghost"
-                      onClick={() => run(() => host().backpacks.setArchived(backpack.id, !backpack.archived))}
+                      onClick={() =>
+                        run(async () => {
+                          await host().backpacks.setArchived(backpack.id, !backpack.archived);
+                          setConfirmingDelete(null);
+                        })
+                      }
                     >
                       {backpack.archived ? 'Restore' : 'Archive'}
                     </button>
+                    {backpack.archived && (
+                      <button
+                        className="ghost destructive"
+                        onClick={() => {
+                          setError(null);
+                          setConfirmingDelete(backpack.id);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    )}
                   </div>
+                  {backpack.archived && confirmingDelete === backpack.id && (
+                    <div className="delete-confirmation">
+                      <div>
+                        <strong>Delete “{backpack.name}”?</strong>
+                        <p>This removes the Backpack from Papers. External files, applications, scripts, and folders are untouched.</p>
+                      </div>
+                      <div className="actions">
+                        <button className="ghost" onClick={() => setConfirmingDelete(null)}>
+                          Cancel
+                        </button>
+                        <button
+                          className="secondary destructive"
+                          onClick={() =>
+                            run(async () => {
+                              await host().backpacks.remove(backpack.id);
+                              setConfirmingDelete(null);
+                            })
+                          }
+                        >
+                          Delete Backpack
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>

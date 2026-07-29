@@ -78,6 +78,37 @@ describe('BackpackRegistry', () => {
     await expect(registry.markEntered(created.id)).rejects.toThrow(/archived/);
   });
 
+  it('removes only an archived Backpack and preserves its internal record in recovery', async () => {
+    const registry = await freshRegistry();
+    const kept = await registry.create('Keep', 'environment');
+    const removed = await registry.create('Remove', 'environment');
+
+    await expect(registry.remove(removed.id)).rejects.toThrow(/archive/i);
+    await registry.setArchived(removed.id, true);
+    await registry.remove(removed.id);
+
+    expect(registry.list().map((backpack) => backpack.id)).toEqual([kept.id]);
+    await expect(fs.access(path.join(dir, 'PapersData', 'backpacks', removed.id))).rejects.toThrow();
+
+    const deletedDir = path.join(dir, 'PapersData', 'recovery', 'deleted-backpacks');
+    const preserved = (await fs.readdir(deletedDir)).find((name) => name.startsWith(`${removed.id}-`));
+    expect(preserved).toBeDefined();
+    await expect(fs.access(path.join(deletedDir, preserved!, 'backpack.json'))).resolves.toBeUndefined();
+
+    const restarted = await freshRegistry();
+    expect(restarted.find(removed.id)).toBeNull();
+    expect(restarted.find(kept.id)?.name).toBe('Keep');
+  });
+
+  it('rejects a traversal-shaped id before it can form a filesystem path', async () => {
+    const registry = await freshRegistry();
+    const sentinel = path.join(dir, 'sentinel.txt');
+    await fs.writeFile(sentinel, 'untouched');
+
+    await expect(registry.remove('../../sentinel')).rejects.toThrow(/invalid Backpack id/i);
+    await expect(fs.readFile(sentinel, 'utf8')).resolves.toBe('untouched');
+  });
+
   it('recovers from a corrupt registry file via backup', async () => {
     const first = await freshRegistry();
     await first.create('One', 'canvas');

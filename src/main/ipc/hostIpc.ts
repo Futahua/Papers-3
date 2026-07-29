@@ -20,6 +20,7 @@ export interface HostFacade {
   createBackpack(name: string, type: string): Promise<unknown>;
   renameBackpack(id: string, name: string): Promise<void>;
   setBackpackArchived(id: string, archived: boolean): Promise<void>;
+  removeBackpack(id: string): Promise<void>;
   enterBackpack(id: string): Promise<unknown>;
   leaveBackpack(): Promise<void>;
   lastActiveBackpackId(): string | null;
@@ -72,6 +73,9 @@ const boundsSchema = z
 const colorSchema = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
 
 const idSchema = z.string().min(1).max(128);
+const backpackRemovalIdSchema = z
+  .string()
+  .regex(/^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
 
 export function registerHostIpc(facade: HostFacade): void {
@@ -105,6 +109,9 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpacks:set-archived', (_e, id, archived) =>
     facade.setBackpackArchived(idSchema.parse(id), z.boolean().parse(archived)),
+  );
+  handle('host:backpacks:remove', (_e, id) =>
+    facade.removeBackpack(backpackRemovalIdSchema.parse(id)),
   );
   handle('host:backpacks:enter', (_e, id) => facade.enterBackpack(idSchema.parse(id)));
   handle('host:backpacks:leave', () => facade.leaveBackpack());

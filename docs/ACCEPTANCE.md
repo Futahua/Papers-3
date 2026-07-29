@@ -10,6 +10,9 @@
 - Settings reports which build is running, so two machines can be compared (D-017).
 - Papers finds, downloads and installs its own updates from its GitHub releases (D-019).
 - Backpack names persist.
+- Archived Backpacks can be deleted only after an inline confirmation that names the
+  exact Backpack. Deletion removes it from Papers without touching external files,
+  applications, scripts or folders; Papers retains the internal record for recovery.
 - Programs, Runs and Papers agent permissions can remain absent from production.
 - The packaged Electron shell can launch and pass its existing product E2E.
 - Permanent Basic navigation visibly containing Backpacks, Tools and Settings.
