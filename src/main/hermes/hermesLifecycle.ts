@@ -13,6 +13,17 @@ export type ReleasableProcess = {
   stderr?: unknown;
 };
 
+/** Start Hermes in its own Windows process group so Papers exiting cannot end it. */
+export function independentHermesProcess(): { detached: true } {
+  return { detached: true };
+}
+
+export function independentHermesStdio(
+  diagnosticLogFd: number | null,
+): ['ignore', 'ignore', number | 'ignore'] {
+  return ['ignore', 'ignore', diagnosticLogFd ?? 'ignore'];
+}
+
 export function hermesUpdateProcessIds(
   current: { desktopPid?: number; backendPid?: number },
   adopted: { desktopPid: number } | null,

@@ -26,7 +26,7 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, request, type Server } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { app, type BaseWindow, screen } from 'electron';
@@ -42,6 +42,8 @@ import {
 import {
   clearHermesConnection,
   hermesUpdateProcessIds,
+  independentHermesProcess,
+  independentHermesStdio,
   leaveHermesRunning,
   readHermesConnection,
   writeHermesConnection,
@@ -503,22 +505,38 @@ export class HermesSurface {
       // stale one. Falls back to PATH when there is no venv to point at.
       const { location } = lookUpHermes();
       const command = location ? resolveHermesCommand(resolveHermesRoot(location)) : 'hermes';
-      // Keep stderr so a failure can say WHY. With `stdio: 'ignore'` the reason
-      // was thrown away and every failure looked identical.
-      const child = spawn(
-        command,
-        ['dashboard', '--host', DASHBOARD_HOST, '--port', String(DASHBOARD_PORT), '--no-open'],
-        {
-          windowsHide: true,
-          stdio: ['ignore', 'ignore', 'pipe'],
-          env: { ...process.env, HERMES_DASHBOARD_SESSION_TOKEN: token },
-        },
-      );
-      // Keep only the tail; this is for a human-readable failure, not a log.
-      let backendStderr = '';
-      child.stderr?.on('data', (chunk: Buffer) => {
-        backendStderr = `${backendStderr}${chunk.toString()}`.slice(-2000);
-      });
+      // A detached process must not retain a pipe back into Papers. Give Hermes
+      // its own inherited log handle so later stderr writes remain valid after
+      // Papers exits, while startup failures can still explain themselves.
+      const backendLogPath = join(app.getPath('userData'), 'hermes-backend.log');
+      let backendLogFd: number | null = null;
+      try {
+        backendLogFd = openSync(backendLogPath, 'w', 0o600);
+      } catch {
+        /* Hermes can still run; only diagnostics are unavailable */
+      }
+      let child: ChildProcess;
+      try {
+        child = spawn(
+          command,
+          ['dashboard', '--host', DASHBOARD_HOST, '--port', String(DASHBOARD_PORT), '--no-open'],
+          {
+            ...independentHermesProcess(),
+            windowsHide: true,
+            stdio: independentHermesStdio(backendLogFd),
+            env: { ...process.env, HERMES_DASHBOARD_SESSION_TOKEN: token },
+          },
+        );
+      } finally {
+        if (backendLogFd !== null) closeSync(backendLogFd);
+      }
+      const backendStderr = (): string => {
+        try {
+          return readFileSync(backendLogPath, 'utf8').slice(-2000).trim();
+        } catch {
+          return '';
+        }
+      };
       this.backendProcess = child;
       this.backendToken = token;
       // Persist so a relaunched Papers can prove ownership of a still-running
@@ -546,8 +564,8 @@ export class HermesSurface {
         if (child.exitCode !== null) {
           throw new Error(
             `The Hermes backend stopped before it was ready.\n\nPapers ran: ${command}\n\n` +
-              (backendStderr.trim()
-                ? `Hermes reported:\n${backendStderr.trim()}`
+              (backendStderr()
+                ? `Hermes reported:\n${backendStderr()}`
                 : 'Hermes gave no reason. Running that command yourself in a terminal will usually show why.'),
           );
         }
@@ -556,7 +574,7 @@ export class HermesSurface {
       throw new Error(
         `The Hermes backend did not become ready within ${Math.round(BACKEND_START_TIMEOUT_MS / 1000)} seconds.\n\n` +
           `Papers ran: ${command}` +
-          (backendStderr.trim() ? `\n\nHermes reported:\n${backendStderr.trim()}` : ''),
+          (backendStderr() ? `\n\nHermes reported:\n${backendStderr()}` : ''),
       );
     })().finally(() => {
       this.backendStartPromise = null;
@@ -647,7 +665,7 @@ export class HermesSurface {
     this.desktopExited = false;
     this.controlPort = null;
     const child = spawn(exe, [], {
-      detached: false,
+      ...independentHermesProcess(),
       windowsHide: false,
       stdio: 'ignore',
       env: {

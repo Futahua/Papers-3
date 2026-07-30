@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import {
   clearHermesConnection,
   hermesUpdateProcessIds,
+  independentHermesProcess,
+  independentHermesStdio,
   leaveHermesRunning,
   readHermesConnection,
   writeHermesConnection,
@@ -13,6 +15,12 @@ import {
 import { parseHermesBackendPid } from '../../src/main/hermes/hermesUpdater';
 
 describe('Hermes lifecycle', () => {
+  it('launches Hermes outside the Papers Windows process lifetime', () => {
+    expect(independentHermesProcess()).toEqual({ detached: true });
+    expect(independentHermesStdio(42)).toEqual(['ignore', 'ignore', 42]);
+    expect(independentHermesStdio(null)).toEqual(['ignore', 'ignore', 'ignore']);
+  });
+
   it('releases Papers ownership without terminating Hermes', () => {
     const desktop = { unref: vi.fn(), kill: vi.fn(), stderr: null };
     const backendStderr = { unref: vi.fn() };
