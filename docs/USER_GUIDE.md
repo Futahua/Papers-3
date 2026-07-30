@@ -27,13 +27,18 @@ Until real contents have been made for it, clicking `Enter` shows:
 > Nothing here yet. Create something under “Backpack name”.
 
 A future Backpack may reach across the whole machine and contain several ways of working.
-It is not a project folder or a single page.
+It is not inherently a project folder or a single page. Papers may contain unique and
+shared Backpacks, but those words do not yet impose configuration or behavior.
 
 ## Tools
 
-Tools is a permanent global destination. Tools will represent reusable capabilities such
-as programs, shortcuts, scripts, automation, locations and utilities. Its exact behavior
-has not yet been decided, so the first honest screen may contain no configured Tools.
+Tools is a permanent destination within Basic. Only the creator decides what is a Tool.
+Its behavior has not yet been decided.
+
+The current installed screen still contains placeholder wording that calls Tools global
+and shared and lists possible examples. That wording is not an accepted Tool definition.
+The mismatch is recorded in [`PROBLEMS.md`](PROBLEMS.md); this documentation correction
+does not change the running interface.
 
 ## Settings
 

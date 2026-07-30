@@ -3,6 +3,22 @@
 This is the plain-language work list, in creator priority order. A problem stays here
 until the creator can use and judge the correction in the installed product.
 
+## Unscheduled — The Tools screen defines Tools without creator authority
+
+**Documented, not corrected (2026-07-30).** The current Tools screen calls Tools global,
+reusable machine capabilities; lists programs, shortcuts, scripts, locations and
+utilities as examples; says Tools are shared between Backpacks; and proposes independent
+enablement.
+
+The creator has now made the actual boundary explicit: only the creator decides what is a
+Tool, spontaneously or deliberately. Normal use and a request concerning one Backpack do
+not authorize a Tool definition. The current screen copy is therefore implementation
+evidence, not accepted product truth.
+
+This documentation consolidation does not authorize a source or UI correction. Until a
+separate creator request does, the mismatch must remain visible here and must not be cited
+as an accepted Tool contract.
+
 ## 0 — "Hermes Desktop is not installed where Papers expects it"
 
 **Corrected in source; needs a rebuild before the creator can judge it (2026-07-27).**

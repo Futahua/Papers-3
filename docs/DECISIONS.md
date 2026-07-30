@@ -1,5 +1,11 @@
 # Papers — consequential decisions
 
+This is a chronological decision record, not a source from which agents may expand product
+ontology. Read [`PRODUCT.md`](PRODUCT.md) for current product truth and
+[`HERMES.md`](../HERMES.md) before acting. Preserve historical entries; when the creator
+corrects an earlier interpretation, record the current truth before implementation rather
+than rewriting history afterward to manufacture consent.
+
 ## D-001 — Existing products are the product boundary (2026-07-21)
 
 The creator explicitly rejected Papers-owned agent validation workflows, modular agent
@@ -11,6 +17,11 @@ This decision supersedes the program-centric decisions in the previous plan and 
 log, which remain available in Git history.
 
 ## D-002 — Backpacks are machine-wide environments (2026-07-21)
+
+> **Current clarification (2026-07-30):** “Machine-wide” describes how far a Backpack
+> may reach within one machine. It does not decide whether a Backpack is unique, shared,
+> portable or synchronized. Those meanings remain open until real Backpack work requires
+> them. The original decision is preserved below as a chronological record.
 
 A Backpack is not a Canvas. It can eventually span application windows, folders, browser
 destinations, documents, multiple monitors and Papers surfaces. It does not own or scope
@@ -57,6 +68,11 @@ before the creator shapes the Backpack through use.
 
 ## D-008 — Global Hermes and name-only Backpacks (2026-07-21)
 
+> **Current clarification (2026-07-30):** Hermes remains global. The wording about Tools
+> below does not define what a Tool is: only the creator decides that, spontaneously or
+> deliberately. A request about one Backpack cannot create a global Tool definition.
+> The original decision is preserved below as a chronological record.
+
 The creator corrected the first-Backpack plan. Hermes is global and Backpack interaction
 must not change its working directory, conversation or context automatically. Creating a
 Backpack asks only for a name and creates no folder, cover, canvas or contents. Entering a
@@ -81,6 +97,13 @@ This is visual reuse only. Papers 1's custom agent workbench, Work rail, provide
 Inspect, approval and self-edit behaviors do not return. Hermes keeps its existing UI.
 
 ## D-010 — Sync classification evolves with real features (2026-07-21)
+
+> **Current clarification (2026-07-30):** The Papers master folder is outside Syncthing
+> and must remain outside it as a whole. Creator-authored work must be preserved, but
+> synchronization is decided from each real feature and creator request. This decision
+> does not reserve `Shared/`, default Backpack definitions to sync or define what unique
+> and shared Backpacks mean. The original decision is preserved below as a chronological
+> record.
 
 The Papers master folder lives inside Syncthing, but the creator cannot know every future
 feature or which of its data should survive across machines before using it. Papers will

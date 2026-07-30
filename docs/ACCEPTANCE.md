@@ -20,7 +20,7 @@
 - `Add Backpack` asks only for a name.
 - New Backpacks create no folder, cover, canvas, conversation or fake contents.
 - `Enter` on an empty Backpack shows the exact required warning.
-- Tools is a global destination with an honest state and no invented Tool contract.
+- Tools is a permanent Basic destination.
 - The `(machine wide complex capability)` placeholder and simulated entered environment
   are absent from the shipped experience.
 - No Backpack folder is passed to `hermes desktop --cwd`.
@@ -30,10 +30,17 @@
 - The installed creator profile contains no seeded or test Backpack, and automated tests
   prove they use isolated temporary profiles.
 
+## Known mismatch
+
+The current Tools screen still presents an unapproved global/shared Tool definition and
+examples. That copy is not accepted product truth; only the creator decides what is a
+Tool. The source/UI correction was not authorized by this documentation change and is
+recorded in [`PROBLEMS.md`](PROBLEMS.md).
+
 ## Human acceptance
 
 The creator can verify the present promise by clicking through Basic, creating a named
-Backpack, observing the exact empty warning, opening global Tools, opening Hermes before
+Backpack, observing the exact empty warning, opening Tools, opening Hermes before
 and after Backpack interaction, restarting Papers and confirming the name remains. No
 source-code review is required.
 

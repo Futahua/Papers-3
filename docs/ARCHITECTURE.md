@@ -1,5 +1,9 @@
 # Papers — current architecture boundary
 
+This describes the current implementation, not the product ontology. Product meaning
+comes from [`PRODUCT.md`](PRODUCT.md), and agent behavior is governed by
+[`HERMES.md`](../HERMES.md).
+
 The production shell has four concepts:
 
 ```text
@@ -10,7 +14,7 @@ Papers  (slim theme-matched title bar; native window controls only)
 │   └── Settings
 ├── Global Hermes — the real Hermes Desktop, docked or detached (two SVG toggles)
 ├── Backpack names and future contents
-└── Global Tools (contract still open)
+└── Tools destination (meaning and contract still open)
 ```
 
 ## Global Hermes boundary
@@ -33,11 +37,16 @@ shows the required warning rather than creating a fake environment.
 The future contents contract is intentionally absent. No folder, canvas, scene or program
 runtime may become that contract by implementation accident.
 
+Papers may eventually contain unique and shared Backpacks, but the architecture does not
+define those terms or prescribe storage, synchronization, portability or local bindings
+before a real Backpack requires them.
+
 ## Tool boundary
 
-Tools are global reusable capabilities. Their exact discovery, persistence, configuration
-and enable/disable contract is not yet decided. The permanent Tools screen may therefore
-be honest and empty, but it must not be replaced with speculative architecture.
+Basic contains a permanent Tools destination. Only the creator decides what is a Tool.
+Its discovery, persistence, configuration, scope and lifecycle are not yet decided. The
+Tools screen may therefore be honest and empty, but it must not be replaced with
+speculative architecture.
 
 ## Fixture boundary
 
@@ -46,12 +55,16 @@ The program sandbox, ACP adapter, Agent Runs and demonstration workflows load on
 
 ## Evolving synchronization boundary
 
-The installed master folder may be carried by Syncthing, but executable files, durable
-creator work and live machine state are different kinds of data. Papers does not freeze
-a speculative schema before real Backpacks exist. Each useful feature must identify its
-data owner and sync behavior using [the data inventory](SYNCTHING_AND_DATA.md).
+The installed master folder is outside Syncthing and must not be synchronized as a whole.
+Executable files, durable creator work and live machine state are different kinds of
+data. Papers does not freeze a speculative schema before real Backpacks exist. Each useful
+feature must identify its data owner and sync behavior using
+[the data inventory](SYNCTHING_AND_DATA.md).
 
-Durable creator-authored work defaults toward survival. Caches, locks, credentials,
-browser profiles, live database journals and installations default toward machine-local
-state. Ambiguous data is preserved and documented until real use makes the decision
-auditable.
+That feature-by-feature classification is a data-safety practice. It does not define
+unique or shared Backpacks in advance.
+
+Durable creator-authored work must be preserved, but preservation does not itself decide
+whether it synchronizes. Caches, locks, credentials, browser profiles, live database
+journals and installations default toward machine-local state. Ambiguous data is
+preserved and documented until real use makes the decision auditable.

@@ -32,9 +32,14 @@ path between them.
 Papers must classify data when a real feature introduces it, not invent a complete data
 platform in advance.
 
-1. **Creator work defaults durable and syncable.** Documents, authored Backpack
-   definitions, layouts and irreplaceable results should survive machine replacement and
-   appear on another trusted machine unless the creator decides otherwise.
+“Unique” and “shared” remain creator language, not data classifications defined by this
+document. The policies below do not establish a Backpack scope field, shared schema,
+synchronization mechanism, portability rule or machine-binding model.
+
+1. **Creator work must be preserved.** Documents, authored Backpack material, layouts and
+   irreplaceable results must survive change and migration. Whether they synchronize,
+   where they live and how they appear on another machine are decided from the real
+   feature and creator request, not from a general Backpack rule.
 2. **Operational state defaults local.** Caches, logs, lockfiles, temporary downloads,
    process metadata, browser profiles, live database journals, credentials, absolute
    machine paths and installation state should be reproducible or machine-specific.
@@ -54,7 +59,6 @@ platform in advance.
 ```text
 Papers/
 ├── App/                 installed application; replaced by the updater, not by hand
-├── Shared/              future durable creator work, introduced only when needed
 ├── Data/                mixed local runtime; machine-local, not multi-writer safe
 └── HERMES.md            pickup instructions for building Backpacks
 ```
@@ -63,9 +67,10 @@ Papers/
 the primary machine (verified 2026-07-27) and is not created by anything; the migration it
 referred to is long finished.
 
-`Shared` is a reserved direction, not a requirement to build an empty framework now.
-The first feature that produces genuinely durable creator data should establish its
-smallest useful contents and migration from any earlier location.
+There is no reserved `Shared/` location or generic shared-data framework. A real feature
+may introduce a synchronized location only when its creator-requested behavior requires
+one; that feature must define the smallest safe location and migration without turning it
+into a rule for other Backpacks.
 
 ## Data inventory
 

@@ -1,41 +1,47 @@
 # Papers
 
-Papers is a personal layer across the Windows machine. Its permanent Basic control
-contains Backpacks, Tools and Settings. Backpacks are named machine-wide environments
-or lenses, not project folders or boxed applications. Tools are reusable capabilities
-across the system.
+> **Coding agents:** start with [`HERMES.md`](HERMES.md) and read it completely before
+> changing Papers or proposing product behavior.
 
-Hermes is global rather than Backpack-specific. Papers runs one Hermes backend and shows
-the real Hermes Desktop in two placements — docked beside Papers or as a detached window —
-using the two symbol toggles in the top bar (D-011, D-012). Backpack activity does not
-change Hermes's working directory, conversation or context automatically.
+Papers is a personal layer across Windows. Its authoritative product definition is
+[`docs/PRODUCT.md`](docs/PRODUCT.md); current implementation and historical projects are
+not substitutes for that definition.
 
-The installed product is self-contained beneath one master folder: `Papers/App`
-contains the application and `Papers/Data` contains its persistent runtime state.
-The master folder also contains `HERMES.md`, the native Hermes pickup instruction for
-building Backpacks without making Hermes Backpack-scoped.
+## Documentation map
 
-The older Repository Research, Visual Dashboard and Kill Test programs are retained
-only as opt-in integration fixtures. They are not visible in the production app.
+### Start here
 
-## Current status
+- [Mandatory agent pickup and creator contract](HERMES.md)
 
-The installed shell provides Basic, name-only Backpack creation, the honest empty
-Backpack warning, a global Tools destination and the existing global Hermes interface.
-The next useful features will be shaped by the creator's first real Backpack rather than
-by adding speculative framework screens.
+### Product authority
 
 - [Product definition](docs/PRODUCT.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Consequential decisions](docs/DECISIONS.md)
-- [How Papers updates itself](docs/UPDATING_PAPERS.md)
-- [Syncthing and evolving data](docs/SYNCTHING_AND_DATA.md)
-- [Hermes pickup instructions](HERMES.md)
+- [Chronological creator-accepted decisions](docs/DECISIONS.md)
+
+### Current use, work and acceptance
+
 - [User guide](docs/USER_GUIDE.md)
 - [Acceptance status](docs/ACCEPTANCE.md)
 - [Creator-reported problems](docs/PROBLEMS.md)
+
+### Current implementation, data and releases
+
+- [Architecture boundary](docs/ARCHITECTURE.md)
+- [Syncthing and evolving data](docs/SYNCTHING_AND_DATA.md)
+- [How Papers updates itself](docs/UPDATING_PAPERS.md)
+- [Hermes skin integration and updates](docs/HERMES_SKIN_INTEGRATION.md)
 - [Hermes skin specification](docs/HERMES_SKIN.md)
+
+### Historical evidence and engineering fixtures
+
 - [Hermes batch implementation handoff](docs/HERMES_BATCH_HANDOFF.md)
+- [Legacy program fixture contract](docs/PROGRAM_CONTRACT.md)
+- [Hermes batch evidence](docs/evidence/hermes-batch/README.md)
+
+Historical material records what happened. It does not define future Backpack contents
+or authorize the return of superseded product architecture.
+
+## Repository checks
 
 ```powershell
 npm install
@@ -44,9 +50,9 @@ npm test
 npm run build
 ```
 
-Papers updates itself from its GitHub releases. To publish a new version, bump `version`
-in `package.json`, run `npm run release`, then publish the draft release GitHub creates —
-only after its uploads finish. See [How Papers updates itself](docs/UPDATING_PAPERS.md).
+Release, installation, termination and restart require separate creator authorization.
+When a release is explicitly requested, follow
+[How Papers updates itself](docs/UPDATING_PAPERS.md).
 
 Set `PAPERS_ENABLE_FIXTURES=1` only when exercising the historical program and ACP
 integration suites.

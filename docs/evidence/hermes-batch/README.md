@@ -1,5 +1,8 @@
 # Hermes batch — verification evidence (2026-07-21)
 
+> **Historical evidence:** this records verification of a completed batch. It is not a
+> current product specification or authorization for future Backpack architecture.
+
 Human-visible verification of the Hermes integration batch, captured against the
 **installed** product (`D:\LapSlop brotherhood\Programs\Papers\App\Papers.exe` and the real
 Hermes Desktop). Screenshots were shown to the creator in the working session; the
