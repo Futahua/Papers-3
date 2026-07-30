@@ -45,7 +45,7 @@ export function BackpackProjectFrame(props: {
         return;
       }
 
-      let task: Promise<void> | null = null;
+      let task: Promise<Record<string, unknown> | void> | null = null;
       if (request.type === 'papers:project:run-action' && request.actionId) {
         task = host().backpackProject.runAction(request.actionId);
       }
@@ -53,23 +53,23 @@ export function BackpackProjectFrame(props: {
         task = host().backpackProject.copyText(request.text);
       }
       if (request.type === 'papers:project:as-you-go-load') {
-        task = host().backpackProject.projectStateLoad().then((state) => {
-          frame.current?.contentWindow?.postMessage(
-            { type: 'papers:host:result', requestId: request.requestId, ok: true, state: JSON.stringify(state) },
-            origin,
-          );
-        });
+        task = host().backpackProject.projectStateLoad().then((state) => ({
+          state: JSON.stringify(state),
+        }));
       }
       if (request.type === 'papers:project:as-you-go-save' && request.state) {
         task = host().backpackProject.projectStateSave(request.state);
       }
       if (request.type === 'papers:project:as-you-go-pick-target' && request.kind) {
-        task = host().backpackProject.projectPickTarget(request.kind).then((target) => {
-          frame.current?.contentWindow?.postMessage(
-            { type: 'papers:host:result', requestId: request.requestId, ok: true, target },
-            origin,
-          );
-        });
+        task = host().backpackProject.projectPickTarget(request.kind).then((selection) => ({
+          target: selection?.target ?? null,
+          icon: selection?.icon ?? null,
+        }));
+      }
+      if (request.type === 'papers:project:as-you-go-shortcut-icon' && request.actionId) {
+        task = host().backpackProject.projectShortcutIcon(request.actionId).then((icon) => ({
+          icon,
+        }));
       }
       if (request.type === 'papers:project:as-you-go-launch' && request.actionId) {
         task = host().backpackProject.projectLaunchShortcut(request.actionId);
@@ -77,9 +77,14 @@ export function BackpackProjectFrame(props: {
       if (!task) return;
 
       try {
-        await task;
+        const payload = await task;
         frame.current?.contentWindow?.postMessage(
-          { type: 'papers:host:result', requestId: request.requestId, ok: true },
+          {
+            type: 'papers:host:result',
+            requestId: request.requestId,
+            ok: true,
+            ...(payload ?? {}),
+          },
           origin,
         );
       } catch (caught) {

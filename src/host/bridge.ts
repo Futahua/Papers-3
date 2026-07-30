@@ -113,7 +113,10 @@ interface HostBridge {
     copyText(text: string): Promise<void>;
     projectStateLoad(): Promise<unknown>;
     projectStateSave(state: string): Promise<void>;
-    projectPickTarget(kind: 'file' | 'folder'): Promise<string | null>;
+    projectPickTarget(
+      kind: 'file' | 'folder',
+    ): Promise<{ target: string; icon: string | null } | null>;
+    projectShortcutIcon(shortcutId: string): Promise<string | null>;
     projectLaunchShortcut(shortcutId: string): Promise<void>;
   };
   programs: {

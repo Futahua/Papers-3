@@ -109,6 +109,28 @@ describe('BackpackProjectService', () => {
     await expect(service.loadState(backpackId)).resolves.toEqual(state);
   });
 
+  it('serializes overlapping state saves so the last requested state remains complete', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile);
+    const first = {
+      schemaVersion: 1 as const,
+      groups: [{ id: 'group-one', parentId: 'root', name: 'One' }],
+      shortcuts: [{ id: 'shortcut-one', parentId: 'group-one', name: 'A', description: '', target, icon: null }],
+    };
+    const second = {
+      schemaVersion: 1 as const,
+      groups: [{ id: 'group-two', parentId: 'root', name: 'Two' }],
+      shortcuts: [{ id: 'shortcut-two', parentId: 'group-two', name: 'B', description: '', target, icon: null }],
+    };
+
+    await Promise.all([
+      service.saveState(backpackId, JSON.stringify(first)),
+      service.saveState(backpackId, JSON.stringify(second)),
+    ]);
+
+    await expect(service.loadState(backpackId)).resolves.toEqual(second);
+  });
+
   it('launches only a shortcut target held by the project state', async () => {
     await writeProject();
     const opened: string[] = [];
@@ -124,6 +146,60 @@ describe('BackpackProjectService', () => {
     await service.launchShortcut(backpackId, 'shortcut-one');
     expect(opened).toEqual([path.resolve(target)]);
     await expect(service.launchShortcut(backpackId, 'not-found')).rejects.toThrow(/not found/i);
+  });
+
+  it('resolves a Windows icon only for a shortcut target already held by project state', async () => {
+    await writeProject();
+    const requested: string[] = [];
+    const service = new BackpackProjectService(
+      bindingsFile,
+      async () => '',
+      async (selected) => {
+        requested.push(selected);
+        return 'data:image/png;base64,target-icon';
+      },
+    );
+    await service.saveState(backpackId, JSON.stringify({
+      schemaVersion: 1,
+      groups: [],
+      shortcuts: [{
+        id: 'shortcut-one',
+        parentId: 'root',
+        name: 'A',
+        description: '',
+        target,
+        icon: null,
+      }],
+    }));
+
+    await expect(service.shortcutIcon(backpackId, 'shortcut-one')).resolves.toBe(
+      'data:image/png;base64,target-icon',
+    );
+    expect(requested).toEqual([path.resolve(target)]);
+    await expect(service.shortcutIcon(backpackId, 'not-found')).rejects.toThrow(/not found/i);
+  });
+
+  it('returns no default icon when Windows cannot resolve one', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(
+      bindingsFile,
+      async () => '',
+      async () => null,
+    );
+    await service.saveState(backpackId, JSON.stringify({
+      schemaVersion: 1,
+      groups: [],
+      shortcuts: [{
+        id: 'shortcut-one',
+        parentId: 'root',
+        name: 'A',
+        description: '',
+        target,
+        icon: null,
+      }],
+    }));
+
+    await expect(service.shortcutIcon(backpackId, 'shortcut-one')).resolves.toBeNull();
   });
 
   it('rejects project state that tries to turn a shortcut into an arbitrary relative path', async () => {

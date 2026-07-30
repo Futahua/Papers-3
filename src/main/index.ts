@@ -108,6 +108,10 @@ async function bootstrap(): Promise<void> {
   const backpackProjects = new BackpackProjectService(
     path.join(paths.root, 'backpack-projects.json'),
     (target) => shell.openPath(target),
+    async (target) => {
+      const icon = await app.getFileIcon(target, { size: 'large' });
+      return icon.isEmpty() ? null : icon.toDataURL();
+    },
   );
   installBackpackProjectProtocol(backpackProjects);
 

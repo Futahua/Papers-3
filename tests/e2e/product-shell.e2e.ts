@@ -275,6 +275,33 @@ describe('production Papers shell', () => {
       'prepared local As you Go action',
     );
 
+    const targetIcon = await evalInBackpackProject<string | null>(
+      app,
+      `new Promise((resolve, reject) => {
+        const requestId = crypto.randomUUID();
+        const timer = setTimeout(() => reject(new Error('icon response timed out')), 5000);
+        const receive = (event) => {
+          if (
+            event.source === window.parent &&
+            event.data?.type === 'papers:host:result' &&
+            event.data?.requestId === requestId
+          ) {
+            clearTimeout(timer);
+            window.removeEventListener('message', receive);
+            if (event.data.ok) resolve(event.data.icon ?? null);
+            else reject(new Error(event.data.error));
+          }
+        };
+        window.addEventListener('message', receive);
+        window.parent.postMessage({
+          type: 'papers:project:as-you-go-shortcut-icon',
+          requestId,
+          actionId: 'shortcut-clips',
+        }, '*');
+      })`,
+    );
+    expect(targetIcon).toMatch(/^data:image\/png;base64,/);
+
     const profile = launched.userDataDir;
     await launched.close();
     const activeRegistry = JSON.parse(await fs.readFile(registryFile, 'utf8')) as {

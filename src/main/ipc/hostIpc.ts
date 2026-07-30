@@ -31,7 +31,10 @@ export interface HostFacade {
   copyBackpackProjectText(text: string): void;
   loadBackpackProjectState(): Promise<unknown>;
   saveBackpackProjectState(rawState: string): Promise<void>;
-  pickBackpackProjectTarget(kind: 'file' | 'folder'): Promise<string | null>;
+  pickBackpackProjectTarget(
+    kind: 'file' | 'folder',
+  ): Promise<{ target: string; icon: string | null } | null>;
+  backpackProjectShortcutIcon(shortcutId: string): Promise<string | null>;
   launchBackpackProjectShortcut(shortcutId: string): Promise<void>;
 
   programCatalog(): unknown;
@@ -145,6 +148,9 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpack-project:pick-target', (_e, kind) =>
     facade.pickBackpackProjectTarget(z.enum(['file', 'folder']).parse(kind)),
+  );
+  handle('host:backpack-project:shortcut-icon', (_e, shortcutId) =>
+    facade.backpackProjectShortcutIcon(backpackProjectActionIdSchema.parse(shortcutId)),
   );
   handle('host:backpack-project:launch-shortcut', (_e, shortcutId) =>
     facade.launchBackpackProjectShortcut(backpackProjectActionIdSchema.parse(shortcutId)),

@@ -55,6 +55,8 @@ const api = {
     projectStateLoad: () => ipcRenderer.invoke('host:backpack-project:state-load'),
     projectStateSave: (state: string) => ipcRenderer.invoke('host:backpack-project:state-save', state),
     projectPickTarget: (kind: string) => ipcRenderer.invoke('host:backpack-project:pick-target', kind),
+    projectShortcutIcon: (shortcutId: string) =>
+      ipcRenderer.invoke('host:backpack-project:shortcut-icon', shortcutId),
     projectLaunchShortcut: (shortcutId: string) => ipcRenderer.invoke('host:backpack-project:launch-shortcut', shortcutId),
   },
 

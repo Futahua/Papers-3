@@ -231,13 +231,27 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     await this.deps.backpackProjects.saveState(this.requireBackpackProjectOpen(), rawState);
   }
 
-  async pickBackpackProjectTarget(kind: 'file' | 'folder'): Promise<string | null> {
+  async pickBackpackProjectTarget(
+    kind: 'file' | 'folder',
+  ): Promise<{ target: string; icon: string | null } | null> {
     this.requireBackpackProjectOpen();
     const result = await dialog.showOpenDialog({
       title: kind === 'file' ? 'Choose a shortcut, script, app, or file' : 'Choose a folder',
       properties: [kind === 'file' ? 'openFile' : 'openDirectory'],
     });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    const target = result.canceled ? null : (result.filePaths[0] ?? null);
+    if (!target) return null;
+    return {
+      target,
+      icon: await this.deps.backpackProjects.targetIcon(target),
+    };
+  }
+
+  async backpackProjectShortcutIcon(shortcutId: string): Promise<string | null> {
+    return this.deps.backpackProjects.shortcutIcon(
+      this.requireBackpackProjectOpen(),
+      shortcutId,
+    );
   }
 
   async launchBackpackProjectShortcut(shortcutId: string): Promise<void> {
