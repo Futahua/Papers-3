@@ -1,6 +1,6 @@
 {
   "name": "papers",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Papers — a personal layer across the Windows machine",
   "main": "out/main/index.js",
   "type": "module",
