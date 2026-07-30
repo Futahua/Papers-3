@@ -90,6 +90,7 @@ Papers 1's custom agent workbench.
   Backpack. External files, applications, scripts and folders remain untouched; Papers
   retains its internal record for recovery.
 - Hermes remains one existing global product with its own interface and capabilities.
+  Closing Papers leaves Hermes and its current session running independently.
 - The Tools destination is present and may honestly contain no configured Tools.
 - Production contains no Programs, Agent Runs, invocation-validation workflow or seeded
   demonstration Backpack.

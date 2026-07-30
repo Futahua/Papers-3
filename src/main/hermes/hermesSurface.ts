@@ -39,6 +39,13 @@ import {
   resolveHermesRoot,
   type HermesLookup,
 } from './hermesLocation';
+import {
+  clearHermesConnection,
+  hermesUpdateProcessIds,
+  leaveHermesRunning,
+  readHermesConnection,
+  writeHermesConnection,
+} from './hermesLifecycle';
 import { launchHermesUpdateHelper } from './hermesUpdater';
 
 export type HermesPlacement = 'closed' | 'docked' | 'detached';
@@ -123,6 +130,7 @@ export class HermesSurface {
    *  desktop launch, passed to Hermes via env, required on every report and
    *  control request in both directions. Never logged. */
   private dockToken: string | null = null;
+  private adoptedProcessIds: { desktopPid: number } | null = null;
   private updateHandedOff = false;
   /** True while another Papers-level activation should raise the docked Hermes
    *  above Papers (moveTop) without making it globally topmost. */
@@ -152,7 +160,7 @@ export class HermesSurface {
 
   // ----------------------------------------------------------- report server
 
-  private ensureReportServer(): Promise<number> {
+  private ensureReportServer(preferredPort = 0): Promise<number> {
     if (this.reportServer && this.reportPort) return Promise.resolve(this.reportPort);
     return new Promise((resolve, reject) => {
       const server = createServer((req, res) => {
@@ -195,7 +203,7 @@ export class HermesSurface {
         });
       });
       server.on('error', reject);
-      server.listen(0, '127.0.0.1', () => {
+      server.listen(preferredPort, '127.0.0.1', () => {
         const addr = server.address();
         this.reportServer = server;
         this.reportPort = addr && typeof addr === 'object' ? addr.port : null;
@@ -203,6 +211,31 @@ export class HermesSurface {
         else reject(new Error('Papers dock endpoint failed to bind.'));
       });
     });
+  }
+
+  private connectionPath(): string {
+    return join(app.getPath('userData'), 'hermes-desktop-connection.json');
+  }
+
+  private rememberConnection(): void {
+    if (!this.reportPort || !this.controlPort || !this.dockToken) return;
+    const desktopPid = this.desktopProcess?.pid ?? this.adoptedProcessIds?.desktopPid;
+    if (!desktopPid) return;
+    try {
+      writeHermesConnection(this.connectionPath(), {
+        schemaVersion: 1,
+        reportPort: this.reportPort,
+        controlPort: this.controlPort,
+        dockToken: this.dockToken,
+        desktopPid,
+      });
+    } catch {
+      /* best effort; Hermes still remains independently usable */
+    }
+  }
+
+  private forgetConnection(): void {
+    clearHermesConnection(this.connectionPath());
   }
 
   /** Constant-time comparison of a presented token header against ours. */
@@ -225,11 +258,14 @@ export class HermesSurface {
     }
     if (msg.phase === 'hello' && typeof msg.controlPort === 'number') {
       this.controlPort = msg.controlPort;
+      this.rememberConnection();
     }
     if (msg.phase === 'closed') {
       this.desktopExited = true;
       this.controlPort = null;
       this.hermesRect = null;
+      this.adoptedProcessIds = null;
+      this.forgetConnection();
       this.setState({ placement: 'closed', status: 'idle' });
       return;
     }
@@ -271,9 +307,14 @@ export class HermesSurface {
     }
     const launched = launchHermesUpdateHelper(
       resolveHermesRoot(location),
-      [this.desktopProcess?.pid, this.backendProcess?.pid].filter(
-        (pid): pid is number => typeof pid === 'number',
+      hermesUpdateProcessIds(
+        {
+          desktopPid: this.desktopProcess?.pid,
+          backendPid: this.backendProcess?.pid,
+        },
+        this.adoptedProcessIds,
       ),
+      this.backendToken,
     );
     if (!launched) {
       this.setState({
@@ -551,14 +592,51 @@ export class HermesSurface {
     return Boolean(this.desktopProcess && !this.desktopExited && this.desktopProcess.exitCode === null);
   }
 
+  private async adoptRunningDesktop(): Promise<boolean> {
+    const connection = readHermesConnection(this.connectionPath());
+    if (!connection) return false;
+    this.dockToken = connection.dockToken;
+    this.controlPort = connection.controlPort;
+    try {
+      await this.ensureReportServer(connection.reportPort);
+      const reply = await this.controlHermes({ op: 'focus' });
+      if (reply?.ok) {
+        this.desktopExited = false;
+        this.adoptedProcessIds = {
+          desktopPid: connection.desktopPid,
+        };
+        return true;
+      }
+    } catch {
+      /* stale connection; fall through to a clean launch */
+    }
+    this.forgetConnection();
+    this.controlPort = null;
+    this.dockToken = null;
+    this.adoptedProcessIds = null;
+    if (this.reportServer) {
+      try {
+        this.reportServer.close();
+      } catch {
+        /* already closed */
+      }
+      this.reportServer = null;
+      this.reportPort = null;
+    }
+    return false;
+  }
+
   private async ensureDesktop(): Promise<void> {
     if (this.desktopAlive()) {
       if (!this.controlPort) await this.waitForControl(8_000);
       return;
     }
-
     const { location, attempts } = lookUpHermes();
     if (!location) throw new Error(describeMissingHermes(attempts));
+    // A persisted backend token authenticates the surviving backend before
+    // Papers trusts the process identities retained with the desktop seam.
+    await this.ensureBackend();
+    if (await this.adoptRunningDesktop()) return;
     const exe = location.desktopExe;
     const token = await this.ensureBackend();
     const reportPort = await this.ensureReportServer();
@@ -595,6 +673,8 @@ export class HermesSurface {
       if (this.desktopProcess === child) this.desktopProcess = null;
       this.controlPort = null;
       this.hermesRect = null;
+      this.adoptedProcessIds = null;
+      this.forgetConnection();
       this.setState({ placement: 'closed', status: 'idle' });
     });
 
@@ -679,22 +759,9 @@ export class HermesSurface {
       }
       this.reportServer = null;
     }
-    if (this.desktopProcess && this.desktopProcess.exitCode === null) {
-      try {
-        this.desktopProcess.kill();
-      } catch {
-        /* already gone */
-      }
-    }
+    leaveHermesRunning(this.desktopProcess, this.backendProcess);
     this.desktopProcess = null;
     this.controlPort = null;
-    if (this.backendProcess && this.backendProcess.exitCode === null) {
-      try {
-        this.backendProcess.kill();
-      } catch {
-        /* already gone */
-      }
-    }
     this.backendProcess = null;
     this.backendToken = null;
     this.dockToken = null;

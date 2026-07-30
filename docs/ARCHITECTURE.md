@@ -28,6 +28,13 @@ loopback seam authenticated with a per-launch shared token (see D-011…D-015 an
 start a conversation, reset a session or limit Hermes context. Hermes owns its own chat,
 attachments, models, settings, history and tools.
 
+Papers owns the authenticated docking connection, not Hermes's lifetime. On ordinary
+Papers exit it closes that temporary connection and releases its process handles without
+terminating Hermes Desktop or the Hermes backend. Hermes therefore remains usable with its
+current session after Papers closes. Papers retains the authenticated loopback coordinates
+in its local data and, after reopening, rebinds the same report endpoint and probes the
+surviving Desktop before it is ever allowed to launch another instance.
+
 ## Backpack boundary
 
 Papers currently persists Backpack identity and whether real contents exist. New

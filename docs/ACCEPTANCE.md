@@ -5,6 +5,9 @@
 - Production runs one Hermes backend and shows the real Hermes Desktop docked or detached
   (D-011). The earlier `/chat` embedding was removed, not retained.
 - Papers can open Hermes Desktop.
+- Closing Papers leaves Hermes Desktop, its backend and its current session running.
+- Reopened Papers reconnects to the surviving authenticated Hermes window rather than
+  launching a duplicate.
 - Papers locates Hermes on each machine at run time, with no per-machine settings (D-016),
   and starts the backend from that install rather than PATH (D-018).
 - Settings reports which build is running, so two machines can be compared (D-017).

@@ -18,6 +18,10 @@ of the two symbol toggles, and can take up to a minute that first time. This is 
 Papers never forces Hermes open — so a quiet Papers with no Hermes running is working
 correctly, not stalled.
 
+Closing Papers does not close Hermes. Hermes remains open with its current conversation;
+close Hermes separately when you actually want to close it. Reopening Papers reconnects to
+that same Hermes window instead of starting another one.
+
 ## Backpacks
 
 Click `Add Backpack` and give it a name. Nothing else is created automatically.

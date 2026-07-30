@@ -29,7 +29,11 @@ function valuesOf(prefix: string): string[] {
  * product does not depend on Node, PowerShell, or another developer tool being
  * installed on the machine.
  */
-export function launchHermesUpdateHelper(hermesRoot: string, hermesPids: number[] = []): boolean {
+export function launchHermesUpdateHelper(
+  hermesRoot: string,
+  hermesPids: number[] = [],
+  backendToken: string | null = null,
+): boolean {
   const integrationDir = app.isPackaged
     ? join(process.resourcesPath, 'hermes-integration')
     : join(app.getAppPath(), 'hermes-skin');
@@ -56,11 +60,45 @@ export function launchHermesUpdateHelper(hermesRoot: string, hermesPids: number[
         ...process.env,
         PAPERS_HERMES_INTEGRATION_DIR: integrationDir,
         PAPERS_HERMES_UPDATE_DATA: app.getPath('userData'),
+        PAPERS_HERMES_BACKEND_TOKEN: backendToken ?? '',
       },
     },
   );
   child.unref();
   return true;
+}
+
+export function parseHermesBackendPid(netstatOutput: string): number | null {
+  const pids = new Set<number>();
+  for (const line of netstatOutput.split(/\r?\n/)) {
+    const match = line.match(/^\s*TCP\s+\S+:9119\s+\S+\s+LISTENING\s+(\d+)\s*$/i);
+    if (match) pids.add(Number(match[1]));
+  }
+  return pids.size === 1 ? [...pids][0] ?? null : null;
+}
+
+async function backendAcceptsToken(token: string): Promise<boolean> {
+  if (!token) return false;
+  try {
+    const response = await fetch('http://127.0.0.1:9119/api/sessions', {
+      headers: { 'X-Hermes-Session-Token': token },
+      signal: AbortSignal.timeout(2_000),
+      redirect: 'manual',
+    });
+    return response.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+async function authenticatedBackendPid(token: string): Promise<number | null> {
+  if (!(await backendAcceptsToken(token))) return null;
+  const lines: string[] = [];
+  const code = await runCaptured('netstat', ['-ano', '-p', 'tcp'], process.cwd(), (line) => lines.push(line));
+  if (code !== 0) return null;
+  const pid = parseHermesBackendPid(lines.join('\n'));
+  if (!pid || !(await backendAcceptsToken(token))) return null;
+  return pid;
 }
 
 function updaterHtml(): string {
@@ -172,6 +210,7 @@ export async function runHermesUpdateHelper(): Promise<void> {
   const hermesPids = valuesOf(HERMES_PID_FLAG).map(Number).filter((pid) => Number.isInteger(pid) && pid > 0);
   const integrationDir = process.env['PAPERS_HERMES_INTEGRATION_DIR'];
   const dataDir = process.env['PAPERS_HERMES_UPDATE_DATA'];
+  const backendToken = process.env['PAPERS_HERMES_BACKEND_TOKEN'] ?? '';
   if (!hermesRoot || !integrationDir || !dataDir) {
     app.quit();
     return;
@@ -214,10 +253,15 @@ export async function runHermesUpdateHelper(): Promise<void> {
   try {
     report('Waiting for Papers and Hermes to close…', 8);
     await waitForExit(waitPid);
+    const liveBackendPid = await authenticatedBackendPid(backendToken);
+    if (backendToken && !liveBackendPid) {
+      throw new Error('Papers could not safely identify the authenticated Hermes backend process.');
+    }
+    if (liveBackendPid) hermesPids.push(liveBackendPid);
     // Normal shutdown is graceful. These exact, parent-supplied process roots
     // are a bounded Windows backstop for backend grandchildren that would
     // otherwise keep hermes.exe or a native Python module mapped.
-    for (const pid of hermesPids) {
+    for (const pid of new Set(hermesPids)) {
       try {
         process.kill(pid, 0);
       } catch {
