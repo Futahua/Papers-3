@@ -41,6 +41,13 @@ Papers may eventually contain unique and shared Backpacks, but the architecture 
 define those terms or prescribe storage, synchronization, portability or local bindings
 before a real Backpack requires them.
 
+“As you Go” is the first concrete exception to the empty-Backpack path. Its exact protected
+Backpack ID selects one dedicated renderer and one dedicated main-process service. That
+service reads the surviving local action manifest without modifying it, returns only action
+IDs and labels to the renderer, and launches only a path already present in that manifest.
+It exposes no create, edit, remove, picker or arbitrary-path channel and establishes no
+contract for another Backpack.
+
 ## Tool boundary
 
 Basic contains a permanent Tools destination. Only the creator decides what is a Tool.

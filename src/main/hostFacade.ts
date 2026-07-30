@@ -16,9 +16,11 @@ import type {
   SaveStatus,
   ShelfContribution,
 } from '@shared/types';
+import { AS_YOU_GO_BACKPACK_ID, type AsYouGoAction } from '@shared/asYouGo';
 import { buildIdentity } from './buildIdentity';
 import type { PapersUpdater } from './papersUpdater';
 import type { BackpackRegistry } from './backpacks/backpackRegistry';
+import type { AsYouGoWorkflow } from './backpacks/asYouGoWorkflow';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
 import type { ProgramCatalog } from './canvas/programLoader';
@@ -40,6 +42,7 @@ export interface FacadeDeps {
   hostContents: () => WebContents | null;
   updater: PapersUpdater;
   registry: BackpackRegistry;
+  asYouGo: AsYouGoWorkflow;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
@@ -54,6 +57,7 @@ export interface FacadeDeps {
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private currentBackpackId: string | null = null;
+  private asYouGoOpen = false;
   private readonly pendingPermissionPrompts = new Map<string, (d: PermissionDecision) => void>();
   private readonly pendingInvocationPreviews = new Map<string, (approved: boolean) => void>();
 
@@ -173,6 +177,36 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   lastActiveBackpackId(): string | null {
     return this.deps.registry.lastActiveBackpackId;
+  }
+
+  private requireAsYouGoOpen(): void {
+    const backpack = this.deps.registry.find(AS_YOU_GO_BACKPACK_ID);
+    if (!backpack) throw new Error('As you Go is not available on this machine.');
+    if (backpack.archived) throw new Error('Restore As you Go before entering it.');
+    if (!this.asYouGoOpen) {
+      throw new Error('Enter As you Go before choosing one of its actions.');
+    }
+  }
+
+  openAsYouGo(): void {
+    const backpack = this.deps.registry.find(AS_YOU_GO_BACKPACK_ID);
+    if (!backpack) throw new Error('As you Go is not available on this machine.');
+    if (backpack.archived) throw new Error('Restore As you Go before entering it.');
+    this.asYouGoOpen = true;
+  }
+
+  closeAsYouGo(): void {
+    this.asYouGoOpen = false;
+  }
+
+  async listAsYouGoActions(): Promise<AsYouGoAction[]> {
+    this.requireAsYouGoOpen();
+    return this.deps.asYouGo.listActions();
+  }
+
+  async launchAsYouGoAction(actionId: string): Promise<void> {
+    this.requireAsYouGoOpen();
+    await this.deps.asYouGo.launchAction(actionId);
   }
 
   // -------------------------------------------------------------- programs

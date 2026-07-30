@@ -1,11 +1,12 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, Menu, Notification, WebContentsView, app, session } from 'electron';
+import { BaseWindow, Menu, Notification, WebContentsView, app, session, shell } from 'electron';
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
+import { AsYouGoWorkflow } from './backpacks/asYouGoWorkflow';
 import { CanvasRuntime, defaultProgramsRoot } from './canvas/canvasRuntime';
 import { CanvasSessionState } from './canvas/canvasState';
 import { loadProgramCatalog, type ProgramCatalog } from './canvas/programLoader';
@@ -31,6 +32,7 @@ import {
   installProgramProtocolHandler,
   registerProgramSchemePrivileges,
 } from './security/programScheme';
+import { AS_YOU_GO_BACKPACK_ID } from '@shared/asYouGo';
 
 const hermesUpdateHelperMode = isHermesUpdateHelper();
 
@@ -97,6 +99,20 @@ async function bootstrap(): Promise<void> {
 
   const registry = new BackpackRegistry(baseDir);
   const registryReport = await registry.initialize();
+  const asYouGoRoot =
+    app.isPackaged && !process.env['PAPERS_TEST_USER_DATA']
+      ? path.resolve(baseDir, '..')
+      : baseDir;
+  const asYouGo = new AsYouGoWorkflow(
+    path.join(
+      asYouGoRoot,
+      'Shared',
+      'backpacks',
+      AS_YOU_GO_BACKPACK_ID,
+      'buttons.json',
+    ),
+    (target) => shell.openPath(target),
+  );
 
   const permissionStore = new PermissionStore(paths);
   await permissionStore.initialize();
@@ -245,6 +261,7 @@ async function bootstrap(): Promise<void> {
     hostContents: () => hostView?.webContents ?? null,
     updater,
     registry,
+    asYouGo,
     runtime,
     canvasState,
     catalog: () => catalog,

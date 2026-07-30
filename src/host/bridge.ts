@@ -10,6 +10,7 @@ import type {
   ProgramStatus,
   ShelfContribution,
 } from '@shared/types';
+import type { AsYouGoAction } from '@shared/asYouGo';
 
 export interface BackpacksList {
   backpacks: BackpackSummary[];
@@ -104,6 +105,13 @@ interface HostBridge {
     enter(id: string): Promise<{ backpack: BackpackSummary }>;
     leave(): Promise<void>;
     lastActive(): Promise<string | null>;
+  };
+  /** The one concrete machine-local workflow prepared for "As you Go". */
+  asYouGo: {
+    open(): Promise<void>;
+    close(): Promise<void>;
+    listActions(): Promise<AsYouGoAction[]>;
+    launchAction(actionId: string): Promise<void>;
   };
   programs: {
     catalog(): Promise<CatalogInfo>;

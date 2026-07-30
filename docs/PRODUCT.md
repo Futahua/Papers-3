@@ -66,6 +66,10 @@ Papers 1's custom agent workbench.
   conversation or invented contents.
 - Entering an empty Backpack truthfully displays
   `Nothing here yet. Create something under “name”.`
+- Implemented in source and awaiting an authorized release: entering the protected local
+  “As you Go” Backpack shows its prepared actions on this machine. The creator uses those
+  actions directly; Papers exposes no action editor, filesystem picker or generic
+  Backpack-button system.
 - Archived Backpacks can be deleted only after explicit confirmation naming that exact
   Backpack. External files, applications, scripts and folders remain untouched; Papers
   retains its internal record for recovery.

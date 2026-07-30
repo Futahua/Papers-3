@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { AS_YOU_GO_BACKPACK_ID } from '@shared/asYouGo';
 import { host, type BackpacksList, type HermesSurfaceStatus, type HostErrorPayload } from './bridge';
+import { AsYouGoWorkspace } from './AsYouGoWorkspace';
 import { BackpacksPane } from './BackpacksPane';
 import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
@@ -123,6 +125,38 @@ export function App(): React.JSX.Element {
     setBasicOpen(false);
   };
 
+  const enterBackpack = (id: string): void => {
+    if (id !== AS_YOU_GO_BACKPACK_ID) {
+      setEntered(id);
+      return;
+    }
+
+    void host()
+      .asYouGo.open()
+      .then(() => setEntered(id))
+      .catch((caught) =>
+        setHostErrors((previous) => [
+          ...previous,
+          {
+            component: 'As you Go',
+            what: 'The local Backpack could not be opened.',
+            known: String(caught instanceof Error ? caught.message : caught),
+            intact: 'Its prepared actions and Backpack record were not changed.',
+            retryUseful: true,
+            inspect: 'Return to Backpacks and enter As you Go again.',
+            recover: 'The local workflow remains on this machine.',
+          },
+        ]),
+      );
+  };
+
+  const leaveAsYouGo = (): void => {
+    void host()
+      .asYouGo.close()
+      .catch(() => undefined)
+      .finally(() => setEntered(null));
+  };
+
   const hermesBusy = hermes.status === 'starting';
 
   return (
@@ -199,14 +233,17 @@ export function App(): React.JSX.Element {
       </header>
 
       {view === 'backpacks' && (
-        <BackpacksPane list={backpacks} onChanged={refreshBackpacks} onEnter={(id) => setEntered(id)} />
+        <BackpacksPane list={backpacks} onChanged={refreshBackpacks} onEnter={enterBackpack} />
       )}
       {view === 'tools' && <ToolsPane />}
       {view === 'settings' && <SettingsPane />}
 
-      {enteredBackpack && (
-        <EmptyBackpackWarning backpackName={enteredBackpack.name} onDismiss={() => setEntered(null)} />
-      )}
+      {enteredBackpack &&
+        (enteredBackpack.id === AS_YOU_GO_BACKPACK_ID ? (
+          <AsYouGoWorkspace onDismiss={leaveAsYouGo} />
+        ) : (
+          <EmptyBackpackWarning backpackName={enteredBackpack.name} onDismiss={() => setEntered(null)} />
+        ))}
 
       {hermes.status === 'error' && hermes.detail && (
         <div className="error-banner hermes-error">

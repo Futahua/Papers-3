@@ -4,17 +4,89 @@
  * the creator sees in the shipped product.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import { clickScript, evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
 
+const AS_YOU_GO_ID = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 let launched: LaunchedApp;
+let localLaunchMarker: string;
+let protectedFixtureFiles: string[];
+let protectedFixtureHashes: string[];
+
+async function hashFile(file: string): Promise<string> {
+  return createHash('sha256').update(await fs.readFile(file)).digest('hex');
+}
 
 beforeAll(async () => {
-  launched = await launchPapers(undefined, { fixtures: false });
+  const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'papers3-as-you-go-e2e-'));
+  const backpack = {
+    id: AS_YOU_GO_ID,
+    name: 'As you Go',
+    type: 'environment',
+    createdAt: '2026-07-29T15:00:00.000Z',
+    lastEnteredAt: null,
+    archived: false,
+    workspacePath: null,
+  };
+  const backpackDir = path.join(userDataDir, 'PapersData', 'backpacks', AS_YOU_GO_ID);
+  await fs.mkdir(backpackDir, { recursive: true });
+  const registryFile = path.join(userDataDir, 'PapersData', 'registry.json');
+  const backpackFile = path.join(backpackDir, 'backpack.json');
+  await fs.writeFile(
+    registryFile,
+    JSON.stringify({ schemaVersion: 1, backpacks: [backpack], lastActiveBackpackId: null }),
+    'utf8',
+  );
+  await fs.writeFile(
+    backpackFile,
+    JSON.stringify({ schemaVersion: 1, ...backpack }),
+    'utf8',
+  );
+
+  const localLaunchScript = path.join(userDataDir, 'as-you-go-local-action.cmd');
+  localLaunchMarker = path.join(userDataDir, 'as-you-go-launched.txt');
+  await fs.writeFile(localLaunchScript, `@echo launched>"${localLaunchMarker}"\r\n`, 'utf8');
+  const manifestDir = path.join(userDataDir, 'Shared', 'backpacks', AS_YOU_GO_ID);
+  await fs.mkdir(manifestDir, { recursive: true });
+  const manifestFile = path.join(manifestDir, 'buttons.json');
+  const preparedActions = [
+    ['button-a3ea849d-dfc7-486f-b6d8-5b2c12d89246', 'CLIPS'],
+    ['button-7b551853-0471-4e3e-9cc1-421338db3469', 'SLOPTOP MODE'],
+    ['button-26dbe75c-e79b-4a9e-a232-74c1dadd1bbc', 'slop_engine'],
+    ['button-2929b1b4-6054-4b4a-a71f-b1bd5b1ff358', 'usb'],
+  ] as const;
+  await fs.writeFile(
+    manifestFile,
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        buttons: preparedActions.map(([id, label], index) => ({
+          id,
+          label,
+          target: localLaunchScript,
+          createdAt: `2026-07-29T15:0${index}:00.000Z`,
+        })),
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+  protectedFixtureFiles = [registryFile, backpackFile, manifestFile];
+  protectedFixtureHashes = await Promise.all(protectedFixtureFiles.map(hashFile));
+
+  launched = await launchPapers(userDataDir, { fixtures: false });
 }, 120_000);
 
 afterAll(async () => {
   await launched?.close();
+  if (launched?.userDataDir) {
+    await fs.rm(launched.userDataDir, { recursive: true, force: true });
+  }
 });
 
 /** Set a controlled React input's value and fire the input event. */
@@ -30,6 +102,72 @@ function setInput(selector: string, value: string): string {
 }
 
 describe('production Papers shell', () => {
+  it('enters only the local As you Go workflow with its prepared actions and no editor', async () => {
+    const { app } = launched;
+    const card = `(name) => [...document.querySelectorAll('.backpack-card')].find((item) =>
+      item.querySelector('.name')?.textContent?.trim() === name
+    )`;
+
+    await waitFor(
+      () => evalInHost<boolean>(app, `Boolean((${card})('As you Go'))`),
+      20_000,
+      'As you Go Backpack card',
+    );
+    await evalInHost(
+      app,
+      `(() => [...(${card})('As you Go').querySelectorAll('button')]
+        .find((button) => button.textContent?.trim() === 'Enter')?.click())()`,
+    );
+    await waitFor(
+      () =>
+        evalInHost<boolean>(
+          app,
+          `document.querySelector('.as-you-go-workspace h1')?.textContent?.trim() === 'As you Go'`,
+        ),
+      10_000,
+      'local As you Go workspace',
+    );
+
+    const visible = await evalInHost<{
+      labels: string[];
+      hasEditor: boolean;
+      leaksPath: boolean;
+    }>(
+      app,
+      `(() => ({
+        labels: [...document.querySelectorAll('.as-you-go-action .label')].map((item) => item.textContent?.trim() ?? ''),
+        hasEditor: [...document.querySelectorAll('button')].some((button) =>
+          ['Add button', 'Remove', 'Choose file', 'Choose folder', 'Save button'].includes(button.textContent?.trim() ?? '')
+        ),
+        leaksPath: document.querySelector('.as-you-go-workspace')?.textContent?.includes('as-you-go-local-action.cmd') ?? false,
+      }))()`,
+    );
+    expect(visible.labels).toEqual(['CLIPS', 'SLOPTOP MODE', 'slop_engine', 'usb']);
+    expect(visible.hasEditor).toBe(false);
+    expect(visible.leaksPath).toBe(false);
+
+    await evalInHost(app, clickScript('.as-you-go-action', 'CLIPS'));
+    await waitFor(
+      async () => {
+        try {
+          return (await fs.readFile(localLaunchMarker, 'utf8')).trim() === 'launched';
+        } catch {
+          return false;
+        }
+      },
+      10_000,
+      'prepared local As you Go action',
+    );
+
+    await evalInHost(app, clickScript('.as-you-go-workspace button', 'Back to Papers'));
+    await waitFor(
+      () => evalInHost<boolean>(app, `document.querySelector('.as-you-go-workspace') === null`),
+      10_000,
+      'return from As you Go',
+    );
+    expect(await Promise.all(protectedFixtureFiles.map(hashFile))).toEqual(protectedFixtureHashes);
+  }, 60_000);
+
   it('shows Basic with Backpacks, Tools and Settings and hosts Hermes own chat', async () => {
     const { app } = launched;
 
@@ -76,7 +214,11 @@ describe('production Papers shell', () => {
     await evalInHost(app, setInput('.create-row input', 'Visual Writing'));
     await evalInHost(app, clickScript('.create-row button', 'Add Backpack'));
     await waitFor(
-      () => evalInHost<boolean>(app, `document.querySelectorAll('.backpack-card').length === 1`),
+      () =>
+        evalInHost<boolean>(
+          app,
+          `[...document.querySelectorAll('.backpack-card .name')].some((name) => name.textContent?.trim() === 'Visual Writing')`,
+        ),
       10_000,
       'created Backpack tile',
     );
@@ -89,7 +231,16 @@ describe('production Papers shell', () => {
     ).toBe(true);
 
     // Enter the empty Backpack → the exact honest warning, quoting the name.
-    await evalInHost(app, clickScript('.backpack-card button', 'Enter'));
+    await evalInHost(
+      app,
+      `(() => {
+        const card = [...document.querySelectorAll('.backpack-card')].find(
+          (item) => item.querySelector('.name')?.textContent?.trim() === 'Visual Writing'
+        );
+        [...(card?.querySelectorAll('button') ?? [])]
+          .find((button) => button.textContent?.trim() === 'Enter')?.click();
+      })()`,
+    );
     await waitFor(
       () =>
         evalInHost<boolean>(
@@ -102,7 +253,7 @@ describe('production Papers shell', () => {
     // Dismiss returns to the shell (warning gone, Backpacks list intact).
     await evalInHost(app, clickScript('.warning-card button', 'Back to Papers'));
     await waitFor(
-      () => evalInHost<boolean>(app, `document.querySelector('.warning-scrim') === null && document.querySelectorAll('.backpack-card').length === 1`),
+      () => evalInHost<boolean>(app, `document.querySelector('.warning-scrim') === null && document.querySelectorAll('.backpack-card').length === 2`),
       10_000,
       'warning dismissed',
     );
@@ -122,7 +273,11 @@ describe('production Papers shell', () => {
     await evalInHost(app, clickScript('.pill-button', 'Tools'));
     await evalInHost(app, clickScript('.basic-row', 'Backpacks'));
     await waitFor(
-      () => evalInHost<boolean>(app, `(document.querySelector('.backpack-card .name')?.textContent ?? '') === 'Visual Writing'`),
+      () =>
+        evalInHost<boolean>(
+          app,
+          `[...document.querySelectorAll('.backpack-card .name')].some((name) => name.textContent?.trim() === 'Visual Writing')`,
+        ),
       10_000,
       'Backpack name retained',
     );

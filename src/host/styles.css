@@ -580,6 +580,122 @@ input:focus-visible {
   justify-content: center;
 }
 
+/* --------------------------------------------------------- local As you Go */
+
+.as-you-go-workspace {
+  position: absolute;
+  inset: var(--titlebar-height) 0 0;
+  z-index: 35;
+  overflow-y: auto;
+  background:
+    linear-gradient(rgba(32, 32, 30, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(32, 32, 30, 0.035) 1px, transparent 1px),
+    var(--paper);
+  background-size: 56px 56px;
+}
+
+.as-you-go-inner {
+  width: min(900px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: 34px 0 90px;
+}
+
+.as-you-go-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.as-you-go-head h1 {
+  margin: 8px 0 0;
+  font-family: var(--serif);
+  font-size: clamp(34px, 5vw, 54px);
+  font-weight: 400;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.as-you-go-intro {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.as-you-go-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.as-you-go-action {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  gap: 4px 12px;
+  align-items: center;
+  min-height: 92px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(251, 250, 246, 0.82);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.as-you-go-action:hover {
+  border-color: var(--green);
+  background: var(--raised-strong);
+  box-shadow: 0 10px 28px rgba(38, 35, 29, 0.08);
+}
+
+.as-you-go-action:disabled {
+  cursor: progress;
+  opacity: 0.62;
+}
+
+.as-you-go-mark {
+  grid-row: 1 / 3;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--green-soft);
+  place-items: center;
+  color: var(--green);
+  font-size: 17px;
+}
+
+.as-you-go-action .label {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.as-you-go-action .kind {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.as-you-go-status {
+  display: grid;
+  min-height: 170px;
+  padding: 32px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 16px;
+  background: rgba(251, 250, 246, 0.52);
+  place-items: center;
+  color: var(--muted);
+  text-align: center;
+}
+
 .inline-error {
   display: flex;
   align-items: center;

@@ -25,6 +25,11 @@ export interface HostFacade {
   leaveBackpack(): Promise<void>;
   lastActiveBackpackId(): string | null;
 
+  openAsYouGo(): void;
+  closeAsYouGo(): void;
+  listAsYouGoActions(): Promise<unknown>;
+  launchAsYouGoAction(actionId: string): Promise<void>;
+
   programCatalog(): unknown;
   startProgram(programId: string): Promise<void>;
   stopProgram(): Promise<void>;
@@ -76,6 +81,9 @@ const idSchema = z.string().min(1).max(128);
 const backpackRemovalIdSchema = z
   .string()
   .regex(/^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+const asYouGoActionIdSchema = z
+  .string()
+  .regex(/^button-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
 
 export function registerHostIpc(facade: HostFacade): void {
@@ -116,6 +124,13 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpacks:enter', (_e, id) => facade.enterBackpack(idSchema.parse(id)));
   handle('host:backpacks:leave', () => facade.leaveBackpack());
   handle('host:backpacks:last-active', () => facade.lastActiveBackpackId());
+
+  handle('host:as-you-go:open', () => facade.openAsYouGo());
+  handle('host:as-you-go:close', () => facade.closeAsYouGo());
+  handle('host:as-you-go:list-actions', () => facade.listAsYouGoActions());
+  handle('host:as-you-go:launch-action', (_e, actionId) =>
+    facade.launchAsYouGoAction(asYouGoActionIdSchema.parse(actionId)),
+  );
 
   handle('host:programs:catalog', () => facade.programCatalog());
   handle('host:programs:start', (_e, programId) => facade.startProgram(idSchema.parse(programId)));

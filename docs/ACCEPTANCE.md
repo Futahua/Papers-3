@@ -30,6 +30,15 @@
 - The installed creator profile contains no seeded or test Backpack, and automated tests
   prove they use isolated temporary profiles.
 
+## Verified in an isolated source build; awaiting authorized release
+
+- `Enter` on the exact protected “As you Go” ID shows `CLIPS`, `SLOPTOP MODE`,
+  `slop_engine` and `usb`; another Backpack remains on the empty warning.
+- “As you Go” has no Add/Remove editor or target picker, exposes no target path to the
+  renderer and launches only one of its four prepared local actions.
+- Entering, using and leaving “As you Go” do not rewrite its Backpack record, registry or
+  local action manifest and do not stop a running application.
+
 ## Known mismatch
 
 The current Tools screen still presents an unapproved global/shared Tool definition and

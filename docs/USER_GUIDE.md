@@ -30,6 +30,16 @@ A future Backpack may reach across the whole machine and contain several ways of
 It is not inherently a project folder or a single page. Papers may contain unique and
 shared Backpacks, but those words do not yet impose configuration or behavior.
 
+### As you Go — source correction awaiting release
+
+The installed build still shows the empty warning. In the corrected source, “As you Go”
+is local to this machine. Click `Enter` to see the four prepared actions: `CLIPS`,
+`SLOPTOP MODE`, `slop_engine` and `usb`. Choose an action to open its existing local
+workflow.
+
+The four actions are finished workflow interactions. There is no Add, Remove, path picker
+or setup screen, and this local workflow does not define any other Backpack.
+
 ## Tools
 
 Tools is a permanent destination within Basic. Only the creator decides what is a Tool.

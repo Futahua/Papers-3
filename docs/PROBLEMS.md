@@ -3,6 +3,22 @@
 This is the plain-language work list, in creator priority order. A problem stays here
 until the creator can use and judge the correction in the installed product.
 
+## Current — “As you Go” became empty after correcting Papers 1.2.0
+
+**Corrected in source; not released or installed (2026-07-30).** Papers 1.2.0 turned a
+request about “As you Go” into a universal launch-button editor. Reverting that false
+product model correctly removed the universal system, but also left the real “As you Go”
+Backpack showing the empty warning even though its four local actions survived on disk.
+
+The source now recognizes only the protected “As you Go” ID and presents its existing
+`CLIPS`, `SLOPTOP MODE`, `slop_engine` and `usb` actions. The manifest is read-only;
+filesystem paths stay in the main process; there is no Add/Remove editor, picker, Tool
+definition, migration or behavior for another Backpack. Isolated tests launch a temporary
+Windows script and prove an ordinary Backpack still shows the exact empty warning.
+
+Remaining for the creator: a future explicitly authorized release may deliver this through
+Papers' updater. Until then the running 1.2.1 installation remains unchanged.
+
 ## Unscheduled — The Tools screen defines Tools without creator authority
 
 **Documented, not corrected (2026-07-30).** The current Tools screen calls Tools global,
