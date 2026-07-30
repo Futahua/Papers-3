@@ -4,7 +4,7 @@
  * the HostFacade IPC contract.
  */
 import { randomUUID } from 'node:crypto';
-import { shell, type WebContents } from 'electron';
+import { clipboard, shell, type WebContents } from 'electron';
 
 import type {
   AgentRunSnapshot,
@@ -16,11 +16,13 @@ import type {
   SaveStatus,
   ShelfContribution,
 } from '@shared/types';
-import { AS_YOU_GO_BACKPACK_ID, type AsYouGoAction } from '@shared/asYouGo';
 import { buildIdentity } from './buildIdentity';
 import type { PapersUpdater } from './papersUpdater';
 import type { BackpackRegistry } from './backpacks/backpackRegistry';
-import type { AsYouGoWorkflow } from './backpacks/asYouGoWorkflow';
+import type {
+  BackpackProjectService,
+  OpenBackpackProject,
+} from './backpacks/backpackProjectService';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
 import type { ProgramCatalog } from './canvas/programLoader';
@@ -42,7 +44,7 @@ export interface FacadeDeps {
   hostContents: () => WebContents | null;
   updater: PapersUpdater;
   registry: BackpackRegistry;
-  asYouGo: AsYouGoWorkflow;
+  backpackProjects: BackpackProjectService;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
@@ -57,7 +59,7 @@ export interface FacadeDeps {
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private currentBackpackId: string | null = null;
-  private asYouGoOpen = false;
+  private currentBackpackProjectId: string | null = null;
   private readonly pendingPermissionPrompts = new Map<string, (d: PermissionDecision) => void>();
   private readonly pendingInvocationPreviews = new Map<string, (approved: boolean) => void>();
 
@@ -117,6 +119,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (archived && this.currentBackpackId === id) {
       await this.leaveBackpack();
     }
+    if (archived && this.currentBackpackProjectId === id) {
+      this.currentBackpackProjectId = null;
+    }
     await this.deps.registry.setArchived(id, archived);
     this.emitBackpacksChanged();
   }
@@ -124,6 +129,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async removeBackpack(id: string): Promise<void> {
     await this.deps.registry.remove(id);
     if (this.currentBackpackId === id) this.currentBackpackId = null;
+    if (this.currentBackpackProjectId === id) this.currentBackpackProjectId = null;
     this.emitBackpacksChanged();
   }
 
@@ -179,34 +185,38 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.registry.lastActiveBackpackId;
   }
 
-  private requireAsYouGoOpen(): void {
-    const backpack = this.deps.registry.find(AS_YOU_GO_BACKPACK_ID);
-    if (!backpack) throw new Error('As you Go is not available on this machine.');
-    if (backpack.archived) throw new Error('Restore As you Go before entering it.');
-    if (!this.asYouGoOpen) {
-      throw new Error('Enter As you Go before choosing one of its actions.');
+  private requireBackpackProjectOpen(): string {
+    const id = this.currentBackpackProjectId;
+    if (!id) throw new Error('Enter a Backpack project before using it.');
+    const backpack = this.deps.registry.find(id);
+    if (!backpack || backpack.archived) {
+      this.currentBackpackProjectId = null;
+      throw new Error('This Backpack project is no longer available.');
     }
+    return id;
   }
 
-  openAsYouGo(): void {
-    const backpack = this.deps.registry.find(AS_YOU_GO_BACKPACK_ID);
-    if (!backpack) throw new Error('As you Go is not available on this machine.');
-    if (backpack.archived) throw new Error('Restore As you Go before entering it.');
-    this.asYouGoOpen = true;
+  async openBackpackProject(id: string): Promise<OpenBackpackProject | null> {
+    this.currentBackpackProjectId = null;
+    const backpack = this.deps.registry.find(id);
+    if (!backpack) throw new Error(`Backpack ${id} not found`);
+    if (backpack.archived) throw new Error('Restore this Backpack before entering it.');
+    const project = await this.deps.backpackProjects.open(id);
+    this.currentBackpackProjectId = project ? id : null;
+    return project;
   }
 
-  closeAsYouGo(): void {
-    this.asYouGoOpen = false;
+  closeBackpackProject(): void {
+    this.currentBackpackProjectId = null;
   }
 
-  async listAsYouGoActions(): Promise<AsYouGoAction[]> {
-    this.requireAsYouGoOpen();
-    return this.deps.asYouGo.listActions();
+  async runBackpackProjectAction(actionId: string): Promise<void> {
+    await this.deps.backpackProjects.runAction(this.requireBackpackProjectOpen(), actionId);
   }
 
-  async launchAsYouGoAction(actionId: string): Promise<void> {
-    this.requireAsYouGoOpen();
-    await this.deps.asYouGo.launchAction(actionId);
+  copyBackpackProjectText(text: string): void {
+    this.requireBackpackProjectOpen();
+    clipboard.writeText(text);
   }
 
   // -------------------------------------------------------------- programs

@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
-import { AsYouGoWorkflow } from './backpacks/asYouGoWorkflow';
+import { BackpackProjectService } from './backpacks/backpackProjectService';
 import { CanvasRuntime, defaultProgramsRoot } from './canvas/canvasRuntime';
 import { CanvasSessionState } from './canvas/canvasState';
 import { loadProgramCatalog, type ProgramCatalog } from './canvas/programLoader';
@@ -32,11 +32,17 @@ import {
   installProgramProtocolHandler,
   registerProgramSchemePrivileges,
 } from './security/programScheme';
-import { AS_YOU_GO_BACKPACK_ID } from '@shared/asYouGo';
+import {
+  installBackpackProjectProtocol,
+  registerBackpackProjectSchemePrivileges,
+} from './security/backpackProjectScheme';
 
 const hermesUpdateHelperMode = isHermesUpdateHelper();
 
-if (!hermesUpdateHelperMode) registerProgramSchemePrivileges();
+if (!hermesUpdateHelperMode) {
+  registerProgramSchemePrivileges();
+  registerBackpackProjectSchemePrivileges();
+}
 
 app.setName('Papers');
 
@@ -99,20 +105,11 @@ async function bootstrap(): Promise<void> {
 
   const registry = new BackpackRegistry(baseDir);
   const registryReport = await registry.initialize();
-  const asYouGoRoot =
-    app.isPackaged && !process.env['PAPERS_TEST_USER_DATA']
-      ? path.resolve(baseDir, '..')
-      : baseDir;
-  const asYouGo = new AsYouGoWorkflow(
-    path.join(
-      asYouGoRoot,
-      'Shared',
-      'backpacks',
-      AS_YOU_GO_BACKPACK_ID,
-      'buttons.json',
-    ),
+  const backpackProjects = new BackpackProjectService(
+    path.join(paths.root, 'backpack-projects.json'),
     (target) => shell.openPath(target),
   );
+  installBackpackProjectProtocol(backpackProjects);
 
   const permissionStore = new PermissionStore(paths);
   await permissionStore.initialize();
@@ -261,7 +258,7 @@ async function bootstrap(): Promise<void> {
     hostContents: () => hostView?.webContents ?? null,
     updater,
     registry,
-    asYouGo,
+    backpackProjects,
     runtime,
     canvasState,
     catalog: () => catalog,

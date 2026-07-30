@@ -30,16 +30,22 @@ A future Backpack may reach across the whole machine and contain several ways of
 It is not inherently a project folder or a single page. Papers may contain unique and
 shared Backpacks, but those words do not yet impose configuration or behavior.
 
-### As you Go
+### As you Go in the authorized 1.2.3 correction
 
-Papers 1.2.2 shows “As you Go” on this machine. Click `Enter` to see the four prepared
-actions: `CLIPS`, `SLOPTOP MODE`, `slop_engine` and `usb`. Choose an action to open its
-existing local workflow.
+After the authorized 1.2.3 update, Papers shows “As you Go” from its independent local
+project on this machine. Click `Enter` to see the four prepared actions: `CLIPS`,
+`SLOPTOP MODE`, `slop_engine` and `usb`. Choose an action to open its existing local
+workflow.
 
 The four actions are finished workflow interactions. There is no Add, Remove, path picker
-or setup screen, and this local workflow does not define any other Backpack. Its current
-compiled placement is being corrected so future “As you Go” development stays on this
-machine and does not require Papers updates.
+or setup screen, and this local workflow does not define any other Backpack. Use **Copy
+agent pickup prompt** beside `Local Backpack` when asking an agent to continue Papers or
+Backpack work; paste it into the task and replace the final placeholder with what you want
+to experience.
+
+“As you Go” is maintained outside the Papers binary on this machine. Ordinary changes to
+its interface, prompt and actions do not require a Papers update and do not affect another
+machine.
 
 ## Tools
 

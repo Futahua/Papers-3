@@ -10,7 +10,6 @@ import type {
   ProgramStatus,
   ShelfContribution,
 } from '@shared/types';
-import type { AsYouGoAction } from '@shared/asYouGo';
 
 export interface BackpacksList {
   backpacks: BackpackSummary[];
@@ -106,12 +105,12 @@ interface HostBridge {
     leave(): Promise<void>;
     lastActive(): Promise<string | null>;
   };
-  /** The one concrete machine-local workflow prepared for "As you Go". */
-  asYouGo: {
-    open(): Promise<void>;
+  /** Host seam for an independently maintained, machine-bound Backpack project. */
+  backpackProject: {
+    open(id: string): Promise<{ url: string } | null>;
     close(): Promise<void>;
-    listActions(): Promise<AsYouGoAction[]>;
-    launchAction(actionId: string): Promise<void>;
+    runAction(actionId: string): Promise<void>;
+    copyText(text: string): Promise<void>;
   };
   programs: {
     catalog(): Promise<CatalogInfo>;

@@ -9,7 +9,14 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { clickScript, evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
+import {
+  clickScript,
+  evalInBackpackProject,
+  evalInHost,
+  launchPapers,
+  waitFor,
+  type LaunchedApp,
+} from './helpers';
 
 const AS_YOU_GO_ID = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 let launched: LaunchedApp;
@@ -50,33 +57,85 @@ beforeAll(async () => {
   const localLaunchScript = path.join(userDataDir, 'as-you-go-local-action.cmd');
   localLaunchMarker = path.join(userDataDir, 'as-you-go-launched.txt');
   await fs.writeFile(localLaunchScript, `@echo launched>"${localLaunchMarker}"\r\n`, 'utf8');
-  const manifestDir = path.join(userDataDir, 'Shared', 'backpacks', AS_YOU_GO_ID);
-  await fs.mkdir(manifestDir, { recursive: true });
-  const manifestFile = path.join(manifestDir, 'buttons.json');
-  const preparedActions = [
-    ['button-a3ea849d-dfc7-486f-b6d8-5b2c12d89246', 'CLIPS'],
-    ['button-7b551853-0471-4e3e-9cc1-421338db3469', 'SLOPTOP MODE'],
-    ['button-26dbe75c-e79b-4a9e-a232-74c1dadd1bbc', 'slop_engine'],
-    ['button-2929b1b4-6054-4b4a-a71f-b1bd5b1ff358', 'usb'],
-  ] as const;
+  const projectRoot = path.join(userDataDir, 'external-as-you-go-project');
+  await fs.mkdir(projectRoot, { recursive: true });
+  const bindingsFile = path.join(userDataDir, 'PapersData', 'backpack-projects.json');
+  const projectFile = path.join(projectRoot, 'project.json');
+  const actionsFile = path.join(projectRoot, 'actions.json');
+  const publicRoot = path.join(projectRoot, 'public');
+  await fs.mkdir(publicRoot, { recursive: true });
+  const entryFile = path.join(publicRoot, 'index.html');
+  const scriptFile = path.join(publicRoot, 'app.js');
   await fs.writeFile(
-    manifestFile,
-    JSON.stringify(
-      {
-        schemaVersion: 1,
-        buttons: preparedActions.map(([id, label], index) => ({
-          id,
-          label,
-          target: localLaunchScript,
-          createdAt: `2026-07-29T15:0${index}:00.000Z`,
-        })),
-      },
-      null,
-      2,
-    ),
+    bindingsFile,
+    JSON.stringify({ schemaVersion: 1, projects: { [AS_YOU_GO_ID]: { root: projectRoot } } }),
     'utf8',
   );
-  protectedFixtureFiles = [registryFile, backpackFile, manifestFile];
+  await fs.writeFile(
+    projectFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      backpackId: AS_YOU_GO_ID,
+      entry: 'public/index.html',
+    }),
+    'utf8',
+  );
+  await fs.writeFile(
+    actionsFile,
+    JSON.stringify({
+      schemaVersion: 1,
+      actions: [
+        { id: 'clips', target: localLaunchScript },
+        { id: 'sloptop-mode', target: localLaunchScript },
+        { id: 'slop-engine', target: localLaunchScript },
+        { id: 'usb', target: localLaunchScript },
+      ],
+    }),
+    'utf8',
+  );
+  await fs.writeFile(
+    entryFile,
+    `<!doctype html>
+      <html><head><meta charset="utf-8"><script defer src="app.js"></script></head>
+      <body>
+        <button id="copy-prompt">Copy agent pickup prompt</button>
+        <h1>As you Go</h1>
+        <button class="action" data-action="clips">CLIPS</button>
+        <button class="action" data-action="sloptop-mode">SLOPTOP MODE</button>
+        <button class="action" data-action="slop-engine">slop_engine</button>
+        <button class="action" data-action="usb">usb</button>
+        <button id="back">Back to Papers</button>
+      </body></html>`,
+    'utf8',
+  );
+  await fs.writeFile(
+    scriptFile,
+    `const send = (type, detail = {}) =>
+      window.parent.postMessage({ type, requestId: crypto.randomUUID(), ...detail }, '*');
+    document.querySelector('#copy-prompt').addEventListener('click', () =>
+      send('papers:project:copy-text', {
+        text: 'Read AGENTS.md and HERMES.md completely before acting. Backpack work stays outside Papers binaries. My request:'
+      })
+    );
+    document.querySelectorAll('.action').forEach((button) =>
+      button.addEventListener('click', () =>
+        send('papers:project:run-action', { actionId: button.dataset.action })
+      )
+    );
+    document.querySelector('#back').addEventListener('click', () =>
+      send('papers:project:close')
+    );`,
+    'utf8',
+  );
+  protectedFixtureFiles = [
+    registryFile,
+    backpackFile,
+    bindingsFile,
+    projectFile,
+    actionsFile,
+    entryFile,
+    scriptFile,
+  ];
   protectedFixtureHashes = await Promise.all(protectedFixtureFiles.map(hashFile));
 
   launched = await launchPapers(userDataDir, { fixtures: false });
@@ -102,7 +161,7 @@ function setInput(selector: string, value: string): string {
 }
 
 describe('production Papers shell', () => {
-  it('enters only the local As you Go workflow with its prepared actions and no editor', async () => {
+  it('hosts the external local As you Go project, including its pickup prompt', async () => {
     const { app } = launched;
     const card = `(name) => [...document.querySelectorAll('.backpack-card')].find((item) =>
       item.querySelector('.name')?.textContent?.trim() === name
@@ -120,33 +179,90 @@ describe('production Papers shell', () => {
     );
     await waitFor(
       () =>
-        evalInHost<boolean>(
+        evalInBackpackProject<boolean>(
           app,
-          `document.querySelector('.as-you-go-workspace h1')?.textContent?.trim() === 'As you Go'`,
+          `document.querySelector('h1')?.textContent?.trim() === 'As you Go'`,
         ),
       10_000,
-      'local As you Go workspace',
+      'external local As you Go project',
     );
+    expect(
+      await evalInBackpackProject<string[]>(
+        app,
+        `[...document.querySelectorAll('.action')].map((button) => button.textContent?.trim() ?? '')`,
+      ),
+    ).toEqual(['CLIPS', 'SLOPTOP MODE', 'slop_engine', 'usb']);
+    expect(
+      await evalInHost<boolean>(
+        app,
+        `document.querySelector('iframe[data-backpack-project]') !== null &&
+         !document.documentElement.innerHTML.includes('AsYouGoWorkspace')`,
+      ),
+    ).toBe(true);
+    expect(
+      await app.evaluate(async ({ net }, backpackId) => {
+        const response = await net.fetch(`papers-backpack://${backpackId}/actions.json`);
+        return {
+          status: response.status,
+          body: await response.text(),
+        };
+      }, AS_YOU_GO_ID),
+    ).toEqual({ status: 403, body: 'Denied: project asset denied' });
 
-    const visible = await evalInHost<{
-      labels: string[];
-      hasEditor: boolean;
-      leaksPath: boolean;
-    }>(
+    await app.evaluate(({ clipboard }) => clipboard.writeText('Backpack boundary sentinel'));
+    await evalInHost(
       app,
-      `(() => ({
-        labels: [...document.querySelectorAll('.as-you-go-action .label')].map((item) => item.textContent?.trim() ?? ''),
-        hasEditor: [...document.querySelectorAll('button')].some((button) =>
-          ['Add button', 'Remove', 'Choose file', 'Choose folder', 'Save button'].includes(button.textContent?.trim() ?? '')
-        ),
-        leaksPath: document.querySelector('.as-you-go-workspace')?.textContent?.includes('as-you-go-local-action.cmd') ?? false,
-      }))()`,
+      `(() => {
+        const frame = document.querySelector('iframe[data-backpack-project]');
+        const origin = new URL(frame.src).origin;
+        const attempts = [
+          new MessageEvent('message', {
+            data: { type: 'papers:project:run-action', actionId: 'clips' },
+            origin: 'https://not-the-project.invalid',
+            source: frame.contentWindow,
+          }),
+          new MessageEvent('message', {
+            data: { type: 'papers:project:copy-text', text: 'forged' },
+            origin,
+            source: window,
+          }),
+          new MessageEvent('message', {
+            data: { type: 'papers:project:close' },
+            origin: 'https://not-the-project.invalid',
+            source: frame.contentWindow,
+          }),
+          new MessageEvent('message', {
+            data: { type: 'papers:project:run-action', actionId: '../invalid' },
+            origin,
+            source: frame.contentWindow,
+          }),
+        ];
+        attempts.forEach((event) => window.dispatchEvent(event));
+        return new Promise((resolve) => window.setTimeout(resolve, 150));
+      })()`,
     );
-    expect(visible.labels).toEqual(['CLIPS', 'SLOPTOP MODE', 'slop_engine', 'usb']);
-    expect(visible.hasEditor).toBe(false);
-    expect(visible.leaksPath).toBe(false);
+    expect(await app.evaluate(({ clipboard }) => clipboard.readText())).toBe(
+      'Backpack boundary sentinel',
+    );
+    await expect(fs.access(localLaunchMarker)).rejects.toThrow();
+    expect(
+      await evalInHost<boolean>(
+        app,
+        `document.querySelector('iframe[data-backpack-project]') !== null`,
+      ),
+    ).toBe(true);
 
-    await evalInHost(app, clickScript('.as-you-go-action', 'CLIPS'));
+    await evalInBackpackProject(app, `document.querySelector('#copy-prompt').click()`);
+    await waitFor(
+      () =>
+        app.evaluate(({ clipboard }) =>
+          clipboard.readText().includes('Backpack work stays outside Papers binaries'),
+        ),
+      10_000,
+      'copied agent pickup prompt',
+    );
+
+    await evalInBackpackProject(app, `document.querySelector('[data-action="clips"]').click()`);
     await waitFor(
       async () => {
         try {
@@ -159,9 +275,13 @@ describe('production Papers shell', () => {
       'prepared local As you Go action',
     );
 
-    await evalInHost(app, clickScript('.as-you-go-workspace button', 'Back to Papers'));
+    await evalInBackpackProject(app, `document.querySelector('#back').click()`);
     await waitFor(
-      () => evalInHost<boolean>(app, `document.querySelector('.as-you-go-workspace') === null`),
+      () =>
+        evalInHost<boolean>(
+          app,
+          `document.querySelector('iframe[data-backpack-project]') === null`,
+        ),
       10_000,
       'return from As you Go',
     );

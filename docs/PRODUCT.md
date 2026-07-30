@@ -78,10 +78,10 @@ Papers 1's custom agent workbench.
   conversation or invented contents.
 - Entering an empty Backpack truthfully displays
   `Nothing here yet. Create something under “name”.`
-- Papers 1.2.2 displays the four prepared “As you Go” actions, but incorrectly compiles
-  this local Backpack's ID, interface and behavior into the universal application. The
-  visible workflow is real; its placement is not accepted and is tracked in
-  [`PROBLEMS.md`](PROBLEMS.md).
+- The explicitly authorized Papers 1.2.3 source/release correction hosts the separately
+  maintained local “As you Go” project on the primary machine. Its exact ID, interface,
+  pickup prompt and action definitions remain outside compiled Papers source, so ordinary
+  project changes do not become Papers releases or updates to other machines.
 - Archived Backpacks can be deleted only after explicit confirmation naming that exact
   Backpack. External files, applications, scripts and folders remain untouched; Papers
   retains its internal record for recovery.

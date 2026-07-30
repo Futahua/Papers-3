@@ -61,6 +61,25 @@ export async function evalInHost<T>(app: ElectronApplication, script: string): P
   }, script) as Promise<T>;
 }
 
+/** Run JS inside the independently loaded Backpack-project frame. */
+export async function evalInBackpackProject<T>(
+  app: ElectronApplication,
+  script: string,
+): Promise<T> {
+  return app.evaluate(async ({ BaseWindow }, js) => {
+    const win = BaseWindow.getAllWindows()[0];
+    if (!win) throw new Error('no window');
+    const views = win.contentView.children as Electron.WebContentsView[];
+    const host = views[0];
+    if (!host) throw new Error('no host view');
+    const project = host.webContents.mainFrame.frames.find((frame) =>
+      frame.url.startsWith('papers-backpack://'),
+    );
+    if (!project) throw new Error('no Backpack project frame');
+    return project.executeJavaScript(js, true);
+  }, script) as Promise<T>;
+}
+
 /** Run JS inside the active program view's page. */
 export async function evalInProgram<T>(app: ElectronApplication, script: string): Promise<T> {
   return app.evaluate(async ({ BaseWindow }, js) => {

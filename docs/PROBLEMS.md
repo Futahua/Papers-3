@@ -3,7 +3,7 @@
 This is the plain-language work list, in creator priority order. A problem stays here
 until the creator can use and judge the correction in the installed product.
 
-## Current — Local “As you Go” was compiled into universal Papers
+## Corrected in source for authorized 1.2.3 — Local “As you Go” was compiled into universal Papers
 
 **Creator-rejected placement; correction authorized (2026-07-30).** Papers 1.2.2 restored
 the visible four-action workflow without restoring the universal editor from 1.2.0, but it
@@ -16,11 +16,22 @@ They may be projects of their own, and development belongs outside Papers' main 
 unless something explicitly requires host support. Local includes experience, behavior,
 implementation and data.
 
-Correction in progress: extract “As you Go” as a machine-local project, remove its
-Backpack-specific interface and action definitions from `app.asar`, add only the host seam
-its real workflow requires, and put the requested copy-ready agent pickup prompt in that
-local project. This does not authorize a marketplace, generic editor, Tool definition or
-fixed universal Backpack schema.
+Correction: “As you Go” now lives at
+`Papers/Backpack projects/As you Go` as its own machine-local project. Its exact ID,
+interface, pickup prompt and four action definitions are absent from Papers compiled
+source. Papers 1.2.3 supplies only the narrow host support demonstrated by the project:
+serve its bound static files without exposing their path, mediate its declared action IDs,
+copy text after its button is used, and return to Papers.
+
+The binding is stored separately in machine-local Papers data. Project files are re-read
+without a Papers rebuild or restart, so ordinary “As you Go” changes stay on this machine
+and do not publish updates to the others. This does not authorize a marketplace, generic
+editor, Tool definition or fixed universal Backpack schema.
+
+For this correction, the creator explicitly authorized pushing the source, building and
+publishing 1.2.3, and automatically installing and restarting Papers on the primary
+machine. That is delivery authorization for this correction; it does not generalize a
+Backpack project into product-wide meaning or authorize updating another machine.
 
 ## Unscheduled — The Tools screen defines Tools without creator authority
 

@@ -44,14 +44,14 @@ const api = {
     lastActive: () => ipcRenderer.invoke('host:backpacks:last-active'),
   },
 
-  // Concrete local workflow for the creator's protected "As you Go" Backpack.
-  // No generic Backpack editor and no filesystem path crosses this bridge.
-  asYouGo: {
-    open: () => ipcRenderer.invoke('host:as-you-go:open'),
-    close: () => ipcRenderer.invoke('host:as-you-go:close'),
-    listActions: () => ipcRenderer.invoke('host:as-you-go:list-actions'),
-    launchAction: (actionId: string) =>
-      ipcRenderer.invoke('host:as-you-go:launch-action', actionId),
+  // Narrow host seam for independently maintained Backpack projects. Project
+  // roots and action targets never cross into a renderer.
+  backpackProject: {
+    open: (id: string) => ipcRenderer.invoke('host:backpack-project:open', id),
+    close: () => ipcRenderer.invoke('host:backpack-project:close'),
+    runAction: (actionId: string) =>
+      ipcRenderer.invoke('host:backpack-project:run-action', actionId),
+    copyText: (text: string) => ipcRenderer.invoke('host:backpack-project:copy-text', text),
   },
 
   programs: {

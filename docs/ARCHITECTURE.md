@@ -47,11 +47,39 @@ Papers may eventually contain unique and shared Backpacks, but the architecture 
 define those terms or prescribe storage, synchronization, portability or local bindings
 before a real Backpack requires them.
 
-Known placement error in 1.2.2: the exact “As you Go” ID selects a dedicated renderer and
-main-process service compiled into Papers. Its local manifest remains untouched, but local
-data does not excuse universal implementation. The corrective work must remove the
-Backpack-specific interface and behavior from the binary, keep them in an independent
-machine-local project and add only the host seam the real project demonstrates.
+Papers 1.2.2 had a placement error: the exact “As you Go” ID selected a dedicated renderer
+and main-process service compiled into Papers. The source correction prepared for the
+explicitly authorized 1.2.3 release removes that exact ID, interface, pickup prompt and
+action definitions from compiled source.
+
+The concrete host seam now demonstrated by the local project is deliberately small:
+
+```text
+machine-local binding (PapersData/backpack-projects.json)
+        │ exact Backpack ID → absolute project root; never sent to the renderer
+        ▼
+Papers main process
+  ├── validates the binding, project entry and declared action IDs
+  ├── serves only static files under that project's `public/` subtree
+  │   on a per-Backpack secure origin
+  ├── opens only absolute action targets declared in the external project
+  └── offers copy-text and close mediation
+        ▼
+sandboxed project frame
+```
+
+Project files are read again when the Backpack is entered or an action is used. Therefore
+ordinary interface, prompt and action changes to the local “As you Go” project do not
+require rebuilding, versioning, releasing or restarting Papers. The binding is optional;
+an unbound Backpack still receives the honest empty warning.
+
+`project.json`, `actions.json` and their absolute paths are private main-process control
+records. They cannot be fetched through the project scheme; real-path containment also
+rejects a junction or symbolic-link alias from `public/` back to a private record.
+
+This is current implementation required by one demonstrated project, not a required format
+for every Backpack. It does not define plugin installation, discovery, synchronization,
+portability or the future architecture of any other Backpack.
 
 ## Tool boundary
 

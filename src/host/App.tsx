@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { AS_YOU_GO_BACKPACK_ID } from '@shared/asYouGo';
 import { host, type BackpacksList, type HermesSurfaceStatus, type HostErrorPayload } from './bridge';
-import { AsYouGoWorkspace } from './AsYouGoWorkspace';
+import { BackpackProjectFrame } from './BackpackProjectFrame';
 import { BackpacksPane } from './BackpacksPane';
 import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
@@ -45,6 +44,7 @@ export function App(): React.JSX.Element {
   const [view, setView] = useState<BasicView>('backpacks');
   const [basicOpen, setBasicOpen] = useState(false);
   const [entered, setEntered] = useState<string | null>(null);
+  const [projectUrl, setProjectUrl] = useState<string | null>(null);
   const [hermes, setHermes] = useState<HermesSurfaceStatus>({ placement: 'closed', status: 'idle' });
   const [hostErrors, setHostErrors] = useState<HostErrorPayload[]>([]);
   const basicRef = useRef<HTMLDivElement | null>(null);
@@ -126,36 +126,37 @@ export function App(): React.JSX.Element {
   };
 
   const enterBackpack = (id: string): void => {
-    if (id !== AS_YOU_GO_BACKPACK_ID) {
-      setEntered(id);
-      return;
-    }
-
     void host()
-      .asYouGo.open()
-      .then(() => setEntered(id))
+      .backpackProject.open(id)
+      .then((project) => {
+        setProjectUrl(project?.url ?? null);
+        setEntered(id);
+      })
       .catch((caught) =>
         setHostErrors((previous) => [
           ...previous,
           {
-            component: 'As you Go',
-            what: 'The local Backpack could not be opened.',
+            component: 'Backpack',
+            what: 'The independent Backpack project could not be opened.',
             known: String(caught instanceof Error ? caught.message : caught),
-            intact: 'Its prepared actions and Backpack record were not changed.',
+            intact: 'The Backpack record and project files were not changed.',
             retryUseful: true,
-            inspect: 'Return to Backpacks and enter As you Go again.',
-            recover: 'The local workflow remains on this machine.',
+            inspect: 'Return to Backpacks and enter it again.',
+            recover: 'The independent project remains outside Papers.',
           },
         ]),
       );
   };
 
-  const leaveAsYouGo = (): void => {
+  const leaveEnteredBackpack = useCallback((): void => {
     void host()
-      .asYouGo.close()
+      .backpackProject.close()
       .catch(() => undefined)
-      .finally(() => setEntered(null));
-  };
+      .finally(() => {
+        setProjectUrl(null);
+        setEntered(null);
+      });
+  }, []);
 
   const hermesBusy = hermes.status === 'starting';
 
@@ -239,10 +240,13 @@ export function App(): React.JSX.Element {
       {view === 'settings' && <SettingsPane />}
 
       {enteredBackpack &&
-        (enteredBackpack.id === AS_YOU_GO_BACKPACK_ID ? (
-          <AsYouGoWorkspace onDismiss={leaveAsYouGo} />
+        (projectUrl ? (
+          <BackpackProjectFrame url={projectUrl} onDismiss={leaveEnteredBackpack} />
         ) : (
-          <EmptyBackpackWarning backpackName={enteredBackpack.name} onDismiss={() => setEntered(null)} />
+          <EmptyBackpackWarning
+            backpackName={enteredBackpack.name}
+            onDismiss={leaveEnteredBackpack}
+          />
         ))}
 
       {hermes.status === 'error' && hermes.detail && (

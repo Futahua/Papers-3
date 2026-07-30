@@ -30,24 +30,34 @@
 - The installed creator profile contains no seeded or test Backpack, and automated tests
   prove they use isolated temporary profiles.
 
-## Known mismatch
+## Source-verified for the explicitly authorized 1.2.3 correction
 
-Papers 1.2.2 visibly restores “As you Go,” but its exact ID, renderer and workflow service
-are compiled into the universal application. This fails the creator's clarified ownership
-boundary: local Backpack development must remain outside Papers binaries and releases.
-The visible behavior is evidence, not acceptance of that placement.
+- Papers 1.2.3 contains no compiled “As you Go” name, ID, renderer, pickup prompt or action
+  definitions. On the primary machine, `Enter` displays the separately maintained local
+  project through the narrow host seam.
+- The local “As you Go” project shows the four existing actions and a **Copy agent pickup
+  prompt** control. The copied text directs an agent to current `AGENTS.md`, `HERMES.md`
+  and the repository document map before work.
+- Changing that external project's interface, prompt or declared actions does not require
+  a Papers version, release, install or restart. Other machines receive none of those
+  project changes unless the creator separately decides how to provide them.
+- The host serves only the project's `public/` subtree. Its private manifest and absolute
+  action targets cannot be retrieved directly or through a junction alias, and forged
+  wrong-source, wrong-origin or malformed project messages cannot launch, copy or close.
+
+## Known mismatch
 
 The current Tools screen still presents an unapproved global/shared Tool definition and
 examples. That copy is not accepted product truth; only the creator decides what is a
-Tool. The source/UI correction was not authorized by this documentation change and is
-recorded in [`PROBLEMS.md`](PROBLEMS.md).
+Tool. Its correction remains separately unauthorized and is recorded in
+[`PROBLEMS.md`](PROBLEMS.md).
 
 ## Human acceptance
 
 The creator can verify the present promise by clicking through Basic, creating a named
 Backpack, observing the exact empty warning, opening Tools, opening Hermes before
-and after Backpack interaction, restarting Papers and confirming the name remains. No
-source-code review is required.
+and after Backpack interaction, entering “As you Go,” copying the agent pickup prompt,
+restarting Papers and confirming the name remains. No source-code review is required.
 
 Future usefulness is accepted through real Backpack use, not by accumulating speculative
 framework screens or declaring undecided behavior complete.

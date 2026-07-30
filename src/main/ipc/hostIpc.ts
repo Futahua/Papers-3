@@ -25,10 +25,10 @@ export interface HostFacade {
   leaveBackpack(): Promise<void>;
   lastActiveBackpackId(): string | null;
 
-  openAsYouGo(): void;
-  closeAsYouGo(): void;
-  listAsYouGoActions(): Promise<unknown>;
-  launchAsYouGoAction(actionId: string): Promise<void>;
+  openBackpackProject(id: string): Promise<unknown>;
+  closeBackpackProject(): void;
+  runBackpackProjectAction(actionId: string): Promise<void>;
+  copyBackpackProjectText(text: string): void;
 
   programCatalog(): unknown;
   startProgram(programId: string): Promise<void>;
@@ -81,9 +81,8 @@ const idSchema = z.string().min(1).max(128);
 const backpackRemovalIdSchema = z
   .string()
   .regex(/^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-const asYouGoActionIdSchema = z
-  .string()
-  .regex(/^button-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+const backpackProjectActionIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/i);
+const backpackProjectTextSchema = z.string().min(1).max(50_000);
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
 
 export function registerHostIpc(facade: HostFacade): void {
@@ -125,11 +124,15 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpacks:leave', () => facade.leaveBackpack());
   handle('host:backpacks:last-active', () => facade.lastActiveBackpackId());
 
-  handle('host:as-you-go:open', () => facade.openAsYouGo());
-  handle('host:as-you-go:close', () => facade.closeAsYouGo());
-  handle('host:as-you-go:list-actions', () => facade.listAsYouGoActions());
-  handle('host:as-you-go:launch-action', (_e, actionId) =>
-    facade.launchAsYouGoAction(asYouGoActionIdSchema.parse(actionId)),
+  handle('host:backpack-project:open', (_e, id) =>
+    facade.openBackpackProject(backpackRemovalIdSchema.parse(id)),
+  );
+  handle('host:backpack-project:close', () => facade.closeBackpackProject());
+  handle('host:backpack-project:run-action', (_e, actionId) =>
+    facade.runBackpackProjectAction(backpackProjectActionIdSchema.parse(actionId)),
+  );
+  handle('host:backpack-project:copy-text', (_e, text) =>
+    facade.copyBackpackProjectText(backpackProjectTextSchema.parse(text)),
   );
 
   handle('host:programs:catalog', () => facade.programCatalog());
