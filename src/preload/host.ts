@@ -52,6 +52,10 @@ const api = {
     runAction: (actionId: string) =>
       ipcRenderer.invoke('host:backpack-project:run-action', actionId),
     copyText: (text: string) => ipcRenderer.invoke('host:backpack-project:copy-text', text),
+    projectStateLoad: () => ipcRenderer.invoke('host:backpack-project:state-load'),
+    projectStateSave: (state: string) => ipcRenderer.invoke('host:backpack-project:state-save', state),
+    projectPickTarget: (kind: string) => ipcRenderer.invoke('host:backpack-project:pick-target', kind),
+    projectLaunchShortcut: (shortcutId: string) => ipcRenderer.invoke('host:backpack-project:launch-shortcut', shortcutId),
   },
 
   programs: {

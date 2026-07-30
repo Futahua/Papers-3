@@ -28,6 +28,12 @@ interface ProjectAction {
   target: string;
 }
 
+export interface BackpackProjectState {
+  schemaVersion: 1;
+  groups: unknown[];
+  shortcuts: unknown[];
+}
+
 const backpackIdPattern =
   /^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const actionIdPattern = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
@@ -242,5 +248,76 @@ export class BackpackProjectService {
     if (!this.openTarget) throw new Error('Backpack project launching is unavailable.');
     const detail = await this.openTarget(action.target);
     if (detail) throw new Error(`Backpack project action ${actionId} could not be opened: ${detail}`);
+  }
+
+  /** Project-owned state for an independently maintained Backpack explorer. */
+  async loadState(backpackId: string): Promise<BackpackProjectState | null> {
+    const manifest = await this.manifest(backpackId);
+    if (!manifest) throw new Error('Backpack project is not bound on this machine.');
+    const statePath = path.join(manifest.root, 'state.json');
+    try {
+      const parsed = JSON.parse(await fs.readFile(statePath, 'utf8')) as BackpackProjectState;
+      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups) || !Array.isArray(parsed.shortcuts)) {
+        throw new Error('invalid state');
+      }
+      return parsed;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Backpack project state could not be read.');
+      const actions = await this.actions(backpackId);
+      return {
+        schemaVersion: 1,
+        groups: [],
+        shortcuts: actions.map((action) => ({
+          id: `shortcut-${action.id}`,
+          parentId: 'root',
+          name: action.id === 'clips' ? 'CLIPS' : action.id === 'sloptop-mode' ? 'SLOPTOP MODE' : action.id === 'slop-engine' ? 'slop_engine' : action.id,
+          description: '',
+          target: action.target,
+          icon: null,
+        })),
+      };
+    }
+  }
+
+  async saveState(backpackId: string, rawState: string): Promise<void> {
+    if (rawState.length > 5_000_000) throw new Error('Backpack project state is too large.');
+    const manifest = await this.manifest(backpackId);
+    if (!manifest) throw new Error('Backpack project is not bound on this machine.');
+    let parsed: BackpackProjectState;
+    try {
+      parsed = JSON.parse(rawState) as BackpackProjectState;
+    } catch {
+      throw new Error('Backpack project state is not valid JSON.');
+    }
+    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups) || !Array.isArray(parsed.shortcuts)) {
+      throw new Error('Backpack project state has an unsupported shape.');
+    }
+    for (const shortcut of parsed.shortcuts) {
+      const candidate = isRecord(shortcut) ? shortcut : null;
+      if (!candidate || typeof candidate['target'] !== 'string' || !path.isAbsolute(candidate['target'])) {
+        throw new Error('Backpack project shortcut targets must be absolute paths.');
+      }
+    }
+    const statePath = path.join(manifest.root, 'state.json');
+    const tempPath = `${statePath}.tmp-${process.pid}`;
+    await fs.writeFile(tempPath, JSON.stringify(parsed, null, 2) + '\n', { encoding: 'utf8' });
+    await fs.rename(tempPath, statePath);
+  }
+
+  async launchShortcut(backpackId: string, shortcutId: string): Promise<void> {
+    const state = await this.loadState(backpackId);
+    const shortcut = state?.shortcuts.find((candidate) => isRecord(candidate) && candidate['id'] === shortcutId);
+    const candidate = isRecord(shortcut) ? shortcut : null;
+    if (!candidate || typeof candidate['target'] !== 'string' || !path.isAbsolute(candidate['target'])) {
+      throw new Error('Backpack project shortcut was not found.');
+    }
+    try {
+      await fs.access(candidate['target']);
+    } catch {
+      throw new Error('That shortcut target is unavailable on this machine.');
+    }
+    if (!this.openTarget) throw new Error('Backpack project launching is unavailable.');
+    const detail = await this.openTarget(candidate['target']);
+    if (detail) throw new Error(detail);
   }
 }

@@ -4,7 +4,7 @@
  * the HostFacade IPC contract.
  */
 import { randomUUID } from 'node:crypto';
-import { clipboard, shell, type WebContents } from 'electron';
+import { clipboard, dialog, shell, type WebContents } from 'electron';
 
 import type {
   AgentRunSnapshot,
@@ -221,6 +221,27 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   copyBackpackProjectText(text: string): void {
     this.requireBackpackProjectOpen();
     clipboard.writeText(text);
+  }
+
+  async loadBackpackProjectState(): Promise<unknown> {
+    return this.deps.backpackProjects.loadState(this.requireBackpackProjectOpen());
+  }
+
+  async saveBackpackProjectState(rawState: string): Promise<void> {
+    await this.deps.backpackProjects.saveState(this.requireBackpackProjectOpen(), rawState);
+  }
+
+  async pickBackpackProjectTarget(kind: 'file' | 'folder'): Promise<string | null> {
+    this.requireBackpackProjectOpen();
+    const result = await dialog.showOpenDialog({
+      title: kind === 'file' ? 'Choose a shortcut, script, app, or file' : 'Choose a folder',
+      properties: [kind === 'file' ? 'openFile' : 'openDirectory'],
+    });
+    return result.canceled ? null : (result.filePaths[0] ?? null);
+  }
+
+  async launchBackpackProjectShortcut(shortcutId: string): Promise<void> {
+    await this.deps.backpackProjects.launchShortcut(this.requireBackpackProjectOpen(), shortcutId);
   }
 
   // -------------------------------------------------------------- programs

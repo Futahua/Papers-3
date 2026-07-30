@@ -111,6 +111,10 @@ interface HostBridge {
     close(): Promise<void>;
     runAction(actionId: string): Promise<void>;
     copyText(text: string): Promise<void>;
+    projectStateLoad(): Promise<unknown>;
+    projectStateSave(state: string): Promise<void>;
+    projectPickTarget(kind: 'file' | 'folder'): Promise<string | null>;
+    projectLaunchShortcut(shortcutId: string): Promise<void>;
   };
   programs: {
     catalog(): Promise<CatalogInfo>;

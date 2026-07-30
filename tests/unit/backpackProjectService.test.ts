@@ -93,6 +93,49 @@ describe('BackpackProjectService', () => {
     await expect(service.runAction(backpackId, 'not-declared')).rejects.toThrow(/not found/i);
   });
 
+  it('loads the project-owned explorer state and atomically saves groups and shortcuts', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile);
+    const migrated = await service.loadState(backpackId);
+    expect(migrated?.schemaVersion).toBe(1);
+    expect(migrated?.shortcuts).toHaveLength(1);
+
+    const state = {
+      schemaVersion: 1,
+      groups: [{ id: 'group-one', parentId: 'root', name: 'One' }],
+      shortcuts: [{ id: 'shortcut-one', parentId: 'group-one', name: 'A', description: 'desc', target, icon: null }],
+    };
+    await service.saveState(backpackId, JSON.stringify(state));
+    await expect(service.loadState(backpackId)).resolves.toEqual(state);
+  });
+
+  it('launches only a shortcut target held by the project state', async () => {
+    await writeProject();
+    const opened: string[] = [];
+    const service = new BackpackProjectService(bindingsFile, async (selected) => {
+      opened.push(selected);
+      return '';
+    });
+    await service.saveState(backpackId, JSON.stringify({
+      schemaVersion: 1,
+      groups: [],
+      shortcuts: [{ id: 'shortcut-one', parentId: 'root', name: 'A', description: '', target, icon: null }],
+    }));
+    await service.launchShortcut(backpackId, 'shortcut-one');
+    expect(opened).toEqual([path.resolve(target)]);
+    await expect(service.launchShortcut(backpackId, 'not-found')).rejects.toThrow(/not found/i);
+  });
+
+  it('rejects project state that tries to turn a shortcut into an arbitrary relative path', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile);
+    await expect(service.saveState(backpackId, JSON.stringify({
+      schemaVersion: 1,
+      groups: [],
+      shortcuts: [{ id: 'shortcut-one', parentId: 'root', name: 'A', description: '', target: 'relative.cmd', icon: null }],
+    }))).rejects.toThrow(/absolute paths/i);
+  });
+
   it('re-reads local project files without rebuilding or restarting Papers', async () => {
     await writeProject();
     const opened: string[] = [];

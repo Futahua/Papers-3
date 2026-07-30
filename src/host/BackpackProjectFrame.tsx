@@ -7,6 +7,8 @@ interface ProjectMessage {
   requestId?: string;
   actionId?: string;
   text?: string;
+  state?: string;
+  kind?: 'file' | 'folder';
 }
 
 function message(value: unknown): ProjectMessage | null {
@@ -20,6 +22,8 @@ function message(value: unknown): ProjectMessage | null {
       : {}),
     ...(typeof candidate['actionId'] === 'string' ? { actionId: candidate['actionId'] } : {}),
     ...(typeof candidate['text'] === 'string' ? { text: candidate['text'] } : {}),
+    ...(typeof candidate['state'] === 'string' ? { state: candidate['state'] } : {}),
+    ...(candidate['kind'] === 'file' || candidate['kind'] === 'folder' ? { kind: candidate['kind'] } : {}),
   };
 }
 
@@ -47,6 +51,28 @@ export function BackpackProjectFrame(props: {
       }
       if (request.type === 'papers:project:copy-text' && request.text) {
         task = host().backpackProject.copyText(request.text);
+      }
+      if (request.type === 'papers:project:as-you-go-load') {
+        task = host().backpackProject.projectStateLoad().then((state) => {
+          frame.current?.contentWindow?.postMessage(
+            { type: 'papers:host:result', requestId: request.requestId, ok: true, state: JSON.stringify(state) },
+            origin,
+          );
+        });
+      }
+      if (request.type === 'papers:project:as-you-go-save' && request.state) {
+        task = host().backpackProject.projectStateSave(request.state);
+      }
+      if (request.type === 'papers:project:as-you-go-pick-target' && request.kind) {
+        task = host().backpackProject.projectPickTarget(request.kind).then((target) => {
+          frame.current?.contentWindow?.postMessage(
+            { type: 'papers:host:result', requestId: request.requestId, ok: true, target },
+            origin,
+          );
+        });
+      }
+      if (request.type === 'papers:project:as-you-go-launch' && request.actionId) {
+        task = host().backpackProject.projectLaunchShortcut(request.actionId);
       }
       if (!task) return;
 

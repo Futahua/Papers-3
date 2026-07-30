@@ -29,6 +29,10 @@ export interface HostFacade {
   closeBackpackProject(): Promise<void>;
   runBackpackProjectAction(actionId: string): Promise<void>;
   copyBackpackProjectText(text: string): void;
+  loadBackpackProjectState(): Promise<unknown>;
+  saveBackpackProjectState(rawState: string): Promise<void>;
+  pickBackpackProjectTarget(kind: 'file' | 'folder'): Promise<string | null>;
+  launchBackpackProjectShortcut(shortcutId: string): Promise<void>;
 
   programCatalog(): unknown;
   startProgram(programId: string): Promise<void>;
@@ -82,6 +86,7 @@ const backpackRemovalIdSchema = z
   .string()
   .regex(/^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const backpackProjectActionIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/i);
+const backpackProjectStateSchema = z.string().min(2).max(5_000_000);
 const backpackProjectTextSchema = z.string().min(1).max(50_000);
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
 
@@ -133,6 +138,16 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpack-project:copy-text', (_e, text) =>
     facade.copyBackpackProjectText(backpackProjectTextSchema.parse(text)),
+  );
+  handle('host:backpack-project:state-load', () => facade.loadBackpackProjectState());
+  handle('host:backpack-project:state-save', (_e, state) =>
+    facade.saveBackpackProjectState(backpackProjectStateSchema.parse(state)),
+  );
+  handle('host:backpack-project:pick-target', (_e, kind) =>
+    facade.pickBackpackProjectTarget(z.enum(['file', 'folder']).parse(kind)),
+  );
+  handle('host:backpack-project:launch-shortcut', (_e, shortcutId) =>
+    facade.launchBackpackProjectShortcut(backpackProjectActionIdSchema.parse(shortcutId)),
   );
 
   handle('host:programs:catalog', () => facade.programCatalog());
