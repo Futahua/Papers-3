@@ -27,6 +27,7 @@ not substitutes for that definition.
 ### Current implementation, data and releases
 
 - [Architecture boundary](docs/ARCHITECTURE.md)
+- [Projects created for Papers use](docs/PROJECTS.md)
 - [Syncthing and evolving data](docs/SYNCTHING_AND_DATA.md)
 - [How Papers updates itself](docs/UPDATING_PAPERS.md)
 - [Hermes skin integration and updates](docs/HERMES_SKIN_INTEGRATION.md)
