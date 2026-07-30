@@ -26,7 +26,7 @@ export interface HostFacade {
   lastActiveBackpackId(): string | null;
 
   openBackpackProject(id: string): Promise<unknown>;
-  closeBackpackProject(): void;
+  closeBackpackProject(): Promise<void>;
   runBackpackProjectAction(actionId: string): Promise<void>;
   copyBackpackProjectText(text: string): void;
 

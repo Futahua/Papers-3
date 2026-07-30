@@ -73,6 +73,12 @@ ordinary interface, prompt and action changes to the local “As you Go” proje
 require rebuilding, versioning, releasing or restarting Papers. The binding is optional;
 an unbound Backpack still receives the honest empty warning.
 
+Papers persists only which Backpack is active in the existing registry
+`lastActiveBackpackId`. On startup the host reopens that Backpack through the same normal
+entry path. Leaving through **Back to Papers** clears the field. Papers does not capture a
+project's internal working state; an independent project may restore its own richer state
+behind its stable origin when real use requires it.
+
 `project.json`, `actions.json` and their absolute paths are private main-process control
 records. They cannot be fetched through the project scheme; real-path containment also
 rejects a junction or symbolic-link alias from `public/` back to a private record.

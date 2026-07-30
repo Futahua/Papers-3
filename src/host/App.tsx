@@ -54,13 +54,40 @@ export function App(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    void refreshBackpacks();
-    void host()
+    const bridge = host();
+    const restoreBackpack = async (): Promise<void> => {
+      const list = await bridge.backpacks.list();
+      setBackpacks(list);
+      const id = await bridge.backpacks.lastActive();
+      if (!id || !list.backpacks.some((backpack) => backpack.id === id && !backpack.archived)) {
+        return;
+      }
+      try {
+        const project = await bridge.backpackProject.open(id);
+        setProjectUrl(project?.url ?? null);
+        setEntered(id);
+      } catch (caught) {
+        setHostErrors((previous) => [
+          ...previous,
+          {
+            component: 'Backpack',
+            what: 'The last active Backpack could not be restored.',
+            known: String(caught instanceof Error ? caught.message : caught),
+            intact: 'The Backpack record and project files were not changed.',
+            retryUseful: true,
+            inspect: 'Open the Backpack again from Backpacks.',
+            recover: 'Papers remains available at the Backpack list.',
+          },
+        ]);
+      }
+    };
+
+    void restoreBackpack();
+    void bridge
       .hermes.surfaceStatus()
       .then(setHermes)
       .catch(() => undefined);
 
-    const bridge = host();
     const subs = [
       bridge.events.onBackpacksChanged(setBackpacks),
       bridge.events.onHermesSurface(setHermes),

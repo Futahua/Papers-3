@@ -202,12 +202,16 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (!backpack) throw new Error(`Backpack ${id} not found`);
     if (backpack.archived) throw new Error('Restore this Backpack before entering it.');
     const project = await this.deps.backpackProjects.open(id);
+    await this.deps.registry.markEntered(id);
     this.currentBackpackProjectId = project ? id : null;
+    this.emitBackpacksChanged();
     return project;
   }
 
-  closeBackpackProject(): void {
+  async closeBackpackProject(): Promise<void> {
     this.currentBackpackProjectId = null;
+    await this.deps.registry.markLeft();
+    this.emitBackpacksChanged();
   }
 
   async runBackpackProjectAction(actionId: string): Promise<void> {

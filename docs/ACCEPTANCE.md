@@ -45,6 +45,14 @@
   action targets cannot be retrieved directly or through a junction alias, and forged
   wrong-source, wrong-origin or malformed project messages cannot launch, copy or close.
 
+## Source-verified for the explicitly authorized 1.2.4 correction
+
+- Entering “As you Go,” closing Papers without choosing **Back to Papers**, and reopening
+  the same isolated profile restores the external project automatically.
+- Choosing **Back to Papers** clears the resumable Backpack selection.
+- Backpack project files and the internal Backpack record remain unchanged by entry,
+  restart and leave; only the existing registry activity fields change.
+
 ## Known mismatch
 
 The current Tools screen still presents an unapproved global/shared Tool definition and

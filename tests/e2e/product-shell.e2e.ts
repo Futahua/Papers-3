@@ -21,6 +21,7 @@ import {
 const AS_YOU_GO_ID = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 let launched: LaunchedApp;
 let localLaunchMarker: string;
+let registryFile: string;
 let protectedFixtureFiles: string[];
 let protectedFixtureHashes: string[];
 
@@ -41,7 +42,7 @@ beforeAll(async () => {
   };
   const backpackDir = path.join(userDataDir, 'PapersData', 'backpacks', AS_YOU_GO_ID);
   await fs.mkdir(backpackDir, { recursive: true });
-  const registryFile = path.join(userDataDir, 'PapersData', 'registry.json');
+  registryFile = path.join(userDataDir, 'PapersData', 'registry.json');
   const backpackFile = path.join(backpackDir, 'backpack.json');
   await fs.writeFile(
     registryFile,
@@ -128,7 +129,6 @@ beforeAll(async () => {
     'utf8',
   );
   protectedFixtureFiles = [
-    registryFile,
     backpackFile,
     bindingsFile,
     projectFile,
@@ -161,7 +161,7 @@ function setInput(selector: string, value: string): string {
 }
 
 describe('production Papers shell', () => {
-  it('hosts the external local As you Go project, including its pickup prompt', async () => {
+  it('hosts and restores the external local As you Go project', async () => {
     const { app } = launched;
     const card = `(name) => [...document.querySelectorAll('.backpack-card')].find((item) =>
       item.querySelector('.name')?.textContent?.trim() === name
@@ -275,16 +275,39 @@ describe('production Papers shell', () => {
       'prepared local As you Go action',
     );
 
-    await evalInBackpackProject(app, `document.querySelector('#back').click()`);
+    const profile = launched.userDataDir;
+    await launched.close();
+    const activeRegistry = JSON.parse(await fs.readFile(registryFile, 'utf8')) as {
+      lastActiveBackpackId: string | null;
+    };
+    expect(activeRegistry.lastActiveBackpackId).toBe(AS_YOU_GO_ID);
+
+    launched = await launchPapers(profile, { fixtures: false });
+    await waitFor(
+      () =>
+        evalInBackpackProject<boolean>(
+          launched.app,
+          `document.querySelector('h1')?.textContent?.trim() === 'As you Go'`,
+        ),
+      20_000,
+      'restored external local As you Go project after restart',
+    );
+
+    const { app: restartedApp } = launched;
+    await evalInBackpackProject(restartedApp, `document.querySelector('#back').click()`);
     await waitFor(
       () =>
         evalInHost<boolean>(
-          app,
+          restartedApp,
           `document.querySelector('iframe[data-backpack-project]') === null`,
         ),
       10_000,
       'return from As you Go',
     );
+    const leftRegistry = JSON.parse(await fs.readFile(registryFile, 'utf8')) as {
+      lastActiveBackpackId: string | null;
+    };
+    expect(leftRegistry.lastActiveBackpackId).toBeNull();
     expect(await Promise.all(protectedFixtureFiles.map(hashFile))).toEqual(protectedFixtureHashes);
   }, 60_000);
 

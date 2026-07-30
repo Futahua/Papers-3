@@ -47,6 +47,11 @@ to experience.
 its interface, prompt and actions do not require a Papers update and do not affect another
 machine.
 
+If Papers closes while you are inside a Backpack, reopening Papers returns to that
+Backpack. Choose **Back to Papers** when you want the next launch to begin at the
+Backpack list. A Backpack with richer internal working state remains responsible for
+restoring that state itself.
+
 ## Tools
 
 Tools is a permanent destination within Basic. Only the creator decides what is a Tool.

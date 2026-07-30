@@ -82,6 +82,10 @@ Papers 1's custom agent workbench.
   maintained local “As you Go” project on the primary machine. Its exact ID, interface,
   pickup prompt and action definitions remain outside compiled Papers source, so ordinary
   project changes do not become Papers releases or updates to other machines.
+- Papers remembers the Backpack that is active when the application closes and restores
+  that Backpack when it reopens. **Back to Papers** deliberately leaves the Backpack and
+  clears that resumable selection. Any richer working state remains owned by the
+  independent Backpack project.
 - Archived Backpacks can be deleted only after explicit confirmation naming that exact
   Backpack. External files, applications, scripts and folders remain untouched; Papers
   retains its internal record for recovery.

@@ -3,6 +3,17 @@
 This is the plain-language work list, in creator priority order. A problem stays here
 until the creator can use and judge the correction in the installed product.
 
+## Corrected for authorized 1.2.4 — Papers forgot the active Backpack on restart
+
+The production external-project path did not update the registry's existing
+`lastActiveBackpackId`, and the production shell did not restore that ID at startup.
+Closing Papers while working in “As you Go” therefore returned to the Backpack list.
+
+Papers now records successful Backpack entry, restores that Backpack after restart, and
+clears the resumable selection only when the creator chooses **Back to Papers**. This
+does not define or capture a future project's internal state; richer state remains owned
+by that independent Backpack.
+
 ## Corrected in source for authorized 1.2.3 — Local “As you Go” was compiled into universal Papers
 
 **Creator-rejected placement; correction authorized (2026-07-30).** Papers 1.2.2 restored
