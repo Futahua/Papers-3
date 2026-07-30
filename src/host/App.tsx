@@ -185,6 +185,17 @@ export function App(): React.JSX.Element {
       });
   }, []);
 
+  const openBasicOrReturnToBackpacks = (): void => {
+    if (entered !== null) {
+      setView('backpacks');
+      setBasicOpen(false);
+      leaveEnteredBackpack();
+      return;
+    }
+
+    setBasicOpen((open) => !open);
+  };
+
   const hermesBusy = hermes.status === 'starting';
 
   return (
@@ -199,9 +210,13 @@ export function App(): React.JSX.Element {
           <button
             className={`pill-button${basicOpen ? ' active' : ''}`}
             aria-haspopup="menu"
-            aria-expanded={basicOpen}
-            aria-label={`${VIEW_LABEL[view]} — open Basic menu`}
-            onClick={() => setBasicOpen((v) => !v)}
+            aria-expanded={entered === null && basicOpen}
+            aria-label={
+              entered === null
+                ? `${VIEW_LABEL[view]} — open Basic menu`
+                : 'Backpacks — return to Backpack list'
+            }
+            onClick={openBasicOrReturnToBackpacks}
           >
             {VIEW_LABEL[view]}
           </button>
