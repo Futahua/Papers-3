@@ -118,6 +118,10 @@ interface HostBridge {
     ): Promise<{ target: string; icon: string | null } | null>;
     projectShortcutIcon(shortcutId: string): Promise<string | null>;
     projectLaunchShortcut(shortcutId: string): Promise<void>;
+    projectOpenWebLink(url: string): Promise<void>;
+    projectResolveDroppedTargets(
+      files: File[],
+    ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>>;
   };
   programs: {
     catalog(): Promise<CatalogInfo>;

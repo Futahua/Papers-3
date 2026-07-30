@@ -7,6 +7,7 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { parseBackpackProjectWebUrl } from './backpackProjectWebLink';
 
 export const BACKPACK_PROJECT_SCHEME = 'papers-backpack';
 
@@ -35,13 +36,32 @@ export interface BackpackProjectState {
   shortcuts: unknown[];
 }
 
+export interface DroppedBackpackProjectTarget {
+  name: string;
+  target: string;
+  kind: 'file' | 'folder';
+}
+
 const backpackIdPattern =
   /^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const actionIdPattern = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const publicDirectory = 'public';
+const openNamespace = '_papers-open';
+const namespacedAssetPattern =
+  /^_papers-open\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\/(.+)$/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isAllowedShortcutTarget(target: string): boolean {
+  if (path.isAbsolute(target)) return true;
+  try {
+    parseBackpackProjectWebUrl(target);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function safeProjectPath(root: string, requested: string): string {
@@ -192,7 +212,7 @@ export class BackpackProjectService {
     if (!manifest) return null;
     await containedExistingPath(manifest.root, manifest.entry);
     const projectUrl = new URL(`${BACKPACK_PROJECT_SCHEME}://${backpackId}/`);
-    projectUrl.pathname = manifest.entry.replace(/\\/g, '/');
+    projectUrl.pathname = `${openNamespace}/${randomUUID()}/${manifest.entry.replace(/\\/g, '/')}`;
     return {
       url: projectUrl.toString(),
     };
@@ -202,7 +222,9 @@ export class BackpackProjectService {
     const manifest = await this.manifest(backpackId);
     if (!manifest) throw new Error('Backpack project is not bound on this machine.');
     const relative = decodeURIComponent(requestPath).replace(/^\/+/, '') || manifest.entry;
-    const normalized = relative.replace(/\\/g, '/');
+    const requested = relative.replace(/\\/g, '/');
+    const namespaced = requested.match(namespacedAssetPattern);
+    const normalized = namespaced?.[1] ?? requested;
     if (!normalized.startsWith(`${publicDirectory}/`)) {
       throw new Error('Backpack project asset is not public.');
     }
@@ -313,8 +335,12 @@ export class BackpackProjectService {
     }
     for (const shortcut of parsed.shortcuts) {
       const candidate = isRecord(shortcut) ? shortcut : null;
-      if (!candidate || typeof candidate['target'] !== 'string' || !path.isAbsolute(candidate['target'])) {
-        throw new Error('Backpack project shortcut targets must be absolute paths.');
+      if (
+        !candidate
+        || typeof candidate['target'] !== 'string'
+        || !isAllowedShortcutTarget(candidate['target'])
+      ) {
+        throw new Error('Backpack project shortcut targets must be absolute paths or http(s) URLs.');
       }
     }
     const statePath = path.join(manifest.root, 'state.json');
@@ -355,6 +381,23 @@ export class BackpackProjectService {
     } catch {
       return null;
     }
+  }
+
+  async describeDroppedTargets(paths: string[]): Promise<DroppedBackpackProjectTarget[]> {
+    const targets: DroppedBackpackProjectTarget[] = [];
+    for (const rawPath of paths) {
+      if (!path.isAbsolute(rawPath)) {
+        throw new Error('Dropped Backpack project targets must be absolute paths.');
+      }
+      const target = path.resolve(rawPath);
+      const details = await fs.stat(target);
+      targets.push({
+        name: path.basename(target) || path.parse(target).root,
+        target,
+        kind: details.isDirectory() ? 'folder' : 'file',
+      });
+    }
+    return targets;
   }
 
   async shortcutIcon(backpackId: string, shortcutId: string): Promise<string | null> {

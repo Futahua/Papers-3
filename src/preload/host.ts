@@ -2,7 +2,7 @@
  * Host preload — bridge for the trusted first-party host frame renderer.
  * Wider than the program API but still explicit methods only.
  */
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 type Listener = (payload: unknown) => void;
 
@@ -58,6 +58,14 @@ const api = {
     projectShortcutIcon: (shortcutId: string) =>
       ipcRenderer.invoke('host:backpack-project:shortcut-icon', shortcutId),
     projectLaunchShortcut: (shortcutId: string) => ipcRenderer.invoke('host:backpack-project:launch-shortcut', shortcutId),
+    projectOpenWebLink: (url: string) =>
+      ipcRenderer.invoke('host:backpack-project:open-web-link', url),
+    projectResolveDroppedTargets: (files: File[]) => {
+      const paths = files
+        .map((file) => webUtils.getPathForFile(file))
+        .filter((filePath) => filePath.length > 0);
+      return ipcRenderer.invoke('host:backpack-project:resolve-dropped-targets', paths);
+    },
   },
 
   programs: {

@@ -70,7 +70,9 @@ Papers main process
   ├── serves only static files under that project's `public/` subtree
   │   on a per-Backpack secure origin
   ├── opens only absolute action targets declared in the external project
-  └── offers copy-text and close mediation
+  ├── opens a project-requested web link only after validating `http` or `https`
+  ├── resolves only real disk-backed files/folders the creator drops from Windows
+  └── offers narrow state, target-picker, icon, copy-text and close mediation
         ▼
 sandboxed project frame
 ```

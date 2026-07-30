@@ -8,6 +8,8 @@ interface ProjectMessage {
   actionId?: string;
   text?: string;
   state?: string;
+  url?: string;
+  files?: File[];
   kind?: 'file' | 'folder';
 }
 
@@ -23,6 +25,10 @@ function message(value: unknown): ProjectMessage | null {
     ...(typeof candidate['actionId'] === 'string' ? { actionId: candidate['actionId'] } : {}),
     ...(typeof candidate['text'] === 'string' ? { text: candidate['text'] } : {}),
     ...(typeof candidate['state'] === 'string' ? { state: candidate['state'] } : {}),
+    ...(typeof candidate['url'] === 'string' ? { url: candidate['url'] } : {}),
+    ...(Array.isArray(candidate['files']) && candidate['files'].every((file) => file instanceof File)
+      ? { files: candidate['files'] }
+      : {}),
     ...(candidate['kind'] === 'file' || candidate['kind'] === 'folder' ? { kind: candidate['kind'] } : {}),
   };
 }
@@ -73,6 +79,14 @@ export function BackpackProjectFrame(props: {
       }
       if (request.type === 'papers:project:as-you-go-launch' && request.actionId) {
         task = host().backpackProject.projectLaunchShortcut(request.actionId);
+      }
+      if (request.type === 'papers:project:open-web-link' && request.url) {
+        task = host().backpackProject.projectOpenWebLink(request.url);
+      }
+      if (request.type === 'papers:project:resolve-dropped-targets' && request.files?.length) {
+        task = host().backpackProject.projectResolveDroppedTargets(request.files).then((targets) => ({
+          targets,
+        }));
       }
       if (!task) return;
 

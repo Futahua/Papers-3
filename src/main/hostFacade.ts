@@ -23,6 +23,7 @@ import type {
   BackpackProjectService,
   OpenBackpackProject,
 } from './backpacks/backpackProjectService';
+import { parseBackpackProjectWebUrl } from './backpacks/backpackProjectWebLink';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
 import type { ProgramCatalog } from './canvas/programLoader';
@@ -256,6 +257,18 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async launchBackpackProjectShortcut(shortcutId: string): Promise<void> {
     await this.deps.backpackProjects.launchShortcut(this.requireBackpackProjectOpen(), shortcutId);
+  }
+
+  async openBackpackProjectWebLink(url: string): Promise<void> {
+    this.requireBackpackProjectOpen();
+    await shell.openExternal(parseBackpackProjectWebUrl(url));
+  }
+
+  async resolveBackpackProjectDroppedTargets(
+    paths: string[],
+  ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>> {
+    this.requireBackpackProjectOpen();
+    return this.deps.backpackProjects.describeDroppedTargets(paths);
   }
 
   // -------------------------------------------------------------- programs
