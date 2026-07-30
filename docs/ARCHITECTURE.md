@@ -37,16 +37,21 @@ shows the required warning rather than creating a fake environment.
 The future contents contract is intentionally absent. No folder, canvas, scene or program
 runtime may become that contract by implementation accident.
 
+Accepted ownership boundary: Papers is the stable host, while a real Backpack may be an
+independently developed project outside `App` and the packaged `app.asar`. Backpack
+interfaces and workflow code do not belong in the main binary merely because Papers
+displays them. This plugin-like ownership does not yet select a universal project format
+or loading architecture.
+
 Papers may eventually contain unique and shared Backpacks, but the architecture does not
 define those terms or prescribe storage, synchronization, portability or local bindings
 before a real Backpack requires them.
 
-“As you Go” is the first concrete exception to the empty-Backpack path. Its exact protected
-Backpack ID selects one dedicated renderer and one dedicated main-process service. That
-service reads the surviving local action manifest without modifying it, returns only action
-IDs and labels to the renderer, and launches only a path already present in that manifest.
-It exposes no create, edit, remove, picker or arbitrary-path channel and establishes no
-contract for another Backpack.
+Known placement error in 1.2.2: the exact “As you Go” ID selects a dedicated renderer and
+main-process service compiled into Papers. Its local manifest remains untouched, but local
+data does not excuse universal implementation. The corrective work must remove the
+Backpack-specific interface and behavior from the binary, keep them in an independent
+machine-local project and add only the host seam the real project demonstrates.
 
 ## Tool boundary
 

@@ -36,6 +36,16 @@ conversation or PowerToys scene. It has no required contents, interface, lifecyc
 storage model or common architecture. The contents and controls of one Backpack do not
 define any other Backpack.
 
+A Backpack's closest equivalent is a plugin in ownership and development: it may be an
+independent project outside Papers' main binaries. Papers is its host, not the owner of
+its interface and behavior. This does not define a plugin format, marketplace, SDK,
+installation flow or common Backpack structure.
+
+Backpack development stays outside the universally distributed Papers application unless
+a concrete request explicitly requires new host support. If it does, the Backpack change
+and the smallest necessary Papers-host change remain separate. Authorizing a Papers
+release does not turn machine-specific Backpack work into universal functionality.
+
 “Machine-wide” describes how far a Backpack may reach within a machine. It does not mean
 that every Backpack is machine-only, shared, portable, synchronized or structurally alike.
 Papers supports both machine-specific and universal ways of working. Some Backpacks will
@@ -43,7 +53,9 @@ be unique and some shared. Their meaning and implementation emerge from real Bac
 requests and must not be standardized beforehand.
 
 The creator has identified “As you Go” as local to the current machine. That statement
-applies only to “As you Go” and does not define a general Backpack scope system.
+applies to its experience, implementation and data, not only its paths. Its ordinary
+development must not update another machine or require a Papers release. This does not
+define a general Backpack scope system.
 
 ### Tools
 
@@ -66,10 +78,10 @@ Papers 1's custom agent workbench.
   conversation or invented contents.
 - Entering an empty Backpack truthfully displays
   `Nothing here yet. Create something under “name”.`
-- Implemented in source and awaiting an authorized release: entering the protected local
-  “As you Go” Backpack shows its prepared actions on this machine. The creator uses those
-  actions directly; Papers exposes no action editor, filesystem picker or generic
-  Backpack-button system.
+- Papers 1.2.2 displays the four prepared “As you Go” actions, but incorrectly compiles
+  this local Backpack's ID, interface and behavior into the universal application. The
+  visible workflow is real; its placement is not accepted and is tracked in
+  [`PROBLEMS.md`](PROBLEMS.md).
 - Archived Backpacks can be deleted only after explicit confirmation naming that exact
   Backpack. External files, applications, scripts and folders remain untouched; Papers
   retains its internal record for recovery.
@@ -87,6 +99,6 @@ The contents and behavior of each real Backpack, what unique and shared mean, th
 Tool contract, the Data Source contract, PowerToys integration and the behavior of
 entering a non-empty Backpack will be decided through real creator use.
 
-No storage location, synchronization policy, portability rule, local binding, scope
-selector, editor, framework or shared Backpack schema is implied by those open questions.
-An agent must not silently settle them through implementation.
+No plugin format, storage location, synchronization policy, portability rule, local
+binding, scope selector, editor, framework or shared Backpack schema is implied by those
+open questions. An agent must not silently settle them through implementation.

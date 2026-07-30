@@ -36,6 +36,11 @@ platform in advance.
 document. The policies below do not establish a Backpack scope field, shared schema,
 synchronization mechanism, portability rule or machine-binding model.
 
+Backpack project ownership is separate from synchronization. A Backpack may be maintained
+outside Papers' binaries whether it is local or later shared. “Local” includes its
+interface and implementation: changing it must not publish a Papers update to other
+machines. The plugin analogy does not itself choose where projects live or how they move.
+
 1. **Creator work must be preserved.** Documents, authored Backpack material, layouts and
    irreplaceable results must survive change and migration. Whether they synchronize,
    where they live and how they appear on another machine are decided from the real
@@ -60,6 +65,7 @@ synchronization mechanism, portability rule or machine-binding model.
 Papers/
 ├── App/                 installed application; replaced by the updater, not by hand
 ├── Data/                mixed local runtime; machine-local, not multi-writer safe
+├── Backpack projects/   outside App; exact location established by each real project
 └── HERMES.md            pickup instructions for building Backpacks
 ```
 
@@ -81,7 +87,7 @@ Update this table whenever a real feature creates persistent data.
 | Packaged Papers application | `Papers/App` | Papers release | Copyable fixed version | No | Do not replace while running | Reinstall/rebuild |
 | Electron runtime profile | `Papers/Data` | Electron/Papers host | Machine-local direction | May contain web state | No | Recreated; preserve unknown files during migration |
 | Backpack registry and records | `Papers/Data/PapersData` when created | Papers | Undecided until first useful Backpack contents | No by design | Current JSON store is not conflict-mergeable | Atomic backups; deleted Backpack records move to `Papers/Data/PapersData/recovery/deleted-backpacks` |
-| “As you Go” prepared actions | `Papers/Shared/backpacks/bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d/buttons.json` (surviving legacy location) | “As you Go” local workflow | **Local to this machine; do not sync or migrate by inference** | No, but contains absolute local paths | One read-only Papers service | Existing adjacent `buttons.json.backup`; neither file is modified by the restored workflow |
+| “As you Go” project and prepared actions | Existing actions: `Papers/Shared/backpacks/bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d/buttons.json`; independent project location is established by the corrective implementation | “As you Go,” not the Papers release | **Local to this machine; do not sync, publish or migrate by inference** | No, but existing actions contain absolute local paths | One local project / Papers host seam | Preserve existing `buttons.json` and adjacent backup; project changes stay outside `App` |
 | Migration material | `Papers/Migration Backup` | Creator | Archive; no runtime dependency | Possibly | No | Original moved material |
 | Hermes runtime and state | Resolved per machine by `hermesLocation.ts` (D-016); the backend runs from `<hermesRoot>\venv\Scripts\hermes.exe` (D-018) | Hermes | Install/configure per machine unless Hermes provides supported sync | Yes | No raw multi-machine writers | Hermes-owned recovery/export mechanisms |
 | Hermes session token | `Papers/Data/hermes-backend-token` | Papers | **Machine-local. Never sync** | **Yes** | One Papers per machine | Regenerated on next launch; delete freely |

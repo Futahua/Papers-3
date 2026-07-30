@@ -6,6 +6,23 @@ ontology. Read [`PRODUCT.md`](PRODUCT.md) for current product truth and
 corrects an earlier interpretation, record the current truth before implementation rather
 than rewriting history afterward to manufacture consent.
 
+## Creator clarification — Backpack projects stay outside Papers binaries (2026-07-30)
+
+A Backpack's closest equivalent is a plugin in ownership and development. It may become a
+project of its own, and its interface, behavior and implementation belong outside Papers'
+main binaries unless a concrete requirement explicitly needs host support. The analogy
+does not approve a plugin format, marketplace, SDK, lifecycle or universal Backpack
+architecture.
+
+“Local” includes implementation and experience, not only data paths. A local Backpack
+change must not update other machines. Release authorization is a separate delivery
+permission and cannot convert Backpack work into universal Papers code.
+
+Papers 1.2.2 violated this boundary by compiling the exact local “As you Go” ID, renderer
+and workflow service into Papers. That release is preserved as history, but its placement
+is not an accepted decision. Corrective implementation must separate the Backpack project
+from the smallest required Papers-host seam before further “As you Go” development.
+
 ## D-001 — Existing products are the product boundary (2026-07-21)
 
 The creator explicitly rejected Papers-owned agent validation workflows, modular agent

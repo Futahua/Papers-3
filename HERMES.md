@@ -13,6 +13,15 @@
   actions are normal use — not configuration or permission to create generic editors,
   frameworks or product-wide abstractions.
 - One Backpack request authorizes changes for that Backpack only.
+- A Backpack is closest to a plugin in ownership and development: it may be a project of
+  its own, maintained outside Papers. This analogy does not define a plugin format,
+  marketplace, SDK, lifecycle or common Backpack architecture.
+- Backpack interfaces, behavior and implementation belong outside Papers' main binaries
+  unless a concrete requirement explicitly needs a Papers-host change. Release permission
+  does not convert Backpack work into universal Papers code.
+- “Local” applies to a Backpack's experience, behavior, implementation and data, not only
+  to its file paths. A local Backpack change must not be delivered to other machines by a
+  Papers release.
 - Backpacks have no required contents, interface, lifecycle, storage model or common
   architecture.
 - Papers supports both machine-specific and universal ways of working. Some Backpacks
@@ -40,6 +49,8 @@ Before changing Papers, state to the creator in plain language:
 3. What the request does not authorize.
 4. Which genuine product questions remain open.
 5. Whether a release or installation was authorized.
+6. Which machines should receive the experience, whether the work belongs to Papers or
+   an independent Backpack project, and why any main-binary change is genuinely required.
 
 This statement is the agent's responsibility. It must not ask the creator to configure
 Papers, choose a framework or supply technical architecture. If a genuine vision-level
@@ -74,6 +85,8 @@ open pull request and recent commits before continuing existing work.
 - Creating a Backpack currently asks only for its name. Until real contents are built,
   entering it honestly says that nothing exists yet. This current empty state does not
   define future Backpack contents.
+- Papers is the stable host; real Backpacks may be independently developed projects.
+  Changing such a project does not normally version or release Papers.
 - The permanent Tools destination may remain empty. Only the creator can identify
   something as a Tool; its detailed contract remains open.
 - Reuse existing applications and products. Papers should associate, launch, embed,
@@ -106,21 +119,34 @@ Do not restore or reproduce that generalization. The current creator request mus
 what “As you Go” becomes; its controls and implementation cannot define other Backpacks
 or Papers as a whole.
 
+Papers 1.2.2 made a second, narrower mistake: it hard-coded the exact “As you Go” ID,
+renderer and workflow service into the universally distributed Papers binary. Keeping its
+files local did not make its implementation local. This is evidence of a placement error,
+not accepted architecture. “As you Go” may become a project of its own, and its ordinary
+development must not require a Papers release.
+
 ## When asked to build a Backpack
 
 1. Treat the creator's prompt, attachments and named files as the working specification.
 2. Read the current repository documents and inspect the installed behavior before
    changing it. Start with open items in `docs/PROBLEMS.md`; do not revive superseded
    plans from history.
-3. Identify the existing product or Windows capability that already does most of the
+3. Decide first whether the request belongs to Papers or to the independently maintained
+   Backpack project. A Backpack name, ID, interface or workflow appearing in compiled
+   Papers source is a review stop unless the creator explicitly required universal
+   distribution or a concrete host capability.
+4. Identify the existing product or Windows capability that already does most of the
    work. Build the smallest real, useful connection through Papers.
-4. Build the requested workflow for the named Backpack. Do not turn its controls,
+5. Build the requested workflow for the named Backpack. Do not turn its controls,
    contents or supporting code into a generic Backpack editor or Papers-wide contract.
-5. Never infer a Backpack working directory merely from its name or activation.
-6. Preserve unrelated creator data and changes. Make migrations reversible.
-7. Use isolated test profiles. Test the human-visible path and explain what the creator
+6. If a Backpack genuinely needs new host support, separate the independent Backpack
+   change from the smallest Papers-host change. They have different ownership and release
+   boundaries.
+7. Never infer a Backpack working directory merely from its name or activation.
+8. Preserve unrelated creator data and changes. Make migrations reversible.
+9. Use isolated test profiles. Test the human-visible path and explain what the creator
    can now do without requiring source-code review.
-8. Do not infer authorization to rebuild, version, release, install, terminate or
+10. Do not infer authorization to rebuild, version, release, install, terminate or
    restart Papers. When a release is explicitly requested, follow
    `docs/UPDATING_PAPERS.md`; publish only after all required assets finish uploading.
    Installed copies offer the update themselves. Never hand-copy a build over `App`.
