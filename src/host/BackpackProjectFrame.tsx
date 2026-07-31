@@ -88,6 +88,9 @@ export function BackpackProjectFrame(props: {
           targets,
         }));
       }
+      if (request.type === 'papers:project:resolve-web-link-icon' && request.url) {
+        task = host().backpackProject.projectResolveWebLinkIcon(request.url);
+      }
       if (!task) return;
 
       try {

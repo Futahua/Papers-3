@@ -122,6 +122,9 @@ interface HostBridge {
     projectResolveDroppedTargets(
       files: File[],
     ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>>;
+    projectResolveWebLinkIcon(
+      url: string,
+    ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }>;
   };
   programs: {
     catalog(): Promise<CatalogInfo>;

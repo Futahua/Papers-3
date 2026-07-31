@@ -40,6 +40,9 @@ export interface HostFacade {
   resolveBackpackProjectDroppedTargets(
     paths: string[],
   ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>>;
+  resolveBackpackProjectWebLinkIcon(
+    url: string,
+  ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }>;
 
   programCatalog(): unknown;
   startProgram(programId: string): Promise<void>;
@@ -166,6 +169,9 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpack-project:resolve-dropped-targets', (_e, paths) =>
     facade.resolveBackpackProjectDroppedTargets(backpackProjectDroppedPathsSchema.parse(paths)),
+  );
+  handle('host:backpack-project:resolve-web-link-icon', (_e, url) =>
+    facade.resolveBackpackProjectWebLinkIcon(backpackProjectWebUrlSchema.parse(url)),
   );
 
   handle('host:programs:catalog', () => facade.programCatalog());

@@ -66,6 +66,8 @@ const api = {
         .filter((filePath) => filePath.length > 0);
       return ipcRenderer.invoke('host:backpack-project:resolve-dropped-targets', paths);
     },
+    projectResolveWebLinkIcon: (url: string) =>
+      ipcRenderer.invoke('host:backpack-project:resolve-web-link-icon', url),
   },
 
   programs: {

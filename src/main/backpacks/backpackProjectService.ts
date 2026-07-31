@@ -8,6 +8,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseBackpackProjectWebUrl } from './backpackProjectWebLink';
+import { resolveWebLinkIcon } from './backpackProjectSiteIcon';
 
 export const BACKPACK_PROJECT_SCHEME = 'papers-backpack';
 
@@ -414,5 +415,11 @@ export class BackpackProjectService {
     if (!this.openTarget) throw new Error('Backpack project launching is unavailable.');
     const detail = await this.openTarget(target);
     if (detail) throw new Error(detail);
+  }
+
+  async resolveWebLinkIcon(backpackId: string, url: string): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }> {
+    parseBackpackProjectWebUrl(url);
+    await this.manifest(backpackId);
+    return resolveWebLinkIcon(url);
   }
 }

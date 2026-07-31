@@ -271,6 +271,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.backpackProjects.describeDroppedTargets(paths);
   }
 
+  async resolveBackpackProjectWebLinkIcon(
+    url: string,
+  ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }> {
+    return this.deps.backpackProjects.resolveWebLinkIcon(this.requireBackpackProjectOpen(), url);
+  }
+
   // -------------------------------------------------------------- programs
   programCatalog(): {
     programs: ProgramManifest[];
