@@ -174,12 +174,31 @@ async function fetchWithRedirects(
   for (let i = 0; i <= maxRedirects; i += 1) {
     const parsed = validateUrl(currentUrl);
 
-    const response = await net.fetch(currentUrl, {
-      method: 'GET',
-      redirect: 'manual',
-      signal,
-      headers: { Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' },
-    });
+    let response: Response;
+    try {
+      response = await net.fetch(currentUrl, {
+        method: 'GET',
+        redirect: 'manual',
+        signal,
+        headers: { Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' },
+      });
+    } catch (fetchError) {
+      // Chromium can cancel a manual-redirect fetch outright instead of
+      // surfacing an inspectable 30x response (observed against real sites,
+      // not just synthetic redirects). Fall back to a single browser-followed
+      // request, then validate the URL it actually landed on so a redirect to
+      // a blocked destination is still rejected even though we could not
+      // inspect it hop by hop.
+      if (!(fetchError instanceof Error) || !/redirect/i.test(fetchError.message)) throw fetchError;
+      response = await net.fetch(currentUrl, {
+        method: 'GET',
+        redirect: 'follow',
+        signal,
+        headers: { Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8' },
+      });
+      validateUrl(response.url);
+      currentUrl = response.url;
+    }
 
     if (signal?.aborted) throw new Error('aborted');
 
@@ -192,7 +211,9 @@ async function fetchWithRedirects(
       continue;
     }
 
-    if (status >= 400) throw new Error(`HTTP ${status} fetching page`);
+    if (status >= 400) {
+      throw new Error(`HTTP ${status} fetching page`);
+    }
 
     const contentType = response.headers.get('content-type');
     const buffer = Buffer.from(await response.arrayBuffer());
