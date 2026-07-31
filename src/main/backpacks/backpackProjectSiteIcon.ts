@@ -100,7 +100,7 @@ function extractIconDeclarations(html: string, pageUrl: URL): Array<{ url: strin
   const linkPattern = /<link\b[^>]*?rel\s*=\s*["']([^"']*)["'][^>]*>/gi;
   let match: RegExpExecArray | null;
   while ((match = linkPattern.exec(html)) !== null) {
-    const rel = match[1].toLowerCase();
+    const rel = (match[1] ?? '').toLowerCase();
     const tag = match[0];
     const isIcon = /\bicon\b/.test(rel);
     const isAppleTouch = /\bapple-touch-icon\b/.test(rel);
@@ -114,9 +114,9 @@ function extractIconDeclarations(html: string, pageUrl: URL): Array<{ url: strin
     const typeMatch = /type\s*=\s*["']([^"']+)["']/i.exec(tag);
 
     let sizes: string | undefined;
-    if (sizesMatch) sizes = sizesMatch[1].toLowerCase();
+    if (sizesMatch) sizes = (sizesMatch[1] ?? '').toLowerCase();
 
-    const resolved = resolveIconUrl(hrefMatch[1], pageUrl);
+    const resolved = resolveIconUrl(hrefMatch[1] ?? '', pageUrl);
     if (!resolved || seen.has(resolved)) continue;
     seen.add(resolved);
 
@@ -223,7 +223,7 @@ async function fetchIconBytes(url: string, signal?: AbortSignal): Promise<{ data
   let mime = response.headers.get('content-type')?.split(';')[0]?.trim()?.toLowerCase() ?? '';
 
   if (!mime || !ALLOWED_MIME.has(mime)) {
-    mime = detectMimeFromBytes(buffer);
+    mime = detectMimeFromBytes(buffer) ?? '';
   }
 
   if (!mime || !ALLOWED_MIME.has(mime)) return null;
