@@ -429,7 +429,7 @@ export class BackpackProjectService {
     await this.revealTarget(target);
   }
 
-  async resolveWebLinkIcon(backpackId: string, url: string): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }> {
+  async resolveWebLinkIcon(backpackId: string, url: string): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string; title: string | null }> {
     parseBackpackProjectWebUrl(url);
     await this.manifest(backpackId);
     return resolveWebLinkIcon(url);

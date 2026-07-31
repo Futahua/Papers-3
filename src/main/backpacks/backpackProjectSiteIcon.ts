@@ -274,6 +274,29 @@ export interface ResolvedWebLinkIcon {
   icon: string | null;
   finalUrl: string;
   finalOrigin: string;
+  title: string | null;
+}
+
+const HTML_ENTITY_REPLACEMENTS: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+  '&apos;': "'",
+  '&nbsp;': ' ',
+};
+
+function decodeHtmlEntities(text: string): string {
+  return text.replace(/&(?:amp|lt|gt|quot|#39|apos|nbsp);/g, (entity) => HTML_ENTITY_REPLACEMENTS[entity] ?? entity);
+}
+
+export function extractPageTitle(html: string): string | null {
+  const match = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  const raw = match?.[1];
+  if (raw === undefined) return null;
+  const title = decodeHtmlEntities(raw).replace(/\s+/g, ' ').trim();
+  return title || null;
 }
 
 export async function resolveWebLinkIcon(rawUrl: string): Promise<ResolvedWebLinkIcon> {
@@ -292,6 +315,7 @@ export async function resolveWebLinkIcon(rawUrl: string): Promise<ResolvedWebLin
     const finalOrigin = finalUrl.origin;
     const html = pageResult.body.toString('utf8');
 
+    const title = extractPageTitle(html);
     const declarations = extractIconDeclarations(html, finalUrl);
     const ranked = rankCandidates(declarations, finalOrigin);
 
@@ -303,16 +327,16 @@ export async function resolveWebLinkIcon(rawUrl: string): Promise<ResolvedWebLin
         if (iconResult) {
           const mime = iconResult.mime;
           const dataUrl = `data:${mime};base64,${iconResult.data.toString('base64')}`;
-          return { icon: dataUrl, finalUrl: finalUrl.toString(), finalOrigin };
+          return { icon: dataUrl, finalUrl: finalUrl.toString(), finalOrigin, title };
         }
       } catch {
         continue;
       }
     }
 
-    return { icon: null, finalUrl: finalUrl.toString(), finalOrigin };
+    return { icon: null, finalUrl: finalUrl.toString(), finalOrigin, title };
   } catch (error) {
-    return { icon: null, finalUrl: parsed.toString(), finalOrigin: parsed.origin };
+    return { icon: null, finalUrl: parsed.toString(), finalOrigin: parsed.origin, title: null };
   } finally {
     clearTimeout(totalTimer);
   }

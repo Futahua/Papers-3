@@ -277,7 +277,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async resolveBackpackProjectWebLinkIcon(
     url: string,
-  ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }> {
+  ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string; title: string | null }> {
     return this.deps.backpackProjects.resolveWebLinkIcon(this.requireBackpackProjectOpen(), url);
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveWebLinkIcon } from '../../src/main/backpacks/backpackProjectSiteIcon';
+import { extractPageTitle, resolveWebLinkIcon } from '../../src/main/backpacks/backpackProjectSiteIcon';
 
 // resolveWebLinkIcon validates its input before its own try/catch begins, so
 // every case here throws synchronously rather than resolving with
@@ -48,5 +48,34 @@ describe('Backpack project web-link icon resolver — SSRF blocklist', () => {
   it('rejects an oversized URL', async () => {
     const oversized = 'https://example.com/' + 'a'.repeat(3_000);
     await expect(resolveWebLinkIcon(oversized)).rejects.toThrow(/invalid URL length/i);
+  });
+});
+
+describe('extractPageTitle', () => {
+  it('extracts a simple title', () => {
+    expect(extractPageTitle('<html><head><title>Example Site</title></head></html>')).toBe('Example Site');
+  });
+
+  it('decodes HTML entities in the title', () => {
+    expect(extractPageTitle('<title>Fish &amp; Chips &mdash; &lt;Test&gt;</title>')).toBe(
+      'Fish & Chips &mdash; <Test>',
+    );
+  });
+
+  it('collapses internal whitespace and trims', () => {
+    expect(extractPageTitle('<title>\n   Spaced   Out   \n</title>')).toBe('Spaced Out');
+  });
+
+  it('is case-insensitive and tolerates attributes on the tag', () => {
+    expect(extractPageTitle('<TITLE class="x">Loud Title</TITLE>')).toBe('Loud Title');
+  });
+
+  it('returns null when there is no title tag', () => {
+    expect(extractPageTitle('<html><head></head><body>No title here</body></html>')).toBeNull();
+  });
+
+  it('returns null for an empty or whitespace-only title', () => {
+    expect(extractPageTitle('<title></title>')).toBeNull();
+    expect(extractPageTitle('<title>   </title>')).toBeNull();
   });
 });
