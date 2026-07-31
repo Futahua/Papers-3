@@ -16,11 +16,37 @@ in the background, and shows **Restart and update** in Settings when one is read
 - The repository is public, so the feed is read anonymously and **no token ships inside the
   application**.
 
+### What a Papers version means
+
+A clean Papers version such as `1.2.7` identifies a **published Papers release**. It does
+not count commits, fixes, experiments, builds or Backpack-project changes.
+
+- Work inside an independent Backpack project never changes the Papers version.
+- Unpublished Papers development does not increment or reserve the next release number.
+  Thirty local changes may all be developed and tested against the same current public
+  version.
+- A local Papers build keeps the current public version and remains distinguishable by
+  its commit and build time. If it also contains uncommitted tracked edits, its commit
+  carries `+local`. It must not claim the next clean version merely because it was built
+  or run.
+- The next clean version is assigned once, when a specific set of Papers changes is
+  deliberately selected for publication. All changes in that release share that one
+  version.
+- Other machines see only releases present in the public update feed. Local builds,
+  source commits and changes to a machine-local Backpack project are invisible to their
+  Papers updater.
+
+For example, developing thirty changes to the local “As you Go” project while `1.2.7` is
+public leaves Papers at `1.2.7`. A local host experiment also keeps `1.2.7`; its build
+identity, not a fictional release number, distinguishes it. Only a deliberately published
+Papers update may become `1.2.8`.
+
 ### Publishing a new version
 
 On the desktop:
 
-1. Bump `version` in `package.json`.
+1. After the release contents are selected and publication is authorized, assign the next
+   clean `version` in `package.json`.
 2. `npm run release` — builds the installer and uploads it with the update feed.
 3. **Publish the draft release**, which `electron-builder` leaves as a draft. Do this only
    *after* the uploads finish; publishing early yields a release missing `latest.yml`, and

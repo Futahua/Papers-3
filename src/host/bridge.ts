@@ -113,8 +113,18 @@ interface HostBridge {
     copyText(text: string): Promise<void>;
     projectStateLoad(): Promise<unknown>;
     projectStateSave(state: string): Promise<void>;
-    projectPickTarget(kind: 'file' | 'folder'): Promise<string | null>;
+    projectPickTarget(
+      kind: 'file' | 'folder',
+    ): Promise<{ target: string; icon: string | null } | null>;
+    projectShortcutIcon(shortcutId: string): Promise<string | null>;
     projectLaunchShortcut(shortcutId: string): Promise<void>;
+    projectOpenWebLink(url: string): Promise<void>;
+    projectResolveDroppedTargets(
+      files: File[],
+    ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>>;
+    projectResolveWebLinkIcon(
+      url: string,
+    ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }>;
   };
   programs: {
     catalog(): Promise<CatalogInfo>;

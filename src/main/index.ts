@@ -24,6 +24,7 @@ import { registerResourceExecutors } from './resources/resourceExecutors';
 import { AgentRunService } from './agents/runService';
 import { PapersHostFacade } from './hostFacade';
 import { PapersUpdater } from './papersUpdater';
+import { papersDataDirArgument } from './papersDataDir';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
 import { papersPaths } from './persistence/paths';
@@ -49,8 +50,12 @@ app.setName('Papers');
 // Keep every Papers-owned runtime file off C:. The packaged application lives
 // in <Papers>/App and stores persistent state in <Papers>/Data, leaving one
 // self-contained Papers master folder. Tests and development remain isolated.
+const explicitPapersDataDir = papersDataDirArgument(process.argv);
 if (process.env['PAPERS_TEST_USER_DATA']) {
   app.setPath('userData', process.env['PAPERS_TEST_USER_DATA']);
+} else if (explicitPapersDataDir) {
+  mkdirSync(explicitPapersDataDir, { recursive: true });
+  app.setPath('userData', explicitPapersDataDir);
 } else {
   const papersDataDir = app.isPackaged
     ? path.resolve(path.dirname(process.execPath), '..', 'Data')
@@ -108,6 +113,10 @@ async function bootstrap(): Promise<void> {
   const backpackProjects = new BackpackProjectService(
     path.join(paths.root, 'backpack-projects.json'),
     (target) => shell.openPath(target),
+    async (target) => {
+      const icon = await app.getFileIcon(target, { size: 'large' });
+      return icon.isEmpty() ? null : icon.toDataURL();
+    },
   );
   installBackpackProjectProtocol(backpackProjects);
 

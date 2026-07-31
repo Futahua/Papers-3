@@ -21,6 +21,7 @@ import {
 const AS_YOU_GO_ID = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 let launched: LaunchedApp;
 let localLaunchMarker: string;
+let localDroppedTarget: string;
 let registryFile: string;
 let protectedFixtureFiles: string[];
 let protectedFixtureHashes: string[];
@@ -56,6 +57,7 @@ beforeAll(async () => {
   );
 
   const localLaunchScript = path.join(userDataDir, 'as-you-go-local-action.cmd');
+  localDroppedTarget = localLaunchScript;
   localLaunchMarker = path.join(userDataDir, 'as-you-go-launched.txt');
   await fs.writeFile(localLaunchScript, `@echo launched>"${localLaunchMarker}"\r\n`, 'utf8');
   const projectRoot = path.join(userDataDir, 'external-as-you-go-project');
@@ -275,6 +277,77 @@ describe('production Papers shell', () => {
       'prepared local As you Go action',
     );
 
+    const targetIcon = await evalInBackpackProject<string | null>(
+      app,
+      `new Promise((resolve, reject) => {
+        const requestId = crypto.randomUUID();
+        const timer = setTimeout(() => reject(new Error('icon response timed out')), 5000);
+        const receive = (event) => {
+          if (
+            event.source === window.parent &&
+            event.data?.type === 'papers:host:result' &&
+            event.data?.requestId === requestId
+          ) {
+            clearTimeout(timer);
+            window.removeEventListener('message', receive);
+            if (event.data.ok) resolve(event.data.icon ?? null);
+            else reject(new Error(event.data.error));
+          }
+        };
+        window.addEventListener('message', receive);
+        window.parent.postMessage({
+          type: 'papers:project:as-you-go-shortcut-icon',
+          requestId,
+          actionId: 'shortcut-clips',
+        }, '*');
+      })`,
+    );
+    expect(targetIcon).toMatch(/^data:image\/png;base64,/);
+
+    const hostPage = await app.firstWindow();
+    const projectFrame = hostPage.frames().find((frame) =>
+      frame.url().startsWith(`papers-backpack://${AS_YOU_GO_ID}/`),
+    );
+    expect(projectFrame).toBeDefined();
+    await projectFrame!.evaluate(() => {
+      const input = document.createElement('input');
+      input.id = 'e2e-native-drop';
+      input.type = 'file';
+      document.body.append(input);
+    });
+    await projectFrame!.locator('#e2e-native-drop').setInputFiles(localDroppedTarget);
+    const droppedTargets = await projectFrame!.evaluate(
+      () =>
+        new Promise<Array<{ name: string; target: string; kind: string }>>((resolve, reject) => {
+          const input = document.querySelector<HTMLInputElement>('#e2e-native-drop');
+          const requestId = crypto.randomUUID();
+          const timer = window.setTimeout(() => reject(new Error('drop response timed out')), 5_000);
+          const receive = (event: MessageEvent): void => {
+            if (
+              event.source === window.parent
+              && event.data?.type === 'papers:host:result'
+              && event.data?.requestId === requestId
+            ) {
+              window.clearTimeout(timer);
+              window.removeEventListener('message', receive);
+              if (event.data.ok) resolve(event.data.targets ?? []);
+              else reject(new Error(event.data.error));
+            }
+          };
+          window.addEventListener('message', receive);
+          window.parent.postMessage({
+            type: 'papers:project:resolve-dropped-targets',
+            requestId,
+            files: [...(input?.files ?? [])],
+          }, '*');
+        }),
+    );
+    expect(droppedTargets).toEqual([{
+      name: path.basename(localDroppedTarget),
+      target: path.resolve(localDroppedTarget),
+      kind: 'file',
+    }]);
+
     const profile = launched.userDataDir;
     await launched.close();
     const activeRegistry = JSON.parse(await fs.readFile(registryFile, 'utf8')) as {
@@ -294,7 +367,10 @@ describe('production Papers shell', () => {
     );
 
     const { app: restartedApp } = launched;
-    await evalInBackpackProject(restartedApp, `document.querySelector('#back').click()`);
+    await evalInHost(
+      restartedApp,
+      `document.querySelector('.titlebar .pill-button')?.click()`,
+    );
     await waitFor(
       () =>
         evalInHost<boolean>(

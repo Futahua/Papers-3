@@ -73,9 +73,10 @@ describe('BackpackProjectService', () => {
     const before = await Promise.all(files.map(hash));
     const service = new BackpackProjectService(bindingsFile);
 
-    await expect(service.open(backpackId)).resolves.toEqual({
-      url: `papers-backpack://${backpackId}/public/index.html`,
-    });
+    const opened = await service.open(backpackId);
+    expect(opened?.url).toMatch(
+      new RegExp(`^papers-backpack://${backpackId}/_papers-open/[0-9a-f-]+/public/index\\.html$`, 'i'),
+    );
     expect(await Promise.all(files.map(hash))).toEqual(before);
   });
 
@@ -93,6 +94,21 @@ describe('BackpackProjectService', () => {
     await expect(service.runAction(backpackId, 'not-declared')).rejects.toThrow(/not found/i);
   });
 
+  it('describes only existing absolute files and folders dropped from Windows', async () => {
+    await writeProject();
+    const folder = path.join(root, 'Dropped folder');
+    const file = path.join(root, 'notes.txt');
+    await fs.mkdir(folder);
+    await fs.writeFile(file, 'notes', 'utf8');
+    const service = new BackpackProjectService(bindingsFile);
+
+    await expect(service.describeDroppedTargets([file, folder])).resolves.toEqual([
+      { name: 'notes.txt', target: path.resolve(file), kind: 'file' },
+      { name: 'Dropped folder', target: path.resolve(folder), kind: 'folder' },
+    ]);
+    await expect(service.describeDroppedTargets(['relative.txt'])).rejects.toThrow(/absolute/i);
+  });
+
   it('loads the project-owned explorer state and atomically saves groups and shortcuts', async () => {
     await writeProject();
     const service = new BackpackProjectService(bindingsFile);
@@ -107,6 +123,28 @@ describe('BackpackProjectService', () => {
     };
     await service.saveState(backpackId, JSON.stringify(state));
     await expect(service.loadState(backpackId)).resolves.toEqual(state);
+  });
+
+  it('serializes overlapping state saves so the last requested state remains complete', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile);
+    const first = {
+      schemaVersion: 1 as const,
+      groups: [{ id: 'group-one', parentId: 'root', name: 'One' }],
+      shortcuts: [{ id: 'shortcut-one', parentId: 'group-one', name: 'A', description: '', target, icon: null }],
+    };
+    const second = {
+      schemaVersion: 1 as const,
+      groups: [{ id: 'group-two', parentId: 'root', name: 'Two' }],
+      shortcuts: [{ id: 'shortcut-two', parentId: 'group-two', name: 'B', description: '', target, icon: null }],
+    };
+
+    await Promise.all([
+      service.saveState(backpackId, JSON.stringify(first)),
+      service.saveState(backpackId, JSON.stringify(second)),
+    ]);
+
+    await expect(service.loadState(backpackId)).resolves.toEqual(second);
   });
 
   it('launches only a shortcut target held by the project state', async () => {
@@ -126,6 +164,60 @@ describe('BackpackProjectService', () => {
     await expect(service.launchShortcut(backpackId, 'not-found')).rejects.toThrow(/not found/i);
   });
 
+  it('resolves a Windows icon only for a shortcut target already held by project state', async () => {
+    await writeProject();
+    const requested: string[] = [];
+    const service = new BackpackProjectService(
+      bindingsFile,
+      async () => '',
+      async (selected) => {
+        requested.push(selected);
+        return 'data:image/png;base64,target-icon';
+      },
+    );
+    await service.saveState(backpackId, JSON.stringify({
+      schemaVersion: 1,
+      groups: [],
+      shortcuts: [{
+        id: 'shortcut-one',
+        parentId: 'root',
+        name: 'A',
+        description: '',
+        target,
+        icon: null,
+      }],
+    }));
+
+    await expect(service.shortcutIcon(backpackId, 'shortcut-one')).resolves.toBe(
+      'data:image/png;base64,target-icon',
+    );
+    expect(requested).toEqual([path.resolve(target)]);
+    await expect(service.shortcutIcon(backpackId, 'not-found')).rejects.toThrow(/not found/i);
+  });
+
+  it('returns no default icon when Windows cannot resolve one', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(
+      bindingsFile,
+      async () => '',
+      async () => null,
+    );
+    await service.saveState(backpackId, JSON.stringify({
+      schemaVersion: 1,
+      groups: [],
+      shortcuts: [{
+        id: 'shortcut-one',
+        parentId: 'root',
+        name: 'A',
+        description: '',
+        target,
+        icon: null,
+      }],
+    }));
+
+    await expect(service.shortcutIcon(backpackId, 'shortcut-one')).resolves.toBeNull();
+  });
+
   it('rejects project state that tries to turn a shortcut into an arbitrary relative path', async () => {
     await writeProject();
     const service = new BackpackProjectService(bindingsFile);
@@ -136,6 +228,31 @@ describe('BackpackProjectService', () => {
     }))).rejects.toThrow(/absolute paths/i);
   });
 
+  it('persists validated http(s) web links without accepting other URL schemes', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile);
+    const webState = {
+      schemaVersion: 1,
+      groups: [],
+      shortcuts: [{
+        id: 'shortcut-web',
+        parentId: 'root',
+        name: 'Web',
+        description: '',
+        target: 'https://example.com/news',
+        icon: null,
+      }],
+    };
+
+    await expect(service.saveState(backpackId, JSON.stringify(webState))).resolves.toBeUndefined();
+    await expect(service.loadState(backpackId)).resolves.toEqual(webState);
+
+    webState.shortcuts[0]!.target = 'javascript:alert(1)';
+    await expect(service.saveState(backpackId, JSON.stringify(webState))).rejects.toThrow(
+      /absolute paths or http\(s\)/i,
+    );
+  });
+
   it('re-reads local project files without rebuilding or restarting Papers', async () => {
     await writeProject();
     const opened: string[] = [];
@@ -144,9 +261,8 @@ describe('BackpackProjectService', () => {
       return '';
     });
 
-    await expect(service.open(backpackId)).resolves.toEqual({
-      url: `papers-backpack://${backpackId}/public/index.html`,
-    });
+    const firstOpening = await service.open(backpackId);
+    expect(firstOpening?.url).toMatch(/\/_papers-open\/[0-9a-f-]+\/public\/index\.html$/i);
 
     const alternateEntry = path.join(projectRoot, 'public', 'updated.html');
     const alternateTarget = path.join(root, 'updated-action.cmd');
@@ -166,11 +282,28 @@ describe('BackpackProjectService', () => {
       'utf8',
     );
 
-    await expect(service.open(backpackId)).resolves.toEqual({
-      url: `papers-backpack://${backpackId}/public/updated.html`,
-    });
+    const secondOpening = await service.open(backpackId);
+    expect(secondOpening?.url).toMatch(/\/_papers-open\/[0-9a-f-]+\/public\/updated\.html$/i);
     await service.runAction(backpackId, actionId);
     expect(opened).toEqual([path.resolve(alternateTarget)]);
+  });
+
+  it('gives each project opening a fresh asset namespace so local edits cannot stay cached', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile);
+
+    const first = await service.open(backpackId);
+    const second = await service.open(backpackId);
+
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(second?.url).not.toBe(first?.url);
+    expect(new URL(first!.url).pathname).toMatch(
+      /^\/_papers-open\/[0-9a-f-]+\/public\/index\.html$/i,
+    );
+    await expect(
+      service.resolveAsset(backpackId, new URL(first!.url).pathname),
+    ).resolves.toBe(path.join(projectRoot, 'public', 'index.html'));
   });
 
   it('serves only files inside the bound project root', async () => {

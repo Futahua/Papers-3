@@ -23,6 +23,7 @@ import type {
   BackpackProjectService,
   OpenBackpackProject,
 } from './backpacks/backpackProjectService';
+import { parseBackpackProjectWebUrl } from './backpacks/backpackProjectWebLink';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
 import type { ProgramCatalog } from './canvas/programLoader';
@@ -231,17 +232,49 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     await this.deps.backpackProjects.saveState(this.requireBackpackProjectOpen(), rawState);
   }
 
-  async pickBackpackProjectTarget(kind: 'file' | 'folder'): Promise<string | null> {
+  async pickBackpackProjectTarget(
+    kind: 'file' | 'folder',
+  ): Promise<{ target: string; icon: string | null } | null> {
     this.requireBackpackProjectOpen();
     const result = await dialog.showOpenDialog({
       title: kind === 'file' ? 'Choose a shortcut, script, app, or file' : 'Choose a folder',
       properties: [kind === 'file' ? 'openFile' : 'openDirectory'],
     });
-    return result.canceled ? null : (result.filePaths[0] ?? null);
+    const target = result.canceled ? null : (result.filePaths[0] ?? null);
+    if (!target) return null;
+    return {
+      target,
+      icon: await this.deps.backpackProjects.targetIcon(target),
+    };
+  }
+
+  async backpackProjectShortcutIcon(shortcutId: string): Promise<string | null> {
+    return this.deps.backpackProjects.shortcutIcon(
+      this.requireBackpackProjectOpen(),
+      shortcutId,
+    );
   }
 
   async launchBackpackProjectShortcut(shortcutId: string): Promise<void> {
     await this.deps.backpackProjects.launchShortcut(this.requireBackpackProjectOpen(), shortcutId);
+  }
+
+  async openBackpackProjectWebLink(url: string): Promise<void> {
+    this.requireBackpackProjectOpen();
+    await shell.openExternal(parseBackpackProjectWebUrl(url));
+  }
+
+  async resolveBackpackProjectDroppedTargets(
+    paths: string[],
+  ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>> {
+    this.requireBackpackProjectOpen();
+    return this.deps.backpackProjects.describeDroppedTargets(paths);
+  }
+
+  async resolveBackpackProjectWebLinkIcon(
+    url: string,
+  ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }> {
+    return this.deps.backpackProjects.resolveWebLinkIcon(this.requireBackpackProjectOpen(), url);
   }
 
   // -------------------------------------------------------------- programs
