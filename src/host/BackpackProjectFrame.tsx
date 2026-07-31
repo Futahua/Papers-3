@@ -80,6 +80,9 @@ export function BackpackProjectFrame(props: {
       if (request.type === 'papers:project:as-you-go-launch' && request.actionId) {
         task = host().backpackProject.projectLaunchShortcut(request.actionId);
       }
+      if (request.type === 'papers:project:as-you-go-reveal' && request.actionId) {
+        task = host().backpackProject.projectRevealShortcut(request.actionId);
+      }
       if (request.type === 'papers:project:open-web-link' && request.url) {
         task = host().backpackProject.projectOpenWebLink(request.url);
       }

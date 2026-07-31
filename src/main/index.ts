@@ -117,6 +117,9 @@ async function bootstrap(): Promise<void> {
       const icon = await app.getFileIcon(target, { size: 'large' });
       return icon.isEmpty() ? null : icon.toDataURL();
     },
+    async (target) => {
+      shell.showItemInFolder(target);
+    },
   );
   installBackpackProjectProtocol(backpackProjects);
 

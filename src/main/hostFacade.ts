@@ -259,6 +259,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     await this.deps.backpackProjects.launchShortcut(this.requireBackpackProjectOpen(), shortcutId);
   }
 
+  async revealBackpackProjectShortcut(shortcutId: string): Promise<void> {
+    await this.deps.backpackProjects.revealShortcut(this.requireBackpackProjectOpen(), shortcutId);
+  }
+
   async openBackpackProjectWebLink(url: string): Promise<void> {
     this.requireBackpackProjectOpen();
     await shell.openExternal(parseBackpackProjectWebUrl(url));

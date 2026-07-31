@@ -36,6 +36,7 @@ export interface HostFacade {
   ): Promise<{ target: string; icon: string | null } | null>;
   backpackProjectShortcutIcon(shortcutId: string): Promise<string | null>;
   launchBackpackProjectShortcut(shortcutId: string): Promise<void>;
+  revealBackpackProjectShortcut(shortcutId: string): Promise<void>;
   openBackpackProjectWebLink(url: string): Promise<void>;
   resolveBackpackProjectDroppedTargets(
     paths: string[],
@@ -163,6 +164,9 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpack-project:launch-shortcut', (_e, shortcutId) =>
     facade.launchBackpackProjectShortcut(backpackProjectActionIdSchema.parse(shortcutId)),
+  );
+  handle('host:backpack-project:reveal-shortcut', (_e, shortcutId) =>
+    facade.revealBackpackProjectShortcut(backpackProjectActionIdSchema.parse(shortcutId)),
   );
   handle('host:backpack-project:open-web-link', (_e, url) =>
     facade.openBackpackProjectWebLink(backpackProjectWebUrlSchema.parse(url)),

@@ -147,6 +147,7 @@ export class BackpackProjectService {
     private readonly bindingsFile: string,
     private readonly openTarget?: (target: string) => Promise<string>,
     private readonly resolveTargetIcon?: (target: string) => Promise<string | null>,
+    private readonly revealTarget?: (target: string) => Promise<void>,
   ) {}
 
   private async binding(backpackId: string): Promise<ProjectBinding | null> {
@@ -415,6 +416,17 @@ export class BackpackProjectService {
     if (!this.openTarget) throw new Error('Backpack project launching is unavailable.');
     const detail = await this.openTarget(target);
     if (detail) throw new Error(detail);
+  }
+
+  async revealShortcut(backpackId: string, shortcutId: string): Promise<void> {
+    const target = await this.shortcutTarget(backpackId, shortcutId);
+    try {
+      await fs.access(target);
+    } catch {
+      throw new Error('That shortcut target is unavailable on this machine.');
+    }
+    if (!this.revealTarget) throw new Error('Revealing a Backpack project shortcut is unavailable.');
+    await this.revealTarget(target);
   }
 
   async resolveWebLinkIcon(backpackId: string, url: string): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }> {

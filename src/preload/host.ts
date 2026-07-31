@@ -58,6 +58,7 @@ const api = {
     projectShortcutIcon: (shortcutId: string) =>
       ipcRenderer.invoke('host:backpack-project:shortcut-icon', shortcutId),
     projectLaunchShortcut: (shortcutId: string) => ipcRenderer.invoke('host:backpack-project:launch-shortcut', shortcutId),
+    projectRevealShortcut: (shortcutId: string) => ipcRenderer.invoke('host:backpack-project:reveal-shortcut', shortcutId),
     projectOpenWebLink: (url: string) =>
       ipcRenderer.invoke('host:backpack-project:open-web-link', url),
     projectResolveDroppedTargets: (files: File[]) => {

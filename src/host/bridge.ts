@@ -118,6 +118,7 @@ interface HostBridge {
     ): Promise<{ target: string; icon: string | null } | null>;
     projectShortcutIcon(shortcutId: string): Promise<string | null>;
     projectLaunchShortcut(shortcutId: string): Promise<void>;
+    projectRevealShortcut(shortcutId: string): Promise<void>;
     projectOpenWebLink(url: string): Promise<void>;
     projectResolveDroppedTargets(
       files: File[],

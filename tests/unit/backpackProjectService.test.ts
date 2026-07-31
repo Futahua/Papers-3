@@ -164,6 +164,41 @@ describe('BackpackProjectService', () => {
     await expect(service.launchShortcut(backpackId, 'not-found')).rejects.toThrow(/not found/i);
   });
 
+  it('reveals only a shortcut target held by the project state, never a web link', async () => {
+    await writeProject();
+    const revealed: string[] = [];
+    const service = new BackpackProjectService(
+      bindingsFile,
+      undefined,
+      undefined,
+      async (selected) => {
+        revealed.push(selected);
+      },
+    );
+    await service.saveState(backpackId, JSON.stringify({
+      schemaVersion: 1,
+      groups: [],
+      shortcuts: [
+        { id: 'shortcut-one', parentId: 'root', name: 'A', description: '', target, icon: null },
+        {
+          id: 'shortcut-web',
+          parentId: 'root',
+          name: 'Web',
+          description: '',
+          target: 'https://example.com/news',
+          icon: null,
+        },
+      ],
+    }));
+
+    await service.revealShortcut(backpackId, 'shortcut-one');
+    expect(revealed).toEqual([path.resolve(target)]);
+
+    await expect(service.revealShortcut(backpackId, 'shortcut-web')).rejects.toThrow(/not found/i);
+    expect(revealed).toEqual([path.resolve(target)]);
+    await expect(service.revealShortcut(backpackId, 'not-found')).rejects.toThrow(/not found/i);
+  });
+
   it('resolves a Windows icon only for a shortcut target already held by project state', async () => {
     await writeProject();
     const requested: string[] = [];
