@@ -109,6 +109,8 @@ interface HostBridge {
   backpackProject: {
     open(id: string): Promise<{ url: string } | null>;
     close(): Promise<void>;
+    showSurface(url: string): Promise<void>;
+    hideSurface(): Promise<void>;
     runAction(actionId: string): Promise<void>;
     copyText(text: string): Promise<void>;
     projectStateLoad(): Promise<unknown>;
@@ -139,6 +141,10 @@ interface HostBridge {
     setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setOverlayActive(active: boolean): Promise<void>;
     setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
+  };
+  settings: {
+    get(): Promise<{ transparentWindow: boolean }>;
+    setTransparentWindow(enabled: boolean): Promise<void>;
   };
   permissions: {
     list(): Promise<
@@ -174,6 +180,7 @@ interface HostBridge {
   };
   events: {
     onBackpacksChanged(cb: (p: BackpacksList) => void): () => void;
+    onBackpackProjectCloseRequest(cb: () => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;

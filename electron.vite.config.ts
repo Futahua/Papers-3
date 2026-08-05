@@ -70,6 +70,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           host: resolve(__dirname, 'src/preload/host.ts'),
+          backpackProject: resolve(__dirname, 'src/preload/backpackProject.ts'),
           program: resolve(__dirname, 'src/preload/program.ts'),
         },
         // Sandboxed preloads cannot use ESM; emit CommonJS.

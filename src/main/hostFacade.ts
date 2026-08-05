@@ -46,6 +46,9 @@ export interface FacadeDeps {
   updater: PapersUpdater;
   registry: BackpackRegistry;
   backpackProjects: BackpackProjectService;
+  isBackpackProjectSender: (sender: WebContents) => boolean;
+  showBackpackProjectSurface: (url: string) => Promise<void>;
+  hideBackpackProjectSurface: () => void;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
@@ -56,6 +59,8 @@ export interface FacadeDeps {
   paths: PapersPaths;
   /** Repaint the native window-controls overlay to match the active theme. */
   setTitleBarOverlay: (color: string, symbolColor: string) => void;
+  getSettings: () => unknown;
+  setTransparentWindow: (enabled: boolean) => Promise<void>;
 }
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
@@ -94,6 +99,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   isHostSender(sender: WebContents): boolean {
     const contents = this.deps.hostContents();
     return contents !== null && sender.id === contents.id;
+  }
+
+  isBackpackProjectSender(sender: WebContents): boolean {
+    return this.deps.isBackpackProjectSender(sender);
   }
 
   get activeBackpackId(): string | null {
@@ -210,9 +219,23 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async closeBackpackProject(): Promise<void> {
+    this.deps.hideBackpackProjectSurface();
     this.currentBackpackProjectId = null;
     await this.deps.registry.markLeft();
     this.emitBackpacksChanged();
+  }
+
+  showBackpackProjectSurface(url: string): Promise<void> {
+    this.requireBackpackProjectOpen();
+    return this.deps.showBackpackProjectSurface(url);
+  }
+
+  hideBackpackProjectSurface(): void {
+    this.deps.hideBackpackProjectSurface();
+  }
+
+  requestCloseBackpackProject(): void {
+    this.send('host:event:backpack-project-close-request', null);
   }
 
   async runBackpackProjectAction(actionId: string): Promise<void> {
@@ -346,6 +369,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   /** Match the native min/maximize/close overlay to the active Papers theme. */
   setTitleBarOverlay(color: string, symbolColor: string): void {
     this.deps.setTitleBarOverlay(color, symbolColor);
+  }
+
+  getSettings(): unknown {
+    return this.deps.getSettings();
+  }
+
+  setTransparentWindow(enabled: boolean): Promise<void> {
+    return this.deps.setTransparentWindow(enabled);
   }
 
   // ----------------------------------------------------------- permissions

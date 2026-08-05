@@ -49,6 +49,8 @@ const api = {
   backpackProject: {
     open: (id: string) => ipcRenderer.invoke('host:backpack-project:open', id),
     close: () => ipcRenderer.invoke('host:backpack-project:close'),
+    showSurface: (url: string) => ipcRenderer.invoke('host:backpack-project:show-surface', url),
+    hideSurface: () => ipcRenderer.invoke('host:backpack-project:hide-surface'),
     runAction: (actionId: string) =>
       ipcRenderer.invoke('host:backpack-project:run-action', actionId),
     copyText: (text: string) => ipcRenderer.invoke('host:backpack-project:copy-text', text),
@@ -87,6 +89,12 @@ const api = {
     setOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-overlay', active),
     setTitleBarOverlay: (color: string, symbolColor: string) =>
       ipcRenderer.invoke('host:layout:set-titlebar', color, symbolColor),
+  },
+
+  settings: {
+    get: () => ipcRenderer.invoke('host:settings:get'),
+    setTransparentWindow: (enabled: boolean) =>
+      ipcRenderer.invoke('host:settings:set-transparent-window', enabled),
   },
 
   permissions: {
@@ -128,6 +136,7 @@ const api = {
 
   events: {
     onBackpacksChanged: subscribe('host:event:backpacks-changed'),
+    onBackpackProjectCloseRequest: subscribe('host:event:backpack-project-close-request'),
     onProgramStatus: subscribe('host:event:program-status'),
     onShelfChanged: subscribe('host:event:shelf-changed'),
     onSaveStatus: subscribe('host:event:save-status'),

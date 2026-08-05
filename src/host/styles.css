@@ -106,6 +106,18 @@ body,
   overflow: hidden;
 }
 
+:root[data-transparent-window="true"],
+:root[data-transparent-window="true"] body,
+:root[data-transparent-window="true"] #root,
+:root[data-transparent-window="true"] .app {
+  background: transparent;
+}
+
+:root[data-transparent-window="true"] .backpack-project-frame,
+:root[data-transparent-window="true"] .backpack-project-frame iframe {
+  background: transparent;
+}
+
 body {
   font-size: 13px;
   user-select: none;
@@ -704,6 +716,16 @@ input:focus-visible {
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--card-surface);
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .settings-card .label {

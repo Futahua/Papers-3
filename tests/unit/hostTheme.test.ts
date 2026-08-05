@@ -31,4 +31,10 @@ describe('host theme contract', () => {
       expect(styles.indexOf(literal)).toBeLessThan(styles.indexOf('* {'));
     }
   });
+
+  it('declares the transparent mode as a restart-time window choice', () => {
+    expect(styles).toContain(':root[data-transparent-window="true"] .app');
+    expect(styles).toContain(':root[data-transparent-window="true"] .backpack-project-frame iframe');
+    expect(styles).toContain('background: transparent;');
+  });
 });

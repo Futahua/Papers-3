@@ -2,6 +2,9 @@ node_modules/
 out/
 dist/
 release/
+# Workers build to their own output directories so a packaging run never
+# disturbs the installed Papers; none of those packs belong in the repo.
+release-*/
 coverage/
 *.log
 .DS_Store

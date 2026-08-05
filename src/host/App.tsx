@@ -54,6 +54,12 @@ export function App(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
+    void host().settings.get().then((settings) => {
+      document.documentElement.dataset.transparentWindow = String(settings.transparentWindow);
+    }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     const bridge = host();
     const restoreBackpack = async (): Promise<void> => {
       const list = await bridge.backpacks.list();
@@ -275,7 +281,7 @@ export function App(): React.JSX.Element {
         </div>
       </header>
 
-      {view === 'backpacks' && (
+      {view === 'backpacks' && entered === null && (
         <BackpacksPane list={backpacks} onChanged={refreshBackpacks} onEnter={enterBackpack} />
       )}
       {view === 'tools' && <ToolsPane />}

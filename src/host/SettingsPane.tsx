@@ -180,6 +180,23 @@ function ThisBuildCard(): React.JSX.Element {
  * model or provider systems that belong to Hermes.
  */
 export function SettingsPane(): React.JSX.Element {
+  const [transparentWindow, setTransparentWindow] = React.useState(false);
+  const [settingsLoaded, setSettingsLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    void host().settings.get().then((settings) => {
+      setTransparentWindow(settings.transparentWindow);
+      document.documentElement.dataset.transparentWindow = String(settings.transparentWindow);
+      setSettingsLoaded(true);
+    }).catch(() => setSettingsLoaded(true));
+  }, []);
+
+  const changeTransparency = (enabled: boolean): void => {
+    setTransparentWindow(enabled);
+    document.documentElement.dataset.transparentWindow = String(enabled);
+    void host().settings.setTransparentWindow(enabled);
+  };
+
   return (
     <div className="pane">
       <div className="pane-inner">
@@ -197,6 +214,16 @@ export function SettingsPane(): React.JSX.Element {
             <span className="label">Appearance</span>
             <strong>Warm paper</strong>
             <small>Papers uses a single calm, tactile desktop theme across every surface.</small>
+            <label className="settings-toggle">
+              <input
+                type="checkbox"
+                checked={transparentWindow}
+                disabled={!settingsLoaded}
+                onChange={(event) => changeTransparency(event.target.checked)}
+              />
+              <span>Transparent window</span>
+            </label>
+            <small>Shows the desktop through unpainted Backpack pages. Restart Papers for this choice to take effect.</small>
           </div>
 
           <div className="settings-card">

@@ -7,6 +7,7 @@ import * as path from 'node:path';
 export interface PapersPaths {
   root: string;
   registryFile: string;
+  settingsFile: string;
   permissionsFile: string;
   recoveryDir: string;
   backupsDir: string;
@@ -20,6 +21,7 @@ export function papersPaths(baseDir: string): PapersPaths {
   return {
     root,
     registryFile: path.join(root, 'registry.json'),
+    settingsFile: path.join(root, 'settings.json'),
     permissionsFile: path.join(root, 'permissions.json'),
     recoveryDir: path.join(root, 'recovery'),
     backupsDir: path.join(root, 'backups'),

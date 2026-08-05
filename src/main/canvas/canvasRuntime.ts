@@ -12,6 +12,7 @@ import {
   installProgramProtocolOnSession,
   type ProgramProtocolHandler,
 } from '../security/programScheme';
+import { OPAQUE_SURFACE_COLOR, TRANSPARENT_CHILD_SURFACE_COLOR } from '../windowSurface';
 
 export interface ProgramSenderIdentity {
   backpackId: string;
@@ -21,6 +22,7 @@ export interface ProgramSenderIdentity {
 
 export interface CanvasRuntimeOptions {
   window: BaseWindow;
+  transparentWindow: boolean;
   preloadPath: string;
   /** Handler serving papers-program:// for program partition sessions. */
   protocolHandler: ProgramProtocolHandler;
@@ -46,8 +48,18 @@ export class CanvasRuntime {
   private readonly crashHistory = new Map<string, number[]>();
   private readonly quarantined = new Map<string, string>();
   private readonly statuses = new Map<string, ProgramStatus>();
+  private transparentWindow: boolean;
 
-  constructor(private readonly options: CanvasRuntimeOptions) {}
+  constructor(private readonly options: CanvasRuntimeOptions) {
+    this.transparentWindow = options.transparentWindow;
+  }
+
+  setTransparentWindow(enabled: boolean): void {
+    this.transparentWindow = enabled;
+    this.active?.view.setBackgroundColor(
+      enabled ? TRANSPARENT_CHILD_SURFACE_COLOR : OPAQUE_SURFACE_COLOR,
+    );
+  }
 
   /** Resolve the program identity for a privileged request sender. */
   identify(sender: WebContents): ProgramSenderIdentity | null {
@@ -172,7 +184,6 @@ export class CanvasRuntime {
         this.setStatus(manifest.id, { state: 'running' });
       }
     });
-
     this.active = { backpackId, programId: manifest.id, manifest, view };
     this.senderRegistry.set(contents.id, { backpackId, programId: manifest.id, manifest });
 

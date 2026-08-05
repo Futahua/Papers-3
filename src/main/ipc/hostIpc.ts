@@ -10,6 +10,7 @@ import type { PermissionDecision } from '@shared/types';
 
 export interface HostFacade {
   isHostSender(sender: WebContents): boolean;
+  isBackpackProjectSender(sender: WebContents): boolean;
 
   buildIdentity(): unknown;
   updateStatus(): unknown;
@@ -27,6 +28,9 @@ export interface HostFacade {
 
   openBackpackProject(id: string): Promise<unknown>;
   closeBackpackProject(): Promise<void>;
+  showBackpackProjectSurface(url: string): Promise<void>;
+  hideBackpackProjectSurface(): void;
+  requestCloseBackpackProject(): void;
   runBackpackProjectAction(actionId: string): Promise<void>;
   copyBackpackProjectText(text: string): void;
   loadBackpackProjectState(): Promise<unknown>;
@@ -55,6 +59,8 @@ export interface HostFacade {
   setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): void;
   setOverlayActive(active: boolean): void;
   setTitleBarOverlay(color: string, symbolColor: string): void;
+  getSettings(): unknown;
+  setTransparentWindow(enabled: boolean): Promise<void>;
 
   listPermissions(): unknown;
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
@@ -90,7 +96,7 @@ const boundsSchema = z
   .strict();
 
 /** Only #rrggbb / #rgb hex colours — the titleBarOverlay repaint takes no other form. */
-const colorSchema = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+const colorSchema = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
 
 const idSchema = z.string().min(1).max(128);
 const backpackRemovalIdSchema = z
@@ -104,8 +110,8 @@ const backpackProjectDroppedPathsSchema = z.array(z.string().min(1).max(32_768))
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
 
 export function registerHostIpc(facade: HostFacade): void {
-  const guard = (event: IpcMainInvokeEvent): void => {
-    if (!facade.isHostSender(event.sender)) {
+  const guard = (event: IpcMainInvokeEvent, projectAllowed = false): void => {
+    if (!facade.isHostSender(event.sender) && !(projectAllowed && facade.isBackpackProjectSender(event.sender))) {
       throw new Error('host channel called from non-host sender');
     }
   };
@@ -113,9 +119,13 @@ export function registerHostIpc(facade: HostFacade): void {
   const handle = (
     channel: string,
     handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
+    projectAllowed = false,
   ): void => {
     ipcMain.handle(channel, (event, ...args) => {
-      guard(event);
+      const projectAction = channel.startsWith('host:backpack-project:') &&
+        !channel.endsWith(':open') && !channel.endsWith(':close') &&
+        !channel.endsWith(':show-surface') && !channel.endsWith(':hide-surface');
+      guard(event, projectAllowed || projectAction);
       return handler(event, ...args);
     });
   };
@@ -146,6 +156,10 @@ export function registerHostIpc(facade: HostFacade): void {
     facade.openBackpackProject(backpackRemovalIdSchema.parse(id)),
   );
   handle('host:backpack-project:close', () => facade.closeBackpackProject());
+  handle('host:backpack-project:show-surface', (_e, url) =>
+    facade.showBackpackProjectSurface(z.string().url().max(2_048).parse(url)),
+  );
+  handle('host:backpack-project:hide-surface', () => facade.hideBackpackProjectSurface());
   handle('host:backpack-project:run-action', (_e, actionId) =>
     facade.runBackpackProjectAction(backpackProjectActionIdSchema.parse(actionId)),
   );
@@ -177,6 +191,10 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:resolve-web-link-icon', (_e, url) =>
     facade.resolveBackpackProjectWebLinkIcon(backpackProjectWebUrlSchema.parse(url)),
   );
+  ipcMain.on('host:backpack-project:request-close', (event) => {
+    if (!facade.isBackpackProjectSender(event.sender)) return;
+    facade.requestCloseBackpackProject();
+  });
 
   handle('host:programs:catalog', () => facade.programCatalog());
   handle('host:programs:start', (_e, programId) => facade.startProgram(idSchema.parse(programId)));
@@ -199,6 +217,10 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:layout:set-titlebar', (_e, color, symbolColor) =>
     facade.setTitleBarOverlay(colorSchema.parse(color), colorSchema.parse(symbolColor)),
+  );
+  handle('host:settings:get', () => facade.getSettings());
+  handle('host:settings:set-transparent-window', (_e, enabled) =>
+    facade.setTransparentWindow(z.boolean().parse(enabled)),
   );
 
   handle('host:permissions:list', () => facade.listPermissions());

@@ -7,6 +7,7 @@ import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
+import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
 import { CanvasRuntime, defaultProgramsRoot } from './canvas/canvasRuntime';
 import { CanvasSessionState } from './canvas/canvasState';
 import { loadProgramCatalog, type ProgramCatalog } from './canvas/programLoader';
@@ -29,6 +30,12 @@ import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
 import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
+import { AtomicJsonStore } from './persistence/atomicStore';
+import {
+  OPAQUE_SURFACE_COLOR,
+  TRANSPARENT_CHILD_SURFACE_COLOR,
+  TRANSPARENT_SURFACE_COLOR,
+} from './windowSurface';
 import {
   installProgramProtocolHandler,
   registerProgramSchemePrivileges,
@@ -85,6 +92,11 @@ const DOCK_WIDTH_FRACTION = 0.4;
 const DOCK_MIN_WIDTH = 380;
 const DOCK_MAX_WIDTH = 620;
 
+interface PapersSettings {
+  transparentWindow: boolean;
+  [key: string]: unknown;
+}
+
 /**
  * The docked Hermes rectangle in Papers content coordinates: a right-hand strip
  * below the top bar. The renderer and main process must agree on this so the
@@ -107,6 +119,12 @@ function dockBoundsFor(contentWidth: number): {
 async function bootstrap(): Promise<void> {
   const baseDir = app.getPath('userData');
   const paths = papersPaths(baseDir);
+  const settingsStore = new AtomicJsonStore(paths.settingsFile, { recoveryDir: paths.recoveryDir });
+  const settingsReport = await settingsStore.load<PapersSettings>();
+  let papersSettings: PapersSettings = {
+    ...(settingsReport.value && typeof settingsReport.value === 'object' ? settingsReport.value : {}),
+    transparentWindow: settingsReport.value?.transparentWindow === true,
+  };
 
   const registry = new BackpackRegistry(baseDir);
   const registryReport = await registry.initialize();
@@ -158,10 +176,16 @@ async function bootstrap(): Promise<void> {
     minWidth: 900,
     minHeight: 600,
     title: 'Papers',
-    backgroundColor: '#efede7',
+    frame: !papersSettings.transparentWindow,
+    transparent: papersSettings.transparentWindow,
+    backgroundColor: papersSettings.transparentWindow ? TRANSPARENT_SURFACE_COLOR : '#efede7',
     ...(appIcon ? { icon: appIcon } : {}),
     titleBarStyle: 'hidden',
     titleBarOverlay: {
+      // The native overlay is a painted Windows region, not a composited page
+      // surface. Keep it opaque and theme-matched even when the rest of the
+      // window is transparent; Electron/Windows does not reliably preserve a
+      // zero-alpha overlay colour and can expose its channel payload as cyan.
       color: '#efede7',
       symbolColor: '#20201e',
       height: TITLE_BAR_HEIGHT,
@@ -169,6 +193,11 @@ async function bootstrap(): Promise<void> {
   });
 
   const preloadDir = path.join(app.getAppPath(), 'out', 'preload');
+  const backpackProjectRuntime = new BackpackProjectRuntime(
+    mainWindow,
+    path.join(preloadDir, 'backpackProject.cjs'),
+    papersSettings.transparentWindow,
+  );
   hostView = new WebContentsView({
     webPreferences: {
       preload: path.join(preloadDir, 'host.cjs'),
@@ -179,6 +208,15 @@ async function bootstrap(): Promise<void> {
     },
   });
   mainWindow.contentView.addChildView(hostView);
+  const applyHostSurface = (transparent: boolean): void => {
+    // The host view is a child surface: its zero alpha is not honoured, so a
+    // white RGB payload paints literally and every transparent page above it
+    // reads as a white panel. Verified over CDP — with the whole DOM computing
+    // rgba(0,0,0,0), the canvas was still white until this base changed.
+    const color = transparent ? TRANSPARENT_CHILD_SURFACE_COLOR : OPAQUE_SURFACE_COLOR;
+    hostView?.setBackgroundColor(color);
+  };
+  applyHostSurface(papersSettings.transparentWindow);
   const fitHost = (): void => {
     if (!mainWindow || !hostView) return;
     const { width, height } = mainWindow.getContentBounds();
@@ -186,6 +224,7 @@ async function bootstrap(): Promise<void> {
   };
   fitHost();
   mainWindow.on('resize', fitHost);
+  mainWindow.on('resize', () => backpackProjectRuntime.fit());
 
   // The production Hermes experience IS the existing Hermes Desktop product.
   // Papers runs one Hermes backend and positions the real Hermes Desktop
@@ -221,6 +260,7 @@ async function bootstrap(): Promise<void> {
 
   const runtime = new CanvasRuntime({
     window: mainWindow,
+    transparentWindow: papersSettings.transparentWindow,
     preloadPath: path.join(preloadDir, 'program.cjs'),
     protocolHandler: programProtocolHandler,
     onStatusChange: (status) => facade.emitProgramStatus(status),
@@ -271,6 +311,9 @@ async function bootstrap(): Promise<void> {
     updater,
     registry,
     backpackProjects,
+    isBackpackProjectSender: (sender) => backpackProjectRuntime.isSender(sender),
+    showBackpackProjectSurface: (url) => backpackProjectRuntime.show(url),
+    hideBackpackProjectSurface: () => backpackProjectRuntime.hide(),
     runtime,
     canvasState,
     catalog: () => catalog,
@@ -284,7 +327,20 @@ async function bootstrap(): Promise<void> {
       mainWindow?.setTitleBarOverlay?.({ color, symbolColor, height: TITLE_BAR_HEIGHT });
       // Keep the surrounding window background in step so a theme switch has no
       // flash of the old colour behind the controls.
-      mainWindow?.setBackgroundColor(color);
+      const windowSurfaceColor = papersSettings.transparentWindow ? TRANSPARENT_SURFACE_COLOR : color;
+      mainWindow?.setBackgroundColor(windowSurfaceColor);
+      applyHostSurface(papersSettings.transparentWindow);
+    },
+    getSettings: () => ({ ...papersSettings }),
+    setTransparentWindow: async (enabled) => {
+      papersSettings = { ...papersSettings, transparentWindow: enabled };
+      await settingsStore.save(papersSettings);
+      applyHostSurface(enabled);
+      // The program view is a separate child surface; the host repaint above
+      // does not reach it. BaseWindow `transparent`/`frame` remain
+      // construction-only, so a full effect still needs a restart.
+      runtime.setTransparentWindow(enabled);
+      backpackProjectRuntime.setTransparent(enabled);
     },
   });
 
@@ -391,6 +447,7 @@ async function bootstrap(): Promise<void> {
   startPhoneConnector();
 
   mainWindow.on('closed', () => {
+    backpackProjectRuntime.hide();
     hermesSurface.shutdown();
     mainWindow = null;
     hostView = null;
