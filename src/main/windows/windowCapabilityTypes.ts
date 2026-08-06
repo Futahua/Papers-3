@@ -91,11 +91,19 @@ export interface PersistedWindowDescriptor {
 
 /** The injectable transport boundary. A real helper will speak JSON lines
  * over its stdin/stdout; tests use an in-memory fake that can deliver
- * out-of-order, duplicate and malformed payloads. */
+ * out-of-order, duplicate and malformed payloads.
+ *
+ * `onTerminal` is the supervisor-observability seam (Assignment 011): EVERY
+ * terminal condition — EOF, read/write error AND explicit close — is
+ * reported exactly once, with the cause retained for late observers. The
+ * supervisor's clean stop stays `stopped` because it enters `stopping`
+ * before calling close(). In-memory fakes that never terminate simply omit
+ * the method. */
 export interface WindowTransport {
   send(message: WindowRequestMessage): Promise<void>;
   onMessage(callback: (raw: unknown) => void): void;
   close(): Promise<void>;
+  onTerminal?(callback: (error?: Error) => void): void;
 }
 
 export interface WindowCapabilityResult {

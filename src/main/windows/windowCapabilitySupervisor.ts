@@ -50,27 +50,54 @@ export function createWindowCapabilitySupervisor({
   async function start(): Promise<void> {
     if (state === 'starting' || state === 'ready') return;
     state = 'starting';
-    let constructed: WindowTransport | null = null;
+    let constructedTransport: WindowTransport | null = null;
     let constructedClient: WindowCapabilityClient | null = null;
+    let startTerminalReason: Error | undefined;
+
+    // Terminal handling is part of the guarded startup transaction: an
+    // unexpected terminal (EOF/read/write error, or a transport that was
+    // already terminal when we registered) flips us to crashed with no
+    // client and rejects pendings exactly once. Deliberate close during
+    // stop() is also notified through the transport, but the supervisor is
+    // already `stopping`, so clean stop stays stopped.
+    const onTerminal = (error?: Error): void => {
+      if (state !== 'starting' && state !== 'ready') return;
+      startTerminalReason = error ?? new Error('helper terminated unexpectedly');
+      state = 'crashed';
+      constructedClient?.rejectAllPending('helper-unavailable', startTerminalReason.message);
+      constructedClient = null;
+      constructedTransport = null;
+      transport = null;
+      client = null;
+    };
+
     try {
-      constructed = createTransport();
-      constructedClient = createWindowCapabilityClient({ transport: constructed, timeoutMs, maxPending });
+      constructedTransport = createTransport();
+      constructedClient = createWindowCapabilityClient({ transport: constructedTransport, timeoutMs, maxPending });
+      constructedTransport.onTerminal?.(onTerminal);
     } catch (error) {
-      // Construction or subscription failure: best-effort close anything
-      // that was built, clear every reference, fail into `crashed` with no
-      // client, and let start() reject so the caller knows the helper never
-      // came up. A later start builds a fresh transport and replays nothing.
-      if (constructed) {
-        await constructed.close().catch(() => undefined);
+      // Construction, client or subscription failure: best-effort close any
+      // partial transport exactly once, clear every reference, fail into
+      // `crashed` with no client, and let start() reject.
+      if (constructedTransport) {
+        await constructedTransport.close().catch(() => undefined);
       }
-      constructed = null;
+      constructedTransport = null;
       constructedClient = null;
       transport = null;
       client = null;
       state = 'crashed';
       throw error;
     }
-    transport = constructed;
+
+    if (state !== 'starting') {
+      // The transport was already terminal and onTerminal fired
+      // synchronously during registration: start() rejects, retaining the
+      // original terminal cause.
+      throw startTerminalReason ?? new Error('transport terminated during start');
+    }
+
+    transport = constructedTransport;
     client = constructedClient;
     state = 'ready';
   }
