@@ -72,6 +72,7 @@ export default defineConfig({
           host: resolve(__dirname, 'src/preload/host.ts'),
           backpackProject: resolve(__dirname, 'src/preload/backpackProject.ts'),
           program: resolve(__dirname, 'src/preload/program.ts'),
+          pickOverlay: resolve(__dirname, 'src/preload/pickOverlay.ts'),
         },
         // Sandboxed preloads cannot use ESM; emit CommonJS.
         output: { format: 'cjs', entryFileNames: '[name].cjs' },

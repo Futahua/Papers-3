@@ -43,6 +43,8 @@ export const WINDOW_CAPABILITY_MAX_TITLE_BYTES = 256;
  * slow (every visible top-level window is read), so the default 2s client
  * timeout would fail the very first list. Bounded and generous. */
 export const WINDOW_CAPABILITY_CLIENT_TIMEOUT_MS = 10000;
+/** Direct-pick hover points are bounded to a sane multi-monitor range. */
+export const WINDOW_CAPABILITY_PICK_POINT_RANGE = 65536;
 
 export interface WindowCandidate {
   /** Host-issued opaque candidate id; never a helper token or HWND. */
@@ -73,6 +75,18 @@ export type WindowCandidateListResult =
   | { outcome: 'success'; candidates: WindowCandidate[] }
   | { outcome: 'helper-unavailable'; error?: string };
 
+/** 016 direct-pick hover: the topmost task-worthy candidate at a point, or
+ * null when nothing eligible is there. Identity is host-issued and STABLE
+ * per window (derived from the helper-session token, which the helper
+ * reuses for an unchanged identity), so a click can be authorized against
+ * the exact highlighted candidate and fails closed when it changes. `bounds`
+ * (current rectangle) and `descriptor` (persisted-identity shape) are
+ * consumed only by the main-owned pick overlay/session; they are never sent
+ * to Backpack content. */
+export type WindowHoverResult =
+  | { outcome: 'success'; candidate: WindowCandidate | null; bounds: WindowBounds | null; descriptor: PersistedWindowMemberDescriptor | null }
+  | { outcome: 'missing' | 'helper-unavailable' | 'timeout'; error?: string };
+
 export type WindowBindResult =
   | { outcome: 'success'; capability: WindowRuntimeCapability; descriptor: PersistedWindowMemberDescriptor }
   | { outcome: 'missing' | 'helper-unavailable' | 'timeout'; error?: string };
@@ -94,6 +108,12 @@ export interface WindowCapabilityService {
   restoreCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   applyCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult>;
   resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<WindowResolveResult>;
+  /** 016 direct pick: resolve the topmost task-worthy candidate at a screen
+   * point. Candidate ids are stable per window identity. */
+  hoverAt(x: number, y: number): Promise<WindowHoverResult>;
+  /** 016 direct pick: re-resolve at the point and bind the candidate ONLY
+   * when it is still the exact highlighted one (fail closed otherwise). */
+  pickAt(x: number, y: number, candidateId: string): Promise<WindowBindResult & { candidate?: WindowCandidate }>;
   stop(): Promise<void>;
 }
 
@@ -196,24 +216,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       if (candidates.length >= WINDOW_CAPABILITY_MAX_CANDIDATES) break;
       const processId = trustedProcessId(observation, currentPid);
       if (processId === null) continue;
-      const id = `wl-candidate-${candidateIdCounter + 1}`;
-      candidateIdCounter += 1;
+      const entry = candidateForObservation(observation);
       const icon = await iconFor(observation);
+      entry.candidate.icon = icon;
       if (!observation.bounds) continue;
-      const descriptor: PersistedWindowMemberDescriptor = {
-        version: 1,
-        executableFingerprint: fingerprint(observation.processPath!),
-        title: boundedTitle(observation.title),
-      };
-      const candidate: WindowCandidate = {
-        id,
-        title: boundedTitle(observation.title),
-        applicationLabel: appLabel(observation.processPath!),
-        icon,
-        state: observation.state,
-      };
-      candidates.push(candidate);
-      listed.set(id, { helperToken: observation.runtimeId, descriptor, candidate });
+      candidates.push(entry.candidate);
+      listed.set(entry.candidate.id, entry);
     }
     candidatesByListedId.clear();
     for (const [id, entry] of listed) candidatesByListedId.set(id, entry);
@@ -240,6 +248,77 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
 
   function listedEntry(candidateId: string): { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate } | null {
     return candidatesByListedId.get(candidateId) ?? null;
+  }
+
+  /** Builds the host-issued candidate + persisted descriptor + listed entry
+   * for one trusted observation. The candidate id is STABLE per window
+   * identity: it derives from the helper-session token, which the helper
+   * reuses for an unchanged identity, so hover and list agree on the same id
+   * and a click can be authorized against the exact highlighted candidate. */
+  function candidateForObservation(observation: WindowObservation): { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate } {
+    const helperToken = observation.runtimeId;
+    const id = `wl-candidate-${helperToken}`;
+    const descriptor: PersistedWindowMemberDescriptor = {
+      version: 1,
+      executableFingerprint: fingerprint(observation.processPath ?? ''),
+      title: boundedTitle(observation.title),
+    };
+    const candidate: WindowCandidate = {
+      id,
+      title: boundedTitle(observation.title),
+      applicationLabel: appLabel(observation.processPath ?? ''),
+      icon: null,
+      state: observation.state,
+    };
+    return { helperToken, descriptor, candidate };
+  }
+
+  /** 016 direct pick: resolve the topmost task-worthy candidate at a point.
+   * The candidate (id stable per identity) is registered for binding but the
+   * listed map is NOT cleared, so an open list picker is never invalidated by
+   * hover polling. */
+  async function hoverAt(x: number, y: number): Promise<WindowHoverResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    if (!Number.isFinite(x) || !Number.isFinite(y)
+      || Math.abs(x) > WINDOW_CAPABILITY_PICK_POINT_RANGE || Math.abs(y) > WINDOW_CAPABILITY_PICK_POINT_RANGE) {
+      return { outcome: 'missing', error: 'hover point is out of range' };
+    }
+    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    const result = await factory.hover(x, y);
+    if (result.outcome !== 'success') {
+      return { outcome: result.outcome === 'timeout' ? 'timeout' : 'helper-unavailable', error: result.error };
+    }
+    if (result.window === null || result.window === undefined) {
+      return { outcome: 'success', candidate: null, bounds: null, descriptor: null };
+    }
+    // Papers-owned surfaces (the host window AND the pick overlay itself) are
+    // never pickable: the overlay is always the topmost window under the
+    // pointer, so this exclusion is what lets direct pick see through it.
+    if (result.window.processId === currentPid) {
+      return { outcome: 'success', candidate: null, bounds: null, descriptor: null };
+    }
+    const entry = candidateForObservation(result.window);
+    const icon = await iconFor(result.window);
+    entry.candidate.icon = icon;
+    if (!result.window.bounds) return { outcome: 'success', candidate: null, bounds: null, descriptor: entry.descriptor };
+    candidatesByListedId.set(entry.candidate.id, entry);
+    return { outcome: 'success', candidate: entry.candidate, bounds: result.window.bounds, descriptor: entry.descriptor };
+  }
+
+  /** 016 direct pick: re-resolve at the point and bind ONLY the exact
+   * highlighted candidate; a change or vanishing is fail-closed. */
+  async function pickAt(x: number, y: number, candidateId: string): Promise<WindowBindResult & { candidate?: WindowCandidate }> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const hovered = await hoverAt(x, y);
+    if (hovered.outcome !== 'success' || !hovered.candidate) {
+      return { outcome: 'missing', error: 'the hovered window is no longer eligible' };
+    }
+    if (hovered.candidate.id !== candidateId) {
+      return { outcome: 'missing', error: 'the hovered window changed before the click' };
+    }
+    const bound = await bindCandidate(candidateId);
+    if (bound.outcome !== 'success') return bound;
+    return { ...bound, candidate: hovered.candidate };
   }
 
   function issueBinding(token: RuntimeWindowId): WindowRuntimeCapability {
@@ -348,6 +427,8 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     restoreCapability,
     applyCapability,
     resolvePersisted,
+    hoverAt,
+    pickAt,
     stop,
   };
 }

@@ -29,7 +29,9 @@ import { papersDataDirArgument } from './papersDataDir';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
 import { registerWindowCapabilityIpc } from './ipc/windowCapabilityIpc';
+import { registerWindowPickIpc } from './ipc/windowPickIpc';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
+import { createPickSessionFromService } from './windows/windowPickSession';
 import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
@@ -315,7 +317,10 @@ async function bootstrap(): Promise<void> {
     backpackProjects,
     isBackpackProjectSender: (sender) => backpackProjectRuntime.isSender(sender),
     showBackpackProjectSurface: (url) => backpackProjectRuntime.show(url),
-    hideBackpackProjectSurface: () => backpackProjectRuntime.hide(),
+    hideBackpackProjectSurface: () => {
+      windowPickSession.cancel().catch(() => undefined);
+      backpackProjectRuntime.hide();
+    },
     runtime,
     canvasState,
     catalog: () => catalog,
@@ -359,6 +364,15 @@ async function bootstrap(): Promise<void> {
     service: windowCapabilityService,
     isSender: (sender) => backpackProjectRuntime.isSender(sender),
   });
+  // 016: one global direct-onscreen pick session (Papers-owned overlay,
+  // hover resolution and eligibility); the Backpack only begins/cancels and
+  // receives one typed result.
+  const windowPickSession = createPickSessionFromService(windowCapabilityService);
+  registerWindowPickIpc({
+    ipcMain,
+    session: windowPickSession,
+    isSender: (sender) => backpackProjectRuntime.isSender(sender),
+  });
   // Best-effort owned shutdown before app exit; the helper factory stop
   // owns stdin close, termination escalation and exactly-once terminal
   // reporting (Assignment 015).
@@ -368,6 +382,7 @@ async function bootstrap(): Promise<void> {
     if (capabilityQuitComplete) return;
     event.preventDefault();
     if (!capabilityQuitPromise) {
+      windowPickSession.cancel().catch(() => undefined);
       capabilityQuitPromise = windowCapabilityService.stop().catch(() => undefined).then(() => {
         capabilityQuitComplete = true;
         app.quit();

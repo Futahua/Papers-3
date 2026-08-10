@@ -28,7 +28,7 @@ import * as path from 'node:path';
 
 import { WINDOW_HELPER_ARGUMENT_PREFIX, WINDOW_HELPER_EXECUTABLE } from './windowHelperSpawn';
 
-export const WINDOW_HELPER_PROTOCOL_VERSION = '013R5F';
+export const WINDOW_HELPER_PROTOCOL_VERSION = '016';
 export const WINDOW_HELPER_RESOURCE_DIRECTORY_NAME = 'window-helper';
 export const WINDOW_HELPER_MANIFEST_FILE = 'manifest.json';
 export const WINDOW_HELPER_SCRIPT_FILE = 'window-helper.ps1';
@@ -37,8 +37,8 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
 /** Compiled pin of the accepted resource bytes. A future reviewed helper
  * edit updates these hashes AND manifest.json together. */
 export const WINDOW_HELPER_EXPECTED_HASHES: Record<string, string> = {
-  [WINDOW_HELPER_SCRIPT_FILE]: '313b213152e346edc69b13410bcb477f5974504640908bc78e4c3c940fc0b19b',
-  [WINDOW_HELPER_ADAPTER_FILE]: 'deef3f23a53cdd25c4e34f72b6d9c5b0e1b3ad2f191ac155dcf99ada73a5577f',
+  [WINDOW_HELPER_SCRIPT_FILE]: '6aa6bf42678a15a64f853111d6c4b96b623c0cdada68c2958fc00c4d01f72b22',
+  [WINDOW_HELPER_ADAPTER_FILE]: '097ed5b6ddd7e15ffb8c130053775df3d488fefeb4aa20a2eb109d04d9cd6672',
 };
 
 export interface WindowHelperResourcePaths {

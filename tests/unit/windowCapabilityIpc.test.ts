@@ -20,6 +20,8 @@ function fakeService(): WindowCapabilityService {
     restoreCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     applyCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     resolvePersisted: async () => ({ outcome: 'missing', error: 'no match' }),
+    hoverAt: async () => ({ outcome: 'success', candidate: null, bounds: null, descriptor: null }),
+    pickAt: async () => ({ outcome: 'missing', error: 'changed' }),
     stop: async () => undefined,
   };
 }

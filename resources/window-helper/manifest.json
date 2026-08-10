@@ -1,11 +1,18 @@
 {
-  "protocolVersion": "013R5F",
+  "protocolVersion": "016",
   "description": "Papers-owned window helper resource. Protocol, session tokens, identity revalidation, capacity limits and native behavior are locked to the accepted Assignment 013 (013R..013R5F) probe snapshot. The hashes below must equal the compiled expected hashes in src/main/windows/windowHelperResource.ts and the actual resource bytes; a deliberate helper edit requires an explicit reviewed code+manifest update.",
   "executable": "powershell.exe",
-  "spawnArguments": ["-NoProfile", "-NonInteractive", "-File"],
-  "files": ["window-helper.ps1", "window-capability.ps1"],
+  "spawnArguments": [
+    "-NoProfile",
+    "-NonInteractive",
+    "-File"
+  ],
+  "files": [
+    "window-helper.ps1",
+    "window-capability.ps1"
+  ],
   "hashes": {
-    "window-helper.ps1": "313b213152e346edc69b13410bcb477f5974504640908bc78e4c3c940fc0b19b",
-    "window-capability.ps1": "deef3f23a53cdd25c4e34f72b6d9c5b0e1b3ad2f191ac155dcf99ada73a5577f"
+    "window-helper.ps1": "6aa6bf42678a15a64f853111d6c4b96b623c0cdada68c2958fc00c4d01f72b22",
+    "window-capability.ps1": "097ed5b6ddd7e15ffb8c130053775df3d488fefeb4aa20a2eb109d04d9cd6672"
   }
 }

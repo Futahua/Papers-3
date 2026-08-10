@@ -19,6 +19,7 @@ export const WINDOW_CAPABILITY_METHODS = [
   'restore',
   'apply',
   'close',
+  'hover',
 ] as const;
 
 export type WindowCapabilityMethod = (typeof WINDOW_CAPABILITY_METHODS)[number];
@@ -59,23 +60,29 @@ export interface WindowObservation {
 }
 
 /** Client -> helper. `target` is an already-resolved runtime id; `apply`
- * carries the geometry/state to apply. The client never synthesizes targets. */
+ * carries the geometry/state to apply; `hover` carries a screen point. The
+ * client never synthesizes targets. */
 export interface WindowRequestMessage {
   requestId: number;
   method: WindowCapabilityMethod;
   target?: RuntimeWindowId;
   bounds?: WindowBounds;
   state?: WindowState;
+  x?: number;
+  y?: number;
 }
 
 /** Helper -> client. `method` echoes the request so correlation can reject a
- * mismatched reply instead of satisfying the wrong request. */
+ * mismatched reply instead of satisfying the wrong request. `window` is the
+ * hover result: a valid observation or null (nothing task-worthy at the
+ * point). */
 export interface WindowResponseMessage {
   requestId: number;
   method: WindowCapabilityMethod;
   outcome: WindowOutcome;
   windows?: WindowObservation[];
   observation?: WindowObservation;
+  window?: WindowObservation | null;
   error?: string;
 }
 
@@ -110,6 +117,7 @@ export interface WindowCapabilityResult {
   outcome: WindowOutcome;
   windows?: WindowObservation[];
   observation?: WindowObservation;
+  window?: WindowObservation | null;
   error?: string;
 }
 
@@ -195,7 +203,7 @@ export function parseWindowResponse(raw: unknown): WindowResponseMessage | null 
   const error = typeof raw['error'] === 'string' ? raw['error'] : undefined;
   const methodName = method as WindowCapabilityMethod;
 
-  const hasExtraPayload = raw['windows'] !== undefined || raw['observation'] !== undefined;
+  const hasExtraPayload = raw['windows'] !== undefined || raw['observation'] !== undefined || raw['window'] !== undefined;
 
   if (method === 'close') {
     // Documented close shape: envelope only, no payload.
@@ -203,9 +211,29 @@ export function parseWindowResponse(raw: unknown): WindowResponseMessage | null 
     return { requestId, method: methodName, outcome: outcome as WindowOutcome, ...(error !== undefined ? { error } : {}) };
   }
 
+  if (method === 'hover') {
+    // Documented hover shape: success must carry `window` (a valid
+    // observation or explicit null) and no other payload key; non-success
+    // responses are envelope-only.
+    if (outcome === 'success') {
+      if (!('window' in raw)) return null;
+      const window = raw['window'];
+      if (window === null) {
+        if (raw['windows'] !== undefined || raw['observation'] !== undefined) return null;
+        return { requestId, method: methodName, outcome, window: null, ...(error !== undefined ? { error } : {}) };
+      }
+      const parsed = parseWindowObservation(window);
+      if (parsed === undefined) return null;
+      if (raw['windows'] !== undefined || raw['observation'] !== undefined) return null;
+      return { requestId, method: methodName, outcome, window: parsed, ...(error !== undefined ? { error } : {}) };
+    }
+    if (hasExtraPayload) return null;
+    return { requestId, method: methodName, outcome: outcome as WindowOutcome, ...(error !== undefined ? { error } : {}) };
+  }
+
   if (outcome === 'success' && method === 'list') {
     if (!Array.isArray(raw['windows'])) return null;
-    if (raw['observation'] !== undefined) return null;
+    if (raw['observation'] !== undefined || raw['window'] !== undefined) return null;
     const windows: WindowObservation[] = [];
     for (const entry of raw['windows']) {
       const parsed = parseWindowObservation(entry);
@@ -219,7 +247,7 @@ export function parseWindowResponse(raw: unknown): WindowResponseMessage | null 
     // observe/minimize/restore/apply success must carry a valid observation.
     const observation = parseWindowObservation(raw['observation']);
     if (observation === undefined) return null;
-    if (raw['windows'] !== undefined) return null;
+    if (raw['windows'] !== undefined || raw['window'] !== undefined) return null;
     return { requestId, method: methodName, outcome, observation, ...(error !== undefined ? { error } : {}) };
   }
 

@@ -1,10 +1,13 @@
 # Papers-owned window helper - long-lived JSON-lines helper.
 #
-# Behavior is LOCKED to the accepted protocol snapshot 013R5F (see
-# manifest.json in this directory for provenance): protocol, session
-# tokens, identity revalidation, capacity limits and native behavior are
-# preserved exactly. This file is the packaged runtime asset; do not
-# drift from the manifest hash without a reviewed protocol change.
+# Behavior is LOCKED to the accepted protocol snapshot 013R5F plus the
+# reviewed Assignment 016 additions (protocolVersion '016' in manifest.json):
+# protocol, session tokens, identity revalidation, capacity limits and native
+# behavior are preserved exactly; 016 adds the task-worthy eligibility filter
+# to list, the hover method (task-worthy window at a point, for direct
+# onscreen pick), and offscreen-safe bounds clamping in apply. This file is
+# the packaged runtime asset; do not drift from the manifest hash without a
+# reviewed protocol change.
 #
 # Reads UTF-8 JSON request lines from stdin, validates against the typed
 # schema, routes through the reused native adapter (window-capability.ps1)
@@ -19,11 +22,26 @@
 #   (1 .. 9007199254740991) with NO Int32 narrowing cast.
 # - 011-aligned invalid-input policy: an unparseable line, an invalid
 #   requestId, or an unknown/missing method is IGNORED (no stdout response, no
-#   act) — correlation is impossible for those. A valid requestId+method with
+#   act) - correlation is impossible for those. A valid requestId+method with
 #   forbidden command-like fields is typed 'denied'; a valid requestId+method
-#   with malformed target/bounds/state is typed 'malformed'.
-# - Fail-closed command vocabulary: exactly the six methods list/observe/
-#   minimize/restore/apply/close. Extra command-like keys are never executed.
+#   with malformed target/bounds/x/y/state is typed 'malformed'.
+# - Fail-closed command vocabulary: list/observe/minimize/restore/apply/
+#   close/hover (016). Extra command-like keys are never executed.
+#
+# 016 method `hover`: {requestId, method:'hover', x, y} resolves the TOPMOST
+# TASK-WORTHY window at the point (helper-owned eligibility: cloaked
+# surfaces, shell desktop/worker, tool/no-activate and owned-non-active
+# windows are excluded; minimized applications stay eligible). The response
+# is success with `window` = a valid wire observation OR null when nothing
+# eligible is at the point. Hover issues/reuses a registered session token
+# for the found identity (identity-reused, so polling does not grow the
+# registry) and honors the capacity limit (denied at capacity).
+#
+# 016 clamping: apply ALWAYS clamps the desired rectangle into a currently
+# visible monitor work area (minimum usable size) before SetWindowPos, so a
+# stale/disconnected-monitor rectangle can never move a window offscreen.
+# Persisted per-layout intent is unchanged; clamping is the runtime
+# application only.
 #
 # Session tokens:
 # - The wire id is a high-entropy helper-session TOKEN ('T'+32 hex GUID),
@@ -53,6 +71,8 @@
 #   rounded away from zero; width/height must round to >= 1; overflow or
 #   non-positive-after-rounding => typed 'malformed'. An apply.state field is
 #   NOT silently ignored: it returns typed 'malformed' for now.
+# - hover x/y are validated as finite numbers within Int32 (typed
+#   'malformed' otherwise).
 # - Every native observation/mutation runs inside a per-request catch that
 #   returns typed 'denied' with bounded non-sensitive error text and keeps
 #   the helper live.
@@ -65,7 +85,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot/window-capability.ps1"
 
-$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'apply', 'close')
+$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'apply', 'close', 'hover')
 $FORBIDDEN_KEYS = @('exec', 'command', 'script', 'path', 'handle', 'env', 'args', 'cmd', 'powershell', 'invoke', 'shell')
 $MAX_SAFE_REQUEST_ID = 9007199254740991L
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
@@ -231,6 +251,16 @@ function Test-WhTokenIdentity {
   return @{ ok = $true }
 }
 
+function Test-PlatformPoint {
+  param([object]$X, [object]$Y)
+  foreach ($value in @($X, $Y)) {
+    if (-not (Test-FiniteNumber $value)) { return $false }
+    $d = [double]$value
+    if ($d -lt [int]::MinValue -or $d -gt [int]::MaxValue) { return $false }
+  }
+  return $true
+}
+
 # Validate one parsed request object. Always returns an envelope: ignored
 # paths (impossible to correlate) return @{ Valid = $false; Response = $null },
 # fail-closed paths return @{ Valid = $false; Response = <typed response> },
@@ -253,6 +283,12 @@ function Test-WhRequestShape {
     if ($FORBIDDEN_KEYS -contains ([string]$key).ToLowerInvariant()) {
       return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' $null 'command-like fields are not accepted') }
     }
+  }
+  if ($method -eq 'hover') {
+    if (-not (Test-PlatformPoint $Request['x'] $Request['y'])) {
+      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'hover requires finite x and y within Int32') }
+    }
+    return @{ Valid = $true; RequestId = $id; Method = [string]$method }
   }
   if ($method -ne 'list') {
     $target = $Request['target']
@@ -278,7 +314,7 @@ function Invoke-WhRequest {
   param([object]$Request, [long]$RequestId, [string]$Method)
   try {
     if ($Method -eq 'list') {
-      $observations = @(Get-WhVisibleWindows)
+      $observations = @(Merge-WhTaskSurfaces (@(Get-WhVisibleWindows | Where-Object { Test-WhTaskWorthy $_ })))
       if (-not (Test-WhListCapacity $observations)) {
         return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'session token capacity reached')
       }
@@ -295,6 +331,26 @@ function Invoke-WhRequest {
         }
       }
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ windows = $windows } $null)
+    }
+    if ($Method -eq 'hover') {
+      $observation = Resolve-WhTaskWindowAtPoint ([int][Math]::Round([double]$Request['x'], 0, [MidpointRounding]::AwayFromZero)) ([int][Math]::Round([double]$Request['y'], 0, [MidpointRounding]::AwayFromZero))
+      if ($null -eq $observation) {
+        return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = $null } $null)
+      }
+      $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.Title)
+      $atCapacity = -not $script:WhSession.byKey.ContainsKey($key) -and $script:WhSession.byToken.Count -ge $script:WhSession.maxTokens
+      if ($atCapacity) {
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'session token capacity reached')
+      }
+      $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.Title)
+      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = [ordered]@{
+        runtimeId = $token
+        title = $observation.Title
+        processId = $observation.ProcessId
+        processPath = $observation.ProcessPath
+        state = $observation.State
+        bounds = (Get-WhWireBounds $observation.Bounds)
+      } } $null)
     }
     $target = [string]$Request['target']
     if ($Method -eq 'observe') {
@@ -325,7 +381,10 @@ function Invoke-WhRequest {
       $y = [Math]::Round([double]$b['y'], 0, [MidpointRounding]::AwayFromZero)
       $w = [Math]::Round([double]$b['width'], 0, [MidpointRounding]::AwayFromZero)
       $h = [Math]::Round([double]$b['height'], 0, [MidpointRounding]::AwayFromZero)
-      Set-WhWindowBounds $runtimeId ([int]$x) ([int]$y) ([int]$w) ([int]$h)
+      # 016: never move a window offscreen - clamp into a visible monitor
+      # work area (minimum usable size) before applying.
+      $clamped = ConvertTo-WhClampedBounds ([int]$x) ([int]$y) ([int]$w) ([int]$h) (Get-WhMonitorWorkAreas)
+      Set-WhWindowBounds $runtimeId $clamped.x $clamped.y $clamped.width $clamped.height
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
     }
     if ($Method -eq 'close') {

@@ -1,6 +1,6 @@
 import { ipcRenderer, webUtils } from 'electron';
 
-interface ProjectMessage { type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; }
+interface ProjectMessage { type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -16,7 +16,7 @@ function exactKeys(raw: Record<string, unknown>, keys: readonly string[]): boole
 }
 
 function parseBoundedString(raw: unknown): string {
-  if (typeof raw !== 'string' || raw.length === 0 || raw.length > WINDOW_CAPABILITY_MAX_STRING_BYTES) {
+  if (typeof raw !== 'string' || raw.length === 0 || Buffer.byteLength(raw, 'utf8') > WINDOW_CAPABILITY_MAX_STRING_BYTES) {
     throw new Error('a bounded non-empty string is required');
   }
   return raw;
@@ -55,6 +55,12 @@ function parseDescriptor(raw: unknown): Record<string, unknown> {
   const fingerprint = parseBoundedString(raw['executableFingerprint']);
   if (!/^[a-f0-9]{64}$/i.test(fingerprint)) throw new Error('descriptor.executableFingerprint is invalid');
   return raw;
+}
+
+function parsePickMembers(raw: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(raw)) throw new Error('pick members must be an array');
+  if (raw.length > 32) throw new Error('pick member list exceeds the bound');
+  return raw.map(parseDescriptor);
 }
 
 window.addEventListener('message', (event) => {
@@ -107,7 +113,25 @@ window.addEventListener('message', (event) => {
     const descriptor = parseDescriptor(request.descriptor);
     task = ipcRenderer.invoke('papers:window-capability:resolve', descriptor);
   }
+  if (request.type === 'papers:project:window-pick-begin') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'members'])) {
+      throw new Error('window pick begin request contains unknown fields');
+    }
+    const members = parsePickMembers(request.members);
+    task = ipcRenderer.invoke('papers:window-pick:begin', { members });
+  }
+  if (request.type === 'papers:project:window-pick-cancel') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) {
+      throw new Error('window pick cancel request contains unknown fields');
+    }
+    task = ipcRenderer.invoke('papers:window-pick:cancel', {});
+  }
   if (!task) return;
   void task.then((payload) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: true, ...(payload && typeof payload === 'object' ? payload : {}) }, event.origin))
     .catch((caught) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: false, error: String(caught instanceof Error ? caught.message : caught) }, event.origin));
+});
+
+// The direct-pick session pushes its typed result to the project frame.
+ipcRenderer.on('papers:window-pick:result', (_event, result) => {
+  window.postMessage({ type: 'papers:project:window-pick-result', result }, window.location.origin);
 });

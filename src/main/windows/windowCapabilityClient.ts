@@ -38,6 +38,9 @@ export interface WindowCapabilityClient {
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  /** 016 direct pick: resolve the topmost task-worthy window at a screen
+   * point (helper-owned eligibility). No target - the helper resolves. */
+  hover(x: number, y: number): Promise<WindowCapabilityResult>;
   /** Inbound message path the transport delivers into. */
   handleMessage(raw: unknown): void;
   /** Rejects every pending request exactly once (supervisor crash/stop). */
@@ -62,9 +65,13 @@ export function createWindowCapabilityClient({
 
   function request(
     method: WindowCapabilityMethod,
-    target?: RuntimeWindowId,
-    bounds?: WindowBounds,
-    state?: WindowState,
+    detail: {
+      target?: RuntimeWindowId;
+      bounds?: WindowBounds;
+      state?: WindowState;
+      x?: number;
+      y?: number;
+    } = {},
   ): Promise<WindowCapabilityResult> {
     if (stopped) {
       return Promise.resolve({ outcome: 'helper-unavailable', error: 'client is stopped' });
@@ -77,9 +84,11 @@ export function createWindowCapabilityClient({
     const message: WindowRequestMessage = {
       requestId,
       method,
-      ...(target !== undefined ? { target } : {}),
-      ...(bounds !== undefined ? { bounds } : {}),
-      ...(state !== undefined ? { state } : {}),
+      ...(detail.target !== undefined ? { target: detail.target } : {}),
+      ...(detail.bounds !== undefined ? { bounds: detail.bounds } : {}),
+      ...(detail.state !== undefined ? { state: detail.state } : {}),
+      ...(detail.x !== undefined ? { x: detail.x } : {}),
+      ...(detail.y !== undefined ? { y: detail.y } : {}),
     };
     const result = new Promise<WindowCapabilityResult>((resolve) => {
       const timer = setTimeout(() => {
@@ -87,7 +96,7 @@ export function createWindowCapabilityClient({
           resolve({ outcome: 'timeout', error: `request ${requestId} (${method}) timed out` });
         }
       }, timeoutMs);
-      pending.set(requestId, { resolve, timer, method, target });
+      pending.set(requestId, { resolve, timer, method, target: detail.target });
     });
     transport.send(message).catch(() => {
       // The helper never accepted the request: fail this one closed, exactly
@@ -120,6 +129,7 @@ export function createWindowCapabilityClient({
       outcome: response.outcome,
       ...(response.windows !== undefined ? { windows: response.windows } : {}),
       ...(response.observation !== undefined ? { observation: response.observation } : {}),
+      ...(response.window !== undefined ? { window: response.window } : {}),
       ...(response.error !== undefined ? { error: response.error } : {}),
     });
   }
@@ -142,11 +152,12 @@ export function createWindowCapabilityClient({
 
   return {
     list: () => request('list'),
-    observe: (runtimeId) => request('observe', runtimeId),
-    minimize: (runtimeId) => request('minimize', runtimeId),
-    restore: (runtimeId) => request('restore', runtimeId),
-    apply: (runtimeId, bounds, state) => request('apply', runtimeId, bounds, state),
-    close: (runtimeId) => request('close', runtimeId),
+    observe: (runtimeId) => request('observe', { target: runtimeId }),
+    minimize: (runtimeId) => request('minimize', { target: runtimeId }),
+    restore: (runtimeId) => request('restore', { target: runtimeId }),
+    apply: (runtimeId, bounds, state) => request('apply', { target: runtimeId, bounds, state }),
+    close: (runtimeId) => request('close', { target: runtimeId }),
+    hover: (x, y) => request('hover', { x, y }),
     handleMessage,
     rejectAllPending,
     stop,

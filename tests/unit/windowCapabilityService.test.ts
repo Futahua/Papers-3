@@ -57,6 +57,10 @@ function fakeFactory(overrides: Partial<WindowHelperFactory> = {}): WindowHelper
       return found ? { outcome: 'success', observation: { ...found, bounds } } : { outcome: 'missing' as const, error: 'gone' };
     },
     close: async () => ({ outcome: 'success' }),
+    hover: async (x, y) => {
+      if (x === -999 && y === -999) return { outcome: 'success', window: null };
+      return { outcome: 'success', window: windows[0] };
+    },
     ...overrides,
   };
 }
@@ -111,8 +115,9 @@ describe('windowCapabilityService candidates', () => {
 describe('windowCapabilityService bind and capabilities', () => {
   it('binds only a currently listed host-issued candidate id into capability + descriptor', async () => {
     const { service } = harness();
-    await service.listCandidates();
-    const bound = await service.bindCandidate('wl-candidate-1');
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success' || listed.candidates.length === 0) throw new Error('no candidates');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
     expect(bound.outcome).toBe('success');
     if (bound.outcome !== 'success') return;
     expect(bound.capability).toMatchObject({ version: 1 });
@@ -136,15 +141,17 @@ describe('windowCapabilityService bind and capabilities', () => {
       currentPid: 9999,
       getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
     });
-    await service.listCandidates();
-    const bound = await service.bindCandidate('wl-candidate-1');
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success' || listed.candidates.length === 0) throw new Error('no candidates');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
     expect(bound.outcome).toBe('missing');
   });
 
   it('observe/minimize/restore/apply route to the issued capability only', async () => {
     const { service } = harness();
-    await service.listCandidates();
-    const bound = await service.bindCandidate('wl-candidate-2');
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success' || listed.candidates.length < 2) throw new Error('no candidates');
+    const bound = await service.bindCandidate(listed.candidates[1]!.id);
     expect(bound.outcome).toBe('success');
     if (bound.outcome !== 'success') return;
     expect((await service.observeCapability(bound.capability)).outcome).toBe('success');

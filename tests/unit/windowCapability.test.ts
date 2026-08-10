@@ -229,12 +229,12 @@ describe('window capability client', () => {
     const client = createWindowCapabilityClient({ transport: fake.transport });
     const surface = Object.keys(client);
     expect(surface.sort()).toEqual(
-      ['apply', 'close', 'handleMessage', 'list', 'minimize', 'observe', 'pendingCount', 'rejectAllPending', 'restore', 'stop'].sort(),
+      ['apply', 'close', 'handleMessage', 'hover', 'list', 'minimize', 'observe', 'pendingCount', 'rejectAllPending', 'restore', 'stop'].sort(),
     );
     for (const name of surface) {
       expect(name.toLowerCase()).not.toMatch(/send|exec|invoke|shell|spawn|launch|eval/);
     }
-    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'minimize', 'restore', 'apply', 'close']);
+    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'minimize', 'restore', 'apply', 'close', 'hover']);
   });
 });
 
@@ -431,6 +431,39 @@ describe('window capability contract types', () => {
       expect(parseWindowResponse({ requestId: 1, method: 'minimize', outcome, observation: observationFor('A') })).toBeNull();
       expect(parseWindowResponse({ requestId: 1, method: 'minimize', outcome, windows: [] })).toBeNull();
     }
+  });
+
+  it('enforces the strict hover payload shape (016)', () => {
+    // Successful hover must carry `window` (null or a valid observation) and
+    // no other payload key.
+    expect(parseWindowResponse({ requestId: 1, method: 'hover', outcome: 'success', window: null })).toEqual({ requestId: 1, method: 'hover', outcome: 'success', window: null });
+    expect(parseWindowResponse({ requestId: 1, method: 'hover', outcome: 'success', window: observationFor('A') })).not.toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'hover', outcome: 'success' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'hover', outcome: 'success', window: { ...observationFor('A'), state: 'bogus' } })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'hover', outcome: 'success', window: null, windows: [] })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'hover', outcome: 'success', window: null, observation: observationFor('A') })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'hover', outcome: 'denied', window: null })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'hover', outcome: 'denied' })).not.toBeNull();
+    // Other methods must not carry the hover `window` key.
+    expect(parseWindowResponse({ requestId: 1, method: 'observe', outcome: 'success', observation: observationFor('A'), window: null })).toBeNull();
+  });
+
+  it('hover requests correlate and carry the resolved window (016)', async () => {
+    const fake = fakeTransport();
+    const client = createWindowCapabilityClient({ transport: fake.transport });
+    const hoverPromise = client.hover(320, 240);
+    const sent = fake.sent[0]!;
+    expect(sent).toMatchObject({ method: 'hover', x: 320, y: 240 });
+    fake.deliver({ ...response(sent.requestId, 'hover', 'success'), window: observationFor('A') });
+    const result = await hoverPromise;
+    expect(result.outcome).toBe('success');
+    expect(result.window?.runtimeId).toBe(observationFor('A').runtimeId);
+    // A hover response for the wrong method must never satisfy it.
+    const hover2 = client.hover(1, 1);
+    const sent2 = fake.sent[1]!;
+    fake.deliver({ ...response(sent2.requestId, 'observe', 'success'), observation: observationFor('A') });
+    const stale = await hover2;
+    expect(stale.outcome).toBe('timeout');
   });
 
   it('the persisted descriptor shape structurally cannot hold a runtime id', () => {

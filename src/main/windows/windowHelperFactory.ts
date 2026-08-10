@@ -64,6 +64,8 @@ export interface WindowHelperFactory {
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  /** 016 direct pick: topmost task-worthy window at a screen point. */
+  hover(x: number, y: number): Promise<WindowCapabilityResult>;
 }
 
 export interface WindowHelperFactoryOptions {
@@ -223,5 +225,6 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
     restore: (runtimeId) => withClient((client) => client.restore(runtimeId), HELPER_NOT_READY),
     apply: (runtimeId, bounds, state) => withClient((client) => client.apply(runtimeId, bounds, state), HELPER_NOT_READY),
     close: (runtimeId) => withClient((client) => client.close(runtimeId), HELPER_NOT_READY),
+    hover: (x, y) => withClient((client) => client.hover(x, y), HELPER_NOT_READY),
   };
 }
