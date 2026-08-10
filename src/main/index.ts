@@ -1,7 +1,7 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, Menu, Notification, WebContentsView, app, session, shell } from 'electron';
+import { BaseWindow, Menu, Notification, WebContentsView, app, ipcMain, session, shell } from 'electron';
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -28,6 +28,8 @@ import { PapersUpdater } from './papersUpdater';
 import { papersDataDirArgument } from './papersDataDir';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
+import { registerWindowCapabilityIpc } from './ipc/windowCapabilityIpc';
+import { createWindowCapabilityService } from './windows/windowCapabilityService';
 import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
@@ -351,6 +353,27 @@ async function bootstrap(): Promise<void> {
   adapter.on('health-changed', () => facade.emitHermesHealth());
 
   registerHostIpc(facade);
+  const windowCapabilityService = createWindowCapabilityService();
+  registerWindowCapabilityIpc({
+    ipcMain,
+    service: windowCapabilityService,
+    isSender: (sender) => backpackProjectRuntime.isSender(sender),
+  });
+  // Best-effort owned shutdown before app exit; the helper factory stop
+  // owns stdin close, termination escalation and exactly-once terminal
+  // reporting (Assignment 015).
+  let capabilityQuitComplete = false;
+  let capabilityQuitPromise: Promise<void> | null = null;
+  app.on('before-quit', (event) => {
+    if (capabilityQuitComplete) return;
+    event.preventDefault();
+    if (!capabilityQuitPromise) {
+      capabilityQuitPromise = windowCapabilityService.stop().catch(() => undefined).then(() => {
+        capabilityQuitComplete = true;
+        app.quit();
+      });
+    }
+  });
   registerProgramIpc({
     runtime,
     canvasState,

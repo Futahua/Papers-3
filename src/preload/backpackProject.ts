@@ -1,6 +1,61 @@
 import { ipcRenderer, webUtils } from 'electron';
 
-interface ProjectMessage { type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; }
+interface ProjectMessage { type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; }
+
+const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
+const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function exactKeys(raw: Record<string, unknown>, keys: readonly string[]): boolean {
+  const expected = [...keys].sort();
+  const actual = Object.keys(raw).sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function parseBoundedString(raw: unknown): string {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > WINDOW_CAPABILITY_MAX_STRING_BYTES) {
+    throw new Error('a bounded non-empty string is required');
+  }
+  return raw;
+}
+
+function parseCapability(raw: unknown): Record<string, unknown> {
+  if (!isPlainObject(raw)) throw new Error('capability must be an object');
+  if (!exactKeys(raw, ['version', 'bindingId'])) throw new Error('capability contains unknown fields');
+  if (raw['version'] !== 1) throw new Error('unsupported capability version');
+  parseBoundedString(raw['bindingId']);
+  return raw;
+}
+
+function parseBounds(raw: unknown): Record<string, unknown> {
+  if (!isPlainObject(raw)) throw new Error('bounds must be an object');
+  if (!exactKeys(raw, ['x', 'y', 'width', 'height'])) throw new Error('bounds contains unknown fields');
+  const bounds: Record<string, number> = {};
+  for (const key of ['x', 'y', 'width', 'height']) {
+    const value = raw[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`bounds.${key} is invalid`);
+    bounds[key] = value;
+  }
+  if (bounds['width']! <= 0 || bounds['height']! <= 0) throw new Error('bounds width and height must be positive');
+  if (bounds['width']! > WINDOW_CAPABILITY_MAX_BOUNDS || bounds['height']! > WINDOW_CAPABILITY_MAX_BOUNDS
+    || Math.abs(bounds['x']!) > WINDOW_CAPABILITY_MAX_BOUNDS || Math.abs(bounds['y']!) > WINDOW_CAPABILITY_MAX_BOUNDS) {
+    throw new Error('bounds exceed the allowed range');
+  }
+  return bounds;
+}
+
+function parseDescriptor(raw: unknown): Record<string, unknown> {
+  if (!isPlainObject(raw)) throw new Error('descriptor must be an object');
+  if (!exactKeys(raw, ['version', 'title', 'executableFingerprint'])) throw new Error('descriptor contains unknown fields');
+  if (raw['version'] !== 1) throw new Error('unsupported descriptor version');
+  parseBoundedString(raw['title']);
+  const fingerprint = parseBoundedString(raw['executableFingerprint']);
+  if (!/^[a-f0-9]{64}$/i.test(fingerprint)) throw new Error('descriptor.executableFingerprint is invalid');
+  return raw;
+}
 
 window.addEventListener('message', (event) => {
   if (event.source !== window || event.origin !== window.location.origin) return;
@@ -23,6 +78,35 @@ window.addEventListener('message', (event) => {
     if (paths.length) task = ipcRenderer.invoke('host:backpack-project:resolve-dropped-targets', paths).then((targets) => ({ targets }));
   }
   if (request.type === 'papers:project:resolve-web-link-icon' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:resolve-web-link-icon', request.url);
+  if (request.type === 'papers:project:window-candidates') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window candidate request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:list');
+  }
+  if (request.type === 'papers:project:window-bind-candidate') {
+    const candidateId = parseBoundedString(request.candidateId);
+    task = ipcRenderer.invoke('papers:window-capability:bind', candidateId);
+  }
+  if (request.type === 'papers:project:window-observe-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:observe', capability);
+  }
+  if (request.type === 'papers:project:window-minimize-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:minimize', capability);
+  }
+  if (request.type === 'papers:project:window-restore-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:restore', capability);
+  }
+  if (request.type === 'papers:project:window-apply-capability') {
+    const capability = parseCapability(request.capability);
+    const bounds = parseBounds(request.bounds);
+    task = ipcRenderer.invoke('papers:window-capability:apply', { capability, bounds });
+  }
+  if (request.type === 'papers:project:window-resolve-descriptor') {
+    const descriptor = parseDescriptor(request.descriptor);
+    task = ipcRenderer.invoke('papers:window-capability:resolve', descriptor);
+  }
   if (!task) return;
   void task.then((payload) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: true, ...(payload && typeof payload === 'object' ? payload : {}) }, event.origin))
     .catch((caught) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: false, error: String(caught instanceof Error ? caught.message : caught) }, event.origin));

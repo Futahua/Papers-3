@@ -115,6 +115,7 @@ function Test-WireResponseShape {
 $script:fakeRegistry = @(
   [pscustomobject]@{ RuntimeId = [IntPtr]0x1001; Title = 'WH-TEST-AAAA'; ProcessId = 1001; ProcessPath = 'C:\fake-a.exe'; State = 'normal'; Bounds = @{ Left = 10; Top = 20; Right = 210; Bottom = 120; Width = 200; Height = 100 }; alive = $true; touched = @() }
   [pscustomobject]@{ RuntimeId = [IntPtr]0x2002; Title = 'WH-TEST-BBBB'; ProcessId = 2002; ProcessPath = 'C:\fake-b.exe'; State = 'minimized'; Bounds = @{ Left = 0; Top = 0; Right = 100; Bottom = 80; Width = 100; Height = 80 }; alive = $true; touched = @() }
+  [pscustomobject]@{ RuntimeId = [IntPtr]0x3003; Title = 'WH-TEST-ZERO'; ProcessId = 3003; ProcessPath = 'C:\fake-c.exe'; State = 'normal'; Bounds = @{ Left = 0; Top = 0; Right = 0; Bottom = 0; Width = 0; Height = 0 }; alive = $true; touched = @() }
 )
 $script:WhOps = @{
   IsWindow = { param([IntPtr]$id) (@($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id -and $_.alive }).Count) -eq 1 }
@@ -251,7 +252,7 @@ Assert-True (Test-WireResponseOk $nullBounds) 'explicit-null processId/processPa
 
 # ---- token issuance and stable identity -----------------------------------
 $list = Invoke-Line '{"requestId":7,"method":"list"}'
-Assert-True ($list.outcome -eq 'success' -and $list.windows.Count -eq 2) 'list returns both fake windows'
+Assert-True ($list.outcome -eq 'success' -and $list.windows.Count -eq 3) 'list returns all fake windows'
 $tokenA = [string]$list.windows[0].runtimeId
 $tokenB = [string]$list.windows[1].runtimeId
 Assert-True ([string]$tokenA -match '^T[0-9a-f]{32}$') 'token A is nonempty high-entropy nonnumeric'
@@ -259,6 +260,11 @@ Assert-True ([string]$tokenB -match '^T[0-9a-f]{32}$') 'token B is nonempty high
 Assert-True ($tokenA -ne $tokenB) 'two identities get distinct tokens'
 $list2 = Invoke-Line '{"requestId":8,"method":"list"}'
 Assert-True ([string]$list2.windows[0].runtimeId -eq $tokenA -and [string]$list2.windows[1].runtimeId -eq $tokenB) 'unchanged identities keep stable tokens across repeated list'
+
+# ---- zero-sized window rects become null bounds (015 helper fix) -----------
+$zeroEntry = @($list.windows | Where-Object { $_.title -eq 'WH-TEST-ZERO' } | Select-Object -First 1)
+Assert-True ($zeroEntry.Count -eq 1) 'the zero-rect window appears in the list'
+Assert-True ($null -eq $zeroEntry[0].bounds) 'a zero-size rect is emitted as null bounds, never as a zero-width bounds object'
 
 # ---- raw numeric HWND and guessed tokens are missing, no act --------------
 Assert-Outcome (Invoke-Line '{"requestId":9,"method":"observe","target":"4097"}') 'missing' 'a raw numeric HWND is not a token, missing'
@@ -318,20 +324,20 @@ Assert-Outcome (Invoke-Line ('{"requestId":26,"method":"observe","target":"' + $
 Assert-Outcome (Invoke-Line ('{"requestId":27,"method":"minimize","target":"' + $tokenA + '"}')) 'missing' 'the old token is unusable after restart'
 
 # ---- bounded token registry (FINDING 2) ------------------------------------
-$script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 2 }
+$script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 3 }
 $fillList = Invoke-Line '{"requestId":28,"method":"list"}'
-Assert-True ($fillList.outcome -eq 'success' -and $fillList.windows.Count -eq 2) 'filling to the injected limit succeeds'
-Assert-True ($script:WhSession.byToken.Count -eq 2) 'both tokens issued at capacity'
+Assert-True ($fillList.outcome -eq 'success' -and $fillList.windows.Count -eq 3) 'filling to the injected limit succeeds'
+Assert-True ($script:WhSession.byToken.Count -eq 3) 'both tokens issued at capacity'
 $capToken = [string]$fillList.windows[0].runtimeId
-$script:fakeRegistry += [pscustomobject]@{ RuntimeId = [IntPtr]0x3003; Title = 'WH-TEST-CCCC'; ProcessId = 3003; ProcessPath = 'C:\fake-c.exe'; State = 'normal'; Bounds = @{ Left = 0; Top = 0; Right = 50; Bottom = 50; Width = 50; Height = 50 }; alive = $true; touched = @() }
+$script:fakeRegistry += [pscustomobject]@{ RuntimeId = [IntPtr]0x4004; Title = 'WH-TEST-CCCC'; ProcessId = 4004; ProcessPath = 'C:\fake-d.exe'; State = 'normal'; Bounds = @{ Left = 0; Top = 0; Right = 50; Bottom = 50; Width = 50; Height = 50 }; alive = $true; touched = @() }
 $capDenied = Invoke-Line '{"requestId":29,"method":"list"}'
 Assert-Outcome $capDenied 'denied' 'a new identity beyond the limit makes list denied atomically'
 Assert-True ([string]$capDenied.error -eq 'session token capacity reached') 'the capacity error is bounded non-sensitive text'
-Assert-True ($script:WhSession.byToken.Count -eq 2 -and $script:WhSession.byKey.Count -eq 2) 'no tokens were issued, both maps unchanged'
+Assert-True ($script:WhSession.byToken.Count -eq 3 -and $script:WhSession.byKey.Count -eq 3) 'no tokens were issued, both maps unchanged'
 Assert-True (-not $capDenied.ContainsKey('windows')) 'no partial windows payload on capacity denial'
 $capObserve = Invoke-Line ('{"requestId":30,"method":"observe","target":"' + $capToken + '"}')
 Assert-Outcome $capObserve 'success' 'previously issued tokens still resolve at capacity'
-Assert-True ($script:fakeRegistry[2].touched.Count -eq 0) 'the un-issued window was never acted on'
+Assert-True ($script:fakeRegistry[3].touched.Count -eq 0) 'the un-issued window was never acted on'
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
 $resetList = Invoke-Line '{"requestId":31,"method":"list"}'
 Assert-Outcome $resetList 'success' 'resetting the helper session resets capacity'

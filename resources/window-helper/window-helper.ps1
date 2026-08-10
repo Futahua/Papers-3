@@ -145,11 +145,14 @@ function Get-BoundedErrorText {
 function Get-WhWireBounds {
   param([object]$Bounds)
   if ($Bounds -eq $null) { return $null }
+  $width = [int]$Bounds['Width']
+  $height = [int]$Bounds['Height']
+  if ($width -le 0 -or $height -le 0) { return $null }
   return [ordered]@{
     x = [int]$Bounds['Left']
     y = [int]$Bounds['Top']
-    width = [int]$Bounds['Width']
-    height = [int]$Bounds['Height']
+    width = $width
+    height = $height
   }
 }
 

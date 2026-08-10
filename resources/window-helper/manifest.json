@@ -5,7 +5,7 @@
   "spawnArguments": ["-NoProfile", "-NonInteractive", "-File"],
   "files": ["window-helper.ps1", "window-capability.ps1"],
   "hashes": {
-    "window-helper.ps1": "79ccb113cf0de2675ceb8fd7462f69e6d47ae7db815f6c858812b765299c4af9",
+    "window-helper.ps1": "313b213152e346edc69b13410bcb477f5974504640908bc78e4c3c940fc0b19b",
     "window-capability.ps1": "deef3f23a53cdd25c4e34f72b6d9c5b0e1b3ad2f191ac155dcf99ada73a5577f"
   }
 }

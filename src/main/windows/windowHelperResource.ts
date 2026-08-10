@@ -37,7 +37,7 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
 /** Compiled pin of the accepted resource bytes. A future reviewed helper
  * edit updates these hashes AND manifest.json together. */
 export const WINDOW_HELPER_EXPECTED_HASHES: Record<string, string> = {
-  [WINDOW_HELPER_SCRIPT_FILE]: '79ccb113cf0de2675ceb8fd7462f69e6d47ae7db815f6c858812b765299c4af9',
+  [WINDOW_HELPER_SCRIPT_FILE]: '313b213152e346edc69b13410bcb477f5974504640908bc78e4c3c940fc0b19b',
   [WINDOW_HELPER_ADAPTER_FILE]: 'deef3f23a53cdd25c4e34f72b6d9c5b0e1b3ad2f191ac155dcf99ada73a5577f',
 };
 
