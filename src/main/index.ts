@@ -676,6 +676,10 @@ async function bootstrap(): Promise<void> {
     registry: widgetRegistry,
     session: widgetSession,
     hidePreview: hideWidgetPreview,
+    dismissCandidatePicker: (sender) => {
+      const active = candidatePickerSessions.get(sender.id);
+      if (active && !active.window.isDestroyed()) active.window.destroy();
+    },
     showContextMenu: async (sender) => {
       const owner = BrowserWindow.fromWebContents(sender);
       if (!owner || owner.isDestroyed()) return 'cancel';

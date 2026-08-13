@@ -378,6 +378,15 @@ window.addEventListener('message', (event) => {
     task = ipcRenderer.invoke('papers:backpack:window-candidate-picker', payload)
       .then((value) => ({ picker: value }));
   }
+  if (request.type === 'papers:project:window-candidate-picker-close') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'window candidate picker close request is malformed');
+      return;
+    }
+    const payload = widgetToken ? { token: widgetToken } : { projectId: projectIdFromOrigin() };
+    task = ipcRenderer.invoke('papers:backpack:window-candidate-picker-close', payload)
+      .then((value) => ({ picker: value }));
+  }
   if (request.type === 'papers:project:detach-reattach') {
     task = detachedToken && detachedTransferId
       ? ipcRenderer.invoke('papers:backpack:detach-reattach', { token: detachedToken, transferId: detachedTransferId })
