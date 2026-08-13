@@ -11,6 +11,20 @@ import type { RuntimeWindowId } from '../../src/main/windows/windowCapabilityTyp
 
 const TOKEN_A = 'Ta'.padEnd(33, 'a');
 
+/** ONE complete valid PNG byte buffer (signature + IHDR claiming the given
+ * dimensions) base64-encoded whole, so the strict IHDR check passes. */
+function pngWithSize(width: number, height: number): string {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(25);
+  ihdr.writeUInt32BE(13, 0);
+  ihdr.write('IHDR', 4, 'latin1');
+  ihdr.writeUInt32BE(width, 8);
+  ihdr.writeUInt32BE(height, 12);
+  ihdr[16] = 8;
+  ihdr[17] = 6;
+  return Buffer.concat([sig, ihdr]).toString('base64');
+}
+
 function fakeService(): WindowCapabilityService {
   return {
     listCandidates: async () => ({ outcome: 'success', candidates: [] }),
@@ -18,10 +32,15 @@ function fakeService(): WindowCapabilityService {
     observeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     minimizeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     restoreCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    beginPeekCapability: async () => ({ outcome: 'success' }),
+    endPeek: async () => ({ outcome: 'success' }),
     applyCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    thumbnailCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     resolvePersisted: async () => ({ outcome: 'missing', error: 'no match' }),
     hoverAt: async () => ({ outcome: 'success', candidate: null, bounds: null, descriptor: null }),
     pickAt: async () => ({ outcome: 'missing', error: 'changed' }),
+    prepareNativePicker: async () => ({ outcome: 'success', seeds: [] }),
+    bindNativePickerSelection: async () => ({ outcome: 'success', windows: [] }),
     stop: async () => undefined,
   };
 }
@@ -57,8 +76,11 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:observe',
       'papers:window-capability:minimize',
       'papers:window-capability:restore',
+      'papers:window-capability:peek-begin',
+      'papers:window-capability:peek-end',
       'papers:window-capability:apply',
       'papers:window-capability:resolve',
+      'papers:window-capability:thumbnail',
     ]);
   });
 
@@ -112,11 +134,12 @@ describe('windowCapabilityIpc', () => {
     const service = new Proxy(fakeService(), {
       get(target, property) {
         const name = String(property);
-        if (['listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'applyCapability', 'resolvePersisted'].includes(name)) {
+        if (['listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'applyCapability', 'thumbnailCapability', 'resolvePersisted'].includes(name)) {
           return async (...args: unknown[]) => {
             calls.push(name);
             if (name === 'listCandidates') return { outcome: 'success', candidates: [{ id: 'c1', title: 'W', applicationLabel: 'W', icon: null, state: 'normal' }] };
             if (name === 'bindCandidate') return { outcome: 'success', capability, descriptor: { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64) } };
+            if (name === 'thumbnailCapability') return { outcome: 'success', thumbnail: { image: pngWithSize(240, 135), width: 240, height: 135 } };
             if (name === 'resolvePersisted') return { outcome: 'missing', error: 'no match' };
             return { outcome: 'success', observation: null };
           };
@@ -144,10 +167,98 @@ describe('windowCapabilityIpc', () => {
     expect(applied.outcome).toBe('success');
     const resolved = await ipc.invoke('papers:window-capability:resolve', 42, { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64) });
     expect(resolved).toEqual({ outcome: 'missing', error: 'no match' });
+    const thumbImage = pngWithSize(240, 135);
+    const thumb = await ipc.invoke('papers:window-capability:thumbnail', 42, {
+      capability,
+      options: { maxWidth: 240, maxHeight: 135 },
+    }) as { outcome: string; imageUrl?: string; width?: number; height?: number };
+    expect(thumb.outcome).toBe('success');
+    expect(thumb.imageUrl).toBe(`data:image/png;base64,${thumbImage}`);
+    expect(thumb.width).toBe(240);
+    expect(thumb.height).toBe(135);
     expect(calls).toEqual([
       'listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability',
-      'restoreCapability', 'applyCapability', 'resolvePersisted',
+      'restoreCapability', 'applyCapability', 'resolvePersisted', 'thumbnailCapability',
     ]);
+  });
+
+  it('enforces the exact 019G thumbnail input shape and dimension bounds', async () => {
+    const ipc = fakeIpcMain();
+    registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service: fakeService(), isSender: () => true });
+
+    await expect(ipc.invoke('papers:window-capability:thumbnail', 42, { capability })).rejects.toThrow('exactly capability and options');
+    await expect(ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: 240, maxHeight: 135 }, extra: 'x' })).rejects.toThrow('exactly capability and options');
+    await expect(ipc.invoke('papers:window-capability:thumbnail', 42, { capability: { version: 1, bindingId: 123 }, options: { maxWidth: 240, maxHeight: 135 } })).rejects.toThrow('bindingId');
+    await expect(ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: 321, maxHeight: 135 } })).rejects.toThrow('maxWidth');
+    await expect(ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: 240, maxHeight: 181 } })).rejects.toThrow('maxHeight');
+    await expect(ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: 0, maxHeight: 135 } })).rejects.toThrow('maxWidth');
+    await expect(ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: 240.5, maxHeight: 135 } })).rejects.toThrow('maxWidth');
+    await expect(ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: '240', maxHeight: 135 } })).rejects.toThrow('maxWidth');
+    await expect(ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: 240, maxHeight: 135, zoom: 2 } })).rejects.toThrow('unknown fields');
+    // Absent options default to 240x135 (the service applies the default).
+    await ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: {} });
+    await ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: 240 } });
+  });
+
+  it('maps typed fallback outcomes to payload-free page results (019G)', async () => {
+    const ipc = fakeIpcMain();
+    const fallbacks = [
+      { outcome: 'minimized', error: 'window is minimized' },
+      { outcome: 'missing', error: 'gone' },
+      { outcome: 'denied', error: 'PrintWindow is not supported' },
+      { outcome: 'helper-unavailable', error: 'window helper is unavailable' },
+    ] as const;
+    let index = 0;
+    const service = new Proxy(fakeService(), {
+      get(target, property) {
+        if (property === 'thumbnailCapability') {
+          return async () => fallbacks[index++ % fallbacks.length];
+        }
+        return Reflect.get(target, property);
+      },
+    });
+    registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service, isSender: () => true });
+    const raw = { capability, options: { maxWidth: 240, maxHeight: 135 } };
+    const first = await ipc.invoke('papers:window-capability:thumbnail', 42, raw) as { outcome: string; error?: string };
+    expect(first).toEqual({ outcome: 'minimized', error: 'window is minimized' });
+    expect(first).not.toHaveProperty('imageUrl');
+    const second = await ipc.invoke('papers:window-capability:thumbnail', 42, raw) as { outcome: string };
+    expect(second).toEqual({ outcome: 'missing', error: 'gone' });
+    const third = await ipc.invoke('papers:window-capability:thumbnail', 42, raw) as { outcome: string };
+    expect(third).toEqual({ outcome: 'denied', error: 'PrintWindow is not supported' });
+  });
+
+  it('bounds a page-facing fallback error to 256 UTF-8 bytes without splitting multibyte chars (019GR3)', async () => {
+    const ipc = fakeIpcMain();
+    // 300 'é' = 600 UTF-8 bytes: must be truncated to <= 256 whole characters,
+    // and a long ASCII string must be truncated too.
+    const multibyte = 'é'.repeat(300);
+    const ascii = 'x'.repeat(400);
+    const calls: string[] = [];
+    const service = new Proxy(fakeService(), {
+      get(target, property) {
+        if (property === 'thumbnailCapability') {
+          return async () => {
+            const error = calls.length === 0 ? multibyte : ascii;
+            calls.push('thumbnail');
+            return { outcome: 'denied', error };
+          };
+        }
+        return Reflect.get(target, property);
+      },
+    });
+    registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service, isSender: () => true });
+    const raw = { capability, options: { maxWidth: 240, maxHeight: 135 } };
+    const first = await ipc.invoke('papers:window-capability:thumbnail', 42, raw) as { outcome: string; error?: string };
+    expect(first.outcome).toBe('denied');
+    expect(first.error).toBeDefined();
+    expect(Buffer.byteLength(first.error!, 'utf8')).toBeLessThanOrEqual(256);
+    // No multibyte character is ever split: the result must be a prefix of
+    // whole 'é' characters.
+    expect(/^é*$/.test(first.error!)).toBe(true);
+    const second = await ipc.invoke('papers:window-capability:thumbnail', 42, raw) as { outcome: string; error?: string };
+    expect(second.outcome).toBe('denied');
+    expect(Buffer.byteLength(second.error!, 'utf8')).toBe(256);
   });
 
   it('composes with the real service over a fake factory end to end', async () => {

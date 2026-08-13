@@ -9,6 +9,8 @@
  *     ephemeral runtime capability plus a versioned persisted descriptor,
  *   - observe / minimize / restore / apply bounds for one issued
  *     capability,
+ *   - 019G real-window thumbnail for one issued capability (bounded
+ *     PrintWindow capture behind a short duplicate-request cache),
  *   - fail-closed re-resolution of an already-visible window from a
  *     persisted descriptor (zero matches = missing, multiple = ambiguous;
  *     a descriptor is NEVER authority to execute or launch anything).
@@ -26,12 +28,21 @@
 
 import { createWindowHelperFactory, type WindowHelperFactory } from './windowHelperFactory';
 import { createHash } from 'node:crypto';
-import type {
-  RuntimeWindowId,
-  WindowBounds,
-  WindowCapabilityResult,
-  WindowObservation,
-  WindowState,
+import {
+  createThumbnailFrameStore,
+  pngDimensions,
+  thumbnailDescriptorKey,
+  type ThumbnailFrameStore,
+} from './thumbnailFrameStore';
+import {
+  isValidThumbnail,
+  WINDOW_THUMBNAIL_MAX_HEIGHT,
+  WINDOW_THUMBNAIL_MAX_WIDTH,
+  type RuntimeWindowId,
+  type WindowBounds,
+  type WindowCapabilityResult,
+  type WindowObservation,
+  type WindowState,
 } from './windowCapabilityTypes';
 
 export const WINDOW_CAPABILITY_MAX_CANDIDATES = 64;
@@ -45,6 +56,16 @@ export const WINDOW_CAPABILITY_MAX_TITLE_BYTES = 256;
 export const WINDOW_CAPABILITY_CLIENT_TIMEOUT_MS = 10000;
 /** Direct-pick hover points are bounded to a sane multi-monitor range. */
 export const WINDOW_CAPABILITY_PICK_POINT_RANGE = 65536;
+/** 019G thumbnail cache: a duplicate-request shield ONLY (maximum 750 ms TTL,
+ * maximum 8 entries), never a long-lived screenshot store. Cache misses are
+ * captured live on hover; leaving/canceling discards late responses. */
+export const WINDOW_CAPABILITY_THUMBNAIL_MAX_CACHE = 8;
+export const WINDOW_CAPABILITY_THUMBNAIL_TTL_MS = 750;
+export const WINDOW_CAPABILITY_THUMBNAIL_DEFAULT_WIDTH = 240;
+/** 028 P3 capture-before-minimize registration: minimum interval between
+ * background frame seeds for one binding (bounded). */
+export const FRAME_SEED_MIN_INTERVAL_MS = 30000;
+export const WINDOW_CAPABILITY_THUMBNAIL_DEFAULT_HEIGHT = 135;
 
 export interface WindowCandidate {
   /** Host-issued opaque candidate id; never a helper token or HWND. */
@@ -100,13 +121,44 @@ export interface WindowMemberUpdate {
   bounds: WindowBounds | null;
 }
 
+/** Machine-local identity used only at the SlopTop picker boundary. It is
+ * deliberately non-persistable: AHK uses the PID + current visible rectangle
+ * to seed and return its local green set, then Papers immediately resolves it
+ * back into ordinary capabilities/descriptors. */
+export interface NativePickerWindowIdentity extends WindowBounds {
+  processId: number;
+}
+
+export type NativePickerSeedResult =
+  | { outcome: 'success'; seeds: NativePickerWindowIdentity[] }
+  | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string };
+
+export type NativePickerBindResult =
+  | { outcome: 'success'; windows: Array<{ descriptor: PersistedWindowMemberDescriptor; capability: WindowRuntimeCapability; candidate: WindowCandidate }> }
+  | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string };
+
 export interface WindowCapabilityService {
-  listCandidates(): Promise<WindowCandidateListResult>;
+  listCandidates(options?: { includeNativeIcons?: boolean }): Promise<WindowCandidateListResult>;
   bindCandidate(candidateId: string): Promise<WindowBindResult>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   restoreCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  /** Transient taskbar-style Peek: compositor-cloak every currently visible
+   * eligible window except the target, then uncloak exactly that set on end. */
+  beginPeekCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  endPeek(): Promise<WindowCapabilityResult>;
   applyCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult>;
+  /** 019G real-window thumbnail for one issued capability. Dimensions default
+   * to 240x135, must be positive integers within 320x180 (malformed
+   * otherwise); the helper rechecks exact token identity immediately before
+   * capture and PrintWindow is best effort, so `minimized`/`missing`/`denied`
+   * are honest typed fallbacks. The bounded result is cached as a
+   * duplicate-request shield (TTL <= 750 ms, LRU <= 8) and only after strict
+   * validation. */
+  thumbnailCapability(
+    capability: WindowRuntimeCapability,
+    options?: { maxWidth?: number; maxHeight?: number },
+  ): Promise<WindowCapabilityResult>;
   resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<WindowResolveResult>;
   /** 016 direct pick: resolve the topmost task-worthy candidate at a screen
    * point. Candidate ids are stable per window identity. */
@@ -114,6 +166,13 @@ export interface WindowCapabilityService {
   /** 016 direct pick: re-resolve at the point and bind the candidate ONLY
    * when it is still the exact highlighted one (fail closed otherwise). */
   pickAt(x: number, y: number, candidateId: string): Promise<WindowBindResult & { candidate?: WindowCandidate }>;
+  /** SlopTop local picker: resolve all current members in one helper snapshot
+   * before activation. No HWND or helper token crosses this boundary. */
+  prepareNativePicker(memberDescriptors: PersistedWindowMemberDescriptor[]): Promise<NativePickerSeedResult>;
+  /** SlopTop local picker: bind one final AHK-owned green-set snapshot in one
+   * helper enumeration. Every identity must match exactly once or the complete
+   * commit fails closed. */
+  bindNativePickerSelection(selections: NativePickerWindowIdentity[]): Promise<NativePickerBindResult>;
   stop(): Promise<void>;
 }
 
@@ -126,7 +185,11 @@ export interface WindowCapabilityServiceOptions {
   getFileIcon?: (path: string) => Promise<Electron.NativeImage>;
   /** Private DI for tests; default is the bounded cadence constant. */
   observeCadenceMs?: number;
+  /** Private DI for tests; default is Date.now. */
   now?: () => number;
+  /** 028 P3: bounded durable validated-frame retention. Default is a
+   * Papers-owned cache under the app userData dir; tests inject a store. */
+  durableFrames?: ThumbnailFrameStore;
 }
 
 const HELPER_UNAVAILABLE: WindowCandidateListResult = {
@@ -149,6 +212,37 @@ function appLabel(path: string): string {
   return boundedTitle(leaf.replace(/\.[^.]+$/, '') || 'Application');
 }
 
+/** 028 P3: default durable frame store under the app userData directory.
+ * Lazily resolved so unit tests never require Electron; when the path cannot
+ * be resolved a bounded NO-OP store is returned (durability degrades to the
+ * in-memory last frame only). */
+let defaultDurableFramesStore: ThumbnailFrameStore | null = null;
+function defaultDurableFrames(): ThumbnailFrameStore {
+  if (defaultDurableFramesStore) return defaultDurableFramesStore;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const electron = require('electron') as { app?: { getPath(name: string): string } };
+    const userData = electron?.app?.getPath?.('userData');
+    if (typeof userData === 'string' && userData.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const nodePath = require('node:path') as typeof import('node:path');
+      const dir = nodePath.join(userData, 'ayg-window-frames');
+      defaultDurableFramesStore = createThumbnailFrameStore({ dir });
+      return defaultDurableFramesStore;
+    }
+  } catch {
+    /* fall through to the no-op store */
+  }
+  const noop: ThumbnailFrameStore = {
+    put: () => undefined,
+    get: () => null,
+    delete: () => undefined,
+    clear: () => undefined,
+  };
+  defaultDurableFramesStore = noop;
+  return defaultDurableFramesStore;
+}
+
 /** Returns the trusted process id of a candidate, or null when the window
  * must be excluded: Papers itself, missing/empty title, missing process
  * path, or a non-positive process id. */
@@ -162,14 +256,116 @@ function trustedProcessId(observation: WindowObservation, currentPid: number): n
 }
 
 export function createWindowCapabilityService(options: WindowCapabilityServiceOptions = {}): WindowCapabilityService {
+  const stamp = options.now ?? (() => Date.now());
   let factory: WindowHelperFactory;
   let factoryBuilt = false;
   let stopped = false;
   let candidateIdCounter = 0;
   const candidatesByListedId = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }>();
   const bindings = new Map<string, { helperToken: RuntimeWindowId; touched: number }>();
+  const bindingDescriptors = new Map<string, PersistedWindowMemberDescriptor>();
   const observations = new Map<string, Promise<WindowCapabilityResult>>();
   const iconCache = new Map<string, string>();
+  /** 019G thumbnail duplicate-request shield: bounded TTL/LRU, cleared on
+   * stop and wholesale on any factory/helper revision change (019GR3), so no
+   * entry from a previous helper session can ever be served. */
+  const thumbnailCache = new Map<string, { value: WindowCapabilityResult; touched: number }>();
+  /** 021 P3 minimized-preview retention: the LAST strictly validated success
+   * per binding, kept beyond the duplicate-request TTL so a window that is
+   * still minimized can serve a USEFUL preview (the frame from the last time
+   * the window was visibly captured). Served before the honest `minimized`
+   * fallback. */
+  const lastFrameCache = new Map<string, { value: WindowCapabilityResult; touched: number }>();
+  /** 028 P3: bounded durable validated-frame retention (stable descriptor key),
+   * so a member that HAS supplied real content keeps serving it while minimized
+   * even when DWM/PrintWindow fail and the in-memory cache is empty. */
+  const durableFrames = options.durableFrames ?? defaultDurableFrames();
+  /** 028 P3 capture-before-minimize registration: bounded seeding state. */
+  const frameSeedAt = new Map<string, number>();
+  const frameSeedInFlight = new Set<string>();
+  /** The factory session revision the current thumbnail cache was built
+   * against; any change invalidates the ENTIRE cache before lookup. */
+  let thumbnailCacheRevision = -1;
+  let peekGeneration = 0;
+  let peekRestoreTokens: RuntimeWindowId[] = [];
+
+  function purgeBindingThumbnails(bindingId: string): void {
+    for (const key of [...thumbnailCache.keys()]) {
+      if (key.startsWith(`${bindingId}|`)) thumbnailCache.delete(key);
+    }
+    lastFrameCache.delete(bindingId);
+    const descriptor = bindingDescriptors.get(bindingId);
+    if (descriptor) durableFrames.delete(thumbnailDescriptorKey(descriptor));
+    bindingDescriptors.delete(bindingId);
+    frameSeedAt.delete(bindingId);
+    frameSeedInFlight.delete(bindingId);
+  }
+
+  function descriptorForBinding(bindingId: string): PersistedWindowMemberDescriptor | null {
+    return bindingDescriptors.get(bindingId) ?? null;
+  }
+
+  /** 028 P3: a valid durable real-content frame for a binding, served as a
+   * minimized real-content preview (source='dwm'). Returns null when nothing
+   * durable is available. */
+  function durableFrameResult(bindingId: string): WindowCapabilityResult | null {
+    const descriptor = descriptorForBinding(bindingId);
+    if (!descriptor) return null;
+    const png = durableFrames.get(thumbnailDescriptorKey(descriptor));
+    if (!png) return null;
+    const dimensions = pngDimensions(png);
+    if (!dimensions) return null;
+    return {
+      outcome: 'success',
+      thumbnail: {
+        image: png.toString('base64'),
+        width: dimensions.width,
+        height: dimensions.height,
+        source: 'dwm',
+        minimized: true,
+      },
+    };
+  }
+
+  /** 028 P3 capture-before-minimize registration: when a member is observed in
+   * a normal (non-minimized) state and has no fresh retained real frame, issue
+   * ONE bounded background thumbnail capture (rate-limited per binding,
+   * single-flight) so a later minimize has real content without depending only
+   * on the optional volatile cache. Never awaited by the observer. */
+  function seedFrameIfNeeded(capability: WindowRuntimeCapability, bindingId: string): void {
+    const descriptor = descriptorForBinding(bindingId);
+    if (!descriptor) return;
+    const key = thumbnailDescriptorKey(descriptor);
+    const now = stamp();
+    if (now - (frameSeedAt.get(bindingId) ?? -Infinity) < FRAME_SEED_MIN_INTERVAL_MS) return;
+    if (frameSeedInFlight.has(bindingId)) return;
+    if (lastFrameCache.has(bindingId) || durableFrames.get(key)) return;
+    frameSeedAt.set(bindingId, now);
+    frameSeedInFlight.add(bindingId);
+    void thumbnailCapability(capability, { maxWidth: WINDOW_CAPABILITY_THUMBNAIL_DEFAULT_WIDTH, maxHeight: WINDOW_CAPABILITY_THUMBNAIL_DEFAULT_HEIGHT })
+      .catch(() => undefined)
+      .finally(() => frameSeedInFlight.delete(bindingId));
+  }
+
+  function retainLastFrame(bindingId: string, value: WindowCapabilityResult): void {
+    lastFrameCache.set(bindingId, { value, touched: stamp() });
+    if (lastFrameCache.size > WINDOW_CAPABILITY_THUMBNAIL_MAX_CACHE) {
+      const oldest = [...lastFrameCache.entries()].sort((a, b) => a[1].touched - b[1].touched)[0];
+      if (oldest) lastFrameCache.delete(oldest[0]);
+    }
+  }
+
+  /** 021 P3: a live capture reported `minimized`; serve the binding's last
+   * retained validated frame (touched LRU) when one exists, else the honest
+   * minimized fallback. Returns null when nothing is retained. */
+  function lastFrameFor(bindingId: string): WindowCapabilityResult | null {
+    const last = lastFrameCache.get(bindingId);
+    if (!last) return null;
+    last.touched = stamp();
+    lastFrameCache.delete(bindingId);
+    lastFrameCache.set(bindingId, last);
+    return last.value;
+  }
 
   const currentPid = options.currentPid ?? process.pid;
   // Lazy, guarded: only the Electron main process has `app`; unit tests
@@ -197,7 +393,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return outcome === 'ready';
   }
 
-  async function listCandidates(): Promise<WindowCandidateListResult> {
+  async function listCandidates(options: { includeNativeIcons?: boolean } = {}): Promise<WindowCandidateListResult> {
     if (stopped) return HELPER_UNAVAILABLE;
     if (!(await ensureStarted())) return HELPER_UNAVAILABLE;
     let result = await factory.list();
@@ -217,7 +413,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       const processId = trustedProcessId(observation, currentPid);
       if (processId === null) continue;
       const entry = candidateForObservation(observation);
-      const icon = await iconFor(observation);
+      // Interactive pick lists request exact native window/class icons so
+      // packaged Electron apps do not collapse to generic executable tiles.
+      // Internal relisting keeps the original cheap file-icon path.
+      const icon = options.includeNativeIcons
+        ? await nativeIconFor(observation)
+        : await iconFor(observation);
       entry.candidate.icon = icon;
       if (!observation.bounds) continue;
       candidates.push(entry.candidate);
@@ -244,6 +445,21 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     } catch {
       return null;
     }
+  }
+
+  /** Resolve the exact window/class icon for a trusted observation. The
+   * helper's bounded 48x48 request is strictly correlated to this runtime
+   * identity and falls back to the executable icon. */
+  async function nativeIconFor(observation: WindowObservation): Promise<string | null> {
+    try {
+      const result = await factory.thumbnail(observation.runtimeId, 48, 48);
+      if (result.outcome === 'success' && result.thumbnail?.source === 'icon') {
+        return `data:image/png;base64,${result.thumbnail.image}`;
+      }
+    } catch {
+      // Executable icon fallback below remains useful for conventional apps.
+    }
+    return iconFor(observation);
   }
 
   function listedEntry(candidateId: string): { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate } | null {
@@ -351,7 +567,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       return { outcome: observed.outcome === 'timeout' ? 'timeout' : 'helper-unavailable', error: observed.error };
     }
     const capability = issueBinding(entry.helperToken);
+    const bindingId = capability.bindingId;
+    if (!bindingId) return { outcome: 'helper-unavailable', error: 'binding failed' };
     const descriptor = entry.descriptor;
+    bindingDescriptors.set(bindingId, descriptor);
     return { outcome: 'success', capability, descriptor };
   }
 
@@ -363,7 +582,16 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const bindingId = capability.bindingId ?? '';
     const previous = observations.get(bindingId);
     if (previous) return previous;
-    const request = factory.observe(token).finally(() => observations.delete(bindingId));
+    const request = factory.observe(token).then((result) => {
+      // 028 P3 capture-before-minimize: while the member is observed NORMAL and
+      // has no fresh retained real frame, seed one bounded background capture so
+      // a later minimize serves real content without depending only on the
+      // volatile cache.
+      if (result.outcome === 'success' && result.observation && result.observation.state !== 'minimized') {
+        seedFrameIfNeeded(capability, bindingId);
+      }
+      return result;
+    }).finally(() => observations.delete(bindingId));
     observations.set(bindingId, request);
     return request;
   }
@@ -384,12 +612,177 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return factory.restore(token);
   }
 
+  async function endPeek(): Promise<WindowCapabilityResult> {
+    peekGeneration += 1;
+    const restore = peekRestoreTokens.splice(0);
+    if (!factoryBuilt || stopped) return { outcome: 'success' };
+    await Promise.all(restore.reverse().map((token) =>
+      factory.uncloak?.(token).catch(() => undefined)));
+    return { outcome: 'success' };
+  }
+
+  async function beginPeekCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const target = tokenFor(capability);
+    if (!target) return { outcome: 'missing', error: 'binding is not issued' };
+    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+
+    const generation = ++peekGeneration;
+
+    // Differential Peek transition: when the pointer moves A -> B, every
+    // window hidden for A except B should remain hidden. Reveal B first, then
+    // hide only newly-visible windows (normally just A). The old full
+    // restore/re-hide cycle made a row of icons visibly cascade and flash.
+    const previous = peekRestoreTokens.splice(0);
+    const retained = previous.filter((token) => token !== target);
+    peekRestoreTokens.push(...retained);
+    if (previous.includes(target)) {
+      const revealed = await factory.uncloak?.(target).catch(() => undefined);
+      if (!revealed || revealed.outcome !== 'success') {
+        peekRestoreTokens.push(target);
+        return revealed ?? { outcome: 'helper-unavailable', error: 'window reveal is unavailable' };
+      }
+    }
+    if (generation !== peekGeneration) return { outcome: 'success' };
+
+    const listed = await factory.list();
+    if (listed.outcome !== 'success') return { outcome: listed.outcome, error: listed.error };
+    if (!factory.cloak) return { outcome: 'helper-unavailable', error: 'window cloak is unavailable' };
+    const toHide = (listed.windows ?? []).filter((observation) =>
+      observation.runtimeId !== target
+      && observation.state !== 'minimized'
+      && trustedProcessId(observation, currentPid) !== null
+      && !peekRestoreTokens.includes(observation.runtimeId));
+    await Promise.all(toHide.map(async (observation) => {
+      const result = await factory.cloak!(observation.runtimeId);
+      if (result.outcome !== 'success') return;
+      if (generation === peekGeneration) peekRestoreTokens.push(observation.runtimeId);
+      else await factory.uncloak?.(observation.runtimeId).catch(() => undefined);
+    }));
+    return { outcome: 'success' };
+  }
+
   async function applyCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const token = tokenFor(capability);
     if (!token) return { outcome: 'missing', error: 'binding is not issued' };
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
     return factory.apply(token, bounds);
+  }
+
+  /** Strictly validates one thumbnail dimension: absent -> the contract
+   * default, present but not a positive safe integer within the max -> typed
+   * malformed (fail closed, never clamped to a guessed value). */
+  function normalizeThumbnailDimension(
+    value: number | undefined,
+    fallback: number,
+    max: number,
+    name: string,
+  ): { kind: 'ok'; value: number } | { kind: 'malformed'; result: WindowCapabilityResult } {
+    if (value === undefined) return { kind: 'ok', value: fallback };
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0 || value > max) {
+      return { kind: 'malformed', result: { outcome: 'malformed', error: `${name} must be a positive integer at most ${max}` } };
+    }
+    return { kind: 'ok', value };
+  }
+
+  /** 019G real-window thumbnail. The main-process cache is ONLY a
+   * duplicate-request shield (TTL <= 750 ms, LRU <= 8 entries): it stores
+   * strictly validated successes, is keyed by (bindingId, dimensions), never
+   * by HWND/token, and touches/reinserts on every hit so eviction is TRUE LRU
+   * rather than FIFO. ANY factory/helper revision change clears the ENTIRE
+   * cache before lookup (019GR3); a lost binding still purges that binding's
+   * entries and the token is re-resolved from the live binding before the
+   * cache is consulted. */
+  async function thumbnailCapability(
+    capability: WindowRuntimeCapability,
+    options: { maxWidth?: number; maxHeight?: number } = {},
+  ): Promise<WindowCapabilityResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const bindingId = capability.bindingId ?? '';
+    const token = tokenFor(capability);
+    if (!token) {
+      // The binding is gone: drop its cached thumbnails AND retained last frame
+      // BEFORE failing closed, so a stale image can never be served after a
+      // capability invalidation.
+      purgeBindingThumbnails(bindingId);
+      return { outcome: 'missing', error: 'binding is not issued' };
+    }
+    const maxWidth = normalizeThumbnailDimension(
+      options.maxWidth, WINDOW_CAPABILITY_THUMBNAIL_DEFAULT_WIDTH, WINDOW_THUMBNAIL_MAX_WIDTH, 'maxWidth');
+    if (maxWidth.kind === 'malformed') return maxWidth.result;
+    const maxHeight = normalizeThumbnailDimension(
+      options.maxHeight, WINDOW_CAPABILITY_THUMBNAIL_DEFAULT_HEIGHT, WINDOW_THUMBNAIL_MAX_HEIGHT, 'maxHeight');
+    if (maxHeight.kind === 'malformed') return maxHeight.result;
+    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+
+    const key = `${bindingId}|${maxWidth.value}x${maxHeight.value}`;
+    const revision = factory.revision;
+    if (thumbnailCacheRevision !== revision) {
+      // 019GR3/021: a helper replacement invalidates the WHOLE cache (the
+      // duplicate-request shield AND every retained last frame) so no entry
+      // from a previous session can ever be served.
+      thumbnailCache.clear();
+      lastFrameCache.clear();
+      thumbnailCacheRevision = revision;
+    }
+    const cached = thumbnailCache.get(key);
+    if (cached) {
+      if (stamp() - cached.touched > WINDOW_CAPABILITY_THUMBNAIL_TTL_MS) {
+        thumbnailCache.delete(key);
+      } else {
+        // Touch and reinsert on hit so eviction order is TRUE LRU.
+        cached.touched = stamp();
+        thumbnailCache.delete(key);
+        thumbnailCache.set(key, cached);
+        return cached.value;
+      }
+    }
+
+    const result = await factory.thumbnail(token, maxWidth.value, maxHeight.value);
+    if (result.outcome === 'success' && result.thumbnail && isValidThumbnail(result.thumbnail)) {
+      // 025/028: a minimized TERMINAL icon preview must never supersede a
+      // retained real-content frame. Serve the DURABLE validated frame, then
+      // the in-memory last frame, before ever returning the terminal icon.
+      const isTerminalIcon = result.thumbnail.minimized === true && result.thumbnail.source === 'icon';
+      if (isTerminalIcon) {
+        const durable = durableFrameResult(bindingId);
+        if (durable) return durable;
+        const lastFrame = lastFrameFor(bindingId);
+        if (lastFrame) return lastFrame;
+      }
+      thumbnailCache.set(key, { value: result, touched: stamp() });
+      if (thumbnailCache.size > WINDOW_CAPABILITY_THUMBNAIL_MAX_CACHE) {
+        const oldest = [...thumbnailCache.entries()].sort((a, b) => a[1].touched - b[1].touched)[0];
+        if (oldest) thumbnailCache.delete(oldest[0]);
+      }
+      // 021/028: retain the last validated REAL frame per binding (in-memory
+      // AND durably by stable descriptor key) so a later minimized window can
+      // serve a useful preview even when the live capture fails. Icons excluded.
+      if (!isTerminalIcon) {
+        retainLastFrame(bindingId, result);
+        const descriptor = descriptorForBinding(bindingId);
+        if (descriptor) {
+          try {
+            durableFrames.put(thumbnailDescriptorKey(descriptor), Buffer.from(result.thumbnail.image, 'base64'));
+          } catch {
+            /* a failed durable write never fails the request */
+          }
+        }
+      }
+      return result;
+    }
+    if (result.outcome === 'minimized') {
+      // 021/028: a live capture reports the window is minimized - serve the
+      // binding's DURABLE validated frame, then the in-memory last frame, as
+      // the useful minimized preview; only with neither is the honest
+      // minimized fallback returned.
+      const durable = durableFrameResult(bindingId);
+      if (durable) return durable;
+      const lastFrame = lastFrameFor(bindingId);
+      if (lastFrame) return lastFrame;
+    }
+    return result;
   }
 
   async function resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<WindowResolveResult> {
@@ -408,12 +801,124 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return { outcome: 'success', capability: bound.capability, descriptor: bound.descriptor };
   }
 
+  async function nativePickerSnapshot(): Promise<
+    | { outcome: 'success'; observations: WindowObservation[] }
+    | { outcome: 'helper-unavailable' | 'timeout'; error?: string }
+  > {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    let result = await factory.list();
+    if (result.outcome === 'timeout') result = await factory.list();
+    if (result.outcome !== 'success') {
+      return {
+        outcome: result.outcome === 'timeout' ? 'timeout' : 'helper-unavailable',
+        error: result.error,
+      };
+    }
+    return {
+      outcome: 'success',
+      observations: (result.windows ?? []).filter((observation) =>
+        trustedProcessId(observation, currentPid) !== null && observation.bounds !== null),
+    };
+  }
+
+  function nativeIdentity(observation: WindowObservation): NativePickerWindowIdentity | null {
+    const processId = trustedProcessId(observation, currentPid);
+    if (processId === null || !observation.bounds) return null;
+    return { processId, ...observation.bounds };
+  }
+
+  function sameNativeIdentity(observation: WindowObservation, identity: NativePickerWindowIdentity): boolean {
+    const current = nativeIdentity(observation);
+    return current !== null
+      && current.processId === identity.processId
+      && current.x === identity.x
+      && current.y === identity.y
+      && current.width === identity.width
+      && current.height === identity.height;
+  }
+
+  async function prepareNativePicker(memberDescriptors: PersistedWindowMemberDescriptor[]): Promise<NativePickerSeedResult> {
+    if (memberDescriptors.length > WINDOW_CAPABILITY_MAX_CANDIDATES) {
+      return { outcome: 'ambiguous', error: 'picker member count exceeds the bounded native selection limit' };
+    }
+    const snapshot = await nativePickerSnapshot();
+    if (snapshot.outcome !== 'success') return snapshot;
+    const seeds: NativePickerWindowIdentity[] = [];
+    const claimed = new Set<string>();
+    for (const descriptor of memberDescriptors) {
+      const matches = snapshot.observations.filter((observation) => {
+        const candidate = candidateForObservation(observation);
+        return candidate.descriptor.executableFingerprint === descriptor.executableFingerprint
+          && candidate.descriptor.title === descriptor.title;
+      });
+      if (matches.length === 0) return { outcome: 'missing', error: `layout member is not currently visible: ${descriptor.title}` };
+      if (matches.length > 1) return { outcome: 'ambiguous', error: `layout member is ambiguous: ${descriptor.title}` };
+      const identity = nativeIdentity(matches[0]!);
+      if (!identity) return { outcome: 'missing', error: `layout member is no longer eligible: ${descriptor.title}` };
+      const key = `${identity.processId}|${identity.x}|${identity.y}|${identity.width}|${identity.height}`;
+      if (claimed.has(key)) return { outcome: 'ambiguous', error: `layout members resolve to the same native window: ${descriptor.title}` };
+      claimed.add(key);
+      seeds.push(identity);
+    }
+    return { outcome: 'success', seeds };
+  }
+
+  async function bindNativePickerSelection(selections: NativePickerWindowIdentity[]): Promise<NativePickerBindResult> {
+    if (selections.length > WINDOW_CAPABILITY_MAX_CANDIDATES) {
+      return { outcome: 'ambiguous', error: 'picker selection exceeds the bounded native selection limit' };
+    }
+    const snapshot = await nativePickerSnapshot();
+    if (snapshot.outcome !== 'success') return snapshot;
+    const matched: WindowObservation[] = [];
+    const claimedTokens = new Set<RuntimeWindowId>();
+    for (const selection of selections) {
+      const matches = snapshot.observations.filter((observation) => sameNativeIdentity(observation, selection));
+      if (matches.length === 0) return { outcome: 'missing', error: 'a selected window changed before commit' };
+      if (matches.length > 1) return { outcome: 'ambiguous', error: 'a selected native identity matches more than one window' };
+      if (claimedTokens.has(matches[0]!.runtimeId)) return { outcome: 'ambiguous', error: 'the final picker set contains a duplicate window' };
+      claimedTokens.add(matches[0]!.runtimeId);
+      matched.push(matches[0]!);
+    }
+
+    // The helper is a single ordered native session. Bind the final snapshot
+    // in that same order instead of fanning several observe requests into it
+    // concurrently; a slow icon lookup or native observation must not make an
+    // otherwise valid Enter commit disappear behind a rejected pending call.
+    const boundWindows: Array<{
+      entry: ReturnType<typeof candidateForObservation>;
+      bound: WindowBindResult;
+    }> = [];
+    for (const observation of matched) {
+      const entry = candidateForObservation(observation);
+      entry.candidate.icon = await nativeIconFor(observation);
+      candidatesByListedId.set(entry.candidate.id, entry);
+      const bound = await bindCandidate(entry.candidate.id);
+      boundWindows.push({ entry, bound });
+      if (bound.outcome !== 'success') break;
+    }
+    const failed = boundWindows.find(({ bound }) => bound.outcome !== 'success');
+    if (failed && failed.bound.outcome !== 'success') return { outcome: failed.bound.outcome, error: failed.bound.error };
+    const windows = boundWindows.map(({ entry, bound }) => {
+      if (bound.outcome !== 'success') throw new Error('unreachable failed native picker binding');
+      return { descriptor: bound.descriptor, capability: bound.capability, candidate: entry.candidate };
+    });
+    return { outcome: 'success', windows };
+  }
+
   async function stop(): Promise<void> {
+    await endPeek().catch(() => undefined);
     if (stopped) return;
     stopped = true;
     candidatesByListedId.clear();
     bindings.clear();
+    bindingDescriptors.clear();
     observations.clear();
+    thumbnailCache.clear();
+    lastFrameCache.clear();
+    frameSeedAt.clear();
+    frameSeedInFlight.clear();
+    thumbnailCacheRevision = -1;
     if (factoryBuilt) {
       await factory.stop().catch(() => undefined);
     }
@@ -425,10 +930,15 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     observeCapability,
     minimizeCapability,
     restoreCapability,
+    beginPeekCapability,
+    endPeek,
     applyCapability,
+    thumbnailCapability,
     resolvePersisted,
     hoverAt,
     pickAt,
+    prepareNativePicker,
+    bindNativePickerSelection,
     stop,
   };
 }

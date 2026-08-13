@@ -95,6 +95,8 @@ const api = {
     get: () => ipcRenderer.invoke('host:settings:get'),
     setTransparentWindow: (enabled: boolean) =>
       ipcRenderer.invoke('host:settings:set-transparent-window', enabled),
+    saveWindowBounds: () => ipcRenderer.invoke('host:settings:save-window-bounds'),
+    clearWindowBounds: () => ipcRenderer.invoke('host:settings:clear-window-bounds'),
   },
 
   permissions: {

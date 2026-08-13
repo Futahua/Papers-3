@@ -34,15 +34,21 @@ describe('host preload settings bridge', () => {
       settings: {
         get: () => Promise<unknown>;
         setTransparentWindow: (enabled: boolean) => Promise<unknown>;
+        saveWindowBounds: () => Promise<unknown>;
+        clearWindowBounds: () => Promise<unknown>;
       };
     };
 
     await api.settings.get();
     await api.settings.setTransparentWindow(false);
+    await api.settings.saveWindowBounds();
+    await api.settings.clearWindowBounds();
 
     expect(mocks.invoke.mock.calls).toEqual([
       ['host:settings:get'],
       ['host:settings:set-transparent-window', false],
+      ['host:settings:save-window-bounds'],
+      ['host:settings:clear-window-bounds'],
     ]);
   });
 });

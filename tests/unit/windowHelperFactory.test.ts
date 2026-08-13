@@ -404,15 +404,94 @@ describe('windowHelperFactory composition', () => {
     expect(await h.factory.list()).toMatchObject({ outcome: 'helper-unavailable' });
   });
 
-  it('exported surface is capability methods plus start/stop/isReady only', () => {
+  it('exported surface is capability methods plus start/stop/isReady and the session revision only', () => {
     const h = harness();
     const surface = Object.keys(h.factory).sort();
     expect(surface).toEqual([
-      'apply', 'close', 'hover', 'isReady', 'list', 'minimize', 'observe', 'restore', 'start', 'stop',
+      'apply', 'cloak', 'close', 'hover', 'isReady', 'list', 'minimize', 'observe', 'restore', 'revision', 'start', 'stop', 'thumbnail', 'uncloak',
     ]);
     const raw = h.factory as unknown as Record<string, unknown>;
     for (const forbidden of ['spawn', 'send', 'transport', 'child', 'createProcess', 'resolvePaths', 'getClient', 'supervisor']) {
       expect(raw).not.toHaveProperty(forbidden);
     }
+  });
+
+  it('bumps the session revision only when a FRESH helper session is created (019G invalidation seam)', async () => {
+    const h = harness();
+    expect(h.factory.revision).toBe(0);
+    expect(await h.factory.start()).toBe('ready');
+    expect(h.factory.revision).toBe(1);
+    // An idempotent ready start performs no new session: revision unchanged.
+    expect(await h.factory.start()).toBe('ready');
+    expect(h.factory.revision).toBe(1);
+    // A crash + restart builds a fresh session: revision bumped.
+    const pending = h.factory.list();
+    await drainMicrotasks();
+    h.fake.exit(1, null);
+    await pending;
+    expect(await h.factory.start()).toBe('ready');
+    expect(h.factory.revision).toBe(2);
+    await h.factory.stop();
+    // A post-stop restart is a fresh session too.
+    expect(await h.factory.start()).toBe('ready');
+    expect(h.factory.revision).toBe(3);
+    await h.factory.stop();
+  });
+
+  it('routes a thumbnail request through the wire and delivers its payload (019G)', async () => {
+    const h = harness();
+    expect(await h.factory.start()).toBe('ready');
+    const token = 'T'.padEnd(33, 'a') as unknown as Parameters<typeof h.factory.thumbnail>[0];
+    const pending = h.factory.thumbnail(token, 240, 135);
+    await drainMicrotasks();
+    expect(h.fake.requests).toHaveLength(1);
+    expect(h.fake.requests[0]).toMatchObject({ method: 'thumbnail', target: token, maxWidth: 240, maxHeight: 135 });
+    const requestId = h.fake.requests[0]!['requestId'];
+    // ONE complete valid PNG buffer whose IHDR claims 240x135, so the strict
+    // response parser (signature + IHDR + byte bound) accepts it.
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const ihdr = Buffer.alloc(25);
+    ihdr.writeUInt32BE(13, 0);
+    ihdr.write('IHDR', 4, 'latin1');
+    ihdr.writeUInt32BE(240, 8);
+    ihdr.writeUInt32BE(135, 12);
+    ihdr[16] = 8;
+    ihdr[17] = 6;
+    const png = Buffer.concat([sig, ihdr]).toString('base64');
+    h.fake.stdout.pushText(JSON.stringify({
+      requestId,
+      method: 'thumbnail',
+      outcome: 'success',
+      thumbnail: { image: png, width: 240, height: 135 },
+      target: token,
+    }) + '\n');
+    expect(await pending).toMatchObject({ outcome: 'success', thumbnail: { image: png, width: 240, height: 135 } });
+    await h.factory.stop();
+  });
+
+  it('resolves a throwing-capture denied thumbnail that echoes its target (019GR4)', async () => {
+    const h = harness();
+    expect(await h.factory.start()).toBe('ready');
+    const token = 'T'.padEnd(33, 'b') as unknown as Parameters<typeof h.factory.thumbnail>[0];
+    const pending = h.factory.thumbnail(token, 240, 135);
+    await drainMicrotasks();
+    expect(h.fake.requests).toHaveLength(1);
+    expect(h.fake.requests[0]).toMatchObject({ method: 'thumbnail', target: token, maxWidth: 240, maxHeight: 135 });
+    const requestId = h.fake.requests[0]!['requestId'];
+    // A generic denied envelope (helper catch) that echoes the accepted target:
+    // the strict parser requires the target, so the client resolves it.
+    h.fake.stdout.pushText(JSON.stringify({
+      requestId,
+      method: 'thumbnail',
+      outcome: 'denied',
+      target: token,
+      error: 'boom capture failure',
+    }) + '\n');
+    const result = await pending;
+    expect(result.outcome).toBe('denied');
+    expect(result.error).toContain('boom');
+    // The token is a main-internal correlation field and never leaks.
+    expect(result).not.toHaveProperty('target');
+    await h.factory.stop();
   });
 });

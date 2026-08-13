@@ -143,8 +143,13 @@ interface HostBridge {
     setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
   };
   settings: {
-    get(): Promise<{ transparentWindow: boolean }>;
+    get(): Promise<{
+      transparentWindow: boolean;
+      windowBounds?: { x: number; y: number; width: number; height: number };
+    }>;
     setTransparentWindow(enabled: boolean): Promise<void>;
+    saveWindowBounds(): Promise<{ x: number; y: number; width: number; height: number } | null>;
+    clearWindowBounds(): Promise<void>;
   };
   permissions: {
     list(): Promise<

@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { BackpackProjectService } from '../../src/main/backpacks/backpackProjectService';
+import { BackpackProjectService, type BackpackProjectState } from '../../src/main/backpacks/backpackProjectService';
 
 const backpackId = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 const actionId = 'open-clips';
@@ -145,6 +145,110 @@ describe('BackpackProjectService', () => {
     ]);
 
     await expect(service.loadState(backpackId)).resolves.toEqual(second);
+  });
+
+  it('018V6: load waits for a same-project save and returns its committed snapshot', async () => {
+    await writeProject();
+    const initial = {
+      schemaVersion: 1 as const,
+      groups: [{ id: 'group-old', parentId: 'root', name: 'Old' }],
+      shortcuts: [],
+    };
+    const next = {
+      schemaVersion: 1 as const,
+      groups: [{ id: 'group-new', parentId: 'root', name: 'New' }],
+      shortcuts: [],
+    };
+    const base = new BackpackProjectService(bindingsFile);
+    await base.saveState(backpackId, JSON.stringify(initial));
+    let release!: () => void;
+    const rename = vi.fn((from: string, to: string) => new Promise<void>((resolve) => {
+      release = () => { void fs.rename(from, to).then(() => resolve()); };
+    }));
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, { rename });
+    const saving = service.saveState(backpackId, JSON.stringify(next));
+    await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1));
+    let loaded = false;
+    const loading = service.loadState(backpackId).then((state) => { loaded = true; return state; });
+    await Promise.resolve();
+    expect(loaded).toBe(false);
+    release();
+    await saving;
+    await expect(loading).resolves.toEqual(next);
+  });
+
+  it('018V6: different-project loads do not wait and failed saves leave old state readable', async () => {
+    await writeProject();
+    const otherId = 'bp-8f1e8c8b-8b3a-4e85-baa9-4a1a6b1f7db1';
+    const otherRoot = path.join(root, 'other-project');
+    await fs.mkdir(path.join(otherRoot, 'public'), { recursive: true });
+    await fs.writeFile(path.join(otherRoot, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: otherId, entry: 'public/index.html' }));
+    await fs.writeFile(path.join(otherRoot, 'actions.json'), JSON.stringify({ schemaVersion: 1, actions: [] }));
+    await fs.writeFile(path.join(otherRoot, 'public', 'index.html'), '<!doctype html>');
+    await fs.writeFile(bindingsFile, JSON.stringify({ schemaVersion: 1, projects: {
+      [backpackId]: { root: projectRoot }, [otherId]: { root: otherRoot },
+    }}));
+    const oldState = { schemaVersion: 1 as const, groups: [{ id: 'old', parentId: 'root', name: 'Old' }], shortcuts: [] };
+    const base = new BackpackProjectService(bindingsFile);
+    await base.saveState(backpackId, JSON.stringify(oldState));
+    const failed = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {
+      rename: vi.fn(async () => { throw new Error('replacement failed'); }),
+    });
+    const saving = failed.saveState(backpackId, JSON.stringify({ schemaVersion: 1, groups: [], shortcuts: [] }));
+    const savingError = saving.catch((error: unknown) => error);
+    await expect(failed.loadState(otherId)).resolves.toEqual({ schemaVersion: 1, groups: [], shortcuts: [] });
+    await expect(savingError).resolves.toMatchObject({ message: 'replacement failed' });
+    await expect(failed.loadState(backpackId)).resolves.toEqual(oldState);
+  });
+
+  it('018V6R: project B load resolves while project A save remains pending', async () => {
+    await writeProject();
+    const otherId = 'bp-8f1e8c8b-8b3a-4e85-baa9-4a1a6b1f7db1';
+    const otherRoot = path.join(root, 'other-project');
+    await fs.mkdir(path.join(otherRoot, 'public'), { recursive: true });
+    await fs.writeFile(path.join(otherRoot, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: otherId, entry: 'public/index.html' }));
+    await fs.writeFile(path.join(otherRoot, 'actions.json'), JSON.stringify({ schemaVersion: 1, actions: [] }));
+    await fs.writeFile(path.join(otherRoot, 'public', 'index.html'), '<!doctype html>');
+    await fs.writeFile(bindingsFile, JSON.stringify({ schemaVersion: 1, projects: {
+      [backpackId]: { root: projectRoot }, [otherId]: { root: otherRoot },
+    }}));
+    let release!: () => void;
+    const rename = vi.fn((from: string, to: string) => new Promise<void>((resolve) => {
+      release = () => { void fs.rename(from, to).then(() => resolve()); };
+    }));
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, { rename });
+    const saving = service.saveState(backpackId, JSON.stringify({ schemaVersion: 1, groups: [], shortcuts: [] }));
+    await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1));
+    const otherLoad = service.loadState(otherId);
+    await expect(otherLoad).resolves.toEqual({ schemaVersion: 1, groups: [], shortcuts: [] });
+    release();
+    await saving;
+  });
+
+  it('018V6R2: load drains appended same-project saves before reading state', async () => {
+    await writeProject();
+    const states = [
+      { schemaVersion: 1 as const, groups: [{ id: 'a1', parentId: 'root', name: 'A1' }], shortcuts: [] },
+      { schemaVersion: 1 as const, groups: [{ id: 'a2', parentId: 'root', name: 'A2' }], shortcuts: [] },
+    ];
+    const releases: Array<() => void> = [];
+    const rename = vi.fn((from: string, to: string) => new Promise<void>((resolve) => {
+      releases.push(() => { void fs.rename(from, to).then(() => resolve()); });
+    }));
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, { rename });
+    const savingA1 = service.saveState(backpackId, JSON.stringify(states[0]));
+    await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(1));
+    const loading = service.loadState(backpackId);
+    const savingA2 = service.saveState(backpackId, JSON.stringify(states[1]));
+    releases[0]!();
+    await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(2));
+    let loaded: BackpackProjectState | null | undefined;
+    void loading.then((state) => { loaded = state; });
+    await Promise.resolve();
+    expect(loaded).toBeUndefined();
+    releases[1]!();
+    await Promise.all([savingA1, savingA2]);
+    await expect(loading).resolves.toEqual(states[1]);
   });
 
   it('launches only a shortcut target held by the project state', async () => {
@@ -399,5 +503,189 @@ describe('BackpackProjectService', () => {
 
     await writeProject({ entry: '../outside.html' });
     await expect(service.open(backpackId)).rejects.toThrow(/outside/i);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Transient state replacement (Assignment 006): Windows intermittently
+  // denies the state.json rename with EPERM while another process briefly
+  // holds a deny-delete/replace handle. The replacement retries only that
+  // transient contention for a short bounded interval; the old complete state
+  // stays readable throughout, and exhausted or non-transient errors surface
+  // with their original context. The rename/delay boundary is injected, so
+  // these tests exercise the real retry behavior with no real-time sleeps.
+  // ---------------------------------------------------------------------------
+
+  function transientError(code: string): NodeJS.ErrnoException {
+    return Object.assign(new Error(`rename ${code}`), { code });
+  }
+
+  function validState(name: string) {
+    return {
+      schemaVersion: 1 as const,
+      groups: [{ id: `group-${name}`, parentId: 'root', name }],
+      shortcuts: [],
+    };
+  }
+
+  async function tempFiles(): Promise<string[]> {
+    return (await fs.readdir(projectRoot)).filter((file) => file.includes('.tmp-'));
+  }
+
+  it('retries transient EPERM contention and resolves with the complete state', async () => {
+    await writeProject();
+    const delays: number[] = [];
+    let failuresLeft = 2;
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {
+      rename: async (from, to) => {
+        if (failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw transientError('EPERM');
+        }
+        await fs.rename(from, to);
+      },
+      delay: async (ms) => { delays.push(ms); },
+    });
+
+    const state = validState('one');
+    await service.saveState(backpackId, JSON.stringify(state));
+
+    expect(failuresLeft).toBe(0);
+    expect(delays).toEqual([25, 50]);
+    await expect(service.loadState(backpackId)).resolves.toEqual(state);
+    await expect(tempFiles()).resolves.toEqual([]);
+  });
+
+  it('EBUSY and ENOTEMPTY follow the same bounded retry path', async () => {
+    for (const code of ['EBUSY', 'ENOTEMPTY'] as const) {
+      await writeProject();
+      const delays: number[] = [];
+      let failuresLeft = 1;
+      const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {
+        rename: async (from, to) => {
+          if (failuresLeft > 0) {
+            failuresLeft -= 1;
+            throw transientError(code);
+          }
+          await fs.rename(from, to);
+        },
+        delay: async (ms) => { delays.push(ms); },
+      });
+
+      const state = validState(code);
+      await service.saveState(backpackId, JSON.stringify(state));
+      expect(delays).toEqual([25]);
+      await expect(service.loadState(backpackId)).resolves.toEqual(state);
+    }
+  });
+
+  it('a non-transient error is attempted once and rethrown unchanged', async () => {
+    await writeProject();
+    const delays: number[] = [];
+    const permanent = transientError('EACCES');
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {
+      rename: async () => { throw permanent; },
+      delay: async (ms) => { delays.push(ms); },
+    });
+
+    await expect(
+      service.saveState(backpackId, JSON.stringify(validState('never'))),
+    ).rejects.toBe(permanent);
+    expect(delays).toEqual([]);
+  });
+
+  it('persistent transient failure stops at the attempt limit, keeps the old state, cleans the temp file', async () => {
+    await writeProject();
+    const first = validState('first');
+    const service = new BackpackProjectService(bindingsFile);
+    await service.saveState(backpackId, JSON.stringify(first));
+    const originalBytes = await fs.readFile(path.join(projectRoot, 'state.json'));
+
+    const delays: number[] = [];
+    const failing = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {
+      rename: async () => { throw transientError('EPERM'); },
+      delay: async (ms) => { delays.push(ms); },
+    });
+
+    await expect(
+      failing.saveState(backpackId, JSON.stringify(validState('second'))),
+    ).rejects.toMatchObject({ code: 'EPERM' });
+
+    expect(delays).toEqual([25, 50, 100, 200, 400]);
+    expect(await fs.readFile(path.join(projectRoot, 'state.json'))).toEqual(originalBytes);
+    await expect(tempFiles()).resolves.toEqual([]);
+  });
+
+  it('a successful retry leaves no temp file behind', async () => {
+    await writeProject();
+    let failuresLeft = 1;
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {
+      rename: async (from, to) => {
+        if (failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw transientError('EPERM');
+        }
+        await fs.rename(from, to);
+      },
+      delay: async () => undefined,
+    });
+
+    await service.saveState(backpackId, JSON.stringify(validState('clean')));
+    await expect(tempFiles()).resolves.toEqual([]);
+  });
+
+  it('overlapping saves stay serialized and the last requested state wins even while the first retries', async () => {
+    await writeProject();
+    const delays: number[] = [];
+    let released = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let failuresLeft = 1;
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {
+      rename: async (from, to) => {
+        if (failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw transientError('EPERM');
+        }
+        await fs.rename(from, to);
+      },
+      delay: async (ms) => {
+        delays.push(ms);
+        if (!released) await gate;
+      },
+    });
+
+    const firstSave = service.saveState(backpackId, JSON.stringify(validState('first')));
+    // The first save's retry delay is held open, so the second request queues.
+    const secondSave = service.saveState(backpackId, JSON.stringify(validState('second')));
+    released = true;
+    release();
+
+    await Promise.all([firstSave, secondSave]);
+    expect(delays).toEqual([25]);
+    await expect(service.loadState(backpackId)).resolves.toEqual(validState('second'));
+  });
+
+  it('a queued save still runs after an earlier save exhausts retries', async () => {
+    await writeProject();
+    const delays: number[] = [];
+    // The first save's replacement exhausts all six attempts; from then on
+    // the rename succeeds, so the queued next save persists normally.
+    let attempts = 0;
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {
+      rename: async (from, to) => {
+        attempts += 1;
+        if (attempts <= 6) throw transientError('EPERM');
+        await fs.rename(from, to);
+      },
+      delay: async (ms) => { delays.push(ms); },
+    });
+    await expect(
+      service.saveState(backpackId, JSON.stringify(validState('lost'))),
+    ).rejects.toMatchObject({ code: 'EPERM' });
+    expect(delays).toEqual([25, 50, 100, 200, 400]);
+
+    // The queue recovers: the next save runs normally and persists its state.
+    await service.saveState(backpackId, JSON.stringify(validState('recovered')));
+    await expect(service.loadState(backpackId)).resolves.toEqual(validState('recovered'));
   });
 });

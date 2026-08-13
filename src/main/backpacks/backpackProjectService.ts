@@ -37,6 +37,50 @@ export interface BackpackProjectState {
   shortcuts: unknown[];
 }
 
+/** Injectable boundary for the atomic state replacement. The rename and the
+ * delay are injected so unit tests exercise real retry behavior without
+ * real-time sleeps; production defaults touch the real fs. */
+export interface AtomicReplaceOptions {
+  rename?: (from: string, to: string) => Promise<void>;
+  delay?: (ms: number) => Promise<void>;
+}
+
+/** Windows-style transient replacement contention, retried for a short
+ * bounded interval. Everything else is a real error and surfaces at once. */
+const TRANSIENT_RENAME_CODES = new Set(['EPERM', 'EBUSY', 'ENOTEMPTY']);
+
+/** One initial attempt plus five retries after 25/50/100/200/400 ms —
+ * a bounded total wait just under one second, then the original error. */
+export const RENAME_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const;
+
+/**
+ * Atomically replaces `to` with `from` via rename, retrying only transient
+ * Windows replacement contention (EPERM, EBUSY, ENOTEMPTY) for a short
+ * bounded interval. The old file is never deleted, truncated or copied
+ * over: a failed rename leaves the prior complete state readable, and the
+ * caller keeps the temp file for finally cleanup. Non-transient errors and
+ * exhausted retries rethrow the original error with its code/path context.
+ */
+export async function replaceFileAtomically(
+  from: string,
+  to: string,
+  options: AtomicReplaceOptions = {},
+): Promise<void> {
+  const rename = options.rename ?? ((source, dest) => fs.rename(source, dest));
+  const delay = options.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 0; attempt <= RENAME_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (typeof code !== 'string' || !TRANSIENT_RENAME_CODES.has(code)) throw error;
+      if (attempt === RENAME_RETRY_DELAYS_MS.length) throw error;
+      await delay(RENAME_RETRY_DELAYS_MS[attempt] as number);
+    }
+  }
+}
+
 export interface DroppedBackpackProjectTarget {
   name: string;
   target: string;
@@ -148,6 +192,7 @@ export class BackpackProjectService {
     private readonly openTarget?: (target: string) => Promise<string>,
     private readonly resolveTargetIcon?: (target: string) => Promise<string | null>,
     private readonly revealTarget?: (target: string) => Promise<void>,
+    private readonly replaceOptions?: AtomicReplaceOptions,
   ) {}
 
   private async binding(backpackId: string): Promise<ProjectBinding | null> {
@@ -282,6 +327,12 @@ export class BackpackProjectService {
   async loadState(backpackId: string): Promise<BackpackProjectState | null> {
     const manifest = await this.manifest(backpackId);
     if (!manifest) throw new Error('Backpack project is not bound on this machine.');
+    while (true) {
+      const pending = this.stateSaveQueues.get(backpackId);
+      if (!pending) break;
+      await pending.catch(() => undefined);
+      if (this.stateSaveQueues.get(backpackId) === pending) break;
+    }
     const statePath = path.join(manifest.root, 'state.json');
     try {
       const parsed = JSON.parse(await fs.readFile(statePath, 'utf8')) as BackpackProjectState;
@@ -351,7 +402,11 @@ export class BackpackProjectService {
       await fs.writeFile(tempPath, JSON.stringify(parsed, null, 2) + '\n', {
         encoding: 'utf8',
       });
-      await fs.rename(tempPath, statePath);
+      // Windows intermittently denies replacing the existing state.json with
+      // EPERM while another process briefly holds a deny-delete/replace
+      // handle. Retry only that transient contention for a bounded interval;
+      // a failed attempt leaves the prior complete state untouched.
+      await replaceFileAtomically(tempPath, statePath, this.replaceOptions);
     } finally {
       await fs.rm(tempPath, { force: true }).catch(() => undefined);
     }

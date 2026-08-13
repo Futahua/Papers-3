@@ -68,6 +68,31 @@ function successWithObservation(requestId: number, method: string, id: string, s
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Valid 1x1 PNG as base64 (decodes to 70 bytes, correct PNG signature,
+ * IHDR claims 1x1). */
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/** Builds ONE complete valid PNG byte buffer (signature + IHDR claiming the
+ * given dimensions, optionally padded to `totalBytes`) and base64-encodes it
+ * as a whole, so the strict parser's IHDR/byte-bound checks are exercised on
+ * a real buffer rather than concatenated fragments. */
+function pngWithSize(width: number, height: number, totalBytes?: number): string {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(25);
+  ihdr.writeUInt32BE(13, 0); // chunk length
+  ihdr.write('IHDR', 4, 'latin1'); // chunk type
+  ihdr.writeUInt32BE(width, 8);
+  ihdr.writeUInt32BE(height, 12);
+  ihdr[16] = 8; // bit depth
+  ihdr[17] = 6; // color type RGBA
+  let buffer = Buffer.concat([sig, ihdr]);
+  if (totalBytes !== undefined && totalBytes > buffer.length) {
+    buffer = Buffer.concat([buffer, Buffer.alloc(totalBytes - buffer.length, 0)]);
+  }
+  return buffer.toString('base64');
+}
+
 describe('window capability client', () => {
   it('correlates out-of-order replies to the right requests', async () => {
     const fake = fakeTransport();
@@ -229,12 +254,89 @@ describe('window capability client', () => {
     const client = createWindowCapabilityClient({ transport: fake.transport });
     const surface = Object.keys(client);
     expect(surface.sort()).toEqual(
-      ['apply', 'close', 'handleMessage', 'hover', 'list', 'minimize', 'observe', 'pendingCount', 'rejectAllPending', 'restore', 'stop'].sort(),
+      ['apply', 'cloak', 'close', 'handleMessage', 'hover', 'list', 'minimize', 'observe', 'pendingCount', 'rejectAllPending', 'restore', 'stop', 'thumbnail', 'uncloak'].sort(),
     );
     for (const name of surface) {
       expect(name.toLowerCase()).not.toMatch(/send|exec|invoke|shell|spawn|launch|eval/);
     }
-    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'minimize', 'restore', 'apply', 'close', 'hover']);
+    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'minimize', 'restore', 'cloak', 'uncloak', 'apply', 'close', 'hover', 'thumbnail']);
+  });
+
+  it('routes a thumbnail request and forwards the bounded thumbnail payload (019G)', async () => {
+    const fake = fakeTransport();
+    const client = createWindowCapabilityClient({ transport: fake.transport });
+    const thumbPromise = client.thumbnail(runtimeId('AAAA'), 240, 135);
+    const sent = fake.sent[0]!;
+    expect(sent).toMatchObject({ method: 'thumbnail', target: 'AAAA', maxWidth: 240, maxHeight: 135 });
+    const image = pngWithSize(240, 135);
+    fake.deliver({
+      ...response(sent.requestId, 'thumbnail', 'success'),
+      thumbnail: { image, width: 240, height: 135 },
+      target: 'AAAA',
+    });
+    const result = await thumbPromise;
+    expect(result.outcome).toBe('success');
+    expect(result.thumbnail).toEqual({ image, width: 240, height: 135 });
+    // A thumbnail reply for the wrong method must never satisfy it.
+    const second = client.thumbnail(runtimeId('BBBB'));
+    const sent2 = fake.sent[1]!;
+    fake.deliver({ ...response(sent2.requestId, 'observe', 'success'), observation: observationFor('BBBB') });
+    const stale = await second;
+    expect(stale.outcome).toBe('timeout');
+  });
+
+  it('forwards and validates the 024 icon-preview fields (source/minimized)', async () => {
+    const fake = fakeTransport();
+    const client = createWindowCapabilityClient({ transport: fake.transport });
+    const thumbPromise = client.thumbnail(runtimeId('AAAA'), 240, 135);
+    const sent = fake.sent[0]!;
+    const image = pngWithSize(240, 135);
+    fake.deliver({
+      ...response(sent.requestId, 'thumbnail', 'success'),
+      thumbnail: { image, width: 240, height: 135, source: 'icon', minimized: true },
+      target: 'AAAA',
+    });
+    const result = await thumbPromise;
+    expect(result.outcome).toBe('success');
+    expect(result.thumbnail).toEqual({ image, width: 240, height: 135, source: 'icon', minimized: true });
+    // A malformed 024 field (unknown source) is rejected: the pending request
+    // is not satisfied and resolves as a typed timeout.
+    const fake2 = fakeTransport();
+    const client2 = createWindowCapabilityClient({ transport: fake2.transport, timeoutMs: 40 });
+    const bad = client2.thumbnail(runtimeId('BBBB'), 240, 135);
+    const sent2 = fake2.sent[0]!;
+    fake2.deliver({
+      ...response(sent2.requestId, 'thumbnail', 'success'),
+      thumbnail: { image, width: 240, height: 135, source: 'bogus' },
+      target: 'BBBB',
+    });
+    const badResult = await bad;
+    expect(badResult.outcome).toBe('timeout');
+  });
+
+  it('ignores a thumbnail response whose echoed target does not match (019GR3)', async () => {
+    const fake = fakeTransport();
+    const client = createWindowCapabilityClient({ transport: fake.transport, timeoutMs: 40 });
+    const pending = client.thumbnail(runtimeId('AAAA'), 240, 135);
+    const sent = fake.sent[0]!;
+    const image = pngWithSize(240, 135);
+    // Same requestId AND method but a DIFFERENT target: must be ignored.
+    fake.deliver({
+      ...response(sent.requestId, 'thumbnail', 'success'),
+      thumbnail: { image, width: 240, height: 135 },
+      target: 'BBBB',
+    });
+    expect(client.pendingCount).toBe(1);
+    // The response for the exact target resolves the pending request.
+    fake.deliver({
+      ...response(sent.requestId, 'thumbnail', 'success'),
+      thumbnail: { image, width: 240, height: 135 },
+      target: 'AAAA',
+    });
+    const result = await pending;
+    expect(result.outcome).toBe('success');
+    // The token is a strict main-internal correlation field: never exposed.
+    expect(result).not.toHaveProperty('target');
   });
 });
 
@@ -464,6 +566,61 @@ describe('window capability contract types', () => {
     fake.deliver({ ...response(sent2.requestId, 'observe', 'success'), observation: observationFor('A') });
     const stale = await hover2;
     expect(stale.outcome).toBe('timeout');
+  });
+
+  it('enforces the strict 019G thumbnail payload shape (019GR2 + 019GR3 target)', () => {
+    // Successful thumbnail must carry a valid bounded thumbnail (PNG IHDR
+    // matching the claim) AND the echoed helper target.
+    const valid = { requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(240, 135), width: 240, height: 135 }, target: 'AAAA' };
+    expect(parseWindowResponse(valid)).toEqual(valid);
+    // The 1x1 fixture must claim 1x1 (IHDR-correct).
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: PNG_1X1, width: 1, height: 1 }, target: 'AAAA' })).not.toBeNull();
+    // Every thumbnail response must carry the target (success AND fallback).
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 } })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'minimized' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'minimized', target: 'AAAA' })).toEqual({ requestId: 1, method: 'thumbnail', outcome: 'minimized', target: 'AAAA' });
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'minimized', target: '' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 }, target: 42 })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: '!!!!', width: 1, height: 1 }, target: 'AAAA' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(1, 1), width: 321, height: 1 }, target: 'AAAA' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(1, 1), width: 1, height: 181 }, target: 'AAAA' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(1, 1), width: 0, height: 1 }, target: 'AAAA' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(1, 1), width: 1.5, height: 1 }, target: 'AAAA' })).toBeNull();
+    // IHDR width/height must equal the claimed width/height.
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(2, 3), width: 2, height: 4 }, target: 'AAAA' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(2, 3), width: 3, height: 3 }, target: 'AAAA' })).toBeNull();
+    // The nested thumbnail must have EXACT keys { image, width, height }.
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1, extra: true }, target: 'AAAA' })).toBeNull();
+    // The top-level success envelope must have EXACT known keys.
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 }, target: 'AAAA', observation: observationFor('A') })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 }, target: 'AAAA', extra: true })).toBeNull();
+    // `minimized` is a valid payload-free fallback ONLY for thumbnail.
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'minimized', thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 }, target: 'AAAA' })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'minimized', target: 'AAAA', extra: true })).toBeNull();
+    expect(parseWindowResponse({ requestId: 1, method: 'observe', outcome: 'minimized' })).toBeNull();
+    // Every other fallback is a payload-free envelope-only shape.
+    for (const outcome of ['missing', 'denied', 'malformed', 'helper-unavailable', 'timeout']) {
+      expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome, target: 'AAAA' })).not.toBeNull();
+      expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome, target: 'AAAA', thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 } })).toBeNull();
+      expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome, target: 'AAAA', extra: true })).toBeNull();
+      expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome })).toBeNull();
+    }
+    // No other method may smuggle a thumbnail payload.
+    expect(parseWindowResponse({ requestId: 1, method: 'observe', outcome: 'success', observation: observationFor('A'), thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 } })).toBeNull();
+  });
+
+  it('rejects a decoded PNG over the 256 KiB byte bound and a non-PNG image (019GR2)', () => {
+    // ONE complete valid PNG byte buffer (IHDR claims 1x1) oversized to
+    // 262145 decoded bytes: rejected by the decoded-byte bound, not by the
+    // header, because the header itself is valid.
+    const over = pngWithSize(1, 1, 262145);
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: over, width: 1, height: 1 }, target: 'AAAA' })).toBeNull();
+    // A non-PNG payload (valid base64, wrong signature) is rejected.
+    const wrongSig = Buffer.concat([Buffer.from('notapng!'), Buffer.alloc(8, 0)]).toString('base64');
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: wrongSig, width: 1, height: 1 }, target: 'AAAA' })).toBeNull();
+    // A valid minimal PNG within the bound passes when the claim matches.
+    expect(parseWindowResponse({ requestId: 1, method: 'thumbnail', outcome: 'success', thumbnail: { image: pngWithSize(2, 3), width: 2, height: 3 }, target: 'AAAA' })).not.toBeNull();
   });
 
   it('the persisted descriptor shape structurally cannot hold a runtime id', () => {

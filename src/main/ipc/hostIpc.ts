@@ -61,6 +61,8 @@ export interface HostFacade {
   setTitleBarOverlay(color: string, symbolColor: string): void;
   getSettings(): unknown;
   setTransparentWindow(enabled: boolean): Promise<void>;
+  saveWindowBounds(): Promise<{ x: number; y: number; width: number; height: number } | null>;
+  clearWindowBounds(): Promise<void>;
 
   listPermissions(): unknown;
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
@@ -222,6 +224,8 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:settings:set-transparent-window', (_e, enabled) =>
     facade.setTransparentWindow(z.boolean().parse(enabled)),
   );
+  handle('host:settings:save-window-bounds', () => facade.saveWindowBounds());
+  handle('host:settings:clear-window-bounds', () => facade.clearWindowBounds());
 
   handle('host:permissions:list', () => facade.listPermissions());
   handle('host:permissions:revoke', (_e, backpackId, programId, capability) =>

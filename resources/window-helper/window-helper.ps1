@@ -1,11 +1,13 @@
 # Papers-owned window helper - long-lived JSON-lines helper.
 #
 # Behavior is LOCKED to the accepted protocol snapshot 013R5F plus the
-# reviewed Assignment 016 additions (protocolVersion '016' in manifest.json):
+# reviewed Assignment 016 additions (protocolVersion '016' in manifest.json)
+# plus the reviewed Assignment 019G thumbnail method (protocolVersion '017'):
 # protocol, session tokens, identity revalidation, capacity limits and native
 # behavior are preserved exactly; 016 adds the task-worthy eligibility filter
 # to list, the hover method (task-worthy window at a point, for direct
-# onscreen pick), and offscreen-safe bounds clamping in apply. This file is
+# onscreen pick), and offscreen-safe bounds clamping in apply; 019G adds the
+# thumbnail method (bounded PrintWindow full-content capture). This file is
 # the packaged runtime asset; do not drift from the manifest hash without a
 # reviewed protocol change.
 #
@@ -26,7 +28,8 @@
 #   forbidden command-like fields is typed 'denied'; a valid requestId+method
 #   with malformed target/bounds/x/y/state is typed 'malformed'.
 # - Fail-closed command vocabulary: list/observe/minimize/restore/apply/
-#   close/hover (016). Extra command-like keys are never executed.
+#   close/hover (016) + thumbnail (019G). Extra command-like keys are never
+#   executed.
 #
 # 016 method `hover`: {requestId, method:'hover', x, y} resolves the TOPMOST
 # TASK-WORTHY window at the point (helper-owned eligibility: cloaked
@@ -42,6 +45,37 @@
 # stale/disconnected-monitor rectangle can never move a window offscreen.
 # Persisted per-layout intent is unchanged; clamping is the runtime
 # application only.
+#
+# 019G method `thumbnail`: {requestId, method:'thumbnail', target, maxWidth?,
+# maxHeight?} rechecks the exact token identity in the SAME request handler
+# and then captures the window's FULL content with PrintWindow(
+# PW_RENDERFULLCONTENT), scaled to fit within (maxWidth, maxHeight). Bounds:
+# maxWidth <= 320, maxHeight <= 180, positive integers; absent dimensions
+# default to 240x135. The response is success with `thumbnail` = { image
+# (base64 PNG, decoded <= 256 KiB), width, height } or a payload-free typed
+# fallback outcome: 'minimized' (window is minimized), 'missing' (window
+# vanished), 'denied' (unsupported/oversized/no-paint capture). PrintWindow is
+# BEST EFFORT: an unsupported application is an honest typed fallback, never a
+# fabricated placeholder.
+#
+# 019GR2 corrections: (a) the thumbnail request is STRICT - only the exact
+# keys requestId, method, target and the optional maxWidth/maxHeight are
+# accepted; EVERY extra key is rejected. (b) PrintWindow cannot scale to a
+# smaller destination HDC, so the capture happens into a bounded NATIVE-SIZE
+# source bitmap (unsafe dimensions/pixel area rejected before allocation) and
+# the FULL source rectangle is then scaled aspect-preservingly into the
+# <=320x180 output. (c) PrintWindow can return TRUE without painting: the
+# source is prefilled with a distinctive nonuniform sentinel and an unchanged
+# capture (checksum equal) is typed 'denied'.
+#
+# 019GR3: every thumbnail response (success AND fallback) echoes the accepted
+# helper `target` token as a strict main-internal correlation field; the
+# Papers client resolves a pending thumbnail only when requestId, method AND
+# target all match, and strips the token before it reaches the service/IPC/page.
+#
+# 019GR4: an unexpected exception from an accepted thumbnail capture also
+# echoes the accepted target on its generic denied envelope (the strict parser
+# would reject a target-less fallback and the client would time out).
 #
 # Session tokens:
 # - The wire id is a high-entropy helper-session TOKEN ('T'+32 hex GUID),
@@ -85,7 +119,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot/window-capability.ps1"
 
-$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'apply', 'close', 'hover')
+$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'cloak', 'uncloak', 'apply', 'close', 'hover', 'thumbnail')
 $FORBIDDEN_KEYS = @('exec', 'command', 'script', 'path', 'handle', 'env', 'args', 'cmd', 'powershell', 'invoke', 'shell')
 $MAX_SAFE_REQUEST_ID = 9007199254740991L
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
@@ -281,7 +315,13 @@ function Test-WhRequestShape {
   $id = [long]$requestId
   foreach ($key in $Request.Keys) {
     if ($FORBIDDEN_KEYS -contains ([string]$key).ToLowerInvariant()) {
-      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' $null 'command-like fields are not accepted') }
+      # 019GR3: a thumbnail denial with a valid target echoes it so the strict
+      # parser/client can still correlate requestId + method + target.
+      $payload = $null
+      if ($method -eq 'thumbnail' -and $Request['target'] -is [string] -and ([string]$Request['target']).Length -gt 0) {
+        $payload = @{ target = [string]$Request['target'] }
+      }
+      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' $payload 'command-like fields are not accepted') }
     }
   }
   if ($method -eq 'hover') {
@@ -302,6 +342,35 @@ function Test-WhRequestShape {
     }
     if (-not (Test-PlatformBounds $Request['bounds'])) {
       return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'apply requires platform-representable bounds (finite, within Int32; width/height at least 1 after rounding away from zero)') }
+    }
+  }
+  if ($method -eq 'thumbnail') {
+    # 019GR3: every thumbnail fallback echoes the accepted target so the strict
+    # parser/client can correlate requestId + method + target. The request's
+    # target has already been validated as a non-empty string above.
+    $thumbTarget = [string]$Request['target']
+    foreach ($name in @('maxWidth', 'maxHeight')) {
+      if (-not $Request.ContainsKey($name)) { continue }
+      $value = $Request[$name]
+      if ($value -isnot [int] -and $value -isnot [long]) {
+        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' @{ target = $thumbTarget } 'thumbnail maxWidth/maxHeight must be integers') }
+      }
+      $n = [long]$value
+      $limit = if ($name -eq 'maxWidth') { 320 } else { 180 }
+      if ($n -le 0 -or $n -gt $limit) {
+        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' @{ target = $thumbTarget } ("thumbnail $name out of range (1..$limit)") ) }
+      }
+    }
+    # 019GR2: strict thumbnail schema - only the exact documented keys
+    # (requestId, method, target and the optional maxWidth/maxHeight) are
+    # accepted. EVERY extra key is rejected, not only command-like names.
+    $allowed = @('requestId', 'method', 'target')
+    if ($Request.ContainsKey('maxWidth')) { $allowed += 'maxWidth' }
+    if ($Request.ContainsKey('maxHeight')) { $allowed += 'maxHeight' }
+    foreach ($key in $Request.Keys) {
+      if ($allowed -notcontains ([string]$key)) {
+        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' @{ target = $thumbTarget } 'thumbnail request must contain only requestId, method, target and optional maxWidth/maxHeight') }
+      }
     }
   }
   return @{ Valid = $true; RequestId = $id; Method = [string]$method }
@@ -360,6 +429,54 @@ function Invoke-WhRequest {
       }
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
     }
+    # ---- 019G thumbnail: identity gate immediately before capture ----------
+    if ($Method -eq 'thumbnail') {
+      $identity = Test-WhTokenIdentity $target
+      if (-not $identity.ok) {
+        # 019GR3: echo the accepted helper target on every fallback so the
+        # client can correlate requestId + method + target.
+        return (ConvertTo-WhResponse $RequestId $Method $identity.outcome @{ target = $target } $identity.error)
+      }
+      $maxWidth = 240
+      $maxHeight = 135
+      if ($Request.ContainsKey('maxWidth')) { $maxWidth = [int]$Request['maxWidth'] }
+      if ($Request.ContainsKey('maxHeight')) { $maxHeight = [int]$Request['maxHeight'] }
+      $entry = Resolve-WhSessionToken $target
+      # 040I: 48x48 is the private post-selection icon request. It is kept on
+      # the existing strictly correlated thumbnail envelope, but resolves only
+      # the window/class icon and never captures full window content. Crucially,
+      # this happens per selected member after commit—not during `list`.
+      $capture = if ($maxWidth -eq 48 -and $maxHeight -eq 48) {
+        Get-WhWindowIcon ([IntPtr]$entry.hwnd) $maxWidth $maxHeight
+      } else {
+        Get-WhWindowThumbnail ([IntPtr]$entry.hwnd) $maxWidth $maxHeight
+      }
+      if ($capture.outcome -ne 'success') {
+        return (ConvertTo-WhResponse $RequestId $Method ([string]$capture.outcome) @{ target = $target } ([string]$capture.error))
+      }
+      $thumb = [ordered]@{
+        image = [string]$capture.image
+        width = [int]$capture.width
+        height = [int]$capture.height
+      }
+      # 024: pass the honest capture source ('capture' | 'icon') and the window
+      # state at capture time through to the client so minimized / acad-like
+      # icon fallbacks are presented correctly.
+      if ($capture.ContainsKey('source')) { $thumb['source'] = [string]$capture.source }
+      if ($capture.ContainsKey('minimized')) { $thumb['minimized'] = [bool]$capture.minimized }
+      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ thumbnail = $thumb; target = $target } $null)
+    }
+    if ($Method -eq 'uncloak') {
+      # A cloaked window is intentionally absent from task-worthy enumeration.
+      # The still-issued session token plus live HWND are the bounded gate.
+      $entry = Resolve-WhSessionToken $target
+      $runtimeId = [IntPtr]$entry.hwnd
+      if (-not (Test-WhWindowAlive $runtimeId)) {
+        return (ConvertTo-WhResponse $RequestId $Method 'missing' $null 'window is gone')
+      }
+      Uncloak-WhWindow $runtimeId
+      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
+    }
     # ---- mutations: identity gate BEFORE any native act -------------------
     $identity = Test-WhTokenIdentity $target
     if (-not $identity.ok) {
@@ -373,6 +490,10 @@ function Invoke-WhRequest {
     }
     if ($Method -eq 'restore') {
       Restore-WhWindow $runtimeId
+      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
+    }
+    if ($Method -eq 'cloak') {
+      Cloak-WhWindow $runtimeId
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
     }
     if ($Method -eq 'apply') {
@@ -393,7 +514,15 @@ function Invoke-WhRequest {
     }
     return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'method not permitted')
   } catch {
-    return (ConvertTo-WhResponse $RequestId $Method 'denied' $null (Get-BoundedErrorText $_))
+    # 019GR4: an unexpected exception from an accepted THUMBNAIL capture must
+    # still echo the exact accepted target, so the strict parser/client can
+    # correlate requestId + method + target instead of timing out on a
+    # target-less denied envelope. All other methods keep the null payload.
+    $payload = $null
+    if ($Method -eq 'thumbnail' -and $target -is [string] -and $target.Length -gt 0) {
+      $payload = @{ target = $target }
+    }
+    return (ConvertTo-WhResponse $RequestId $Method 'denied' $payload (Get-BoundedErrorText $_))
   }
 }
 

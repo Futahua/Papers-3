@@ -15,6 +15,8 @@ function fakeSession(): WindowPickSession & { calls: unknown[]; results: Array<(
       results.push(options.onResult);
       return { outcome: 'started' as const };
     },
+    stage: () => { calls.push('stage'); },
+    commit: async () => { calls.push('commit'); },
     cancel: async () => undefined,
   } as unknown as WindowPickSession & { calls: unknown[]; results: Array<(r: unknown) => void> };
 }
@@ -67,6 +69,22 @@ describe('window pick IPC', () => {
     await expect(invoke('papers:window-pick:cancel', 1, { x: 1 })).rejects.toThrow('must be empty');
     const ok = await invoke('papers:window-pick:cancel', 1, {});
     expect(ok).toEqual({ outcome: 'cancelled' });
+  });
+
+  it('021: stage and commit are empty-payload, sender-gated workspace-page bridges', async () => {
+    const { ipcMain, invoke } = fakeIpcMain();
+    const session = fakeSession();
+    registerWindowPickIpc({ ipcMain, session, isSender: () => true });
+    await expect(invoke('papers:window-pick:stage', 1, { x: 1 })).rejects.toThrow('must be empty');
+    await expect(invoke('papers:window-pick:commit', 1, { x: 1 })).rejects.toThrow('must be empty');
+    expect(await invoke('papers:window-pick:stage', 1, {})).toEqual({ outcome: 'staged' });
+    expect(await invoke('papers:window-pick:commit', 1, {})).toEqual({ outcome: 'committed' });
+    expect(session.calls).toEqual(['stage', 'commit']);
+
+    const denied = fakeIpcMain();
+    registerWindowPickIpc({ ipcMain: denied.ipcMain, session: fakeSession(), isSender: () => false });
+    await expect(denied.invoke('papers:window-pick:stage', 1, {})).rejects.toThrow('not a Backpack project sender');
+    await expect(denied.invoke('papers:window-pick:commit', 1, {})).rejects.toThrow('not a Backpack project sender');
   });
 
   it('bounds member strings by UTF-8 BYTES, not JS characters (016R)', async () => {

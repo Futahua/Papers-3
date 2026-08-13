@@ -61,6 +61,10 @@ export interface FacadeDeps {
   setTitleBarOverlay: (color: string, symbolColor: string) => void;
   getSettings: () => unknown;
   setTransparentWindow: (enabled: boolean) => Promise<void>;
+  /** Capture the window's current rectangle as the restore-on-launch preset. */
+  saveWindowBounds: () => Promise<{ x: number; y: number; width: number; height: number } | null>;
+  /** Forget the preset so Papers reopens at its default size. */
+  clearWindowBounds: () => Promise<void>;
 }
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
@@ -377,6 +381,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   setTransparentWindow(enabled: boolean): Promise<void> {
     return this.deps.setTransparentWindow(enabled);
+  }
+
+  saveWindowBounds(): Promise<{ x: number; y: number; width: number; height: number } | null> {
+    return this.deps.saveWindowBounds();
+  }
+
+  clearWindowBounds(): Promise<void> {
+    return this.deps.clearWindowBounds();
   }
 
   // ----------------------------------------------------------- permissions

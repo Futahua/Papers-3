@@ -20,10 +20,26 @@ import {
   type WindowResolveResult,
   type WindowRuntimeCapability,
 } from '../windows/windowCapabilityService';
-import type { WindowBounds, WindowCapabilityResult } from '../windows/windowCapabilityTypes';
+import {
+  isValidThumbnail,
+  WINDOW_THUMBNAIL_MAX_HEIGHT,
+  WINDOW_THUMBNAIL_MAX_WIDTH,
+  type WindowBounds,
+  type WindowCapabilityResult,
+} from '../windows/windowCapabilityTypes';
 
 export const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 export const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
+/** 019GR3: a page-facing fallback error is omitted or truncated to at most
+ * this many UTF-8 bytes; arbitrary internal strings are never exposed. */
+export const WINDOW_THUMBNAIL_PAGE_ERROR_MAX_BYTES = 256;
+
+/** 019G page-facing thumbnail result: exactly success
+ * `{ outcome:'success', imageUrl, width, height }` or a payload-free typed
+ * fallback `{ outcome }` plus optional bounded error. Never a placeholder. */
+export type WindowThumbnailResult =
+  | { outcome: 'success'; imageUrl: string; width: number; height: number }
+  | { outcome: 'minimized' | 'missing' | 'denied' | 'malformed' | 'helper-unavailable' | 'timeout'; error?: string };
 
 export interface WindowCapabilityIpcDependencies {
   ipcMain: Pick<IpcMain, 'handle'>;
@@ -82,7 +98,73 @@ function parsePersistedDescriptor(raw: unknown): PersistedWindowMemberDescriptor
   return { version: 1, title, executableFingerprint };
 }
 
-type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult;
+/** 019G thumbnail request dimensions: absent -> the 240x135 default; when
+ * present they must be positive integers within the 320x180 contract bounds.
+ * Unknown option keys are rejected, never ignored. */
+function parseThumbnailOptions(raw: unknown): { maxWidth?: number; maxHeight?: number } {
+  if (raw === undefined) return {};
+  if (!isPlainObject(raw)) throw new Error('thumbnail options must be an object');
+  for (const key of Object.keys(raw)) {
+    if (key !== 'maxWidth' && key !== 'maxHeight') throw new Error('thumbnail options contains unknown fields');
+  }
+  const options: { maxWidth?: number; maxHeight?: number } = {};
+  if (raw['maxWidth'] !== undefined) {
+    const maxWidth = raw['maxWidth'];
+    if (typeof maxWidth !== 'number' || !Number.isSafeInteger(maxWidth) || maxWidth <= 0 || maxWidth > WINDOW_THUMBNAIL_MAX_WIDTH) {
+      throw new Error(`thumbnail options.maxWidth must be a positive integer at most ${WINDOW_THUMBNAIL_MAX_WIDTH}`);
+    }
+    options.maxWidth = maxWidth;
+  }
+  if (raw['maxHeight'] !== undefined) {
+    const maxHeight = raw['maxHeight'];
+    if (typeof maxHeight !== 'number' || !Number.isSafeInteger(maxHeight) || maxHeight <= 0 || maxHeight > WINDOW_THUMBNAIL_MAX_HEIGHT) {
+      throw new Error(`thumbnail options.maxHeight must be a positive integer at most ${WINDOW_THUMBNAIL_MAX_HEIGHT}`);
+    }
+    options.maxHeight = maxHeight;
+  }
+  return options;
+}
+
+/** 019GR3: truncate a page-facing error to at most 256 UTF-8 bytes WITHOUT
+ * splitting a multibyte character (an error is always either omitted or a
+ * bounded string; never an arbitrary internal payload). */
+function boundPageError(error: string): string {
+  if (Buffer.byteLength(error, 'utf8') <= WINDOW_THUMBNAIL_PAGE_ERROR_MAX_BYTES) return error;
+  let bytes = 0;
+  let out = '';
+  for (const character of error) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (bytes + characterBytes > WINDOW_THUMBNAIL_PAGE_ERROR_MAX_BYTES) break;
+    bytes += characterBytes;
+    out += character;
+  }
+  return out;
+}
+
+/** Maps the internal typed thumbnail result to the exact page result shape:
+ * success carries a data-URL image plus actual dimensions; every fallback is
+ * payload-free with an optional bounded error. */
+function toPageThumbnailResult(result: WindowCapabilityResult): WindowThumbnailResult {
+  if (result.outcome === 'success') {
+    const thumbnail = result.thumbnail;
+    if (!thumbnail || !isValidThumbnail(thumbnail)) {
+      return { outcome: 'malformed', error: 'thumbnail response is malformed' };
+    }
+    return {
+      outcome: 'success',
+      imageUrl: `data:image/png;base64,${thumbnail.image}`,
+      width: thumbnail.width,
+      height: thumbnail.height,
+    };
+  }
+  if (result.outcome === 'ambiguous') {
+    // Unreachable from the thumbnail path; fail closed rather than leak it.
+    return { outcome: 'malformed', error: 'thumbnail response is ambiguous' };
+  }
+  return { outcome: result.outcome, ...(result.error !== undefined ? { error: boundPageError(result.error) } : {}) };
+}
+
+type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult;
 
 function resultPayload(result: IpcResult): IpcResult {
   return result;
@@ -111,11 +193,17 @@ export function registerWindowCapabilityIpc({
     if (raw === undefined) return undefined;
     if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('list payload must be empty');
     return undefined;
-  }, () => service.listCandidates());
+  }, () => service.listCandidates({ includeNativeIcons: true }));
   handle('papers:window-capability:bind', (raw) => parseBoundedString(raw, 'candidateId'), (candidateId) => service.bindCandidate(candidateId));
   handle('papers:window-capability:observe', parseRuntimeCapability, (capability) => service.observeCapability(capability));
   handle('papers:window-capability:minimize', parseRuntimeCapability, (capability) => service.minimizeCapability(capability));
   handle('papers:window-capability:restore', parseRuntimeCapability, (capability) => service.restoreCapability(capability));
+  handle('papers:window-capability:peek-begin', parseRuntimeCapability, (capability) => service.beginPeekCapability(capability));
+  handle('papers:window-capability:peek-end', (raw) => {
+    if (raw === undefined) return undefined;
+    if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('peek-end payload must be empty');
+    return undefined;
+  }, () => service.endPeek());
   handle(
     'papers:window-capability:apply',
     (raw) => {
@@ -131,4 +219,17 @@ export function registerWindowCapabilityIpc({
     (input) => service.applyCapability(input.capability, input.bounds),
   );
   handle('papers:window-capability:resolve', parsePersistedDescriptor, (descriptor) => service.resolvePersisted(descriptor));
+  handle(
+    'papers:window-capability:thumbnail',
+    (raw) => {
+      if (!isPlainObject(raw)) throw new Error('thumbnail payload must be an object');
+      if (!exactKeys(raw, ['capability', 'options'])) {
+        throw new Error('thumbnail payload must contain exactly capability and options');
+      }
+      const capability = parseRuntimeCapability(raw['capability']);
+      const options = parseThumbnailOptions(raw['options']);
+      return { capability, options };
+    },
+    async (input) => toPageThumbnailResult(await service.thumbnailCapability(input.capability, input.options)),
+  );
 }

@@ -22,6 +22,14 @@ $ErrorActionPreference = 'Stop'
 # use; an injected fake op would hide the 0/$null sentinel defect again.
 $script:realParentPidOp = $script:WhOps['ParentPid']
 
+# 019GR2: keep the REAL thumbnail capture pipeline and its native seams before
+# the fake registry replaces the ops, so the full-scale/sentinel/strict-native
+# behavior can be proven with injected nonuniform fixtures.
+$script:realCaptureOp = $script:WhOps['Capture']
+$script:realIsIconicOp = $script:WhOps['IsIconic']
+$script:realPrintWindowOp = $script:WhOps['PrintWindow']
+$script:realCaptureDwmOp = $script:WhOps['CaptureDwm']
+
 $script:passed = 0
 $script:failed = 0
 function Assert-True {
@@ -36,9 +44,25 @@ function Assert-Outcome {
   else { $script:failed += 1; Write-Output "FAIL: $Message (got $($Response.outcome))" }
 }
 
+# Builds ONE complete valid PNG byte buffer (signature + IHDR claiming the
+# given dimensions) base64-encoded whole, so the strict IHDR wire validator
+# passes when the claimed width/height match.
+function New-WhTestPng {
+  param([int]$Width, [int]$Height)
+  $sig = [byte[]](0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A)
+  $len = [System.BitConverter]::GetBytes([uint32]13); [Array]::Reverse($len)
+  $type = [System.Text.Encoding]::ASCII.GetBytes('IHDR')
+  $w = [System.BitConverter]::GetBytes([uint32]$Width); [Array]::Reverse($w)
+  $h = [System.BitConverter]::GetBytes([uint32]$Height); [Array]::Reverse($h)
+  $data = [byte[]](8, 6, 0, 0, 0)
+  $crc = [byte[]](0, 0, 0, 0)
+  $bytes = $sig + $len + $type + $w + $h + $data + $crc
+  return [Convert]::ToBase64String($bytes)
+}
+
 # ---- wire-schema validator: faithful 010R predicates, no coercion ----------
 $STATES = @('normal', 'minimized', 'maximized', 'missing')
-$OUTCOMES = @('success', 'missing', 'ambiguous', 'denied', 'malformed')
+$OUTCOMES = @('success', 'missing', 'ambiguous', 'denied', 'malformed', 'minimized')
 function Test-WireFiniteNumber {
   param([object]$Value)
   if (-not ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal] -or $Value -is [float])) { return $false }
@@ -79,30 +103,86 @@ function Test-WireResponseOk {
   if (-not (Test-WireSafeIntegerOk $R['requestId']) -or [long]$R['requestId'] -lt 1) { return $false }
   if ($R['method'] -isnot [string] -or $VALID_METHODS -notcontains $R['method']) { return $false }
   if ($R['outcome'] -isnot [string] -or $OUTCOMES -notcontains $R['outcome']) { return $false }
+  # 019G: the 'minimized' outcome is valid ONLY on the thumbnail method.
+  if ($R['outcome'] -eq 'minimized' -and $R['method'] -ne 'thumbnail') { return $false }
   if ($R.ContainsKey('error') -and $R['error'] -isnot [string]) { return $false }
   $hasObservationKey = $R.ContainsKey('observation')
   $hasWindowsKey = $R.ContainsKey('windows')
   $hasWindowKey = $R.ContainsKey('window')
+  $hasThumbnailKey = $R.ContainsKey('thumbnail')
   $windowsIsArray = $hasWindowsKey -and $R['windows'] -is [System.Array]
+  # 019GR2/019GR3: the thumbnail top-level envelope must have EXACT known keys
+  # AND must echo the accepted helper `target` token on success AND fallback.
+  # The ONLY target-less thumbnail response is the missing-target malformed
+  # (nothing was accepted to echo).
+  if ($R['method'] -eq 'thumbnail') {
+    $allowedEnvelope = @('requestId', 'method', 'outcome', 'target', 'error')
+    if ($R['outcome'] -eq 'success') { $allowedEnvelope = @('requestId', 'method', 'outcome', 'thumbnail', 'target', 'error') }
+    foreach ($key in $R.Keys) {
+      if ($allowedEnvelope -notcontains ([string]$key)) { return $false }
+    }
+    if ($R.ContainsKey('target')) {
+      if ($R['target'] -isnot [string] -or ([string]$R['target']).Length -eq 0) { return $false }
+    } elseif ($R['outcome'] -ne 'malformed') {
+      return $false
+    }
+  }
   if ($R['outcome'] -eq 'success') {
     if ($R['method'] -eq 'list') {
-      if (-not ($hasWindowsKey -and $windowsIsArray -and -not $hasObservationKey -and -not $hasWindowKey)) { return $false }
+      if (-not ($hasWindowsKey -and $windowsIsArray -and -not $hasObservationKey -and -not $hasWindowKey -and -not $hasThumbnailKey)) { return $false }
     } elseif ($R['method'] -eq 'close') {
-      if ($hasWindowsKey -or $hasObservationKey -or $hasWindowKey) { return $false }
+      if ($hasWindowsKey -or $hasObservationKey -or $hasWindowKey -or $hasThumbnailKey) { return $false }
     } elseif ($R['method'] -eq 'hover') {
-      if (-not ($hasWindowKey -and -not $hasWindowsKey -and -not $hasObservationKey)) { return $false }
+      if (-not ($hasWindowKey -and -not $hasWindowsKey -and -not $hasObservationKey -and -not $hasThumbnailKey)) { return $false }
       if ($null -ne $R['window'] -and -not (Test-WireObservationOk $R['window'])) { return $false }
+    } elseif ($R['method'] -eq 'thumbnail') {
+      if (-not ($hasThumbnailKey -and -not $hasWindowsKey -and -not $hasObservationKey -and -not $hasWindowKey)) { return $false }
+      if (-not (Test-WireThumbnailOk $R['thumbnail'])) { return $false }
     } else {
-      if (-not ($hasObservationKey -and -not $hasWindowsKey -and -not $hasWindowKey)) { return $false }
+      if (-not ($hasObservationKey -and -not $hasWindowsKey -and -not $hasWindowKey -and -not $hasThumbnailKey)) { return $false }
     }
   } else {
-    if ($hasWindowsKey -or $hasObservationKey -or $hasWindowKey) { return $false }
+    if ($hasWindowsKey -or $hasObservationKey -or $hasWindowKey -or $hasThumbnailKey) { return $false }
   }
   if ($hasObservationKey -and -not (Test-WireObservationOk $R['observation'])) { return $false }
   if ($windowsIsArray) {
     foreach ($w in $R['windows']) {
       if (-not (Test-WireObservationOk $w)) { return $false }
     }
+  }
+  return $true
+}
+function Test-WireThumbnailOk {
+  param([object]$Thumb)
+  if ($Thumb -isnot [System.Collections.IDictionary]) { return $false }
+  # 019GR2/024: the nested thumbnail object must have EXACT keys
+  # image/width/height, plus BOTH optional 024 fields (source, minimized) when
+  # either is present - mirrors the main-process isValidThumbnail gate.
+  $expectedKeys = @('image', 'width', 'height')
+  $hasFlags = $Thumb.ContainsKey('source') -or $Thumb.ContainsKey('minimized')
+  if ($hasFlags) { $expectedKeys = @('height', 'image', 'minimized', 'source', 'width') }
+  if ($Thumb.Count -ne $expectedKeys.Count) { return $false }
+  foreach ($k in $expectedKeys) { if (-not $Thumb.ContainsKey($k)) { return $false } }
+  foreach ($k in $Thumb.Keys) { if ($expectedKeys -notcontains ([string]$k)) { return $false } }
+  if ($hasFlags -and ($Thumb['source'] -notin @('capture', 'dwm', 'icon') -or $Thumb['minimized'] -isnot [bool])) { return $false }
+  if ($Thumb['image'] -isnot [string] -or $Thumb['image'].Length -eq 0) { return $false }
+  if (-not (Test-WireSafeIntegerOk $Thumb['width']) -or -not (Test-WireSafeIntegerOk $Thumb['height'])) { return $false }
+  if ([long]$Thumb['width'] -lt 1 -or [long]$Thumb['width'] -gt 320) { return $false }
+  if ([long]$Thumb['height'] -lt 1 -or [long]$Thumb['height'] -gt 180) { return $false }
+  try {
+    $png = [Convert]::FromBase64String([string]$Thumb['image'])
+    if ($png.Length -gt 256 * 1024) { return $false }
+    if ($png.Length -lt 33) { return $false }
+    $sig = 0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A
+    for ($i = 0; $i -lt 8; $i++) { if ([int]$png[$i] -ne $sig[$i]) { return $false } }
+    # PNG IHDR width/height (big-endian at offsets 16/20) must equal the
+    # claimed dimensions and stay within 320x180.
+    $ihdrW = [System.Net.IPAddress]::NetworkToHostOrder([System.BitConverter]::ToInt32($png, 16))
+    $ihdrH = [System.Net.IPAddress]::NetworkToHostOrder([System.BitConverter]::ToInt32($png, 20))
+    if ($ihdrW -ne [long]$Thumb['width'] -or $ihdrH -ne [long]$Thumb['height']) { return $false }
+    if ($ihdrW -le 0 -or $ihdrH -le 0 -or $ihdrW -gt 320 -or $ihdrH -gt 180) { return $false }
+  } catch {
+    return $false
   }
   return $true
 }
@@ -121,6 +201,9 @@ function Test-WireResponseShape {
   }
   if ($R.ContainsKey('window') -and $null -ne $R['window']) {
     Assert-True (Test-WireObservationOk $R['window']) "${Context}: hover window member predicates hold"
+  }
+  if ($R.ContainsKey('thumbnail')) {
+    Assert-True (Test-WireThumbnailOk $R['thumbnail']) "${Context}: thumbnail payload predicates hold"
   }
 }
 
@@ -170,6 +253,15 @@ function New-PristineRegistry {
   # hover, never collapsing into each other.
   [pscustomobject]@{ RuntimeId = [IntPtr]0x2525; Title = 'WH-TEST-DOC-C'; ProcessId = 2525; ProcessPath = 'C:\fake-docs3.exe'; State = 'normal'; Bounds = @{ Left = 600; Top = 500; Right = 850; Bottom = 650; Width = 250; Height = 150 }; alive = $true; touched = @(); Visible = $true; Cloaked = $false; ExStyle = 0; ClassName = 'FakeWin'; ProcessName = 'fake-docs3.exe'; OwnerHwnd = [IntPtr]::Zero; RootAncestor = [IntPtr]0x2525; LastActivePopup = [IntPtr]0x2525 }
   [pscustomobject]@{ RuntimeId = [IntPtr]0x2626; Title = 'WH-TEST-DOC-D'; ProcessId = 2525; ProcessPath = 'C:\fake-docs3.exe'; State = 'normal'; Bounds = @{ Left = 900; Top = 500; Right = 1150; Bottom = 650; Width = 250; Height = 150 }; alive = $true; touched = @(); Visible = $true; Cloaked = $false; ExStyle = 0; ClassName = 'FakeWin'; ProcessName = 'fake-docs3.exe'; OwnerHwnd = [IntPtr]::Zero; RootAncestor = [IntPtr]0x2626; LastActivePopup = [IntPtr]0x2626 }
+  # ---- 024 preview fixtures ------------------------------------------------
+  # No window icon available: minimized must stay an honest typed fallback.
+  [pscustomobject]@{ RuntimeId = [IntPtr]0x2727; Title = 'WH-TEST-NOICON'; ProcessId = 2727; ProcessPath = 'C:\fake-noicon.exe'; State = 'minimized'; Bounds = @{ Left = 2400; Top = 1500; Right = 2560; Bottom = 1620; Width = 160; Height = 120 }; alive = $true; touched = @(); Visible = $true; Cloaked = $false; ExStyle = 0; ClassName = 'FakeWin'; ProcessName = 'fake-noicon.exe'; OwnerHwnd = [IntPtr]::Zero; RootAncestor = [IntPtr]0x2727; LastActivePopup = [IntPtr]0x2727 }
+  # Hardware-accelerated (acad-like): PrintWindow reports FALSE -> the capture
+  # must fall back to a REAL DWM-composited content capture (source='dwm').
+  [pscustomobject]@{ RuntimeId = [IntPtr]0x2828; Title = 'WH-TEST-ACAD'; ProcessId = 2828; ProcessPath = 'C:\fake-acad.exe'; State = 'normal'; Bounds = @{ Left = 2600; Top = 1500; Right = 3000; Bottom = 1800; Width = 400; Height = 300 }; alive = $true; touched = @(); Visible = $true; Cloaked = $false; ExStyle = 0; ClassName = 'FakeWin'; ProcessName = 'fake-acad.exe'; OwnerHwnd = [IntPtr]::Zero; RootAncestor = [IntPtr]0x2828; LastActivePopup = [IntPtr]0x2828 }
+  # acad-like where even DWM capture is unavailable -> the terminal icon remains
+  # the only honest fallback (never acceptance evidence).
+  [pscustomobject]@{ RuntimeId = [IntPtr]0x2929; Title = 'WH-TEST-ACAD-NODWM'; ProcessId = 2929; ProcessPath = 'C:\fake-acad2.exe'; State = 'normal'; Bounds = @{ Left = 2800; Top = 1500; Right = 3200; Bottom = 1800; Width = 400; Height = 300 }; alive = $true; touched = @(); Visible = $true; Cloaked = $false; ExStyle = 0; ClassName = 'FakeWin'; ProcessName = 'fake-acad2.exe'; OwnerHwnd = [IntPtr]::Zero; RootAncestor = [IntPtr]0x2929; LastActivePopup = [IntPtr]0x2929 }
   )
 }
 $script:fakeRegistry = New-PristineRegistry
@@ -212,6 +304,49 @@ $script:WhOps = @{
   Close = { param([IntPtr]$id)
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).alive = $false
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).touched += 'close'
+  }
+  GetWindowRect = { param([IntPtr]$id)
+    $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
+    return @{ Width = [int]$entry.Bounds.Width; Height = [int]$entry.Bounds.Height }
+  }
+  IsIconic = { param([IntPtr]$id) [bool]((($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).State) -eq 'minimized') }
+  PrintWindow = { param([IntPtr]$id, [IntPtr]$hdc)
+    $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
+    return -not ($entry.Title -in @('WH-TEST-ACAD', 'WH-TEST-ACAD-NODWM'))
+  }
+  ResolveWindowIcon = { param([IntPtr]$id)
+    $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
+    if ($null -eq $entry -or $entry.Title -eq 'WH-TEST-NOICON') { return [IntPtr]::Zero }
+    return [IntPtr]0x4000
+  }
+  CaptureIcon = { param([IntPtr]$id, [int]$maxWidth, [int]$maxHeight)
+    $hicon = & $script:WhOps['ResolveWindowIcon'] $id
+    if ($null -eq $hicon -or $hicon -eq [IntPtr]::Zero) { return $null }
+    ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).touched += "capture-icon:$maxWidth,$maxHeight"
+    return @{ outcome = 'success'; image = (New-WhTestPng $maxWidth $maxHeight); width = $maxWidth; height = $maxHeight; source = 'icon'; minimized = [bool](& $script:WhOps['IsIconic'] $id) }
+  }
+  CaptureDwm = { param([IntPtr]$id, [int]$maxWidth, [int]$maxHeight)
+    $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
+    # DWM renders no useful content for windows with no retained frame (the
+    # NOICON minimized fixture) or when the compositor path is unavailable
+    # (ACAD-NODWM); every other window yields real DWM content.
+    if ($null -eq $entry -or $entry.Title -in @('WH-TEST-NOICON', 'WH-TEST-ACAD-NODWM')) { return $null }
+    ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).touched += "capture-dwm:$maxWidth,$maxHeight"
+    return @{ outcome = 'success'; image = (New-WhTestPng $maxWidth $maxHeight); width = $maxWidth; height = $maxHeight; source = 'dwm'; minimized = [bool](& $script:WhOps['IsIconic'] $id) }
+  }
+  Capture = { param([IntPtr]$id, [int]$maxWidth, [int]$maxHeight)
+    $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
+    if ($null -eq $entry -or -not $entry.alive) { return @{ outcome = 'missing'; error = 'window is gone' } }
+    # 024/025: for minimized windows and acad-like (PrintWindow FALSE) windows,
+    # delegate to the REAL capture op so the DWM/icon fallback is exercised
+    # against the fake native seams (IsIconic, PrintWindow, DWM/icon ops).
+    if ($entry.State -eq 'minimized' -or $entry.Title -in @('WH-TEST-ACAD', 'WH-TEST-ACAD-NODWM')) {
+      return & $script:realCaptureOp $id $maxWidth $maxHeight
+    }
+    $entry.touched += "capture:$maxWidth,$maxHeight"
+    # Deterministic bounded fake PNG payload whose IHDR claims the requested
+    # dimensions (decoded under the 256 KiB cap).
+    return @{ outcome = 'success'; image = (New-WhTestPng $maxWidth $maxHeight); width = $maxWidth; height = $maxHeight }
   }
 }
 # The helper's observation reader and enumeration must read ONLY the fake
@@ -327,7 +462,7 @@ Assert-True (Test-WireResponseOk $nullBounds) 'explicit-null processId/processPa
 
 # ---- token issuance and stable identity -----------------------------------
 $list = Invoke-Line '{"requestId":7,"method":"list"}'
-Assert-True ($list.outcome -eq 'success' -and $list.windows.Count -eq 15) 'list returns all fake task-worthy windows (same-task surfaces collapsed)'
+Assert-True ($list.outcome -eq 'success' -and $list.windows.Count -eq 18) 'list returns all fake task-worthy windows (same-task surfaces collapsed)'
 $tokenA = [string]$list.windows[0].runtimeId
 $tokenB = [string]$list.windows[1].runtimeId
 Assert-True ([string]$tokenA -match '^T[0-9a-f]{32}$') 'token A is nonempty high-entropy nonnumeric'
@@ -591,6 +726,221 @@ Assert-True ($script:WhParentPid -eq $firstParent) 'real ParentPid: first resolu
 $secondParent = [int](& $script:realParentPidOp)
 Assert-True ($secondParent -eq $firstParent) 'real ParentPid: second read reuses the cached value'
 $script:WhParentPid = $null
+
+# ================= Assignment 019G thumbnail sections =======================
+$script:fakeRegistry = New-PristineRegistry
+$script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
+$thumbList = Invoke-Line '{"requestId":80,"method":"list"}'
+$thumbToken = [string]@($thumbList.windows | Where-Object { $_.title -eq 'WH-TEST-AAAA' } | Select-Object -First 1)[0].runtimeId
+$thumbMinToken = [string]@($thumbList.windows | Where-Object { $_.title -eq 'WH-TEST-MINIMIZED-LEGIT' } | Select-Object -First 1)[0].runtimeId
+Assert-True ($thumbToken -match '^T[0-9a-f]{32}$' -and $thumbMinToken -match '^T[0-9a-f]{32}$') '019G: thumbnail tokens are issued for the list identities'
+# ---- 019G: malformed dimensions are typed malformed -------------------------
+Assert-Outcome (Invoke-Line '{"requestId":81,"method":"thumbnail"}') 'malformed' '019G: thumbnail without a target is malformed'
+Assert-Outcome (Invoke-Line ('{"requestId":82,"method":"thumbnail","target":"' + $thumbToken + '","maxWidth":321,"maxHeight":135}')) 'malformed' '019G: maxWidth above 320 is malformed'
+Assert-Outcome (Invoke-Line ('{"requestId":83,"method":"thumbnail","target":"' + $thumbToken + '","maxWidth":240,"maxHeight":181}')) 'malformed' '019G: maxHeight above 180 is malformed'
+Assert-Outcome (Invoke-Line ('{"requestId":84,"method":"thumbnail","target":"' + $thumbToken + '","maxWidth":0,"maxHeight":135}')) 'malformed' '019G: non-positive maxWidth is malformed'
+Assert-Outcome (Invoke-Line ('{"requestId":85,"method":"thumbnail","target":"' + $thumbToken + '","maxWidth":"240","maxHeight":135}')) 'malformed' '019G: non-integer maxWidth is malformed'
+Assert-Outcome (Invoke-Line ('{"requestId":86,"method":"thumbnail","target":"' + $thumbToken + '","maxWidth":240.5,"maxHeight":135}')) 'malformed' '019G: fractional maxWidth is malformed'
+# ---- 019G: capture routing, defaults and bounded dimensions -----------------
+$thumbDefault = Invoke-Line ('{"requestId":87,"method":"thumbnail","target":"' + $thumbToken + '"}')
+Assert-Outcome $thumbDefault 'success' '019G: thumbnail succeeds on an issued token'
+Assert-True ($thumbDefault.thumbnail.width -eq 240 -and $thumbDefault.thumbnail.height -eq 135) '019G: absent dimensions default to 240x135'
+Assert-True ($thumbDefault.thumbnail.image -is [string] -and $thumbDefault.thumbnail.image.Length -gt 0) '019G: the image is a nonempty base64 string'
+$thumbCustom = Invoke-Line ('{"requestId":88,"method":"thumbnail","target":"' + $thumbToken + '","maxWidth":160,"maxHeight":90}')
+Assert-Outcome $thumbCustom 'success' '019G: thumbnail succeeds with explicit dimensions'
+Assert-True ($thumbCustom.thumbnail.width -eq 160 -and $thumbCustom.thumbnail.height -eq 90) '019G: explicit dimensions are honored'
+Assert-True (@($script:fakeRegistry | Where-Object { $_.RuntimeId -eq [IntPtr]0x1001 } | Select-Object -First 1).touched -contains 'capture:160,90') '019G: the capture op ran for the exact requested window/dimensions'
+# ---- 019G/026: honest typed fallbacks (minimized now attempts REAL content) ----
+$thumbMin = Invoke-Line ('{"requestId":89,"method":"thumbnail","target":"' + $thumbMinToken + '"}')
+Assert-Outcome $thumbMin 'success' '026: a minimized window with DWM-retained content serves a REAL window-content preview (source=dwm, not icon)'
+Assert-True ($thumbMin.thumbnail.source -eq 'dwm' -and $thumbMin.thumbnail.minimized -eq $true) '026: the minimized real-content preview is typed source=dwm, minimized=true'
+$thumbNoIconToken = [string]@($thumbList.windows | Where-Object { $_.title -eq 'WH-TEST-NOICON' } | Select-Object -First 1)[0].runtimeId
+$thumbNoIcon = Invoke-Line ('{"requestId":89,"method":"thumbnail","target":"' + $thumbNoIconToken + '"}')
+Assert-Outcome $thumbNoIcon 'minimized' '026: a minimized window with no DWM content and no icon stays an honest typed fallback'
+Assert-True (-not $thumbNoIcon.ContainsKey('thumbnail')) '026: the no-content minimized fallback carries no payload'
+$thumbAcadToken = [string]@($thumbList.windows | Where-Object { $_.title -eq 'WH-TEST-ACAD' } | Select-Object -First 1)[0].runtimeId
+$thumbAcad = Invoke-Line ('{"requestId":89,"method":"thumbnail","target":"' + $thumbAcadToken + '"}')
+Assert-Outcome $thumbAcad 'success' '025: an acad-like window (PrintWindow FALSE) falls back to a REAL DWM-composited content capture'
+Assert-True ($thumbAcad.thumbnail.source -eq 'dwm' -and $thumbAcad.thumbnail.minimized -eq $false) '025: the acad DWM capture is typed source=dwm, minimized=false'
+$thumbNoDwmToken = [string]@($thumbList.windows | Where-Object { $_.title -eq 'WH-TEST-ACAD-NODWM' } | Select-Object -First 1)[0].runtimeId
+$thumbNoDwm = Invoke-Line ('{"requestId":89,"method":"thumbnail","target":"' + $thumbNoDwmToken + '"}')
+Assert-Outcome $thumbNoDwm 'success' '025: when DWM is unavailable an acad-like window falls back to the terminal icon (source=icon)'
+Assert-True ($thumbNoDwm.thumbnail.source -eq 'icon') '025: the no-DWM acad fallback is typed source=icon (honest terminal, never acceptance evidence)'
+Assert-Outcome (Invoke-Line ('{"requestId":90,"method":"thumbnail","target":"T00000000000000000000000000000000"}')) 'missing' '019G: a guessed token is missing'
+Assert-Outcome (Invoke-Line ('{"requestId":91,"method":"thumbnail","target":"' + $thumbToken + '","exec":"calc.exe"}')) 'denied' '019G: a command-like field on thumbnail is denied'
+# ---- 019GR2: strict thumbnail request schema (exact keys only) --------------
+Assert-Outcome (Invoke-Line ('{"requestId":92,"method":"thumbnail","target":"' + $thumbToken + '","extra":"x"}')) 'denied' '019GR2: a benign extra field on thumbnail is denied (exact schema, not just command-like)'
+Assert-Outcome (Invoke-Line ('{"requestId":93,"method":"thumbnail","target":"' + $thumbToken + '","bounds":{"x":0,"y":0,"width":10,"height":10}}')) 'denied' '019GR2: a bounds field on thumbnail is denied'
+Assert-Outcome (Invoke-Line ('{"requestId":94,"method":"thumbnail","target":"' + $thumbToken + '","maxWidth":240,"maxHeight":135,"x":1}')) 'denied' '019GR2: a hover-style field on thumbnail is denied'
+# ---- 019G: wire schema fixtures --------------------------------------------
+$thumbBad1 = @{ requestId = 1; method = 'thumbnail'; outcome = 'success' }
+Assert-True (-not (Test-WireResponseOk $thumbBad1)) 'wire: thumbnail success without a payload is rejected'
+$thumbBad2 = @{ requestId = 1; method = 'thumbnail'; outcome = 'success'; thumbnail = @{ image = '!!!!'; width = 10; height = 10 } }
+Assert-True (-not (Test-WireResponseOk $thumbBad2)) 'wire: thumbnail with an invalid base64 image is rejected'
+$thumbBad5 = @{ requestId = 1; method = 'thumbnail'; outcome = 'success'; thumbnail = @{ image = $thumbDefault.thumbnail.image; width = 321; height = 10 } }
+Assert-True (-not (Test-WireResponseOk $thumbBad5)) 'wire: thumbnail with out-of-range dimensions is rejected'
+$thumbBad3 = @{ requestId = 1; method = 'thumbnail'; outcome = 'minimized'; thumbnail = $thumbDefault.thumbnail }
+Assert-True (-not (Test-WireResponseOk $thumbBad3)) 'wire: thumbnail minimized fallback with a payload is rejected'
+$thumbBad4 = @{ requestId = 1; method = 'observe'; outcome = 'minimized' }
+Assert-True (-not (Test-WireResponseOk $thumbBad4)) 'wire: minimized outcome on a non-thumbnail method is rejected'
+# ---- 019GR2: strict wire schema (unknown keys + IHDR) ------------------------
+$thumbBad6 = @{ requestId = 1; method = 'thumbnail'; outcome = 'success'; thumbnail = $thumbDefault.thumbnail; extra = 'x' }
+Assert-True (-not (Test-WireResponseOk $thumbBad6)) 'wire: thumbnail success envelope with an unknown top-level key is rejected'
+$thumbBad7 = @{ requestId = 1; method = 'thumbnail'; outcome = 'minimized'; extra = 'x' }
+Assert-True (-not (Test-WireResponseOk $thumbBad7)) 'wire: thumbnail fallback envelope with an unknown top-level key is rejected'
+$thumbBad8 = @{ requestId = 1; method = 'thumbnail'; outcome = 'success'; thumbnail = @{ image = $thumbDefault.thumbnail.image; width = 240; height = 135; extra = 'x' } }
+Assert-True (-not (Test-WireResponseOk $thumbBad8)) 'wire: thumbnail payload with an unknown nested key is rejected'
+$thumbBad9 = @{ requestId = 1; method = 'thumbnail'; outcome = 'success'; thumbnail = @{ image = $thumbDefault.thumbnail.image; width = 240; height = 134 } }
+Assert-True (-not (Test-WireResponseOk $thumbBad9)) 'wire: thumbnail whose declared height mismatches the PNG IHDR is rejected'
+$thumbBad10 = @{ requestId = 1; method = 'thumbnail'; outcome = 'success'; thumbnail = @{ image = (New-WhTestPng 240 134); width = 240; height = 135 } }
+Assert-True (-not (Test-WireResponseOk $thumbBad10)) 'wire: a PNG IHDR claiming different dimensions than declared is rejected'
+# ---- 019GR3: the accepted helper target must be echoed on every response -----
+$thumbNoTarget = @{ requestId = 1; method = 'thumbnail'; outcome = 'minimized' }
+Assert-True (-not (Test-WireResponseOk $thumbNoTarget)) 'wire: a thumbnail fallback WITHOUT the echoed target is rejected'
+$thumbWithTarget = @{ requestId = 1; method = 'thumbnail'; outcome = 'minimized'; target = 'T11111111111111111111111111111111' }
+Assert-True (Test-WireResponseOk $thumbWithTarget) 'wire: a thumbnail fallback echoing its target is accepted'
+$thumbBadTarget = @{ requestId = 1; method = 'thumbnail'; outcome = 'minimized'; target = 42 }
+Assert-True (-not (Test-WireResponseOk $thumbBadTarget)) 'wire: a non-string echoed target is rejected'
+
+# ================= 019GR2 native correctness sections ========================
+# ---- aspect-preserving full-surface scale policy ---------------------------
+$scaleFit = Get-WhThumbnailScale 400 200 240 135
+Assert-True ($scaleFit.width -eq 240 -and $scaleFit.height -eq 120) 'scale: a 400x200 source fits 240x135 as 240x120 (aspect preserved)'
+$scaleNoUp = Get-WhThumbnailScale 100 50 240 135
+Assert-True ($scaleNoUp.width -eq 100 -and $scaleNoUp.height -eq 50) 'scale: a small source is never upscaled'
+$scaleExact = Get-WhThumbnailScale 640 360 320 180
+Assert-True ($scaleExact.width -eq 320 -and $scaleExact.height -eq 180) 'scale: a 16:9 source maps exactly onto the max bounds'
+$scaleFloor = Get-WhThumbnailScale 401 200 240 135
+Assert-True ($scaleFloor.width -le 240 -and $scaleFloor.height -le 135 -and $scaleFloor.width -ge 1 -and $scaleFloor.height -ge 1) 'scale: output never exceeds the requested max (floored, >= 1)'
+# ---- nonuniform fixture: the FULL source rectangle survives the scale -------
+# PrintWindow does not scale to a smaller destination HDC; a wrong (crop)
+# implementation would show only the top-left. Distinct corner markers prove
+# the whole source is drawn into the output.
+$cornerSrc = New-Object System.Drawing.Bitmap -ArgumentList 400, 200
+$cg = [System.Drawing.Graphics]::FromImage($cornerSrc)
+$cg.Clear([System.Drawing.Color]::White)
+$cg.FillRectangle((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::Red)), 0, 0, 40, 40)
+$cg.FillRectangle((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::Green)), 360, 0, 40, 40)
+$cg.FillRectangle((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::Blue)), 0, 160, 40, 40)
+$cg.FillRectangle((New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::Yellow)), 360, 160, 40, 40)
+$cg.Dispose()
+$cornerScale = Get-WhThumbnailScale 400 200 240 135
+$cornerOut = ConvertTo-WhCaptureThumbnail $cornerSrc $cornerScale.width $cornerScale.height
+$cornerTL = $cornerOut.GetPixel(2, 2)
+$cornerBR = $cornerOut.GetPixel($cornerOut.Width - 3, $cornerOut.Height - 3)
+$cornerMid = $cornerOut.GetPixel([int]($cornerOut.Width / 2), [int]($cornerOut.Height / 2))
+Assert-True ($cornerTL.R -gt 150 -and $cornerTL.G -lt 120 -and $cornerTL.B -lt 120) 'scale: the top-left corner (red) survives into the scaled thumbnail'
+Assert-True ($cornerBR.R -gt 150 -and $cornerBR.G -gt 150 -and $cornerBR.B -lt 120) 'scale: the bottom-right corner (yellow) survives - FULL source scaled, not cropped'
+Assert-True ($cornerMid.R -gt 180 -and $cornerMid.G -gt 180 -and $cornerMid.B -gt 180) 'scale: the middle stays the background (full-surface draw, not a crop)'
+$cornerSrc.Dispose(); $cornerOut.Dispose()
+# ---- sentinel: no-paint detection is distinct from a false PrintWindow ------
+$sent = New-Object System.Drawing.Bitmap -ArgumentList 64, 64
+Fill-WhSentinel $sent
+$sentC1 = Get-WhCaptureChecksum $sent
+$sentC2 = Get-WhCaptureChecksum $sent
+Assert-True ($sentC1 -eq $sentC2) 'sentinel: an unchanged bitmap keeps ONE checksum (true-without-paint is detectable)'
+$sg = [System.Drawing.Graphics]::FromImage($sent)
+$sg.Clear([System.Drawing.Color]::Black)
+$sg.Dispose()
+$sentC3 = Get-WhCaptureChecksum $sent
+Assert-True ($sentC3 -ne $sentC1) 'sentinel: any painted pixel changes the checksum'
+$sent.Dispose()
+# ---- 026: uniform (blank) content detection --------------------------------
+$uniformBmp = New-Object System.Drawing.Bitmap -ArgumentList 64, 64
+$ug = [System.Drawing.Graphics]::FromImage($uniformBmp)
+$ug.Clear([System.Drawing.Color]::White)
+$ug.Dispose()
+Assert-True (Test-WhCaptureUniform $uniformBmp) 'uniform detector: a single-colour bitmap is treated as no useful content'
+$patternBmp = New-Object System.Drawing.Bitmap -ArgumentList 64, 64
+$pg = [System.Drawing.Graphics]::FromImage($patternBmp)
+$pg.Clear([System.Drawing.Color]::White)
+$pg.FillRectangle([System.Drawing.Brushes]::Black, 4, 4, 20, 20)
+$pg.Dispose()
+Assert-True (-not (Test-WhCaptureUniform $patternBmp)) 'uniform detector: a patterned bitmap is real content'
+$uniformBmp.Dispose()
+$patternBmp.Dispose()
+# ---- real capture pipeline with injected native seams -----------------------
+function Invoke-WhRealCapture {
+  param([IntPtr]$Id, [int]$MaxWidth = 240, [int]$MaxHeight = 135, [hashtable]$Native = @{})
+  $ops = @{
+    IsWindow = { param([IntPtr]$id) $true }
+    GetWindowRect = { param([IntPtr]$id) @{ Width = 400; Height = 200 } }
+    IsIconic = { param([IntPtr]$id) $false }
+    PrintWindow = { param([IntPtr]$id, [IntPtr]$hdc) $true }
+    # 024/025: the real capture may fall back to the window icon or a DWM
+    # thumbnail on PrintWindow failure/no-paint. These minimal seams report "no
+    # DWM / no icon" so the original denied/minimized behavior is preserved here.
+    ResolveWindowIcon = { param([IntPtr]$id) [IntPtr]::Zero }
+    CaptureIcon = { param([IntPtr]$id, [int]$maxWidth, [int]$maxHeight) $null }
+    CaptureDwm = { param([IntPtr]$id, [int]$maxWidth, [int]$maxHeight) $null }
+  }
+  foreach ($key in $Native.Keys) { $ops[$key] = $Native[$key] }
+  $previous = $script:WhOps
+  $script:WhOps = $ops
+  try {
+    return (& $script:realCaptureOp $Id $MaxWidth $MaxHeight)
+  } finally {
+    $script:WhOps = $previous
+  }
+}
+$capFalse = Invoke-WhRealCapture ([IntPtr]0x1001) -Native @{ PrintWindow = { param([IntPtr]$id, [IntPtr]$hdc) $false } }
+Assert-Outcome $capFalse 'denied' 'capture pipeline: a FALSE PrintWindow return is denied'
+Assert-True ([string]$capFalse.error -match 'not supported') 'capture pipeline: the false-return denial names the unsupported path'
+$capNoPaint = Invoke-WhRealCapture ([IntPtr]0x1001) -Native @{ PrintWindow = { param([IntPtr]$id, [IntPtr]$hdc) $true } }
+Assert-Outcome $capNoPaint 'denied' 'capture pipeline: a TRUE return without painting is denied (sentinel unchanged)'
+# ---- 026: exercise the REAL CaptureDwm op (guard path, no window created) ----
+function Invoke-WhRealDwmGuard {
+  param([IntPtr]$Id)
+  $previous = $script:WhOps
+  $script:WhOps = @{
+    GetWindowRect = { param([IntPtr]$id) if ($id -eq [IntPtr]::Zero) { return $null } return @{ Width = 100; Height = 100 } }
+    IsIconic = { param([IntPtr]$id) $false }
+  }
+  try { return (& $script:realCaptureDwmOp $Id 240 135) } finally { $script:WhOps = $previous }
+}
+$dwmGuard = Invoke-WhRealDwmGuard ([IntPtr]::Zero)
+Assert-True ($null -eq $dwmGuard) 'real CaptureDwm: an invalid source window is guarded (returns $null without creating a window)'
+Assert-True ([string]$capNoPaint.error -match 'without painting') 'capture pipeline: the no-paint denial is distinct from a false return'
+$capPaint = Invoke-WhRealCapture ([IntPtr]0x1001) -Native @{ PrintWindow = { param([IntPtr]$id, [IntPtr]$hdc)
+  $g = [System.Drawing.Graphics]::FromHdc($hdc)
+  $g.Clear([System.Drawing.Color]::Red)
+  $g.Dispose()
+  return $true
+} }
+Assert-Outcome $capPaint 'success' 'capture pipeline: a painted capture succeeds'
+Assert-True ($capPaint.width -eq 240 -and $capPaint.height -eq 120) 'capture pipeline: output dims match the full-surface scale (400x200 -> 240x120)'
+Assert-True (Test-WireThumbnailOk @{ image = $capPaint.image; width = $capPaint.width; height = $capPaint.height }) 'capture pipeline: the success payload satisfies the strict IHDR wire validator'
+$capMin = Invoke-WhRealCapture ([IntPtr]0x1001) -Native @{ IsIconic = { param([IntPtr]$id) $true } }
+Assert-Outcome $capMin 'minimized' 'capture pipeline: a minimized window stays typed minimized'
+$capUnsafe = Invoke-WhRealCapture ([IntPtr]0x1001) -Native @{ GetWindowRect = { param([IntPtr]$id) @{ Width = 9000; Height = 9000 } } }
+Assert-Outcome $capUnsafe 'denied' 'capture pipeline: unsafe source dimensions are rejected before allocation'
+$capGone = Invoke-WhRealCapture ([IntPtr]0x1001) -Native @{ IsWindow = { param([IntPtr]$id) $false } }
+Assert-Outcome $capGone 'missing' 'capture pipeline: a vanished window is missing'
+
+# ---- 019GR4: a throwing thumbnail capture echoes the accepted target ---------
+# An unexpected exception inside the accepted thumbnail capture path must NOT
+# produce a target-less generic denied envelope (the strict parser would reject
+# it and the client would time out); it echoes the exact accepted target.
+$script:fakeRegistry = New-PristineRegistry
+$script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
+$throwList = Invoke-Line '{"requestId":95,"method":"list"}'
+$throwToken = [string]$throwList.windows[0].runtimeId
+Assert-True ($throwToken -match '^T[0-9a-f]{32}$') '019GR4: a token is issued for the throwing-capture fixture'
+$script:WhOps['Capture'] = { param([IntPtr]$id, [int]$mw, [int]$mh) throw 'boom capture failure' }
+$throwThumb = Invoke-Line ('{"requestId":96,"method":"thumbnail","target":"' + $throwToken + '"}')
+Assert-Outcome $throwThumb 'denied' '019GR4: a throwing thumbnail capture is typed denied'
+Assert-True ([string]$throwThumb.target -eq $throwToken) '019GR4: the generic denied envelope echoes the exact accepted target'
+Assert-True ([string]$throwThumb.error -match 'boom') '019GR4: the bounded error text carries the cause'
+$wireDenied = @{ requestId = 1; method = 'thumbnail'; outcome = 'denied'; target = 'T11111111111111111111111111111111'; error = 'boom' }
+Assert-True (Test-WireResponseOk $wireDenied) '019GR4: a thumbnail denied envelope echoing its target is accepted on the wire'
+# Restore the real fake Capture op so no later test is disturbed.
+$script:WhOps['Capture'] = { param([IntPtr]$id, [int]$maxWidth, [int]$maxHeight)
+  $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
+  if ($null -eq $entry -or -not $entry.alive) { return @{ outcome = 'missing'; error = 'window is gone' } }
+  if ($entry.State -eq 'minimized') { return @{ outcome = 'minimized'; error = 'window is minimized' } }
+  $entry.touched += "capture:$maxWidth,$maxHeight"
+  return @{ outcome = 'success'; image = (New-WhTestPng $maxWidth $maxHeight); width = $maxWidth; height = $maxHeight }
+}
 
 Write-Output '---'
 Write-Output "helper-schema.test.ps1 (Papers-owned window helper): $script:passed passed, $script:failed failed"

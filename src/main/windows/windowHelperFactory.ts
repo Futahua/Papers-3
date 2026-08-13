@@ -62,10 +62,20 @@ export interface WindowHelperFactory {
   observe(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   minimize(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  cloak?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  uncloak?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** 016 direct pick: topmost task-worthy window at a screen point. */
   hover(x: number, y: number): Promise<WindowCapabilityResult>;
+  /** 019G real-window thumbnail: bounded PrintWindow capture scaled to fit
+   * (maxWidth, maxHeight). */
+  thumbnail(runtimeId: RuntimeWindowId, maxWidth?: number, maxHeight?: number): Promise<WindowCapabilityResult>;
+  /** Monotonic session revision: incremented every time a FRESH helper
+   * session is created (first start and every post-crash/post-stop restart).
+   * The service uses it to invalidate the bounded thumbnail cache on helper
+   * replacement, so a cached image from a previous session is never served. */
+  readonly revision: number;
 }
 
 export interface WindowHelperFactoryOptions {
@@ -119,6 +129,7 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
   let currentSnapshot: WindowHelperStartSnapshot | null = null;
   let starting: Promise<WindowHelperStartOutcome> | null = null;
   let stopping: Promise<void> | null = null;
+  let revision = 0;
   const stopGate = options.stopGate ?? (async () => undefined);
 
   const supervisor: WindowCapabilitySupervisor = createWindowCapabilitySupervisor({
@@ -179,6 +190,10 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
       if (supervisor.getState() !== 'ready') {
         return 'helper-unavailable';
       }
+      // A fresh helper session now owns the client/transport: bump the
+      // session revision so helper-replacement invalidates any cached
+      // thumbnail from a previous session.
+      revision += 1;
       return 'ready';
     })().finally(() => {
       starting = null;
@@ -223,8 +238,14 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
     observe: (runtimeId) => withClient((client) => client.observe(runtimeId), HELPER_NOT_READY),
     minimize: (runtimeId) => withClient((client) => client.minimize(runtimeId), HELPER_NOT_READY),
     restore: (runtimeId) => withClient((client) => client.restore(runtimeId), HELPER_NOT_READY),
+    cloak: (runtimeId) => withClient((client) => client.cloak(runtimeId), HELPER_NOT_READY),
+    uncloak: (runtimeId) => withClient((client) => client.uncloak(runtimeId), HELPER_NOT_READY),
     apply: (runtimeId, bounds, state) => withClient((client) => client.apply(runtimeId, bounds, state), HELPER_NOT_READY),
     close: (runtimeId) => withClient((client) => client.close(runtimeId), HELPER_NOT_READY),
     hover: (x, y) => withClient((client) => client.hover(x, y), HELPER_NOT_READY),
+    thumbnail: (runtimeId, maxWidth, maxHeight) => withClient((client) => client.thumbnail(runtimeId, maxWidth, maxHeight), HELPER_NOT_READY),
+    get revision() {
+      return revision;
+    },
   };
 }

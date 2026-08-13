@@ -17,6 +17,12 @@ contextBridge.exposeInMainWorld('pickOverlay', {
   click: (x: number, y: number): void => {
     ipcRenderer.send('pick:click', { x, y });
   },
+  pointerMove: (x: number, y: number): void => {
+    ipcRenderer.send('pick:pointer-move', { x, y });
+  },
+  commit: (): void => {
+    ipcRenderer.send('pick:commit');
+  },
   cancel: (): void => {
     ipcRenderer.send('pick:cancel');
   },

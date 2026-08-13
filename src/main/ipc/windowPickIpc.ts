@@ -62,7 +62,9 @@ export function registerWindowPickIpc({
   isSender,
 }: WindowPickIpcDependencies): void {
   ipcMain.handle('papers:window-pick:begin', async (event, raw) => {
+    console.info('[045-direct-pick] ipc-begin-received', event.sender.id);
     if (!isSender(event.sender)) {
+      console.warn('[045-direct-pick] ipc-sender-rejected', event.sender.id);
       throw new Error('denied: not a Backpack project sender');
     }
     if (!isPlainObject(raw)) throw new Error('pick begin payload must be an object');
@@ -73,7 +75,7 @@ export function registerWindowPickIpc({
     }
     const members = raw['members'].map(parseMemberDescriptor);
     const sender = event.sender;
-    return session.begin({
+    const result = await session.begin({
       memberDescriptors: members,
       onResult: (result: WindowPickResult) => {
         if (!sender.isDestroyed()) {
@@ -81,6 +83,9 @@ export function registerWindowPickIpc({
         }
       },
     });
+    console.info('[045-direct-pick] session-begin-result', result.outcome,
+      result.outcome === 'failed' ? (result.error ?? '') : '');
+    return result;
   });
 
   ipcMain.handle('papers:window-pick:cancel', async (event, raw) => {
@@ -92,5 +97,30 @@ export function registerWindowPickIpc({
     }
     await session.cancel();
     return { outcome: 'cancelled' };
+  });
+
+  // 021: keyboard flow lives on the launching workspace page. Enter commits the
+  // staged set; a toggle key (e.g. Space) stages the hovered window. Both are
+  // empty-payload invokes gated on the Backpack sender.
+  ipcMain.handle('papers:window-pick:stage', async (event, raw) => {
+    if (!isSender(event.sender)) {
+      throw new Error('denied: not a Backpack project sender');
+    }
+    if (raw !== undefined && !(isPlainObject(raw) && Object.keys(raw).length === 0)) {
+      throw new Error('pick stage payload must be empty');
+    }
+    session.stage();
+    return { outcome: 'staged' };
+  });
+
+  ipcMain.handle('papers:window-pick:commit', async (event, raw) => {
+    if (!isSender(event.sender)) {
+      throw new Error('denied: not a Backpack project sender');
+    }
+    if (raw !== undefined && !(isPlainObject(raw) && Object.keys(raw).length === 0)) {
+      throw new Error('pick commit payload must be empty');
+    }
+    await session.commit();
+    return { outcome: 'committed' };
   });
 }

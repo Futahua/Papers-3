@@ -182,10 +182,15 @@ function ThisBuildCard(): React.JSX.Element {
 export function SettingsPane(): React.JSX.Element {
   const [transparentWindow, setTransparentWindow] = React.useState(false);
   const [settingsLoaded, setSettingsLoaded] = React.useState(false);
+  const [windowBounds, setWindowBounds] = React.useState<
+    { x: number; y: number; width: number; height: number } | null
+  >(null);
+  const [boundsStatus, setBoundsStatus] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     void host().settings.get().then((settings) => {
       setTransparentWindow(settings.transparentWindow);
+      setWindowBounds(settings.windowBounds ?? null);
       document.documentElement.dataset.transparentWindow = String(settings.transparentWindow);
       setSettingsLoaded(true);
     }).catch(() => setSettingsLoaded(true));
@@ -195,6 +200,20 @@ export function SettingsPane(): React.JSX.Element {
     setTransparentWindow(enabled);
     document.documentElement.dataset.transparentWindow = String(enabled);
     void host().settings.setTransparentWindow(enabled);
+  };
+
+  const saveWindowSize = (): void => {
+    void host().settings.saveWindowBounds().then((bounds) => {
+      setWindowBounds(bounds);
+      setBoundsStatus(bounds ? 'Saved.' : 'Could not read the window size.');
+    }).catch(() => setBoundsStatus('Could not save the window size.'));
+  };
+
+  const clearWindowSize = (): void => {
+    void host().settings.clearWindowBounds().then(() => {
+      setWindowBounds(null);
+      setBoundsStatus('Cleared. Papers will open at its default size.');
+    }).catch(() => setBoundsStatus('Could not clear the saved size.'));
   };
 
   return (
@@ -224,6 +243,34 @@ export function SettingsPane(): React.JSX.Element {
               <span>Transparent window</span>
             </label>
             <small>Shows the desktop through unpainted Backpack pages. Restart Papers for this choice to take effect.</small>
+          </div>
+
+          <div className="settings-card">
+            <span className="label">Window size</span>
+            <strong>
+              {windowBounds
+                ? `${windowBounds.width} x ${windowBounds.height} saved`
+                : 'Default size'}
+            </strong>
+            <small>
+              Size and place the Papers window how you want it — including stretched across
+              several monitors — then save it. Papers reopens at that size every launch. If a
+              monitor is disconnected, the window is pulled back onto a screen you can still reach.
+            </small>
+            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+              <button type="button" onClick={saveWindowSize} disabled={!settingsLoaded}>
+                Save current window size
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={clearWindowSize}
+                disabled={!settingsLoaded || !windowBounds}
+              >
+                Reset to default
+              </button>
+            </div>
+            {boundsStatus ? <small>{boundsStatus}</small> : null}
           </div>
 
           <div className="settings-card">

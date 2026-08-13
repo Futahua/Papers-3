@@ -1,9 +1,18 @@
 import { ipcRenderer, webUtils } from 'electron';
 
-interface ProjectMessage { type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; }
+interface ProjectMessage { type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
+const WINDOW_THUMBNAIL_MAX_WIDTH = 320;
+const WINDOW_THUMBNAIL_MAX_HEIGHT = 180;
+let detachedToken: string | null = null;
+let detachedTransferId: string | null = null;
+let detachedPageReady = false;
+let detachedReadySent = false;
+let widgetToken: string | null = null;
+let widgetPageReady = false;
+let widgetReadySent = false;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -63,10 +72,87 @@ function parsePickMembers(raw: unknown): Record<string, unknown>[] {
   return raw.map(parseDescriptor);
 }
 
+/** 019G thumbnail request dimensions (page gate): options must be an object
+ * with EXACT keys { maxWidth, maxHeight }, each a positive safe integer within
+ * the 320x180 contract bounds. The 240x135 default is applied by the service,
+ * never guessed here. */
+function parseThumbnailOptions(raw: unknown): Record<string, number> {
+  if (!isPlainObject(raw)) throw new Error('thumbnail options must be an object');
+  if (!exactKeys(raw, ['maxWidth', 'maxHeight'])) throw new Error('thumbnail options contains unknown fields');
+  const maxWidth = raw['maxWidth'];
+  const maxHeight = raw['maxHeight'];
+  if (typeof maxWidth !== 'number' || !Number.isSafeInteger(maxWidth) || maxWidth <= 0 || maxWidth > WINDOW_THUMBNAIL_MAX_WIDTH) {
+    throw new Error('thumbnail options.maxWidth is invalid');
+  }
+  if (typeof maxHeight !== 'number' || !Number.isSafeInteger(maxHeight) || maxHeight <= 0 || maxHeight > WINDOW_THUMBNAIL_MAX_HEIGHT) {
+    throw new Error('thumbnail options.maxHeight is invalid');
+  }
+  return { maxWidth, maxHeight };
+}
+
+function projectIdFromOrigin(): string {
+  const projectId = new URL(window.location.href).host;
+  if (!projectId) throw new Error('the project origin has no identity');
+  return projectId;
+}
+
+function immediateHostResult(requestId: unknown, origin: string): void {
+  if (typeof requestId !== 'string') return;
+  window.postMessage({ type: 'papers:host:result', requestId, ok: true }, origin);
+}
+
+function immediateHostError(requestId: unknown, origin: string, error: string): void {
+  if (typeof requestId !== 'string') return;
+  window.postMessage({ type: 'papers:host:result', requestId, ok: false, error }, origin);
+}
+
+function validTransferId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512;
+}
+
+function validRequestId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512;
+}
+
+function trySendDetachedReady(): void {
+  if (!detachedPageReady || detachedReadySent || !detachedToken || !detachedTransferId) return;
+  detachedReadySent = true;
+  ipcRenderer.send('papers:backpack:detach-ready', {
+    token: detachedToken,
+    transferId: detachedTransferId,
+  });
+}
+
+function trySendWidgetReady(): void {
+  if (!widgetPageReady || widgetReadySent || !widgetToken) return;
+  widgetReadySent = true;
+  ipcRenderer.send('papers:backpack:widget-ready', { token: widgetToken });
+}
+
 window.addEventListener('message', (event) => {
   if (event.source !== window || event.origin !== window.location.origin) return;
   const request = event.data as ProjectMessage;
   if (!request || typeof request.type !== 'string') return;
+  if (request.type === 'papers:project:detach-ready') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || typeof request.requestId !== 'string') {
+      immediateHostError(request.requestId, event.origin, 'detached ready request is malformed');
+      return;
+    }
+    detachedPageReady = true;
+    trySendDetachedReady();
+    immediateHostResult(request.requestId, event.origin);
+    return;
+  }
+  if (request.type === 'papers:project:widget-ready') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'widget ready request is malformed');
+      return;
+    }
+    widgetPageReady = true;
+    trySendWidgetReady();
+    immediateHostResult(request.requestId, event.origin);
+    return;
+  }
   if (request.type === 'papers:project:close') { ipcRenderer.send('host:backpack-project:request-close'); return; }
 
   let task: Promise<unknown> | null = null;
@@ -104,6 +190,15 @@ window.addEventListener('message', (event) => {
     const capability = parseCapability(request.capability);
     task = ipcRenderer.invoke('papers:window-capability:restore', capability);
   }
+  if (request.type === 'papers:project:window-peek-begin') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability'])) throw new Error('window peek begin request contains unknown fields');
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:peek-begin', capability);
+  }
+  if (request.type === 'papers:project:window-peek-end') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window peek end request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:peek-end', {});
+  }
   if (request.type === 'papers:project:window-apply-capability') {
     const capability = parseCapability(request.capability);
     const bounds = parseBounds(request.bounds);
@@ -113,7 +208,30 @@ window.addEventListener('message', (event) => {
     const descriptor = parseDescriptor(request.descriptor);
     task = ipcRenderer.invoke('papers:window-capability:resolve', descriptor);
   }
+  if (request.type === 'papers:project:window-thumbnail') {
+    // 019G/019GR2: the final AYG page event is EXACTLY
+    // `papers:project:window-thumbnail` with keys { capability,
+    // options: { maxWidth, maxHeight } }; only the opaque capability and
+    // bounded integer dimensions reach Papers, never an HWND/PID/path. The
+    // page result shape is the strict typed thumbnail result (data-URL
+    // success or a payload-free typed fallback).
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability', 'options']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'window thumbnail request is malformed');
+      return;
+    }
+    let capability: Record<string, unknown>;
+    let options: Record<string, number>;
+    try {
+      capability = parseCapability(request.capability);
+      options = parseThumbnailOptions(request.options);
+    } catch {
+      immediateHostError(request.requestId, event.origin, 'window thumbnail request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:window-capability:thumbnail', { capability, options });
+  }
   if (request.type === 'papers:project:window-pick-begin') {
+    console.info('[045-direct-pick] preload-begin-received');
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'members'])) {
       throw new Error('window pick begin request contains unknown fields');
     }
@@ -126,6 +244,167 @@ window.addEventListener('message', (event) => {
     }
     task = ipcRenderer.invoke('papers:window-pick:cancel', {});
   }
+  if (request.type === 'papers:project:window-pick-stage') {
+    // 021: the launching workspace page routes the toggle key (e.g. Space) to
+    // the pick session; empty payload only.
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) {
+      throw new Error('window pick stage request contains unknown fields');
+    }
+    task = ipcRenderer.invoke('papers:window-pick:stage', {});
+  }
+  if (request.type === 'papers:project:window-pick-commit') {
+    // 021: the launching workspace page routes Enter to commit the staged set;
+    // empty payload only.
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) {
+      throw new Error('window pick commit request contains unknown fields');
+    }
+    task = ipcRenderer.invoke('papers:window-pick:commit', {});
+  }
+  if (request.type === 'papers:project:detach-open') {
+    task = ipcRenderer.invoke('papers:backpack:detach-open', {
+      projectId: projectIdFromOrigin(),
+      ...(request.bounds !== undefined ? { bounds: request.bounds } : {}),
+    });
+  }
+  if (request.type === 'papers:project:widget-close') {
+    // 019C: the WORKSPACE frame closes a layout's widget by opaque layoutKey
+    // (projectId attached here); the WIDGET frame closes itself by the hidden
+    // token the preload latched. Exact keys, never a page-visible token.
+    if (exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutKey']) && validRequestId(request.requestId)) {
+      let layoutKey: string;
+      try { layoutKey = parseBoundedString(request.layoutKey); } catch {
+        immediateHostError(request.requestId, event.origin, 'widget close request is malformed');
+        return;
+      }
+      task = ipcRenderer.invoke('papers:backpack:widget-close', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+    } else if (widgetToken && exactKeys(request as Record<string, unknown>, ['type', 'requestId']) && validRequestId(request.requestId)) {
+      task = ipcRenderer.invoke('papers:backpack:widget-close', { token: widgetToken }).then((payload) => ({ widget: payload }));
+    } else {
+      immediateHostError(request.requestId, event.origin, 'widget close request is malformed');
+      return;
+    }
+  }
+  if (request.type === 'papers:project:widget-open') {
+    // 019C: the registered live workspace opens/focuses a layout's compact
+    // widget by opaque layoutKey; projectId is attached ONLY here, never from
+    // page data. The opaque key is bounded and never parsed.
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutKey']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'widget open request is malformed');
+      return;
+    }
+    let layoutKey: string;
+    try { layoutKey = parseBoundedString(request.layoutKey); } catch {
+      immediateHostError(request.requestId, event.origin, 'widget open request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-open', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+  }
+  if (request.type === 'papers:project:widget-focus') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutKey']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'widget focus request is malformed');
+      return;
+    }
+    let layoutKey: string;
+    try { layoutKey = parseBoundedString(request.layoutKey); } catch {
+      immediateHostError(request.requestId, event.origin, 'widget focus request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-focus', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+  }
+  if (request.type === 'papers:project:widget-report-size') {
+    // 024: the compact-widget page reports its bounded card content size after
+    // each render so the host refits the frameless window to the card. Only the
+    // latched widget token may report (the token never reaches the page body).
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'width', 'height']) || !widgetToken) {
+      immediateHostError(request.requestId, event.origin, 'widget size report is malformed');
+      return;
+    }
+    const width = request.width;
+    const height = request.height;
+    if (typeof width !== 'number' || typeof height !== 'number' || !Number.isFinite(width) || !Number.isFinite(height)
+      || width < 1 || height < 1 || width > 2000 || height > 2000) {
+      immediateHostError(request.requestId, event.origin, 'widget size report is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-report-size', {
+      token: widgetToken,
+      width: Math.round(width),
+      height: Math.round(height),
+    }).then((payload) => ({ size: payload }));
+  }
+  if (request.type === 'papers:project:widget-preview-show') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'imageUrl', 'title', 'width', 'height', 'anchor']) || !widgetToken) {
+      immediateHostError(request.requestId, event.origin, 'widget preview request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-preview-show', {
+      token: widgetToken,
+      imageUrl: request.imageUrl,
+      title: request.title,
+      width: request.width,
+      height: request.height,
+      anchor: request.anchor,
+    }).then((payload) => ({ preview: payload }));
+  }
+  if (request.type === 'papers:project:widget-preview-hide') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !widgetToken) {
+      immediateHostError(request.requestId, event.origin, 'widget preview hide request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-preview-hide', { token: widgetToken })
+      .then((payload) => ({ preview: payload }));
+  }
+  if (request.type === 'papers:project:widget-context-menu') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !widgetToken) {
+      immediateHostError(request.requestId, event.origin, 'widget context menu request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-context-menu', { token: widgetToken })
+      .then((payload) => ({ menu: payload }));
+  }
+  if (request.type === 'papers:project:window-candidate-picker') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'candidates'])
+      || !validRequestId(request.requestId) || !Array.isArray(request.candidates) || request.candidates.length > 64) {
+      immediateHostError(request.requestId, event.origin, 'window candidate picker request is malformed');
+      return;
+    }
+    const payload = widgetToken
+      ? { token: widgetToken, candidates: request.candidates }
+      : { projectId: projectIdFromOrigin(), candidates: request.candidates };
+    task = ipcRenderer.invoke('papers:backpack:window-candidate-picker', payload)
+      .then((value) => ({ picker: value }));
+  }
+  if (request.type === 'papers:project:detach-reattach') {
+    task = detachedToken && detachedTransferId
+      ? ipcRenderer.invoke('papers:backpack:detach-reattach', { token: detachedToken, transferId: detachedTransferId })
+      : ipcRenderer.invoke('papers:backpack:detach-reattach', { projectId: projectIdFromOrigin() });
+  }
+  if (request.type === 'papers:project:detach-focus') {
+    if (detachedToken && detachedTransferId) {
+      task = ipcRenderer.invoke('papers:backpack:detach-focus', {
+        token: detachedToken,
+        transferId: detachedTransferId,
+      });
+    } else task = ipcRenderer.invoke('papers:backpack:detach-focus', { projectId: projectIdFromOrigin() });
+  }
+  if (request.type === 'papers:project:detach-stop-ack') {
+    if (!validTransferId(request.transferId)) {
+      immediateHostError(request.requestId, event.origin, 'detached stop acknowledgement is malformed');
+      return;
+    }
+    ipcRenderer.send('papers:backpack:detach-stop-ack', { transferId: request.transferId });
+    immediateHostResult(request.requestId, event.origin);
+    return;
+  }
+  if (request.type === 'papers:project:detach-resumed-ack') {
+    if (!validTransferId(request.transferId)) {
+      immediateHostError(request.requestId, event.origin, 'detached resumed acknowledgement is malformed');
+      return;
+    }
+    ipcRenderer.send('papers:backpack:detach-resumed', { transferId: request.transferId });
+    immediateHostResult(request.requestId, event.origin);
+    return;
+  }
   if (!task) return;
   void task.then((payload) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: true, ...(payload && typeof payload === 'object' ? payload : {}) }, event.origin))
     .catch((caught) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: false, error: String(caught instanceof Error ? caught.message : caught) }, event.origin));
@@ -134,4 +413,65 @@ window.addEventListener('message', (event) => {
 // The direct-pick session pushes its typed result to the project frame.
 ipcRenderer.on('papers:window-pick:result', (_event, result) => {
   window.postMessage({ type: 'papers:project:window-pick-result', result }, window.location.origin);
+});
+
+// The same preload serves the workspace iframe and the top-level detached
+// page. Tokens stay here; the project page sees only bounded lifecycle events.
+ipcRenderer.on('papers:backpack:detach-token', (_event, payload) => {
+  const value = payload as { token?: unknown; transferId?: unknown } | null;
+  if (typeof value?.token !== 'string' || typeof value.transferId !== 'string') return;
+  if (detachedToken !== value.token || detachedTransferId !== value.transferId) {
+    detachedToken = value.token;
+    detachedTransferId = value.transferId;
+    detachedReadySent = false;
+  }
+  trySendDetachedReady();
+});
+
+ipcRenderer.on('papers:backpack:widget-token', (_event, payload) => {
+  const value = payload as { token?: unknown } | null;
+  if (typeof value?.token !== 'string' || value.token.length === 0 || value.token.length > 512) return;
+  if (widgetToken !== value.token) {
+    widgetToken = value.token;
+    widgetReadySent = false;
+  }
+  trySendWidgetReady();
+});
+
+for (const [channel, type] of [
+  ['papers:backpack:detach-stop-request', 'papers:project:detach-stop-request'],
+  ['papers:backpack:detach-activate', 'papers:project:detach-activate'],
+  ['papers:backpack:detach-flush-request', 'papers:project:detach-flush-request'],
+  ['papers:backpack:detach-closed', 'papers:project:detach-closed'],
+] as const) {
+  ipcRenderer.on(channel, (_event, payload) => window.postMessage({ type, ...(payload ?? {}) }, window.location.origin));
+}
+
+window.addEventListener('message', (event) => {
+  if (event.source !== window || event.origin !== window.location.origin) return;
+  const request = event.data as ProjectMessage;
+  if (!request || typeof request.type !== 'string') return;
+  if (request.type === 'papers:project:detach-flush-ack') {
+    if (!detachedToken || !detachedTransferId || request.transferId !== detachedTransferId) {
+      immediateHostError(request.requestId, event.origin, 'detached flush acknowledgement is malformed');
+      return;
+    }
+    ipcRenderer.send('papers:backpack:detach-flush-ack', {
+      token: detachedToken,
+      transferId: detachedTransferId,
+    });
+    immediateHostResult(request.requestId, event.origin);
+  }
+  if (request.type === 'papers:project:detach-activated-ack') {
+    if (!detachedToken || !detachedTransferId || !exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'transferId'])
+      || !validRequestId(request.requestId) || !validTransferId(request.transferId) || request.transferId !== detachedTransferId) {
+      immediateHostError(request.requestId, event.origin, 'detached activation acknowledgement is malformed');
+      return;
+    }
+    ipcRenderer.send('papers:backpack:detach-activated', {
+      token: detachedToken,
+      transferId: detachedTransferId,
+    });
+    immediateHostResult(request.requestId, event.origin);
+  }
 });

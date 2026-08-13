@@ -36,11 +36,17 @@ export interface WindowCapabilityClient {
   observe(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   minimize(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  cloak(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  uncloak(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** 016 direct pick: resolve the topmost task-worthy window at a screen
    * point (helper-owned eligibility). No target - the helper resolves. */
   hover(x: number, y: number): Promise<WindowCapabilityResult>;
+  /** 019G real-window thumbnail: bounded PrintWindow capture scaled to fit
+   * (maxWidth, maxHeight). Dimensions are positive integers (maxWidth <= 320,
+   * maxHeight <= 180); the service validates them before reaching this. */
+  thumbnail(runtimeId: RuntimeWindowId, maxWidth?: number, maxHeight?: number): Promise<WindowCapabilityResult>;
   /** Inbound message path the transport delivers into. */
   handleMessage(raw: unknown): void;
   /** Rejects every pending request exactly once (supervisor crash/stop). */
@@ -71,6 +77,8 @@ export function createWindowCapabilityClient({
       state?: WindowState;
       x?: number;
       y?: number;
+      maxWidth?: number;
+      maxHeight?: number;
     } = {},
   ): Promise<WindowCapabilityResult> {
     if (stopped) {
@@ -89,6 +97,8 @@ export function createWindowCapabilityClient({
       ...(detail.state !== undefined ? { state: detail.state } : {}),
       ...(detail.x !== undefined ? { x: detail.x } : {}),
       ...(detail.y !== undefined ? { y: detail.y } : {}),
+      ...(detail.maxWidth !== undefined ? { maxWidth: detail.maxWidth } : {}),
+      ...(detail.maxHeight !== undefined ? { maxHeight: detail.maxHeight } : {}),
     };
     const result = new Promise<WindowCapabilityResult>((resolve) => {
       const timer = setTimeout(() => {
@@ -116,7 +126,14 @@ export function createWindowCapabilityClient({
     const entry = pending.get(response.requestId);
     if (!entry) return; // stale, duplicate or unknown id: ignored
     if (entry.method !== response.method) return; // mismatched: never satisfy the wrong request
-    if (response.observation !== undefined
+    if (entry.method === 'thumbnail') {
+      // 019GR3: a thumbnail response resolves ONLY when the echoed helper
+      // target matches the token the request was issued for. A wrong-target
+      // response with the same requestId and method is ignored. The target is
+      // a strict main-internal correlation field and is NEVER forwarded into
+      // the result.
+      if (response.target === undefined || response.target !== entry.target) return;
+    } else if (response.observation !== undefined
       && entry.target !== undefined
       && response.observation.runtimeId !== entry.target) {
       // Same method, same request id, but the observation is for a
@@ -130,6 +147,7 @@ export function createWindowCapabilityClient({
       ...(response.windows !== undefined ? { windows: response.windows } : {}),
       ...(response.observation !== undefined ? { observation: response.observation } : {}),
       ...(response.window !== undefined ? { window: response.window } : {}),
+      ...(response.thumbnail !== undefined ? { thumbnail: response.thumbnail } : {}),
       ...(response.error !== undefined ? { error: response.error } : {}),
     });
   }
@@ -155,9 +173,12 @@ export function createWindowCapabilityClient({
     observe: (runtimeId) => request('observe', { target: runtimeId }),
     minimize: (runtimeId) => request('minimize', { target: runtimeId }),
     restore: (runtimeId) => request('restore', { target: runtimeId }),
+    cloak: (runtimeId) => request('cloak', { target: runtimeId }),
+    uncloak: (runtimeId) => request('uncloak', { target: runtimeId }),
     apply: (runtimeId, bounds, state) => request('apply', { target: runtimeId, bounds, state }),
     close: (runtimeId) => request('close', { target: runtimeId }),
     hover: (x, y) => request('hover', { x, y }),
+    thumbnail: (runtimeId, maxWidth, maxHeight) => request('thumbnail', { target: runtimeId, maxWidth, maxHeight }),
     handleMessage,
     rejectAllPending,
     stop,
