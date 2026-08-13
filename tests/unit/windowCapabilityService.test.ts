@@ -250,6 +250,48 @@ describe('windowCapabilityService native picker snapshots', () => {
     });
   });
 
+  it('collapses same-native-rectangle host aliases instead of permanently bricking direct pick', async () => {
+    const topmost = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      title: 'D:\\',
+      processId: 1001,
+      processPath: 'C:\\Apps\\dopus.exe',
+    });
+    const alias = observation({
+      runtimeId: TOKEN_B as RuntimeWindowId,
+      title: '_disabled_by_cleanup',
+      processId: 1001,
+      processPath: 'C:\\Apps\\dopus.exe',
+    });
+    const factory = fakeFactory({ list: async () => ({ outcome: 'success', windows: [topmost, alias] }) });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('list failed');
+    const descriptors = [];
+    for (const candidate of listed.candidates) {
+      const bound = await service.bindCandidate(candidate.id);
+      if (bound.outcome !== 'success') throw new Error('bind failed');
+      descriptors.push(bound.descriptor);
+    }
+
+    const prepared = await service.prepareNativePicker(descriptors);
+    expect(prepared).toEqual({
+      outcome: 'success',
+      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200 }],
+    });
+    if (prepared.outcome !== 'success') return;
+    const rebound = await service.bindNativePickerSelection(prepared.seeds);
+    expect(rebound.outcome).toBe('success');
+    if (rebound.outcome === 'success') {
+      expect(rebound.windows).toHaveLength(1);
+      expect(rebound.windows[0]!.descriptor.title).toBe('D:\\');
+    }
+  });
+
   it('fails the whole commit when a PID/bounds identity is absent', async () => {
     const { service } = harness();
     await expect(service.bindNativePickerSelection([

@@ -935,7 +935,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       const identity = nativeIdentity(matches[0]!);
       if (!identity) continue;
       const key = `${identity.processId}|${identity.x}|${identity.y}|${identity.width}|${identity.height}`;
-      if (claimed.has(key)) return { outcome: 'ambiguous', error: `layout members resolve to the same native window: ${descriptor.title}` };
+      // Some hosts expose more than one logical observation for one native
+      // top-level rectangle (for example a Directory Opus surface plus its
+      // cleanup-labelled companion). The local AHK picker can paint that
+      // rectangle only once, so collapse it instead of bricking the entire
+      // direct-pick session.
+      if (claimed.has(key)) continue;
       claimed.add(key);
       seeds.push(identity);
     }
@@ -953,7 +958,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     for (const selection of selections) {
       const matches = snapshot.observations.filter((observation) => sameNativeIdentity(observation, selection));
       if (matches.length === 0) return { outcome: 'missing', error: 'a selected window changed before commit' };
-      if (matches.length > 1) return { outcome: 'ambiguous', error: 'a selected native identity matches more than one window' };
+      // EnumWindows/helper order is topmost-first. If one native PID/rectangle
+      // is represented by multiple logical observations, the first is the
+      // window AHK actually hit; rejecting the complete set would make Direct
+      // Pick permanently unavailable for that desktop state.
       if (claimedTokens.has(matches[0]!.runtimeId)) return { outcome: 'ambiguous', error: 'the final picker set contains a duplicate window' };
       claimedTokens.add(matches[0]!.runtimeId);
       matched.push(matches[0]!);
