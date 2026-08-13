@@ -229,8 +229,11 @@ async function bootstrap(): Promise<void> {
     (projectId) => {
       detachSession?.closeProject(projectId).catch(() => undefined);
       detachRegistry.unregisterWorkspaceForProject(projectId);
-      widgetSession?.closeProject(projectId).catch(() => undefined);
-      widgetRegistry.unregisterAllForProject(projectId);
+      // Compact widgets are independent pet windows, not child views of the
+      // entered Backpack. Returning to the Backpack list tears down only the
+      // workspace surface; the widget and its capability token stay live so
+      // it remains visible/usable and can reconnect when the project is
+      // entered again. App shutdown still owns closeAll().
     },
   );
   hostView = new WebContentsView({
