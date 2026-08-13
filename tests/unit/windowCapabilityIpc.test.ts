@@ -32,6 +32,7 @@ function fakeService(): WindowCapabilityService {
     observeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     minimizeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     restoreCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    closeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     beginPeekCapability: async () => ({ outcome: 'success' }),
     endPeek: async () => ({ outcome: 'success' }),
     applyCapability: async () => ({ outcome: 'missing', error: 'gone' }),
@@ -76,6 +77,7 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:observe',
       'papers:window-capability:minimize',
       'papers:window-capability:restore',
+      'papers:window-capability:close',
       'papers:window-capability:peek-begin',
       'papers:window-capability:peek-end',
       'papers:window-capability:apply',
@@ -134,7 +136,7 @@ describe('windowCapabilityIpc', () => {
     const service = new Proxy(fakeService(), {
       get(target, property) {
         const name = String(property);
-        if (['listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'applyCapability', 'thumbnailCapability', 'resolvePersisted'].includes(name)) {
+        if (['listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'closeCapability', 'applyCapability', 'thumbnailCapability', 'resolvePersisted'].includes(name)) {
           return async (...args: unknown[]) => {
             calls.push(name);
             if (name === 'listCandidates') return { outcome: 'success', candidates: [{ id: 'c1', title: 'W', applicationLabel: 'W', icon: null, state: 'normal' }] };
@@ -163,6 +165,8 @@ describe('windowCapabilityIpc', () => {
     expect(minimized.outcome).toBe('success');
     const restored = await ipc.invoke('papers:window-capability:restore', 42, capability) as { outcome: string };
     expect(restored.outcome).toBe('success');
+    const closed = await ipc.invoke('papers:window-capability:close', 42, capability) as { outcome: string };
+    expect(closed.outcome).toBe('success');
     const applied = await ipc.invoke('papers:window-capability:apply', 42, { capability, bounds: { x: 1, y: 2, width: 300, height: 200 } }) as { outcome: string };
     expect(applied.outcome).toBe('success');
     const resolved = await ipc.invoke('papers:window-capability:resolve', 42, { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64) });
@@ -178,7 +182,7 @@ describe('windowCapabilityIpc', () => {
     expect(thumb.height).toBe(135);
     expect(calls).toEqual([
       'listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability',
-      'restoreCapability', 'applyCapability', 'resolvePersisted', 'thumbnailCapability',
+      'restoreCapability', 'closeCapability', 'applyCapability', 'resolvePersisted', 'thumbnailCapability',
     ]);
   });
 

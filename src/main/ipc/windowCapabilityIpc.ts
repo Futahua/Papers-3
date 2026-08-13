@@ -198,6 +198,7 @@ export function registerWindowCapabilityIpc({
   handle('papers:window-capability:observe', parseRuntimeCapability, (capability) => service.observeCapability(capability));
   handle('papers:window-capability:minimize', parseRuntimeCapability, (capability) => service.minimizeCapability(capability));
   handle('papers:window-capability:restore', parseRuntimeCapability, (capability) => service.restoreCapability(capability));
+  handle('papers:window-capability:close', parseRuntimeCapability, (capability) => service.closeCapability(capability));
   handle('papers:window-capability:peek-begin', parseRuntimeCapability, (capability) => service.beginPeekCapability(capability));
   handle('papers:window-capability:peek-end', (raw) => {
     if (raw === undefined) return undefined;

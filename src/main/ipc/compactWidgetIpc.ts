@@ -14,7 +14,7 @@ export interface CompactWidgetIpcDependencies {
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
-  showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>) => Promise<string | null>;
+  showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>) => Promise<{ action: 'select' | 'close' | 'cancel'; candidateId: string | null }>;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -196,7 +196,8 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
       if (typeof value.current !== 'boolean') throw new Error('candidate current state is malformed');
       return { id, title, icon, current: value.current };
     });
-    const candidateId = showCandidatePicker ? await showCandidatePicker(event.sender, candidates) : null;
-    return { candidateId };
+    return showCandidatePicker
+      ? showCandidatePicker(event.sender, candidates)
+      : { action: 'cancel', candidateId: null };
   });
 }

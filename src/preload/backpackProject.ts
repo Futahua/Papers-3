@@ -190,6 +190,10 @@ window.addEventListener('message', (event) => {
     const capability = parseCapability(request.capability);
     task = ipcRenderer.invoke('papers:window-capability:restore', capability);
   }
+  if (request.type === 'papers:project:window-close-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:close', capability);
+  }
   if (request.type === 'papers:project:window-peek-begin') {
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability'])) throw new Error('window peek begin request contains unknown fields');
     const capability = parseCapability(request.capability);
