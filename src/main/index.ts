@@ -713,7 +713,6 @@ async function bootstrap(): Promise<void> {
           active.resolve = resolve;
         });
       }
-      const owner = BrowserWindow.fromWebContents(sender);
       const cursor = screen.getCursorScreenPoint();
       const area = screen.getDisplayNearestPoint(cursor).workArea;
       const width = Math.min(420, area.width);
@@ -721,7 +720,6 @@ async function bootstrap(): Promise<void> {
       const x = Math.max(area.x, Math.min(area.x + area.width - width, cursor.x - Math.round(width / 2)));
       const y = Math.max(area.y, Math.min(area.y + area.height - height, cursor.y - 36));
       const picker = new BrowserWindow({
-        ...(owner && !owner.isDestroyed() ? { parent: owner } : {}),
         x, y, width, height,
         frame: false,
         resizable: true,
@@ -731,7 +729,12 @@ async function bootstrap(): Promise<void> {
         skipTaskbar: true,
         show: false,
         backgroundColor: '#161b22',
-        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          preload: path.join(preloadDir, 'candidatePicker.cjs'),
+        },
       });
       picker.setAlwaysOnTop(true, 'pop-up-menu');
       const encoded = JSON.stringify(candidates).replace(/</g, '\\u003c');
@@ -740,9 +743,9 @@ async function bootstrap(): Promise<void> {
  *{box-sizing:border-box}html,body{margin:0;height:100%;background:#161b22;color:#dbe7f3;font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}body{border:1px solid #465462;border-radius:12px;display:flex;flex-direction:column;box-shadow:0 14px 38px #0009}.head{padding:7px 13px 10px;border-bottom:1px solid #2b3742}.titleline{display:flex;align-items:center;justify-content:flex-end;min-height:27px;margin-bottom:4px;-webkit-app-region:drag}.close,.search,.row,.empty{-webkit-app-region:no-drag}.close{border:0;background:transparent;color:#9cacba;font-size:19px;line-height:20px;border-radius:5px;cursor:pointer}.close:hover{background:#31404b;color:#fff}.search{width:100%;height:34px;border:1px solid #536372;border-radius:8px;background:#0e141a;color:#f3f8fc;padding:0 11px;outline:none}.search:focus{border-color:#72a7d5;box-shadow:0 0 0 2px #72a7d533}.list{padding:7px;overflow:auto;flex:1;scrollbar-color:#4b5b68 transparent;display:flex;flex-direction:column}.row,.empty{flex:0 0 auto}.row{width:100%;border:0;background:transparent;color:inherit;display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px;border-radius:8px;text-align:left;cursor:pointer}.row:hover,.row:focus-visible{background:#273540;outline:none}.busy .row{pointer-events:none;opacity:.68}.icon{width:20px;height:20px;object-fit:contain}.fallback{width:16px;height:16px;border:1px solid #83919d;border-radius:3px}.label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.state{font-size:11px;color:#8fb1cb}.current .state{color:#ef9c77}.empty{padding:24px;text-align:center;color:#8898a7}.drag-space{flex:1 0 28px;min-height:28px;-webkit-app-region:drag}
 </style><div class="head"><div class="titleline"><button class="close" aria-label="Close">×</button></div><input class="search" type="search" placeholder="Search windows…" autocomplete="off" spellcheck="false"></div><div class="list"></div><script id="data" type="application/json">${encoded}</script><script>
  let all=JSON.parse(document.getElementById('data').textContent);const list=document.querySelector('.list'),search=document.querySelector('.search');
-function signal(path,id=''){window.open('https://papers-picker.invalid/'+path+(id?'/'+encodeURIComponent(id):''),'_blank','noopener')}
+function signal(path,id=''){window.candidatePicker.signal(path,id)}
  function appendDragSpace(){const d=document.createElement('div');d.className='drag-space';d.setAttribute('aria-hidden','true');list.append(d)}
- function render(){const q=search.value.trim().toLowerCase(),rows=all.filter(x=>x.title.toLowerCase().includes(q));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>{document.body.classList.add('busy');c.current=!c.current;render();signal('select',c.id)};b.onauxclick=e=>{if(e.button!==1||!e.ctrlKey)return;e.preventDefault();document.body.classList.add('busy');signal('close',c.id)};list.append(b)}appendDragSpace()}
+ function render(){const q=search.value.trim().toLowerCase(),rows=all.filter(x=>x.title.toLowerCase().includes(q));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>{document.body.classList.add('busy');signal('select',c.id)};b.onauxclick=e=>{if(e.button!==1||!e.ctrlKey)return;e.preventDefault();document.body.classList.add('busy');signal('close',c.id)};list.append(b)}appendDragSpace()}
  window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
 const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;search.oninput=render;document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
@@ -815,10 +818,18 @@ const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cance
             if (session.candidateIds.has(candidateId)) finishAction(action, candidateId);
           } catch { /* malformed navigation is ignored */ }
         };
-        picker.webContents.setWindowOpenHandler(({ url }) => {
-          handlePickerUrl(url);
-          return { action: 'deny' };
-        });
+        picker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        const pickerSignal = (event: Electron.IpcMainEvent, raw: unknown): void => {
+          if (event.sender.id !== picker.webContents.id || !raw || typeof raw !== 'object' || Array.isArray(raw)) return;
+          const record = raw as Record<string, unknown>;
+          if (Object.keys(record).some((key) => key !== 'action' && key !== 'candidateId')) return;
+          const action = record.action;
+          const candidateId = record.candidateId;
+          if (typeof action !== 'string' || !['select', 'close', 'cancel', 'peek', 'peek-end'].includes(action)) return;
+          if (typeof candidateId !== 'string' || Buffer.byteLength(candidateId, 'utf8') > 512) return;
+          handlePickerUrl(`https://papers-picker.invalid/${action}${candidateId ? `/${encodeURIComponent(candidateId)}` : ''}`);
+        };
+        ipcMain.on('papers:candidate-picker:signal', pickerSignal);
         picker.webContents.on('will-navigate', (event, target) => {
           event.preventDefault();
           handlePickerUrl(target);
@@ -827,6 +838,7 @@ const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cance
           if (input.key === 'Escape') { event.preventDefault(); closePicker(); }
         });
         picker.once('closed', () => {
+          ipcMain.removeListener('papers:candidate-picker:signal', pickerSignal);
           const current = candidatePickerSessions.get(sender.id);
           if (!current || current.window !== picker) return;
           candidatePickerSessions.delete(sender.id);
