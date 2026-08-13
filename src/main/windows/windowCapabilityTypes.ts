@@ -19,6 +19,9 @@ export const WINDOW_CAPABILITY_METHODS = [
   'restore',
   'cloak',
   'uncloak',
+  'cloak-many',
+  'uncloak-many',
+  'live-preview',
   'apply',
   'close',
   'hover',
@@ -74,6 +77,9 @@ export interface WindowRequestMessage {
   requestId: number;
   method: WindowCapabilityMethod;
   target?: RuntimeWindowId;
+  targets?: RuntimeWindowId[];
+  caller?: string;
+  enabled?: boolean;
   bounds?: WindowBounds;
   state?: WindowState;
   x?: number;
@@ -296,7 +302,7 @@ export function parseWindowResponse(raw: unknown): WindowResponseMessage | null 
   const hasExtraPayload = raw['windows'] !== undefined || raw['observation'] !== undefined
     || raw['window'] !== undefined || raw['thumbnail'] !== undefined;
 
-  if (method === 'close') {
+  if (method === 'close' || method === 'cloak-many' || method === 'uncloak-many' || method === 'live-preview') {
     // Documented close shape: envelope only, no payload.
     if (hasExtraPayload) return null;
     return { requestId, method: methodName, outcome: outcome as WindowOutcome, ...(error !== undefined ? { error } : {}) };

@@ -150,4 +150,20 @@ describe('compact widget session', () => {
     h.session.resizeFromSender(window.webContents.id, token, Number.NaN, 200);
     expect(window.setContentSize.mock.calls).toHaveLength(callsBefore);
   });
+
+  it('moves a widget through the token-gated blank-surface drag channel', async () => {
+    const h = harness();
+    h.session.registerIpc();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a' });
+    const window = h.windows[0]!;
+    const token = (window.webContents.send.mock.calls[0]![1] as { token: string }).token;
+    const drag = h.listeners.get('papers:backpack:widget-drag')!;
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'begin', x: 100, y: 90 });
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 150, y: 130 });
+    expect(window.setBounds).toHaveBeenLastCalledWith({ x: 50, y: 40, width: 420, height: 180 });
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'end', x: 150, y: 130 });
+    const calls = window.setBounds.mock.calls.length;
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 180, y: 160 });
+    expect(window.setBounds.mock.calls).toHaveLength(calls);
+  });
 });

@@ -77,10 +77,14 @@ namespace WH
         [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
         [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int w, int h, uint flags);
+        [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr BeginDeferWindowPos(int nNumWindows);
+        [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr DeferWindowPos(IntPtr hWinPosInfo, IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+        [DllImport("user32.dll", SetLastError = true)] public static extern bool EndDeferWindowPos(IntPtr hWinPosInfo);
         [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr w, IntPtr l);
         [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute, out int pvAttribute, int cbAttribute);
         [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hWnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+        [DllImport("dwmapi.dll", EntryPoint = "#113", SetLastError = true)] public static extern uint DwmActivateLivePreview(uint enable, IntPtr targetHwnd, IntPtr callingHwnd, uint type, IntPtr unknown);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
         [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
         [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
@@ -125,7 +129,24 @@ namespace WH
         public const uint MONITORINFOF_PRIMARY = 1;
         public static readonly IntPtr HWND_TOP = IntPtr.Zero;
         public const uint SWP_NOZORDER = 0x0004;
+        public const uint SWP_NOSIZE = 0x0001;
+        public const uint SWP_NOMOVE = 0x0002;
         public const uint SWP_NOACTIVATE = 0x0010;
+        public const uint SWP_SHOWWINDOW = 0x0040;
+        public const uint SWP_HIDEWINDOW = 0x0080;
+
+        public static bool SetWindowVisibilityBatch(IntPtr[] windows, bool visible) {
+          if (windows == null || windows.Length == 0) return true;
+          IntPtr batch = BeginDeferWindowPos(windows.Length);
+          if (batch == IntPtr.Zero) return false;
+          uint flags = SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+            | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW);
+          foreach (IntPtr window in windows) {
+            batch = DeferWindowPos(batch, window, IntPtr.Zero, 0, 0, 0, 0, flags);
+            if (batch == IntPtr.Zero) return false;
+          }
+          return EndDeferWindowPos(batch);
+        }
         public const uint PW_RENDERFULLCONTENT = 0x00000002;
         public const int DWM_TNP_RECTDESTINATION = 0x00000001;
         public const int DWM_TNP_VISIBLE = 0x00000008;

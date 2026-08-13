@@ -123,10 +123,14 @@ describe('windowCapabilityService candidates', () => {
     const revealed: RuntimeWindowId[] = [];
     const minimized: RuntimeWindowId[] = [];
     const cloaked: RuntimeWindowId[] = [];
+    const cloakedBatches: RuntimeWindowId[][] = [];
+    const revealedBatches: RuntimeWindowId[][] = [];
     const factory = fakeFactory({
       list: async () => ({ outcome: 'success', windows: [target, other] }),
       uncloak: async (runtimeId) => { revealed.push(runtimeId); return { outcome: 'success' }; },
       cloak: async (runtimeId) => { cloaked.push(runtimeId); return { outcome: 'success' }; },
+      cloakMany: async (runtimeIds) => { cloakedBatches.push(runtimeIds); return { outcome: 'success' }; },
+      uncloakMany: async (runtimeIds) => { revealedBatches.push(runtimeIds); return { outcome: 'success' }; },
       minimize: async (runtimeId) => { minimized.push(runtimeId); return { outcome: 'success' }; },
     });
     const service = createWindowCapabilityService({
@@ -143,10 +147,12 @@ describe('windowCapabilityService candidates', () => {
 
     expect((await service.beginPeekCapability(bound.capability)).outcome).toBe('success');
     expect(revealed).toEqual([TOKEN_A]);
-    expect(cloaked).toEqual([TOKEN_B]);
+    expect(cloaked).toEqual([]);
+    expect(cloakedBatches).toEqual([[TOKEN_B]]);
     expect(minimized).toEqual([]);
 
     expect((await service.endPeek()).outcome).toBe('success');
+    expect(revealedBatches).toEqual([[TOKEN_B]]);
     expect(minimized).toEqual([TOKEN_A]);
   });
 
@@ -159,6 +165,22 @@ describe('windowCapabilityService candidates', () => {
     expect(result.candidates.map((candidate) => candidate.title)).toEqual(['Window A', 'Window B']);
     expect(result.candidates[0]!.applicationLabel).toBe('a');
     expect(result.candidates[0]!.icon).toBe('data:image/png;base64,ICON');
+  });
+
+  it('can explicitly admit the main Papers shell without admitting other same-process surfaces', async () => {
+    const { service } = harness({
+      allowCurrentProcessWindow: (candidate) => candidate.title === 'Papers',
+    });
+    const result = await service.listCandidates();
+    expect(result.outcome).toBe('success');
+    if (result.outcome !== 'success') return;
+    expect(result.candidates.map((candidate) => candidate.title)).toEqual(['Window A', 'Window B', 'Papers']);
+    const papers = result.candidates.find((candidate) => candidate.title === 'Papers');
+    expect(papers).toBeDefined();
+    const bound = await service.bindCandidate(papers!.id);
+    expect(bound.outcome).toBe('success');
+    if (bound.outcome !== 'success') return;
+    expect((await service.resolvePersisted(bound.descriptor)).outcome).toBe('success');
   });
 
   it('bounds candidate count', async () => {
@@ -208,6 +230,24 @@ describe('windowCapabilityService native picker snapshots', () => {
       expect(rebound.windows[0]!.descriptor).toEqual(original.descriptor);
       expect(rebound.windows[0]!.candidate.title).toBe('Window A');
     }
+  });
+
+  it('opens with visible seeds when a persisted layout member is currently closed', async () => {
+    const { service } = harness();
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('list failed');
+    const target = listed.candidates.find((entry) => entry.title === 'Window A');
+    if (!target) throw new Error('candidate missing');
+    const original = await service.bindCandidate(target.id);
+    if (original.outcome !== 'success') throw new Error('bind failed');
+
+    await expect(service.prepareNativePicker([
+      original.descriptor,
+      { version: 1, title: 'Closed Window', executableFingerprint: 'f'.repeat(64) },
+    ])).resolves.toEqual({
+      outcome: 'success',
+      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200 }],
+    });
   });
 
   it('fails the whole commit when a PID/bounds identity is absent', async () => {

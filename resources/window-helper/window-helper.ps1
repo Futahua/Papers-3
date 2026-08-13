@@ -119,7 +119,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot/window-capability.ps1"
 
-$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'cloak', 'uncloak', 'apply', 'close', 'hover', 'thumbnail')
+$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail')
 $FORBIDDEN_KEYS = @('exec', 'command', 'script', 'path', 'handle', 'env', 'args', 'cmd', 'powershell', 'invoke', 'shell')
 $MAX_SAFE_REQUEST_ID = 9007199254740991L
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
@@ -330,6 +330,38 @@ function Test-WhRequestShape {
     }
     return @{ Valid = $true; RequestId = $id; Method = [string]$method }
   }
+  if ($method -eq 'cloak-many' -or $method -eq 'uncloak-many') {
+    $targets = @($Request['targets'])
+    if ($targets.Count -lt 1 -or $targets.Count -gt 64) {
+      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'targets must contain 1..64 session tokens') }
+    }
+    foreach ($target in $targets) {
+      if ($target -isnot [string] -or $target.Length -eq 0) {
+        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'every target must be a non-empty string') }
+      }
+    }
+    foreach ($key in $Request.Keys) {
+      if (@('requestId', 'method', 'targets') -notcontains ([string]$key)) {
+        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' $null 'batch visibility accepts only requestId, method and targets') }
+      }
+    }
+    return @{ Valid = $true; RequestId = $id; Method = [string]$method }
+  }
+  if ($method -eq 'live-preview') {
+    $target = $Request['target']
+    $caller = $Request['caller']
+    $enabled = $Request['enabled']
+    if (($target -isnot [string]) -or ($target.Length -eq 0) -or ($caller -isnot [string]) -or
+      ($caller -notmatch '^[1-9][0-9]{0,19}$') -or ($enabled -isnot [bool])) {
+      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'live preview requires target, caller and enabled') }
+    }
+    foreach ($key in $Request.Keys) {
+      if (@('requestId', 'method', 'target', 'caller', 'enabled') -notcontains ([string]$key)) {
+        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' $null 'live preview accepts only its exact bounded fields') }
+      }
+    }
+    return @{ Valid = $true; RequestId = $id; Method = [string]$method }
+  }
   if ($method -ne 'list') {
     $target = $Request['target']
     if ($target -isnot [string] -or $target.Length -eq 0) {
@@ -420,6 +452,58 @@ function Invoke-WhRequest {
         state = $observation.State
         bounds = (Get-WhWireBounds $observation.Bounds)
       } } $null)
+    }
+    if ($Method -eq 'cloak-many' -or $Method -eq 'uncloak-many') {
+      $runtimeIds = New-Object System.Collections.Generic.List[System.IntPtr]
+      foreach ($batchTarget in @($Request['targets'])) {
+        $identity = Test-WhTokenIdentity ([string]$batchTarget)
+        if (-not $identity.ok) {
+          return (ConvertTo-WhResponse $RequestId $Method $identity.outcome $null $identity.error)
+        }
+        $entry = Resolve-WhSessionToken ([string]$batchTarget)
+        $runtimeIds.Add([IntPtr]$entry.hwnd)
+      }
+      $visible = $Method -eq 'uncloak-many'
+      if (-not [WH.Win32]::SetWindowVisibilityBatch($runtimeIds.ToArray(), $visible)) {
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'batched window visibility update failed')
+      }
+      return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
+    }
+    if ($Method -eq 'live-preview') {
+      $target = [string]$Request['target']
+      $entry = Resolve-WhSessionToken $target
+      if ($null -eq $entry -or -not (Test-WhWindowAlive ([IntPtr]$entry.hwnd))) {
+        return (ConvertTo-WhResponse $RequestId $Method 'missing' $null 'target window is gone')
+      }
+      $callerNumber = [UInt64]::Parse([string]$Request['caller'], [Globalization.CultureInfo]::InvariantCulture)
+      $callerHwnd = [IntPtr]([Int64]$callerNumber)
+      if (-not (Test-WhWindowAlive $callerHwnd)) {
+        return (ConvertTo-WhResponse $RequestId $Method 'missing' $null 'caller window is gone')
+      }
+      $enabled = if ([bool]$Request['enabled']) { 1 } else { 0 }
+      # DWMWA_EXCLUDED_FROM_PEEK (12) is independent of the caller argument
+      # passed to DwmActivateLivePreview. Keep the candidate picker composed
+      # while every unrelated application surface fades to glass.
+      if ($enabled -eq 1) {
+        $excluded = 1
+        $excludeStatus = [WH.Win32]::DwmSetWindowAttribute($callerHwnd, 12, [ref]$excluded, 4)
+        if ($excludeStatus -ne 0) {
+          return (ConvertTo-WhResponse $RequestId $Method 'denied' $null "DWM peek exclusion failed ($excludeStatus)")
+        }
+      }
+      $status = [WH.Win32]::DwmActivateLivePreview([uint32]$enabled, [IntPtr]$entry.hwnd, $callerHwnd, [uint32]3, [IntPtr]::Zero)
+      if ($status -ne 0) {
+        if ($enabled -eq 1) {
+          $included = 0
+          [void][WH.Win32]::DwmSetWindowAttribute($callerHwnd, 12, [ref]$included, 4)
+        }
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null "DWM live preview failed ($status)")
+      }
+      if ($enabled -eq 0) {
+        $included = 0
+        [void][WH.Win32]::DwmSetWindowAttribute($callerHwnd, 12, [ref]$included, 4)
+      }
+      return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
     }
     $target = [string]$Request['target']
     if ($Method -eq 'observe') {

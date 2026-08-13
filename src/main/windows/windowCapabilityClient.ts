@@ -38,6 +38,9 @@ export interface WindowCapabilityClient {
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   cloak(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   uncloak(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  cloakMany(runtimeIds: RuntimeWindowId[]): Promise<WindowCapabilityResult>;
+  uncloakMany(runtimeIds: RuntimeWindowId[]): Promise<WindowCapabilityResult>;
+  livePreview(runtimeId: RuntimeWindowId, caller: string, enabled: boolean): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** 016 direct pick: resolve the topmost task-worthy window at a screen
@@ -73,6 +76,9 @@ export function createWindowCapabilityClient({
     method: WindowCapabilityMethod,
     detail: {
       target?: RuntimeWindowId;
+      targets?: RuntimeWindowId[];
+      caller?: string;
+      enabled?: boolean;
       bounds?: WindowBounds;
       state?: WindowState;
       x?: number;
@@ -93,6 +99,9 @@ export function createWindowCapabilityClient({
       requestId,
       method,
       ...(detail.target !== undefined ? { target: detail.target } : {}),
+      ...(detail.targets !== undefined ? { targets: detail.targets } : {}),
+      ...(detail.caller !== undefined ? { caller: detail.caller } : {}),
+      ...(detail.enabled !== undefined ? { enabled: detail.enabled } : {}),
       ...(detail.bounds !== undefined ? { bounds: detail.bounds } : {}),
       ...(detail.state !== undefined ? { state: detail.state } : {}),
       ...(detail.x !== undefined ? { x: detail.x } : {}),
@@ -175,6 +184,9 @@ export function createWindowCapabilityClient({
     restore: (runtimeId) => request('restore', { target: runtimeId }),
     cloak: (runtimeId) => request('cloak', { target: runtimeId }),
     uncloak: (runtimeId) => request('uncloak', { target: runtimeId }),
+    cloakMany: (runtimeIds) => request('cloak-many', { targets: runtimeIds }),
+    uncloakMany: (runtimeIds) => request('uncloak-many', { targets: runtimeIds }),
+    livePreview: (runtimeId, caller, enabled) => request('live-preview', { target: runtimeId, caller, enabled }),
     apply: (runtimeId, bounds, state) => request('apply', { target: runtimeId, bounds, state }),
     close: (runtimeId) => request('close', { target: runtimeId }),
     hover: (x, y) => request('hover', { x, y }),

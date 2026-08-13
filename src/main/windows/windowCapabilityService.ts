@@ -3,7 +3,8 @@
  *
  * The single main-process owner of the 014 window-helper factory for the
  * Backpack project bridge. It exposes ONLY a narrow typed surface:
- *   - list eligible candidates (Papers itself and untrusted entries are
+ *   - list eligible candidates (only the explicitly admitted main Papers
+ *     shell may be same-process; utility surfaces and untrusted entries are
  *     excluded host-side; results are bounded),
  *   - bind one currently listed, host-issued candidate id into an
  *     ephemeral runtime capability plus a versioned persisted descriptor,
@@ -150,6 +151,10 @@ export interface WindowCapabilityService {
    * eligible window except the target, then uncloak exactly that set on end. */
   beginPeekCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   endPeek(): Promise<WindowCapabilityResult>;
+  /** Native taskbar-style DWM live preview used by the candidate list. The
+   * caller HWND is Papers-owned and never supplied by project content. */
+  beginLivePreviewCapability?(capability: WindowRuntimeCapability, caller: string): Promise<WindowCapabilityResult>;
+  endLivePreview?(): Promise<WindowCapabilityResult>;
   applyCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult>;
   /** 019G real-window thumbnail for one issued capability. Dimensions default
    * to 240x135, must be positive integers within 320x180 (malformed
@@ -169,8 +174,10 @@ export interface WindowCapabilityService {
   /** 016 direct pick: re-resolve at the point and bind the candidate ONLY
    * when it is still the exact highlighted one (fail closed otherwise). */
   pickAt(x: number, y: number, candidateId: string): Promise<WindowBindResult & { candidate?: WindowCandidate }>;
-  /** SlopTop local picker: resolve all current members in one helper snapshot
-   * before activation. No HWND or helper token crosses this boundary. */
+  /** SlopTop local picker: resolve every currently visible member in one helper
+   * snapshot before activation. Closed/stale members are omitted from the green
+   * seed set instead of blocking the whole picker. No HWND or helper token
+   * crosses this boundary. */
   prepareNativePicker(memberDescriptors: PersistedWindowMemberDescriptor[]): Promise<NativePickerSeedResult>;
   /** SlopTop local picker: bind one final AHK-owned green-set snapshot in one
    * helper enumeration. Every identity must match exactly once or the complete
@@ -184,6 +191,9 @@ export interface WindowCapabilityServiceOptions {
   createFactory?: () => WindowHelperFactory;
   /** Private DI for tests; default is the real current process pid. */
   currentPid?: number;
+  /** Explicitly admits one trusted Papers-owned top-level window (the main
+   * Papers shell) while every picker/widget/preview surface stays excluded. */
+  allowCurrentProcessWindow?: (observation: WindowObservation) => boolean;
   /** Private DI for tests; default is app.getFileIcon. */
   getFileIcon?: (path: string) => Promise<Electron.NativeImage>;
   /** Private DI for tests; default is the bounded cadence constant. */
@@ -247,11 +257,15 @@ function defaultDurableFrames(): ThumbnailFrameStore {
 }
 
 /** Returns the trusted process id of a candidate, or null when the window
- * must be excluded: Papers itself, missing/empty title, missing process
- * path, or a non-positive process id. */
-function trustedProcessId(observation: WindowObservation, currentPid: number): number | null {
+ * must be excluded: an unapproved Papers-owned surface, missing/empty title,
+ * missing process path, or a non-positive process id. */
+function trustedProcessId(
+  observation: WindowObservation,
+  currentPid: number,
+  allowCurrentProcessWindow: (observation: WindowObservation) => boolean,
+): number | null {
   if (observation.processId === null || observation.processId <= 0) return null;
-  if (observation.processId === currentPid) return null; // Papers itself
+  if (observation.processId === currentPid && !allowCurrentProcessWindow(observation)) return null;
   if (typeof observation.title !== 'string' || observation.title.length === 0) return null;
   if (typeof observation.processPath !== 'string' || observation.processPath.length === 0) return null;
   if (Buffer.byteLength(observation.processPath, 'utf8') > 4096) return null;
@@ -292,6 +306,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   let peekGeneration = 0;
   let peekRestoreTokens: RuntimeWindowId[] = [];
   let peekMinimizedTarget: RuntimeWindowId | null = null;
+  let livePreview: { target: RuntimeWindowId; caller: string } | null = null;
 
   function purgeBindingThumbnails(bindingId: string): void {
     for (const key of [...thumbnailCache.keys()]) {
@@ -372,6 +387,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   }
 
   const currentPid = options.currentPid ?? process.pid;
+  const allowCurrentProcessWindow = options.allowCurrentProcessWindow ?? (() => false);
   // Lazy, guarded: only the Electron main process has `app`; unit tests
   // always inject getFileIcon and never reach this path.
   const getFileIcon = options.getFileIcon ?? ((filePath: string) => {
@@ -414,7 +430,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const listed = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }>();
     for (const observation of result.windows ?? []) {
       if (candidates.length >= WINDOW_CAPABILITY_MAX_CANDIDATES) break;
-      const processId = trustedProcessId(observation, currentPid);
+      const processId = trustedProcessId(observation, currentPid, allowCurrentProcessWindow);
       if (processId === null) continue;
       const entry = candidateForObservation(observation);
       // Interactive pick lists request exact native window/class icons so
@@ -511,10 +527,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (result.window === null || result.window === undefined) {
       return { outcome: 'success', candidate: null, bounds: null, descriptor: null };
     }
-    // Papers-owned surfaces (the host window AND the pick overlay itself) are
-    // never pickable: the overlay is always the topmost window under the
-    // pointer, so this exclusion is what lets direct pick see through it.
-    if (result.window.processId === currentPid) {
+    // Same-process utility surfaces remain unpickable. The caller may
+    // explicitly admit only the real main Papers shell.
+    if (trustedProcessId(result.window, currentPid, allowCurrentProcessWindow) === null) {
       return { outcome: 'success', candidate: null, bounds: null, descriptor: null };
     }
     const entry = candidateForObservation(result.window);
@@ -630,8 +645,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const reminimize = peekMinimizedTarget;
     peekMinimizedTarget = null;
     if (!factoryBuilt || stopped) return { outcome: 'success' };
-    await Promise.all(restore.reverse().map((token) =>
-      factory.uncloak?.(token).catch(() => undefined)));
+    if (restore.length > 0 && factory.uncloakMany) {
+      await factory.uncloakMany(restore.reverse()).catch(() => undefined);
+    } else {
+      await Promise.all(restore.reverse().map((token) =>
+        factory.uncloak?.(token).catch(() => undefined)));
+    }
     if (reminimize) await factory.minimize(reminimize).catch(() => undefined);
     return { outcome: 'success' };
   }
@@ -679,15 +698,43 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const toHide = (listed.windows ?? []).filter((observation) =>
       observation.runtimeId !== target
       && observation.state !== 'minimized'
-      && trustedProcessId(observation, currentPid) !== null
+      && trustedProcessId(observation, currentPid, allowCurrentProcessWindow) !== null
       && !peekRestoreTokens.includes(observation.runtimeId));
-    await Promise.all(toHide.map(async (observation) => {
-      const result = await factory.cloak!(observation.runtimeId);
-      if (result.outcome !== 'success') return;
-      if (generation === peekGeneration) peekRestoreTokens.push(observation.runtimeId);
-      else await factory.uncloak?.(observation.runtimeId).catch(() => undefined);
-    }));
+    const tokens = toHide.map((observation) => observation.runtimeId);
+    if (tokens.length > 0 && factory.cloakMany) {
+      const result = await factory.cloakMany(tokens);
+      if (result.outcome === 'success') {
+        if (generation === peekGeneration) peekRestoreTokens.push(...tokens);
+        else if (factory.uncloakMany) await factory.uncloakMany(tokens).catch(() => undefined);
+      }
+    } else {
+      await Promise.all(toHide.map(async (observation) => {
+        const result = await factory.cloak!(observation.runtimeId);
+        if (result.outcome !== 'success') return;
+        if (generation === peekGeneration) peekRestoreTokens.push(observation.runtimeId);
+        else await factory.uncloak?.(observation.runtimeId).catch(() => undefined);
+      }));
+    }
     return { outcome: 'success' };
+  }
+
+  async function endLivePreview(): Promise<WindowCapabilityResult> {
+    const activePreview = livePreview;
+    livePreview = null;
+    if (!activePreview || !factory.livePreview || stopped) return { outcome: 'success' };
+    return factory.livePreview(activePreview.target, activePreview.caller, false);
+  }
+
+  async function beginLivePreviewCapability(capability: WindowRuntimeCapability, caller: string): Promise<WindowCapabilityResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const target = tokenFor(capability);
+    if (!target) return { outcome: 'missing', error: 'binding is not issued' };
+    if (!/^[1-9][0-9]{0,19}$/.test(caller)) return { outcome: 'malformed', error: 'caller window is malformed' };
+    if (!(await ensureStarted()) || !factory.livePreview) return { outcome: 'helper-unavailable', error: 'DWM live preview is unavailable' };
+    if (livePreview && (livePreview.target !== target || livePreview.caller !== caller)) await endLivePreview().catch(() => undefined);
+    const result = await factory.livePreview(target, caller, true);
+    if (result.outcome === 'success') livePreview = { target, caller };
+    return result;
   }
 
   async function applyCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult> {
@@ -846,12 +893,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return {
       outcome: 'success',
       observations: (result.windows ?? []).filter((observation) =>
-        trustedProcessId(observation, currentPid) !== null && observation.bounds !== null),
+        trustedProcessId(observation, currentPid, allowCurrentProcessWindow) !== null && observation.bounds !== null),
     };
   }
 
   function nativeIdentity(observation: WindowObservation): NativePickerWindowIdentity | null {
-    const processId = trustedProcessId(observation, currentPid);
+    const processId = trustedProcessId(observation, currentPid, allowCurrentProcessWindow);
     if (processId === null || !observation.bounds) return null;
     return { processId, ...observation.bounds };
   }
@@ -880,10 +927,13 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         return candidate.descriptor.executableFingerprint === descriptor.executableFingerprint
           && candidate.descriptor.title === descriptor.title;
       });
-      if (matches.length === 0) return { outcome: 'missing', error: `layout member is not currently visible: ${descriptor.title}` };
+      // A persisted layout may legitimately contain a closed window. It cannot
+      // be painted green, but it must not prevent the creator from opening the
+      // picker to add/remove the windows that are currently on screen.
+      if (matches.length === 0) continue;
       if (matches.length > 1) return { outcome: 'ambiguous', error: `layout member is ambiguous: ${descriptor.title}` };
       const identity = nativeIdentity(matches[0]!);
-      if (!identity) return { outcome: 'missing', error: `layout member is no longer eligible: ${descriptor.title}` };
+      if (!identity) continue;
       const key = `${identity.processId}|${identity.x}|${identity.y}|${identity.width}|${identity.height}`;
       if (claimed.has(key)) return { outcome: 'ambiguous', error: `layout members resolve to the same native window: ${descriptor.title}` };
       claimed.add(key);
@@ -935,6 +985,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   }
 
   async function stop(): Promise<void> {
+    await endLivePreview().catch(() => undefined);
     await endPeek().catch(() => undefined);
     if (stopped) return;
     stopped = true;
@@ -961,6 +1012,8 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     closeCapability,
     beginPeekCapability,
     endPeek,
+    beginLivePreviewCapability,
+    endLivePreview,
     applyCapability,
     thumbnailCapability,
     resolvePersisted,

@@ -86,6 +86,33 @@ describe('windowCapabilityIpc', () => {
     ]);
   });
 
+  it('uses native DWM live preview for widget Shift-hover when its trusted host HWND resolves', async () => {
+    const ipc = fakeIpcMain();
+    const calls: Array<[string, unknown, unknown?]> = [];
+    const service = fakeService();
+    service.beginLivePreviewCapability = async (input, caller) => {
+      calls.push(['begin', input, caller]);
+      return { outcome: 'success' };
+    };
+    service.endLivePreview = async () => {
+      calls.push(['end', null]);
+      return { outcome: 'success' };
+    };
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service,
+      isSender: () => true,
+      resolveCallerHwnd: () => '424242',
+    });
+
+    await expect(ipc.invoke('papers:window-capability:peek-begin', 42, capability)).resolves.toEqual({ outcome: 'success' });
+    await expect(ipc.invoke('papers:window-capability:peek-end', 42, {})).resolves.toEqual({ outcome: 'success' });
+    expect(calls).toEqual([
+      ['begin', capability, '424242'],
+      ['end', null],
+    ]);
+  });
+
   it('enforces the Backpack project sender gate on every channel', async () => {
     const ipc = fakeIpcMain();
     let calls = 0;

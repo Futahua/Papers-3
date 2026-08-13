@@ -100,6 +100,7 @@ function widgetUrl(raw: string, layoutKey: string, projectId: string): string {
 
 export function createCompactWidgetSession(deps: CompactWidgetSessionDependencies): CompactWidgetSession {
   const entries = new Map<string, WidgetEntry>();
+  let activeDrag: { senderId: number; token: string; offsetX: number; offsetY: number } | null = null;
   let registered = false;
   const keyOf = (projectId: string, layoutKey: string) => `${projectId}\0${layoutKey}`;
 
@@ -119,6 +120,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
   function destroy(entry: WidgetEntry): void {
     if (entries.get(keyOf(entry.projectId, entry.layoutKey)) !== entry) return;
     entries.delete(keyOf(entry.projectId, entry.layoutKey));
+    if (activeDrag?.senderId === entry.window.webContents.id) activeDrag = null;
     deps.registry.unregister(entry.window.webContents.id);
     if (!entry.window.isDestroyed()) entry.window.destroy();
     deps.onSurfaceClosed?.(entry.projectId, entry.layoutKey);
@@ -137,6 +139,43 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND || surface.token !== raw.token) return;
     if (deps.isSurfaceOrigin && !deps.isSurfaceOrigin(event.sender.id, surface.projectId)) return;
     return;
+  };
+
+  const dragHandler = (event: { sender: { id: number } }, payload?: unknown): void => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+    const raw = payload as Record<string, unknown>;
+    if (!exactKeys(raw, ['token', 'phase', 'x', 'y']) || typeof raw.token !== 'string'
+      || !['begin', 'move', 'end'].includes(String(raw.phase))
+      || typeof raw.x !== 'number' || typeof raw.y !== 'number'
+      || !Number.isFinite(raw.x) || !Number.isFinite(raw.y)
+      || Math.abs(raw.x) > 100000 || Math.abs(raw.y) > 100000) return;
+    const surface = deps.registry.surface(event.sender.id);
+    if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND || surface.token !== raw.token) return;
+    if (deps.isSurfaceOrigin && !deps.isSurfaceOrigin(event.sender.id, surface.projectId)) return;
+    const entry = [...entries.values()].find((candidate) => candidate.window.webContents.id === event.sender.id);
+    if (!entry || entry.closing || entry.window.isDestroyed()) return;
+    if (raw.phase === 'begin') {
+      const bounds = entry.window.getBounds();
+      activeDrag = {
+        senderId: event.sender.id,
+        token: raw.token,
+        offsetX: raw.x - bounds.x,
+        offsetY: raw.y - bounds.y,
+      };
+      return;
+    }
+    if (!activeDrag || activeDrag.senderId !== event.sender.id || activeDrag.token !== raw.token) return;
+    if (raw.phase === 'end') {
+      activeDrag = null;
+      return;
+    }
+    const bounds = entry.window.getBounds();
+    entry.window.setBounds({
+      x: Math.round(raw.x - activeDrag.offsetX),
+      y: Math.round(raw.y - activeDrag.offsetY),
+      width: bounds.width,
+      height: bounds.height,
+    });
   };
 
   const displayEvents: Array<'display-metrics-changed' | 'display-added' | 'display-removed'> = ['display-metrics-changed', 'display-added', 'display-removed'];
@@ -221,12 +260,14 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       if (registered) return;
       registered = true;
       deps.ipcMain.on('papers:backpack:widget-ready', readyHandler);
+      deps.ipcMain.on('papers:backpack:widget-drag', dragHandler);
       for (const event of displayEvents) deps.screen.on(event, clampOpen);
     },
     unregisterIpc() {
       if (!registered) return;
       registered = false;
       deps.ipcMain.removeListener('papers:backpack:widget-ready', readyHandler);
+      deps.ipcMain.removeListener('papers:backpack:widget-drag', dragHandler);
       for (const event of displayEvents) deps.screen.removeListener(event, clampOpen);
     },
   };

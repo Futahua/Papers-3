@@ -1,6 +1,6 @@
 import { ipcRenderer, webUtils } from 'electron';
 
-interface ProjectMessage { type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; }
+interface ProjectMessage { type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -133,6 +133,20 @@ window.addEventListener('message', (event) => {
   if (event.source !== window || event.origin !== window.location.origin) return;
   const request = event.data as ProjectMessage;
   if (!request || typeof request.type !== 'string') return;
+  if (request.type === 'papers:project:widget-drag') {
+    if (!widgetToken || !exactKeys(request as Record<string, unknown>, ['type', 'phase', 'x', 'y'])
+      || !['begin', 'move', 'end'].includes(String(request.phase))
+      || typeof request.x !== 'number' || typeof request.y !== 'number'
+      || !Number.isFinite(request.x) || !Number.isFinite(request.y)
+      || Math.abs(request.x) > 100000 || Math.abs(request.y) > 100000) return;
+    ipcRenderer.send('papers:backpack:widget-drag', {
+      token: widgetToken,
+      phase: request.phase,
+      x: request.x,
+      y: request.y,
+    });
+    return;
+  }
   if (request.type === 'papers:project:detach-ready') {
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || typeof request.requestId !== 'string') {
       immediateHostError(request.requestId, event.origin, 'detached ready request is malformed');

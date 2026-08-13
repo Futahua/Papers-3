@@ -411,11 +411,22 @@ async function bootstrap(): Promise<void> {
   adapter.on('health-changed', () => facade.emitHermesHealth());
 
   registerHostIpc(facade);
-  const windowCapabilityService = createWindowCapabilityService();
+  const windowCapabilityService = createWindowCapabilityService({
+    // Papers itself is a useful saved layout member. Admit only the real main
+    // shell by its fixed native title; same-process picker, widget, preview and
+    // overlay utility windows retain empty/data titles and remain ineligible.
+    allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
+  });
   registerWindowCapabilityIpc({
     ipcMain,
     service: windowCapabilityService,
     isSender: isProjectSurfaceSender,
+    resolveCallerHwnd: (sender) => {
+      const owner = BrowserWindow.fromWebContents(sender);
+      if (!owner || owner.isDestroyed()) return null;
+      const handle = owner.getNativeWindowHandle();
+      return handle.length >= 8 ? handle.readBigUInt64LE(0).toString() : String(handle.readUInt32LE(0));
+    },
   });
   // One global direct-onscreen pick session. Papers sends one authenticated
   // initial-member snapshot to the creator's already-running SlopTop AHK. AHK
@@ -720,6 +731,7 @@ async function bootstrap(): Promise<void> {
       const x = Math.max(area.x, Math.min(area.x + area.width - width, cursor.x - Math.round(width / 2)));
       const y = Math.max(area.y, Math.min(area.y + area.height - height, cursor.y - 36));
       const picker = new BrowserWindow({
+        title: 'Papers Window Chooser',
         x, y, width, height,
         frame: false,
         resizable: true,
@@ -738,7 +750,7 @@ async function bootstrap(): Promise<void> {
       });
       picker.setAlwaysOnTop(true, 'pop-up-menu');
       const encoded = JSON.stringify(candidates).replace(/</g, '\\u003c');
-      const html = `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+      const html = `<!doctype html><meta charset="utf-8"><title>Papers Window Chooser</title><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
  *{box-sizing:border-box}html,body{margin:0;height:100%;background:#161b22;color:#dbe7f3;font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}body{border:1px solid #465462;border-radius:12px;display:flex;flex-direction:column;box-shadow:0 14px 38px #0009}.head{padding:7px 13px 10px;border-bottom:1px solid #2b3742}.titleline{display:flex;align-items:center;justify-content:flex-end;min-height:27px;margin-bottom:4px;-webkit-app-region:drag}.close,.search,.row,.empty{-webkit-app-region:no-drag}.close{border:0;background:transparent;color:#9cacba;font-size:19px;line-height:20px;border-radius:5px;cursor:pointer}.close:hover{background:#31404b;color:#fff}.search{width:100%;height:34px;border:1px solid #536372;border-radius:8px;background:#0e141a;color:#f3f8fc;padding:0 11px;outline:none}.search:focus{border-color:#72a7d5;box-shadow:0 0 0 2px #72a7d533}.list{padding:7px;overflow:auto;flex:1;scrollbar-color:#4b5b68 transparent;display:flex;flex-direction:column}.row,.empty{flex:0 0 auto}.row{width:100%;border:0;background:transparent;color:inherit;display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px;border-radius:8px;text-align:left;cursor:pointer}.row:hover,.row:focus-visible{background:#273540;outline:none}.busy .row{pointer-events:none;opacity:.68}.icon{width:20px;height:20px;object-fit:contain}.fallback{width:16px;height:16px;border:1px solid #83919d;border-radius:3px}.label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.state{font-size:11px;color:#8fb1cb}.current .state{color:#ef9c77}.empty{padding:24px;text-align:center;color:#8898a7}.drag-space{flex:1 0 28px;min-height:28px;-webkit-app-region:drag}
 </style><div class="head"><div class="titleline"><button class="close" aria-label="Close">×</button></div><input class="search" type="search" placeholder="Search windows…" autocomplete="off" spellcheck="false"></div><div class="list"></div><script id="data" type="application/json">${encoded}</script><script>
@@ -747,17 +759,27 @@ function signal(path,id=''){window.candidatePicker.signal(path,id)}
  function appendDragSpace(){const d=document.createElement('div');d.className='drag-space';d.setAttribute('aria-hidden','true');list.append(d)}
  function render(){const q=search.value.trim().toLowerCase(),rows=all.filter(x=>x.title.toLowerCase().includes(q));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>{document.body.classList.add('busy');signal('select',c.id)};b.onauxclick=e=>{if(e.button!==1||!e.ctrlKey)return;e.preventDefault();document.body.classList.add('busy');signal('close',c.id)};list.append(b)}appendDragSpace()}
  window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
-const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;search.oninput=render;document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
+let leaveTimer=null;const cancel=()=>signal('cancel');const cancelLeave=()=>{if(leaveTimer){clearTimeout(leaveTimer);leaveTimer=null}};document.documentElement.addEventListener('mouseenter',cancelLeave);document.documentElement.addEventListener('mouseleave',()=>{cancelLeave();leaveTimer=setTimeout(cancel,140)});document.querySelector('.close').onclick=cancel;search.oninput=render;document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
       return new Promise<{ action: 'select' | 'close' | 'cancel'; candidateId: string | null }>((resolve) => {
         let peekGeneration = 0;
         let peekTimer: NodeJS.Timeout | null = null;
         let peekEndTimer: NodeJS.Timeout | null = null;
+        let candidatePeekUsesLivePreview = false;
+        const nativeHandle = picker.getNativeWindowHandle();
+        const callerHwnd = nativeHandle.length >= 8
+          ? nativeHandle.readBigUInt64LE(0).toString()
+          : String(nativeHandle.readUInt32LE(0));
         const endCandidatePeek = (): void => {
           peekGeneration += 1;
           if (peekTimer) { clearTimeout(peekTimer); peekTimer = null; }
           if (peekEndTimer) { clearTimeout(peekEndTimer); peekEndTimer = null; }
-          void windowCapabilityService.endPeek().catch(() => undefined);
+          if (candidatePeekUsesLivePreview && windowCapabilityService.endLivePreview) {
+            candidatePeekUsesLivePreview = false;
+            void windowCapabilityService.endLivePreview().catch(() => undefined);
+          } else {
+            void windowCapabilityService.endPeek().catch(() => undefined);
+          }
         };
         const beginCandidatePeek = (candidateId: string): void => {
           if (peekEndTimer) { clearTimeout(peekEndTimer); peekEndTimer = null; }
@@ -767,8 +789,20 @@ const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cance
             peekTimer = null;
             void windowCapabilityService.bindCandidate(candidateId).then(async (bound) => {
               if (generation !== peekGeneration || bound.outcome !== 'success') return;
-              await windowCapabilityService.beginPeekCapability(bound.capability).catch(() => undefined);
-              if (generation !== peekGeneration) void windowCapabilityService.endPeek().catch(() => undefined);
+              const live = windowCapabilityService.beginLivePreviewCapability
+                ? await windowCapabilityService.beginLivePreviewCapability(bound.capability, callerHwnd).catch(() => null)
+                : null;
+              if (live?.outcome === 'success') candidatePeekUsesLivePreview = true;
+              // Never fall back to hide/show. A failed DWM preview should be a
+              // quiet no-op, not a cascade that flashes every other window.
+              if (generation !== peekGeneration) {
+                if (candidatePeekUsesLivePreview && windowCapabilityService.endLivePreview) {
+                  candidatePeekUsesLivePreview = false;
+                  void windowCapabilityService.endLivePreview().catch(() => undefined);
+                } else {
+                  void windowCapabilityService.endPeek().catch(() => undefined);
+                }
+              }
             });
           }, 32);
         };

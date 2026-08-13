@@ -254,12 +254,22 @@ describe('window capability client', () => {
     const client = createWindowCapabilityClient({ transport: fake.transport });
     const surface = Object.keys(client);
     expect(surface.sort()).toEqual(
-      ['apply', 'cloak', 'close', 'handleMessage', 'hover', 'list', 'minimize', 'observe', 'pendingCount', 'rejectAllPending', 'restore', 'stop', 'thumbnail', 'uncloak'].sort(),
+      ['apply', 'cloak', 'cloakMany', 'close', 'handleMessage', 'hover', 'list', 'livePreview', 'minimize', 'observe', 'pendingCount', 'rejectAllPending', 'restore', 'stop', 'thumbnail', 'uncloak', 'uncloakMany'].sort(),
     );
     for (const name of surface) {
       expect(name.toLowerCase()).not.toMatch(/send|exec|invoke|shell|spawn|launch|eval/);
     }
-    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'minimize', 'restore', 'cloak', 'uncloak', 'apply', 'close', 'hover', 'thumbnail']);
+    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'minimize', 'restore', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail']);
+  });
+
+  it('routes bounded batched visibility through one correlated request', async () => {
+    const fake = fakeTransport();
+    const client = createWindowCapabilityClient({ transport: fake.transport });
+    const pending = client.cloakMany([runtimeId('AAAA'), runtimeId('BBBB')]);
+    const sent = fake.sent[0]!;
+    expect(sent).toMatchObject({ method: 'cloak-many', targets: ['AAAA', 'BBBB'] });
+    fake.deliver(response(sent.requestId, 'cloak-many', 'success'));
+    await expect(pending).resolves.toEqual({ outcome: 'success' });
   });
 
   it('routes a thumbnail request and forwards the bounded thumbnail payload (019G)', async () => {

@@ -64,6 +64,9 @@ export interface WindowHelperFactory {
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   cloak?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   uncloak?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  cloakMany?(runtimeIds: RuntimeWindowId[]): Promise<WindowCapabilityResult>;
+  uncloakMany?(runtimeIds: RuntimeWindowId[]): Promise<WindowCapabilityResult>;
+  livePreview?(runtimeId: RuntimeWindowId, caller: string, enabled: boolean): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** 016 direct pick: topmost task-worthy window at a screen point. */
@@ -240,6 +243,9 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
     restore: (runtimeId) => withClient((client) => client.restore(runtimeId), HELPER_NOT_READY),
     cloak: (runtimeId) => withClient((client) => client.cloak(runtimeId), HELPER_NOT_READY),
     uncloak: (runtimeId) => withClient((client) => client.uncloak(runtimeId), HELPER_NOT_READY),
+    cloakMany: (runtimeIds) => withClient((client) => client.cloakMany(runtimeIds), HELPER_NOT_READY),
+    uncloakMany: (runtimeIds) => withClient((client) => client.uncloakMany(runtimeIds), HELPER_NOT_READY),
+    livePreview: (runtimeId, caller, enabled) => withClient((client) => client.livePreview(runtimeId, caller, enabled), HELPER_NOT_READY),
     apply: (runtimeId, bounds, state) => withClient((client) => client.apply(runtimeId, bounds, state), HELPER_NOT_READY),
     close: (runtimeId) => withClient((client) => client.close(runtimeId), HELPER_NOT_READY),
     hover: (x, y) => withClient((client) => client.hover(x, y), HELPER_NOT_READY),

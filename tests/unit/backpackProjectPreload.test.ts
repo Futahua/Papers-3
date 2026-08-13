@@ -124,6 +124,20 @@ describe('Backpack project protocol alignment', () => {
     expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'widget-ready-bad', ok: false }));
   });
 
+  it('routes only bounded widget drag coordinates with the hidden widget token', async () => {
+    await import('../../src/preload/backpackProject');
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    tokenHandler({}, { token: 'widget-token' });
+    dispatch({ type: 'papers:project:widget-drag', phase: 'begin', x: 120, y: -40 });
+    expect(mocks.send).toHaveBeenCalledWith('papers:backpack:widget-drag', {
+      token: 'widget-token', phase: 'begin', x: 120, y: -40,
+    });
+    const before = mocks.send.mock.calls.length;
+    dispatch({ type: 'papers:project:widget-drag', phase: 'move', x: Number.NaN, y: 0 });
+    expect(mocks.send.mock.calls).toHaveLength(before);
+  });
+
   it('019C: workspace widget-open/focus/close attach projectId and keep keys bounded', async () => {
     await import('../../src/preload/backpackProject');
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));

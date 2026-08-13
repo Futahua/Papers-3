@@ -45,6 +45,9 @@ export interface WindowCapabilityIpcDependencies {
   ipcMain: Pick<IpcMain, 'handle'>;
   service: WindowCapabilityService;
   isSender: (sender: WebContents) => boolean;
+  /** Resolves only the trusted native host that owns this already-authorized
+   * Backpack surface. The raw HWND never crosses the renderer boundary. */
+  resolveCallerHwnd?: (sender: WebContents) => string | null;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -174,7 +177,9 @@ export function registerWindowCapabilityIpc({
   ipcMain,
   service,
   isSender,
+  resolveCallerHwnd,
 }: WindowCapabilityIpcDependencies): void {
+  let nativePeekActive = false;
   function handle<TInput>(
     channel: string,
     parse: (raw: unknown) => TInput,
@@ -199,12 +204,27 @@ export function registerWindowCapabilityIpc({
   handle('papers:window-capability:minimize', parseRuntimeCapability, (capability) => service.minimizeCapability(capability));
   handle('papers:window-capability:restore', parseRuntimeCapability, (capability) => service.restoreCapability(capability));
   handle('papers:window-capability:close', parseRuntimeCapability, (capability) => service.closeCapability(capability));
-  handle('papers:window-capability:peek-begin', parseRuntimeCapability, (capability) => service.beginPeekCapability(capability));
+  handle('papers:window-capability:peek-begin', parseRuntimeCapability, async (capability, event) => {
+    const caller = resolveCallerHwnd?.(event.sender) ?? null;
+    if (caller && service.beginLivePreviewCapability) {
+      const result = await service.beginLivePreviewCapability(capability, caller);
+      nativePeekActive = result.outcome === 'success';
+      return result;
+    }
+    nativePeekActive = false;
+    return service.beginPeekCapability(capability);
+  });
   handle('papers:window-capability:peek-end', (raw) => {
     if (raw === undefined) return undefined;
     if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('peek-end payload must be empty');
     return undefined;
-  }, () => service.endPeek());
+  }, async () => {
+    if (nativePeekActive && service.endLivePreview) {
+      nativePeekActive = false;
+      return service.endLivePreview();
+    }
+    return service.endPeek();
+  });
   handle(
     'papers:window-capability:apply',
     (raw) => {
