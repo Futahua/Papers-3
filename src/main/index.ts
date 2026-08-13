@@ -759,9 +759,14 @@ function signal(path,id=''){window.candidatePicker.signal(path,id)}
  function appendDragSpace(){const d=document.createElement('div');d.className='drag-space';d.setAttribute('aria-hidden','true');list.append(d)}
  function render(){const q=search.value.trim().toLowerCase(),rows=all.filter(x=>x.title.toLowerCase().includes(q));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>{document.body.classList.add('busy');signal('select',c.id)};b.onauxclick=e=>{if(e.button!==1||!e.ctrlKey)return;e.preventDefault();document.body.classList.add('busy');signal('close',c.id)};list.append(b)}appendDragSpace()}
  window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
-let leaveTimer=null;const cancel=()=>signal('cancel');const cancelLeave=()=>{if(leaveTimer){clearTimeout(leaveTimer);leaveTimer=null}};document.documentElement.addEventListener('mouseenter',cancelLeave);document.documentElement.addEventListener('mouseleave',()=>{cancelLeave();leaveTimer=setTimeout(cancel,140)});document.querySelector('.close').onclick=cancel;search.oninput=render;document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
+const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;search.oninput=render;document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
       return new Promise<{ action: 'select' | 'close' | 'cancel'; candidateId: string | null }>((resolve) => {
+        const pickerOpenedAt = Date.now();
+        let pickerPointerEntered = false;
+        let pickerOutsideSince: number | null = null;
+        let pickerPointerWatch: NodeJS.Timeout | null = null;
+        let pickerShowAnimation: NodeJS.Timeout | null = null;
         let peekGeneration = 0;
         let peekTimer: NodeJS.Timeout | null = null;
         let peekEndTimer: NodeJS.Timeout | null = null;
@@ -834,6 +839,29 @@ let leaveTimer=null;const cancel=()=>signal('cancel');const cancelLeave=()=>{if(
           settle?.({ action: 'cancel', candidateId: null });
           if (!picker.isDestroyed()) picker.destroy();
         };
+        // Renderer mouseleave is unreliable over -webkit-app-region:drag:
+        // Chromium can report the lower drag-space as outside even while the
+        // native pointer remains within this BrowserWindow. Use native screen
+        // bounds instead. A short initial bridge lets the pointer travel from
+        // the hover opener into the chooser; after entry, only leaving the
+        // actual native window for a bounded interval closes it.
+        pickerPointerWatch = setInterval(() => {
+          if (picker.isDestroyed()) return;
+          const point = screen.getCursorScreenPoint();
+          const bounds = picker.getBounds();
+          const inside = point.x >= bounds.x && point.x < bounds.x + bounds.width
+            && point.y >= bounds.y && point.y < bounds.y + bounds.height;
+          if (inside) {
+            pickerPointerEntered = true;
+            pickerOutsideSince = null;
+            return;
+          }
+          const now = Date.now();
+          if (!pickerPointerEntered && now - pickerOpenedAt < 650) return;
+          pickerOutsideSince ??= now;
+          if (now - pickerOutsideSince >= 140) closePicker();
+        }, 40);
+        pickerPointerWatch.unref?.();
         const handlePickerUrl = (target: string): void => {
           try {
             const url = new URL(target);
@@ -872,6 +900,8 @@ let leaveTimer=null;const cancel=()=>signal('cancel');const cancelLeave=()=>{if(
           if (input.key === 'Escape') { event.preventDefault(); closePicker(); }
         });
         picker.once('closed', () => {
+          if (pickerPointerWatch) { clearInterval(pickerPointerWatch); pickerPointerWatch = null; }
+          if (pickerShowAnimation) { clearInterval(pickerShowAnimation); pickerShowAnimation = null; }
           ipcMain.removeListener('papers:candidate-picker:signal', pickerSignal);
           const current = candidatePickerSessions.get(sender.id);
           if (!current || current.window !== picker) return;
@@ -881,7 +911,31 @@ let leaveTimer=null;const cancel=()=>signal('cancel');const cancelLeave=()=>{if(
           current.resolve = null;
           settle?.({ action: 'cancel', candidateId: null });
         });
-        picker.once('ready-to-show', () => { if (!picker.isDestroyed()) { picker.show(); picker.focus(); } });
+        picker.once('ready-to-show', () => {
+          if (picker.isDestroyed()) return;
+          const finalBounds = picker.getBounds();
+          const startY = Math.min(area.y + area.height - finalBounds.height, finalBounds.y + 12);
+          picker.setPosition(finalBounds.x, startY, false);
+          picker.setOpacity(0);
+          picker.show();
+          picker.focus();
+          const startedAt = Date.now();
+          pickerShowAnimation = setInterval(() => {
+            if (picker.isDestroyed()) return;
+            const progress = Math.min(1, (Date.now() - startedAt) / 120);
+            const eased = 1 - ((1 - progress) ** 3);
+            const animatedY = Math.round(startY + ((finalBounds.y - startY) * eased));
+            picker.setPosition(finalBounds.x, animatedY, false);
+            picker.setOpacity(Math.max(0.01, eased));
+            if (progress >= 1 && pickerShowAnimation) {
+              clearInterval(pickerShowAnimation);
+              pickerShowAnimation = null;
+              picker.setPosition(finalBounds.x, finalBounds.y, false);
+              picker.setOpacity(1);
+            }
+          }, 16);
+          pickerShowAnimation.unref?.();
+        });
         void picker.loadURL(`data:text/html;base64,${Buffer.from(html).toString('base64')}`).catch(() => closePicker());
       });
     },
