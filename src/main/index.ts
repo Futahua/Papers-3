@@ -98,6 +98,19 @@ if (
 let mainWindow: BaseWindow | null = null;
 let hostView: WebContentsView | null = null;
 
+// A second launch belongs to the existing Papers window. Auxiliary Backpack
+// surfaces must never be allowed to become an unreachable single-instance
+// owner: if the main surface still exists, restore it; if it does not, retire
+// the orphaned process so the next launch can start cleanly.
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  app.quit();
+});
+
 /** Height of the slim custom title bar / native window-controls overlay. */
 const TITLE_BAR_HEIGHT = 40;
 /** Papers band the docked Hermes window sits below (the slim title bar). */
@@ -1145,8 +1158,16 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // transparent surfaces, bf15f93). `close` still runs while the window is
   // alive, and hide() is idempotent, so an earlier host-IPC hide followed
   // by this one is harmless. Post-destruction bookkeeping stays in `closed`.
-  mainWindow.on('close', () => {
+  mainWindow.on('close', (event) => {
     backpackProjectRuntime.hide();
+    // Closing Papers means closing Papers, including its detached/widget
+    // surfaces. Prevent this first native close while the existing before-quit
+    // owner performs its bounded asynchronous cleanup; its second app.quit()
+    // re-enters here after capabilityQuitComplete and is allowed through.
+    if (!capabilityQuitComplete) {
+      event.preventDefault();
+      app.quit();
+    }
   });
 
   mainWindow.on('closed', () => {
