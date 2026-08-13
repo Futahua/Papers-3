@@ -288,6 +288,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   let thumbnailCacheRevision = -1;
   let peekGeneration = 0;
   let peekRestoreTokens: RuntimeWindowId[] = [];
+  let peekMinimizedTarget: RuntimeWindowId | null = null;
 
   function purgeBindingThumbnails(bindingId: string): void {
     for (const key of [...thumbnailCache.keys()]) {
@@ -615,9 +616,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   async function endPeek(): Promise<WindowCapabilityResult> {
     peekGeneration += 1;
     const restore = peekRestoreTokens.splice(0);
+    const reminimize = peekMinimizedTarget;
+    peekMinimizedTarget = null;
     if (!factoryBuilt || stopped) return { outcome: 'success' };
     await Promise.all(restore.reverse().map((token) =>
       factory.uncloak?.(token).catch(() => undefined)));
+    if (reminimize) await factory.minimize(reminimize).catch(() => undefined);
     return { outcome: 'success' };
   }
 
@@ -628,6 +632,15 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
 
     const generation = ++peekGeneration;
+
+    if (peekMinimizedTarget && peekMinimizedTarget !== target) {
+      await factory.minimize(peekMinimizedTarget).catch(() => undefined);
+      peekMinimizedTarget = null;
+    }
+
+    const listed = await factory.list();
+    if (listed.outcome !== 'success') return { outcome: listed.outcome, error: listed.error };
+    const targetObservation = (listed.windows ?? []).find((observation) => observation.runtimeId === target);
 
     // Differential Peek transition: when the pointer moves A -> B, every
     // window hidden for A except B should remain hidden. Reveal B first, then
@@ -643,10 +656,14 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         return revealed ?? { outcome: 'helper-unavailable', error: 'window reveal is unavailable' };
       }
     }
+    if (targetObservation?.state === 'minimized') {
+      const revealed = await factory.uncloak?.(target).catch(() => undefined);
+      if (!revealed || revealed.outcome !== 'success') {
+        return revealed ?? { outcome: 'helper-unavailable', error: 'minimized window reveal is unavailable' };
+      }
+      peekMinimizedTarget = target;
+    }
     if (generation !== peekGeneration) return { outcome: 'success' };
-
-    const listed = await factory.list();
-    if (listed.outcome !== 'success') return { outcome: listed.outcome, error: listed.error };
     if (!factory.cloak) return { outcome: 'helper-unavailable', error: 'window cloak is unavailable' };
     const toHide = (listed.windows ?? []).filter((observation) =>
       observation.runtimeId !== target

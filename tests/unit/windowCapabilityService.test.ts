@@ -106,6 +106,50 @@ function harness(overrides: Parameters<typeof createWindowCapabilityService>[0] 
 }
 
 describe('windowCapabilityService candidates', () => {
+  it('temporarily reveals a minimized Peek target and returns it to minimized on end', async () => {
+    const target = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      title: 'Window A',
+      processId: 1001,
+      processPath: 'C:\\Apps\\a.exe',
+      state: 'minimized',
+    });
+    const other = observation({
+      runtimeId: TOKEN_B as RuntimeWindowId,
+      title: 'Window B',
+      processId: 2002,
+      processPath: 'C:\\Apps\\b.exe',
+    });
+    const revealed: RuntimeWindowId[] = [];
+    const minimized: RuntimeWindowId[] = [];
+    const cloaked: RuntimeWindowId[] = [];
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [target, other] }),
+      uncloak: async (runtimeId) => { revealed.push(runtimeId); return { outcome: 'success' }; },
+      cloak: async (runtimeId) => { cloaked.push(runtimeId); return { outcome: 'success' }; },
+      minimize: async (runtimeId) => { minimized.push(runtimeId); return { outcome: 'success' }; },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('list failed');
+    const row = listed.candidates.find((candidate) => candidate.title === 'Window A');
+    if (!row) throw new Error('minimized target missing');
+    const bound = await service.bindCandidate(row.id);
+    if (bound.outcome !== 'success') throw new Error('bind failed');
+
+    expect((await service.beginPeekCapability(bound.capability)).outcome).toBe('success');
+    expect(revealed).toEqual([TOKEN_A]);
+    expect(cloaked).toEqual([TOKEN_B]);
+    expect(minimized).toEqual([]);
+
+    expect((await service.endPeek()).outcome).toBe('success');
+    expect(minimized).toEqual([TOKEN_A]);
+  });
+
   it('lists only trusted candidates: Papers itself, empty titles and missing paths are excluded', async () => {
     const { service } = harness();
     const result = await service.listCandidates();

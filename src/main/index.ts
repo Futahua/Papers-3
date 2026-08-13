@@ -660,6 +660,12 @@ async function bootstrap(): Promise<void> {
   });
   widgetSession.registerIpc();
   const widgetPreviewWindows = new Map<number, BrowserWindow>();
+  type CandidatePickerSession = {
+    window: BrowserWindow;
+    candidateIds: Set<string>;
+    resolve: ((candidateId: string | null) => void) | null;
+  };
+  const candidatePickerSessions = new Map<number, CandidatePickerSession>();
   const hideWidgetPreview = (senderId: number): void => {
     const preview = widgetPreviewWindows.get(senderId);
     widgetPreviewWindows.delete(senderId);
@@ -688,6 +694,21 @@ async function bootstrap(): Promise<void> {
       });
     },
     showCandidatePicker: async (sender, candidates) => {
+      const active = candidatePickerSessions.get(sender.id);
+      if (active && !active.window.isDestroyed()) {
+        active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
+        const update = JSON.stringify(candidates).replace(/</g, '\\u003c');
+        await active.window.webContents.executeJavaScript(
+          `window.__papersPickerUpdate?.(${update})`, true).catch(() => undefined);
+        if (!active.window.isVisible()) active.window.show();
+        active.window.focus();
+        return new Promise<string | null>((resolve) => {
+          // The Backpack requests the next choice only after the previous one
+          // settled. Fail closed if a malformed caller overlaps requests.
+          active.resolve?.(null);
+          active.resolve = resolve;
+        });
+      }
       const owner = BrowserWindow.fromWebContents(sender);
       const cursor = screen.getCursorScreenPoint();
       const area = screen.getDisplayNearestPoint(cursor).workArea;
@@ -712,15 +733,15 @@ async function bootstrap(): Promise<void> {
       const encoded = JSON.stringify(candidates).replace(/</g, '\\u003c');
       const html = `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
-*{box-sizing:border-box}html,body{margin:0;height:100%;background:#161b22;color:#dbe7f3;font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}body{border:1px solid #465462;border-radius:12px;display:flex;flex-direction:column;box-shadow:0 14px 38px #0009}.head{padding:13px 13px 10px;border-bottom:1px solid #2b3742}.titleline{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}.title{font-weight:650}.close{border:0;background:transparent;color:#9cacba;font-size:19px;line-height:20px;border-radius:5px;cursor:pointer}.close:hover{background:#31404b;color:#fff}.search{width:100%;height:34px;border:1px solid #536372;border-radius:8px;background:#0e141a;color:#f3f8fc;padding:0 11px;outline:none}.search:focus{border-color:#72a7d5;box-shadow:0 0 0 2px #72a7d533}.list{padding:7px;overflow:auto;flex:1;scrollbar-color:#4b5b68 transparent}.row{width:100%;border:0;background:transparent;color:inherit;display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px;border-radius:8px;text-align:left;cursor:pointer}.row:hover,.row:focus-visible{background:#273540;outline:none}.icon{width:20px;height:20px;object-fit:contain}.fallback{width:16px;height:16px;border:1px solid #83919d;border-radius:3px}.label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.state{font-size:11px;color:#8fb1cb}.current .state{color:#ef9c77}.empty{padding:24px;text-align:center;color:#8898a7}
+ *{box-sizing:border-box}html,body{margin:0;height:100%;background:#161b22;color:#dbe7f3;font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}body{border:1px solid #465462;border-radius:12px;display:flex;flex-direction:column;box-shadow:0 14px 38px #0009}.head{padding:13px 13px 10px;border-bottom:1px solid #2b3742}.titleline{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}.title{font-weight:650}.close{border:0;background:transparent;color:#9cacba;font-size:19px;line-height:20px;border-radius:5px;cursor:pointer}.close:hover{background:#31404b;color:#fff}.search{width:100%;height:34px;border:1px solid #536372;border-radius:8px;background:#0e141a;color:#f3f8fc;padding:0 11px;outline:none}.search:focus{border-color:#72a7d5;box-shadow:0 0 0 2px #72a7d533}.list{padding:7px;overflow:auto;flex:1;scrollbar-color:#4b5b68 transparent}.row{width:100%;border:0;background:transparent;color:inherit;display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px;border-radius:8px;text-align:left;cursor:pointer}.row:hover,.row:focus-visible{background:#273540;outline:none}.busy .row{pointer-events:none;opacity:.68}.icon{width:20px;height:20px;object-fit:contain}.fallback{width:16px;height:16px;border:1px solid #83919d;border-radius:3px}.label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.state{font-size:11px;color:#8fb1cb}.current .state{color:#ef9c77}.empty{padding:24px;text-align:center;color:#8898a7}
 </style><div class="head"><div class="titleline"><div class="title">Choose an onscreen window</div><button class="close" aria-label="Close">×</button></div><input class="search" type="search" placeholder="Search windows…" autocomplete="off" spellcheck="false"></div><div class="list"></div><script id="data" type="application/json">${encoded}</script><script>
-const all=JSON.parse(document.getElementById('data').textContent),list=document.querySelector('.list'),search=document.querySelector('.search');
+ let all=JSON.parse(document.getElementById('data').textContent);const list=document.querySelector('.list'),search=document.querySelector('.search');
 function signal(path,id=''){window.open('https://papers-picker.invalid/'+path+(id?'/'+encodeURIComponent(id):''),'_blank','noopener')}
-function render(){const q=search.value.trim().toLowerCase(),rows=all.filter(x=>x.title.toLowerCase().includes(q));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>signal('select',c.id);list.append(b)}}
+ function render(){const q=search.value.trim().toLowerCase(),rows=all.filter(x=>x.title.toLowerCase().includes(q));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>{document.body.classList.add('busy');c.current=!c.current;render();signal('select',c.id)};list.append(b)}}
+ window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
 const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;search.oninput=render;document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
       return new Promise<string | null>((resolve) => {
-        let settled = false;
         let peekGeneration = 0;
         let peekTimer: NodeJS.Timeout | null = null;
         let peekEndTimer: NodeJS.Timeout | null = null;
@@ -747,27 +768,43 @@ const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cance
           if (peekEndTimer) clearTimeout(peekEndTimer);
           peekEndTimer = setTimeout(endCandidatePeek, 80);
         };
-        const finish = (candidateId: string | null): void => {
-          if (settled) return;
-          settled = true;
+        const session: CandidatePickerSession = {
+          window: picker,
+          candidateIds: new Set(candidates.map((candidate) => candidate.id)),
+          resolve,
+        };
+        candidatePickerSessions.set(sender.id, session);
+        const finishSelection = (candidateId: string): void => {
+          const current = candidatePickerSessions.get(sender.id);
+          if (!current || current.window !== picker || !current.resolve) return;
           endCandidatePeek();
-          resolve(candidateId);
+          const settle = current.resolve;
+          current.resolve = null;
+          settle(candidateId);
+        };
+        const closePicker = (): void => {
+          const current = candidatePickerSessions.get(sender.id);
+          if (!current || current.window !== picker) return;
+          candidatePickerSessions.delete(sender.id);
+          endCandidatePeek();
+          const settle = current.resolve;
+          current.resolve = null;
+          settle?.(null);
           if (!picker.isDestroyed()) picker.destroy();
         };
-        const candidateIds = new Set(candidates.map((candidate) => candidate.id));
         const handlePickerUrl = (target: string): void => {
           try {
             const url = new URL(target);
-            if (url.host === 'papers-picker.invalid' && url.pathname === '/cancel') { finish(null); return; }
+            if (url.host === 'papers-picker.invalid' && url.pathname === '/cancel') { closePicker(); return; }
             if (url.host === 'papers-picker.invalid' && url.pathname === '/peek-end') { deferCandidatePeekEnd(); return; }
             if (url.host === 'papers-picker.invalid' && url.pathname.startsWith('/peek/')) {
               const candidateId = decodeURIComponent(url.pathname.slice('/peek/'.length));
-              if (candidateIds.has(candidateId)) beginCandidatePeek(candidateId);
+              if (session.candidateIds.has(candidateId)) beginCandidatePeek(candidateId);
               return;
             }
             if (url.host !== 'papers-picker.invalid' || !url.pathname.startsWith('/select/')) return;
             const candidateId = decodeURIComponent(url.pathname.slice('/select/'.length));
-            if (candidateIds.has(candidateId)) finish(candidateId);
+            if (session.candidateIds.has(candidateId)) finishSelection(candidateId);
           } catch { /* malformed navigation is ignored */ }
         };
         picker.webContents.setWindowOpenHandler(({ url }) => {
@@ -779,11 +816,19 @@ const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cance
           handlePickerUrl(target);
         });
         picker.webContents.on('before-input-event', (event, input) => {
-          if (input.key === 'Escape') { event.preventDefault(); finish(null); }
+          if (input.key === 'Escape') { event.preventDefault(); closePicker(); }
         });
-        picker.once('closed', () => finish(null));
+        picker.once('closed', () => {
+          const current = candidatePickerSessions.get(sender.id);
+          if (!current || current.window !== picker) return;
+          candidatePickerSessions.delete(sender.id);
+          endCandidatePeek();
+          const settle = current.resolve;
+          current.resolve = null;
+          settle?.(null);
+        });
         picker.once('ready-to-show', () => { if (!picker.isDestroyed()) { picker.show(); picker.focus(); } });
-        void picker.loadURL(`data:text/html;base64,${Buffer.from(html).toString('base64')}`).catch(() => finish(null));
+        void picker.loadURL(`data:text/html;base64,${Buffer.from(html).toString('base64')}`).catch(() => closePicker());
       });
     },
     showPreview: (sender, preview) => {

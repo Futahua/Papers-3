@@ -108,6 +108,7 @@ namespace WH
         public const int SW_HIDE = 0;
         public const int SW_MINIMIZE = 6;
         public const int SW_SHOWNA = 8;
+        public const int SW_SHOWNOACTIVATE = 4;
         public const int SW_RESTORE = 9;
         public const int WM_CLOSE = 0x0010;
         public const int DWMWA_CLOAKED = 14;
@@ -174,7 +175,16 @@ $script:WhOps = @{
     if ($enabled) {
       [void][WH.Win32]::ShowWindow($id, [WH.Win32]::SW_HIDE)
     } else {
-      [void][WH.Win32]::ShowWindow($id, [WH.Win32]::SW_SHOWNA)
+      # A minimized Peek target must become visible without stealing focus.
+      # SW_SHOWNA preserves an iconic window, while SW_SHOWNOACTIVATE reveals
+      # it at its restored placement. The main service re-minimizes exactly
+      # that target when Peek ends.
+      $showCommand = if ([WH.Win32]::IsIconic($id)) {
+        [WH.Win32]::SW_SHOWNOACTIVATE
+      } else {
+        [WH.Win32]::SW_SHOWNA
+      }
+      [void][WH.Win32]::ShowWindow($id, $showCommand)
     }
   }
   Close = { param([IntPtr]$id) [void][WH.Win32]::PostMessage($id, [WH.Win32]::WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) }
