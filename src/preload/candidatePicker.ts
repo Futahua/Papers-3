@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-const ACTIONS = new Set(['select', 'close', 'cancel', 'peek', 'peek-end']);
+const ACTIONS = new Set(['select', 'close', 'cancel', 'peek', 'peek-end', 'direct-pick']);
 
 contextBridge.exposeInMainWorld('candidatePicker', {
   signal: (action: string, candidateId = ''): void => {

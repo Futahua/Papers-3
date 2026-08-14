@@ -43,6 +43,7 @@ function fakeFactory(overrides: Partial<WindowHelperFactory> = {}): WindowHelper
     observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Window A', processId: 1001, processPath: 'C:\\Apps\\a.exe' }),
     observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Window B', processId: 2002, processPath: 'C:\\Apps\\b.exe' }),
     observation({ runtimeId: TOKEN_C as RuntimeWindowId, title: 'Papers', processId: 9999, processPath: 'C:\\Papers\\Papers.exe' }),
+    observation({ runtimeId: 'Tf'.padEnd(33, 'f') as RuntimeWindowId, title: 'As you Go', processId: 9999, processPath: 'C:\\Papers\\Papers.exe' }),
     observation({ runtimeId: 'Td'.padEnd(33, 'd') as RuntimeWindowId, title: '', processId: 3003, processPath: 'C:\\Apps\\c.exe' }),
     observation({ runtimeId: 'Te'.padEnd(33, 'e') as RuntimeWindowId, title: 'No Path', processId: 4004, processPath: null }),
   ];
@@ -175,6 +176,7 @@ describe('windowCapabilityService candidates', () => {
     expect(result.outcome).toBe('success');
     if (result.outcome !== 'success') return;
     expect(result.candidates.map((candidate) => candidate.title)).toEqual(['Window A', 'Window B', 'Papers']);
+    expect(result.candidates.some((candidate) => candidate.title === 'As you Go')).toBe(false);
     const papers = result.candidates.find((candidate) => candidate.title === 'Papers');
     expect(papers).toBeDefined();
     const bound = await service.bindCandidate(papers!.id);

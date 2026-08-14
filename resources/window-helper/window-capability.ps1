@@ -739,12 +739,10 @@ function Test-WhTaskWorthy {
   if ($className -eq 'Progman' -or $className -eq 'WorkerW') { return $false }
   $processName = [string](& $script:WhOps['ProcessName'] $id)
   if ($processName -eq 'TextInputHost') { return $false }
-  # Every Papers application window is excluded STRUCTURALLY by executable
-  # identity (the packaged Papers.exe reports the process name 'Papers'), not
-  # by title; the current test instance is excluded separately by the
-  # helper-parent PID in hover. Legitimate Electron applications (Code, etc.)
-  # keep their own names and stay eligible.
-  if ($processName -eq 'Papers') { return $false }
+  # Same-process Papers surfaces are deliberately left in LIST enumeration so
+  # the trusted host can admit its one real shell by current native identity.
+  # The host rejects every other same-process surface. Direct hover still
+  # excludes the helper-parent PID below, so an overlay can never select itself.
   $owner = [IntPtr](& $script:WhOps['OwnerHwnd'] $id)
   if ($owner -ne [IntPtr]::Zero) {
     $root = [IntPtr](& $script:WhOps['RootAncestor'] $id)

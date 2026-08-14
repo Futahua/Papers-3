@@ -462,7 +462,7 @@ Assert-True (Test-WireResponseOk $nullBounds) 'explicit-null processId/processPa
 
 # ---- token issuance and stable identity -----------------------------------
 $list = Invoke-Line '{"requestId":7,"method":"list"}'
-Assert-True ($list.outcome -eq 'success' -and $list.windows.Count -eq 18) 'list returns all fake task-worthy windows (same-task surfaces collapsed)'
+Assert-True ($list.outcome -eq 'success' -and $list.windows.Count -eq 19) 'list returns all fake task-worthy windows for host policy (same-task surfaces collapsed)'
 $tokenA = [string]$list.windows[0].runtimeId
 $tokenB = [string]$list.windows[1].runtimeId
 Assert-True ([string]$tokenA -match '^T[0-9a-f]{32}$') 'token A is nonempty high-entropy nonnumeric'
@@ -609,7 +609,7 @@ Assert-True ($taskTitles -contains 'WH-TEST-MINIMIZED-LEGIT') 'task-worthy: legi
 Assert-True ($taskTitles -contains 'WH-TEST-DOC-1' -and $taskTitles -contains 'WH-TEST-DOC-2') 'task-worthy: two genuine same-app document windows stay separate'
 Assert-True ($taskTitles -contains 'WH-TEST-OWNED-ACTIVE') 'task-worthy: owned active popup stays listed'
 Assert-True ($taskTitles -contains 'Code') 'task-worthy: unrelated Electron application stays listed (Code)'
-Assert-True ($taskTitles -notcontains 'Papers') 'task-worthy: packaged Papers process excluded structurally (executable identity, not title)'
+Assert-True ($taskTitles -contains 'Papers') 'task-worthy: Papers shell reaches the trusted host policy gate'
 # 016R gap 7: same-task surface dedup without collapsing documents.
 Assert-True ($taskTitles -contains 'WH-TEST-TASK-ROOT') 'same-task dedup: the task root surface stays listed'
 Assert-True ($taskTitles -notcontains 'WH-TEST-TASK-POPUP') 'same-task dedup: the owned popup surface of the SAME process collapses into its root'
@@ -640,12 +640,12 @@ $hoverText = Invoke-Line '{"requestId":57,"method":"hover","x":900,"y":850}'
 Assert-True ($hoverText.outcome -eq 'success' -and $null -eq $hoverText.window) 'hover: TextInputHost at point resolves to null'
 $hoverBlank = Invoke-Line '{"requestId":58,"method":"hover","x":5000,"y":5000}'
 Assert-True ($hoverBlank.outcome -eq 'success' -and $null -eq $hoverBlank.window) 'hover: blank point resolves to null'
-# 016R gap 6 hover-path evidence: a point inside the packaged Papers fixture
-# rect resolves to null (structural name exclusion), an unrelated Electron
-# application at its rect stays eligible, and a window owned by the helper's
-# parent PID resolves to null (hover-through exclusion).
+# 016R gap 6 hover-path evidence: a Papers fixture reaches helper output for
+# trusted host policy, an unrelated Electron application stays eligible, and a
+# window owned by the helper's parent PID resolves to null (hover-through
+# exclusion).
 $hoverPapers = Invoke-Line '{"requestId":63,"method":"hover","x":400,"y":750}'
-Assert-True ($hoverPapers.outcome -eq 'success' -and $null -eq $hoverPapers.window) 'hover: packaged Papers surface at point resolves to null (name exclusion)'
+Assert-True ($hoverPapers.outcome -eq 'success' -and $null -ne $hoverPapers.window -and $hoverPapers.window.title -eq 'Papers') 'hover: Papers surface reaches trusted host policy'
 $hoverCode = Invoke-Line '{"requestId":64,"method":"hover","x":1400,"y":750}'
 Assert-True ($hoverCode.outcome -eq 'success' -and $null -ne $hoverCode.window -and $hoverCode.window.title -eq 'Code') 'hover: unrelated Electron application stays eligible at point'
 $hoverParent = Invoke-Line '{"requestId":65,"method":"hover","x":2200,"y":250}'

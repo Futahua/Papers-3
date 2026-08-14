@@ -81,6 +81,12 @@ describe('windowHelperResource path resolution', () => {
 });
 
 describe('windowHelperResource provenance validation', () => {
+  it('leaves same-process Papers observations to the trusted host gate while hover excludes its parent', () => {
+    const adapter = fs.readFileSync(realPaths().adapterPath, 'utf8');
+    expect(adapter).not.toContain("if ($processName -eq 'Papers')");
+    expect(adapter).toContain('([int]$_.ProcessId -ne $parentPid)');
+  });
+
   it('accepts the real Papers-owned resource in the dev layout', () => {
     const result = validateWindowHelperResource(realPaths());
     expect(result.ok).toBe(true);
