@@ -76,6 +76,8 @@ namespace WH
         [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+        [DllImport("user32.dll", SetLastError = true)] public static extern bool BringWindowToTop(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int w, int h, uint flags);
         [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr BeginDeferWindowPos(int nNumWindows);
         [DllImport("user32.dll", SetLastError = true)] public static extern IntPtr DeferWindowPos(IntPtr hWinPosInfo, IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
@@ -187,6 +189,17 @@ $script:WhOps = @{
   }
   Minimize = { param([IntPtr]$id) [void][WH.Win32]::ShowWindow($id, [WH.Win32]::SW_MINIMIZE) }
   Restore = { param([IntPtr]$id) [void][WH.Win32]::ShowWindow($id, [WH.Win32]::SW_RESTORE) }
+  # Activate once and raise inside the ordinary z-order. This is deliberately
+  # never HWND_TOPMOST: later activated windows may cover it normally. The
+  # request originates in a creator click, so Windows may grant this helper
+  # foreground permission; BringWindowToTop remains the ordinary-z fallback.
+  Raise = { param([IntPtr]$id)
+    $brought = [WH.Win32]::BringWindowToTop($id)
+    $foregrounded = [WH.Win32]::SetForegroundWindow($id)
+    if (-not $brought -and -not $foregrounded) {
+      throw "WH-COMMAND-ROUTING: one-shot foreground activation failed for runtime id $id."
+    }
+  }
   Cloak = { param([IntPtr]$id, [bool]$enabled)
     # DWMWA_CLOAK can return S_OK for a foreign top-level window while leaving
     # it visibly composed. Use a reversible visibility change instead: SW_HIDE
@@ -544,6 +557,7 @@ function Get-WhWindowBounds([IntPtr]$RuntimeId) {
 
 function Set-WhWindowBounds([IntPtr]$RuntimeId, [int]$X, [int]$Y, [int]$Width, [int]$Height) {
   & $script:WhOps['SetBounds'] $RuntimeId $X $Y $Width $Height
+  & $script:WhOps['Raise'] $RuntimeId
 }
 
 function Minimize-WhWindow([IntPtr]$RuntimeId) {
@@ -552,6 +566,7 @@ function Minimize-WhWindow([IntPtr]$RuntimeId) {
 
 function Restore-WhWindow([IntPtr]$RuntimeId) {
   & $script:WhOps['Restore'] $RuntimeId
+  & $script:WhOps['Raise'] $RuntimeId
 }
 
 # Addendum: the narrow graceful-close request for an already resolved runtime

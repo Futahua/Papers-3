@@ -38,7 +38,7 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
  * edit updates these hashes AND manifest.json together. */
 export const WINDOW_HELPER_EXPECTED_HASHES: Record<string, string> = {
   [WINDOW_HELPER_SCRIPT_FILE]: 'd1e69c080ca46d7a399612932e38e4c5a82dc66d1aaa178777ba2560a8e35c0a',
-  [WINDOW_HELPER_ADAPTER_FILE]: '28cf27c83cb246ac65cdd9ca1dd113aea569cb711bed3828775f1b1b1a834e8a',
+  [WINDOW_HELPER_ADAPTER_FILE]: '50b8efb59b6074dd9d860136013bcff726036bd9a78a047a81fe0fb827359d31',
 };
 
 export interface WindowHelperResourcePaths {

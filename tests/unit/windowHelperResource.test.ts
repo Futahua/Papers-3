@@ -81,6 +81,15 @@ describe('windowHelperResource path resolution', () => {
 });
 
 describe('windowHelperResource provenance validation', () => {
+  it('foregrounds activated and restored windows once without making them permanently topmost', () => {
+    const adapter = fs.readFileSync(realPaths().adapterPath, 'utf8');
+    expect(adapter).toContain("& $script:WhOps['Raise'] $RuntimeId");
+    expect(adapter).not.toContain('[WH.Win32]::HWND_TOPMOST');
+    expect(adapter).toContain('[WH.Win32]::BringWindowToTop($id)');
+    expect(adapter).toContain('[WH.Win32]::SetForegroundWindow($id)');
+    expect(adapter).toContain('one-shot foreground activation failed');
+  });
+
   it('leaves same-process Papers observations to the trusted host gate while hover excludes its parent', () => {
     const adapter = fs.readFileSync(realPaths().adapterPath, 'utf8');
     expect(adapter).not.toContain("if ($processName -eq 'Papers')");

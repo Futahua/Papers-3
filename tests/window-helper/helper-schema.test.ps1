@@ -301,6 +301,9 @@ $script:WhOps = @{
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).State = 'normal'
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).touched += 'restore'
   }
+  Raise = { param([IntPtr]$id)
+    ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).touched += 'foreground-once'
+  }
   Close = { param([IntPtr]$id)
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).alive = $false
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).touched += 'close'
@@ -492,6 +495,10 @@ Assert-True ($script:fakeRegistry[1].touched.Count -eq 0) 'B was never touched'
 $apply = Invoke-Line ('{"requestId":14,"method":"apply","target":"' + $tokenA + '","bounds":{"x":50.4,"y":60.6,"width":300.5,"height":150.5}}')
 Assert-True ($apply.outcome -eq 'success' -and $apply.observation.bounds.width -eq 301 -and $apply.observation.bounds.height -eq 151) 'fractional bounds are deterministically rounded away from zero'
 Assert-True ($apply.observation.bounds.x -eq 50 -and $apply.observation.bounds.y -eq 61) 'fractional position is rounded away from zero'
+Assert-True ($script:fakeRegistry[0].touched -contains 'foreground-once') 'apply foregrounds the activated member once without persistent topmost state'
+$restored = Invoke-Line ('{"requestId":140,"method":"restore","target":"' + $tokenA + '"}')
+Assert-Outcome $restored 'success' 'restore succeeds on an issued token'
+Assert-True ($script:fakeRegistry[0].touched -contains 'restore' -and $script:fakeRegistry[0].touched -contains 'foreground-once') 'restore foregrounds the member once without persistent topmost state'
 Assert-Outcome (Invoke-Line ('{"requestId":15,"method":"close","target":"' + $tokenA + '"}')) 'success' 'close succeeds on an issued token'
 Assert-Outcome (Invoke-Line ('{"requestId":16,"method":"observe","target":"' + $tokenA + '"}')) 'missing' 'vanished token returns missing'
 Assert-Outcome (Invoke-Line ('{"requestId":17,"method":"restore","target":"' + $tokenA + '","handle":123}')) 'denied' 'a handle field on a mutation is denied'
