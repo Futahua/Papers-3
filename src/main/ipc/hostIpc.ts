@@ -34,6 +34,11 @@ export interface HostFacade {
   runBackpackProjectAction(actionId: string): Promise<void>;
   copyBackpackProjectText(text: string): void;
   loadBackpackProjectState(): Promise<unknown>;
+  callDelegateWave(
+    backpackId: string,
+    operation: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown>;
   saveBackpackProjectState(rawState: string): Promise<void>;
   pickBackpackProjectTarget(
     kind: 'file' | 'folder',
@@ -109,6 +114,15 @@ const backpackProjectStateSchema = z.string().min(2).max(5_000_000);
 const backpackProjectTextSchema = z.string().min(1).max(50_000);
 const backpackProjectWebUrlSchema = z.string().min(8).max(2_048);
 const backpackProjectDroppedPathsSchema = z.array(z.string().min(1).max(32_768)).min(1).max(64);
+const delegateWaveRequestSchema = z
+  .object({
+    backpackId: z.string().min(1).max(256),
+    // A NAME, not a path. The relay owns the operation map; an unknown name is
+    // refused there rather than being turned into a request.
+    operation: z.string().min(1).max(64),
+    params: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
 
 export function registerHostIpc(facade: HostFacade): void {
@@ -168,6 +182,15 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:copy-text', (_e, text) =>
     facade.copyBackpackProjectText(backpackProjectTextSchema.parse(text)),
   );
+  // Delegate Wave relay. The Backpack id is supplied by the preload from the
+  // page ORIGIN, never from page data; the relay refuses any id that is not the
+  // one Papers was configured with. `operation` is a name, never a URL, and the
+  // relay maps it to a fixed route. Nothing here can express a generic request.
+  handle('host:backpack-project:delegate-wave', (_e, payload) => {
+    const request = delegateWaveRequestSchema.parse(payload);
+    return facade.callDelegateWave(request.backpackId, request.operation, request.params ?? {});
+  });
+
   handle('host:backpack-project:state-load', () => facade.loadBackpackProjectState());
   handle('host:backpack-project:state-save', (_e, state) =>
     facade.saveBackpackProjectState(backpackProjectStateSchema.parse(state)),

@@ -26,6 +26,8 @@ import { AgentRunService } from './agents/runService';
 import { PapersHostFacade } from './hostFacade';
 import { PapersUpdater } from './papersUpdater';
 import { papersDataDirArgument } from './papersDataDir';
+import { randomUUID } from 'node:crypto';
+import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
 import { registerWindowCapabilityIpc } from './ipc/windowCapabilityIpc';
@@ -370,6 +372,13 @@ async function bootstrap(): Promise<void> {
     updater,
     registry,
     backpackProjects,
+    // Environment-only: URL, operator token and the one permitted Backpack id
+    // live in main and are never persisted, logged or exposed to a renderer.
+    delegateWave: new DelegateWaveRelay(
+      readConfigFromEnvironment(),
+      (url, init) => fetch(url, init),
+      () => randomUUID(),
+    ),
     isBackpackProjectSender: isProjectSurfaceSender,
     showBackpackProjectSurface: (url) => backpackProjectRuntime.show(url),
     hideBackpackProjectSurface: () => {

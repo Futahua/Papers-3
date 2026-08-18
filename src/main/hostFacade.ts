@@ -17,6 +17,7 @@ import type {
   ShelfContribution,
 } from '@shared/types';
 import { buildIdentity } from './buildIdentity';
+import type { DelegateWaveRelay } from './delegateWave/delegateWaveRelay';
 import type { PapersUpdater } from './papersUpdater';
 import type { BackpackRegistry } from './backpacks/backpackRegistry';
 import type {
@@ -46,6 +47,7 @@ export interface FacadeDeps {
   updater: PapersUpdater;
   registry: BackpackRegistry;
   backpackProjects: BackpackProjectService;
+  delegateWave: DelegateWaveRelay;
   isBackpackProjectSender: (sender: WebContents) => boolean;
   showBackpackProjectSurface: (url: string) => Promise<void>;
   hideBackpackProjectSurface: () => void;
@@ -253,6 +255,28 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async loadBackpackProjectState(): Promise<unknown> {
     return this.deps.backpackProjects.loadState(this.requireBackpackProjectOpen());
+  }
+
+  /**
+   * Delegate Wave relay.
+   *
+   * Two independent identity checks, and both must hold. `requireBackpackProjectOpen()`
+   * establishes that a Backpack project surface is genuinely open, and the id
+   * the preload derived from the page origin must equal it -- so a page cannot
+   * act for a project that is not the one currently running. The relay then
+   * applies the third and decisive check: that this id is the single Backpack
+   * Papers was configured to permit.
+   */
+  async callDelegateWave(
+    backpackId: string,
+    operation: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    const open = this.requireBackpackProjectOpen();
+    if (backpackId !== open) {
+      return { ok: false, code: 'NOT_PERMITTED', message: 'This Backpack may not use Delegate Wave.' };
+    }
+    return this.deps.delegateWave.call(backpackId, operation, params);
   }
 
   async saveBackpackProjectState(rawState: string): Promise<void> {

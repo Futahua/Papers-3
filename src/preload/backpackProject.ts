@@ -1,6 +1,6 @@
 import { ipcRenderer, webUtils } from 'electron';
 
-interface ProjectMessage { type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
+interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -178,6 +178,23 @@ window.addEventListener('message', (event) => {
   if (request.type === 'papers:project:as-you-go-shortcut-icon' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:shortcut-icon', request.actionId).then((icon) => ({ icon }));
   if (request.type === 'papers:project:as-you-go-launch' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:launch-shortcut', request.actionId);
   if (request.type === 'papers:project:as-you-go-reveal' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:reveal-shortcut', request.actionId);
+  if (request.type === 'papers:project:delegate-wave') {
+    // The Backpack names an OPERATION; it never names a URL, a method or a path.
+    // Its identity is attached here from the page origin, exactly as projectId
+    // is elsewhere in this file, and never read from page data -- a page that
+    // supplied its own backpackId would be claiming an authority it cannot have.
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'operation', 'params'])
+      || !validRequestId(request.requestId) || typeof request.operation !== 'string') {
+      immediateHostError(request.requestId, event.origin, 'delegate wave request is malformed');
+      return;
+    }
+    const params = isPlainObject(request.params) ? request.params : {};
+    task = ipcRenderer.invoke('host:backpack-project:delegate-wave', {
+      backpackId: projectIdFromOrigin(),
+      operation: request.operation,
+      params,
+    }).then((payload) => ({ delegateWave: payload }));
+  }
   if (request.type === 'papers:project:open-web-link' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-web-link', request.url);
   if (request.type === 'papers:project:resolve-dropped-targets' && Array.isArray(request.files)) {
     const paths = request.files.filter((file): file is File => file instanceof File).map((file) => webUtils.getPathForFile(file)).filter(Boolean);
