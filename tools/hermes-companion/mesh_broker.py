@@ -65,6 +65,8 @@ CONTROL_PORT_CONVERSATION = "__desktop_port__"
 CONTROL_RENAME_CONVERSATION = "__desktop_rename__"
 CONTROL_ARCHIVE_CONVERSATION = "__desktop_archive__"
 CONTROL_CANCEL_CONVERSATION = "__desktop_cancel__"
+CONTROL_DELEGATION_GET_CONVERSATION = "__desktop_delegation_get__"
+CONTROL_DELEGATION_SET_CONVERSATION = "__desktop_delegation_set__"
 CONTROL_LIST_PROMPT = "__APERS_LIST_DESKTOP_SESSIONS_V1__"
 CONTROL_BIND_PROMPT = "__APERS_BIND_DESKTOP_SESSION_V1__"
 CONTROL_NEW_PROMPT = "__APERS_NEW_DESKTOP_SESSION_V1__"
@@ -72,6 +74,8 @@ CONTROL_PORT_PROMPT = "__APERS_PORT_PHONE_SESSION_V1__"
 CONTROL_RENAME_PROMPT = "__APERS_RENAME_DESKTOP_SESSION_V1__"
 CONTROL_ARCHIVE_PROMPT = "__APERS_ARCHIVE_DESKTOP_SESSION_V1__"
 CONTROL_CANCEL_PROMPT = "__APERS_CANCEL_TASK_V1__"
+CONTROL_DELEGATION_GET_PROMPT = "__APERS_GET_DELEGATION_V1__"
+CONTROL_DELEGATION_SET_PROMPT = "__APERS_SET_DELEGATION_V1__"
 CHAT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,160}$")
 SESSION_ID_RE = re.compile(r"(?:^|\n)session_id:\s*([^\s]+)", re.IGNORECASE)
 QUIET_NOISE_RE = re.compile(
@@ -87,6 +91,7 @@ DEFAULT_PORT = 51379
 # stdout/stderr are piped in both call sites, so nothing is lost by hiding it.
 # 0 on non-Windows keeps Popen(creationflags=...) valid everywhere.
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+_CONFIG_WRITE_LOCK = threading.Lock()
 
 _ACTION_PROMPT_RE = re.compile(
     r"\b(?:build|browse|check|connect|create|debug|delete|deploy|diagnose|"
@@ -575,6 +580,8 @@ class MeshBroker:
             CONTROL_RENAME_CONVERSATION: CONTROL_RENAME_PROMPT,
             CONTROL_ARCHIVE_CONVERSATION: CONTROL_ARCHIVE_PROMPT,
             CONTROL_CANCEL_CONVERSATION: CONTROL_CANCEL_PROMPT,
+            CONTROL_DELEGATION_GET_CONVERSATION: CONTROL_DELEGATION_GET_PROMPT,
+            CONTROL_DELEGATION_SET_CONVERSATION: CONTROL_DELEGATION_SET_PROMPT,
         }
         if conversation_id not in expected or command != expected[conversation_id]:
             return False
@@ -586,7 +593,15 @@ class MeshBroker:
             if not CHAT_ID_RE.fullmatch(phone_conversation):
                 raise ValueError("invalid conversation_id")
 
-            if conversation_id == CONTROL_CANCEL_CONVERSATION:
+            if conversation_id == CONTROL_DELEGATION_GET_CONVERSATION:
+                result = {"route_repo_changes": self._delegation_route_state()}
+            elif conversation_id == CONTROL_DELEGATION_SET_CONVERSATION:
+                if not isinstance(payload.get("route_repo_changes"), bool):
+                    raise ValueError("route_repo_changes must be a boolean")
+                enabled = self._set_delegation_route_state(
+                    payload["route_repo_changes"])
+                result = {"route_repo_changes": enabled}
+            elif conversation_id == CONTROL_CANCEL_CONVERSATION:
                 # Stop mid-run: signal the running task for this conversation, and
                 # leave a "pending" marker so a task that hasn't been claimed yet
                 # is cancelled the moment the worker picks it up. Also drop any
@@ -612,6 +627,7 @@ class MeshBroker:
                     "sessions": self._desktop_session_catalog(),
                     "selected_session_id": self.store.conversation_session(
                         cdid, phone_conversation),
+                    "route_repo_changes": self._delegation_route_state(),
                 }
             elif conversation_id == CONTROL_BIND_CONVERSATION:
                 session_id = str(payload.get("session_id") or "")
@@ -661,6 +677,69 @@ class MeshBroker:
             self._add_control_result(
                 tid, cdid, conversation_id, False, {"error": str(exc)})
         return True
+
+    def _delegation_config_path(self) -> str:
+        return os.path.join(
+            self.home or os.path.expanduser("~/.hermes"), "config.yaml")
+
+    def _delegation_route_state(self) -> bool:
+        """Read the one Desktop delegation flag without exposing other config."""
+        path = self._delegation_config_path()
+        try:
+            text = open(path, "r", encoding="utf-8").read()
+        except FileNotFoundError:
+            return False
+        section = re.search(
+            r"(?ms)^delegate_wave:\s*(?:#.*)?\n(?P<body>(?:^[ \t]+.*(?:\n|$)|^[ \t]*#.*(?:\n|$)|^\s*$)*)",
+            text)
+        if not section:
+            return False
+        value = re.search(
+            r"(?m)^[ \t]+route_repo_changes:\s*(true|false)\s*(?:#.*)?$",
+            section.group("body"), re.IGNORECASE)
+        return bool(value and value.group(1).lower() == "true")
+
+    def _set_delegation_route_state(self, enabled: bool) -> bool:
+        """Atomically edit only delegate_wave.route_repo_changes in config.yaml."""
+        path = self._delegation_config_path()
+        value = "true" if enabled else "false"
+        with _CONFIG_WRITE_LOCK:
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    text = handle.read()
+            except FileNotFoundError:
+                text = ""
+            section = re.search(
+                r"(?ms)^delegate_wave:\s*(?:#.*)?\n(?P<body>(?:^[ \t]+.*(?:\n|$)|^[ \t]*#.*(?:\n|$)|^\s*$)*)",
+                text)
+            if section:
+                body = section.group("body")
+                setting = re.search(
+                    r"(?m)^(?P<indent>[ \t]+)route_repo_changes:\s*(?:true|false)\s*(?P<comment>#.*)?$",
+                    body, re.IGNORECASE)
+                if setting:
+                    replacement = (setting.group("indent") + "route_repo_changes: " + value
+                                   + ((" " + setting.group("comment")) if setting.group("comment") else ""))
+                    body = body[:setting.start()] + replacement + body[setting.end():]
+                else:
+                    body = "  route_repo_changes: " + value + "\n" + body
+                text = text[:section.start("body")] + body + text[section.end("body"):]
+            else:
+                if text and not text.endswith("\n"):
+                    text += "\n"
+                text += "\ndelegate_wave:\n  route_repo_changes: " + value + "\n"
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            temp = path + ".apers-" + uuid.uuid4().hex + ".tmp"
+            try:
+                with open(temp, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(text)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp, path)
+            finally:
+                if os.path.exists(temp):
+                    os.unlink(temp)
+        return self._delegation_route_state()
 
     def _add_control_result(self, ref: str, to_did: str,
                             conversation_id: str, ok: bool, value: dict) -> None:
