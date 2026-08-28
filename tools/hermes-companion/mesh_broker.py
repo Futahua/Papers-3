@@ -1178,6 +1178,13 @@ class MeshBroker:
         env = dict(os.environ)
         if self.home:
             env["HERMES_HOME"] = self.home
+        # The phone conversation is already bound to this canonical Hermes
+        # session. Propagate that trusted binding into the resumed CLI turn so
+        # MCP clients can stamp the real callback address into tool metadata.
+        # Without it, `--resume current` can resolve the transcript correctly
+        # while delegate-wave still watches the literal session "current".
+        if session_id:
+            env["HERMES_SESSION_ID"] = session_id
         state_db = os.path.join(
             self.home or os.path.expanduser("~/.hermes"), "state.db")
         started_at = time.time()
