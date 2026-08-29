@@ -814,7 +814,7 @@ class MeshBroker:
         home = self.home or os.path.expanduser("~/.hermes")
         bundle = de.export_for_handoff(
             home, session_id, source_device=self.identity.device_id,
-            include_memory=False)
+            include_memory=False, include_message_row_ids=True)
         if bundle is None:
             return None
         sessions = bundle.get("sessions") or []
@@ -834,6 +834,14 @@ class MeshBroker:
                 "content": content[:2400],
                 "timestamp": message.get("timestamp") or 0,
             }
+            # Preserve Hermes's durable timeline authority through the phone bridge. The marker in
+            # prose is only correlation data; Apers authenticates machine cards with display_kind.
+            if message.get("row_id") is not None:
+                entry["row_id"] = message["row_id"]
+            if message.get("display_kind") is not None:
+                entry["display_kind"] = message["display_kind"]
+            if message.get("display_metadata") is not None:
+                entry["display_metadata"] = message["display_metadata"]
             if role == "assistant":
                 raw_calls = message.get("tool_calls")
                 try:

@@ -82,7 +82,8 @@ def _read_memory(hermes_home: str) -> dict:
 
 
 def export_for_handoff(hermes_home: str, session_id: str,
-                       source_device: str = "", include_memory: bool = True) -> dict | None:
+                       source_device: str = "", include_memory: bool = True,
+                       include_message_row_ids: bool = False) -> dict | None:
     """Produce a handoff bundle (read-only, does not touch the live db). Returns None
     if the session is not found."""
     state_db = os.path.join(hermes_home, "state.db")
@@ -97,7 +98,8 @@ def export_for_handoff(hermes_home: str, session_id: str,
         finally:
             guard.close()
         bundle = hc.export_session(
-            snap, session_id, source_device=source_device, exported_at=time.time())
+            snap, session_id, source_device=source_device, exported_at=time.time(),
+            include_message_row_ids=include_message_row_ids)
         if bundle is None:
             return None
         if include_memory:

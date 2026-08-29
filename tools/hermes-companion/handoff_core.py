@@ -102,7 +102,8 @@ def resolve_chain(conn: sqlite3.Connection, session_id: str) -> List[str]:
 # ── export ────────────────────────────────────────────────────────────────
 
 def export_session(db_path: str, session_id: str, source_device: str = "",
-                   exported_at: float = 0.0) -> Optional[Dict[str, Any]]:
+                   exported_at: float = 0.0,
+                   include_message_row_ids: bool = False) -> Optional[Dict[str, Any]]:
     """Extract one conversation's (connected chain) sessions + messages from state.db into a bundle.
 
     Returns None if the session is not found. messages already have the source autoincrement id removed.
@@ -113,7 +114,10 @@ def export_session(db_path: str, session_id: str, source_device: str = "",
         if not chain:
             return None
         scols = _columns(conn, "sessions")
-        mcols = [c for c in _columns(conn, "messages") if c != "id"]  # drop source id
+        mcols = [
+            c for c in _columns(conn, "messages")
+            if c != "id" or include_message_row_ids
+        ]
 
         placeholders = ",".join("?" * len(chain))
         sessions = [
@@ -129,6 +133,11 @@ def export_session(db_path: str, session_id: str, source_device: str = "",
                 chain,
             ).fetchall()
         ]
+        if include_message_row_ids:
+            # This option is for the read-only Desktop timeline projection, not a handoff import.
+            # Rename the database-local id so it cannot be mistaken for an insertable peer id.
+            for message in messages:
+                message["row_id"] = message.pop("id")
         return {
             "schema": SCHEMA,
             "source_device": source_device,
