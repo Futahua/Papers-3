@@ -674,6 +674,11 @@ export class HermesSurface {
         HERMES_DESKTOP_REMOTE_TOKEN: token,
         HERMES_DESKTOP_PAPERS_DOCK_URL: `http://127.0.0.1:${reportPort}/`,
         HERMES_DESKTOP_PAPERS_DOCK_TOKEN: this.dockToken,
+        // Papers already resolved the one authoritative Hermes checkout.
+        // Pin Desktop's own runtime resolver to the same checkout instead of
+        // letting HERMES_HOME's historical install location trigger bootstrap.
+        HERMES_DESKTOP_HERMES_ROOT: location.hermesRoot,
+        HERMES_DESKTOP_PYTHON: join(location.hermesRoot, 'venv', 'Scripts', 'python.exe'),
         // Papers is the canonical launcher: always start a fresh, dock-seam-
         // enabled Hermes we own, rather than re-focusing a stale instance that
         // was launched without the seam env (its window would never report to
