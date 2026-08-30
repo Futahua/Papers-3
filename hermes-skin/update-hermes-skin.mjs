@@ -20,7 +20,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const hermesRoot =
   process.env.PAPERS_HERMES_ROOT ??
   'D:\\LapSlop brotherhood\\Programs\\Assistant\\HermesAI\\.hermes\\hermes-agent';
-const hermesHome = path.resolve(hermesRoot, '..');
+const hermesHome = process.env.HERMES_HOME ?? path.resolve(hermesRoot, '..');
 const patchFile = path.join(here, 'papers-integration.patch');
 const pluginFile = path.join(here, 'papers-theme-plugin.js');
 const pluginTarget = path.join(hermesHome, 'desktop-plugins', 'papers-theme', 'plugin.js');
