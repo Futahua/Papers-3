@@ -56,6 +56,27 @@ describe('DelegateWaveRelay', () => {
     expect(captured[0]!.headers['x-request-id']).toBeUndefined();
   });
 
+  it('exposes exactly two bounded read-only session operations', async () => {
+    const { instance, captured } = relay();
+    await instance.call(BOUND, 'session.list', { cursor: 'eyJpZCI6InMxIn0', limit: 40, ignored: 'no' });
+    await instance.call(BOUND, 'session.timeline', {
+      sessionId: 'session_1', streamSpanId: 'worker:attempt_1', before: '120', limit: 100,
+    });
+    expect(captured[0]!.url).toBe('http://127.0.0.1:47321/v1/sessions?cursor=eyJpZCI6InMxIn0&limit=40');
+    expect(captured[1]!.url).toBe('http://127.0.0.1:47321/v1/sessions/session_1/timeline?streamSpanId=worker%3Aattempt_1&before=120&limit=100');
+    expect(captured.every((request) => request.method === 'GET')).toBe(true);
+    expect(captured.every((request) => request.headers['x-request-id'] === undefined)).toBe(true);
+    expect(isDelegateWaveOperation('session.list')).toBe(true);
+    expect(isDelegateWaveOperation('session.timeline')).toBe(true);
+  });
+
+  it('rejects unbounded session paging inputs before network access', async () => {
+    const { instance, captured } = relay();
+    expect((await instance.call(BOUND, 'session.list', { limit: 501 })).code).toBe('INVALID_REQUEST');
+    expect((await instance.call(BOUND, 'session.timeline', { sessionId: 's1', streamSpanId: '../escape' })).code).toBe('INVALID_REQUEST');
+    expect(captured).toHaveLength(0);
+  });
+
   it('refuses any Backpack that is not the bound one', async () => {
     // The whole containment. Another embedded page can emit the same message
     // type; identity comes from the page origin and is checked here.

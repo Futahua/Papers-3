@@ -20,7 +20,7 @@ const suite = live ? describe : describe.skip;
 suite('DelegateWaveRelay against the running Control API', () => {
   const relay = () => new DelegateWaveRelay(
     config,
-    (url, init) => fetch(url, init as RequestInit) as unknown as ReturnType<Parameters<typeof DelegateWaveRelay>[1]>,
+    (url, init) => fetch(url, init as RequestInit) as unknown as ReturnType<ConstructorParameters<typeof DelegateWaveRelay>[1]>,
     () => crypto.randomUUID(),
   );
 

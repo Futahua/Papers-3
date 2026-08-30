@@ -34,7 +34,9 @@ export type DelegateWaveOperation =
   | 'authorize'
   | 'integration'
   | 'approve'
-  | 'decline';
+  | 'decline'
+  | 'session.list'
+  | 'session.timeline';
 
 export interface DelegateWaveResult {
   ok: boolean;
@@ -52,6 +54,8 @@ interface OperationSpec {
   pathParams: readonly string[];
   /** Body fields this operation may forward, and how each is validated. */
   body?: Readonly<Record<string, (value: unknown) => unknown>>;
+  /** Optional bounded query fields. Undefined values are omitted. */
+  query?: Readonly<Record<string, (value: unknown) => string | undefined>>;
   /** A mutation needs an X-Request-ID so a retry cannot execute twice. */
   mutation: boolean;
 }
@@ -101,6 +105,26 @@ function optionalText(max: number) {
   };
 }
 
+function optionalBoundedId(value: unknown): string | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  return boundedId(value);
+}
+
+function optionalSpanId(value: unknown): string | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  if (typeof value !== 'string' || value.length > MAX_ID || !/^[A-Za-z0-9._:-]+$/.test(value)) {
+    throw new RelayInputError('process span identifier is invalid');
+  }
+  return value;
+}
+
+function optionalPageLimit(value: unknown): string | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 500) throw new RelayInputError('page limit is invalid');
+  return String(parsed);
+}
+
 export class RelayInputError extends Error {}
 
 /**
@@ -113,6 +137,15 @@ export class RelayInputError extends Error {}
  * Control API and are deliberately not reachable from a page.
  */
 const OPERATIONS: Readonly<Record<DelegateWaveOperation, OperationSpec>> = Object.freeze({
+  'session.list': {
+    method: 'GET', path: () => '/v1/sessions', pathParams: [], mutation: false,
+    query: { cursor: optionalBoundedId, limit: optionalPageLimit },
+  },
+  'session.timeline': {
+    method: 'GET', path: (p) => `/v1/sessions/${encodeURIComponent(p['sessionId']!)}/timeline`,
+    pathParams: ['sessionId'], mutation: false,
+    query: { streamSpanId: optionalSpanId, before: optionalBoundedId, limit: optionalPageLimit },
+  },
   overview: { method: 'GET', path: () => '/v1/overview', pathParams: [], mutation: false },
   briefing: { method: 'GET', path: () => '/v1/briefing', pathParams: [], mutation: false },
   attention: { method: 'GET', path: () => '/v1/attention', pathParams: [], mutation: false },
@@ -243,6 +276,15 @@ export class DelegateWaveRelay {
       const pathParams: Record<string, string> = {};
       for (const name of spec.pathParams) pathParams[name] = boundedId(supplied[name]);
       path = spec.path(pathParams);
+      if (spec.query) {
+        const query = new URLSearchParams();
+        for (const [field, parse] of Object.entries(spec.query)) {
+          const value = parse(supplied[field]);
+          if (value !== undefined) query.set(field, value);
+        }
+        const serialized = query.toString();
+        if (serialized) path += `?${serialized}`;
+      }
 
       if (spec.body) {
         body = {};
