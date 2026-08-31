@@ -242,7 +242,7 @@ export function SettingsPane(): React.JSX.Element {
               />
               <span>Transparent window</span>
             </label>
-            <small>Shows the desktop through unpainted Backpack pages. Restart Papers for this choice to take effect.</small>
+            <small>Shows the desktop through Papers and unpainted Backpack pages. Restart Papers for this choice to take effect.</small>
           </div>
 
           <div className="settings-card">

@@ -270,6 +270,16 @@ async function bootstrap(): Promise<void> {
     hostView?.setBackgroundColor(color);
   };
   applyHostSurface(papersSettings.transparentWindow);
+  // Chromium recreates the renderer surface while navigating the host view.
+  // Reapply both transparent layers after each committed load; otherwise the
+  // new child compositor can fall back to its opaque black default even though
+  // the DOM itself correctly computes transparent backgrounds.
+  hostView.webContents.on('did-finish-load', () => {
+    applyHostSurface(papersSettings.transparentWindow);
+    mainWindow?.setBackgroundColor(
+      papersSettings.transparentWindow ? TRANSPARENT_SURFACE_COLOR : OPAQUE_SURFACE_COLOR,
+    );
+  });
   const fitHost = (): void => {
     if (!mainWindow || !hostView) return;
     const { width, height } = mainWindow.getContentBounds();

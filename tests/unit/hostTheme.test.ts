@@ -34,6 +34,8 @@ describe('host theme contract', () => {
 
   it('declares the transparent mode as a restart-time window choice', () => {
     expect(styles).toContain(':root[data-transparent-window="true"] .app');
+    expect(styles).toContain(':root[data-transparent-window="true"] .titlebar');
+    expect(styles).toContain(':root[data-transparent-window="true"] .pane');
     expect(styles).toContain(':root[data-transparent-window="true"] .backpack-project-frame iframe');
     expect(styles).toContain('background: transparent;');
   });

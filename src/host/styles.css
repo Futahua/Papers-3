@@ -118,6 +118,11 @@ body,
   background: transparent;
 }
 
+:root[data-transparent-window="true"] .titlebar,
+:root[data-transparent-window="true"] .pane {
+  background: transparent;
+}
+
 body {
   font-size: 13px;
   user-select: none;
