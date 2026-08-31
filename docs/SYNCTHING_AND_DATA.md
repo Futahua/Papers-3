@@ -99,6 +99,17 @@ Update this table whenever a real feature creates persistent data.
 
 ## Current Syncthing caution
 
+### Delegate Wave organizer preferences (2026-08-31)
+
+Wave display names, group names/membership, archive timestamps and organizer-delete
+tombstones are DW-owned rows (`wave_groups`, `wave_organization`) in its machine-local
+`state/delegate-wave.sqlite` (schema 38), not Papers localStorage or profile data.
+They carry no credentials. Use DW's database backup/restore lifecycle; do not sync
+the live SQLite files across machines. Archive is reversible; organizer deletion
+is not restorable through the UI, while execution audit and repository data remain.
+Deleting a custom group resets membership without deleting waves. The Papers relay
+stores no second copy and exposes only fixed, authenticated organizer operations.
+
 The Papers master folder is outside Syncthing today, so nothing needs unwinding. **Keep it
 that way**: do not add `Papers/` to a synchronized folder, and in particular never sync
 `Papers/Data` (live SQLite state and the Hermes token) or `Papers/App` (a running binary

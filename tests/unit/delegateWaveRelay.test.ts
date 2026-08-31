@@ -42,6 +42,20 @@ function relay(overrides: Partial<DelegateWaveConfig> = {}, respond?: () => unkn
 }
 
 describe('DelegateWaveRelay', () => {
+  it('bounds organization mutations to the bound Backpack and fixed API', async () => {
+    const { instance, captured } = relay();
+    await instance.call(BOUND, 'organization.get', {});
+    await instance.call(BOUND, 'organization.change', {action:'move',sessionId:'asess_1',groupId:'unlinked:asess_2',url:'https://untrusted',token:'fake'});
+    expect(captured[0]!.method).toBe('GET');
+    expect(captured[1]!.url).toBe('http://127.0.0.1:47321/v1/wave-organization');
+    expect(captured[1]!.headers['x-request-id']).toBeTruthy();
+    expect(JSON.parse(captured[1]!.body!)).toEqual({action:'move',sessionId:'asess_1',groupId:'unlinked:asess_2',name:'',confirm:false});
+    expect((await instance.call(OTHER,'organization.change',{action:'archive',sessionId:'asess_1'})).ok).toBe(false);
+    expect((await instance.call(BOUND,'organization.change',{action:'cancel'})).ok).toBe(false);
+    expect((await instance.call(BOUND,'organization.change',{action:'rename',name:'x'.repeat(241)})).ok).toBe(false);
+    expect((await instance.call(BOUND,'organization.change',{action:'move',groupId:'../../other'})).ok).toBe(false);
+    expect(captured).toHaveLength(2);
+  });
   it('relays a read operation to its fixed route with the bearer token', async () => {
     const { instance, captured } = relay();
     const result = await instance.call(BOUND, 'overview', {});

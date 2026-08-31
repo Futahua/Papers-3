@@ -26,6 +26,8 @@
  */
 
 export type DelegateWaveOperation =
+  | 'organization.get'
+  | 'organization.change'
   | 'overview'
   | 'briefing'
   | 'attention'
@@ -137,6 +139,20 @@ export class RelayInputError extends Error {}
  * Control API and are deliberately not reachable from a page.
  */
 const OPERATIONS: Readonly<Record<DelegateWaveOperation, OperationSpec>> = Object.freeze({
+  'organization.get': { method: 'GET', path: () => '/v1/wave-organization', pathParams: [], mutation: false },
+  'organization.change': {
+    method: 'POST', path: () => '/v1/wave-organization', pathParams: [], mutation: true,
+    body: {
+      action: (value) => {
+        if (typeof value !== 'string' || !['rename','move','archive','restore','delete','group.create','group.rename','group.delete'].includes(value)) throw new RelayInputError('Unknown organization action');
+        return value;
+      },
+      sessionId: optionalBoundedId,
+      groupId: (value) => value == null ? null : optionalSpanId(value),
+      name: optionalText(240),
+      confirm: (value) => value === true,
+    },
+  },
   'session.list': {
     method: 'GET', path: () => '/v1/sessions', pathParams: [], mutation: false,
     query: { cursor: optionalBoundedId, limit: optionalPageLimit },
