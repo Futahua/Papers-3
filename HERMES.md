@@ -68,6 +68,8 @@ fork remains, surface it in product language before deciding it.
 - Current implementation boundary: `docs/ARCHITECTURE.md`
 - Creator-reported problems, in priority order: `docs/PROBLEMS.md`
 - Current acceptance evidence: `docs/ACCEPTANCE.md`
+- Active multi-session workspace/control progress and gate checklist:
+  `docs/WORKSPACE_AND_CONTROL_PROGRESS.md`
 - Syncthing and data policy: `docs/SYNCTHING_AND_DATA.md`
 - Release and update procedure: `docs/UPDATING_PAPERS.md`
 - Completed Hermes batch: `docs/HERMES_BATCH_HANDOFF.md`. It is historical evidence;
