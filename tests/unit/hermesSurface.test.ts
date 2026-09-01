@@ -66,6 +66,29 @@ describe('HermesSurface control acknowledgements', () => {
     expect(internals.controlHermes).not.toHaveBeenCalled();
   });
 
+  it('does not realign while a delayed dock hide is pending', async () => {
+    const { surface, internals } = createSurface();
+    let settleMinimize!: () => void;
+    const pendingMinimize = new Promise<void>((resolve) => { settleMinimize = resolve; });
+    internals.placement = 'docked';
+    internals.status = 'ready';
+    internals.controlPort = 41232;
+    internals.controlHermes = vi.fn(async (command) => {
+      if (command.op === 'minimize') await pendingMinimize;
+      return { ok: true };
+    });
+
+    const hiding = surface.hideDock();
+    await vi.waitFor(() => expect(internals.controlHermes).toHaveBeenCalledWith({ op: 'minimize' }));
+    surface.setDockBounds({ x: 720, y: 40, width: 480, height: 760 });
+    await Promise.resolve();
+
+    expect(internals.controlHermes).toHaveBeenCalledTimes(1);
+    settleMinimize();
+    await hiding;
+    expect(surface.state.placement).toBe('closed');
+  });
+
   it('does not commit detached placement when focus has no valid reply', async () => {
     const { surface, internals } = createSurface();
     internals.controlHermes = vi.fn(async () => null);

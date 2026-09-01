@@ -134,6 +134,12 @@ export class HermesSurface {
   private dockToken: string | null = null;
   private adoptedProcessIds: { desktopPid: number } | null = null;
   private updateHandedOff = false;
+  /** Physical dock realignment is outside the facade's renderer-command queue,
+   * because native move/resize events arrive independently. Placement changes
+   * close that side channel and wait for an already-started move before issuing
+   * focus/minimize/setBounds, so geometry can never overtake a transition. */
+  private placementTransition = false;
+  private realignmentTail: Promise<void> = Promise.resolve();
   /** True while another Papers-level activation should raise the docked Hermes
    *  above Papers (moveTop) without making it globally topmost. */
   private lastRaiseAt = 0;
@@ -442,6 +448,25 @@ export class HermesSurface {
     );
   }
 
+  private queueRealignment(rect: Rect, opts: { raise?: boolean } = {}): void {
+    if (this.placementTransition) return;
+    const operation = this.realignmentTail.then(async () => {
+      if (this.placementTransition || this.placement !== 'docked') return;
+      await this.moveHermesTo(rect, opts);
+    });
+    this.realignmentTail = operation.catch(() => {});
+  }
+
+  private async runPlacementTransition<T>(operation: () => Promise<T>): Promise<T> {
+    this.placementTransition = true;
+    try {
+      await this.realignmentTail;
+      return await operation();
+    } finally {
+      this.placementTransition = false;
+    }
+  }
+
   /**
    * Raise the docked Hermes above Papers WITHOUT global always-on-top, so it
    * never covers unrelated apps. Debounced so rapid Papers move/resize streams
@@ -733,33 +758,34 @@ export class HermesSurface {
   // -------------------------------------------------------------- placements
 
   async dock(bounds: SurfaceBounds): Promise<HermesSurfaceState> {
-    const previousDockBounds = this.dockBounds;
-    this.dockBounds = bounds;
-    try {
-      this.setState({ status: 'starting' });
-      await this.ensureDesktop();
-      const rect = this.absoluteDockRect(bounds);
-      // No live owning window means nothing to dock against.
-      if (!rect) throw new Error('No Papers window is available to dock Hermes to.');
-      // Place the strip and raise it above Papers (non-topmost), not globally
-      // always-on-top — so it sits above Papers but never over other apps.
-      await this.moveHermesTo(rect, { focus: true, raise: true });
-      // Re-assert once after Hermes settles any boot geometry.
-      setTimeout(() => {
-        if (this.placement === 'docked') {
+    return this.runPlacementTransition(async () => {
+      const previousDockBounds = this.dockBounds;
+      this.dockBounds = bounds;
+      try {
+        this.setState({ status: 'starting' });
+        await this.ensureDesktop();
+        const rect = this.absoluteDockRect(bounds);
+        // No live owning window means nothing to dock against.
+        if (!rect) throw new Error('No Papers window is available to dock Hermes to.');
+        // Place the strip and raise it above Papers (non-topmost), not globally
+        // always-on-top — so it sits above Papers but never over other apps.
+        await this.moveHermesTo(rect, { focus: true, raise: true });
+        // Re-assert once after Hermes settles any boot geometry. It goes through
+        // the same side-channel barrier as native resize realignment.
+        setTimeout(() => {
           const settled = this.absoluteDockRect(this.dockBounds ?? bounds);
-          if (settled) void this.moveHermesTo(settled, { raise: true }).catch(() => {});
-        }
-      }, 400);
-      this.setState({ placement: 'docked', status: 'ready' });
-    } catch (error) {
-      // A transfer may have temporarily installed another window's relative
-      // bounds. If its native move failed, the facade restores the old owner,
-      // so restore that owner's geometry as the matching authoritative target.
-      this.dockBounds = previousDockBounds;
-      this.setState({ status: 'error', detail: message(error) });
-    }
-    return this.state;
+          if (settled) this.queueRealignment(settled, { raise: true });
+        }, 400);
+        this.setState({ placement: 'docked', status: 'ready' });
+      } catch (error) {
+        // A transfer may have temporarily installed another window's relative
+        // bounds. If its native move failed, the facade restores the old owner,
+        // so restore that owner's geometry as the matching authoritative target.
+        this.dockBounds = previousDockBounds;
+        this.setState({ status: 'error', detail: message(error) });
+      }
+      return this.state;
+    });
   }
 
   /** Reposition the docked window to follow Papers move/resize, raising it so it
@@ -770,9 +796,9 @@ export class HermesSurface {
     // do not let an independent resize command physically overtake its pending
     // focus/setBounds acknowledgement. Error remains eligible because a failed
     // transfer can leave Hermes legitimately docked with its previous owner.
-    if (this.placement !== 'docked' || this.status === 'starting' || !this.controlPort) return;
+    if (this.placement !== 'docked' || this.placementTransition || !this.controlPort) return;
     const rect = this.absoluteDockRect(bounds);
-    if (rect) void this.moveHermesTo(rect, { raise: true }).catch(() => {});
+    if (rect) this.queueRealignment(rect, { raise: true });
   }
 
   /** Papers was activated/focused: raise the docked Hermes above Papers, but
@@ -785,28 +811,34 @@ export class HermesSurface {
   /** Hide the docked placement without terminating Hermes or its session. */
   async hideDock(): Promise<void> {
     if (this.placement !== 'docked') return;
-    await this.requireControl({ op: 'minimize' }, 'Hermes Desktop did not acknowledge minimize.');
-    this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle' });
+    return this.runPlacementTransition(async () => {
+      await this.requireControl({ op: 'minimize' }, 'Hermes Desktop did not acknowledge minimize.');
+      this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle' });
+    });
   }
 
   /** Detach Hermes into a free-floating window. */
   async showDetached(): Promise<HermesSurfaceState> {
-    try {
-      this.setState({ status: 'starting' });
-      await this.ensureDesktop();
-      await this.requireControl({ op: 'focus' }, 'Hermes Desktop did not acknowledge focus.');
-      this.setState({ placement: 'detached', status: 'ready' });
-    } catch (error) {
-      this.setState({ status: 'error', detail: message(error) });
-    }
-    return this.state;
+    return this.runPlacementTransition(async () => {
+      try {
+        this.setState({ status: 'starting' });
+        await this.ensureDesktop();
+        await this.requireControl({ op: 'focus' }, 'Hermes Desktop did not acknowledge focus.');
+        this.setState({ placement: 'detached', status: 'ready' });
+      } catch (error) {
+        this.setState({ status: 'error', detail: message(error) });
+      }
+      return this.state;
+    });
   }
 
   /** Hide the detached window (minimize; keep Hermes + session alive). */
   async hideDetached(): Promise<void> {
     if (this.placement !== 'detached') return;
-    await this.requireControl({ op: 'minimize' }, 'Hermes Desktop did not acknowledge minimize.');
-    this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle' });
+    return this.runPlacementTransition(async () => {
+      await this.requireControl({ op: 'minimize' }, 'Hermes Desktop did not acknowledge minimize.');
+      this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle' });
+    });
   }
 
   // ------------------------------------------------------------------ close
