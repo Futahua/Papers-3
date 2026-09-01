@@ -96,6 +96,23 @@ function soleView(): FakeView {
 }
 
 describe('BackpackProjectRuntime.hide', () => {
+  it('conceals and restores the same live renderer without closing it', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+
+    runtime.conceal();
+
+    expect(harness.window.removeChildView).toHaveBeenCalledWith(view);
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(runtime.senderId).toBe(view.webContents.id);
+
+    await runtime.show(PROJECT_URL);
+
+    expect(harness.views).toHaveLength(1);
+    expect(harness.window.addChildView).toHaveBeenCalledTimes(2);
+    expect(runtime.senderId).toBe(view.webContents.id);
+  });
+
   it('detaches and closes the shown surface once', async () => {
     const runtime = await shownRuntime();
     const view = soleView();

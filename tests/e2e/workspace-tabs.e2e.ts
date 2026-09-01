@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
+import { evalInBackpackProject, evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
 // @ts-expect-error -- shared production control client is plain ESM.
 import { connectPapersControl, readDescriptor } from '../../tools/papersControlClient.mjs';
 
@@ -21,6 +21,13 @@ async function call(method: string): Promise<unknown> {
   } finally {
     connection.close();
   }
+}
+
+async function projectSenderId(projectId: string): Promise<number | null> {
+  return launched.app.evaluate(({ webContents }, id) =>
+    webContents.getAllWebContents()
+      .find((contents) => contents.getURL().startsWith(`papers-backpack://${id}/`))?.id ?? null,
+  projectId);
 }
 
 async function seedProject(userDataDir: string, id: string, name: string): Promise<{ id: string; name: string; root: string }> {
@@ -96,6 +103,8 @@ describe('A1 workspace tabs', () => {
         && surfaces.some((surface) => surface.projectId === A && surface.presentation === 'hidden')
         && surfaces.some((surface) => surface.projectId === B && surface.presentation === 'visible');
     }, 10_000, 'two tab surfaces with Beta active');
+    const alphaSenderId = await projectSenderId(A);
+    expect(alphaSenderId).not.toBeNull();
     expect(await evalInHost<string[]>(launched.app, `[...document.querySelectorAll('.dv-tab')]
       .map((tab) => tab.textContent?.trim() ?? '').filter(Boolean)`)).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
     const hostPage = await launched.app.firstWindow();
@@ -105,6 +114,7 @@ describe('A1 workspace tabs', () => {
       return surfaces.some((surface) => surface.projectId === A && surface.presentation === 'visible')
         && surfaces.some((surface) => surface.projectId === B && surface.presentation === 'hidden');
     }, 10_000, 'Alpha tab activation');
+    expect(await projectSenderId(A)).toBe(alphaSenderId);
 
     await hostPage.getByRole('button', { name: 'Split Right' }).click();
     await waitFor(async () => {
@@ -112,5 +122,15 @@ describe('A1 workspace tabs', () => {
       return surfaces.filter((surface) => surface.presentation === 'visible').length === 2;
     }, 10_000, 'two visible native split panes');
     expect(await hostPage.locator('.dv-groupview').count()).toBe(2);
+
+    await evalInBackpackProject(launched.app, `window.postMessage({ type: 'papers:project:close' }, '*')`);
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.length === 1
+        && surfaces[0]?.projectId === B
+        && surfaces[0]?.presentation === 'visible';
+    }, 10_000, 'authoritative project close with surviving Beta active');
+    expect(await hostPage.getByRole('tab', { name: 'Alpha' }).count()).toBe(0);
+    expect(await hostPage.getByRole('tab', { name: 'Beta' }).count()).toBe(1);
   });
 });

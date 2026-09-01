@@ -5,6 +5,7 @@ import { createLogicalSurfaceRegistry } from '../../src/main/windows/logicalSurf
 
 type FakeRuntime = {
   hide: ReturnType<typeof vi.fn>;
+  conceal: ReturnType<typeof vi.fn>;
   fit: ReturnType<typeof vi.fn>;
   setTransparent: ReturnType<typeof vi.fn>;
   setBounds: ReturnType<typeof vi.fn>;
@@ -22,6 +23,7 @@ function collectionWithFakes() {
     (surfaceId) => {
       const runtime: FakeRuntime = {
         hide: vi.fn(),
+        conceal: vi.fn(),
         fit: vi.fn(),
         setTransparent: vi.fn(),
         setBounds: vi.fn(),
@@ -44,15 +46,15 @@ describe('BackpackProjectSurfaceCollection', () => {
     collection.hide('surface-p');
 
     expect(p).not.toBe(q);
-    expect(runtimes.get('surface-p')!.hide).toHaveBeenCalledTimes(1);
-    expect(runtimes.get('surface-q')!.hide).not.toHaveBeenCalled();
+    expect(runtimes.get('surface-p')!.conceal).toHaveBeenCalledTimes(1);
+    expect(runtimes.get('surface-q')!.conceal).not.toHaveBeenCalled();
     expect(collection.get('surface-q')).toBe(q);
 
     collection.close('surface-p');
 
     expect(collection.get('surface-p')).toBeNull();
     expect(collection.get('surface-q')).toBe(q);
-    expect(runtimes.get('surface-p')!.hide).toHaveBeenCalledTimes(2);
+    expect(runtimes.get('surface-p')!.hide).toHaveBeenCalledTimes(1);
   });
 
   it('keeps same-project lookup separate from surface identity', () => {

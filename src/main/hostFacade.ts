@@ -595,6 +595,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (!context?.surfaceId) return;
     const surface = this.deps.logicalSurfaces.get(context.surfaceId);
     if (!surface || surface.windowId !== context.windowId) return;
+    this.deps.closeAttachedProjectSurface(context.windowId, context.surfaceId);
+    this.deps.logicalSurfaces.retire(context.surfaceId);
+    this.deps.surfaces.unbind(senderId);
+
+    if (this.deps.activeSurfaceId(context.windowId) === context.surfaceId) {
+      const replacement = this.deps.logicalSurfaces.listForWindow(context.windowId)[0] ?? null;
+      this.deps.setActiveSurfaceId(context.windowId, replacement?.surfaceId ?? null);
+      this.deps.setEnteredBackpack(context.windowId, replacement?.projectId ?? null);
+    }
     this.deps.sendToWindow(
       context.windowId,
       'host:event:backpack-project-close-request',

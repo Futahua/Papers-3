@@ -56,10 +56,11 @@ export class BackpackProjectSurfaceCollection {
   }
 
   hide(surfaceId: string): void {
-    this.runtimes.get(surfaceId)?.hide();
+    this.runtimes.get(surfaceId)?.conceal();
   }
 
   hideAll(): void {
+    // Window teardown is terminal, unlike hiding one inactive tab.
     for (const runtime of this.runtimes.values()) runtime.hide();
   }
 

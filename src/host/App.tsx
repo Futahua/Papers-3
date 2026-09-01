@@ -136,13 +136,18 @@ export function App(): React.JSX.Element {
         // Another window may archive/remove the Backpack while this renderer
         // is showing it. Main already retired the exact surface; synchronize
         // every tab, including an inactive one whose panel is unmounted.
-        setOpenProjects((projects) => projects.filter((project) => project.surfaceId !== payload.surfaceId));
+        setOpenProjects((projects) => {
+          const remaining = projects.filter((project) => project.surfaceId !== payload.surfaceId);
+          if (surfaceIdRef.current === payload.surfaceId) {
+            const replacement = remaining[0] ?? null;
+            setProjectUrl(replacement?.url ?? null);
+            setSurfaceId(replacement?.surfaceId ?? null);
+            setEntered(replacement?.projectId ?? null);
+            if (replacement) void bridge.backpackProject.activateSurface(replacement.surfaceId).catch(() => undefined);
+          }
+          return remaining;
+        });
         setWorkspaceTopology((topology) => closeTopologySurface(topology, payload.surfaceId));
-        if (surfaceIdRef.current === payload.surfaceId) {
-          setProjectUrl(null);
-          setSurfaceId(null);
-          setEntered(null);
-        }
       }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),

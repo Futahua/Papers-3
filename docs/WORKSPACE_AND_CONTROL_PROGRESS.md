@@ -344,6 +344,12 @@ renderer tabs or splits.
   native WCV without covering Dockview tab chrome.
 - [x] Hide relevant WCVs synchronously before Dockview drop overlays, and
   restore after drop, drag cancel or DOM drop.
+- [x] Retain inactive tab WCVs and renderer sender bindings; presentation hide
+  detaches without destruction, while semantic close/window teardown destroys.
+- [x] Make a project-originated close authoritative in main: close the exact
+  native runtime, retire the exact logical surface and select a survivor.
+- [x] Keep the surviving tab selected and visible when archive/remove or a
+  project-originated close retires the active surface.
 
 First A1 slice at the current branch head:
 
@@ -360,6 +366,21 @@ First A1 slice at the current branch head:
 Validation: typecheck passed, full Vitest 646 passed / 4 skipped, production
 build passed, dev-control Electron E2E 2/2 passed, workspace-tabs Electron E2E
 1/1 passed, and diff check passed.
+
+A1.1 lifecycle hardening after reviewer feedback:
+
+- inactive tabs now preserve the same live WebContents and sender identity;
+- concealment no longer emits surface-closed lifecycle callbacks, so tab
+  selection cannot tear down owner-scoped detached workspace state;
+- project-originated close is an authenticated semantic close in main rather
+  than a renderer-only tab removal;
+- the live workspace test proves A→B→A retains Alpha's sender, then closes
+  Alpha from its project frame with no logical/control orphan and Beta visible;
+- window teardown remains terminal and destroys every retained native view.
+
+Validation after A1.1: typecheck passed, full Vitest 648 passed / 4 skipped,
+production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
+Electron E2E 1/1 passed, and diff check passed.
 - [ ] Keyboard tab selection and accessibility acceptance.
 - [ ] Automatic restore of last tab/split workspace.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.

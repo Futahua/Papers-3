@@ -169,7 +169,7 @@ function projectSurfaceControlSnapshot(surface: {
     ...surface,
     presentation: !runtime
       ? 'not-created'
-      : runtime.liveProjectId === surface.projectId ? 'visible' : 'hidden',
+      : runtime.liveProjectId === surface.projectId && runtime.isPresented ? 'visible' : 'hidden',
   };
 }
 

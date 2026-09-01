@@ -140,6 +140,34 @@ describe('surface routing in the host facade', () => {
     expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, b.surfaceId);
   });
 
+  it('project-originated close retires its exact surface and selects a survivor', () => {
+    const {
+      facade, surfaces, logicalSurfaces, closeAttachedProjectSurface,
+      sendToWindow, setActiveSurfaceId, setEnteredBackpack,
+    } = createFacade();
+    const closing = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const survivor = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    surfaces.bind(FRAME, {
+      surfaceId: closing.surfaceId,
+      projectId: PROJECT,
+      windowId: 1,
+      kind: 'project',
+    });
+    setActiveSurfaceId(1, closing.surfaceId);
+
+    facade.requestCloseBackpackProject(FRAME);
+
+    expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, closing.surfaceId);
+    expect(logicalSurfaces.get(closing.surfaceId)).toBeNull();
+    expect(logicalSurfaces.get(survivor.surfaceId)).not.toBeNull();
+    expect(surfaces.contextForSender(FRAME)).toBeNull();
+    expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, survivor.surfaceId);
+    expect(setEnteredBackpack).toHaveBeenLastCalledWith(1, OTHER);
+    expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:backpack-project-close-request', {
+      surfaceId: closing.surfaceId,
+    });
+  });
+
   it('reports the focused surface project as the active Backpack', () => {
     const { facade, logicalSurfaces, setActiveSurfaceId } = createFacade();
     const surface = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });

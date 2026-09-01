@@ -9,6 +9,7 @@ export class BackpackProjectRuntime {
   private entryUrl: string | null = null;
   private transparent: boolean;
   private bounds: { x: number; y: number; width: number; height: number } | null = null;
+  private presented = false;
 
   constructor(
     private readonly window: BaseWindow,
@@ -43,6 +44,10 @@ export class BackpackProjectRuntime {
     return this.projectId;
   }
 
+  get isPresented(): boolean {
+    return this.presented;
+  }
+
   isSender(sender: WebContents): boolean {
     return this.view !== null && sender.id === this.view.webContents.id;
   }
@@ -67,6 +72,15 @@ export class BackpackProjectRuntime {
   async show(url: string): Promise<void> {
     const parsed = new URL(url);
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:`) throw new Error('Only a bound Backpack project may use the project surface.');
+    if (this.view && this.projectId === parsed.host && this.entryUrl === url) {
+      if (!this.presented && !this.window.isDestroyed()) {
+        this.window.contentView.addChildView(this.view);
+        this.presented = true;
+      }
+      this.fit();
+      this.applySurface();
+      return;
+    }
     this.hide();
     const view = new WebContentsView({ webPreferences: {
       preload: this.preloadPath, nodeIntegration: false, contextIsolation: true,
@@ -75,11 +89,13 @@ export class BackpackProjectRuntime {
     this.view = view;
     this.projectId = parsed.host;
     this.entryUrl = url;
+    this.presented = true;
     view.webContents.on('destroyed', () => {
       if (this.view !== view) return;
       this.view = null;
       this.projectId = null;
       this.entryUrl = null;
+      this.presented = false;
       this.onSurfaceClosed?.(parsed.host);
     });
     this.applySurface();
@@ -96,6 +112,13 @@ export class BackpackProjectRuntime {
     this.fit();
     await view.webContents.loadURL(url);
     this.applySurface();
+  }
+
+  /** Remove the native view from composition without ending its renderer. */
+  conceal(): void {
+    if (!this.view || !this.presented) return;
+    if (!this.window.isDestroyed()) this.window.contentView.removeChildView(this.view);
+    this.presented = false;
   }
 
   fit(): void {
@@ -120,6 +143,7 @@ export class BackpackProjectRuntime {
     this.view = null;
     this.projectId = null;
     this.entryUrl = null;
+    this.presented = false;
     if (projectId) this.onSurfaceClosed?.(projectId);
     // Detach and close the child surface before its parent window is
     // destroyed. hide() can also arrive late — the window teardown used to
