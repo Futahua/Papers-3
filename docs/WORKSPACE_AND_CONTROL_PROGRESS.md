@@ -197,6 +197,21 @@ The `af4e26c` review found two concrete gaps, now addressed in `962f3b8`:
 The follow-up acceptance harness in `a03ff39` composes two logical projects in
 one native-window collection and verifies focused-projection preservation.
 
+The completed follow-up review of `06df02e` found two remaining projection
+gaps, now addressed after `12d99b2`:
+
+- archive/remove now reconciles each affected window's `activeSurfaceId` after
+  project-wide retirement, selecting an unrelated surviving surface or
+  clearing the projection;
+- the cross-window "still active anywhere" decision now derives from the same
+  active logical-surface projection as list/runs/return-to-origin, rather than
+  treating legacy `enteredBackpackId` as workspace authority;
+- focused ordinary close also updates the legacy fallback to the selected
+  survivor, keeping the compatibility projection coherent.
+
+Current validation after those fixes: typecheck passed, production build
+passed, and the full Vitest suite passed with 636 tests and 4 skipped.
+
 Implementation submitted through `a03ff39`:
 
 - Native project presentations now live in a per-window collection keyed by
@@ -254,6 +269,10 @@ renderer tabs or splits.
 - [x] Replace list, runs, Canvas and return-to-origin active lookups with the
   explicit active-surface projection, retaining `enteredBackpackId` only for
   no-surface/UI and fixture fallback.
+- [x] Reconcile focused-surface state after archive/remove retires every surface
+  for one project; preserve a surviving surface from another project.
+- [x] Make cross-window "still active anywhere" checks follow active logical
+  surfaces rather than legacy `enteredBackpackId`.
 - [x] Prove collection-level A/B independence and exact close behavior in unit
   tests; live application proof remains pending until the host can create two
   surfaces through the user workflow/control plane.

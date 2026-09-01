@@ -21,8 +21,15 @@ function createFacade() {
   const closeAttachedProjectSurface = vi.fn();
   const closeBackpackProjectSurface = vi.fn();
   const sendToWindow = vi.fn();
-  let focusedSurfaceId: string | null = null;
-  const setActiveSurfaceId = vi.fn((_windowId: number, surfaceId: string | null) => { focusedSurfaceId = surfaceId; });
+  const focusedSurfaces = new Map<number, string | null>();
+  const enteredBackpacks = new Map<number, string | null>();
+  const setActiveSurfaceId = vi.fn((windowId: number, surfaceId: string | null) => {
+    focusedSurfaces.set(windowId, surfaceId);
+  });
+  const setEnteredBackpack = vi.fn((windowId: number, backpackId: string | null) => {
+    enteredBackpacks.set(windowId, backpackId);
+  });
+  const markLeft = vi.fn(async () => {});
   const facade = new PapersHostFacade({
     surfaces,
     logicalSurfaces,
@@ -33,9 +40,9 @@ function createFacade() {
     hostWindowIds: () => [1, 2],
     sendToWindow,
     broadcastToHosts: vi.fn(),
-    enteredBackpack: () => null,
-    setEnteredBackpack: vi.fn(),
-    activeSurfaceId: () => focusedSurfaceId,
+    enteredBackpack: (windowId: number) => enteredBackpacks.get(windowId) ?? null,
+    setEnteredBackpack,
+    activeSurfaceId: (windowId: number) => focusedSurfaces.get(windowId) ?? null,
     setActiveSurfaceId,
     clearEnteredBackpackEverywhere: vi.fn(),
     listLogicalSurfaces: () => logicalSurfaces.project(),
@@ -43,12 +50,13 @@ function createFacade() {
     retireBackpackProjectSurfaces: vi.fn(async () => {}),
     closeAttachedProjectSurface,
     closeBackpackProjectSurface,
-    isBackpackEnteredAnywhere: () => false,
     registry: {
       find: (id: string) => (id === PROJECT || id === OTHER ? { id, archived: false } : null),
       list: () => [],
       setArchived: vi.fn(async () => {}),
+      markLeft,
     },
+    runtime: { stopActive: vi.fn(async () => {}) },
     showBackpackProjectSurface,
     hideBackpackProjectSurface,
     // Present only so the guard is what refuses, not a missing service.
@@ -58,6 +66,7 @@ function createFacade() {
     facade, surfaces, logicalSurfaces, hideBackpackProjectSurface,
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
+    setEnteredBackpack, markLeft,
   };
 }
 
@@ -137,6 +146,19 @@ describe('surface routing in the host facade', () => {
     setActiveSurfaceId(1, surface.surfaceId);
 
     expect(facade.listBackpacks(HOST).activeBackpackId).toBe(OTHER);
+  });
+
+  it('does not mark a Backpack left while another window has an active surface for it', async () => {
+    const { facade, logicalSurfaces, setActiveSurfaceId, setEnteredBackpack, markLeft } = createFacade();
+    const local = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const elsewhere = logicalSurfaces.create({ windowId: 2, projectId: PROJECT, kind: 'project' });
+    setActiveSurfaceId(1, local.surfaceId);
+    setActiveSurfaceId(2, elsewhere.surfaceId);
+    setEnteredBackpack(1, PROJECT);
+
+    await facade.leaveBackpack(HOST);
+
+    expect(markLeft).not.toHaveBeenCalled();
   });
 
   it('refuses a host operation that names no surface it owns', () => {
@@ -238,10 +260,15 @@ describe('a host renderer is not a project surface', () => {
 
 describe('project-unavailability lifecycle uses logical surface identity', () => {
   it('archives every exact project surface without touching another project', async () => {
-    const { facade, logicalSurfaces, closeAttachedProjectSurface, sendToWindow } = createFacade();
+    const {
+      facade, logicalSurfaces, closeAttachedProjectSurface, sendToWindow,
+      setActiveSurfaceId, setEnteredBackpack,
+    } = createFacade();
     const a = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     const b = logicalSurfaces.create({ windowId: 2, projectId: PROJECT, kind: 'project' });
     const other = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    setActiveSurfaceId(1, a.surfaceId);
+    setActiveSurfaceId(2, b.surfaceId);
 
     await facade.setBackpackArchived(PROJECT, true);
 
@@ -256,5 +283,9 @@ describe('project-unavailability lifecycle uses logical surface identity', () =>
     expect(logicalSurfaces.get(a.surfaceId)).toBeNull();
     expect(logicalSurfaces.get(b.surfaceId)).toBeNull();
     expect(logicalSurfaces.get(other.surfaceId)).not.toBeNull();
+    expect(setActiveSurfaceId).toHaveBeenCalledWith(1, other.surfaceId);
+    expect(setEnteredBackpack).toHaveBeenCalledWith(1, OTHER);
+    expect(setActiveSurfaceId).toHaveBeenCalledWith(2, null);
+    expect(setEnteredBackpack).toHaveBeenCalledWith(2, null);
   });
 });

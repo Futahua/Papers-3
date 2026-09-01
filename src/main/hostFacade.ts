@@ -94,8 +94,6 @@ export interface FacadeDeps {
    * renderer remount. */
   closeBackpackProjectSurface: (senderId: number, surfaceId: string) => void;
   restoreBackpack: (windowId: number) => string | null;
-  /** Whether any live window still has this Backpack entered. */
-  isBackpackEnteredAnywhere: (backpackId: string) => boolean;
   setHermesDockOwner: (windowId: number | null) => void;
   /** The window whose Canvas runtime a program event belongs to. One runtime
    * today, so one answer -- but the relationship is recorded rather than
@@ -253,6 +251,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.enteredBackpack(windowId);
   }
 
+  private isBackpackActiveAnywhere(backpackId: string): boolean {
+    return this.deps.hostWindowIds()
+      .some((windowId) => this.activeBackpackForWindow(windowId) === backpackId);
+  }
+
   listBackpacks(senderId: number): { backpacks: BackpackSummary[]; activeBackpackId: string | null } {
     return this.listBackpacksFor(this.deps.hostWindowForSender(senderId));
   }
@@ -276,10 +279,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       // The Backpack itself became unavailable, so EVERY window that entered
       // it must leave. This is one of the few operations that legitimately
       // reaches across windows; an ordinary leave touches only its own.
-      this.closeLogicalProjectSurfaces(id);
+      this.closeAndRetireLogicalProjectSurfaces(id);
       await this.deps.retireBackpackProjectSurfaces(id);
       this.deps.clearEnteredBackpackEverywhere(id);
-      this.deps.retireProjectSurfaces(id);
       this.deps.surfaces.unbindProject(id);
     } else {
       await this.deps.registry.setArchived(id, archived);
@@ -289,22 +291,30 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async removeBackpack(id: string): Promise<void> {
     await this.deps.registry.remove(id);
-    this.closeLogicalProjectSurfaces(id);
+    this.closeAndRetireLogicalProjectSurfaces(id);
     await this.deps.retireBackpackProjectSurfaces(id);
     this.deps.clearEnteredBackpackEverywhere(id);
-    this.deps.retireProjectSurfaces(id);
     this.deps.surfaces.unbindProject(id);
     this.emitBackpacksChanged();
   }
 
   /** Close every attached presentation before retiring its logical identity.
    * Capture first: retireProjectSurfaces intentionally removes the records. */
-  private closeLogicalProjectSurfaces(projectId: string): void {
+  private closeAndRetireLogicalProjectSurfaces(projectId: string): void {
     const targets = this.deps.listLogicalSurfaces()
       .filter((surface) => surface.projectId === projectId && surface.kind === 'project');
     for (const { windowId, surfaceId } of targets) {
       this.deps.closeAttachedProjectSurface(windowId, surfaceId);
       this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', { surfaceId });
+    }
+    this.deps.retireProjectSurfaces(projectId);
+
+    for (const windowId of new Set(targets.map((surface) => surface.windowId))) {
+      const activeSurfaceId = this.deps.activeSurfaceId(windowId);
+      if (activeSurfaceId && this.deps.logicalSurfaces.get(activeSurfaceId)) continue;
+      const replacement = this.deps.logicalSurfaces.listForWindow(windowId)[0] ?? null;
+      this.deps.setActiveSurfaceId(windowId, replacement?.surfaceId ?? null);
+      this.deps.setEnteredBackpack(windowId, replacement?.projectId ?? null);
     }
   }
 
@@ -368,7 +378,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // "Back to Papers" clears the resumable selection (PRODUCT.md) -- but only
     // once no window is still in that Backpack. One window leaving must not
     // erase a fact another window is living in.
-    if (left && !this.deps.isBackpackEnteredAnywhere(left)) {
+    if (left && !this.isBackpackActiveAnywhere(left)) {
       await this.deps.registry.markLeft(left);
     }
     this.emitBackpacksChanged();
@@ -482,9 +492,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.closeBackpackProjectSurface(senderId, surfaceId);
     this.deps.logicalSurfaces.retire(surfaceId);
     if (this.deps.activeSurfaceId(windowId) === surfaceId) {
-      const replacement = this.deps.logicalSurfaces.listForWindow(windowId)[0]?.surfaceId ?? null;
-      this.deps.setActiveSurfaceId(windowId, replacement);
-      if (replacement === null) this.deps.setEnteredBackpack(windowId, null);
+      const replacement = this.deps.logicalSurfaces.listForWindow(windowId)[0] ?? null;
+      this.deps.setActiveSurfaceId(windowId, replacement?.surfaceId ?? null);
+      this.deps.setEnteredBackpack(windowId, replacement?.projectId ?? null);
     }
     this.emitBackpacksChanged();
   }

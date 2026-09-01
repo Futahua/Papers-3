@@ -556,8 +556,6 @@ async function bootstrap(): Promise<void> {
       if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
     },
     restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
-    isBackpackEnteredAnywhere: (backpackId) => papersWindows.all()
-      .some((context) => context.enteredBackpackId === backpackId),
     setHermesDockOwner: (windowId) => papersWindows.setHermesDockOwner(windowId),
     // The Canvas runtime is still application-level and attached to the first
     // window, so this has one answer today. Recording the relationship rather
