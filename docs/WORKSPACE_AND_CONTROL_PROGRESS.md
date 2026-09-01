@@ -434,6 +434,15 @@ A1.2b reviewer hardening:
 Validation after hardening: typecheck passed, full Vitest 655 passed / 4
 skipped, production build passed, dev-control Electron E2E 2/2 passed,
 workspace-tabs Electron E2E 1/1 passed, and diff check passed.
+
+Reviewer follow-up at `15daa02` closed those four blockers and found one final
+cleanup-timing issue. Workspace topology is now cleared at the same pre-Hermes
+authority boundary as logical-surface retirement, rather than waiting behind
+delayed Hermes reconciliation and window-record removal. The delayed-Hermes
+regression proves sender unbind, logical retirement and topology cleanup all
+finish before the await begins. The original reviewer chat then reached its
+conversation-length limit; start a fresh reviewer conversation for subsequent
+reverse-reconciliation review.
 - [ ] Keyboard tab selection and accessibility acceptance.
 - [ ] Automatic restore of last tab/split workspace.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.

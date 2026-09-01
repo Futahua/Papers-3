@@ -10,11 +10,12 @@ describe('Papers window finalization', () => {
       reconcileHermes: async () => { order.push('hermes'); },
       unbindSurfaceSenders: () => { order.push('unbind'); },
       retireLogicalSurfaces: () => { order.push('retire'); },
+      clearWorkspaceTopology: () => { order.push('topology'); },
       removeWindow: () => { order.push('remove'); },
       emitHermesSurface: () => { order.push('emit'); },
     });
 
-    expect(order).toEqual(['widgets', 'unbind', 'retire', 'hermes', 'remove', 'emit']);
+    expect(order).toEqual(['widgets', 'unbind', 'retire', 'topology', 'hermes', 'remove', 'emit']);
   });
 
   it('still retires surfaces and removes the dead window when Hermes reconciliation fails', async () => {
@@ -25,6 +26,7 @@ describe('Papers window finalization', () => {
       reconcileHermes: async () => { throw new Error('minimize failed'); },
       unbindSurfaceSenders: vi.fn(),
       retireLogicalSurfaces: retire,
+      clearWorkspaceTopology: vi.fn(),
       removeWindow: remove,
       emitHermesSurface: vi.fn(),
     })).rejects.toThrow('minimize failed');
@@ -42,15 +44,16 @@ describe('Papers window finalization', () => {
       reconcileHermes: async () => { order.push('hermes-start'); await reconcile; },
       unbindSurfaceSenders: () => { order.push('unbind'); },
       retireLogicalSurfaces: () => { order.push('retire'); },
+      clearWorkspaceTopology: () => { order.push('topology'); },
       removeWindow: () => { order.push('remove'); },
       emitHermesSurface: () => { order.push('emit'); },
     });
 
     await Promise.resolve();
     await Promise.resolve();
-    expect(order).toEqual(['unbind', 'retire', 'hermes-start']);
+    expect(order).toEqual(['unbind', 'retire', 'topology', 'hermes-start']);
     release();
     await pending;
-    expect(order).toEqual(['unbind', 'retire', 'hermes-start', 'remove', 'emit']);
+    expect(order).toEqual(['unbind', 'retire', 'topology', 'hermes-start', 'remove', 'emit']);
   });
 });

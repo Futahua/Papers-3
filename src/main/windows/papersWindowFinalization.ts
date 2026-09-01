@@ -3,6 +3,7 @@ export interface PapersWindowFinalizationDependencies {
   reconcileHermes(windowId: number): Promise<void>;
   unbindSurfaceSenders(windowId: number): void;
   retireLogicalSurfaces(windowId: number): void;
+  clearWorkspaceTopology(windowId: number): void;
   removeWindow(windowId: number): void;
   emitHermesSurface(): void;
 }
@@ -22,6 +23,7 @@ export async function finalizePapersWindow(
   // with live surfaces during that bounded interval.
   dependencies.unbindSurfaceSenders(windowId);
   dependencies.retireLogicalSurfaces(windowId);
+  dependencies.clearWorkspaceTopology(windowId);
   try {
     await dependencies.reconcileHermes(windowId);
   } finally {
