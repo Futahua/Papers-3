@@ -13,8 +13,8 @@ const OTHER = 'bp-a5d07080-7210-45e6-b3f1-93978873a2fe';
  */
 function createFacade() {
   const surfaces = createSurfaceContextRegistry();
-  const hideBackpackProjectSurface = vi.fn();
-  const showBackpackProjectSurface = vi.fn(async () => {});
+  const hideBackpackProjectSurface = vi.fn((_senderId: number) => {});
+  const showBackpackProjectSurface = vi.fn(async (_senderId: number, _url: string) => {});
   const facade = new PapersHostFacade({
     surfaces,
     windowIdForSender: () => 1,
@@ -46,6 +46,8 @@ describe('surface routing in the host facade', () => {
     await expect(facade.showBackpackProjectSurface(HOST, url)).resolves.toBeUndefined();
 
     expect(showBackpackProjectSurface).toHaveBeenCalledTimes(2);
+    // Both calls carry the asking sender, so they act on that window's runtime.
+    expect(showBackpackProjectSurface.mock.calls.every(([sender]) => sender === HOST)).toBe(true);
     expect(surfaces.projectForSender(HOST)).toBe(PROJECT);
   });
 

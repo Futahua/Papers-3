@@ -20,18 +20,32 @@
  * only when the creator presses Dock -- never because a window took focus.
  */
 
-export interface PapersWindowContext {
+/**
+ * `Owned` is whatever this window genuinely owns -- its native window, its
+ * host view, its project runtime. It is a type parameter so this module stays
+ * pure and testable: the registry never needs to know what an Electron window
+ * is, and the lifecycle rules can be tested without one.
+ */
+export interface PapersWindowContext<Owned> {
   /** The native window's id. Stable for the window's lifetime. */
   windowId: number;
   /** The Papers renderer for this window, once it exists. */
   hostSenderId: number | null;
+  /** The per-window objects. Returned by reference -- they are the live
+   * things, not a description of them. */
+  owned: Owned;
 }
 
-export interface PapersWindowRegistry {
-  add(windowId: number): PapersWindowContext;
+export interface PapersWindowRegistry<Owned> {
+  add(windowId: number, owned: Owned): PapersWindowContext<Owned>;
   remove(windowId: number): void;
   has(windowId: number): boolean;
-  get(windowId: number): PapersWindowContext | null;
+  get(windowId: number): PapersWindowContext<Owned> | null;
+  /** Every live context, for the events that genuinely go to all windows. */
+  all(): Array<PapersWindowContext<Owned>>;
+  /** What the window this sender belongs to owns, or null. The resolution a
+   * per-window operation needs: sender -> window -> its own runtime. */
+  ownedForSender(senderId: number): Owned | null;
   /** Record this window's Papers renderer. */
   setHostSender(windowId: number, senderId: number | null): void;
   /** The window a sender belongs to, or null when it belongs to none. Never a
@@ -53,17 +67,28 @@ export interface PapersWindowRegistry {
   setHermesDockOwner(windowId: number | null): void;
 }
 
-export function createPapersWindowRegistry(): PapersWindowRegistry {
-  const byWindow = new Map<number, PapersWindowContext>();
+export function createPapersWindowRegistry<Owned>(): PapersWindowRegistry<Owned> {
+  const byWindow = new Map<number, PapersWindowContext<Owned>>();
   let hermesOwner: number | null = null;
 
   return {
-    add(windowId) {
+    add(windowId, owned) {
       const existing = byWindow.get(windowId);
       if (existing) return existing;
-      const context: PapersWindowContext = { windowId, hostSenderId: null };
+      const context: PapersWindowContext<Owned> = { windowId, hostSenderId: null, owned };
       byWindow.set(windowId, context);
       return context;
+    },
+
+    all() {
+      return [...byWindow.values()].map((context) => ({ ...context }));
+    },
+
+    ownedForSender(senderId) {
+      for (const context of byWindow.values()) {
+        if (context.hostSenderId === senderId) return context.owned;
+      }
+      return null;
     },
 
     remove(windowId) {

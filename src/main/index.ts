@@ -103,9 +103,36 @@ let mainWindow: BaseWindow | null = null;
 /** Phase 1A: which project each sender may act for. One registry for the
  * application; the bindings inside it are per surface. */
 const surfaceContexts = createSurfaceContextRegistry();
-/** Phase 1B: the Papers windows that exist. Per-window ownership lives here;
- * application-level services stay application-level. */
-const papersWindows = createPapersWindowRegistry();
+/**
+ * Phase 1B: what each Papers window owns. Its native window, its host view and
+ * its project runtime are per-window; the Backpack registry, project service,
+ * Delegate Wave, updater, capabilities and the single Hermes backend are not,
+ * and stay application-level.
+ */
+interface PapersWindowOwned {
+  window: BaseWindow;
+  hostView: WebContentsView;
+  backpackProjectRuntime: BackpackProjectRuntime;
+}
+
+const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
+
+/** The project runtime belonging to the window this sender is in. A host
+ * sender resolves through the window registry; a project frame resolves
+ * through the surface binding it already carries. */
+function runtimeForSender(senderId: number): BackpackProjectRuntime | null {
+  const owned = papersWindows.ownedForSender(senderId);
+  if (owned) return owned.backpackProjectRuntime;
+  const windowId = surfaceContexts.contextForSender(senderId)?.windowId;
+  if (windowId === undefined) return null;
+  return papersWindows.get(windowId)?.owned.backpackProjectRuntime ?? null;
+}
+
+/** Every live project runtime — for the few operations that genuinely apply to
+ * all of them, such as a settings change. */
+function allRuntimes(): BackpackProjectRuntime[] {
+  return papersWindows.all().map((context) => context.owned.backpackProjectRuntime);
+}
 
 /**
  * Phase 1A: bind a Papers-owned project surface so it can act for its project.
@@ -296,7 +323,11 @@ async function bootstrap(): Promise<void> {
   mainWindow.contentView.addChildView(hostView);
   // Phase 1B: this window and its renderer are now addressable as a context
   // rather than as the module's single `mainWindow`/`hostView` pair.
-  papersWindows.add(mainWindow.id);
+  papersWindows.add(mainWindow.id, {
+    window: mainWindow,
+    hostView,
+    backpackProjectRuntime,
+  });
   papersWindows.setHostSender(mainWindow.id, hostView.webContents.id);
   const applyHostSurface = (transparent: boolean): void => {
     // The host view is a child surface: its zero alpha is not honoured, so a
@@ -428,35 +459,38 @@ async function bootstrap(): Promise<void> {
     ),
     isBackpackProjectSender: isProjectSurfaceSender,
     surfaces: surfaceContexts,
-    // Phase 1B: a real lookup. A host renderer resolves through the window
-    // registry; a project/detached/widget sender resolves through the surface
-    // binding it already has. Anything else is refused rather than attributed
-    // to whichever window happens to exist.
+    // Phase 1B: a real lookup, with no singleton fallback left. A host
+    // renderer resolves through the window registry; a project, detached or
+    // widget sender resolves through the surface binding it already carries.
+    // Anything else is refused.
     windowIdForSender: (senderId) => papersWindows.windowForSender(senderId)
       ?? surfaceContexts.contextForSender(senderId)?.windowId
-      ?? (backpackProjectRuntime.senderId === senderId ? mainWindow?.id ?? null : null),
-    showBackpackProjectSurface: async (url) => {
-      await backpackProjectRuntime.show(url);
+      ?? null,
+    showBackpackProjectSurface: async (senderId, url) => {
+      const runtime = runtimeForSender(senderId);
+      if (!runtime) throw new Error('This surface has no Papers window.');
+      await runtime.show(url);
       // Phase 1A: bind both senders that may act for this project — the host
       // view that opened it and the project frame it hosts. The project id is
       // the surface origin's host, so the binding is derived from the surface
       // itself rather than from whatever was opened most recently.
       // The host surface was bound when the project opened; this binds the
       // project frame it now hosts, in the same window.
-      const projectId = backpackProjectRuntime.liveProjectId;
-      const frameSender = backpackProjectRuntime.senderId;
-      const owningWindowId = mainWindow?.id;
+      const projectId = runtime.liveProjectId;
+      const frameSender = runtime.senderId;
+      const owningWindowId = papersWindows.windowForSender(senderId)
+        ?? surfaceContexts.contextForSender(senderId)?.windowId;
       if (projectId && frameSender !== null && owningWindowId !== undefined) {
         surfaceContexts.bind(frameSender, { projectId, windowId: owningWindowId, kind: 'project' });
         // show() replaces a live surface by hiding the old one first, so
         // without this a dead frame's id would stay bound.
-        backpackProjectRuntime.onFrameDestroyed(frameSender, () => surfaceContexts.unbind(frameSender));
+        runtime.onFrameDestroyed(frameSender, () => surfaceContexts.unbind(frameSender));
       }
     },
-    hideBackpackProjectSurface: () => {
+    hideBackpackProjectSurface: (senderId) => {
       windowPickSession.cancel().catch(() => undefined);
-      // Unbinding is the facade's job now, scoped to the asking window.
-      backpackProjectRuntime.hide();
+      // Only this window's surface comes down. Unbinding is the facade's job.
+      runtimeForSender(senderId)?.hide();
     },
     runtime,
     canvasState,
@@ -484,7 +518,7 @@ async function bootstrap(): Promise<void> {
       // does not reach it. BaseWindow `transparent`/`frame` remain
       // construction-only, so a full effect still needs a restart.
       runtime.setTransparentWindow(enabled);
-      backpackProjectRuntime.setTransparent(enabled);
+      for (const runtime of allRuntimes()) runtime.setTransparent(enabled);
     },
     saveWindowBounds: async () => {
       // getBounds(), not getContentBounds(): the saved rectangle is restored
@@ -1272,6 +1306,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     // WebContents dies, but the host sender has no such hook -- without this
     // its binding survives as stale registry data. It matters once Phase 1B
     // lets one Papers window close while others keep the process alive.
+    // Creation and destruction are one unit: a context that can make a
+    // project frame but cannot reliably take down exactly its own is not an
+    // ownership primitive. Its surfaces release first, then the context.
+    papersWindows.get(ownedWindowId)?.owned.backpackProjectRuntime.hide();
     surfaceContexts.unbindWindow(ownedWindowId);
     papersWindows.remove(ownedWindowId);
     mainWindow = null;

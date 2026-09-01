@@ -66,8 +66,10 @@ export interface FacadeDeps {
   backpackProjects: BackpackProjectService;
   delegateWave: DelegateWaveRelay;
   isBackpackProjectSender: (sender: WebContents) => boolean;
-  showBackpackProjectSurface: (url: string) => Promise<void>;
-  hideBackpackProjectSurface: () => void;
+  /** Phase 1B: both take the asking sender, so they act on THAT window's
+   * project runtime instead of implicitly meaning "the one runtime". */
+  showBackpackProjectSurface: (senderId: number, url: string) => Promise<void>;
+  hideBackpackProjectSurface: (senderId: number) => void;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
@@ -260,7 +262,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async closeBackpackProject(senderId: number): Promise<void> {
-    this.deps.hideBackpackProjectSurface();
+    this.deps.hideBackpackProjectSurface(senderId);
     this.deps.surfaces.unbind(senderId);
     await this.deps.registry.markLeft();
     this.emitBackpacksChanged();
@@ -290,7 +292,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || parsed.host !== projectId) {
       throw new Error('This surface may not show another Backpack project.');
     }
-    await this.deps.showBackpackProjectSurface(url);
+    await this.deps.showBackpackProjectSurface(senderId, url);
   }
 
   /**
@@ -312,7 +314,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    */
   hideBackpackProjectSurface(senderId: number): void {
     if (!this.deps.surfaces.contextForSender(senderId)) return;
-    this.deps.hideBackpackProjectSurface();
+    this.deps.hideBackpackProjectSurface(senderId);
   }
 
   /**
