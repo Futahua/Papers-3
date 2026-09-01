@@ -124,6 +124,32 @@ describe('A1 workspace tabs', () => {
       const byProject = new Map(workspace.topology.surfaces.map((surface) => [surface.projectId, surface.surfaceId]));
       return workspace.topology.groups[0]?.surfaceIds.join(',') === `${byProject.get(B)},${byProject.get(A)}`;
     }, 10_000, 'Papers topology follows real tab reorder');
+    const reorderedWorkspace = await call('inspect.workspace', { windowId }) as {
+      revision: number;
+      topology: {
+        schemaVersion: 1;
+        surfaces: Array<{ surfaceId: string; projectId: string; title: string }>;
+        groups: Array<{ groupId: string; surfaceIds: string[]; activeSurfaceId: string | null }>;
+        root: { kind: 'group'; groupId: string };
+        focusedGroupId: string;
+      };
+    };
+    const surfaceByProject = new Map(reorderedWorkspace.topology.surfaces.map((surface) => [surface.projectId, surface.surfaceId]));
+    const reverseOrder = {
+      ...reorderedWorkspace.topology,
+      groups: reorderedWorkspace.topology.groups.map((group) => ({
+        ...group,
+        surfaceIds: [surfaceByProject.get(A)!, surfaceByProject.get(B)!],
+        activeSurfaceId: surfaceByProject.get(B)!,
+      })),
+    };
+    await call('layout.restore', { windowId, topology: reverseOrder });
+    await waitFor(() => evalInHost<boolean>(launched.app, `[...document.querySelectorAll('.dv-tab')]
+      .map((tab) => tab.textContent?.trim()).filter(Boolean).join(',') === 'Alpha,Beta'`),
+    10_000, 'Papers topology forces Dockview tab order');
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBe(reorderedWorkspace.revision + 1);
+    expect(await projectSenderId(A)).toBe(alphaSenderId);
     await hostPage.getByRole('tab', { name: 'Alpha' }).click();
     await waitFor(async () => {
       const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
@@ -153,6 +179,45 @@ describe('A1 workspace tabs', () => {
       const weights = workspace.topology.root.weights;
       return Boolean(weights && Math.abs((weights[0] ?? 0) - 0.5) > 0.05);
     }, 10_000, 'Papers topology follows real sash resize');
+
+    const splitWorkspace = await call('inspect.workspace', { windowId }) as {
+      topology: {
+        schemaVersion: 1;
+        surfaces: Array<{ surfaceId: string; projectId: string; title: string }>;
+        groups: Array<{ groupId: string; surfaceIds: string[]; activeSurfaceId: string | null }>;
+        root: { kind: 'split'; orientation: 'horizontal'; weights: number[]; children: Array<{ kind: 'group'; groupId: string }> };
+        focusedGroupId: string;
+      };
+    };
+    const weightedTopology = {
+      ...splitWorkspace.topology,
+      root: { ...splitWorkspace.topology.root, weights: [0.7, 0.3] },
+    };
+    await call('layout.restore', { windowId, topology: weightedTopology });
+    await waitFor(async () => {
+      const boxes = await hostPage.locator('.dv-groupview').evaluateAll((groups) =>
+        groups.map((group) => group.getBoundingClientRect().width));
+      const total = boxes.reduce((sum, width) => sum + width, 0);
+      return boxes.length === 2 && total > 0 && Math.abs((boxes[0] ?? 0) / total - 0.7) < 0.08;
+    }, 10_000, 'Papers split weights force real Dockview sash geometry');
+
+    const collapsedTopology = {
+      ...weightedTopology,
+      groups: [{
+        groupId: 'group-main',
+        surfaceIds: [surfaceByProject.get(A)!, surfaceByProject.get(B)!],
+        activeSurfaceId: surfaceByProject.get(A)!,
+      }],
+      root: { kind: 'group' as const, groupId: 'group-main' },
+      focusedGroupId: 'group-main',
+    };
+    await call('layout.restore', { windowId, topology: collapsedTopology });
+    await waitFor(async () => await hostPage.locator('.dv-groupview').count() === 1,
+      10_000, 'Papers group collapse converges Dockview');
+    await call('layout.restore', { windowId, topology: weightedTopology });
+    await waitFor(async () => await hostPage.locator('.dv-groupview').count() === 2,
+      10_000, 'Papers split topology recreates Dockview group');
+    expect(await projectSenderId(A)).toBe(alphaSenderId);
 
     const movedAlphaBox = await hostPage.getByRole('tab', { name: 'Alpha' }).boundingBox();
     const targetBetaBox = await hostPage.getByRole('tab', { name: 'Beta' }).boundingBox();

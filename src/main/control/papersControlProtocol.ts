@@ -74,9 +74,15 @@ export const papersControlCommands = {
   },
   'inspect.workspace': {
     input: windowTargetSchema,
-    output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
+    output: z.object({ windowId: z.number().int(), revision: z.number().int().nonnegative(), topology: workspaceTopologySchema }).strict(),
     scope: 'window',
     effect: 'query',
+  },
+  'layout.restore': {
+    input: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
+    output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
+    scope: 'window',
+    effect: 'mutate',
   },
   'window.create': {
     input: emptyParamsSchema,
@@ -102,6 +108,7 @@ export interface PapersControlDependencies {
    */
   surface(target: { windowId: number; surfaceId: string }): unknown;
   workspace?(windowId: number): unknown;
+  restoreWorkspace?(windowId: number, topology: z.infer<typeof workspaceTopologySchema>): unknown;
   snapshot(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
@@ -139,9 +146,15 @@ export async function dispatchPapersControl(
     }
     case 'inspect.workspace': {
       const { windowId } = papersControlCommands[request.method].input.parse(request.params ?? {});
-      const topology = dependencies.workspace?.(windowId) ?? null;
-      if (!topology) throw new Error('That Papers window has not committed workspace topology.');
-      return papersControlCommands[request.method].output.parse({ windowId, topology });
+      const workspace = dependencies.workspace?.(windowId) ?? null;
+      if (!workspace) throw new Error('That Papers window has not committed workspace topology.');
+      return papersControlCommands[request.method].output.parse({ windowId, ...(workspace as object) });
+    }
+    case 'layout.restore': {
+      const { windowId, topology } = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const restored = dependencies.restoreWorkspace?.(windowId, topology);
+      if (!restored) throw new Error('That Papers window cannot restore workspace topology.');
+      return papersControlCommands[request.method].output.parse({ windowId, topology: restored });
     }
     case 'inspect.snapshot': return papersControlCommands[request.method].output.parse(dependencies.snapshot());
     case 'inspect.windows': return papersControlCommands[request.method].output.parse(dependencies.windows());

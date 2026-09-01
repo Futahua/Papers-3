@@ -170,9 +170,9 @@ describe('control surface targeting', () => {
 
   it('returns only the validated Papers topology committed by an exact window', async () => {
     const topology = createWorkspaceTopology();
-    const dependencies = { ...deps(liveRegistry), workspace: vi.fn((windowId: number) => windowId === 1 ? topology : null) };
+    const dependencies = { ...deps(liveRegistry), workspace: vi.fn((windowId: number) => windowId === 1 ? { topology, revision: 3 } : null) };
     await expect(dispatchPapersControl(dependencies, request('inspect.workspace', { windowId: 1 })))
-      .resolves.toEqual({ windowId: 1, topology });
+      .resolves.toEqual({ windowId: 1, revision: 3, topology });
     await expect(dispatchPapersControl(dependencies, request('inspect.workspace', { windowId: 2 })))
       .rejects.toThrow(/has not committed/);
   });

@@ -401,7 +401,9 @@ A1.2 canonical-topology work in progress:
   Dockview, so a one-tab group cannot diverge the two models.
 - [x] Rebuild Dockview-to-Papers group mappings atomically after committed
   mutations and restore native presentation at that same boundary.
-- [ ] Reconcile Dockview from external Papers topology mutations.
+- [x] Reconcile Dockview from external Papers topology mutations for the
+  supported flat/single-split model, with API-origin/generation feedback
+  suppression and convergence checks before every Dockview mutation.
 - [ ] Persist only validated/atomic schema-v1 Papers topology; do not persist
   Dockview JSON, sender ids, WebContents ids or native window ids.
 - [x] Expose validated read-only topology through `inspect.workspace` and
@@ -443,6 +445,26 @@ regression proves sender unbind, logical retirement and topology cleanup all
 finish before the await begins. The original reviewer chat then reached its
 conversation-length limit; start a fresh reviewer conversation for subsequent
 reverse-reconciliation review.
+
+A1.2c reverse convergence:
+
+- [x] Add exact-window `layout.restore` semantic control, reusing the same
+  live-surface authority validation as renderer commits.
+- [x] Reconcile external Papers order, existing-group membership, active tabs,
+  one supported root split/collapse and normalized root weights into Dockview.
+- [x] Ignore API-origin structural mutations, suppress move/layout callbacks
+  during a reconciliation generation, and skip the renderer's echo commit for
+  externally restored topology.
+- [x] Add monotonic workspace revision to `inspect.workspace`; live acceptance
+  proves one external restore advances it exactly once, not again through
+  feedback.
+- [x] Extend `papersctl` with `layout.restore --window <id> --topology <file>`.
+- [x] Live Electron acceptance proves external order convergence, real sash
+  geometry, group collapse/recreation and retained native sender identity.
+
+A1.2c validation: typecheck passed, full Vitest 655 passed / 4 skipped,
+production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
+Electron E2E 1/1 passed, and diff check passed.
 - [ ] Keyboard tab selection and accessibility acceptance.
 - [ ] Automatic restore of last tab/split workspace.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.

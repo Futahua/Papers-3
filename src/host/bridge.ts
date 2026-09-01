@@ -195,6 +195,7 @@ interface HostBridge {
     /** The project frame asked Papers to leave it. Carries the exact surface,
      * so a window holding several does not close the wrong one. */
     onBackpackProjectCloseRequest(cb: (payload: { surfaceId: string }) => void): () => void;
+    onWorkspaceTopology(cb: (topology: WorkspaceTopologyV1) => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;

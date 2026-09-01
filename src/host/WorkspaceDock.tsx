@@ -65,6 +65,8 @@ export function WorkspaceDock(props: {
   const disposing = useRef(false);
   const groupIds = useRef(new Map<string, string>());
   const apiSubscriptions = useRef<Array<{ dispose(): void }>>([]);
+  const reconciling = useRef(false);
+  const reconciliationGeneration = useRef(0);
   const [nativeSuspended, setNativeSuspended] = useState(false);
   projectsRef.current = projects;
   topologyRef.current = topology;
@@ -106,6 +108,80 @@ export function WorkspaceDock(props: {
     onCommitLayout({ groups, ...(rootWeights ? { rootWeights } : {}) });
   }, [onCommitLayout, refreshGroupIds]);
 
+  const reconcileFromTopology = useCallback((api: DockviewApi): void => {
+    refreshGroupIds(api);
+    const desired = topologyRef.current;
+    const desiredGroups = desired.groups;
+    const splitRoot = desired.root.kind === 'split' ? desired.root : null;
+    if (desiredGroups.length > 2 || (splitRoot
+      && !splitRoot.children.every((child) => child.kind === 'group'))) return;
+    const firstSplitGroupId = splitRoot && splitRoot.children[0]?.kind === 'group'
+      ? splitRoot.children[0].groupId
+      : null;
+
+    const generation = ++reconciliationGeneration.current;
+    let mutated = false;
+    const mutate = (operation: () => void): void => {
+      reconciling.current = true;
+      mutated = true;
+      operation();
+    };
+    const dockGroupFor = (papersGroupId: string) => {
+      const dockviewId = [...groupIds.current].find(([, id]) => id === papersGroupId)?.[0];
+      return dockviewId ? api.groups.find((group) => group.id === dockviewId) : undefined;
+    };
+
+    if (splitRoot && firstSplitGroupId && desiredGroups.length === 2) {
+      const second = desiredGroups.find((group) => group.groupId !== firstSplitGroupId)!;
+      if (!dockGroupFor(second.groupId)) {
+        const panel = api.getPanel(second.surfaceIds[0]!);
+        const reference = dockGroupFor(firstSplitGroupId);
+        if (panel && reference) {
+          mutate(() => panel.api.moveTo({
+            group: reference,
+            position: splitRoot.orientation === 'horizontal' ? 'right' : 'bottom',
+          }));
+          groupIds.current.set(panel.group.id, second.groupId);
+        }
+      }
+    }
+
+    for (const group of desiredGroups) {
+      let target = dockGroupFor(group.groupId);
+      if (!target && desiredGroups.length === 1) target = api.groups[0];
+      if (!target) continue;
+      group.surfaceIds.forEach((surfaceId, index) => {
+        const panel = api.getPanel(surfaceId);
+        if (!panel) return;
+        const currentIndex = target!.panels.findIndex((candidate) => candidate.id === surfaceId);
+        if (panel.group.id !== target!.id || currentIndex !== index) {
+          mutate(() => panel.api.moveTo({ group: target, position: 'center', index, skipSetActive: true }));
+        }
+      });
+      const active = group.activeSurfaceId ? api.getPanel(group.activeSurfaceId) : undefined;
+      if (active && target.activePanel?.id !== active.id) mutate(() => active.api.setActive());
+    }
+
+    if (splitRoot && firstSplitGroupId) {
+      const first = dockGroupFor(firstSplitGroupId);
+      const weight = splitRoot.weights[0];
+      const total = splitRoot.orientation === 'horizontal' ? api.width : api.height;
+      const current = splitRoot.orientation === 'horizontal' ? first?.api.width : first?.api.height;
+      const targetSize = total * (weight ?? 0);
+      if (first && current !== undefined && total > 0 && Math.abs(current - targetSize) > 2) {
+        mutate(() => first.api.setSize(splitRoot.orientation === 'horizontal'
+          ? { width: Math.round(targetSize) }
+          : { height: Math.round(targetSize) }));
+      }
+    }
+
+    if (mutated) {
+      window.setTimeout(() => {
+        if (reconciliationGeneration.current === generation) reconciling.current = false;
+      }, 0);
+    }
+  }, [refreshGroupIds]);
+
   useEffect(() => {
     const restore = (): void => setNativeSuspended(false);
     window.addEventListener('dragend', restore);
@@ -137,8 +213,8 @@ export function WorkspaceDock(props: {
     apiRef.current = event.api;
     addMissingPanels(event.api);
     refreshGroupIds(event.api);
-    apiSubscriptions.current.push(event.api.onDidActivePanelChange(({ panel }) => {
-      if (panel) onActivate(panel.id);
+    apiSubscriptions.current.push(event.api.onDidActivePanelChange(({ panel, origin }) => {
+      if (panel && !reconciling.current && origin !== 'api') onActivate(panel.id);
     }));
     apiSubscriptions.current.push(event.api.onDidRemovePanel((panel) => {
       if (disposing.current) return;
@@ -146,16 +222,20 @@ export function WorkspaceDock(props: {
       onClose(panel.id);
     }));
     apiSubscriptions.current.push(event.api.onDidMovePanel(({ panel, to }) => {
+      if (reconciling.current) return;
       const targetGroupId = groupIds.current.get(to.id);
       if (!targetGroupId) return;
       const targetIndex = to.panels.findIndex((candidate) => candidate.id === panel.id);
       if (targetIndex >= 0) onMove(panel.id, targetGroupId, targetIndex);
     }));
-    apiSubscriptions.current.push(event.api.onDidMutateLayout(() => {
+    apiSubscriptions.current.push(event.api.onDidMutateLayout(({ origin }) => {
+      if (reconciling.current || origin === 'api') return;
       commitLayout(event.api);
       setNativeSuspended(false);
     }));
-    apiSubscriptions.current.push(event.api.onDidLayoutChange(() => commitLayout(event.api)));
+    apiSubscriptions.current.push(event.api.onDidLayoutChange(() => {
+      if (!reconciling.current) commitLayout(event.api);
+    }));
     apiSubscriptions.current.push(event.api.onWillShowOverlay((overlay) => {
       if ((overlay.kind === 'content' || overlay.kind === 'edge') && overlay.position !== 'center') {
         overlay.preventDefault();
@@ -181,8 +261,8 @@ export function WorkspaceDock(props: {
     }
     const active = activeSurfaceId ? api.getPanel(activeSurfaceId) : undefined;
     if (active && api.activePanel?.id !== active.id) active.api.setActive();
-    refreshGroupIds(api);
-  }, [activeSurfaceId, addMissingPanels, projects, refreshGroupIds]);
+    reconcileFromTopology(api);
+  }, [activeSurfaceId, addMissingPanels, projects, reconcileFromTopology, topology]);
 
   const splitActive = useCallback((direction: 'right' | 'down'): void => {
     const panel = apiRef.current?.activePanel;

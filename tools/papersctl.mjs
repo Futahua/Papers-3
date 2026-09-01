@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { connectPapersControl, readDescriptor } from './papersControlClient.mjs';
+import { readFile } from 'node:fs/promises';
 
 function usage() {
-  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|inspect.surfaces|inspect.surface|inspect.workspace|window.create> [--descriptor <path>] [--window <id>] [--surface <id>]');
+  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|inspect.surfaces|inspect.surface|inspect.workspace|layout.restore|window.create> [--descriptor <path>] [--window <id>] [--surface <id>] [--topology <json-file>]');
 }
 
 const args = process.argv.slice(2);
@@ -13,6 +14,7 @@ const descriptorPath = descriptorFlag >= 0
   : process.env.PAPERS_DEV_CONTROL_DESCRIPTOR;
 const windowFlag = args.indexOf('--window');
 const surfaceFlag = args.indexOf('--surface');
+const topologyFlag = args.indexOf('--topology');
 
 if (!method || !descriptorPath) {
   usage();
@@ -25,10 +27,20 @@ if (!method || !descriptorPath) {
       }
     : method === 'inspect.workspace'
       ? { windowId: Number(args[windowFlag + 1]) }
+      : method === 'layout.restore'
+        ? {
+            windowId: Number(args[windowFlag + 1]),
+            topology: topologyFlag >= 0
+              ? JSON.parse(await readFile(args[topologyFlag + 1], 'utf8'))
+              : undefined,
+          }
       : {};
   if ((method === 'inspect.surface' && (
     windowFlag < 0 || surfaceFlag < 0 || !Number.isInteger(params.windowId) || !params.surfaceId
-  )) || (method === 'inspect.workspace' && (windowFlag < 0 || !Number.isInteger(params.windowId)))) {
+  )) || (method === 'inspect.workspace' && (windowFlag < 0 || !Number.isInteger(params.windowId)))
+    || (method === 'layout.restore' && (
+      windowFlag < 0 || topologyFlag < 0 || !Number.isInteger(params.windowId) || !params.topology
+    ))) {
     usage();
     process.exitCode = 2;
   } else {

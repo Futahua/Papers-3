@@ -834,6 +834,18 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may commit workspace topology.');
+    this.validateWorkspaceTopology(windowId, topology);
+    this.deps.setWorkspaceTopology(windowId, topology);
+  }
+
+  restoreWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {
+    this.validateWorkspaceTopology(windowId, topology);
+    this.deps.setWorkspaceTopology(windowId, topology);
+    this.deps.sendToWindow(windowId, 'host:event:workspace-topology', topology);
+  }
+
+  private validateWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {
+    if (!this.deps.hostWindowIds().includes(windowId)) throw new Error('That Papers window is not live.');
     const live = this.deps.logicalSurfaces.listForWindow(windowId)
       .filter((surface) => surface.kind === 'project');
     if (topology.surfaces.length !== live.length) {
@@ -843,7 +855,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (topology.surfaces.some((surface) => liveById.get(surface.surfaceId) !== surface.projectId)) {
       throw new Error('Workspace topology surface identity does not match its Papers window.');
     }
-    this.deps.setWorkspaceTopology(windowId, topology);
   }
 
   // ----------------------------------------------------------- permissions

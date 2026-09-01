@@ -63,6 +63,7 @@ export function App(): React.JSX.Element {
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
   const [openProjects, setOpenProjects] = useState<OpenWorkspaceProject[]>([]);
   const [workspaceTopology, setWorkspaceTopology] = useState(createWorkspaceTopology);
+  const externallyRestoredTopology = useRef(false);
   /**
    * The logical surface this window is showing.
    *
@@ -89,6 +90,10 @@ export function App(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
+    if (externallyRestoredTopology.current) {
+      externallyRestoredTopology.current = false;
+      return;
+    }
     void host().layout.commitWorkspaceTopology(workspaceTopology).catch(() => undefined);
   }, [workspaceTopology]);
 
@@ -155,6 +160,10 @@ export function App(): React.JSX.Element {
           return remaining;
         });
         setWorkspaceTopology((topology) => closeTopologySurface(topology, payload.surfaceId));
+      }),
+      bridge.events.onWorkspaceTopology((topology) => {
+        externallyRestoredTopology.current = true;
+        setWorkspaceTopology(topology);
       }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),

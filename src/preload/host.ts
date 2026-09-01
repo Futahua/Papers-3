@@ -133,6 +133,7 @@ const api = {
   events: {
     onBackpacksChanged: subscribe('host:event:backpacks-changed'),
     onBackpackProjectCloseRequest: subscribe('host:event:backpack-project-close-request'),
+    onWorkspaceTopology: subscribe('host:event:workspace-topology'),
     onProgramStatus: subscribe('host:event:program-status'),
     onShelfChanged: subscribe('host:event:shelf-changed'),
     onSaveStatus: subscribe('host:event:save-status'),

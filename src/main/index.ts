@@ -132,6 +132,7 @@ interface PapersWindowOwned {
 
 const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
 const workspaceTopologies = new Map<number, WorkspaceTopologyV1>();
+const workspaceTopologyRevisions = new Map<number, number>();
 
 /** The exact project runtime belonging to a bound project-frame sender. A host
  * sender is only a window actor and must use an explicit surface id. */
@@ -406,7 +407,10 @@ async function bootstrap(): Promise<void> {
         reconcileHermes: reconcileHermesForClosingWindow,
         unbindSurfaceSenders: (id) => surfaceContexts.unbindWindow(id),
         retireLogicalSurfaces: (id) => { logicalSurfaces.retireWindow(id); },
-        clearWorkspaceTopology: (id) => { workspaceTopologies.delete(id); },
+        clearWorkspaceTopology: (id) => {
+          workspaceTopologies.delete(id);
+          workspaceTopologyRevisions.delete(id);
+        },
         removeWindow: (id) => { papersWindows.remove(id); },
         emitHermesSurface: () => facade.emitHermesSurface(),
       });
@@ -543,7 +547,10 @@ async function bootstrap(): Promise<void> {
     hermesDockOwner: () => papersWindows.hermesDockOwner(),
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
-    setWorkspaceTopology: (windowId, topology) => { workspaceTopologies.set(windowId, topology); },
+    setWorkspaceTopology: (windowId, topology) => {
+      workspaceTopologies.set(windowId, topology);
+      workspaceTopologyRevisions.set(windowId, (workspaceTopologyRevisions.get(windowId) ?? 0) + 1);
+    },
     activeSurfaceId: (windowId) => papersWindows.activeSurfaceId(windowId),
     setActiveSurfaceId: (windowId, surfaceId) => papersWindows.setActiveSurfaceId(windowId, surfaceId),
     clearEnteredBackpackEverywhere: (backpackId) => papersWindows.clearEnteredBackpackEverywhere(backpackId),
@@ -1363,9 +1370,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           },
         }),
         surfaces: () => logicalSurfaces.project().map(projectSurfaceControlSnapshot),
-        workspace: (windowId) => papersWindows.has(windowId)
-          ? workspaceTopologies.get(windowId) ?? null
+        workspace: (windowId) => papersWindows.has(windowId) && workspaceTopologies.has(windowId)
+          ? { topology: workspaceTopologies.get(windowId), revision: workspaceTopologyRevisions.get(windowId) ?? 0 }
           : null,
+        restoreWorkspace: (windowId, topology) => {
+          facade.restoreWorkspaceTopology(windowId, topology);
+          return topology;
+        },
         /**
          * The shared control-side target resolver: the window must be live and
          * the surface must be live IN that window. Nothing is resolved by
