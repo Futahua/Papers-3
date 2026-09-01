@@ -766,7 +766,11 @@ export class HermesSurface {
    *  stays above Papers as Papers is dragged/resized. */
   setDockBounds(bounds: SurfaceBounds): void {
     this.dockBounds = bounds;
-    if (this.placement !== 'docked' || !this.controlPort) return;
+    // Preserve the newest owner geometry during a dock/detach transaction, but
+    // do not let an independent resize command physically overtake its pending
+    // focus/setBounds acknowledgement. Error remains eligible because a failed
+    // transfer can leave Hermes legitimately docked with its previous owner.
+    if (this.placement !== 'docked' || this.status === 'starting' || !this.controlPort) return;
     const rect = this.absoluteDockRect(bounds);
     if (rect) void this.moveHermesTo(rect, { raise: true }).catch(() => {});
   }

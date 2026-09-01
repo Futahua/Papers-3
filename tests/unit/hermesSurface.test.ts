@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { HermesSurface, type HermesPlacement, type SurfaceBounds } from '../../src/main/hermes/hermesSurface';
+import {
+  HermesSurface,
+  type HermesPlacement,
+  type HermesStatus,
+  type SurfaceBounds,
+} from '../../src/main/hermes/hermesSurface';
 
 type SurfaceInternals = {
   placement: HermesPlacement;
+  status: HermesStatus;
   dockBounds: SurfaceBounds | null;
+  controlPort: number | null;
   ensureDesktop: () => Promise<void>;
   controlHermes: (command: Record<string, unknown>) => Promise<{ ok: boolean } | null>;
 };
@@ -43,6 +50,20 @@ describe('HermesSurface control acknowledgements', () => {
 
     expect(internals.dockBounds).toBe(ownerBounds);
     expect(surface.state).toMatchObject({ placement: 'docked', status: 'error' });
+  });
+
+  it('records resize geometry without moving Hermes during a placement transition', () => {
+    const { surface, internals } = createSurface();
+    const latestBounds = { x: 720, y: 40, width: 480, height: 760 };
+    internals.placement = 'docked';
+    internals.status = 'starting';
+    internals.controlPort = 41232;
+    internals.controlHermes = vi.fn(async () => ({ ok: true }));
+
+    surface.setDockBounds(latestBounds);
+
+    expect(internals.dockBounds).toBe(latestBounds);
+    expect(internals.controlHermes).not.toHaveBeenCalled();
   });
 
   it('does not commit detached placement when focus has no valid reply', async () => {
