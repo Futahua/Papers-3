@@ -337,6 +337,7 @@ export function App(): React.JSX.Element {
 
   const splitWorkspaceProject = useCallback((splitSurfaceId: string, direction: 'right' | 'down'): void => {
     setWorkspaceTopology((topology) => {
+      if (topology.root.kind === 'split') return topology;
       const source = topology.groups.find((group) => group.surfaceIds.includes(splitSurfaceId));
       if (!source || source.surfaceIds.length < 2) return topology;
       return splitWorkspaceGroup(topology, {

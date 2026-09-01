@@ -138,6 +138,8 @@ describe('A1 workspace tabs', () => {
       return surfaces.filter((surface) => surface.presentation === 'visible').length === 2;
     }, 10_000, 'two visible native split panes');
     expect(await hostPage.locator('.dv-groupview').count()).toBe(2);
+    expect(await hostPage.getByRole('button', { name: 'Split Right' }).isDisabled()).toBe(true);
+    expect(await hostPage.getByRole('button', { name: 'Split Down' }).isDisabled()).toBe(true);
 
     const sash = hostPage.locator('.dv-sash.dv-enabled').first();
     const sashBox = await sash.boundingBox();

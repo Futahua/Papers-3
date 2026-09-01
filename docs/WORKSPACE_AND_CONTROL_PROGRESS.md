@@ -415,6 +415,25 @@ Electron E2E 1/1 passed, and diff check passed. The live workspace workflow
 proves real reorder `[A,B] → [B,A]`, semantic `inspect.workspace`, sash-weight
 changes, existing-group DnD, final-source-group collapse, retained native
 renderer identity and authoritative project close.
+
+A1.2b reviewer hardening:
+
+- [x] Preserve existing Dockview-group ↔ Papers-group mappings across the
+  post-mutation React lag; remove only dead mappings and explicitly map new
+  supported groups. A focused race regression covers a moved tab whose source
+  group still contains other tabs.
+- [x] Disable floating Dockview groups until the Papers schema intentionally
+  models them.
+- [x] Require every renderer topology commit to exactly match the live
+  `{surfaceId, projectId}` project surfaces owned by that native window;
+  fabricated, retired, foreign-window and mismatched identities are refused.
+- [x] Delete a window's in-memory topology during finalization.
+- [x] Temporarily prohibit nested splitting in both UI eligibility and the
+  Papers transition path until recursive split-weight synchronization exists.
+
+Validation after hardening: typecheck passed, full Vitest 655 passed / 4
+skipped, production build passed, dev-control Electron E2E 2/2 passed,
+workspace-tabs Electron E2E 1/1 passed, and diff check passed.
 - [ ] Keyboard tab selection and accessibility acceptance.
 - [ ] Automatic restore of last tab/split workspace.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.

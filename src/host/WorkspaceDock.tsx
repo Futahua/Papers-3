@@ -10,6 +10,7 @@ import 'dockview-react/dist/styles/dockview.css';
 
 import { BackpackProjectFrame } from './BackpackProjectFrame';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { rebuildWorkspaceGroupMap } from './workspaceGroupMapping';
 
 export interface OpenWorkspaceProject {
   surfaceId: string;
@@ -77,14 +78,11 @@ export function WorkspaceDock(props: {
   }, []);
 
   const refreshGroupIds = useCallback((api: DockviewApi): void => {
-    const nextGroupIds = new Map<string, string>();
-    for (const group of topologyRef.current.groups) {
-      const matchingPanel = group.surfaceIds
-        .map((id) => api.getPanel(id))
-        .find((panel) => panel !== undefined);
-      if (matchingPanel) nextGroupIds.set(matchingPanel.group.id, group.groupId);
-    }
-    groupIds.current = nextGroupIds;
+    groupIds.current = rebuildWorkspaceGroupMap(
+      groupIds.current,
+      api.groups.map((group) => ({ id: group.id, panelIds: group.panels.map((panel) => panel.id) })),
+      topologyRef.current.groups,
+    );
   }, []);
 
   const commitLayout = useCallback((api: DockviewApi): void => {
@@ -202,7 +200,9 @@ export function WorkspaceDock(props: {
   const activeGroup = activeSurfaceId
     ? topology.groups.find((group) => group.surfaceIds.includes(activeSurfaceId))
     : undefined;
-  const canSplit = Boolean(activeSurfaceId && activeGroup && activeGroup.surfaceIds.length > 1);
+  const canSplit = Boolean(
+    activeSurfaceId && activeGroup && activeGroup.surfaceIds.length > 1 && topology.root.kind === 'group',
+  );
 
   return (
     <section className="workspace-dock" aria-label="Workspace tabs">
@@ -215,6 +215,7 @@ export function WorkspaceDock(props: {
           className="dockview-theme-light"
           components={components}
           onReady={onReady}
+          disableFloatingGroups
         />
       </NativePresentationSuspended.Provider>
     </section>

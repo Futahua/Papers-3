@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PapersHostFacade, type FacadeDeps } from '../../src/main/hostFacade';
 import { createLogicalSurfaceRegistry } from '../../src/main/windows/logicalSurfaceRegistry';
 import { createSurfaceContextRegistry } from '../../src/main/windows/surfaceContextRegistry';
+import { createWorkspaceTopology, openWorkspaceSurface } from '../../src/shared/workspaceTopology';
 
 const PROJECT = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 const OTHER = 'bp-a5d07080-7210-45e6-b3f1-93978873a2fe';
@@ -29,6 +30,7 @@ function createFacade() {
   const setEnteredBackpack = vi.fn((windowId: number, backpackId: string | null) => {
     enteredBackpacks.set(windowId, backpackId);
   });
+  const setWorkspaceTopology = vi.fn();
   const markLeft = vi.fn(async () => {});
   const facade = new PapersHostFacade({
     surfaces,
@@ -44,6 +46,7 @@ function createFacade() {
     setEnteredBackpack,
     activeSurfaceId: (windowId: number) => focusedSurfaces.get(windowId) ?? null,
     setActiveSurfaceId,
+    setWorkspaceTopology,
     clearEnteredBackpackEverywhere: vi.fn(),
     listLogicalSurfaces: () => logicalSurfaces.project(),
     retireProjectSurfaces: (projectId: string) => { logicalSurfaces.retireProject(projectId); },
@@ -66,7 +69,7 @@ function createFacade() {
     facade, surfaces, logicalSurfaces, hideBackpackProjectSurface,
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
-    setEnteredBackpack, markLeft,
+    setEnteredBackpack, setWorkspaceTopology, markLeft,
   };
 }
 
@@ -184,6 +187,29 @@ describe('surface routing in the host facade', () => {
 
     expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, surface.surfaceId);
     expect(setEnteredBackpack).toHaveBeenLastCalledWith(1, OTHER);
+  });
+
+  it('accepts only topology whose surfaces exactly match the committing window', () => {
+    const { facade, logicalSurfaces, setWorkspaceTopology } = createFacade();
+    const local = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const elsewhere = logicalSurfaces.create({ windowId: 2, projectId: OTHER, kind: 'project' });
+    const valid = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: local.surfaceId, projectId: PROJECT, title: 'Local',
+    });
+
+    facade.commitWorkspaceTopology(HOST, valid);
+    expect(setWorkspaceTopology).toHaveBeenCalledWith(1, valid);
+
+    const foreign = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: elsewhere.surfaceId, projectId: OTHER, title: 'Foreign',
+    });
+    expect(() => facade.commitWorkspaceTopology(HOST, foreign)).toThrow(/does not match|every live/);
+
+    const mismatched = { ...valid, surfaces: [{ ...valid.surfaces[0]!, projectId: OTHER }] };
+    expect(() => facade.commitWorkspaceTopology(HOST, mismatched)).toThrow(/does not match/);
+
+    const fabricated = { ...valid, surfaces: [{ ...valid.surfaces[0]!, surfaceId: 'sf-fabricated' }] };
+    expect(() => facade.commitWorkspaceTopology(HOST, fabricated)).toThrow(/does not match/);
   });
 
   it('does not mark a Backpack left while another window has an active surface for it', async () => {

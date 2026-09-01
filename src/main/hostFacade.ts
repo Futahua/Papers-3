@@ -834,6 +834,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may commit workspace topology.');
+    const live = this.deps.logicalSurfaces.listForWindow(windowId)
+      .filter((surface) => surface.kind === 'project');
+    if (topology.surfaces.length !== live.length) {
+      throw new Error('Workspace topology must contain every live project surface in its Papers window.');
+    }
+    const liveById = new Map(live.map((surface) => [surface.surfaceId, surface.projectId]));
+    if (topology.surfaces.some((surface) => liveById.get(surface.surfaceId) !== surface.projectId)) {
+      throw new Error('Workspace topology surface identity does not match its Papers window.');
+    }
     this.deps.setWorkspaceTopology(windowId, topology);
   }
 

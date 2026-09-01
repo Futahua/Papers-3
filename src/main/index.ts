@@ -406,7 +406,10 @@ async function bootstrap(): Promise<void> {
         reconcileHermes: reconcileHermesForClosingWindow,
         unbindSurfaceSenders: (id) => surfaceContexts.unbindWindow(id),
         retireLogicalSurfaces: (id) => { logicalSurfaces.retireWindow(id); },
-        removeWindow: (id) => papersWindows.remove(id),
+        removeWindow: (id) => {
+          workspaceTopologies.delete(id);
+          papersWindows.remove(id);
+        },
         emitHermesSurface: () => facade.emitHermesSurface(),
       });
     },
