@@ -799,7 +799,7 @@ selection, or management screen was added.
 - [x] A3 — cross-native-window move transaction with recreate/rebind fallback,
   forward canonicalization, and authenticated host-sender adapter (signed off
   through A3.4; exact implementation heads are recorded below).
-- [ ] Electron-version compatibility test for optional live WCV reparenting.
+- [x] Electron-version compatibility test for optional live WCV reparenting.
 - [ ] B2 — richer `papersctl`, event subscriptions and authorized confirmation
   challenges for destructive operations.
 - [ ] B3 — thin stdio MCP adapter over the same local control protocol; no
@@ -1071,6 +1071,23 @@ already-loaded WebContentsView between two real BaseWindows, including a
 post-reparent interaction and source/target close behavior. Either result
 closes the compatibility gate; recreate/rebind remains the correctness path,
 with no production behavior change.
+
+### Electron 43.1.1 live-WebContentsView reparent compatibility — signed off
+
+The standalone acceptance probe creates two real `BaseWindow`s and one loaded
+`WebContentsView`, detaches it from the source, attaches it to the target, and
+verifies:
+
+- the source no longer owns the view and the target does;
+- the same `webContents.id`, loaded data URL and renderer probe survive;
+- a post-reparent renderer interaction returns the expected value;
+- source and target can be destroyed without a destroyed-object exception.
+
+Observed result: compatible for the live detach/attach operation on Electron
+43.1.1. A target-window destroy does not automatically destroy the WCV, so the
+probe explicitly closes the WCV and verifies its `destroyed` lifecycle. This
+is evidence only: Papers continues to use recreate/rebind as the correctness
+path, and no production behavior or A3 transaction selection changes.
 
 ## Persistent pickup checklist for every new session
 
