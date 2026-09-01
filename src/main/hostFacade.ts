@@ -75,7 +75,7 @@ export interface FacadeDeps {
   setEnteredBackpack: (windowId: number, backpackId: string | null) => void;
   clearEnteredBackpackEverywhere: (backpackId: string) => void;
   /** Retire auxiliary project surfaces only when the project is unavailable. */
-  retireBackpackProjectSurfaces?: (backpackId: string) => Promise<void>;
+  retireBackpackProjectSurfaces: (backpackId: string) => Promise<void>;
   restoreBackpack: (windowId: number) => string | null;
   setHermesDockOwner: (windowId: number | null) => void;
   /** The window whose Canvas runtime a program event belongs to. One runtime
@@ -236,7 +236,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         if (hostSender !== null) this.deps.hideBackpackProjectSurface(hostSender);
         this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', null);
       }
-      await this.deps.retireBackpackProjectSurfaces?.(id);
+      await this.deps.retireBackpackProjectSurfaces(id);
       this.deps.clearEnteredBackpackEverywhere(id);
       this.deps.surfaces.unbindProject(id);
     } else {
@@ -253,7 +253,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       if (hostSender !== null) this.deps.hideBackpackProjectSurface(hostSender);
       this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', null);
     }
-    await this.deps.retireBackpackProjectSurfaces?.(id);
+    await this.deps.retireBackpackProjectSurfaces(id);
     this.deps.clearEnteredBackpackEverywhere(id);
     this.deps.surfaces.unbindProject(id);
     this.emitBackpacksChanged();

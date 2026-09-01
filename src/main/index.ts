@@ -1096,6 +1096,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           settle?.({ action: 'cancel', candidateId: null });
           if (!picker.isDestroyed()) picker.destroy();
         };
+        sender.once('destroyed', closePicker);
         // Renderer mouseleave is unreliable over -webkit-app-region:drag:
         // Chromium can report the lower drag-space as outside even while the
         // native pointer remains within this BrowserWindow. Use native screen
