@@ -12,6 +12,7 @@ import {
   closeWorkspaceSurface,
   createWorkspaceTopology,
   openWorkspaceSurface,
+  splitWorkspaceGroup,
 } from '@shared/workspaceTopology';
 
 /** Papers content-relative docked-Hermes rectangle. Must match the main
@@ -322,6 +323,20 @@ export function App(): React.JSX.Element {
       });
   }, []);
 
+  const splitWorkspaceProject = useCallback((splitSurfaceId: string, direction: 'right' | 'down'): void => {
+    setWorkspaceTopology((topology) => {
+      const source = topology.groups.find((group) => group.surfaceIds.includes(splitSurfaceId));
+      if (!source || source.surfaceIds.length < 2) return topology;
+      return splitWorkspaceGroup(topology, {
+        groupId: source.groupId,
+        newGroupId: `group-${splitSurfaceId}`,
+        surfaceId: splitSurfaceId,
+        orientation: direction === 'right' ? 'horizontal' : 'vertical',
+        position: 'after',
+      });
+    });
+  }, []);
+
   const openBasicOrReturnToBackpacks = (): void => {
     if (entered !== null) {
       setView('backpacks');
@@ -436,6 +451,7 @@ export function App(): React.JSX.Element {
           activeSurfaceId={surfaceId}
           onActivate={activateWorkspaceProject}
           onClose={closeWorkspaceProject}
+          onSplit={splitWorkspaceProject}
         />
       )}
 

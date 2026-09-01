@@ -696,6 +696,31 @@ input:focus-visible {
   height: 100%;
 }
 
+.workspace-layout-actions {
+  position: absolute;
+  z-index: 5;
+  top: 3px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+}
+
+.workspace-layout-actions button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.workspace-layout-actions button:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
 .backpack-project-frame {
   position: relative;
   width: 100%;

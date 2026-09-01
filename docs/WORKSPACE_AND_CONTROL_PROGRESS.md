@@ -337,12 +337,13 @@ renderer tabs or splits.
   into the DOM.
 - [x] Open, activate and close tabs through exact logical `surfaceId` targets.
 - [ ] Persist Dockview drag reorder into the Papers topology model.
-- [ ] Split Right and Split Down.
+- [x] Split Right and Split Down through explicit workspace controls; live
+  Electron acceptance proves Split Right with two visible native panes.
 - [ ] Drag tabs between same-window groups.
 - [x] Report the active pane rectangle to main and position/show/hide its exact
   native WCV without covering Dockview tab chrome.
-- [ ] Hide relevant WCVs during drag/drop overlays so native views cannot cover
-  drop targets; restore after commit/cancel.
+- [x] Hide relevant WCVs synchronously before Dockview drop overlays, and
+  restore after drop, drag cancel or DOM drop.
 
 First A1 slice at the current branch head:
 

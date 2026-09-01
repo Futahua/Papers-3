@@ -105,5 +105,12 @@ describe('A1 workspace tabs', () => {
       return surfaces.some((surface) => surface.projectId === A && surface.presentation === 'visible')
         && surfaces.some((surface) => surface.projectId === B && surface.presentation === 'hidden');
     }, 10_000, 'Alpha tab activation');
+
+    await hostPage.getByRole('button', { name: 'Split Right' }).click();
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.filter((surface) => surface.presentation === 'visible').length === 2;
+    }, 10_000, 'two visible native split panes');
+    expect(await hostPage.locator('.dv-groupview').count()).toBe(2);
   });
 });
