@@ -335,20 +335,16 @@ async function bootstrap(): Promise<void> {
       // entered again. App shutdown still owns closeAll().
     },
   });
-  const preparedWindow = preparePapersWindow(windowInstance, {
-    register: (instance) => {
-      papersWindows.add(
-        instance.window.id,
-        {
-          window: instance.window,
-          hostView: instance.hostView,
-          backpackProjectRuntime: instance.backpackProjectRuntime,
-        },
-        registry.lastActiveBackpackId,
-      );
+  const lifecycleDependencies = (restoreBackpackId: string | null) => ({
+    register: (instance: Parameters<typeof preparePapersWindow>[0]) => {
+      papersWindows.add(instance.window.id, {
+        window: instance.window,
+        hostView: instance.hostView,
+        backpackProjectRuntime: instance.backpackProjectRuntime,
+      }, restoreBackpackId);
       papersWindows.setHostSender(instance.window.id, instance.hostView.webContents.id);
     },
-    install: (instance) => {
+    install: (instance: Parameters<typeof preparePapersWindow>[0]) => {
       const window = instance.window;
       const windowId = window.id;
       const realignHermesDock = (): void => {
@@ -361,13 +357,14 @@ async function bootstrap(): Promise<void> {
         if (papersWindows.hermesDockOwner() === windowId) hermesSurface.onPapersActivated();
       });
     },
-    onClose: (instance) => instance.backpackProjectRuntime.hide(),
-    finalize: (windowId) => {
-      void widgetSession?.closeOwnedByWindow(windowId);
+    onClose: (instance: Parameters<typeof preparePapersWindow>[0]) => instance.backpackProjectRuntime.hide(),
+    finalize: async (windowId: number) => {
+      await widgetSession?.closeOwnedByWindow(windowId).catch(() => undefined);
       surfaceContexts.unbindWindow(windowId);
       papersWindows.remove(windowId);
     },
   });
+  const preparedWindow = preparePapersWindow(windowInstance, lifecycleDependencies(registry.lastActiveBackpackId));
   mainWindow = windowInstance.window;
   hostView = windowInstance.hostView;
   const backpackProjectRuntime = windowInstance.backpackProjectRuntime;
