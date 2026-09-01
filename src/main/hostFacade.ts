@@ -895,15 +895,63 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   private validateWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {
-    if (!this.deps.hostWindowIds().includes(windowId)) throw new Error('That Papers window is not live.');
     const live = this.deps.logicalSurfaces.listForWindow(windowId)
       .filter((surface) => surface.kind === 'project');
-    if (topology.surfaces.length !== live.length) {
-      throw new Error('Workspace topology must contain every live project surface in its Papers window.');
+    this.validateWorkspaceTopologyAgainstSet(windowId, topology, live);
+  }
+
+  /** Validate a prospective topology against an explicit surface set. Startup
+   * and layout replacement need this while fresh surfaces coexist with the
+   * old live set and rollback is still possible. */
+  validateWorkspaceTopologyAgainst(
+    windowId: number,
+    topology: WorkspaceTopologyV1,
+    expectedSurfaces: ReadonlyArray<{ surfaceId: string; projectId: string }>,
+  ): void {
+    this.validateWorkspaceTopologyAgainstSet(windowId, topology, expectedSurfaces);
+  }
+
+  /** Bulk replacement cleanup has no topology commit or per-surface event. The
+   * caller owns the single replacement event and canonical commit boundary. */
+  retireWorkspaceSurfacesForReplacement(windowId: number, surfaceIds: ReadonlyArray<string>): void {
+    if (!this.deps.hostWindowIds().includes(windowId)) throw new Error('That Papers window is not live.');
+    const live = this.deps.logicalSurfaces.listForWindow(windowId).filter((surface) => surface.kind === 'project');
+    const ids = [...surfaceIds];
+    if (new Set(ids).size !== ids.length || ids.length !== live.length
+      || live.some((surface) => !ids.includes(surface.surfaceId))) {
+      throw new Error('Replacement cleanup must name every live project surface in its Papers window.');
     }
-    const liveById = new Map(live.map((surface) => [surface.surfaceId, surface.projectId]));
-    if (topology.surfaces.some((surface) => liveById.get(surface.surfaceId) !== surface.projectId)) {
-      throw new Error('Workspace topology surface identity does not match its Papers window.');
+    const targets = ids.map((surfaceId) => {
+      const surface = this.deps.logicalSurfaces.get(surfaceId);
+      if (!surface || surface.windowId !== windowId || surface.kind !== 'project') {
+        throw new Error('Replacement cleanup names a surface outside its Papers window.');
+      }
+      return surface;
+    });
+    // Validate every target before touching any native or logical state.
+    for (const target of targets) this.deps.closeAttachedProjectSurface(windowId, target.surfaceId);
+    for (const target of targets) {
+      this.deps.logicalSurfaces.retire(target.surfaceId);
+      for (const senderId of this.deps.surfaces.sendersForSurface(target.surfaceId)) this.deps.surfaces.unbind(senderId);
+    }
+  }
+
+  private validateWorkspaceTopologyAgainstSet(
+    windowId: number,
+    topology: WorkspaceTopologyV1,
+    expectedSurfaces: ReadonlyArray<{ surfaceId: string; projectId: string }>,
+  ): void {
+    if (!this.deps.hostWindowIds().includes(windowId)) throw new Error('That Papers window is not live.');
+    const expectedIds = expectedSurfaces.map((surface) => surface.surfaceId);
+    if (new Set(expectedIds).size !== expectedIds.length) {
+      throw new Error('Expected workspace surface identities must be unique.');
+    }
+    if (topology.surfaces.length !== expectedSurfaces.length) {
+      throw new Error('Workspace topology must contain every expected project surface.');
+    }
+    const expectedById = new Map(expectedSurfaces.map((surface) => [surface.surfaceId, surface.projectId]));
+    if (topology.surfaces.some((surface) => expectedById.get(surface.surfaceId) !== surface.projectId)) {
+      throw new Error('Workspace topology surface identity does not match its expected surface set.');
     }
     assertValidWorkspaceTopology(topology);
     const flatRoot = topology.root.kind === 'group'

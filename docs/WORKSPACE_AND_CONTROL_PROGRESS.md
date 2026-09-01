@@ -693,6 +693,21 @@ archive/remove and crash/reload durability, and keyboard tab accessibility.
 The complete legacy Electron suite still has the separately documented
 fixture/restart failures; the focused A1 acceptance tests are green.
 
+### A2.1a prospective-set validation and bulk replacement boundary
+
+- [x] Validate a prospective topology against an explicit `{surfaceId,
+  projectId}` set instead of requiring it to equal the currently live set.
+- [x] Add all-or-nothing bulk replacement cleanup that closes native
+  presentations, retires logical surfaces, and unbinds senders without
+  intermediate topology commits or per-surface close events.
+- [x] Add unit coverage for prospective validation, exact complete-set
+  enforcement, and no-mutation-on-invalid-cleanup.
+- [ ] Reviewer sign-off.
+
+A2.1a validation: typecheck passed and focused host-facade unit tests passed
+27/27. The production seam is intentionally not used by ordinary close; it is
+ready for the named-layout replace-load transaction after reviewer review.
+
 ### Later gates
 
 - [ ] A2 — named Save Layout / Load Layout.
