@@ -147,12 +147,9 @@ function allRuntimes(): BackpackProjectRuntime[] {
 /**
  * The Papers window a detach/widget surface belongs to.
  *
- * It is the window whose surface asked for it — but neither session API
- * carries the requesting sender into `createWindow`, so it is inferred from
- * the project's currently bound surfaces. That inference is exact while one
- * window shows a project and AMBIGUOUS if two do, which is why threading the
- * requesting sender through the detach and widget sessions is a prerequisite
- * for the New Window entry point rather than something to guess at now.
+ * It is the window whose surface asked for it. The authenticated workspace
+ * sender is resolved before the session call and the proven owning id is
+ * carried through detach/widget creation.
  */
 /**
  * The Papers window a project surface sender belongs to.
@@ -385,14 +382,19 @@ async function bootstrap(): Promise<void> {
   hostView.webContents.on('did-finish-load', () => {
     applyHostSurface(papersSettings.transparentWindow);
   });
-  const fitHost = (): void => {
-    if (!mainWindow || !hostView) return;
-    const { width, height } = mainWindow.getContentBounds();
-    hostView.setBounds({ x: 0, y: 0, width, height });
+  const fitHost = (windowId: number): void => {
+    const context = papersWindows.get(windowId);
+    if (!context || context.owned.window.isDestroyed() || context.owned.hostView.webContents.isDestroyed()) return;
+    const { width, height } = context.owned.window.getContentBounds();
+    context.owned.hostView.setBounds({ x: 0, y: 0, width, height });
   };
-  fitHost();
-  mainWindow.on('resize', fitHost);
-  mainWindow.on('resize', () => backpackProjectRuntime.fit());
+  const windowId = mainWindow.id;
+  fitHost(windowId);
+  mainWindow.on('resize', () => {
+    fitHost(windowId);
+    const context = papersWindows.get(windowId);
+    context?.owned.backpackProjectRuntime.fit();
+  });
 
   // The production Hermes experience IS the existing Hermes Desktop product.
   // Papers runs one Hermes backend and positions the real Hermes Desktop
@@ -430,12 +432,15 @@ async function bootstrap(): Promise<void> {
     hermesSurface.onPapersActivated();
   });
 
-  hostView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  hostView.webContents.on('will-navigate', (event, url) => {
+  const installHostNavigationGuards = (view: WebContentsView): void => {
+    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    view.webContents.on('will-navigate', (event, url) => {
     const devUrl = process.env['ELECTRON_RENDERER_URL'];
     const allowedPrefix = devUrl ?? 'file://';
     if (!url.startsWith(allowedPrefix)) event.preventDefault();
-  });
+    });
+  };
+  installHostNavigationGuards(hostView);
 
   // ------------------------------------------------------------ composition
   const canvasState = new CanvasSessionState((items) => facade.emitShelfChanged(items));
