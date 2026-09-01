@@ -258,6 +258,37 @@ describe('Papers developer control server', () => {
     expect(created).toBe(true);
   });
 
+  it('admits no command received after close() begins, even while cleanup is still pending', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-'));
+    const descriptorPath = join(root, 'control.json');
+    let created = 0;
+    const server = await startPapersControlServer({
+      descriptorPath,
+      dependencies: {
+        snapshot: () => ({}),
+        windows: () => [],
+        createWindow: async () => { created += 1; return { windowId: created }; },
+      },
+    });
+    const { socket, readLine } = await connect(server.descriptor.pipe);
+
+    // Papers has begun quitting. The barrier must be up immediately, not once
+    // the descriptor unlink has finished -- otherwise an already-connected
+    // client can still start a mutation after the shutdown request.
+    const closing = server.close();
+    socket.write(`${JSON.stringify({
+      id: 1,
+      token: server.descriptor.token,
+      protocolVersion: server.descriptor.protocolVersion,
+      method: 'window.create',
+      params: {},
+    })}\n`);
+
+    await closing;
+    expect(created).toBe(0);
+    void readLine;
+  });
+
 /**
  * Framing, tested with exact chunk sequences. A real socket chooses its own
  * delivery boundaries, so a socket-level test cannot reliably deliver two

@@ -230,6 +230,11 @@ export async function startPapersControlServer({
     async close() {
       if (closed) return;
       closed = true;
+      // Synchronously, before any await: once close() is invoked, no request
+      // received afterwards may begin semantic dispatch. Setting this inside
+      // teardown() left a window during the descriptor unlink in which a
+      // connected client could still start a command.
+      closing = true;
       await unlink(descriptorPath).catch(() => undefined);
       await teardown();
     },

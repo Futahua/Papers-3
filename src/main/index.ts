@@ -1284,8 +1284,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           // machine-stamped summary.
           build: controlBuildIdentity(),
           windows: windowsSnapshot(),
+          // Projected field by field, never spread: `detail` is UI prose that
+          // can name absolute paths.
           hermes: {
-            ...hermesSurface.state,
+            placement: hermesSurface.state.placement,
+            status: hermesSurface.state.status,
             ownerWindowId: papersWindows.hermesDockOwner(),
           },
         }),

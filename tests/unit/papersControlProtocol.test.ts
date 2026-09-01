@@ -58,6 +58,30 @@ describe('Papers developer control protocol', () => {
     }, request('window.create', { senderId: 10 }))).rejects.toThrow();
   });
 
+  it('refuses to disclose Hermes error prose, which names the paths it searched', async () => {
+    // describeMissingHermes() lists every location Hermes.exe was looked for.
+    // That is the right message for the creator and exactly the wrong thing to
+    // hand a control client.
+    const leaky = {
+      schemaVersion: 1 as const,
+      build: { version: '1.3.10', commit: 'abc1234', branch: 'main', builtAt: 'unknown', packaged: false },
+      windows: [],
+      hermes: {
+        placement: 'closed' as const,
+        status: 'error' as const,
+        detail: 'Papers could not find Hermes Desktop...\\n  • C:\\\\Users\\\\secret\\\\HermesAI\\\\Hermes.exe',
+        ownerWindowId: null,
+      },
+    };
+    const dependencies = {
+      snapshot: vi.fn(() => leaky),
+      windows: vi.fn(() => []),
+      createWindow: vi.fn(async () => ({ windowId: 1 })),
+    };
+
+    await expect(dispatchPapersControl(dependencies, request('inspect.snapshot'))).rejects.toThrow();
+  });
+
   it('refuses to disclose a snapshot carrying filesystem roots', async () => {
     // The contract is "no roots". Enforced here rather than trusted: widening
     // the renderer-facing build identity must not silently widen what the
