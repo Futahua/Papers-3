@@ -74,6 +74,10 @@ export interface FacadeDeps {
    * persisted most-recent Backpack stays application-level. */
   enteredBackpack: (windowId: number) => string | null;
   setEnteredBackpack: (windowId: number, backpackId: string | null) => void;
+  /** The focused logical project surface; enteredBackpack is only the
+   * no-surface/legacy projection. */
+  activeSurfaceId: (windowId: number) => string | null;
+  setActiveSurfaceId: (windowId: number, surfaceId: string | null) => void;
   clearEnteredBackpackEverywhere: (backpackId: string) => void;
   /** Retire every logical surface showing a Backpack that has become
    * unavailable. Distinct from unbinding senders: the surfaces themselves end. */
@@ -86,6 +90,9 @@ export interface FacadeDeps {
    * host renderer is only a window actor and is never looked up as a project
    * surface. */
   closeAttachedProjectSurface: (windowId: number, surfaceId: string) => void;
+  /** Semantic close removes the native runtime entry; hide preserves it for
+   * renderer remount. */
+  closeBackpackProjectSurface: (senderId: number, surfaceId: string) => void;
   restoreBackpack: (windowId: number) => string | null;
   /** Whether any live window still has this Backpack entered. */
   isBackpackEnteredAnywhere: (backpackId: string) => boolean;
@@ -233,8 +240,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   listBackpacksFor(windowId: number | null): { backpacks: BackpackSummary[]; activeBackpackId: string | null } {
     return {
       backpacks: this.deps.registry.list(),
-      activeBackpackId: windowId === null ? null : this.deps.enteredBackpack(windowId),
+      activeBackpackId: windowId === null ? null : this.activeBackpackForWindow(windowId),
     };
+  }
+
+  private activeBackpackForWindow(windowId: number): string | null {
+    const activeSurfaceId = this.deps.activeSurfaceId(windowId);
+    if (activeSurfaceId) {
+      const surface = this.deps.logicalSurfaces.get(activeSurfaceId);
+      if (surface?.windowId === windowId) return surface.projectId;
+    }
+    return this.deps.enteredBackpack(windowId);
   }
 
   listBackpacks(senderId: number): { backpacks: BackpackSummary[]; activeBackpackId: string | null } {
@@ -309,11 +325,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const backpack = this.deps.registry.find(id);
     if (!backpack) throw new Error(`Backpack ${id} not found`);
     if (backpack.archived) throw new Error('Cannot enter an archived Backpack');
-    const previous = this.deps.enteredBackpack(windowId);
+    const previous = this.activeBackpackForWindow(windowId);
     if (previous && previous !== id) {
       await this.deps.runtime.stopActive();
     }
     this.deps.setEnteredBackpack(windowId, id);
+    // Entering the Backpack shell has no focused project surface until a
+    // project is opened. A previous surface may remain alive for later use.
+    this.deps.setActiveSurfaceId(windowId, null);
     // Entering updates the application-level most-recent record, which is a
     // legitimate application fact -- unlike "what is active now", which is
     // per window.
@@ -342,9 +361,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async leaveBackpack(senderId: number): Promise<void> {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) return;
-    const left = this.deps.enteredBackpack(windowId);
+    const left = this.activeBackpackForWindow(windowId);
     await this.deps.runtime.stopActive();
     this.deps.setEnteredBackpack(windowId, null);
+    this.deps.setActiveSurfaceId(windowId, null);
     // "Back to Papers" clears the resumable selection (PRODUCT.md) -- but only
     // once no window is still in that Backpack. One window leaving must not
     // erase a fact another window is living in.
@@ -450,6 +470,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // The creation operation allocates the logical surface and hands back its
     // id. Every later operation on this view names that id explicitly.
     const surface = this.deps.logicalSurfaces.create({ windowId, projectId: id, kind: 'project' });
+    this.deps.setActiveSurfaceId(windowId, surface.surfaceId);
     this.emitBackpacksChanged();
     return { ...project, surfaceId: surface.surfaceId };
   }
@@ -458,9 +479,13 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // Leaving retires the surface: this is the creator closing the view, not a
     // renderer being rebuilt, so its id is spent for good.
     const { windowId } = this.requireHostSurfaceTarget(senderId, surfaceId);
-    this.deps.hideBackpackProjectSurface(senderId, surfaceId);
+    this.deps.closeBackpackProjectSurface(senderId, surfaceId);
     this.deps.logicalSurfaces.retire(surfaceId);
-    this.deps.setEnteredBackpack(windowId, null);
+    if (this.deps.activeSurfaceId(windowId) === surfaceId) {
+      const replacement = this.deps.logicalSurfaces.listForWindow(windowId)[0]?.surfaceId ?? null;
+      this.deps.setActiveSurfaceId(windowId, replacement);
+      if (replacement === null) this.deps.setEnteredBackpack(windowId, null);
+    }
     this.emitBackpacksChanged();
   }
 
@@ -822,7 +847,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   /** Runs are listed for the Backpack the asking window has entered. */
   listRuns(senderId: number): unknown {
     const windowId = this.deps.hostWindowForSender(senderId);
-    return this.deps.runService().list(windowId === null ? null : this.deps.enteredBackpack(windowId));
+    return this.deps.runService().list(windowId === null ? null : this.activeBackpackForWindow(windowId));
   }
 
   getRun(runId: string): unknown {
@@ -866,7 +891,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const run = this.deps.runService().get(runId);
     if (!run) throw new Error(`run ${runId} not found`);
     const windowId = this.deps.hostWindowForSender(senderId);
-    const entered = windowId === null ? null : this.deps.enteredBackpack(windowId);
+    const entered = windowId === null ? null : this.activeBackpackForWindow(windowId);
     if (entered !== run.backpackId) {
       await this.enterBackpack(senderId, run.backpackId);
     }

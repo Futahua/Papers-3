@@ -535,6 +535,8 @@ async function bootstrap(): Promise<void> {
     hermesDockOwner: () => papersWindows.hermesDockOwner(),
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
+    activeSurfaceId: (windowId) => papersWindows.activeSurfaceId(windowId),
+    setActiveSurfaceId: (windowId, surfaceId) => papersWindows.setActiveSurfaceId(windowId, surfaceId),
     clearEnteredBackpackEverywhere: (backpackId) => papersWindows.clearEnteredBackpackEverywhere(backpackId),
     // Archiving or removing a Backpack retires every surface showing it, in
     // any window: the thing itself became unavailable.
@@ -548,6 +550,10 @@ async function bootstrap(): Promise<void> {
     },
     closeAttachedProjectSurface: (windowId, surfaceId) => {
       papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
+    },
+    closeBackpackProjectSurface: (senderId, surfaceId) => {
+      const windowId = papersWindows.windowForSender(senderId);
+      if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
     },
     restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
     isBackpackEnteredAnywhere: (backpackId) => papersWindows.all()
@@ -590,7 +596,8 @@ async function bootstrap(): Promise<void> {
       const projectId = runtime.liveProjectId;
       const frameSender = runtime.senderId;
       const owningWindowId = papersWindows.windowForSender(senderId)
-        ?? surfaceContexts.contextForSender(senderId)?.windowId;
+        ?? surfaceContexts.contextForSender(senderId)?.windowId
+        ?? null;
       if (projectId && frameSender !== null && owningWindowId !== null) {
         // The surface already exists: the host created it when the project
         // was opened and named it in this call. Binding the frame is attaching

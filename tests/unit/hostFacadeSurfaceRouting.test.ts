@@ -19,7 +19,10 @@ function createFacade() {
   const hideBackpackProjectSurface = vi.fn((_senderId: number, _surfaceId: string) => {});
   const showBackpackProjectSurface = vi.fn(async (_senderId: number, _surfaceId: string, _url: string) => {});
   const closeAttachedProjectSurface = vi.fn();
+  const closeBackpackProjectSurface = vi.fn();
   const sendToWindow = vi.fn();
+  let focusedSurfaceId: string | null = null;
+  const setActiveSurfaceId = vi.fn((_windowId: number, surfaceId: string | null) => { focusedSurfaceId = surfaceId; });
   const facade = new PapersHostFacade({
     surfaces,
     logicalSurfaces,
@@ -32,11 +35,14 @@ function createFacade() {
     broadcastToHosts: vi.fn(),
     enteredBackpack: () => null,
     setEnteredBackpack: vi.fn(),
+    activeSurfaceId: () => focusedSurfaceId,
+    setActiveSurfaceId,
     clearEnteredBackpackEverywhere: vi.fn(),
     listLogicalSurfaces: () => logicalSurfaces.project(),
     retireProjectSurfaces: (projectId: string) => { logicalSurfaces.retireProject(projectId); },
     retireBackpackProjectSurfaces: vi.fn(async () => {}),
     closeAttachedProjectSurface,
+    closeBackpackProjectSurface,
     isBackpackEnteredAnywhere: () => false,
     registry: {
       find: (id: string) => (id === PROJECT || id === OTHER ? { id, archived: false } : null),
@@ -50,7 +56,8 @@ function createFacade() {
   } as unknown as FacadeDeps);
   return {
     facade, surfaces, logicalSurfaces, hideBackpackProjectSurface,
-    showBackpackProjectSurface, closeAttachedProjectSurface, sendToWindow,
+    showBackpackProjectSurface, closeAttachedProjectSurface,
+    closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
   };
 }
 
@@ -78,7 +85,7 @@ describe('surface routing in the host facade', () => {
   });
 
   it('hiding the workspace leaves a live compact widget bound and usable', () => {
-    const { facade, surfaces, logicalSurfaces } = createFacade();
+    const { facade, surfaces, logicalSurfaces, closeBackpackProjectSurface } = createFacade();
     surfaces.bind(HOST, { projectId: PROJECT, windowId: 1, kind: 'host' });
     surfaces.bind(FRAME, { projectId: PROJECT, windowId: 1, kind: 'project' });
     // A widget outlives a return to the Backpack list, and carries the same
@@ -95,7 +102,7 @@ describe('surface routing in the host facade', () => {
   });
 
   it('leaving retires the surface, so its id is spent for good', async () => {
-    const { facade, surfaces, logicalSurfaces } = createFacade();
+    const { facade, surfaces, logicalSurfaces, closeBackpackProjectSurface } = createFacade();
     const surface = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
 
     await facade.closeBackpackProject(HOST, surface.surfaceId);
@@ -104,10 +111,24 @@ describe('surface routing in the host facade', () => {
     // project binding to remove -- it proves a window, nothing more.
     expect(surfaces.projectForSender(HOST)).toBeNull();
     expect(logicalSurfaces.get(surface.surfaceId)).toBeNull();
+    expect(closeBackpackProjectSurface).toHaveBeenCalledWith(HOST, surface.surfaceId);
     // A stale client repeating the call gets a refusal, not another window's
     // surface.
     await expect(facade.closeBackpackProject(HOST, surface.surfaceId))
       .rejects.toThrow(/not open in this Papers window/);
+  });
+
+  it('closing a non-focused surface preserves the focused surface projection', async () => {
+    const { facade, logicalSurfaces, setActiveSurfaceId } = createFacade();
+    const a = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const b = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    setActiveSurfaceId(1, b.surfaceId);
+
+    await facade.closeBackpackProject(HOST, a.surfaceId);
+
+    expect(logicalSurfaces.get(a.surfaceId)).toBeNull();
+    expect(logicalSurfaces.get(b.surfaceId)).not.toBeNull();
+    expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, b.surfaceId);
   });
 
   it('refuses a host operation that names no surface it owns', () => {

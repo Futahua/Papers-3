@@ -20,6 +20,8 @@ function createFacade({ hostWindows = [1, 2], runtimeWindow = 1 as number | null
     hostWindowIds: () => hostWindows,
     registry: { list: () => [], lastActiveBackpackId: null },
     enteredBackpack: (windowId: number) => (windowId === 1 ? 'bp-a' : 'bp-b'),
+    activeSurfaceId: () => null,
+    setActiveSurfaceId: () => {},
     adapter: { health: { ok: true } },
     surfaces: { contextForSender: () => null },
   } as unknown as FacadeDeps);

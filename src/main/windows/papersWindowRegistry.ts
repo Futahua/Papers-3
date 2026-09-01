@@ -36,9 +36,13 @@ export interface PapersWindowContext<Owned> {
   owned: Owned;
   /**
    * The Backpack this window has entered. Per window, because two windows may
-   * be in different Backpacks -- that is the point of having two.
+   * be in different Backpacks -- that is the point of having two. This is a
+   * legacy/no-surface projection; an active project surface is authoritative
+   * when one exists.
    */
   enteredBackpackId: string | null;
+  /** The focused logical project surface in this window, if any. */
+  activeSurfaceId: string | null;
   /**
    * The Backpack this window may restore at startup, if any. Set when the
    * window is created: the first window at launch may carry the persisted
@@ -63,6 +67,8 @@ export interface PapersWindowRegistry<Owned> {
   /** What this window has entered, and the setter for entering/leaving. */
   enteredBackpack(windowId: number): string | null;
   setEnteredBackpack(windowId: number, backpackId: string | null): void;
+  activeSurfaceId(windowId: number): string | null;
+  setActiveSurfaceId(windowId: number, surfaceId: string | null): void;
   /** The startup restore candidate for this window; null for a window opened
    * after launch. Reading it does not consume the persisted MRU -- the
    * registry that stores that stays a dumb store. */
@@ -105,6 +111,7 @@ export function createPapersWindowRegistry<Owned>(): PapersWindowRegistry<Owned>
         hostSenderId: null,
         owned,
         enteredBackpackId: null,
+        activeSurfaceId: null,
         restoreBackpackId,
       };
       byWindow.set(windowId, context);
@@ -119,6 +126,16 @@ export function createPapersWindowRegistry<Owned>(): PapersWindowRegistry<Owned>
       const context = byWindow.get(windowId);
       if (!context) return;
       context.enteredBackpackId = backpackId;
+    },
+
+    activeSurfaceId(windowId) {
+      return byWindow.get(windowId)?.activeSurfaceId ?? null;
+    },
+
+    setActiveSurfaceId(windowId, surfaceId) {
+      const context = byWindow.get(windowId);
+      if (!context) return;
+      context.activeSurfaceId = surfaceId;
     },
 
     restoreBackpack(windowId) {
