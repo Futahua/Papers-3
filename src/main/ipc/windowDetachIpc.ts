@@ -27,6 +27,8 @@ export interface WindowDetachIpcDependencies {
   session: WindowDetachSession;
   /** True only for the genuine bound project frame of the given project. */
   isWorkspaceSender: (sender: WebContents, projectId: string) => boolean;
+  /** Ownership resolved once, at the authenticated boundary; null denies. */
+  windowIdForWorkspaceSender: (sender: WebContents) => number | null;
   isDetachedSender?: (sender: WebContents, projectId: string) => boolean;
   /** Returns the live workspace's already-validated entry URL, or null. */
   resolveEntryUrl: (sender: WebContents, projectId: string) => string | null;
@@ -98,6 +100,7 @@ export function registerWindowDetachIpc({
   isWorkspaceSender,
   resolveEntryUrl,
   isDetachedSender = () => false,
+  windowIdForWorkspaceSender,
 }: WindowDetachIpcDependencies): void {
   ipcMain.handle('papers:backpack:detach-open', async (event, raw) => {
     if (!isPlainObject(raw)) throw new Error('detach open payload must be an object');
@@ -116,7 +119,9 @@ export function registerWindowDetachIpc({
     ensureWorkspaceSurface(registry, event.sender.id, projectId);
     const entryUrl = resolveEntryUrl(event.sender, projectId);
     if (!entryUrl) throw new Error('denied: no live workspace entry for this project');
-    const opened = await session.open({ projectId, entryUrl, bounds });
+    const owningWindowId = windowIdForWorkspaceSender(event.sender);
+    if (owningWindowId === null) throw new Error('denied: workspace has no Papers window');
+    const opened = await session.open({ projectId, entryUrl, owningWindowId, bounds });
     if (!opened.ok) throw new Error(opened.error);
     return { ok: true };
   });

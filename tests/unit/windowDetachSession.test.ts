@@ -78,7 +78,7 @@ interface Harness {
 }
 
 function makeHarness(options: {
-  sendToWorkspace?: (projectId: string, channel: string, payload: unknown) => boolean;
+  sendToWorkspace?: (projectId: string, owningWindowId: number, channel: string, payload: unknown) => boolean;
   deferLoad?: boolean;
   crashOnTokenSend?: boolean;
 } = {}): Harness {
@@ -166,17 +166,17 @@ describe('window detach session', () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
     const session = h.session;
-    const opened = await session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    const opened = await session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     expect(opened).toEqual({ ok: true });
     expect(h.windows.length).toBe(1);
-    const again = await session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    const again = await session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     expect(again.ok).toBe(false);
     expect(h.windows.length).toBe(1);
   });
 
   it('requires the project to have a registered workspace surface', async () => {
     const h = makeHarness();
-    const opened = await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    const opened = await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     expect(opened).toEqual({ ok: false, error: 'project is not registered for detach' });
     expect(h.windows.length).toBe(0);
   });
@@ -184,9 +184,9 @@ describe('window detach session', () => {
   it('rejects entry URLs that are not the bound project surface', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    expect(await h.session.open({ projectId: 'bp-a', entryUrl: 'https://evil.example/x' }))
+    expect(await h.session.open({ projectId: 'bp-a', entryUrl: 'https://evil.example/x', owningWindowId: 1 }))
       .toEqual({ ok: false, error: 'detached entry url is not a bound project surface' });
-    expect(await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-other/ns/u/public/index.html' }))
+    expect(await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-other/ns/u/public/index.html', owningWindowId: 1 }))
       .toEqual({ ok: false, error: 'detached entry url is not a bound project surface' });
     expect(h.windows.length).toBe(0);
   });
@@ -194,7 +194,7 @@ describe('window detach session', () => {
   it('appends the single enumerated detached mode, never renderer input', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     expect(h.windows[0]!.loadedUrls).toEqual([
       'papers-backpack://bp-a/ns/u/public/index.html?detach=1',
     ]);
@@ -203,7 +203,7 @@ describe('window detach session', () => {
   it('registers the detached window as a detached surface of the same project', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     const surface = h.registry.surface(h.windows[0]!.webContents.id);
     expect(surface?.projectId).toBe('bp-a');
     expect(surface?.kind).toBe('detached');
@@ -212,7 +212,7 @@ describe('window detach session', () => {
   it('ready -> activate ordering: no activate before ready, one activate after', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     const window = h.windows[0]!;
     expect(sendChannels(window)).not.toContain('papers:backpack:detach-activate');
     const token = tokenOf(window);
@@ -224,13 +224,13 @@ describe('window detach session', () => {
   it('018H3: detached ready waits for workspace stop acknowledgement before activation', async () => {
     const stopRequests: unknown[] = [];
     const h = makeHarness({
-      sendToWorkspace: (_projectId, channel, payload) => {
+      sendToWorkspace: (_projectId, _owningWindowId, channel, payload) => {
         stopRequests.push([channel, payload]);
         return true;
       },
     });
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     await new Promise((resolve) => setImmediate(resolve));
     const window = h.windows[0]!;
     const tokenSend = window.webContents.send.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token');
@@ -254,7 +254,7 @@ describe('window detach session', () => {
     try {
       const h = makeHarness({ sendToWorkspace: () => true });
       h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-      const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html' });
+      const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html', owningWindowId: 1 });
       await Promise.resolve();
       await Promise.resolve();
       const window = h.windows[0]!;
@@ -278,7 +278,7 @@ describe('window detach session', () => {
     try {
       const h = makeHarness({ sendToWorkspace: () => true });
       h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-      const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html' });
+      const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html', owningWindowId: 1 });
       await Promise.resolve();
       await Promise.resolve();
       const window = h.windows[0]!;
@@ -296,7 +296,7 @@ describe('window detach session', () => {
   it('018V4: rejects spoofed or malformed activation receipts and accepts duplicates idempotently', async () => {
     const h = makeHarness({ sendToWorkspace: () => true });
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html' });
+    const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html', owningWindowId: 1 });
     await new Promise((resolve) => setImmediate(resolve));
     const window = h.windows[0]!;
     const payload = window.webContents.send.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token')?.[1] as { token: string; transferId: string };
@@ -317,7 +317,7 @@ describe('window detach session', () => {
     try {
       const h = makeHarness({ sendToWorkspace: () => false, deferLoad: true });
       h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-      const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html' });
+      const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html', owningWindowId: 1 });
       const window = h.windows[0]!;
       window.emitRendererCrash();
       window.resolveLoad();
@@ -333,7 +333,7 @@ describe('window detach session', () => {
     try {
       const h = makeHarness({ sendToWorkspace: () => false, crashOnTokenSend: true });
       h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-      const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html' });
+      const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html', owningWindowId: 1 });
       await Promise.resolve();
       await Promise.resolve();
       await expect(openPromise).resolves.toEqual({ ok: false, error: 'detached surface closed before activation (crash)' });
@@ -346,13 +346,13 @@ describe('window detach session', () => {
   it('018X1: session emits exactly one canonical CLOSED after reattach and resume', async () => {
     const workspaceMessages: unknown[] = [];
     const h = makeHarness({
-      sendToWorkspace: (_projectId, channel, payload) => {
+      sendToWorkspace: (_projectId, _owningWindowId, channel, payload) => {
         workspaceMessages.push({ channel, payload });
         return true;
       },
     });
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html' });
+    const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html', owningWindowId: 1 });
     await new Promise((resolve) => setImmediate(resolve));
     const window = h.windows[0]!;
     const tokenPayload = window.webContents.send.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token')?.[1] as { token: string; transferId: string };
@@ -375,13 +375,13 @@ describe('window detach session', () => {
   it('018X1R: crash before ACTIVATE settles open immediately and pushes recovery', async () => {
     const workspaceMessages: unknown[] = [];
     const h = makeHarness({
-      sendToWorkspace: (_projectId, channel, payload) => {
+      sendToWorkspace: (_projectId, _owningWindowId, channel, payload) => {
         workspaceMessages.push({ channel, payload });
         return true;
       },
     });
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html' });
+    const openPromise = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html', owningWindowId: 1 });
     await new Promise((resolve) => setImmediate(resolve));
     const window = h.windows[0]!;
     const tokenPayload = window.webContents.send.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token')?.[1] as { token: string; transferId: string };
@@ -402,7 +402,7 @@ describe('window detach session', () => {
     const h = makeHarness({ sendToWorkspace: () => true });
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
     const openCycle = async () => {
-      const opening = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html' });
+      const opening = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html', owningWindowId: 1 });
       await new Promise((resolve) => setImmediate(resolve));
       const window = h.windows.at(-1)!;
       const payload = window.webContents.send.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token')?.[1] as { token: string; transferId: string };
@@ -430,14 +430,14 @@ describe('window detach session', () => {
   it('018V1: two consecutive detach cycles each deliver one activation', async () => {
     const workspaceMessages: unknown[] = [];
     const h = makeHarness({
-      sendToWorkspace: (_projectId, channel, payload) => {
+      sendToWorkspace: (_projectId, _owningWindowId, channel, payload) => {
         workspaceMessages.push({ channel, payload });
         return true;
       },
     });
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
     const cycle = async () => {
-      const opening = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html' });
+      const opening = h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/1/public/index.html', owningWindowId: 1 });
       await new Promise((resolve) => setImmediate(resolve));
       const window = h.windows.at(-1)!;
       const payload = window.webContents.send.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token')?.[1] as { token: string; transferId: string };
@@ -463,7 +463,7 @@ describe('window detach session', () => {
   it('rejects spoofed or wrong-token ready messages', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     const window = h.windows[0]!;
     const token = tokenOf(window);
     // Unregistered sender.
@@ -478,7 +478,7 @@ describe('window detach session', () => {
   it('flush/stop before close: flush-request, ack, then destroy and unregister', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     const window = h.windows[0]!;
     const token = tokenOf(window);
     const stopPromise = h.session.reattach('bp-a');
@@ -498,7 +498,7 @@ describe('window detach session', () => {
   it('flush timeout destroys the window after the bounded wait', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     const window = h.windows[0]!;
     const stopPromise = h.session.closeProject('bp-a');
     expect(window.destroyed).toBe(false);
@@ -511,7 +511,7 @@ describe('window detach session', () => {
   it('reattach and closeProject share the flush/stop path', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     const window = h.windows[0]!;
     const token = tokenOf(window);
     await h.session.reattach('bp-a');
@@ -524,7 +524,7 @@ describe('window detach session', () => {
   it('crash idempotence: a closed window unregisters; a later close is a no-op', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     const window = h.windows[0]!;
     window.destroy(); // renderer crash closes the window
     expect(h.registry.size).toBe(1);
@@ -538,7 +538,7 @@ describe('window detach session', () => {
   it('018H3: render-process-gone converges on the same cleanup path', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     const window = h.windows[0]!;
     window.emitRendererCrash();
     expect(h.session.isOpen('bp-a')).toBe(false);
@@ -552,6 +552,7 @@ describe('window detach session', () => {
     const opened = await h.session.open({
       projectId: 'bp-a',
       entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html',
+      owningWindowId: 1,
       bounds: { x: 0, y: 0, width: 0, height: 200 },
     });
     expect(opened.ok).toBe(false);
@@ -564,6 +565,7 @@ describe('window detach session', () => {
     await h.session.open({
       projectId: 'bp-a',
       entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html',
+      owningWindowId: 1,
       bounds: { x: 9000, y: 9000, width: 800, height: 600 },
     });
     const created = h.windows[0]!.bounds;
@@ -576,7 +578,7 @@ describe('window detach session', () => {
   it('re-clamps a live detached window on display removal without touching others', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
     const window = h.windows[0]!;
     const before = window.getBounds();
     // The old display disappears; only a far-right display remains.
@@ -594,8 +596,8 @@ describe('window detach session', () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
     h.registry.register(2, 'bp-b', WORKSPACE_SURFACE_KIND);
-    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html' });
-    await h.session.open({ projectId: 'bp-b', entryUrl: 'papers-backpack://bp-b/ns/u/public/index.html' });
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 1 });
+    await h.session.open({ projectId: 'bp-b', entryUrl: 'papers-backpack://bp-b/ns/u/public/index.html', owningWindowId: 1 });
     expect(h.windows.length).toBe(2);
     await h.session.closeAll();
     expect(h.windows.every((w) => w.destroyed)).toBe(true);

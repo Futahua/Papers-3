@@ -10,6 +10,15 @@ export interface CompactWidgetIpcDependencies {
   registry: BackpackSurfaceRegistry;
   session: CompactWidgetSession;
   isWorkspaceSender: (sender: WebContents, projectId: string) => boolean;
+  /**
+   * The Papers window a genuine workspace sender belongs to; null denies.
+   *
+   * Ownership is resolved ONCE here, at the authenticated boundary, and the
+   * proven fact is passed downward. The session never learns how senders are
+   * resolved, and nothing downstream infers a window from a project -- two
+   * windows may show the same project, so that inference is unanswerable.
+   */
+  windowIdForWorkspaceSender: (sender: WebContents) => number | null;
   isWidgetSender: (sender: WebContents, projectId: string) => boolean;
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
@@ -55,7 +64,7 @@ function ensureWorkspaceSurface(
   registry.register(senderId, projectId, WORKSPACE_SURFACE_KIND);
 }
 
-export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, isWidgetSender, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
+export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, windowIdForWorkspaceSender, isWidgetSender, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
   ipcMain.handle('papers:backpack:widget-open', async (event, raw) => {
     if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget open payload is malformed');
     const projectId = key(raw.projectId, 'projectId');
@@ -64,7 +73,9 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     ensureWorkspaceSurface(registry, event.sender.id, projectId);
     const surface = registry.surface(event.sender.id);
     if (!surface || surface.projectId !== projectId || surface.kind !== WORKSPACE_SURFACE_KIND) throw new Error('denied: workspace is not registered');
-    return session.open({ projectId, layoutKey });
+    const owningWindowId = windowIdForWorkspaceSender(event.sender);
+    if (owningWindowId === null) throw new Error('denied: workspace has no Papers window');
+    return session.open({ projectId, layoutKey, owningWindowId });
   });
 
   ipcMain.handle('papers:backpack:widget-focus', async (event, raw) => {
@@ -78,7 +89,9 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     if (!surface || surface.projectId !== projectId || surface.kind !== WORKSPACE_SURFACE_KIND) {
       throw new Error('denied: workspace is not registered');
     }
-    return { ok: session.focus(projectId, layoutKey) };
+    const owningWindowId = windowIdForWorkspaceSender(event.sender);
+    if (owningWindowId === null) throw new Error('denied: workspace has no Papers window');
+    return { ok: session.focus(projectId, layoutKey, owningWindowId) };
   });
 
   ipcMain.handle('papers:backpack:widget-close', async (event, raw) => {
@@ -93,7 +106,9 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
       if (!surface || surface.projectId !== projectId || surface.kind !== WORKSPACE_SURFACE_KIND) {
         throw new Error('denied: workspace is not registered');
       }
-      await session.close(projectId, layoutKey);
+      const owningWindowId = windowIdForWorkspaceSender(event.sender);
+      if (owningWindowId === null) throw new Error('denied: workspace has no Papers window');
+      await session.close(projectId, layoutKey, owningWindowId);
       return { ok: true };
     }
     if (!exact(raw, ['token'])) throw new Error('widget close payload is malformed');

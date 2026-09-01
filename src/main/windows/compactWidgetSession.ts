@@ -22,6 +22,10 @@ export const COMPACT_WIDGET_MAX_HEIGHT = 2000;
 interface WidgetEntry {
   projectId: string;
   layoutKey: string;
+  /** The Papers window this widget belongs to. Part of its identity, so two
+   * windows showing one layout get their own widget rather than sharing one
+   * that neither can be said to own. */
+  owningWindowId: number;
   window: CompactWidgetWindow;
   closing: boolean;
 }
@@ -54,18 +58,29 @@ export interface CompactWidgetSessionDependencies {
     on(channel: string, handler: (event: { sender: { id: number } }, payload?: unknown) => void): void;
     removeListener(channel: string, handler: (event: { sender: { id: number } }, payload?: unknown) => void): void;
   };
-  createWindow: (options: { bounds: WindowBounds; preloadPath: string; projectId: string; layoutKey: string }) => CompactWidgetWindow;
+  createWindow: (options: { bounds: WindowBounds; preloadPath: string; projectId: string; layoutKey: string; owningWindowId: number }) => CompactWidgetWindow;
   preloadPath: string;
-  resolveEntryUrl: (projectId: string) => string | null;
+  /** Owner-scoped: two Papers windows may show one project, and each has its
+   * own project runtime, so the entry URL cannot be derived from the project
+   * alone. */
+  resolveEntryUrl: (projectId: string, owningWindowId: number) => string | null;
   isSurfaceOrigin?: (senderId: number, projectId: string) => boolean;
-  onSurfaceClosed?: (projectId: string, layoutKey: string) => void;
+  onSurfaceClosed?: (projectId: string, layoutKey: string, owningWindowId: number) => void;
 }
 
 export interface CompactWidgetSession {
-  open(request: { projectId: string; layoutKey: string; bounds?: WindowBounds | null }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }>;
+  open(request: { projectId: string; layoutKey: string; owningWindowId: number; bounds?: WindowBounds | null }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }>;
   ready(senderId: number, payload: unknown): boolean;
-  focus(projectId: string, layoutKey: string): boolean;
-  close(projectId: string, layoutKey: string): Promise<void>;
+  focus(projectId: string, layoutKey: string, owningWindowId: number): boolean;
+  close(projectId: string, layoutKey: string, owningWindowId: number): Promise<void>;
+  /**
+   * Destroy every widget belonging to one Papers window.
+   *
+   * Called before that window's surface bindings are released: a widget that
+   * outlived its window would be an authorized project sender with no routing
+   * context -- the same authorized-but-unbound defect found twice already.
+   */
+  closeOwnedByWindow(owningWindowId: number): Promise<void>;
   closeFromSender(senderId: number, token: string): Promise<void>;
   /** 024: the widget page reports its bounded card content size after each
    * render; the host refits the frameless window to that content (clamped). */
@@ -102,7 +117,17 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
   const entries = new Map<string, WidgetEntry>();
   let activeDrag: { senderId: number; token: string; offsetX: number; offsetY: number } | null = null;
   let registered = false;
-  const keyOf = (projectId: string, layoutKey: string) => `${projectId}\0${layoutKey}`;
+  /**
+   * Widget identity includes the owning Papers window.
+   *
+   * Keyed by (projectId, layoutKey) alone, two windows showing the same layout
+   * would share one native widget, and nothing could say whose it was or which
+   * window's close should destroy it. Separate instances keep teardown
+   * coherent and avoid inventing an ownership-transfer protocol nobody asked
+   * for.
+   */
+  const keyOf = (projectId: string, layoutKey: string, owningWindowId: number) =>
+    `${owningWindowId}\0${projectId}\0${layoutKey}`;
 
   function clamp(bounds: WindowBounds | null): WindowBounds {
     const displays = deps.screen.getAllDisplays();
@@ -118,16 +143,17 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
   }
 
   function destroy(entry: WidgetEntry): void {
-    if (entries.get(keyOf(entry.projectId, entry.layoutKey)) !== entry) return;
-    entries.delete(keyOf(entry.projectId, entry.layoutKey));
+    const key = keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId);
+    if (entries.get(key) !== entry) return;
+    entries.delete(key);
     if (activeDrag?.senderId === entry.window.webContents.id) activeDrag = null;
     deps.registry.unregister(entry.window.webContents.id);
     if (!entry.window.isDestroyed()) entry.window.destroy();
-    deps.onSurfaceClosed?.(entry.projectId, entry.layoutKey);
+    deps.onSurfaceClosed?.(entry.projectId, entry.layoutKey, entry.owningWindowId);
   }
 
-  const onClosed = (projectId: string, layoutKey: string): void => {
-    const entry = entries.get(keyOf(projectId, layoutKey));
+  const onClosed = (projectId: string, layoutKey: string, owningWindowId: number): void => {
+    const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
     if (entry) destroy(entry);
   };
 
@@ -188,24 +214,25 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
   const session: CompactWidgetSession = {
     async open(request) {
       if (!request || typeof request.projectId !== 'string' || !request.projectId || !validKey(request.layoutKey)) return { ok: false, error: 'a bounded project and layout key are required' };
-      const key = keyOf(request.projectId, request.layoutKey);
+      if (!Number.isInteger(request.owningWindowId)) return { ok: false, error: 'an owning Papers window is required' };
+      const key = keyOf(request.projectId, request.layoutKey, request.owningWindowId);
       const existing = entries.get(key);
       if (existing && !existing.window.isDestroyed()) {
         existing.window.focus();
         return { ok: true, reused: true };
       }
-      const entryUrl = deps.resolveEntryUrl(request.projectId);
+      const entryUrl = deps.resolveEntryUrl(request.projectId, request.owningWindowId);
       if (!entryUrl) return { ok: false, error: 'no live workspace entry for this project' };
       let url: string;
       try { url = widgetUrl(entryUrl, request.layoutKey, request.projectId); } catch { return { ok: false, error: 'widget entry is not a bound project surface' }; }
-      const window = deps.createWindow({ bounds: clamp(request.bounds ?? null), preloadPath: deps.preloadPath, projectId: request.projectId, layoutKey: request.layoutKey });
+      const window = deps.createWindow({ bounds: clamp(request.bounds ?? null), preloadPath: deps.preloadPath, projectId: request.projectId, layoutKey: request.layoutKey, owningWindowId: request.owningWindowId });
       let token: string;
       try { token = deps.registry.register(window.webContents.id, request.projectId, COMPACT_WIDGET_SURFACE_KIND, request.layoutKey); }
       catch { if (!window.isDestroyed()) window.destroy(); return { ok: false, error: 'widget surface registration failed' }; }
-      const entry: WidgetEntry = { projectId: request.projectId, layoutKey: request.layoutKey, window, closing: false };
+      const entry: WidgetEntry = { projectId: request.projectId, layoutKey: request.layoutKey, owningWindowId: request.owningWindowId, window, closing: false };
       entries.set(key, entry);
-      window.on('closed', () => onClosed(request.projectId, request.layoutKey));
-      window.webContents.on('render-process-gone', () => onClosed(request.projectId, request.layoutKey));
+      window.on('closed', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));
+      window.webContents.on('render-process-gone', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));
       try { await window.loadURL(url); }
       catch { destroy(entry); return { ok: false, error: 'compact widget failed to load' }; }
       if (entries.get(key) !== entry || window.isDestroyed()) return { ok: false, error: 'compact widget closed during load' };
@@ -217,15 +244,21 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       readyHandler({ sender: { id: senderId } }, payload);
       return before?.kind === COMPACT_WIDGET_SURFACE_KIND && before.token === (payload as { token?: unknown })?.token;
     },
-    focus(projectId, layoutKey) {
-      const entry = entries.get(keyOf(projectId, layoutKey));
+    focus(projectId, layoutKey, owningWindowId) {
+      const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
       if (!entry || entry.closing || entry.window.isDestroyed()) return false;
       entry.window.focus();
       return true;
     },
-    async close(projectId, layoutKey) {
-      const entry = entries.get(keyOf(projectId, layoutKey));
+    async close(projectId, layoutKey, owningWindowId) {
+      const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
       if (entry) destroy(entry);
+    },
+
+    async closeOwnedByWindow(owningWindowId) {
+      for (const entry of [...entries.values()]) {
+        if (entry.owningWindowId === owningWindowId) destroy(entry);
+      }
     },
     async closeFromSender(senderId, token) {
       const surface = deps.registry.surface(senderId);

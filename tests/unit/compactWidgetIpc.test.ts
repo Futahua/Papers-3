@@ -19,6 +19,7 @@ function harness() {
     ipcMain,
     registry,
     session,
+    windowIdForWorkspaceSender: () => 1,
     isWorkspaceSender: (sender, projectId) => sender.id === 1 && projectId === 'bp-a',
     isWidgetSender: (sender, projectId) => sender.id === 2 && projectId === 'bp-a',
   });
@@ -35,7 +36,7 @@ describe('compact widget IPC', () => {
     const h = harness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
     await expect(h.invoke('papers:backpack:widget-open', 1, { projectId: 'bp-a', layoutKey: 'layout-a' })).resolves.toEqual({ ok: true, reused: false });
-    expect(h.session.open).toHaveBeenCalledWith({ projectId: 'bp-a', layoutKey: 'layout-a' });
+    expect(h.session.open).toHaveBeenCalledWith({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     await expect(h.invoke('papers:backpack:widget-focus', 1, { projectId: 'bp-a', layoutKey: 'layout-a' })).resolves.toEqual({ ok: true });
     await expect(h.invoke('papers:backpack:widget-open', 9, { projectId: 'bp-a', layoutKey: 'layout-a' })).rejects.toThrow(/denied/);
   });
@@ -75,7 +76,7 @@ describe('compact widget IPC', () => {
     const h = harness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
     await expect(h.invoke('papers:backpack:widget-close', 1, { projectId: 'bp-a', layoutKey: 'layout-a' })).resolves.toEqual({ ok: true });
-    expect(h.session.close).toHaveBeenCalledWith('bp-a', 'layout-a');
+    expect(h.session.close).toHaveBeenCalledWith('bp-a', 'layout-a', 1);
     await expect(h.invoke('papers:backpack:widget-close', 9, { projectId: 'bp-a', layoutKey: 'layout-a' })).rejects.toThrow(/denied/);
   });
 

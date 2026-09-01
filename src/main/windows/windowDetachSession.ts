@@ -82,18 +82,25 @@ export interface WindowDetachSessionDependencies {
     on(channel: string, handler: (event: { sender: { id: number } }, payload?: unknown) => void): void;
     removeListener(channel: string, handler: (event: { sender: { id: number } }, payload?: unknown) => void): void;
   };
-  createWindow: (options: { bounds: WindowBounds; preloadPath: string; projectId: string }) => DetachWindow;
+  createWindow: (options: { bounds: WindowBounds; preloadPath: string; projectId: string; owningWindowId: number }) => DetachWindow;
   preloadPath: string;
   /** Called once per detached surface teardown (crash, close, project close,
    * shutdown) so the composer can cancel any sender-scoped pick. */
   onSurfaceClosed?: (projectId: string) => void;
-  sendToWorkspace?: (projectId: string, channel: string, payload: unknown) => boolean;
+  /** Owner-scoped: lifecycle messages go back to the workspace of the Papers
+   * window that owns this detached surface, not to the first workspace that
+   * happens to show the project. */
+  sendToWorkspace?: (projectId: string, owningWindowId: number, channel: string, payload: unknown) => boolean;
   isSurfaceOrigin?: (senderId: number, projectId: string) => boolean;
   flushTimeoutMs?: number;
 }
 
 interface DetachedWindowEntry {
   projectId: string;
+  /** The Papers window this detached surface belongs to. Preserved so its
+   * lifecycle messages return to that window's workspace even though this
+   * path is currently unreachable. */
+  owningWindowId: number;
   window: DetachWindow;
   ready: boolean;
   closing: boolean;
@@ -111,7 +118,7 @@ interface DetachedWindowEntry {
 }
 
 export interface WindowDetachSession {
-  open(request: { projectId: string; entryUrl: string; bounds?: WindowBounds | null }): Promise<
+  open(request: { projectId: string; entryUrl: string; owningWindowId: number; bounds?: WindowBounds | null }): Promise<
     { ok: true } | { ok: false; error: string }
   >;
   focus(projectId: string, transferId?: string): boolean;
@@ -209,7 +216,7 @@ export function createWindowDetachSession(deps: WindowDetachSessionDependencies)
     }
     if (!entry.stopRequested) {
       entry.stopRequested = true;
-      deps.sendToWorkspace?.(surface.projectId, 'papers:backpack:detach-stop-request', { transferId: entry.transferId });
+      deps.sendToWorkspace?.(surface.projectId, entry.owningWindowId, 'papers:backpack:detach-stop-request', { transferId: entry.transferId });
     }
   };
   const flushAckHandler = (event: { sender: { id: number } }, payload?: unknown): void => {
@@ -298,7 +305,7 @@ export function createWindowDetachSession(deps: WindowDetachSessionDependencies)
       activateResolve?.({ ok: false, error: `detached surface closed before activation (${reason})` });
       return;
     }
-    const sent = deps.sendToWorkspace(entry.projectId, 'papers:backpack:detach-closed', {
+    const sent = deps.sendToWorkspace(entry.projectId, entry.owningWindowId, 'papers:backpack:detach-closed', {
       transferId: entry.transferId,
       reason,
     });
@@ -393,7 +400,7 @@ export function createWindowDetachSession(deps: WindowDetachSessionDependencies)
         return { ok: false, error: 'detached entry url is not a bound project surface' };
       }
       const bounds = clampToDisplays(parsedBounds);
-      const window = deps.createWindow({ bounds, preloadPath: deps.preloadPath, projectId: request.projectId });
+      const window = deps.createWindow({ bounds, preloadPath: deps.preloadPath, projectId: request.projectId, owningWindowId: request.owningWindowId });
       let token: string;
       try {
         token = registry.register(window.webContents.id, request.projectId, DETACHED_SURFACE_KIND);
@@ -403,6 +410,7 @@ export function createWindowDetachSession(deps: WindowDetachSessionDependencies)
       }
       const entry: DetachedWindowEntry = {
         projectId: request.projectId,
+        owningWindowId: request.owningWindowId,
         window,
         ready: false,
         closing: false,

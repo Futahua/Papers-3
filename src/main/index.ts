@@ -154,23 +154,23 @@ function allRuntimes(): BackpackProjectRuntime[] {
  * requesting sender through the detach and widget sessions is a prerequisite
  * for the New Window entry point rather than something to guess at now.
  */
-function owningWindowForProject(projectId: string): number | null {
-  const windows = new Set<number>();
-  for (const senderId of surfaceContexts.sendersForProject(projectId)) {
-    const windowId = surfaceContexts.contextForSender(senderId)?.windowId;
-    if (windowId !== undefined) windows.add(windowId);
-  }
-  const [only] = [...windows];
-  return windows.size === 1 && only !== undefined ? only : null;
+/**
+ * The Papers window a project surface sender belongs to.
+ *
+ * Resolved from the sender's own binding, never inferred from its project: two
+ * windows may show one project, so "which window owns this project" has no
+ * answer while "which window is this sender in" always does.
+ */
+function windowIdForProjectSender(sender: WebContents): number | null {
+  return surfaceContexts.contextForSender(sender.id)?.windowId ?? null;
 }
 
 function bindOwnedProjectSurface(
   window: BrowserWindow,
   projectId: string,
   kind: 'detached' | 'widget',
+  owningWindowId: number,
 ): void {
-  const owningWindowId = owningWindowForProject(projectId);
-  if (owningWindowId === null) return;
   const senderId = window.webContents.id;
   surfaceContexts.bind(senderId, { projectId, windowId: owningWindowId, kind });
   // A dead sender can no longer act, and leaving its id bound would let a
@@ -702,9 +702,13 @@ async function bootstrap(): Promise<void> {
       },
     },
     ipcMain,
-    sendToWorkspace: (projectId, channel, payload) => {
+    // Routed to the OWNING window's workspace. surfaceForProject returns the
+    // first workspace showing a project, which is ambiguous once two windows
+    // do -- so the owner recorded at detach time decides.
+    sendToWorkspace: (projectId, owningWindowId, channel, payload) => {
       const workspace = detachRegistry.surfaceForProject(projectId, 'workspace');
       if (!workspace) return false;
+      if (surfaceContexts.contextForSender(workspace.id)?.windowId !== owningWindowId) return false;
       const contents = webContents.fromId(workspace.id);
       if (!contents || contents.isDestroyed()) return false;
       contents.send(channel, payload);
@@ -721,7 +725,7 @@ async function bootstrap(): Promise<void> {
       }
     },
     preloadPath: path.join(preloadDir, 'backpackProject.cjs'),
-    createWindow: ({ bounds, preloadPath: detachedPreloadPath, projectId }) => {
+    createWindow: ({ bounds, preloadPath: detachedPreloadPath, projectId, owningWindowId }) => {
       const detachedWindow = new BrowserWindow({
         x: bounds.x,
         y: bounds.y,
@@ -749,7 +753,7 @@ async function bootstrap(): Promise<void> {
       detachedWindow.once('ready-to-show', () => {
         if (!detachedWindow.isDestroyed()) detachedWindow.showInactive();
       });
-      bindOwnedProjectSurface(detachedWindow, projectId, 'detached');
+      bindOwnedProjectSurface(detachedWindow, projectId, 'detached', owningWindowId);
       return detachedWindow;
     },
     // Cancelling the 016 pick when a registered surface goes away is safe:
@@ -763,14 +767,17 @@ async function bootstrap(): Promise<void> {
     ipcMain,
     registry: detachRegistry,
     session: detachSession!,
+    // Resolved against the SENDER's own window runtime, not the bootstrap one:
+    // with two windows, "is this the workspace" has a different answer in each.
     isWorkspaceSender: (sender, projectId) => {
-      if (!backpackProjectRuntime.isSender(sender)) return false;
+      if (!runtimeForSender(sender.id)?.isSender(sender)) return false;
       try {
         return new URL(sender.mainFrame.url).host === projectId;
       } catch {
         return false;
       }
     },
+    windowIdForWorkspaceSender: windowIdForProjectSender,
     isDetachedSender: (sender, projectId) => {
       const surface = detachRegistry.surface(sender.id);
       if (!surface || surface.kind !== DETACHED_SURFACE_KIND || surface.projectId !== projectId) return false;
@@ -781,7 +788,7 @@ async function bootstrap(): Promise<void> {
         return false;
       }
     },
-    resolveEntryUrl: (sender, projectId) => backpackProjectRuntime.entryUrlFor(sender, projectId),
+    resolveEntryUrl: (sender, projectId) => runtimeForSender(sender.id)?.entryUrlFor(sender, projectId) ?? null,
   });
   // 019C: generic compact widget host - one fixed compact BrowserWindow per
   // (projectId, layoutKey), opened/focused by the registered live workspace via
@@ -809,8 +816,10 @@ async function bootstrap(): Promise<void> {
     },
     ipcMain,
     preloadPath: path.join(preloadDir, 'backpackProject.cjs'),
-    resolveEntryUrl: (projectId) => backpackProjectRuntime.entryUrlForProject(projectId),
-    createWindow: ({ bounds, preloadPath: widgetPreloadPath, projectId }) => {
+    // Owner-scoped: the entry URL comes from that window's own runtime.
+    resolveEntryUrl: (projectId, owningWindowId) =>
+      papersWindows.get(owningWindowId)?.owned.backpackProjectRuntime.entryUrlForProject(projectId) ?? null,
+    createWindow: ({ bounds, preloadPath: widgetPreloadPath, projectId, owningWindowId }) => {
       const widgetWindow = new BrowserWindow({
         x: bounds.x,
         y: bounds.y,
@@ -862,7 +871,7 @@ async function bootstrap(): Promise<void> {
       widgetWindow.once('ready-to-show', () => {
         if (!widgetWindow.isDestroyed()) widgetWindow.showInactive();
       });
-      bindOwnedProjectSurface(widgetWindow, projectId, 'widget');
+      bindOwnedProjectSurface(widgetWindow, projectId, 'widget', owningWindowId);
       return widgetWindow;
     },
     isSurfaceOrigin: (senderId, projectId) => {
@@ -893,6 +902,7 @@ async function bootstrap(): Promise<void> {
     ipcMain,
     registry: widgetRegistry,
     session: widgetSession,
+    windowIdForWorkspaceSender: windowIdForProjectSender,
     hidePreview: hideWidgetPreview,
     dismissCandidatePicker: (sender) => {
       const active = candidatePickerSessions.get(sender.id);
@@ -1386,6 +1396,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     // project frame but cannot reliably take down exactly its own is not an
     // ownership primitive. Its surfaces release first, then the context.
     papersWindows.get(ownedWindowId)?.owned.backpackProjectRuntime.hide();
+    // Widgets belonging to this window die with it, BEFORE its bindings are
+    // released: a widget outliving its window would be an authorized project
+    // sender with no routing context.
+    void widgetSession?.closeOwnedByWindow(ownedWindowId);
     surfaceContexts.unbindWindow(ownedWindowId);
     papersWindows.remove(ownedWindowId);
     mainWindow = null;

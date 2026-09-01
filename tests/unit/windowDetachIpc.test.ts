@@ -47,6 +47,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry,
       session,
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: (sender, projectId) => sender.id === 7 && projectId === 'bp-a',
       resolveEntryUrl,
     });
@@ -58,6 +59,9 @@ describe('window detach IPC', () => {
     expect(session.open).toHaveBeenCalledWith({
       projectId: 'bp-a',
       entryUrl: ENTRY,
+      // Ownership resolved once at this boundary and passed downward; the
+      // session never derives it.
+      owningWindowId: 1,
       bounds: { x: 100, y: 100, width: 800, height: 600 },
     });
     expect(send).not.toHaveBeenCalled();
@@ -73,6 +77,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry,
       session,
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: () => false,
       isDetachedSender: (sender, projectId) => {
         try {
@@ -97,6 +102,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry: new BackpackSurfaceRegistry(),
       session: fakeSession(),
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: () => true,
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
@@ -110,6 +116,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry: new BackpackSurfaceRegistry(),
       session: fakeSession(),
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: () => true,
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
@@ -124,6 +131,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry: new BackpackSurfaceRegistry(),
       session: fakeSession(),
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: () => true,
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
@@ -137,6 +145,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry: new BackpackSurfaceRegistry(),
       session: fakeSession(),
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: () => false,
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
@@ -151,6 +160,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry: new BackpackSurfaceRegistry(),
       session,
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: () => true,
       resolveEntryUrl,
     });
@@ -167,6 +177,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry,
       session: fakeSession(),
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: (sender, projectId) => sender.id === 7 && projectId === 'bp-a',
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
@@ -181,6 +192,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry: new BackpackSurfaceRegistry(),
       session,
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: () => true,
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
@@ -196,6 +208,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry,
       session,
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: (sender, projectId) => sender.id === 7 && projectId === 'bp-a',
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
@@ -214,6 +227,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry,
       session,
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: (sender, projectId) => sender.id === 7 && projectId === 'bp-a',
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
@@ -238,6 +252,7 @@ describe('window detach IPC', () => {
       ipcMain,
       registry,
       session,
+      windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: (sender, projectId) => sender.id === 7 && projectId === 'bp-a',
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
