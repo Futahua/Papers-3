@@ -487,7 +487,7 @@ A1.2d validation: typecheck passed, full Vitest 657 passed / 4 skipped,
 production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
 Electron E2E 1/1 passed, and diff check passed.
 - [ ] Keyboard tab selection and accessibility acceptance.
-- [ ] Automatic restore of last tab/split workspace.
+- [x] Automatic restore of last tab/split workspace.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.
 - [ ] Add control commands such as `workspace.open`, `workspace.activate`,
   `workspace.close`, `layout.split`, `layout.moveSurface`, `layout.restore`.
@@ -627,7 +627,13 @@ A1.2i all-or-nothing primary startup hydration:
   reuse after mutation; additional window remains fresh.
 - [x] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
   assertions through the control plane.
-- [ ] Reviewer sign-off.
+- [x] Reviewer sign-off on exact head `641460843d379862ec4bb50092847ffa618965bb`.
+
+Reviewer closed A1.2i with no concrete lifecycle, startup-authority,
+identity-mapping, renderer-convergence, persistence, or acceptance blocker.
+The next narrow slice is A1.2j: archive/remove plus crash/reload durability
+across a multi-surface workspace. Keep additional windows fresh and preserve
+the persistence-redaction assertions.
 
 A1.2i validation: the dedicated seeded-v2 startup Electron E2E passed 1/1;
 typecheck passed; full Vitest passed with 677 tests and 4 skipped; production
