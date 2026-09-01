@@ -134,7 +134,8 @@ interface PapersWindowOwned {
 const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
 const workspaceTopologies = new Map<number, WorkspaceTopologyV1>();
 const workspaceTopologyRevisions = new Map<number, number>();
-const workspaceKeys = new Map<number, string>();
+/** Live-only association. Durable workspace IDs persist; native window IDs do not. */
+const workspaceIds = new Map<number, string>();
 
 /** The exact project runtime belonging to a bound project-frame sender. A host
  * sender is only a window actor and must use an explicit surface id. */
@@ -414,7 +415,7 @@ async function bootstrap(): Promise<void> {
         clearWorkspaceTopology: (id) => {
           workspaceTopologies.delete(id);
           workspaceTopologyRevisions.delete(id);
-          workspaceKeys.delete(id);
+          workspaceIds.delete(id);
         },
         removeWindow: (id) => { papersWindows.remove(id); },
         emitHermesSurface: () => facade.emitHermesSurface(),
@@ -561,12 +562,12 @@ async function bootstrap(): Promise<void> {
     setWorkspaceTopology: (windowId, topology) => {
       workspaceTopologies.set(windowId, topology);
       workspaceTopologyRevisions.set(windowId, (workspaceTopologyRevisions.get(windowId) ?? 0) + 1);
-      let workspaceKey = workspaceKeys.get(windowId);
-      if (!workspaceKey) {
-        workspaceKey = randomUUID();
-        workspaceKeys.set(windowId, workspaceKey);
+      let workspaceId = workspaceIds.get(windowId);
+      if (!workspaceId) {
+        workspaceId = randomUUID();
+        workspaceIds.set(windowId, workspaceId);
       }
-      void workspaceTopologyStore.commit(workspaceKey, topology).catch((error) => {
+      void workspaceTopologyStore.commit(workspaceId, topology).catch((error) => {
         console.error('[workspace-topology] durable commit failed', error);
       });
     },

@@ -574,7 +574,27 @@ A1.2g main-authoritative `workspace.open`:
 
 A1.2g deliberately does not read persisted snapshots, select restart workspace
 identity, reuse old surface ids, map old→fresh ids or automatically restore.
-Reviewer sign-off remains.
+Reviewer signed off exact head `6b66f13ab7921334db913f6303f5c4cb32fbec10`.
+
+A1.2h durable identity and pure remapping basis:
+
+- [x] Upgrade snapshot persistence to schema v2 with durable `workspaceId`,
+  `lastWorkspaceId`, validated topology and `updatedAt`; native `windowId`
+  remains only in the live in-memory `windowId → workspaceId` association.
+- [x] Reuse one durable ID across every revision committed by a live workspace.
+  Closing a native window drops only its live association, not its disk record.
+- [x] Explicitly migrate schema-v1 lifetime snapshot keys to newly minted
+  durable IDs rather than silently overstating their historical semantics.
+- [x] Add pure `remapWorkspaceTopologySurfaceIds(topology, oldToFresh)` that
+  rewrites surfaces, group membership and active IDs while preserving project,
+  tab/group order, focus, split orientation/tree and weights.
+- [x] Require a complete exact mapping with unique non-empty fresh IDs; refuse
+  missing, extra or duplicate mappings and semantically validate the result.
+- [x] Prove duplicate tabs for one project remap independently.
+
+A1.2h still does not consume `lastWorkspaceId`, open projects, allocate startup
+surfaces, construct mappings, or restore layout automatically. Reviewer sign-off
+remains.
 - [ ] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
   assertions through the control plane.
 - [ ] Reviewer sign-off.

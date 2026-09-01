@@ -336,4 +336,38 @@ export function splitWorkspaceGroup(
   assertValidWorkspaceTopology(next);
   return next;
 }
+
+/** Pure persisted-snapshot identity rewrite. Project/group/layout identity is
+ * preserved; every old surface must map exactly once to a unique fresh id. */
+export function remapWorkspaceTopologySurfaceIds(
+  topology: WorkspaceTopologyV1,
+  oldToFresh: ReadonlyMap<string, string>,
+): WorkspaceTopologyV1 {
+  assertValidWorkspaceTopology(topology);
+  const oldIds = new Set(topology.surfaces.map((surface) => surface.surfaceId));
+  if (oldToFresh.size !== oldIds.size || [...oldToFresh.keys()].some((surfaceId) => !oldIds.has(surfaceId))) {
+    throw new Error('surface identity mapping must contain every persisted surface exactly once');
+  }
+  const freshIds = [...oldToFresh.values()];
+  if (freshIds.some((surfaceId) => typeof surfaceId !== 'string' || surfaceId.length === 0)
+    || new Set(freshIds).size !== freshIds.length) {
+    throw new Error('fresh surface identities must be non-empty and unique');
+  }
+  const remap = (surfaceId: string): string => {
+    const fresh = oldToFresh.get(surfaceId);
+    if (!fresh) throw new Error(`missing fresh identity for ${surfaceId}`);
+    return fresh;
+  };
+  const next: WorkspaceTopologyV1 = {
+    ...topology,
+    surfaces: topology.surfaces.map((surface) => ({ ...surface, surfaceId: remap(surface.surfaceId) })),
+    groups: topology.groups.map((group) => ({
+      ...group,
+      surfaceIds: group.surfaceIds.map(remap),
+      activeSurfaceId: group.activeSurfaceId === null ? null : remap(group.activeSurfaceId),
+    })),
+  };
+  assertValidWorkspaceTopology(next);
+  return next;
+}
 import { z } from 'zod';

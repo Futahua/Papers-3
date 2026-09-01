@@ -7,6 +7,7 @@ import {
   createWorkspaceTopology,
   openWorkspaceSurface,
   moveWorkspaceSurface,
+  remapWorkspaceTopologySurfaceIds,
   reorderWorkspaceGroup,
   setRootWorkspaceSplitWeights,
   splitWorkspaceGroup,
@@ -127,5 +128,42 @@ describe('workspace topology', () => {
     });
     topology = setRootWorkspaceSplitWeights(topology, [3, 1]);
     expect(topology.root).toMatchObject({ weights: [0.75, 0.25] });
+  });
+
+  it('purely remaps split surface identity while preserving project and layout semantics', () => {
+    let topology = createWorkspaceTopology();
+    topology = openWorkspaceSurface(topology, { surfaceId: 'old-a', projectId: 'bp-same', title: 'A' });
+    topology = openWorkspaceSurface(topology, { surfaceId: 'old-b', projectId: 'bp-same', title: 'B' });
+    topology = splitWorkspaceGroup(topology, {
+      groupId: 'group-main', newGroupId: 'group-right', surfaceId: 'old-b',
+      orientation: 'vertical', position: 'after',
+    });
+    topology = setRootWorkspaceSplitWeights(topology, [1, 3]);
+    const remapped = remapWorkspaceTopologySurfaceIds(topology, new Map([
+      ['old-a', 'fresh-x'], ['old-b', 'fresh-y'],
+    ]));
+    expect(remapped.surfaces.map((surface) => [surface.surfaceId, surface.projectId]))
+      .toEqual([['fresh-x', 'bp-same'], ['fresh-y', 'bp-same']]);
+    expect(remapped.groups.map((group) => [group.groupId, group.surfaceIds, group.activeSurfaceId]))
+      .toEqual([['group-main', ['fresh-x'], 'fresh-x'], ['group-right', ['fresh-y'], 'fresh-y']]);
+    expect(remapped.root).toEqual(topology.root);
+    expect(remapped.focusedGroupId).toBe(topology.focusedGroupId);
+    expect(() => assertValidWorkspaceTopology(remapped)).not.toThrow();
+  });
+
+  it('refuses incomplete, extra, duplicate or empty fresh surface mappings', () => {
+    let topology = createWorkspaceTopology();
+    topology = openWorkspaceSurface(topology, { surfaceId: 'old-a', projectId: 'bp-a', title: 'A' });
+    topology = openWorkspaceSurface(topology, { surfaceId: 'old-b', projectId: 'bp-b', title: 'B' });
+    expect(() => remapWorkspaceTopologySurfaceIds(topology, new Map([['old-a', 'fresh-a']]))).toThrow(/every persisted/);
+    expect(() => remapWorkspaceTopologySurfaceIds(topology, new Map([
+      ['old-a', 'fresh-a'], ['old-b', 'fresh-b'], ['old-extra', 'fresh-c'],
+    ]))).toThrow(/every persisted/);
+    expect(() => remapWorkspaceTopologySurfaceIds(topology, new Map([
+      ['old-a', 'fresh'], ['old-b', 'fresh'],
+    ]))).toThrow(/unique/);
+    expect(() => remapWorkspaceTopologySurfaceIds(topology, new Map([
+      ['old-a', 'fresh-a'], ['old-b', ''],
+    ]))).toThrow(/non-empty/);
   });
 });

@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 describe('WorkspaceTopologyStore', () => {
-  it('serializes and coalesces validated Papers topology snapshots by stable workspace key', async () => {
+  it('reuses durable workspace ids across commits and records last selection metadata', async () => {
     const paths = papersPaths(directory);
     const store = new WorkspaceTopologyStore(paths);
     const empty = createWorkspaceTopology();
@@ -33,12 +33,14 @@ describe('WorkspaceTopologyStore', () => {
     ]);
 
     const persisted = JSON.parse(await fs.readFile(paths.workspaceTopologiesFile, 'utf8')) as {
-      schemaVersion: number;
-      workspaces: Array<{ workspaceKey: string; topology: typeof opened }>;
+      schemaVersion: number; lastWorkspaceId: string;
+      workspaces: Array<{ workspaceId: string; topology: typeof opened; updatedAt: string }>;
     };
-    expect(persisted.schemaVersion).toBe(1);
-    expect(persisted.workspaces.find((entry) => entry.workspaceKey === keyA)?.topology).toEqual(opened);
-    expect(persisted.workspaces.find((entry) => entry.workspaceKey === keyB)?.topology).toEqual(empty);
+    expect(persisted.schemaVersion).toBe(2);
+    expect(persisted.lastWorkspaceId).toBe(keyB);
+    expect(persisted.workspaces.find((entry) => entry.workspaceId === keyA)?.topology).toEqual(opened);
+    expect(persisted.workspaces.filter((entry) => entry.workspaceId === keyA)).toHaveLength(1);
+    expect(persisted.workspaces.find((entry) => entry.workspaceId === keyB)?.topology).toEqual(empty);
   });
 
   it('quarantines structurally invalid persisted topology instead of consuming it', async () => {
@@ -64,5 +66,24 @@ describe('WorkspaceTopologyStore', () => {
     const store = new WorkspaceTopologyStore(paths);
     await expect(store.initialize()).resolves.toBeUndefined();
     expect((await fs.readdir(paths.recoveryDir)).some((name) => name.endsWith('.corrupt'))).toBe(true);
+  });
+
+  it('migrates v1 lifetime keys to fresh explicit durable identities', async () => {
+    const paths = papersPaths(directory);
+    const topology = createWorkspaceTopology();
+    const legacyKey = '11111111-1111-4111-8111-111111111111';
+    await fs.mkdir(path.dirname(paths.workspaceTopologiesFile), { recursive: true });
+    await fs.writeFile(paths.workspaceTopologiesFile, JSON.stringify({
+      schemaVersion: 1, workspaces: [{ workspaceKey: legacyKey, topology }],
+    }));
+    const store = new WorkspaceTopologyStore(paths, () => '2026-09-01T00:00:00.000Z');
+    await store.initialize();
+    const migrated = JSON.parse(await fs.readFile(paths.workspaceTopologiesFile, 'utf8')) as {
+      schemaVersion: number; lastWorkspaceId: string; workspaces: Array<{ workspaceId: string; updatedAt: string }>;
+    };
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.workspaces[0]?.workspaceId).not.toBe(legacyKey);
+    expect(migrated.lastWorkspaceId).toBe(migrated.workspaces[0]?.workspaceId);
+    expect(migrated.workspaces[0]?.updatedAt).toBe('2026-09-01T00:00:00.000Z');
   });
 });
