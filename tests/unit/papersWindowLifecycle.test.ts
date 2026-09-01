@@ -16,9 +16,11 @@ function windowStub() {
   return events;
 }
 
-function instance(loadHostRenderer: () => Promise<void>): PapersWindowInstance {
+function instance(loadHostRenderer: () => Promise<void>, id = 42): PapersWindowInstance {
+  const window = windowStub();
+  window.id = id;
   return {
-    window: windowStub() as never,
+    window: window as never,
     hostView: {} as never,
     backpackProjectRuntime: { hide: vi.fn() } as never,
     loadHostRenderer,
@@ -81,5 +83,19 @@ describe('prepared Papers window lifecycle', () => {
     (current.window as never as EventEmitter).emit('closed');
     expect(order).toEqual(['hide', 'finalize']);
     expect(finalize).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers two windows independently without changing primary aliases', () => {
+    const first = instance(async () => undefined, 1);
+    const second = instance(async () => undefined, 2);
+    const registered: number[] = [];
+    const dependencies = { register: (current: PapersWindowInstance) => registered.push(current.window.id), finalize: vi.fn() };
+
+    preparePapersWindow(first, dependencies);
+    preparePapersWindow(second, dependencies);
+
+    expect(registered).toEqual([1, 2]);
+    expect(first.window.id).toBe(1);
+    expect(second.window.id).toBe(2);
   });
 });

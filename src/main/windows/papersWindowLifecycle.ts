@@ -3,6 +3,7 @@ import type { PapersWindowInstance } from './papersWindowFactory';
 /** The operations needed to make a native Papers window authoritative. */
 export interface PapersWindowLifecycleDependencies {
   register(instance: PapersWindowInstance): void;
+  install?(instance: PapersWindowInstance): void;
   onClose?(instance: PapersWindowInstance): void;
   finalize(windowId: number): void | Promise<void>;
 }
@@ -24,17 +25,17 @@ export function preparePapersWindow(
   dependencies: PapersWindowLifecycleDependencies,
 ): PreparedPapersWindow {
   const windowId = instance.window.id;
-  let finalized = false;
+  let finalizePromise: Promise<void> | null = null;
 
-  const finalize = (): void => {
-    if (finalized) return;
-    finalized = true;
-    void dependencies.finalize(windowId);
+  const finalize = (): Promise<void> => {
+    if (!finalizePromise) finalizePromise = Promise.resolve(dependencies.finalize(windowId));
+    return finalizePromise;
   };
 
   dependencies.register(instance);
+  dependencies.install?.(instance);
   instance.window.once('close', () => dependencies.onClose?.(instance));
-  instance.window.once('closed', finalize);
+  instance.window.once('closed', () => { void finalize().catch(() => undefined); });
 
   return {
     instance,
@@ -45,7 +46,7 @@ export function preparePapersWindow(
         return instance;
       } catch (error) {
         instance.backpackProjectRuntime.hide();
-        finalize();
+        await finalize();
         if (!instance.window.isDestroyed()) instance.window.destroy();
         throw error;
       }

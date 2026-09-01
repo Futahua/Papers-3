@@ -307,6 +307,15 @@ async function bootstrap(): Promise<void> {
   let detachSession: WindowDetachSession | null = null;
   const widgetRegistry = new BackpackSurfaceRegistry();
   let widgetSession: CompactWidgetSession | null = null;
+  // One Hermes backend is shared by all Papers windows. The callback is late
+  // bound because the facade is composed after the first window is prepared.
+  const hermesSurface = new HermesSurface(
+    () => {
+      const owner = papersWindows.hermesDockOwner();
+      return owner === null ? null : papersWindows.get(owner)?.owned.window ?? null;
+    },
+    () => facade.emitHermesSurface(),
+  );
   const windowInstance = createPapersWindow({
     bounds: savedBounds ?? undefined,
     appIcon,
@@ -328,8 +337,6 @@ async function bootstrap(): Promise<void> {
   });
   const preparedWindow = preparePapersWindow(windowInstance, {
     register: (instance) => {
-      mainWindow = instance.window;
-      hostView = instance.hostView;
       papersWindows.add(
         instance.window.id,
         {
@@ -340,6 +347,19 @@ async function bootstrap(): Promise<void> {
         registry.lastActiveBackpackId,
       );
       papersWindows.setHostSender(instance.window.id, instance.hostView.webContents.id);
+    },
+    install: (instance) => {
+      const window = instance.window;
+      const windowId = window.id;
+      const realignHermesDock = (): void => {
+        if (papersWindows.hermesDockOwner() !== windowId) return;
+        hermesSurface.setDockBounds(dockBoundsFor(window.getContentBounds()));
+      };
+      window.on('resize', realignHermesDock);
+      window.on('move', realignHermesDock);
+      window.on('focus', () => {
+        if (papersWindows.hermesDockOwner() === windowId) hermesSurface.onPapersActivated();
+      });
     },
     onClose: (instance) => instance.backpackProjectRuntime.hide(),
     finalize: (windowId) => {
@@ -383,39 +403,6 @@ async function bootstrap(): Promise<void> {
   // The production Hermes experience IS the existing Hermes Desktop product.
   // Papers runs one Hermes backend and positions the real Hermes Desktop
   // window as a docked sidebar or a detached window — never a second chat UI.
-  // Phase 1B.4: Hermes is told which live window to compute dock geometry
-  // against; the docking relationship itself lives in the window registry.
-  const hermesSurface = new HermesSurface(
-    () => {
-      const owner = papersWindows.hermesDockOwner();
-      return owner === null ? null : papersWindows.get(owner)?.owned.window ?? null;
-    },
-    () => facade.emitHermesSurface(),
-  );
-
-  // Keep a docked Hermes window aligned to Papers as it moves or resizes.
-  // setDockBounds also raises Hermes above Papers (non-topmost) so it follows
-  // Papers to the front without becoming globally always-on-top.
-  // Every Papers window may carry these handlers, but they are inert unless
-  // that window owns the dock: moving or resizing a window that does not own
-  // Hermes must not drag Hermes around.
-  const realignHermesDock = (): void => {
-    const owner = papersWindows.hermesDockOwner();
-    if (owner === null || owner !== mainWindow?.id) return;
-    hermesSurface.setDockBounds(dockBoundsFor(mainWindow.getContentBounds()));
-  };
-  mainWindow.on('resize', realignHermesDock);
-  mainWindow.on('move', realignHermesDock);
-  // When Papers is activated, raise the docked Hermes above it (moveTop), so
-  // clicking Papers keeps the pair together — but only via non-topmost raise, so
-  // switching to another application leaves both windows ordinary.
-  // Focus raises a docked Hermes only for the window that owns it. Focus is
-  // never an ownership transfer (D-021).
-  mainWindow.on('focus', () => {
-    if (papersWindows.hermesDockOwner() !== mainWindow?.id) return;
-    hermesSurface.onPapersActivated();
-  });
-
   // ------------------------------------------------------------ composition
   const canvasState = new CanvasSessionState((items) => facade.emitShelfChanged(items));
 
