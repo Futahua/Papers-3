@@ -17,12 +17,25 @@
  * Global services stay global. This is only about whose request it is.
  */
 
+/**
+ * Two different senders act for one project, and they are not
+ * interchangeable. The `host` surface is the Papers renderer that opened the
+ * project; the `project` surface is the Backpack's own frame inside it.
+ *
+ * Without this distinction "every sender for project X" is the only question
+ * the registry can answer, and that is the wrong question whenever the right
+ * one is "which window did this come from" -- two windows may legitimately
+ * show the same project.
+ */
+export type SurfaceKind = 'host' | 'project';
+
 export interface SurfaceContext {
   /** The Backpack whose project this surface is showing. */
   projectId: string;
   /** Identifies the native window a surface belongs to, so a window can be
    * torn down without hunting for its surfaces. */
   windowId: number;
+  kind: SurfaceKind;
 }
 
 export interface SurfaceContextRegistry {
@@ -36,11 +49,25 @@ export interface SurfaceContextRegistry {
   /** Every sender currently bound to a project — used to notify exactly the
    * surfaces that care, instead of broadcasting to whoever is listening. */
   sendersForProject(projectId: string): number[];
+  /** The Papers renderer of one window. This is what a project frame's request
+   * must be answered through: its OWN window's host, never every host showing
+   * the same project. */
+  hostSenderForWindow(windowId: number): number | null;
+  projectSendersForProject(projectId: string): number[];
+  hostSendersForProject(projectId: string): number[];
   readonly size: number;
 }
 
 export function createSurfaceContextRegistry(): SurfaceContextRegistry {
   const bySender = new Map<number, SurfaceContext>();
+
+  function sendersWhere(match: (context: SurfaceContext) => boolean): number[] {
+    const found: number[] = [];
+    for (const [senderId, context] of bySender) {
+      if (match(context)) found.push(senderId);
+    }
+    return found;
+  }
 
   return {
     bind(senderId, context) {
@@ -75,11 +102,22 @@ export function createSurfaceContextRegistry(): SurfaceContextRegistry {
     },
 
     sendersForProject(projectId) {
-      const found: number[] = [];
+      return sendersWhere((context) => context.projectId === projectId);
+    },
+
+    hostSenderForWindow(windowId) {
       for (const [senderId, context] of bySender) {
-        if (context.projectId === projectId) found.push(senderId);
+        if (context.windowId === windowId && context.kind === 'host') return senderId;
       }
-      return found;
+      return null;
+    },
+
+    projectSendersForProject(projectId) {
+      return sendersWhere((context) => context.projectId === projectId && context.kind === 'project');
+    },
+
+    hostSendersForProject(projectId) {
+      return sendersWhere((context) => context.projectId === projectId && context.kind === 'host');
     },
 
     get size() {

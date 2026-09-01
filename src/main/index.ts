@@ -395,19 +395,23 @@ async function bootstrap(): Promise<void> {
     ),
     isBackpackProjectSender: isProjectSurfaceSender,
     surfaces: surfaceContexts,
+    windowIdForSender: () => mainWindow?.id ?? 0,
     showBackpackProjectSurface: async (url) => {
       await backpackProjectRuntime.show(url);
       // Phase 1A: bind both senders that may act for this project — the host
       // view that opened it and the project frame it hosts. The project id is
       // the surface origin's host, so the binding is derived from the surface
       // itself rather than from whatever was opened most recently.
+      // The host surface was bound when the project opened; this binds the
+      // project frame it now hosts, in the same window.
       const projectId = backpackProjectRuntime.liveProjectId;
-      const windowId = mainWindow?.id ?? 0;
-      if (projectId) {
-        const frameSender = backpackProjectRuntime.senderId;
-        if (frameSender !== null) surfaceContexts.bind(frameSender, { projectId, windowId });
-        const host = hostView?.webContents.id;
-        if (host !== undefined) surfaceContexts.bind(host, { projectId, windowId });
+      const frameSender = backpackProjectRuntime.senderId;
+      if (projectId && frameSender !== null) {
+        surfaceContexts.bind(frameSender, {
+          projectId,
+          windowId: mainWindow?.id ?? 0,
+          kind: 'project',
+        });
       }
     },
     hideBackpackProjectSurface: () => {

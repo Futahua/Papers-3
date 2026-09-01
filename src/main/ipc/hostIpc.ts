@@ -26,16 +26,17 @@ export interface HostFacade {
   leaveBackpack(): Promise<void>;
   lastActiveBackpackId(): string | null;
 
-  openBackpackProject(id: string): Promise<unknown>;
-  closeBackpackProject(): Promise<void>;
-  showBackpackProjectSurface(url: string): Promise<void>;
+  openBackpackProject(senderId: number, id: string): Promise<unknown>;
+  closeBackpackProject(senderId: number): Promise<void>;
+  showBackpackProjectSurface(senderId: number, url: string): Promise<void>;
   hideBackpackProjectSurface(): void;
-  requestCloseBackpackProject(): void;
-  runBackpackProjectAction(actionId: string): Promise<void>;
-  copyBackpackProjectText(text: string): void;
+  requestCloseBackpackProject(senderId: number): void;
+  runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
+  copyBackpackProjectText(senderId: number, text: string): void;
   loadBackpackProjectState(senderId: number): Promise<unknown>;
   loadBackpackProjectStateVersioned(senderId: number): Promise<unknown>;
   callDelegateWave(
+    senderId: number,
     backpackId: string,
     operation: string,
     params: Record<string, unknown>,
@@ -43,16 +44,19 @@ export interface HostFacade {
   saveBackpackProjectState(senderId: number, rawState: string): Promise<void>;
   saveBackpackProjectStateChecked(senderId: number, rawState: string, expectedRevision: string): Promise<unknown>;
   pickBackpackProjectTarget(
+    senderId: number,
     kind: 'file' | 'folder',
   ): Promise<{ target: string; icon: string | null } | null>;
-  backpackProjectShortcutIcon(shortcutId: string): Promise<string | null>;
-  launchBackpackProjectShortcut(shortcutId: string): Promise<void>;
-  revealBackpackProjectShortcut(shortcutId: string): Promise<void>;
-  openBackpackProjectWebLink(url: string): Promise<void>;
+  backpackProjectShortcutIcon(senderId: number, shortcutId: string): Promise<string | null>;
+  launchBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void>;
+  revealBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void>;
+  openBackpackProjectWebLink(senderId: number, url: string): Promise<void>;
   resolveBackpackProjectDroppedTargets(
+    senderId: number,
     paths: string[],
   ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>>;
   resolveBackpackProjectWebLinkIcon(
+    senderId: number,
     url: string,
   ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }>;
 
@@ -172,27 +176,35 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpacks:leave', () => facade.leaveBackpack());
   handle('host:backpacks:last-active', () => facade.lastActiveBackpackId());
 
-  handle('host:backpack-project:open', (_e, id) =>
-    facade.openBackpackProject(backpackRemovalIdSchema.parse(id)),
+  handle('host:backpack-project:open', (event, id) =>
+    facade.openBackpackProject(event.sender.id, backpackRemovalIdSchema.parse(id)),
   );
-  handle('host:backpack-project:close', () => facade.closeBackpackProject());
-  handle('host:backpack-project:show-surface', (_e, url) =>
-    facade.showBackpackProjectSurface(z.string().url().max(2_048).parse(url)),
+  handle('host:backpack-project:close', (event) => facade.closeBackpackProject(event.sender.id));
+  handle('host:backpack-project:show-surface', (event, url) =>
+    facade.showBackpackProjectSurface(event.sender.id, z.string().url().max(2_048).parse(url)),
   );
   handle('host:backpack-project:hide-surface', () => facade.hideBackpackProjectSurface());
-  handle('host:backpack-project:run-action', (_e, actionId) =>
-    facade.runBackpackProjectAction(backpackProjectActionIdSchema.parse(actionId)),
+  handle('host:backpack-project:run-action', (event, actionId) =>
+    facade.runBackpackProjectAction(event.sender.id, backpackProjectActionIdSchema.parse(actionId)),
   );
-  handle('host:backpack-project:copy-text', (_e, text) =>
-    facade.copyBackpackProjectText(backpackProjectTextSchema.parse(text)),
+  handle('host:backpack-project:copy-text', (event, text) =>
+    facade.copyBackpackProjectText(event.sender.id, backpackProjectTextSchema.parse(text)),
   );
   // Delegate Wave relay. The Backpack id is supplied by the preload from the
-  // page ORIGIN, never from page data; the relay refuses any id that is not the
-  // one Papers was configured with. `operation` is a name, never a URL, and the
-  // relay maps it to a fixed route. Nothing here can express a generic request.
-  handle('host:backpack-project:delegate-wave', (_e, payload) => {
+  // page ORIGIN, never from page data. Since Phase 1A the registry independently
+  // says which project this sender belongs to; the two must agree, and the
+  // relay is called with the registry's answer. The relay then applies the
+  // decisive check: that this is the one Backpack Papers was configured with.
+  // `operation` is a name, never a URL, mapped to a fixed route -- nothing here
+  // can express a generic request.
+  handle('host:backpack-project:delegate-wave', (event, payload) => {
     const request = delegateWaveRequestSchema.parse(payload);
-    return facade.callDelegateWave(request.backpackId, request.operation, request.params ?? {});
+    return facade.callDelegateWave(
+      event.sender.id,
+      request.backpackId,
+      request.operation,
+      request.params ?? {},
+    );
   });
 
   // Phase 1A: the sender is the authority on which project a request is for.
@@ -217,30 +229,30 @@ export function registerHostIpc(facade: HostFacade): void {
       backpackProjectRevisionSchema.parse(revision),
     ),
   );
-  handle('host:backpack-project:pick-target', (_e, kind) =>
-    facade.pickBackpackProjectTarget(z.enum(['file', 'folder']).parse(kind)),
+  handle('host:backpack-project:pick-target', (event, kind) =>
+    facade.pickBackpackProjectTarget(event.sender.id, z.enum(['file', 'folder']).parse(kind)),
   );
-  handle('host:backpack-project:shortcut-icon', (_e, shortcutId) =>
-    facade.backpackProjectShortcutIcon(backpackProjectActionIdSchema.parse(shortcutId)),
+  handle('host:backpack-project:shortcut-icon', (event, shortcutId) =>
+    facade.backpackProjectShortcutIcon(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId)),
   );
-  handle('host:backpack-project:launch-shortcut', (_e, shortcutId) =>
-    facade.launchBackpackProjectShortcut(backpackProjectActionIdSchema.parse(shortcutId)),
+  handle('host:backpack-project:launch-shortcut', (event, shortcutId) =>
+    facade.launchBackpackProjectShortcut(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId)),
   );
-  handle('host:backpack-project:reveal-shortcut', (_e, shortcutId) =>
-    facade.revealBackpackProjectShortcut(backpackProjectActionIdSchema.parse(shortcutId)),
+  handle('host:backpack-project:reveal-shortcut', (event, shortcutId) =>
+    facade.revealBackpackProjectShortcut(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId)),
   );
-  handle('host:backpack-project:open-web-link', (_e, url) =>
-    facade.openBackpackProjectWebLink(backpackProjectWebUrlSchema.parse(url)),
+  handle('host:backpack-project:open-web-link', (event, url) =>
+    facade.openBackpackProjectWebLink(event.sender.id, backpackProjectWebUrlSchema.parse(url)),
   );
-  handle('host:backpack-project:resolve-dropped-targets', (_e, paths) =>
-    facade.resolveBackpackProjectDroppedTargets(backpackProjectDroppedPathsSchema.parse(paths)),
+  handle('host:backpack-project:resolve-dropped-targets', (event, paths) =>
+    facade.resolveBackpackProjectDroppedTargets(event.sender.id, backpackProjectDroppedPathsSchema.parse(paths)),
   );
-  handle('host:backpack-project:resolve-web-link-icon', (_e, url) =>
-    facade.resolveBackpackProjectWebLinkIcon(backpackProjectWebUrlSchema.parse(url)),
+  handle('host:backpack-project:resolve-web-link-icon', (event, url) =>
+    facade.resolveBackpackProjectWebLinkIcon(event.sender.id, backpackProjectWebUrlSchema.parse(url)),
   );
   ipcMain.on('host:backpack-project:request-close', (event) => {
     if (!facade.isBackpackProjectSender(event.sender)) return;
-    facade.requestCloseBackpackProject();
+    facade.requestCloseBackpackProject(event.sender.id);
   });
 
   handle('host:programs:catalog', () => facade.programCatalog());

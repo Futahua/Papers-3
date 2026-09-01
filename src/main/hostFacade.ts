@@ -4,7 +4,7 @@
  * the HostFacade IPC contract.
  */
 import { randomUUID } from 'node:crypto';
-import { clipboard, dialog, shell, type WebContents } from 'electron';
+import { clipboard, dialog, shell, webContents, type WebContents } from 'electron';
 
 import type {
   AgentRunSnapshot,
@@ -51,6 +51,10 @@ export interface FacadeDeps {
    * project requests resolve through their own sender instead of ambient
    * state. */
   surfaces: SurfaceContextRegistry;
+  /** The native window a sender belongs to. Supplied by the host, which owns
+   * the windows; Phase 1B replaces the single-window answer with a real
+   * lookup. */
+  windowIdForSender: (senderId: number) => number;
   updater: PapersUpdater;
   registry: BackpackRegistry;
   backpackProjects: BackpackProjectService;
@@ -78,13 +82,19 @@ export interface FacadeDeps {
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private currentBackpackId: string | null = null;
-  private currentBackpackProjectId: string | null = null;
   private readonly pendingPermissionPrompts = new Map<string, (d: PermissionDecision) => void>();
   private readonly pendingInvocationPreviews = new Map<string, (approved: boolean) => void>();
 
   constructor(private readonly deps: FacadeDeps) {}
 
   // ---------------------------------------------------------------- events
+  /** Deliver to exactly one surface. Used where the answer belongs to the
+   * window that asked, rather than to whichever host happens to be current. */
+  private sendTo(senderId: number, channel: string, payload: unknown): void {
+    const contents = webContents.fromId(senderId);
+    if (contents && !contents.isDestroyed()) contents.send(channel, payload);
+  }
+
   private send(channel: string, payload: unknown): void {
     const contents = this.deps.hostContents();
     if (contents && !contents.isDestroyed()) contents.send(channel, payload);
@@ -142,9 +152,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (archived && this.currentBackpackId === id) {
       await this.leaveBackpack();
     }
-    if (archived && this.currentBackpackProjectId === id) {
-      this.currentBackpackProjectId = null;
-    }
+    // Archiving releases every surface bound to it, in any window; a surface
+    // must not keep acting for a Backpack the creator has put away.
+    if (archived) this.deps.surfaces.unbindProject(id);
     await this.deps.registry.setArchived(id, archived);
     this.emitBackpacksChanged();
   }
@@ -152,7 +162,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async removeBackpack(id: string): Promise<void> {
     await this.deps.registry.remove(id);
     if (this.currentBackpackId === id) this.currentBackpackId = null;
-    if (this.currentBackpackProjectId === id) this.currentBackpackProjectId = null;
+    this.deps.surfaces.unbindProject(id);
     this.emitBackpacksChanged();
   }
 
@@ -226,38 +236,35 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return id;
   }
 
-  private requireBackpackProjectOpen(): string {
-    const id = this.currentBackpackProjectId;
-    if (!id) throw new Error('Enter a Backpack project before using it.');
-    const backpack = this.deps.registry.find(id);
-    if (!backpack || backpack.archived) {
-      this.currentBackpackProjectId = null;
-      throw new Error('This Backpack project is no longer available.');
-    }
-    return id;
-  }
-
-  async openBackpackProject(id: string): Promise<OpenBackpackProject | null> {
-    this.currentBackpackProjectId = null;
+  async openBackpackProject(senderId: number, id: string): Promise<OpenBackpackProject | null> {
+    this.deps.surfaces.unbind(senderId);
     const backpack = this.deps.registry.find(id);
     if (!backpack) throw new Error(`Backpack ${id} not found`);
     if (backpack.archived) throw new Error('Restore this Backpack before entering it.');
     const project = await this.deps.backpackProjects.open(id);
     await this.deps.registry.markEntered(id);
-    this.currentBackpackProjectId = project ? id : null;
+    // Bind the asking host surface immediately, so every later request from
+    // this window resolves through its own sender rather than ambient state.
+    if (project) {
+      this.deps.surfaces.bind(senderId, {
+        projectId: id,
+        windowId: this.deps.windowIdForSender(senderId),
+        kind: 'host',
+      });
+    }
     this.emitBackpacksChanged();
     return project;
   }
 
-  async closeBackpackProject(): Promise<void> {
+  async closeBackpackProject(senderId: number): Promise<void> {
     this.deps.hideBackpackProjectSurface();
-    this.currentBackpackProjectId = null;
+    this.deps.surfaces.unbind(senderId);
     await this.deps.registry.markLeft();
     this.emitBackpacksChanged();
   }
 
-  showBackpackProjectSurface(url: string): Promise<void> {
-    this.requireBackpackProjectOpen();
+  showBackpackProjectSurface(senderId: number, url: string): Promise<void> {
+    this.requireProjectForSender(senderId);
     return this.deps.showBackpackProjectSurface(url);
   }
 
@@ -265,16 +272,28 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.hideBackpackProjectSurface();
   }
 
-  requestCloseBackpackProject(): void {
-    this.send('host:event:backpack-project-close-request', null);
+  /**
+   * A project frame asking Papers to leave it.
+   *
+   * Answered through the host renderer of the SAME window, never every host
+   * showing this project: two windows may legitimately show one project, and
+   * closing one surface must not close the other. Window identity is the
+   * question here, not project identity.
+   */
+  requestCloseBackpackProject(senderId: number): void {
+    const context = this.deps.surfaces.contextForSender(senderId);
+    if (!context) return;
+    const hostSender = this.deps.surfaces.hostSenderForWindow(context.windowId);
+    if (hostSender === null) return;
+    this.sendTo(hostSender, 'host:event:backpack-project-close-request', null);
   }
 
-  async runBackpackProjectAction(actionId: string): Promise<void> {
-    await this.deps.backpackProjects.runAction(this.requireBackpackProjectOpen(), actionId);
+  async runBackpackProjectAction(senderId: number, actionId: string): Promise<void> {
+    await this.deps.backpackProjects.runAction(this.requireProjectForSender(senderId), actionId);
   }
 
-  copyBackpackProjectText(text: string): void {
-    this.requireBackpackProjectOpen();
+  copyBackpackProjectText(senderId: number, text: string): void {
+    this.requireProjectForSender(senderId);
     clipboard.writeText(text);
   }
 
@@ -290,23 +309,28 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   /**
    * Delegate Wave relay.
    *
-   * Two independent identity checks, and both must hold. `requireBackpackProjectOpen()`
-   * establishes that a Backpack project surface is genuinely open, and the id
-   * the preload derived from the page origin must equal it -- so a page cannot
-   * act for a project that is not the one currently running. The relay then
-   * applies the third and decisive check: that this id is the single Backpack
-   * Papers was configured to permit.
+   * Two values that must agree, and a third gate that decides. The registry
+   * says which project this WebContents belongs to; the preload says which
+   * `papers-backpack://<id>` origin it is serving. Since sender routing landed
+   * these are no longer INDEPENDENT -- both descend from the surface identity
+   * -- but they cross different boundaries, and if they ever disagree,
+   * refusing is far safer than picking a winner. The relay then applies the
+   * decisive check: whether this is the single Backpack Papers was configured
+   * to permit.
+   *
+   * The relay is called with the registry-resolved id, never the payload's.
    */
   async callDelegateWave(
+    senderId: number,
     backpackId: string,
     operation: string,
     params: Record<string, unknown>,
   ): Promise<unknown> {
-    const open = this.requireBackpackProjectOpen();
-    if (backpackId !== open) {
+    const projectId = this.requireProjectForSender(senderId);
+    if (backpackId !== projectId) {
       return { ok: false, code: 'NOT_PERMITTED', message: 'This Backpack may not use Delegate Wave.' };
     }
-    return this.deps.delegateWave.call(backpackId, operation, params);
+    return this.deps.delegateWave.call(projectId, operation, params);
   }
 
   async saveBackpackProjectState(senderId: number, rawState: string): Promise<void> {
@@ -334,9 +358,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async pickBackpackProjectTarget(
+    senderId: number,
     kind: 'file' | 'folder',
   ): Promise<{ target: string; icon: string | null } | null> {
-    this.requireBackpackProjectOpen();
+    this.requireProjectForSender(senderId);
     const result = await dialog.showOpenDialog({
       title: kind === 'file' ? 'Choose a shortcut, script, app, or file' : 'Choose a folder',
       properties: [kind === 'file' ? 'openFile' : 'openDirectory'],
@@ -349,37 +374,39 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     };
   }
 
-  async backpackProjectShortcutIcon(shortcutId: string): Promise<string | null> {
+  async backpackProjectShortcutIcon(senderId: number, shortcutId: string): Promise<string | null> {
     return this.deps.backpackProjects.shortcutIcon(
-      this.requireBackpackProjectOpen(),
+      this.requireProjectForSender(senderId),
       shortcutId,
     );
   }
 
-  async launchBackpackProjectShortcut(shortcutId: string): Promise<void> {
-    await this.deps.backpackProjects.launchShortcut(this.requireBackpackProjectOpen(), shortcutId);
+  async launchBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void> {
+    await this.deps.backpackProjects.launchShortcut(this.requireProjectForSender(senderId), shortcutId);
   }
 
-  async revealBackpackProjectShortcut(shortcutId: string): Promise<void> {
-    await this.deps.backpackProjects.revealShortcut(this.requireBackpackProjectOpen(), shortcutId);
+  async revealBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void> {
+    await this.deps.backpackProjects.revealShortcut(this.requireProjectForSender(senderId), shortcutId);
   }
 
-  async openBackpackProjectWebLink(url: string): Promise<void> {
-    this.requireBackpackProjectOpen();
+  async openBackpackProjectWebLink(senderId: number, url: string): Promise<void> {
+    this.requireProjectForSender(senderId);
     await shell.openExternal(parseBackpackProjectWebUrl(url));
   }
 
   async resolveBackpackProjectDroppedTargets(
+    senderId: number,
     paths: string[],
   ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>> {
-    this.requireBackpackProjectOpen();
+    this.requireProjectForSender(senderId);
     return this.deps.backpackProjects.describeDroppedTargets(paths);
   }
 
   async resolveBackpackProjectWebLinkIcon(
+    senderId: number,
     url: string,
   ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string; title: string | null }> {
-    return this.deps.backpackProjects.resolveWebLinkIcon(this.requireBackpackProjectOpen(), url);
+    return this.deps.backpackProjects.resolveWebLinkIcon(this.requireProjectForSender(senderId), url);
   }
 
   // -------------------------------------------------------------- programs
