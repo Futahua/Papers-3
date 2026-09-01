@@ -76,6 +76,7 @@ const api = {
   },
 
   layout: {
+    hydrateStartupWorkspace: () => ipcRenderer.invoke('host:workspace:hydrate-startup'),
     setProgramBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke('host:layout:set-program-bounds', bounds),
     setOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-overlay', active),
@@ -135,6 +136,7 @@ const api = {
     onBackpackProjectCloseRequest: subscribe('host:event:backpack-project-close-request'),
     onWorkspaceTopology: subscribe('host:event:workspace-topology'),
     onWorkspaceProjectOpened: subscribe('host:event:workspace-project-opened'),
+    onWorkspaceHydrated: subscribe('host:event:workspace-hydrated'),
     onProgramStatus: subscribe('host:event:program-status'),
     onShelfChanged: subscribe('host:event:shelf-changed'),
     onSaveStatus: subscribe('host:event:save-status'),

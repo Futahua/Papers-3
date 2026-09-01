@@ -605,14 +605,15 @@ A1.2i all-or-nothing primary startup hydration:
 
 - [x] Add read-only selected snapshot access; it does not consume, reorder or
   persist, and a null selector makes no automatic choice.
-- [ ] Make main the sole startup restore authority and gate renderer initial
+- [x] Make main the sole startup restore authority and gate renderer initial
   empty topology commit until hydration decision.
-- [ ] Resolve every persisted surface project/URL before allocating anything.
-- [ ] Allocate fresh surfaces, build exact old→fresh map, remap once, validate,
-  atomically deliver all descriptors+topology, then commit under the selected
-  durable workspace ID.
-- [ ] All-or-nothing rollback and fresh-UI decision without empty snapshot
-  overwrite on failure/no selection.
+- [x] Add a resolve-first all-or-nothing hydration core: resolve every
+  persisted surface project/URL before allocation; allocate fresh surfaces,
+  build old→fresh map, remap once, validate, deliver once, commit once, and
+  retire only invocation-owned surfaces on failure.
+- [x] Wire primary-window startup IPC and one combined descriptors+topology
+  hydration event; additional windows return fresh/no-hydration decisions.
+- [ ] Complete live seeded-v2 restore acceptance and reviewer sign-off.
 - [ ] Live seeded-v2 primary restore; fresh IDs/order/focus/weights; durable ID
   reuse after mutation; additional window remains fresh.
 - [ ] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and

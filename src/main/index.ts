@@ -59,6 +59,7 @@ import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { WorkspaceTopologyStore } from './persistence/workspaceTopologyStore';
+import { hydrateStartupWorkspace } from './persistence/startupWorkspaceHydration';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import {
   OPAQUE_SURFACE_COLOR,
@@ -353,6 +354,7 @@ async function bootstrap(): Promise<void> {
   const widgetRegistry = new BackpackSurfaceRegistry();
   let widgetSession: CompactWidgetSession | null = null;
   let reconcileHermesForClosingWindow: (windowId: number) => Promise<void> = async () => undefined;
+  let primaryWindowIdForHydration: number | null = null;
   // One Hermes backend is shared by all Papers windows. The callback is late
   // bound because the facade is composed after the first window is prepared.
   const hermesSurface = new HermesSurface(
@@ -433,6 +435,7 @@ async function bootstrap(): Promise<void> {
   mainWindow = windowInstance.window;
   hostView = windowInstance.hostView;
   const primaryWindow = windowInstance.window;
+  primaryWindowIdForHydration = primaryWindow.id;
   // These aliases are bootstrap/fixture compatibility only. Their cleanup is
   // deliberately first-window-specific; reusable window finalization must not
   // let a later window rewrite or clear the primary fixture relationship.
@@ -559,6 +562,36 @@ async function bootstrap(): Promise<void> {
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
     workspaceTopology: (windowId) => workspaceTopologies.get(windowId) ?? null,
+    hydrateStartupWorkspace: async (windowId) => {
+      if (windowId !== primaryWindowIdForHydration) return { hydrated: false };
+      const result = await hydrateStartupWorkspace(windowId, {
+        snapshot: await workspaceTopologyStore.selectedSnapshot(),
+        findAvailableBackpack: (projectId) => {
+          const backpack = registry.find(projectId);
+          return backpack && !backpack.archived ? { name: backpack.name } : null;
+        },
+        openProject: (projectId) => backpackProjects.open(projectId),
+        createSurface: ({ windowId: targetWindowId, projectId }) => logicalSurfaces.create({ windowId: targetWindowId, projectId, kind: 'project' }),
+        retireSurface: (surfaceId) => logicalSurfaces.retire(surfaceId),
+        validate: (topology) => facade.validateWorkspaceTopologyForStartup(windowId, topology),
+        deliver: (projects, topology) => {
+          const contents = papersWindows.get(windowId)?.owned.hostView.webContents;
+          if (!contents || contents.isDestroyed()) throw new Error('That Papers window host is unavailable.');
+          contents.send('host:event:workspace-hydrated', { projects, topology });
+        },
+        commit: (workspaceId, topology) => {
+          workspaceIds.set(windowId, workspaceId);
+          papersWindows.setActiveSurfaceId(windowId, topology.groups.find((group) => group.groupId === topology.focusedGroupId)?.activeSurfaceId ?? null);
+          const active = topology.groups.find((group) => group.groupId === topology.focusedGroupId)?.activeSurfaceId;
+          const projectId = topology.surfaces.find((surface) => surface.surfaceId === active)?.projectId ?? null;
+          papersWindows.setEnteredBackpack(windowId, projectId);
+          workspaceTopologies.set(windowId, topology);
+          workspaceTopologyRevisions.set(windowId, (workspaceTopologyRevisions.get(windowId) ?? 0) + 1);
+          void workspaceTopologyStore.commit(workspaceId, topology);
+        },
+      });
+      return { hydrated: Boolean(result) };
+    },
     setWorkspaceTopology: (windowId, topology) => {
       workspaceTopologies.set(windowId, topology);
       workspaceTopologyRevisions.set(windowId, (workspaceTopologyRevisions.get(windowId) ?? 0) + 1);

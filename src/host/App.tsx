@@ -65,6 +65,7 @@ export function App(): React.JSX.Element {
   const openProjectsRef = useRef<OpenWorkspaceProject[]>([]);
   openProjectsRef.current = openProjects;
   const [workspaceTopology, setWorkspaceTopology] = useState(createWorkspaceTopology);
+  const [hydrationReady, setHydrationReady] = useState(false);
   const externallyRestoredTopology = useRef(false);
   /**
    * The logical surface this window is showing.
@@ -86,6 +87,7 @@ export function App(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
+    if (!hydrationReady) return;
     void host().settings.get().then((settings) => {
       document.documentElement.dataset.transparentWindow = String(settings.transparentWindow);
     }).catch(() => undefined);
@@ -97,47 +99,11 @@ export function App(): React.JSX.Element {
       return;
     }
     void host().layout.commitWorkspaceTopology(workspaceTopology).catch(() => undefined);
-  }, [workspaceTopology]);
+  }, [hydrationReady, workspaceTopology]);
 
   useEffect(() => {
     const bridge = host();
-    const restoreBackpack = async (): Promise<void> => {
-      const list = await bridge.backpacks.list();
-      setBackpacks(list);
-      const id = await bridge.backpacks.startupRestore();
-      if (!id || !list.backpacks.some((backpack) => backpack.id === id && !backpack.archived)) {
-        return;
-      }
-      try {
-        const project = await bridge.backpackProject.open(id);
-        setProjectUrl(project?.url ?? null);
-        setSurfaceId(project?.surfaceId ?? null);
-        setEntered(id);
-        if (project) {
-          const title = list.backpacks.find((backpack) => backpack.id === id)?.name ?? id;
-          setOpenProjects([{ surfaceId: project.surfaceId, projectId: id, title, url: project.url }]);
-          setWorkspaceTopology(openWorkspaceSurface(
-            createWorkspaceTopology(),
-            { surfaceId: project.surfaceId, projectId: id, title },
-          ));
-        }
-      } catch (caught) {
-        setHostErrors((previous) => [
-          ...previous,
-          {
-            component: 'Backpack',
-            what: 'The last active Backpack could not be restored.',
-            known: String(caught instanceof Error ? caught.message : caught),
-            intact: 'The Backpack record and project files were not changed.',
-            retryUseful: true,
-            inspect: 'Open the Backpack again from Backpacks.',
-            recover: 'Papers remains available at the Backpack list.',
-          },
-        ]);
-      }
-    };
-
-    void restoreBackpack();
+    void bridge.backpacks.list().then(setBackpacks).catch(() => undefined);
     void bridge
       .hermes.surfaceStatus()
       .then(setHermes)
@@ -178,9 +144,28 @@ export function App(): React.JSX.Element {
         setProjectUrl(project.url);
         setEntered(project.projectId);
       }),
+      bridge.events.onWorkspaceHydrated(({ projects, topology }) => {
+        openProjectsRef.current = projects;
+        setOpenProjects(projects);
+        externallyRestoredTopology.current = true;
+        setWorkspaceTopology(topology);
+        const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
+        const active = projects.find((project) => project.surfaceId === focused?.activeSurfaceId) ?? null;
+        setSurfaceId(active?.surfaceId ?? null);
+        setProjectUrl(active?.url ?? null);
+        setEntered(active?.projectId ?? null);
+      }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),
     ];
+    void bridge.layout.hydrateStartupWorkspace()
+      .catch((caught) => setHostErrors((previous) => [...previous, {
+        component: 'Backpack', what: 'Startup workspace could not be restored.',
+        known: String(caught instanceof Error ? caught.message : caught),
+        intact: 'Saved workspace data and Backpack files were not changed.', retryUseful: true,
+        inspect: 'Open Backpacks and retry manually.', recover: 'Papers remains available at the Backpack list.',
+      }]))
+      .finally(() => setHydrationReady(true));
     return () => subs.forEach((unsub) => unsub());
   }, [refreshBackpacks]);
 

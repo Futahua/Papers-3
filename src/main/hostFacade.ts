@@ -148,6 +148,7 @@ export interface FacadeDeps {
   /** Forget the preset so Papers reopens at its default size. */
   clearWindowBounds: () => Promise<void>;
   workspaceTopology?: (windowId: number) => WorkspaceTopologyV1 | null;
+  hydrateStartupWorkspace?: (windowId: number) => Promise<{ hydrated: boolean }>;
   setWorkspaceTopology: (windowId: number, topology: WorkspaceTopologyV1) => void;
 }
 
@@ -393,6 +394,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   startupRestoreBackpackId(senderId: number): string | null {
     const windowId = this.deps.hostWindowForSender(senderId);
     return windowId === null ? null : this.deps.restoreBackpack(windowId);
+  }
+
+  hydrateStartupWorkspace(senderId: number): Promise<{ hydrated: boolean }> {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) return Promise.reject(new Error('Only a Papers window may hydrate startup workspace.'));
+    return this.deps.hydrateStartupWorkspace?.(windowId) ?? Promise.resolve({ hydrated: false });
   }
 
   /**
@@ -905,6 +912,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         && topology.root.children.length === 2
         && topology.root.children.every((child) => child.kind === 'group');
     if (!flatRoot) throw new Error('Only an exact flat one- or two-group workspace topology is currently supported.');
+  }
+
+  validateWorkspaceTopologyForStartup(windowId: number, topology: WorkspaceTopologyV1): void {
+    this.validateWorkspaceTopology(windowId, topology);
   }
 
   // ----------------------------------------------------------- permissions

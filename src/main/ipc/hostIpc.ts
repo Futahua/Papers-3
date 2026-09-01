@@ -26,6 +26,7 @@ export interface HostFacade {
   enterBackpack(senderId: number, id: string): Promise<unknown>;
   leaveBackpack(senderId: number): Promise<void>;
   startupRestoreBackpackId(senderId: number): string | null;
+  hydrateStartupWorkspace(senderId: number): Promise<{ hydrated: boolean }>;
 
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
   closeBackpackProject(senderId: number, surfaceId: string): Promise<void>;
@@ -184,6 +185,7 @@ export function registerHostIpc(facade: HostFacade): void {
   // restore candidate, so a window opened later does not reopen the persisted
   // most-recent Backpack.
   handle('host:backpacks:startup-restore', (event) => facade.startupRestoreBackpackId(event.sender.id));
+  handle('host:workspace:hydrate-startup', (event) => facade.hydrateStartupWorkspace(event.sender.id));
 
   handle('host:backpack-project:open', (event, id) =>
     facade.openBackpackProject(event.sender.id, backpackRemovalIdSchema.parse(id)),

@@ -144,6 +144,7 @@ interface HostBridge {
     invokeCommand(commandId: string): Promise<void>;
   };
   layout: {
+    hydrateStartupWorkspace(): Promise<{ hydrated: boolean }>;
     setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setOverlayActive(active: boolean): Promise<void>;
     setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
@@ -198,6 +199,10 @@ interface HostBridge {
     onWorkspaceTopology(cb: (topology: WorkspaceTopologyV1) => void): () => void;
     onWorkspaceProjectOpened(cb: (payload: {
       project: { surfaceId: string; projectId: string; title: string; url: string };
+      topology: WorkspaceTopologyV1;
+    }) => void): () => void;
+    onWorkspaceHydrated(cb: (payload: {
+      projects: Array<{ surfaceId: string; projectId: string; title: string; url: string }>;
       topology: WorkspaceTopologyV1;
     }) => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
