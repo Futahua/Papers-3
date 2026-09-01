@@ -3,7 +3,7 @@ import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 export interface PapersWindowIpcDependencies {
   ipcMain: Pick<IpcMain, 'handle'>;
   isHostSender: (sender: WebContents) => boolean;
-  createAdditionalWindow: () => Promise<{ window: { id: number } }>;
+  createAdditionalWindow: () => Promise<void>;
 }
 
 /** Register the narrow host-only boundary for creating a secondary window. */
@@ -12,7 +12,6 @@ export function registerPapersWindowIpc(dependencies: PapersWindowIpcDependencie
     if (!dependencies.isHostSender(event.sender)) {
       throw new Error('window creation called from non-host sender');
     }
-    const instance = await dependencies.createAdditionalWindow();
-    return { windowId: instance.window.id };
+    await dependencies.createAdditionalWindow();
   });
 }

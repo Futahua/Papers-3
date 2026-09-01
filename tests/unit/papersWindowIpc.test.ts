@@ -12,16 +12,16 @@ function harness() {
 describe('Papers window IPC', () => {
   it('creates a secondary window only for a trusted host sender', async () => {
     const h = harness();
-    const createAdditionalWindow = vi.fn(async () => ({ window: { id: 22 } }));
+    const createAdditionalWindow = vi.fn(async () => undefined);
     registerPapersWindowIpc({ ipcMain: h.ipcMain as PapersWindowIpcDependencies['ipcMain'], isHostSender: () => true, createAdditionalWindow });
 
-    await expect(h.getHandler()({ sender: {} })).resolves.toEqual({ windowId: 22 });
+    await expect(h.getHandler()({ sender: {} })).resolves.toBeUndefined();
     expect(createAdditionalWindow).toHaveBeenCalledTimes(1);
   });
 
   it('rejects non-host senders before constructing a window', async () => {
     const h = harness();
-    const createAdditionalWindow = vi.fn(async () => ({ window: { id: 22 } }));
+    const createAdditionalWindow = vi.fn(async () => undefined);
     registerPapersWindowIpc({ ipcMain: h.ipcMain as PapersWindowIpcDependencies['ipcMain'], isHostSender: () => false, createAdditionalWindow });
 
     await expect(h.getHandler()({ sender: {} })).rejects.toThrow('non-host sender');

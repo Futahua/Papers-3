@@ -27,6 +27,8 @@ const api = {
     updateStatus: () => ipcRenderer.invoke('host:app:update-status'),
     checkForUpdate: () => ipcRenderer.invoke('host:app:check-for-update'),
     installUpdate: () => ipcRenderer.invoke('host:app:install-update'),
+    // Create one fresh Papers window; all policy stays in the main process.
+    newWindow: () => ipcRenderer.invoke('host:window:new'),
   },
 
   backpacks: {

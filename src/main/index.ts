@@ -363,10 +363,12 @@ async function bootstrap(): Promise<void> {
       papersWindows.remove(windowId);
     },
   });
-  const createAdditionalPapersWindow = () => composeAdditionalPapersWindow({
-    createWindow: () => makePapersWindow(undefined),
-    lifecycleDependencies,
-  });
+  const createAdditionalPapersWindow = async (): Promise<void> => {
+    await composeAdditionalPapersWindow({
+      createWindow: () => makePapersWindow(undefined),
+      lifecycleDependencies,
+    });
+  };
   const preparedWindow = preparePapersWindow(windowInstance, lifecycleDependencies(registry.lastActiveBackpackId));
   mainWindow = windowInstance.window;
   hostView = windowInstance.hostView;

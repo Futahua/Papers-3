@@ -99,6 +99,8 @@ interface HostBridge {
     checkForUpdate(): Promise<UpdateState>;
     /** Restart into the downloaded update; only acts once stage is `ready`. */
     installUpdate(): Promise<void>;
+    /** Create one fresh secondary Papers window. */
+    newWindow(): Promise<void>;
   };
   backpacks: {
     list(): Promise<BackpacksList>;
