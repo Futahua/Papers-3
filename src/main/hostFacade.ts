@@ -335,11 +335,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (!backpack) throw new Error(`Backpack ${id} not found`);
     if (backpack.archived) throw new Error('Restore this Backpack before entering it.');
     const project = await this.deps.backpackProjects.open(id);
+    // A null project is a successful entry into a valid empty Backpack. The
+    // window must still become entered and the registry must still record the
+    // application MRU; only the project-surface binding is conditional.
+    this.deps.setEnteredBackpack(windowId, id);
+    await this.deps.registry.markEntered(id);
     // Bind the asking host surface immediately, so every later request from
     // this window resolves through its own sender rather than ambient state.
     if (project) {
-      this.deps.setEnteredBackpack(windowId, id);
-      await this.deps.registry.markEntered(id);
       this.deps.surfaces.bind(senderId, { projectId: id, windowId, kind: 'host' });
     }
     this.emitBackpacksChanged();
