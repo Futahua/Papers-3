@@ -486,6 +486,41 @@ describe('surface routing in the host facade', () => {
     expect(setWorkspaceTopology).not.toHaveBeenCalled();
   });
 
+  it('keeps the replacement commit coherent when a later old native close throws', async () => {
+    const {
+      facade, logicalSurfaces, workspaceTopologies, workspaceLayouts, closeAttachedProjectSurface,
+      sendToWindow, setWorkspaceTopology,
+    } = createFacade();
+    const oldA = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const oldB = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    let oldTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: oldA.surfaceId, projectId: PROJECT, title: 'Old A',
+    });
+    oldTopology = openWorkspaceSurface(oldTopology, {
+      surfaceId: oldB.surfaceId, projectId: OTHER, title: 'Old B',
+    });
+    workspaceTopologies.set(1, oldTopology);
+    const savedTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: 'saved-a', projectId: PROJECT, title: 'New',
+    });
+    const layoutId = '3f0f8c9c-4d3c-4c3c-8c3c-3f0f8c9c4d3c';
+    workspaceLayouts.get.mockResolvedValue({
+      layoutId, name: 'Saved', topology: savedTopology,
+      createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
+    });
+    closeAttachedProjectSurface.mockImplementationOnce(() => undefined)
+      .mockImplementationOnce(() => { throw new Error('late destroyed object'); });
+
+    const loaded = await facade.loadWorkspaceLayoutFromControl(1, layoutId);
+
+    expect(loaded.topology.surfaces).toHaveLength(1);
+    expect(sendToWindow).toHaveBeenCalledTimes(1);
+    expect(setWorkspaceTopology).toHaveBeenCalledTimes(1);
+    expect(logicalSurfaces.get(oldA.surfaceId)).toBeNull();
+    expect(logicalSurfaces.get(oldB.surfaceId)).toBeNull();
+    expect(logicalSurfaces.project()).toHaveLength(1);
+  });
+
   it('does not mark a Backpack left while another window has an active surface for it', async () => {
     const { facade, logicalSurfaces, setActiveSurfaceId, setEnteredBackpack, markLeft } = createFacade();
     const local = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });

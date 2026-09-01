@@ -752,10 +752,13 @@ pushed head. No control, UI, or load transaction was included in this slice.
 - [ ] Reviewer sign-off on the exact pushed head.
 
 A2.1c implementation validation: typecheck passed, full Vitest passed 60/60
-files with 690 passed and 4 skipped tests, build passed, and `git diff --check`
+files with 691 passed and 4 skipped tests, build passed, and `git diff --check`
 passed. Focused facade/control coverage includes resolve-first archive races,
 duplicate project tabs with independent fresh identities, delivery rollback,
-one combined event, exact old-set cleanup, and one final topology commit.
+one combined event, exact old-set cleanup, one final topology commit, and a
+late native-close failure after event delivery. Replacement cleanup now treats
+known native teardown errors as non-throwing after the delivery boundary, so a
+queued successful layout cannot be contradicted by rollback of its fresh ids.
 Reviewer sign-off is still pending on the exact pushed head. UI remains deferred
 to A2.1d.
 

@@ -1044,8 +1044,19 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       }
       return surface;
     });
-    // Validate every target before touching any native or logical state.
-    for (const target of targets) this.deps.closeAttachedProjectSurface(windowId, target.surfaceId);
+    // Validate every target before touching any native or logical state. This
+    // native cleanup is deliberately best-effort: it runs after the combined
+    // replacement event has been queued, so it must never throw into the
+    // transaction's rollback path and leave the renderer holding fresh ids
+    // that main has retired. Logical retirement below is the authoritative
+    // commit; a late Electron destroyed-object error cannot undo it.
+    for (const target of targets) {
+      try {
+        this.deps.closeAttachedProjectSurface(windowId, target.surfaceId);
+      } catch (caught) {
+        console.error(`[workspace-layout] native cleanup failed for ${target.surfaceId}:`, caught);
+      }
+    }
     for (const target of targets) {
       this.deps.logicalSurfaces.retire(target.surfaceId);
       for (const senderId of this.deps.surfaces.sendersForSurface(target.surfaceId)) this.deps.surfaces.unbind(senderId);
