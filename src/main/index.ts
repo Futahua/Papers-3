@@ -34,6 +34,7 @@ import { registerWindowCapabilityIpc } from './ipc/windowCapabilityIpc';
 import { registerWindowPickIpc } from './ipc/windowPickIpc';
 import { registerWindowDetachIpc } from './ipc/windowDetachIpc';
 import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
+import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
@@ -1238,6 +1239,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         return false;
       }
     },
+  });
+  // Keep the constructor behind the complete application-global composition
+  // barrier. A newly loaded host may call any registered bridge immediately.
+  registerPapersWindowIpc({
+    ipcMain,
+    isHostSender: (sender) => facade.isHostSender(sender),
+    createAdditionalWindow: createAdditionalPapersWindow,
   });
   // Best-effort owned shutdown before app exit; the helper factory stop
   // owns stdin close, termination escalation and exactly-once terminal
