@@ -469,16 +469,16 @@ Electron E2E 1/1 passed, and diff check passed.
 A1.2d atomic persistence:
 
 - [x] Persist schema-v1 Papers topology through `AtomicJsonStore` using
-  runtime-independent UUID snapshot keys rather than Electron/native window
-  ids. These keys are currently stable only for one live window lifetime and
-  are not yet restart workspace identity.
+  runtime-independent identity rather than Electron/native window ids; A1.2h
+  upgrades that identity to durable schema-v2 workspace ids.
 - [x] Serialize and coalesce concurrent main-process commits; one writer drains
   the newest topology snapshots without parallel file replacement races.
 - [x] Validate the complete persisted envelope and every nested topology on
   load; quarantine invalid state rather than consuming or deleting it.
-- [x] Keep persisted snapshots write-only for now. Automatic startup hydration
-  remains blocked on the explicit surface-identity mapping policy and cannot be
-  overwritten accidentally by a hydration implementation that does not exist.
+- [x] Consume the selected v2 snapshot only through primary-window,
+  resolve-first startup hydration with fresh runtime surface remapping; later
+  windows remain fresh and no empty snapshot overwrites a failed/no-selection
+  startup.
 - [x] Live Electron acceptance proves the final one-surface topology reaches
   disk and the persisted JSON contains no Dockview, WebContents, sender or
   native-window identity.
@@ -486,10 +486,10 @@ A1.2d atomic persistence:
 A1.2d validation: typecheck passed, full Vitest 657 passed / 4 skipped,
 production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
 Electron E2E 1/1 passed, and diff check passed.
-- [ ] Keyboard tab selection and accessibility acceptance.
+- [x] Keyboard tab selection and accessibility acceptance; see A1.2k.
 - [x] Automatic restore of last tab/split workspace.
 - [x] Archive/remove and crash/reload behavior across multiple live surfaces.
-- [ ] Add control commands such as `workspace.open`, `workspace.activate`,
+- [x] Add control commands such as `workspace.open`, `workspace.activate`,
   `workspace.close`, `layout.split`, `layout.moveSurface`, `layout.restore`.
   Implemented and live-validated: `workspace.open`, `workspace.activate`,
   `workspace.close`, `layout.split`, `layout.moveSurface`, `layout.restore`.
@@ -664,14 +664,15 @@ previously documented unrelated fixture/restart failures.
   native presentation.
 - [x] Keyboard acceptance covers a multi-surface workspace without relying on
   mouse-only Dockview gestures.
-- [ ] Reviewer sign-off.
+- [x] Reviewer sign-off on exact head `a9184df50564c2dce0df2db2464a5b2bd58ed3c8`.
 
 A1.2k validation: dedicated keyboard-accessibility Electron E2E passed 1/1;
 it reaches the active tab through real Tab navigation, moves across the tab
 strip with ArrowLeft/ArrowRight, activates Alpha and Beta with Enter, verifies
 accessible names and selected state, and checks canonical active-surface plus
 native presentation convergence including the inactive tab becoming hidden.
-Reviewer sign-off is pending.
+Reviewer signed off exact head `a9184df50564c2dce0df2db2464a5b2bd58ed3c8` with
+no concrete keyboard/accessibility defect.
 
 A1.2i validation: the dedicated seeded-v2 startup Electron E2E passed 1/1;
 typecheck passed; full Vitest passed with 677 tests and 4 skipped; production
@@ -682,6 +683,14 @@ single durable workspace identity after mutation, and a fresh secondary
 window. The complete legacy Electron suite remains non-green in this
 environment for unrelated fixture/restart failures (permission/startup
 timeouts and a worker fixture's missing `crypto.randomUUID`).
+
+### A1 workspace/tab/split milestone — closed
+
+A1 now has signed-off live coverage for one-window tabs, supported splits and
+weights, canonical external control, durable startup restore with fresh IDs,
+archive/remove and crash/reload durability, and keyboard tab accessibility.
+The complete legacy Electron suite still has the separately documented
+fixture/restart failures; the focused A1 acceptance tests are green.
 
 ### Later gates
 
