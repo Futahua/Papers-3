@@ -913,17 +913,21 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   /** Bulk replacement cleanup has no topology commit or per-surface event. The
    * caller owns the single replacement event and canonical commit boundary. */
-  retireWorkspaceSurfacesForReplacement(windowId: number, surfaceIds: ReadonlyArray<string>): void {
+  retireWorkspaceSurfacesForReplacement(
+    windowId: number,
+    oldSurfaces: ReadonlyArray<{ surfaceId: string; projectId: string }>,
+  ): void {
     if (!this.deps.hostWindowIds().includes(windowId)) throw new Error('That Papers window is not live.');
-    const live = this.deps.logicalSurfaces.listForWindow(windowId).filter((surface) => surface.kind === 'project');
-    const ids = [...surfaceIds];
-    if (new Set(ids).size !== ids.length || ids.length !== live.length
-      || live.some((surface) => !ids.includes(surface.surfaceId))) {
-      throw new Error('Replacement cleanup must name every live project surface in its Papers window.');
+    const ids = oldSurfaces.map((surface) => surface.surfaceId);
+    if (new Set(ids).size !== ids.length) {
+      throw new Error('Replacement cleanup must name unique old surface identities.');
     }
-    const targets = ids.map((surfaceId) => {
+    const oldTopology = this.deps.workspaceTopology?.(windowId) ?? null;
+    if (!oldTopology) throw new Error('That Papers window has not committed workspace topology.');
+    this.validateWorkspaceTopologyAgainstSet(windowId, oldTopology, oldSurfaces);
+    const targets = oldSurfaces.map(({ surfaceId, projectId }) => {
       const surface = this.deps.logicalSurfaces.get(surfaceId);
-      if (!surface || surface.windowId !== windowId || surface.kind !== 'project') {
+      if (!surface || surface.windowId !== windowId || surface.kind !== 'project' || surface.projectId !== projectId) {
         throw new Error('Replacement cleanup names a surface outside its Papers window.');
       }
       return surface;

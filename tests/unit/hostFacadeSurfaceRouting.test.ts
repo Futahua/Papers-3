@@ -318,18 +318,35 @@ describe('surface routing in the host facade', () => {
   });
 
   it('bulk replacement cleanup retires every old surface without intermediate commits or events', () => {
-    const { facade, surfaces, logicalSurfaces, closeAttachedProjectSurface, setWorkspaceTopology, sendToWindow } = createFacade();
+    const {
+      facade, surfaces, logicalSurfaces, closeAttachedProjectSurface,
+      setWorkspaceTopology, sendToWindow, workspaceTopologies,
+    } = createFacade();
     const first = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     const second = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    const freshFirst = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const freshSecond = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    let oldTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: first.surfaceId, projectId: PROJECT, title: 'Old A',
+    });
+    oldTopology = openWorkspaceSurface(oldTopology, {
+      surfaceId: second.surfaceId, projectId: OTHER, title: 'Old B',
+    });
+    workspaceTopologies.set(1, oldTopology);
     surfaces.bind(FRAME, { surfaceId: first.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project' });
     surfaces.bind(WIDGET, { surfaceId: second.surfaceId, projectId: OTHER, windowId: 1, kind: 'widget' });
 
-    facade.retireWorkspaceSurfacesForReplacement(1, [first.surfaceId, second.surfaceId]);
+    facade.retireWorkspaceSurfacesForReplacement(1, [
+      { surfaceId: first.surfaceId, projectId: PROJECT },
+      { surfaceId: second.surfaceId, projectId: OTHER },
+    ]);
 
     expect(closeAttachedProjectSurface.mock.calls).toEqual([
       [1, first.surfaceId], [1, second.surfaceId],
     ]);
-    expect(logicalSurfaces.project()).toEqual([]);
+    expect(logicalSurfaces.project().map((surface) => surface.surfaceId)).toEqual([
+      freshFirst.surfaceId, freshSecond.surfaceId,
+    ]);
     expect(surfaces.contextForSender(FRAME)).toBeNull();
     expect(surfaces.contextForSender(WIDGET)).toBeNull();
     expect(setWorkspaceTopology).not.toHaveBeenCalled();
@@ -337,11 +354,16 @@ describe('surface routing in the host facade', () => {
   });
 
   it('bulk replacement cleanup validates the complete old set before mutating', () => {
-    const { facade, logicalSurfaces, closeAttachedProjectSurface } = createFacade();
+    const { facade, logicalSurfaces, closeAttachedProjectSurface, workspaceTopologies } = createFacade();
     const first = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     const second = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    workspaceTopologies.set(1, openWorkspaceSurface(openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: first.surfaceId, projectId: PROJECT, title: 'A',
+    }), { surfaceId: second.surfaceId, projectId: OTHER, title: 'B' }));
 
-    expect(() => facade.retireWorkspaceSurfacesForReplacement(1, [first.surfaceId])).toThrow(/every live project surface/);
+    expect(() => facade.retireWorkspaceSurfacesForReplacement(1, [
+      { surfaceId: first.surfaceId, projectId: PROJECT },
+    ])).toThrow(/expected project surface/);
     expect(logicalSurfaces.get(first.surfaceId)).not.toBeNull();
     expect(logicalSurfaces.get(second.surfaceId)).not.toBeNull();
     expect(closeAttachedProjectSurface).not.toHaveBeenCalled();

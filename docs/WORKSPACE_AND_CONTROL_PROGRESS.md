@@ -697,16 +697,19 @@ fixture/restart failures; the focused A1 acceptance tests are green.
 
 - [x] Validate a prospective topology against an explicit `{surfaceId,
   projectId}` set instead of requiring it to equal the currently live set.
-- [x] Add all-or-nothing bulk replacement cleanup that closes native
-  presentations, retires logical surfaces, and unbinds senders without
-  intermediate topology commits or per-surface close events.
+- [x] Add all-or-nothing bulk replacement cleanup that accepts the explicit
+  canonical old `{surfaceId, projectId}` set, closes native presentations,
+  retires those logical surfaces, and unbinds senders without intermediate
+  topology commits or per-surface close events; unrelated fresh replacement
+  surfaces may coexist and remain untouched.
 - [x] Add unit coverage for prospective validation, exact complete-set
   enforcement, and no-mutation-on-invalid-cleanup.
 - [ ] Reviewer sign-off.
 
 A2.1a validation: typecheck passed and focused host-facade unit tests passed
-27/27. The production seam is intentionally not used by ordinary close; it is
-ready for the named-layout replace-load transaction after reviewer review.
+27/27, including old+fresh coexistence and invalid-set no-mutation cases. The
+production seam is intentionally not used by ordinary close; it is ready for
+the named-layout replace-load transaction after reviewer review.
 
 ### Later gates
 
