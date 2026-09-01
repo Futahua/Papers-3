@@ -187,6 +187,13 @@ app.on('second-instance', () => {
     mainWindow.focus();
     return;
   }
+  for (const context of papersWindows.all()) {
+    if (!context.owned.window.isDestroyed()) {
+      context.owned.window.show();
+      context.owned.window.focus();
+      return;
+    }
+  }
   app.quit();
 });
 
@@ -1284,6 +1291,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       const widgetClose = widgetSession!.closeAll().catch(() => undefined);
       windowPickSession.cancel().catch(() => undefined);
       capabilityQuitPromise = Promise.all([detachClose, widgetClose, windowCapabilityService.stop().catch(() => undefined)]).then(() => {
+        hermesSurface.shutdown();
         capabilityQuitComplete = true;
         app.quit();
       });
@@ -1402,7 +1410,6 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     // Releasing the dock is not shutting Hermes down: Papers owns the docking
     // connection, not Hermes's lifetime.
     if (papersWindows.hermesDockOwner() === ownedWindowId) papersWindows.setHermesDockOwner(null);
-    hermesSurface.shutdown();
     // The project, detached and widget senders unbind themselves when their
     // WebContents dies, but the host sender has no such hook -- without this
     // its binding survives as stale registry data. It matters once Phase 1B
@@ -1415,10 +1422,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     // released: a widget outliving its window would be an authorized project
     // sender with no routing context.
     void widgetSession?.closeOwnedByWindow(ownedWindowId);
+    const ownedHostView = papersWindows.get(ownedWindowId)?.owned.hostView;
     surfaceContexts.unbindWindow(ownedWindowId);
     papersWindows.remove(ownedWindowId);
-    mainWindow = null;
-    hostView = null;
+    if (mainWindow?.id === ownedWindowId) mainWindow = null;
+    if (hostView === ownedHostView) hostView = null;
   });
 }
 
