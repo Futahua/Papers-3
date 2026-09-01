@@ -534,6 +534,12 @@ async function bootstrap(): Promise<void> {
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
     clearEnteredBackpackEverywhere: (backpackId) => papersWindows.clearEnteredBackpackEverywhere(backpackId),
+    retireBackpackProjectSurfaces: async (backpackId) => {
+      await Promise.all([
+        detachSession?.closeProject(backpackId).catch(() => undefined),
+        widgetSession?.closeProject(backpackId).catch(() => undefined),
+      ]);
+    },
     restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
     setHermesDockOwner: (windowId) => papersWindows.setHermesDockOwner(windowId),
     // The Canvas runtime is still application-level and attached to the first
