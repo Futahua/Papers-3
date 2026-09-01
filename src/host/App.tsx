@@ -100,8 +100,10 @@ export function App(): React.JSX.Element {
         // Another window may archive/remove the Backpack while this renderer
         // is showing it. The main process already tore down the surface; this
         // synchronizes the local React state with that authoritative event.
-        setProjectUrl(null);
-        setEntered(null);
+        void bridge.backpackProject.close().catch(() => undefined).finally(() => {
+          setProjectUrl(null);
+          setEntered(null);
+        });
         setView('backpacks');
       }),
       bridge.events.onHermesSurface(setHermes),

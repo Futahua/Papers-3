@@ -18,6 +18,8 @@ function createFacade() {
   const facade = new PapersHostFacade({
     surfaces,
     windowIdForSender: () => 1,
+    hostWindowForSender: () => 1,
+    setEnteredBackpack: vi.fn(),
     registry: {
       find: (id: string) => (id === PROJECT || id === OTHER ? { id, archived: false } : null),
     },
