@@ -134,12 +134,19 @@ function createHermesFacade({
   showDetached?: () => Promise<HermesSurfaceState>;
 } = {}) {
   const sent: Array<{ windowId: number; channel: string; payload: unknown }> = [];
+  let currentState = surfaceState;
   const surface = {
-    state: surfaceState,
-    dock: vi.fn(dock),
+    get state() { return currentState; },
+    dock: vi.fn(async () => {
+      currentState = await dock();
+      return currentState;
+    }),
     setDockBounds: vi.fn(),
     hideDock: vi.fn(async () => {}),
-    showDetached: vi.fn(showDetached),
+    showDetached: vi.fn(async () => {
+      currentState = await showDetached();
+      return currentState;
+    }),
     hideDetached: vi.fn(async () => {}),
   };
   let owner: number | null = 2;
@@ -203,6 +210,49 @@ describe('Hermes dock ownership across windows', () => {
 
     expect(owner()).toBe(2);
     expect(facade.hermesSurfaceStatus(A)).toMatchObject({ placement: 'docked', status: 'error', ownedByThisWindow: false });
+  });
+
+  it('serializes overlapping docks so an older failure cannot roll back a newer success', async () => {
+    let settleFirst!: (state: HermesSurfaceState) => void;
+    const first = new Promise<HermesSurfaceState>((resolve) => { settleFirst = resolve; });
+    const ready = { placement: 'docked', status: 'ready' } satisfies HermesSurfaceState;
+    let call = 0;
+    const { facade, surface, owner } = createHermesFacade({
+      dock: async () => (++call === 1 ? first : ready),
+    });
+
+    const older = facade.dockHermes(A, { x: 0, y: 0, width: 400, height: 800 });
+    await vi.waitFor(() => expect(surface.dock).toHaveBeenCalledTimes(1));
+    const newer = facade.dockHermes(B, { x: 10, y: 10, width: 400, height: 800 });
+    await Promise.resolve();
+    expect(surface.dock).toHaveBeenCalledTimes(1);
+
+    settleFirst({ placement: 'docked', status: 'error', detail: 'older failed' });
+    await older;
+    await newer;
+
+    expect(surface.dock).toHaveBeenCalledTimes(2);
+    expect(owner()).toBe(2);
+  });
+
+  it('serializes detach after a pending dock so final placement and ownership agree', async () => {
+    let settleDock!: (state: HermesSurfaceState) => void;
+    const pendingDock = new Promise<HermesSurfaceState>((resolve) => { settleDock = resolve; });
+    const { facade, surface, owner } = createHermesFacade({ dock: async () => pendingDock });
+
+    const docking = facade.dockHermes(A, { x: 0, y: 0, width: 400, height: 800 });
+    await vi.waitFor(() => expect(surface.dock).toHaveBeenCalledTimes(1));
+    const detaching = facade.showHermesWindow();
+    await Promise.resolve();
+    expect(surface.showDetached).not.toHaveBeenCalled();
+
+    settleDock({ placement: 'docked', status: 'ready' });
+    await docking;
+    await detaching;
+
+    expect(surface.showDetached).toHaveBeenCalledTimes(1);
+    expect(surface.state).toMatchObject({ placement: 'detached', status: 'ready' });
+    expect(owner()).toBeNull();
   });
 
   it('refuses to dock for a sender that is not a Papers window', async () => {

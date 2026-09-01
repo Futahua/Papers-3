@@ -125,8 +125,24 @@ export interface FacadeDeps {
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private readonly pendingPermissionPrompts = new Map<string, (d: PermissionDecision) => void>();
   private readonly pendingInvocationPreviews = new Map<string, (approved: boolean) => void>();
+  private hermesPlacementTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: FacadeDeps) {}
+
+  /** Hermes has one physical/global placement. Serialize every mutation from
+   * request authorization through ownership commit/rollback and projection so
+   * an older operation can never finish after and overwrite a newer one. */
+  private runHermesPlacement<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.hermesPlacementTail.then(
+      () => operation(),
+      () => operation(),
+    );
+    this.hermesPlacementTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 
   // ---------------------------------------------------------------- events
   /** Deliver to exactly one surface. Used where the answer belongs to the
@@ -825,16 +841,18 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * live agent session between windows by accident (D-021).
    */
   async dockHermes(senderId: number, bounds: SurfaceBounds): Promise<unknown> {
-    const windowId = this.deps.hostWindowForSender(senderId);
-    if (windowId === null) throw new Error('Only a Papers window may dock Hermes.');
-    const previousOwner = this.deps.hermesDockOwner();
-    this.deps.setHermesDockOwner(windowId);
-    const result = await this.deps.hermesSurface.dock(bounds);
-    if (result.placement !== 'docked' || result.status !== 'ready') {
-      this.deps.setHermesDockOwner(previousOwner);
-    }
-    this.emitHermesSurface();
-    return this.hermesPresentationFor(windowId);
+    return this.runHermesPlacement(async () => {
+      const windowId = this.deps.hostWindowForSender(senderId);
+      if (windowId === null) throw new Error('Only a Papers window may dock Hermes.');
+      const previousOwner = this.deps.hermesDockOwner();
+      this.deps.setHermesDockOwner(windowId);
+      const result = await this.deps.hermesSurface.dock(bounds);
+      if (result.placement !== 'docked' || result.status !== 'ready') {
+        this.deps.setHermesDockOwner(previousOwner);
+      }
+      this.emitHermesSurface();
+      return this.hermesPresentationFor(windowId);
+    });
   }
 
   /** Keep the docked Hermes window aligned as Papers moves/resizes. Accepted
@@ -849,32 +867,38 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * Only the owner may hide it; a non-owner that wants Hermes uses dock,
    * which transfers ownership rather than taking it away from someone. */
   async hideHermesDock(senderId: number): Promise<void> {
-    if (!this.isHermesDockOwner(senderId)) return;
-    await this.deps.hermesSurface.hideDock();
-    this.deps.setHermesDockOwner(null);
-    this.emitHermesSurface();
+    return this.runHermesPlacement(async () => {
+      if (!this.isHermesDockOwner(senderId)) return;
+      await this.deps.hermesSurface.hideDock();
+      this.deps.setHermesDockOwner(null);
+      this.emitHermesSurface();
+    });
   }
 
   /** Detach Hermes into a free-floating window (same experience, same session). */
   async showHermesWindow(): Promise<unknown> {
-    // Hermes stays global. Entering a Backpack never changes Hermes's working
-    // directory, so the window launches with no Backpack-derived context.
-    const previousOwner = this.deps.hermesDockOwner();
-    const result = await this.deps.hermesSurface.showDetached();
-    if (result.placement === 'detached' && result.status === 'ready') {
-      // A detached Hermes belongs to no Papers window.
-      this.deps.setHermesDockOwner(null);
-    } else {
-      this.deps.setHermesDockOwner(previousOwner);
-    }
-    this.emitHermesSurface();
-    return result;
+    return this.runHermesPlacement(async () => {
+      // Hermes stays global. Entering a Backpack never changes Hermes's working
+      // directory, so the window launches with no Backpack-derived context.
+      const previousOwner = this.deps.hermesDockOwner();
+      const result = await this.deps.hermesSurface.showDetached();
+      if (result.placement === 'detached' && result.status === 'ready') {
+        // A detached Hermes belongs to no Papers window.
+        this.deps.setHermesDockOwner(null);
+      } else {
+        this.deps.setHermesDockOwner(previousOwner);
+      }
+      this.emitHermesSurface();
+      return result;
+    });
   }
 
   /** Hide the detached window without terminating Hermes or its session. */
   async hideHermesWindow(): Promise<void> {
-    await this.deps.hermesSurface.hideDetached();
-    this.emitHermesSurface();
+    return this.runHermesPlacement(async () => {
+      await this.deps.hermesSurface.hideDetached();
+      this.emitHermesSurface();
+    });
   }
 
   private isHermesDockOwner(senderId: number): boolean {
