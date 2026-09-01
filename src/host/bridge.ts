@@ -10,6 +10,7 @@ import type {
   ProgramStatus,
   ShelfContribution,
 } from '@shared/types';
+import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 export interface BackpacksList {
   backpacks: BackpackSummary[];
@@ -146,6 +147,7 @@ interface HostBridge {
     setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setOverlayActive(active: boolean): Promise<void>;
     setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
+    commitWorkspaceTopology(topology: WorkspaceTopologyV1): Promise<void>;
   };
   settings: {
     get(): Promise<{

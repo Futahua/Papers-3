@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { workspaceTopologySchema } from '@shared/workspaceTopology';
 
 export const PAPERS_CONTROL_PROTOCOL_VERSION = 1;
 
@@ -31,6 +32,7 @@ const surfaceTargetSchema = z.object({
   windowId: z.number().int(),
   surfaceId: z.string().min(1).max(128),
 }).strict();
+const windowTargetSchema = z.object({ windowId: z.number().int() }).strict();
 
 const controlWindowSchema = z.object({
   windowId: z.number().int(),
@@ -70,6 +72,12 @@ export const papersControlCommands = {
     scope: 'surface',
     effect: 'query',
   },
+  'inspect.workspace': {
+    input: windowTargetSchema,
+    output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
+    scope: 'window',
+    effect: 'query',
+  },
   'window.create': {
     input: emptyParamsSchema,
     output: z.object({ windowId: z.number().int() }).strict(),
@@ -93,6 +101,7 @@ export interface PapersControlDependencies {
    * reuse sender-based authorization.
    */
   surface(target: { windowId: number; surfaceId: string }): unknown;
+  workspace?(windowId: number): unknown;
   snapshot(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
@@ -127,6 +136,12 @@ export async function dispatchPapersControl(
       const found = dependencies.surface(target);
       if (!found) throw new Error('That surface is not open in that Papers window.');
       return papersControlCommands[request.method].output.parse(found);
+    }
+    case 'inspect.workspace': {
+      const { windowId } = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const topology = dependencies.workspace?.(windowId) ?? null;
+      if (!topology) throw new Error('That Papers window has not committed workspace topology.');
+      return papersControlCommands[request.method].output.parse({ windowId, topology });
     }
     case 'inspect.snapshot': return papersControlCommands[request.method].output.parse(dependencies.snapshot());
     case 'inspect.windows': return papersControlCommands[request.method].output.parse(dependencies.windows());

@@ -51,8 +51,12 @@ export function WorkspaceDock(props: {
   onClose: (surfaceId: string) => void;
   onSplit: (surfaceId: string, direction: 'right' | 'down') => void;
   onMove: (surfaceId: string, targetGroupId: string, targetIndex: number) => void;
+  onCommitLayout: (snapshot: {
+    groups: Array<{ groupId: string; surfaceIds: string[] }>;
+    rootWeights?: number[];
+  }) => void;
 }): React.JSX.Element {
-  const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove } = props;
+  const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onCommitLayout } = props;
   const apiRef = useRef<DockviewApi | null>(null);
   const projectsRef = useRef(projects);
   const topologyRef = useRef(topology);
@@ -73,13 +77,36 @@ export function WorkspaceDock(props: {
   }, []);
 
   const refreshGroupIds = useCallback((api: DockviewApi): void => {
+    const nextGroupIds = new Map<string, string>();
     for (const group of topologyRef.current.groups) {
       const matchingPanel = group.surfaceIds
         .map((id) => api.getPanel(id))
         .find((panel) => panel !== undefined);
-      if (matchingPanel) groupIds.current.set(matchingPanel.group.id, group.groupId);
+      if (matchingPanel) nextGroupIds.set(matchingPanel.group.id, group.groupId);
     }
+    groupIds.current = nextGroupIds;
   }, []);
+
+  const commitLayout = useCallback((api: DockviewApi): void => {
+    refreshGroupIds(api);
+    const groups = api.groups.flatMap((group) => {
+      const groupId = groupIds.current.get(group.id);
+      return groupId ? [{ groupId, surfaceIds: group.panels.map((panel) => panel.id) }] : [];
+    });
+    const root = topologyRef.current.root;
+    let rootWeights: number[] | undefined;
+    if (root.kind === 'split' && root.children.every((child) => child.kind === 'group')) {
+      const byPapersId = new Map([...groupIds.current].map(([dockviewId, papersId]) => [papersId, dockviewId]));
+      const sizes = root.children.map((child) => {
+        if (child.kind !== 'group') return 0;
+        const dockviewId = byPapersId.get(child.groupId);
+        const group = dockviewId ? api.groups.find((candidate) => candidate.id === dockviewId) : undefined;
+        return root.orientation === 'horizontal' ? group?.api.width ?? 0 : group?.api.height ?? 0;
+      });
+      if (sizes.every((size) => size > 0)) rootWeights = sizes;
+    }
+    onCommitLayout({ groups, ...(rootWeights ? { rootWeights } : {}) });
+  }, [onCommitLayout, refreshGroupIds]);
 
   useEffect(() => {
     const restore = (): void => setNativeSuspended(false);
@@ -126,14 +153,23 @@ export function WorkspaceDock(props: {
       const targetIndex = to.panels.findIndex((candidate) => candidate.id === panel.id);
       if (targetIndex >= 0) onMove(panel.id, targetGroupId, targetIndex);
     }));
-    apiSubscriptions.current.push(event.api.onWillShowOverlay(() => {
+    apiSubscriptions.current.push(event.api.onDidMutateLayout(() => {
+      commitLayout(event.api);
+      setNativeSuspended(false);
+    }));
+    apiSubscriptions.current.push(event.api.onDidLayoutChange(() => commitLayout(event.api)));
+    apiSubscriptions.current.push(event.api.onWillShowOverlay((overlay) => {
+      if ((overlay.kind === 'content' || overlay.kind === 'edge') && overlay.position !== 'center') {
+        overlay.preventDefault();
+        return;
+      }
       flushSync(() => setNativeSuspended(true));
     }));
     apiSubscriptions.current.push(event.api.onDidDrop(() => {
       refreshGroupIds(event.api);
       setNativeSuspended(false);
     }));
-  }, [addMissingPanels, onActivate, onClose, onMove, refreshGroupIds]);
+  }, [addMissingPanels, commitLayout, onActivate, onClose, onMove, refreshGroupIds]);
 
   useEffect(() => {
     const api = apiRef.current;
@@ -153,6 +189,8 @@ export function WorkspaceDock(props: {
   const splitActive = useCallback((direction: 'right' | 'down'): void => {
     const panel = apiRef.current?.activePanel;
     if (!panel) return;
+    const source = topologyRef.current.groups.find((group) => group.surfaceIds.includes(panel.id));
+    if (!source || source.surfaceIds.length < 2) return;
     panel.api.moveTo({
       group: panel.group,
       position: direction === 'right' ? 'right' : 'bottom',
@@ -161,11 +199,16 @@ export function WorkspaceDock(props: {
     groupIds.current.set(panel.group.id, `group-${panel.id}`);
   }, [onSplit]);
 
+  const activeGroup = activeSurfaceId
+    ? topology.groups.find((group) => group.surfaceIds.includes(activeSurfaceId))
+    : undefined;
+  const canSplit = Boolean(activeSurfaceId && activeGroup && activeGroup.surfaceIds.length > 1);
+
   return (
     <section className="workspace-dock" aria-label="Workspace tabs">
       <div className="workspace-layout-actions" aria-label="Workspace layout actions">
-        <button type="button" onClick={() => splitActive('right')} disabled={!activeSurfaceId}>Split Right</button>
-        <button type="button" onClick={() => splitActive('down')} disabled={!activeSurfaceId}>Split Down</button>
+        <button type="button" onClick={() => splitActive('right')} disabled={!canSplit}>Split Right</button>
+        <button type="button" onClick={() => splitActive('down')} disabled={!canSplit}>Split Down</button>
       </div>
       <NativePresentationSuspended.Provider value={nativeSuspended}>
         <DockviewReact

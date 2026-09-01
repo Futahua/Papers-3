@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import { backpackNameSchema } from '@shared/schemas';
 import type { PermissionDecision } from '@shared/types';
+import { parseWorkspaceTopology, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 export interface HostFacade {
   isHostSender(sender: WebContents): boolean;
@@ -76,6 +77,7 @@ export interface HostFacade {
   setTransparentWindow(enabled: boolean): Promise<void>;
   saveWindowBounds(senderId: number): Promise<{ x: number; y: number; width: number; height: number } | null>;
   clearWindowBounds(): Promise<void>;
+  commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void;
 
   listPermissions(): unknown;
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
@@ -306,6 +308,9 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:settings:save-window-bounds', (event) => facade.saveWindowBounds(event.sender.id));
   handle('host:settings:clear-window-bounds', () => facade.clearWindowBounds());
+  handle('host:workspace:commit-topology', (event, topology) =>
+    facade.commitWorkspaceTopology(event.sender.id, parseWorkspaceTopology(topology)),
+  );
 
   handle('host:permissions:list', () => facade.listPermissions());
   handle('host:permissions:revoke', (_e, backpackId, programId, capability) =>

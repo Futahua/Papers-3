@@ -7,6 +7,8 @@ import {
   createWorkspaceTopology,
   openWorkspaceSurface,
   moveWorkspaceSurface,
+  reorderWorkspaceGroup,
+  setRootWorkspaceSplitWeights,
   splitWorkspaceGroup,
 } from '../../src/shared/workspaceTopology';
 
@@ -109,5 +111,21 @@ describe('workspace topology', () => {
       groupId: 'group-main', surfaceIds: ['sf-a', 'sf-b'], activeSurfaceId: 'sf-b',
     }]);
     expect(topology.root).toEqual({ kind: 'group', groupId: 'group-main' });
+  });
+
+  it('commits exact tab order and normalized split weights', () => {
+    let topology = createWorkspaceTopology();
+    topology = openWorkspaceSurface(topology, { surfaceId: 'sf-a', projectId: 'bp-a', title: 'A' });
+    topology = openWorkspaceSurface(topology, { surfaceId: 'sf-b', projectId: 'bp-b', title: 'B' });
+    topology = reorderWorkspaceGroup(topology, 'group-main', ['sf-b', 'sf-a']);
+    expect(topology.groups[0]?.surfaceIds).toEqual(['sf-b', 'sf-a']);
+    expect(() => reorderWorkspaceGroup(topology, 'group-main', ['sf-a'])).toThrow(/every surface/);
+
+    topology = splitWorkspaceGroup(topology, {
+      groupId: 'group-main', newGroupId: 'group-right', surfaceId: 'sf-a',
+      orientation: 'horizontal', position: 'after',
+    });
+    topology = setRootWorkspaceSplitWeights(topology, [3, 1]);
+    expect(topology.root).toMatchObject({ weights: [0.75, 0.25] });
   });
 });

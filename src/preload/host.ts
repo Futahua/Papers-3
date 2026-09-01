@@ -81,6 +81,8 @@ const api = {
     setOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-overlay', active),
     setTitleBarOverlay: (color: string, symbolColor: string) =>
       ipcRenderer.invoke('host:layout:set-titlebar', color, symbolColor),
+    commitWorkspaceTopology: (topology: unknown) =>
+      ipcRenderer.invoke('host:workspace:commit-topology', topology),
   },
 
   settings: {

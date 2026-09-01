@@ -41,6 +41,7 @@ import type { PermissionPrompter } from './capabilities/capabilityBroker';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { backpackDir, canvasFile, type PapersPaths } from './persistence/paths';
 import type { HostFacade } from './ipc/hostIpc';
+import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 interface CanvasPersistedState {
   schemaVersion: 1;
@@ -144,6 +145,7 @@ export interface FacadeDeps {
   saveWindowBounds: (senderId: number) => Promise<{ x: number; y: number; width: number; height: number } | null>;
   /** Forget the preset so Papers reopens at its default size. */
   clearWindowBounds: () => Promise<void>;
+  setWorkspaceTopology: (windowId: number, topology: WorkspaceTopologyV1) => void;
 }
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
@@ -827,6 +829,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   clearWindowBounds(): Promise<void> {
     return this.deps.clearWindowBounds();
+  }
+
+  commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may commit workspace topology.');
+    this.deps.setWorkspaceTopology(windowId, topology);
   }
 
   // ----------------------------------------------------------- permissions

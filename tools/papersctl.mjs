@@ -2,7 +2,7 @@
 import { connectPapersControl, readDescriptor } from './papersControlClient.mjs';
 
 function usage() {
-  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|inspect.surfaces|inspect.surface|window.create> [--descriptor <path>] [--window <id>] [--surface <id>]');
+  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|inspect.surfaces|inspect.surface|inspect.workspace|window.create> [--descriptor <path>] [--window <id>] [--surface <id>]');
 }
 
 const args = process.argv.slice(2);
@@ -23,10 +23,12 @@ if (!method || !descriptorPath) {
         windowId: Number(args[windowFlag + 1]),
         surfaceId: args[surfaceFlag + 1],
       }
-    : {};
-  if (method === 'inspect.surface' && (
+    : method === 'inspect.workspace'
+      ? { windowId: Number(args[windowFlag + 1]) }
+      : {};
+  if ((method === 'inspect.surface' && (
     windowFlag < 0 || surfaceFlag < 0 || !Number.isInteger(params.windowId) || !params.surfaceId
-  )) {
+  )) || (method === 'inspect.workspace' && (windowFlag < 0 || !Number.isInteger(params.windowId)))) {
     usage();
     process.exitCode = 2;
   } else {

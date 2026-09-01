@@ -33,6 +33,36 @@ export interface WorkspaceTopologyV1 {
   focusedGroupId: string;
 }
 
+const workspaceLayoutNodeSchema: z.ZodType<WorkspaceLayoutNode> = z.lazy(() => z.union([
+  z.object({ kind: z.literal('group'), groupId: z.string().min(1) }).strict(),
+  z.object({
+    kind: z.literal('split'),
+    orientation: z.enum(['horizontal', 'vertical']),
+    weights: z.array(z.number().positive()),
+    children: z.array(workspaceLayoutNodeSchema).min(2),
+  }).strict(),
+]));
+
+export const workspaceTopologySchema: z.ZodType<WorkspaceTopologyV1> = z.object({
+  schemaVersion: z.literal(WORKSPACE_TOPOLOGY_SCHEMA_VERSION),
+  surfaces: z.array(z.object({
+    surfaceId: z.string().min(1), projectId: z.string().min(1), title: z.string(),
+  }).strict()),
+  groups: z.array(z.object({
+    groupId: z.string().min(1),
+    surfaceIds: z.array(z.string().min(1)),
+    activeSurfaceId: z.string().min(1).nullable(),
+  }).strict()).min(1),
+  root: workspaceLayoutNodeSchema,
+  focusedGroupId: z.string().min(1),
+}).strict();
+
+export function parseWorkspaceTopology(value: unknown): WorkspaceTopologyV1 {
+  const topology = workspaceTopologySchema.parse(value);
+  assertValidWorkspaceTopology(topology);
+  return topology;
+}
+
 export function createWorkspaceTopology(groupId = 'group-main'): WorkspaceTopologyV1 {
   return {
     schemaVersion: WORKSPACE_TOPOLOGY_SCHEMA_VERSION,
@@ -122,6 +152,43 @@ export function activateWorkspaceSurface(topology: WorkspaceTopologyV1, surfaceI
       : { ...candidate, surfaceIds: [...candidate.surfaceIds] }),
     focusedGroupId: group.groupId,
   };
+  assertValidWorkspaceTopology(next);
+  return next;
+}
+
+export function reorderWorkspaceGroup(
+  topology: WorkspaceTopologyV1,
+  groupId: string,
+  orderedSurfaceIds: string[],
+): WorkspaceTopologyV1 {
+  const group = topology.groups.find((candidate) => candidate.groupId === groupId);
+  if (!group) throw new Error(`group ${groupId} does not exist`);
+  if (orderedSurfaceIds.length !== group.surfaceIds.length
+    || new Set(orderedSurfaceIds).size !== orderedSurfaceIds.length
+    || orderedSurfaceIds.some((surfaceId) => !group.surfaceIds.includes(surfaceId))) {
+    throw new Error(`reorder must contain every surface in group ${groupId} exactly once`);
+  }
+  const next = {
+    ...topology,
+    groups: topology.groups.map((candidate) => candidate.groupId === groupId
+      ? { ...candidate, surfaceIds: [...orderedSurfaceIds] }
+      : { ...candidate, surfaceIds: [...candidate.surfaceIds] }),
+  };
+  assertValidWorkspaceTopology(next);
+  return next;
+}
+
+export function setRootWorkspaceSplitWeights(
+  topology: WorkspaceTopologyV1,
+  weights: number[],
+): WorkspaceTopologyV1 {
+  if (topology.root.kind !== 'split') return topology;
+  if (weights.length !== topology.root.children.length || weights.some((weight) => !Number.isFinite(weight) || weight <= 0)) {
+    throw new Error('split weights must match the root children');
+  }
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const normalized = weights.map((weight) => weight / total);
+  const next = { ...topology, root: { ...topology.root, weights: normalized } };
   assertValidWorkspaceTopology(next);
   return next;
 }
@@ -262,3 +329,4 @@ export function splitWorkspaceGroup(
   assertValidWorkspaceTopology(next);
   return next;
 }
+import { z } from 'zod';

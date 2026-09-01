@@ -12,10 +12,10 @@ const B = 'bp-22222222-2222-4222-8222-222222222222';
 let launched: LaunchedApp;
 let descriptorPath: string;
 
-async function call(method: string): Promise<unknown> {
+async function call(method: string, params: unknown = {}): Promise<unknown> {
   const connection = await connectPapersControl(await readDescriptor(descriptorPath));
   try {
-    const response = await connection.call(method) as { ok: boolean; result?: unknown; error?: string };
+    const response = await connection.call(method, params) as { ok: boolean; result?: unknown; error?: string };
     if (!response.ok) throw new Error(response.error ?? 'control request failed');
     return response.result;
   } finally {
@@ -108,6 +108,22 @@ describe('A1 workspace tabs', () => {
     expect(await evalInHost<string[]>(launched.app, `[...document.querySelectorAll('.dv-tab')]
       .map((tab) => tab.textContent?.trim() ?? '').filter(Boolean)`)).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
     const hostPage = await launched.app.firstWindow();
+    const windowId = (await call('inspect.surfaces') as Array<{ windowId: number }>)[0]!.windowId;
+    const alphaTab = hostPage.getByRole('tab', { name: 'Alpha' });
+    const alphaBox = await alphaTab.boundingBox();
+    await hostPage.getByRole('tab', { name: 'Beta' }).dragTo(alphaTab, {
+      targetPosition: { x: 2, y: Math.max(2, Math.round((alphaBox?.height ?? 20) / 2)) },
+    });
+    await waitFor(() => evalInHost<boolean>(launched.app, `[...document.querySelectorAll('.dv-tab')]
+      .map((tab) => tab.textContent?.trim()).filter(Boolean).join(',') === 'Beta,Alpha'`),
+    10_000, 'Dockview tab reorder');
+    await waitFor(async () => {
+      const workspace = await call('inspect.workspace', { windowId }) as {
+        topology: { groups: Array<{ surfaceIds: string[] }>; surfaces: Array<{ surfaceId: string; projectId: string }> };
+      };
+      const byProject = new Map(workspace.topology.surfaces.map((surface) => [surface.projectId, surface.surfaceId]));
+      return workspace.topology.groups[0]?.surfaceIds.join(',') === `${byProject.get(B)},${byProject.get(A)}`;
+    }, 10_000, 'Papers topology follows real tab reorder');
     await hostPage.getByRole('tab', { name: 'Alpha' }).click();
     await waitFor(async () => {
       const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
@@ -122,6 +138,37 @@ describe('A1 workspace tabs', () => {
       return surfaces.filter((surface) => surface.presentation === 'visible').length === 2;
     }, 10_000, 'two visible native split panes');
     expect(await hostPage.locator('.dv-groupview').count()).toBe(2);
+
+    const sash = hostPage.locator('.dv-sash.dv-enabled').first();
+    const sashBox = await sash.boundingBox();
+    expect(sashBox).not.toBeNull();
+    await hostPage.mouse.move((sashBox?.x ?? 0) + 2, (sashBox?.y ?? 0) + 20);
+    await hostPage.mouse.down();
+    await hostPage.mouse.move((sashBox?.x ?? 0) + 100, (sashBox?.y ?? 0) + 20, { steps: 5 });
+    await hostPage.mouse.up();
+    await waitFor(async () => {
+      const workspace = await call('inspect.workspace', { windowId }) as { topology: { root: { weights?: number[] } } };
+      const weights = workspace.topology.root.weights;
+      return Boolean(weights && Math.abs((weights[0] ?? 0) - 0.5) > 0.05);
+    }, 10_000, 'Papers topology follows real sash resize');
+
+    const movedAlphaBox = await hostPage.getByRole('tab', { name: 'Alpha' }).boundingBox();
+    const targetBetaBox = await hostPage.getByRole('tab', { name: 'Beta' }).boundingBox();
+    expect(movedAlphaBox).not.toBeNull();
+    expect(targetBetaBox).not.toBeNull();
+    await hostPage.mouse.move((movedAlphaBox?.x ?? 0) + 10, (movedAlphaBox?.y ?? 0) + 10);
+    await hostPage.mouse.down();
+    await hostPage.waitForTimeout(150);
+    await hostPage.mouse.move((movedAlphaBox?.x ?? 0) + 25, (movedAlphaBox?.y ?? 0) + 10, { steps: 3 });
+    await hostPage.mouse.move((targetBetaBox?.x ?? 0) + 10, (targetBetaBox?.y ?? 0) + 10, { steps: 12 });
+    await hostPage.waitForTimeout(150);
+    await hostPage.mouse.up();
+    await waitFor(async () => {
+      const workspace = await call('inspect.workspace', { windowId }) as { topology: { groups: unknown[]; root: { kind: string } } };
+      return workspace.topology.groups.length === 1
+        && workspace.topology.root.kind === 'group'
+        && await hostPage.locator('.dv-groupview').count() === 1;
+    }, 10_000, 'moving final tab collapses Papers and Dockview source group');
 
     await evalInBackpackProject(launched.app, `window.postMessage({ type: 'papers:project:close' }, '*')`);
     await waitFor(async () => {

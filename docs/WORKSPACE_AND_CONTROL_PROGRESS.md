@@ -336,10 +336,11 @@ renderer tabs or splits.
 - [x] Integrate layout renderer chrome without putting actual Backpack content
   into the DOM.
 - [x] Open, activate and close tabs through exact logical `surfaceId` targets.
-- [ ] Persist Dockview drag reorder into the Papers topology model.
+- [x] Persist Dockview drag reorder into the Papers topology model.
 - [x] Split Right and Split Down through explicit workspace controls; live
   Electron acceptance proves Split Right with two visible native panes.
-- [ ] Drag tabs between same-window groups.
+- [x] Drag tabs between existing same-window groups; unsupported edge-created
+  groups are rejected before Dockview mutates.
 - [x] Report the active pane rectangle to main and position/show/hide its exact
   native WCV without covering Dockview tab chrome.
 - [x] Hide relevant WCVs synchronously before Dockview drop overlays, and
@@ -393,14 +394,27 @@ A1.2 canonical-topology work in progress:
   `moveWorkspaceSurface` transition for known same-window groups.
 - [x] Collapse the source group/tree node when its final surface moves away,
   matching semantic close behavior and preventing empty product groups.
-- [ ] Prove real tab reorder and same-window group DnD update Papers topology.
+- [x] Prove real tab reorder and same-window group DnD update Papers topology.
+- [x] Synchronize user-resized root split weights into normalized Papers
+  topology weights at the committed layout boundary.
+- [x] Validate Split Right/Down against Papers topology before mutating
+  Dockview, so a one-tab group cannot diverge the two models.
+- [x] Rebuild Dockview-to-Papers group mappings atomically after committed
+  mutations and restore native presentation at that same boundary.
 - [ ] Reconcile Dockview from external Papers topology mutations.
 - [ ] Persist only validated/atomic schema-v1 Papers topology; do not persist
   Dockview JSON, sender ids, WebContents ids or native window ids.
-- [ ] Expose semantic topology inspection/control through the developer control
-  plane rather than requiring DOM inspection.
+- [x] Expose validated read-only topology through `inspect.workspace` and
+  `papersctl inspect.workspace --window`, without Dockview serialization.
 - [ ] Decide restart identity mapping separately before consuming persisted
   surface ids during automatic restoration.
+
+A1.2b validation: typecheck passed, full Vitest 652 passed / 4 skipped,
+production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
+Electron E2E 1/1 passed, and diff check passed. The live workspace workflow
+proves real reorder `[A,B] → [B,A]`, semantic `inspect.workspace`, sash-weight
+changes, existing-group DnD, final-source-group collapse, retained native
+renderer identity and authoritative project close.
 - [ ] Keyboard tab selection and accessibility acceptance.
 - [ ] Automatic restore of last tab/split workspace.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.

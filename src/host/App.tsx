@@ -12,6 +12,8 @@ import {
   closeWorkspaceSurface,
   createWorkspaceTopology,
   moveWorkspaceSurface,
+  reorderWorkspaceGroup,
+  setRootWorkspaceSplitWeights,
   openWorkspaceSurface,
   splitWorkspaceGroup,
 } from '@shared/workspaceTopology';
@@ -85,6 +87,10 @@ export function App(): React.JSX.Element {
       document.documentElement.dataset.transparentWindow = String(settings.transparentWindow);
     }).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    void host().layout.commitWorkspaceTopology(workspaceTopology).catch(() => undefined);
+  }, [workspaceTopology]);
 
   useEffect(() => {
     const bridge = host();
@@ -347,6 +353,27 @@ export function App(): React.JSX.Element {
     setWorkspaceTopology((topology) => moveWorkspaceSurface(topology, movedSurfaceId, targetGroupId, targetIndex));
   }, []);
 
+  const commitWorkspaceLayout = useCallback((snapshot: {
+    groups: Array<{ groupId: string; surfaceIds: string[] }>;
+    rootWeights?: number[];
+  }): void => {
+    setWorkspaceTopology((current) => {
+      let next = current;
+      for (const group of snapshot.groups) {
+        const existing = next.groups.find((candidate) => candidate.groupId === group.groupId);
+        if (!existing || existing.surfaceIds.length !== group.surfaceIds.length) continue;
+        if (existing.surfaceIds.every((surface, index) => surface === group.surfaceIds[index])) continue;
+        next = reorderWorkspaceGroup(next, group.groupId, group.surfaceIds);
+      }
+      if (snapshot.rootWeights && next.root.kind === 'split') {
+        const unchanged = next.root.weights.length === snapshot.rootWeights.length
+          && next.root.weights.every((weight, index) => Math.abs(weight - (snapshot.rootWeights?.[index] ?? 0)) < 0.001);
+        if (!unchanged) next = setRootWorkspaceSplitWeights(next, snapshot.rootWeights);
+      }
+      return next;
+    });
+  }, []);
+
   const openBasicOrReturnToBackpacks = (): void => {
     if (entered !== null) {
       setView('backpacks');
@@ -464,6 +491,7 @@ export function App(): React.JSX.Element {
           onClose={closeWorkspaceProject}
           onSplit={splitWorkspaceProject}
           onMove={moveWorkspaceProject}
+          onCommitLayout={commitWorkspaceLayout}
         />
       )}
 

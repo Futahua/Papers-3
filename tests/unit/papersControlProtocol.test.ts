@@ -5,8 +5,9 @@ import {
   dispatchPapersControl,
   PAPERS_CONTROL_PROTOCOL_VERSION,
 } from '../../src/main/control/papersControlProtocol';
+import { createWorkspaceTopology } from '../../src/shared/workspaceTopology';
 
-function request(method: 'inspect.snapshot' | 'inspect.windows' | 'inspect.surfaces' | 'inspect.surface' | 'window.create', params: unknown = {}) {
+function request(method: 'inspect.snapshot' | 'inspect.windows' | 'inspect.surfaces' | 'inspect.surface' | 'inspect.workspace' | 'window.create', params: unknown = {}) {
   return controlRequestSchema.parse({
     id: 'r1',
     token: 'secret',
@@ -165,6 +166,15 @@ describe('control surface targeting', () => {
   it('returns the exact surface when window and surface agree', async () => {
     await expect(dispatchPapersControl(deps(liveRegistry), targeted({ windowId: 1, surfaceId: 'sf-1' })))
       .resolves.toEqual(SURFACE);
+  });
+
+  it('returns only the validated Papers topology committed by an exact window', async () => {
+    const topology = createWorkspaceTopology();
+    const dependencies = { ...deps(liveRegistry), workspace: vi.fn((windowId: number) => windowId === 1 ? topology : null) };
+    await expect(dispatchPapersControl(dependencies, request('inspect.workspace', { windowId: 1 })))
+      .resolves.toEqual({ windowId: 1, topology });
+    await expect(dispatchPapersControl(dependencies, request('inspect.workspace', { windowId: 2 })))
+      .rejects.toThrow(/has not committed/);
   });
 
   it('refuses an unknown surface', async () => {
