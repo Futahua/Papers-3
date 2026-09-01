@@ -377,8 +377,11 @@ A1.1 lifecycle hardening after reviewer feedback:
 - the live workspace test proves A→B→A retains Alpha's sender, then closes
   Alpha from its project frame with no logical/control orphan and Beta visible;
 - window teardown remains terminal and destroys every retained native view.
+- repeated conceal/show cycles retain one destroyed/unbind listener per
+  WebContents incarnation, preventing ordinary tab switching from accumulating
+  lifecycle listeners.
 
-Validation after A1.1: typecheck passed, full Vitest 648 passed / 4 skipped,
+Validation after A1.1: typecheck passed, full Vitest 649 passed / 4 skipped,
 production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
 Electron E2E 1/1 passed, and diff check passed.
 - [ ] Keyboard tab selection and accessibility acceptance.

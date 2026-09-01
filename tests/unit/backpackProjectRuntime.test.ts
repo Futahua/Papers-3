@@ -17,6 +17,7 @@ type FakeWebContents = {
   destroyed: boolean;
   setWindowOpenHandler: ReturnType<typeof vi.fn>;
   on: ReturnType<typeof vi.fn>;
+  once: ReturnType<typeof vi.fn>;
   loadURL: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   isDestroyed: () => boolean;
@@ -60,6 +61,7 @@ vi.mock('electron', () => ({
         destroyed: false,
         setWindowOpenHandler: vi.fn(),
         on: vi.fn(),
+        once: vi.fn(),
         loadURL: vi.fn().mockResolvedValue(undefined),
         close: vi.fn(),
         isDestroyed() {
@@ -111,6 +113,24 @@ describe('BackpackProjectRuntime.hide', () => {
     expect(harness.views).toHaveLength(1);
     expect(harness.window.addChildView).toHaveBeenCalledTimes(2);
     expect(runtime.senderId).toBe(view.webContents.id);
+  });
+
+  it('registers one destroyed subscription across repeated presentations', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    const first = vi.fn();
+    const latest = vi.fn();
+
+    runtime.onFrameDestroyed(view.webContents.id, first);
+    runtime.conceal();
+    await runtime.show(PROJECT_URL);
+    runtime.onFrameDestroyed(view.webContents.id, latest);
+
+    expect(view.webContents.once).toHaveBeenCalledTimes(1);
+    const destroyed = view.webContents.once.mock.calls[0]?.[1] as (() => void) | undefined;
+    destroyed?.();
+    expect(first).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledTimes(1);
   });
 
   it('detaches and closes the shown surface once', async () => {

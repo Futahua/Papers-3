@@ -10,6 +10,8 @@ export class BackpackProjectRuntime {
   private transparent: boolean;
   private bounds: { x: number; y: number; width: number; height: number } | null = null;
   private presented = false;
+  private readonly frameDestroyedCallbacks = new Map<number, () => void>();
+  private readonly observedDestroyedFrames = new Set<number>();
 
   constructor(
     private readonly window: BaseWindow,
@@ -31,7 +33,15 @@ export class BackpackProjectRuntime {
       onDestroyed();
       return;
     }
-    view.webContents.once('destroyed', onDestroyed);
+    this.frameDestroyedCallbacks.set(senderId, onDestroyed);
+    if (this.observedDestroyedFrames.has(senderId)) return;
+    this.observedDestroyedFrames.add(senderId);
+    view.webContents.once('destroyed', () => {
+      this.observedDestroyedFrames.delete(senderId);
+      const callback = this.frameDestroyedCallbacks.get(senderId);
+      this.frameDestroyedCallbacks.delete(senderId);
+      callback?.();
+    });
   }
 
   /** The project frame's sender id, so the host can bind it to a project. */
