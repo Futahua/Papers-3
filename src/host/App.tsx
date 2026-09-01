@@ -147,6 +147,23 @@ export function App(): React.JSX.Element {
     else void host().hermes.showWindow().then(setHermes);
   }, [hermes.placement]);
 
+  const createNewWindow = useCallback((): void => {
+    void host().app.newWindow().catch((caught) => {
+      setHostErrors((previous) => [
+        ...previous,
+        {
+          component: 'Papers',
+          what: 'A new Papers window could not be opened.',
+          known: String(caught instanceof Error ? caught.message : caught),
+          intact: 'The current window and its Backpacks were not changed.',
+          retryUseful: true,
+          inspect: 'The current Papers window remains available.',
+          recover: 'Try New Window again.',
+        },
+      ]);
+    });
+  }, []);
+
   // The Hermes surface (a native view) must sit behind renderer overlays.
   useEffect(() => {
     void host().layout.setOverlayActive(basicOpen || entered !== null);
@@ -286,6 +303,15 @@ export function App(): React.JSX.Element {
         <div className="titlebar-drag" />
 
         <div className="titlebar-actions">
+          <button
+            type="button"
+            className="titlebar-icon-button"
+            aria-label="New window"
+            title="New window"
+            onClick={createNewWindow}
+          >
+            ⊞
+          </button>
           <HermesControls
             placement={hermes.placement}
             busy={hermesBusy}

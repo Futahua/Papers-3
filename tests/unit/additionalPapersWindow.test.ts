@@ -31,7 +31,6 @@ describe('additional Papers window composer', () => {
     const windows = createPapersWindowRegistry<Owned>();
     const first = instance(1, async () => undefined);
     const second = instance(2, async () => undefined);
-    const primary = first.window;
     const lifecycleDependencies = (restoreBackpackId: string | null): PapersWindowLifecycleDependencies => ({
       register: (current) => {
         windows.add(current.window.id, current, restoreBackpackId);
@@ -49,7 +48,6 @@ describe('additional Papers window composer', () => {
     expect(windows.windowIds).toEqual([1, 2]);
     expect(windows.windowForSender(101)).toBe(1);
     expect(windows.windowForSender(102)).toBe(2);
-    expect(primary).toBe(first.window);
   });
 
   it('rolls back B without disturbing an already registered A', async () => {

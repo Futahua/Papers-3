@@ -198,6 +198,26 @@ input:focus-visible {
   min-width: 0;
 }
 
+.titlebar-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--titlebar-symbol);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.titlebar-icon-button:hover,
+.titlebar-icon-button:focus-visible {
+  background: color-mix(in srgb, var(--titlebar-symbol) 10%, transparent);
+}
+
 /* Reserved space under the OS-painted window controls (min/maximize/close). */
 .titlebar-window-controls {
   width: 140px;
