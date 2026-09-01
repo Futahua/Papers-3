@@ -131,6 +131,14 @@ describe('surface routing in the host facade', () => {
     expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, b.surfaceId);
   });
 
+  it('reports the focused surface project as the active Backpack', () => {
+    const { facade, logicalSurfaces, setActiveSurfaceId } = createFacade();
+    const surface = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    setActiveSurfaceId(1, surface.surfaceId);
+
+    expect(facade.listBackpacks(HOST).activeBackpackId).toBe(OTHER);
+  });
+
   it('refuses a host operation that names no surface it owns', () => {
     const { facade, hideBackpackProjectSurface } = createFacade();
     // A0.2: the host proves its window and must name its target. There is

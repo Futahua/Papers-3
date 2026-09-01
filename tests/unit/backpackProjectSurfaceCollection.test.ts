@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { BackpackProjectSurfaceCollection } from '../../src/main/backpacks/backpackProjectSurfaceCollection';
+import { createLogicalSurfaceRegistry } from '../../src/main/windows/logicalSurfaceRegistry';
 
 type FakeRuntime = {
   hide: ReturnType<typeof vi.fn>;
@@ -59,6 +60,22 @@ describe('BackpackProjectSurfaceCollection', () => {
 
     expect(collection.all()).toEqual([p, q]);
     expect(collection.entryUrlForProject('project-x')).toBe('papers-backpack://project-x/entry.html');
+  });
+
+  it('composes two logical projects into one native-window collection', () => {
+    const logicalSurfaces = createLogicalSurfaceRegistry(() => `sf-${logicalSurfaces.size + 1}`);
+    const { collection } = collectionWithFakes();
+    const x = logicalSurfaces.create({ windowId: 7, projectId: 'project-x', kind: 'project' });
+    const y = logicalSurfaces.create({ windowId: 7, projectId: 'project-y', kind: 'project' });
+
+    collection.ensure(x.surfaceId);
+    collection.ensure(y.surfaceId);
+    logicalSurfaces.retire(x.surfaceId);
+    collection.close(x.surfaceId);
+
+    expect(logicalSurfaces.listForWindow(7).map((surface) => surface.surfaceId)).toEqual([y.surfaceId]);
+    expect(collection.get(x.surfaceId)).toBeNull();
+    expect(collection.get(y.surfaceId)).not.toBeNull();
   });
 
   it('fans out window-wide presentation changes to every surface', () => {
