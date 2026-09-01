@@ -196,6 +196,10 @@ interface HostBridge {
      * so a window holding several does not close the wrong one. */
     onBackpackProjectCloseRequest(cb: (payload: { surfaceId: string }) => void): () => void;
     onWorkspaceTopology(cb: (topology: WorkspaceTopologyV1) => void): () => void;
+    onWorkspaceProjectOpened(cb: (payload: {
+      project: { surfaceId: string; projectId: string; title: string; url: string };
+      topology: WorkspaceTopologyV1;
+    }) => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;

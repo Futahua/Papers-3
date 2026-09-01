@@ -95,6 +95,13 @@ export const papersControlCommands = {
     output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
     scope: 'surface', effect: 'mutate',
   },
+  'workspace.open': {
+    input: z.object({ windowId: z.number().int(), projectId: z.string().min(1) }).strict(),
+    output: z.object({
+      windowId: z.number().int(), surfaceId: z.string().min(1), projectId: z.string().min(1), topology: workspaceTopologySchema,
+    }).strict(),
+    scope: 'window', effect: 'mutate',
+  },
   'workspace.close': {
     input: surfaceTargetSchema,
     output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
@@ -136,6 +143,7 @@ export interface PapersControlDependencies {
   workspace?(windowId: number): unknown;
   restoreWorkspace?(windowId: number, topology: z.infer<typeof workspaceTopologySchema>): unknown;
   closeWorkspace?(windowId: number, surfaceId: string, topology: z.infer<typeof workspaceTopologySchema>): unknown;
+  openWorkspace?(windowId: number, projectId: string): Promise<unknown>;
   snapshot(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
@@ -191,6 +199,12 @@ export async function dispatchPapersControl(
       const restored = dependencies.restoreWorkspace?.(windowId, topology);
       if (!restored) throw new Error('That Papers window cannot restore workspace topology.');
       return papersControlCommands[request.method].output.parse({ windowId, topology: restored });
+    }
+    case 'workspace.open': {
+      const { windowId, projectId } = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const opened = await dependencies.openWorkspace?.(windowId, projectId);
+      if (!opened) throw new Error('That Papers window cannot open the workspace project.');
+      return papersControlCommands[request.method].output.parse(opened);
     }
     case 'workspace.activate':
     case 'workspace.close':

@@ -491,10 +491,8 @@ Electron E2E 1/1 passed, and diff check passed.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.
 - [ ] Add control commands such as `workspace.open`, `workspace.activate`,
   `workspace.close`, `layout.split`, `layout.moveSurface`, `layout.restore`.
-  Implemented and live-validated: `workspace.activate`, `workspace.close`,
-  `layout.split`, `layout.moveSurface`, `layout.restore`; `workspace.open`
-  remains because it must allocate/open the project and synchronize the host's
-  project metadata without fabricating a renderer sender.
+  Implemented and live-validated: `workspace.open`, `workspace.activate`,
+  `workspace.close`, `layout.split`, `layout.moveSurface`, `layout.restore`.
 
 A1.2e semantic control operations:
 
@@ -543,13 +541,36 @@ A1.2f reviewer hardening (fresh review of `9a3c79f`):
 
 A1.2f validation: typecheck passed, full Vitest 661 passed / 4 skipped,
 production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
-Electron E2E 1/1 passed, and diff check passed. Reviewer re-review remains.
+Electron E2E 1/1 passed, and diff check passed. Reviewer signed off exact head
+`bccd746abc110d404ae262f77f4e27e099746946`.
 
 Creator authorization note (2026-09-01): the creator explicitly authorized
 continuing all scoped work with the reviewer. `workspace.close` is treated as
 closing an open runtime surface, not deleting Backpack/project data; it remains
 exact-target only. Any future data-deleting control operation still requires
 the two-phase confirmation design below.
+
+A1.2g main-authoritative `workspace.open`:
+
+- [x] Add `workspace.open {windowId, projectId}` with authenticated explicit
+  creation authority; no sender, entered/active inference or caller-provided
+  surface identity.
+- [x] Validate the exact live window's canonical topology before creation,
+  resolve an available registry Backpack and real project URL, and refuse
+  unavailable/empty projects without mutation.
+- [x] Allocate a fresh logical project surface in main, insert it into the
+  focused group, make it canonical active, and commit/revise/persist it.
+- [x] Deliver one atomic main→host event containing trusted project descriptor
+  plus resulting topology, so App has URL metadata before Dockview renders.
+- [x] Roll back invocation-owned surface, active/entered projection and
+  topology if post-allocation delivery fails; preserve pre-existing surfaces.
+- [x] Add `papersctl workspace.open --window <id> --project <id>`.
+- [x] Live A/B/C E2E opens Gamma through control, verifies the real host tab,
+  then continues actual Dockview close/archive and persistence acceptance.
+
+A1.2g deliberately does not read persisted snapshots, select restart workspace
+identity, reuse old surface ids, map old→fresh ids or automatically restore.
+Reviewer sign-off remains.
 - [ ] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
   assertions through the control plane.
 - [ ] Reviewer sign-off.

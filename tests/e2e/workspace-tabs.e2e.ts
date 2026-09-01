@@ -252,16 +252,11 @@ describe('A1 workspace tabs', () => {
         && await hostPage.locator('.dv-groupview').count() === 1;
     }, 10_000, 'moving final tab collapses Papers and Dockview source group');
 
-    expect(await evalInHost<boolean>(launched.app, `(() => {
-      const button = document.querySelector('.titlebar .pill-button');
-      button?.click();
-      return Boolean(button);
-    })()`)).toBe(true);
-    await waitFor(() => evalInHost<boolean>(launched.app, `Boolean([...document.querySelectorAll('.backpack-card .name')]
-      .find((node) => node.textContent?.trim() === 'Gamma'))`), 10_000, 'Backpack picker for Gamma');
-    expect(await evalInHost<boolean>(launched.app, enterBackpack('Gamma'))).toBe(true);
-    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string }>).some((surface) => surface.projectId === C),
-      10_000, 'Gamma workspace surface');
+    const openedGamma = await call('workspace.open', { windowId, projectId: C }) as { surfaceId: string; projectId: string };
+    expect(openedGamma.projectId).toBe(C);
+    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string }>).some((surface) => surface.projectId === C)
+      && await hostPage.getByRole('tab', { name: 'Gamma' }).count() === 1,
+    10_000, 'programmatic Gamma workspace surface and host metadata');
     const threeWorkspace = await call('inspect.workspace', { windowId }) as {
       topology: { surfaces: Array<{ surfaceId: string; projectId: string }> };
     };

@@ -41,7 +41,7 @@ import type { PermissionPrompter } from './capabilities/capabilityBroker';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { backpackDir, canvasFile, type PapersPaths } from './persistence/paths';
 import type { HostFacade } from './ipc/hostIpc';
-import { assertValidWorkspaceTopology, closeWorkspaceSurface, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { assertValidWorkspaceTopology, closeWorkspaceSurface, openWorkspaceSurface, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 interface CanvasPersistedState {
   schemaVersion: 1;
@@ -820,6 +820,43 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.setEnteredBackpack(windowId, activeProject);
     this.deps.setWorkspaceTopology(windowId, topology);
     this.deps.sendToWindow(windowId, 'host:event:workspace-topology', topology);
+  }
+
+  async openWorkspaceSurfaceFromControl(windowId: number, projectId: string): Promise<{
+    windowId: number; surfaceId: string; projectId: string; topology: WorkspaceTopologyV1;
+  }> {
+    const topology = this.deps.workspaceTopology?.(windowId) ?? null;
+    if (!topology) throw new Error('That Papers window has not committed workspace topology.');
+    this.validateWorkspaceTopology(windowId, topology);
+    const backpack = this.deps.registry.find(projectId);
+    if (!backpack || backpack.archived) throw new Error('That Backpack is not available.');
+    const project = await this.deps.backpackProjects.open(projectId);
+    if (!project) throw new Error('That Backpack has no usable project surface.');
+    const previousActiveSurfaceId = this.deps.activeSurfaceId(windowId);
+    const previousEnteredBackpack = this.deps.enteredBackpack(windowId);
+    const surface = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
+    try {
+      const next = openWorkspaceSurface(topology, {
+        surfaceId: surface.surfaceId,
+        projectId,
+        title: backpack.name,
+      });
+      this.validateWorkspaceTopology(windowId, next);
+      this.deps.setActiveSurfaceId(windowId, surface.surfaceId);
+      this.deps.setEnteredBackpack(windowId, projectId);
+      this.deps.setWorkspaceTopology(windowId, next);
+      this.deps.sendToWindow(windowId, 'host:event:workspace-project-opened', {
+        project: { surfaceId: surface.surfaceId, projectId, title: backpack.name, url: project.url },
+        topology: next,
+      });
+      return { windowId, surfaceId: surface.surfaceId, projectId, topology: next };
+    } catch (caught) {
+      this.deps.logicalSurfaces.retire(surface.surfaceId);
+      this.deps.setActiveSurfaceId(windowId, previousActiveSurfaceId);
+      this.deps.setEnteredBackpack(windowId, previousEnteredBackpack);
+      this.deps.setWorkspaceTopology(windowId, topology);
+      throw caught;
+    }
   }
 
   closeWorkspaceSurfaceFromControl(windowId: number, surfaceId: string, topology: WorkspaceTopologyV1): WorkspaceTopologyV1 {

@@ -1393,6 +1393,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         },
         closeWorkspace: (windowId, surfaceId, topology) =>
           facade.closeWorkspaceSurfaceFromControl(windowId, surfaceId, topology),
+        openWorkspace: (windowId, projectId) => facade.openWorkspaceSurfaceFromControl(windowId, projectId),
         /**
          * The shared control-side target resolver: the window must be live and
          * the surface must be live IN that window. Nothing is resolved by

@@ -166,6 +166,18 @@ export function App(): React.JSX.Element {
         setProjectUrl(activeProject?.url ?? null);
         setEntered(activeProject?.projectId ?? null);
       }),
+      bridge.events.onWorkspaceProjectOpened(({ project, topology }) => {
+        openProjectsRef.current = [
+          ...openProjectsRef.current.filter((candidate) => candidate.surfaceId !== project.surfaceId),
+          project,
+        ];
+        setOpenProjects(openProjectsRef.current);
+        externallyRestoredTopology.current = true;
+        setWorkspaceTopology(topology);
+        setSurfaceId(project.surfaceId);
+        setProjectUrl(project.url);
+        setEntered(project.projectId);
+      }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),
     ];

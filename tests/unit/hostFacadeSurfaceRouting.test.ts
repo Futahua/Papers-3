@@ -21,6 +21,7 @@ function createFacade() {
   const showBackpackProjectSurface = vi.fn(async (_senderId: number, _surfaceId: string, _url: string) => {});
   const closeAttachedProjectSurface = vi.fn();
   const closeBackpackProjectSurface = vi.fn();
+  const openProject = vi.fn(async (id: string) => id === PROJECT || id === OTHER ? { url: `papers-backpack://${id}/open` } : null);
   const sendToWindow = vi.fn();
   const focusedSurfaces = new Map<number, string | null>();
   const enteredBackpacks = new Map<number, string | null>();
@@ -58,7 +59,7 @@ function createFacade() {
     closeAttachedProjectSurface,
     closeBackpackProjectSurface,
     registry: {
-      find: (id: string) => (id === PROJECT || id === OTHER ? { id, archived: false } : null),
+      find: (id: string) => (id === PROJECT || id === OTHER ? { id, name: id === PROJECT ? 'Alpha' : 'Beta', archived: false } : null),
       list: () => [],
       setArchived: vi.fn(async () => {}),
       markLeft,
@@ -67,13 +68,13 @@ function createFacade() {
     showBackpackProjectSurface,
     hideBackpackProjectSurface,
     // Present only so the guard is what refuses, not a missing service.
-    backpackProjects: { saveState: vi.fn(async () => ({ ok: true, revision: 'r1' })) },
+    backpackProjects: { open: openProject, saveState: vi.fn(async () => ({ ok: true, revision: 'r1' })) },
   } as unknown as FacadeDeps);
   return {
     facade, surfaces, logicalSurfaces, hideBackpackProjectSurface,
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
-    setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, markLeft,
+    setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, markLeft,
   };
 }
 
@@ -81,6 +82,37 @@ describe('surface routing in the host facade', () => {
   const HOST = 11;
   const FRAME = 12;
   const WIDGET = 13;
+
+  it('opens a real project into the exact window and atomically sends descriptor plus topology', async () => {
+    const { facade, logicalSurfaces, workspaceTopologies, sendToWindow } = createFacade();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    const opened = await facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    expect(opened.projectId).toBe(PROJECT);
+    expect(logicalSurfaces.isLiveIn(opened.surfaceId, 1)).toBe(true);
+    expect(opened.topology.groups[0]?.activeSurfaceId).toBe(opened.surfaceId);
+    expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:workspace-project-opened', {
+      project: { surfaceId: opened.surfaceId, projectId: PROJECT, title: 'Alpha', url: `papers-backpack://${PROJECT}/open` },
+      topology: opened.topology,
+    });
+  });
+
+  it('refuses unavailable project without creating a surface', async () => {
+    const { facade, logicalSurfaces, workspaceTopologies, setWorkspaceTopology } = createFacade();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    await expect(facade.openWorkspaceSurfaceFromControl(1, 'bp-missing')).rejects.toThrow(/not available/);
+    expect(logicalSurfaces.project()).toEqual([]);
+    expect(setWorkspaceTopology).not.toHaveBeenCalled();
+  });
+
+  it('rolls back only its fresh surface if atomic host delivery fails', async () => {
+    const { facade, logicalSurfaces, workspaceTopologies, sendToWindow } = createFacade();
+    const original = createWorkspaceTopology();
+    workspaceTopologies.set(1, original);
+    sendToWindow.mockImplementationOnce(() => { throw new Error('host unavailable'); });
+    await expect(facade.openWorkspaceSurfaceFromControl(1, PROJECT)).rejects.toThrow(/host unavailable/);
+    expect(logicalSurfaces.project()).toEqual([]);
+    expect(workspaceTopologies.get(1)).toEqual(original);
+  });
 
   it('hiding does not leave: the host can show again straight afterwards', async () => {
     const { facade, surfaces, logicalSurfaces, showBackpackProjectSurface } = createFacade();
