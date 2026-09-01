@@ -790,7 +790,9 @@ selection, or management screen was added.
 - [x] A3.1 — define cross-native-window move transaction and authority
   contract (signed off at
   `adfd9796a7f9c3f21ca037681f86b08a92cb3ec2`).
-- [ ] A3 — cross-native-window move transaction with recreate/rebind fallback.
+- [x] A3 — cross-native-window move transaction with recreate/rebind fallback,
+  forward canonicalization, and authenticated host-sender adapter (signed off
+  through A3.4; exact implementation heads are recorded below).
 - [ ] Electron-version compatibility test for optional live WCV reparenting.
 - [ ] B2 — richer `papersctl`, event subscriptions and authorized confirmation
   challenges for destructive operations.
@@ -1015,7 +1017,7 @@ is signed off with no correctness or security defect.
 - [x] A3 implementation and adapter gates are signed off at exact heads
   `b8717bb840be56c0a422398f6e11f3fc24d63994` and
   `b7d4bcac93aedd1ee795aca5eeddc16651bf508d`; the latest pushed documentation
-  tip is `166632d1066e20e90e98e9eb0f2eb184aa15b702`.
+  tip is `a48a3b67ec6af48d5a1c5219626edbf383aa1517`.
 - [x] Final A3 evidence: typecheck passed; full Vitest passed 723/727 (4
   skipped); focused validation passed 85/85; production build and diff checks
   passed; live workspace-tabs and developer-control Electron acceptance passed
