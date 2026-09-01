@@ -153,17 +153,17 @@ developer-control actor
   -> must match current registries
 ```
 
-## Validation evidence at `962f3b8`
+## Validation evidence at `a03ff39`
 
 - `npm run typecheck` — passed.
-- `npm test` — 633 passed, 4 skipped; 55 files passed, 1 skipped.
+- `npm test` — 635 passed, 4 skipped; 55 files passed, 1 skipped.
 - `npm run build` — passed.
 - `npx vitest run --config vitest.e2e.config.ts tests/e2e/dev-control.e2e.ts`
   — 2/2 passed, including the real `papersctl` executable controlling a running
   Electron Papers process without DOM injection.
-- Focused A0.4 collection/finalization/routing tests — 45/45 passed.
+- Focused A0.4 collection/finalization/routing tests — 47/47 passed.
 - `git diff --check` — passed before commit.
-- Branch was pushed to `origin/agent/surface-context-routing` at `962f3b8`.
+- Branch was pushed to `origin/agent/surface-context-routing` at `a03ff39`.
 
 Do not claim the historical full product E2E suite is wholly green: unrelated
 fixture/restart failures were previously observed and remain separately scoped.
@@ -171,7 +171,7 @@ fixture/restart failures were previously observed and remain separately scoped.
 ## Current reviewer status
 
 The browser reviewer completed its review of exact `af4e26c`; the next review is
-pending for `962f3b8`.
+pending for `a03ff39`.
 
 Prior verdict on `e053c95`:
 
@@ -194,7 +194,10 @@ The `af4e26c` review found two concrete gaps, now addressed in `962f3b8`:
   Backpack/list/run projections no longer clear when a non-focused surface is
   closed.
 
-Implementation submitted in `962f3b8`:
+The follow-up acceptance harness in `a03ff39` composes two logical projects in
+one native-window collection and verifies focused-projection preservation.
+
+Implementation submitted through `a03ff39`:
 
 - Native project presentations now live in a per-window collection keyed by
   durable `surfaceId`; no layout framework or DOM-hosted Backpack content was
