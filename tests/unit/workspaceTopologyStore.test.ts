@@ -86,4 +86,43 @@ describe('WorkspaceTopologyStore', () => {
     expect(migrated.lastWorkspaceId).toBe(migrated.workspaces[0]?.workspaceId);
     expect(migrated.workspaces[0]?.updatedAt).toBe('2026-09-01T00:00:00.000Z');
   });
+
+  it('does not invent last-workspace selection when migrating multiple legacy snapshots', async () => {
+    const paths = papersPaths(directory);
+    const topology = createWorkspaceTopology();
+    await fs.mkdir(path.dirname(paths.workspaceTopologiesFile), { recursive: true });
+    await fs.writeFile(paths.workspaceTopologiesFile, JSON.stringify({ schemaVersion: 1, workspaces: [
+      { workspaceKey: '11111111-1111-4111-8111-111111111111', topology },
+      { workspaceKey: '22222222-2222-4222-8222-222222222222', topology },
+    ] }));
+    await new WorkspaceTopologyStore(paths).initialize();
+    const migrated = JSON.parse(await fs.readFile(paths.workspaceTopologiesFile, 'utf8')) as { lastWorkspaceId: string | null };
+    expect(migrated.lastWorkspaceId).toBeNull();
+  });
+
+  it.each([
+    ['duplicate durable ids', (topology: ReturnType<typeof createWorkspaceTopology>) => ({
+      schemaVersion: 2, lastWorkspaceId: null, workspaces: [
+        { workspaceId: '11111111-1111-4111-8111-111111111111', topology, updatedAt: '2026-09-01T00:00:00.000Z' },
+        { workspaceId: '11111111-1111-4111-8111-111111111111', topology, updatedAt: '2026-09-01T00:00:00.000Z' },
+      ],
+    })],
+    ['orphan last workspace id', (topology: ReturnType<typeof createWorkspaceTopology>) => ({
+      schemaVersion: 2, lastWorkspaceId: '22222222-2222-4222-8222-222222222222', workspaces: [
+        { workspaceId: '11111111-1111-4111-8111-111111111111', topology, updatedAt: '2026-09-01T00:00:00.000Z' },
+      ],
+    })],
+    ['duplicate legacy keys', (topology: ReturnType<typeof createWorkspaceTopology>) => ({
+      schemaVersion: 1, workspaces: [
+        { workspaceKey: '11111111-1111-4111-8111-111111111111', topology },
+        { workspaceKey: '11111111-1111-4111-8111-111111111111', topology },
+      ],
+    })],
+  ])('quarantines %s instead of collapsing relationally invalid identity', async (_name, envelope) => {
+    const paths = papersPaths(directory);
+    await fs.mkdir(path.dirname(paths.workspaceTopologiesFile), { recursive: true });
+    await fs.writeFile(paths.workspaceTopologiesFile, JSON.stringify(envelope(createWorkspaceTopology())));
+    await new WorkspaceTopologyStore(paths).initialize();
+    expect((await fs.readdir(paths.recoveryDir)).some((name) => name.endsWith('.corrupt'))).toBe(true);
+  });
 });

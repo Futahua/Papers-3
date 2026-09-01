@@ -8,14 +8,28 @@ import type { PapersPaths } from './paths';
 const legacySchema = z.object({
   schemaVersion: z.literal(1),
   workspaces: z.array(z.object({ workspaceKey: z.string().uuid(), topology: validatedWorkspaceTopologySchema }).strict()),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const keys = value.workspaces.map((entry) => entry.workspaceKey);
+  if (new Set(keys).size !== keys.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'legacy workspace keys must be unique' });
+  }
+});
 const durableSchema = z.object({
   schemaVersion: z.literal(2),
   lastWorkspaceId: z.string().uuid().nullable(),
   workspaces: z.array(z.object({
     workspaceId: z.string().uuid(), topology: validatedWorkspaceTopologySchema, updatedAt: z.string().datetime(),
   }).strict()),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const ids = value.workspaces.map((entry) => entry.workspaceId);
+  const idSet = new Set(ids);
+  if (idSet.size !== ids.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'durable workspace ids must be unique' });
+  }
+  if (value.lastWorkspaceId !== null && !idSet.has(value.lastWorkspaceId)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'lastWorkspaceId must reference an existing workspace' });
+  }
+});
 const readableSchema = z.union([legacySchema, durableSchema]);
 type DurableRecord = z.infer<typeof durableSchema>['workspaces'][number];
 
@@ -49,11 +63,13 @@ export class WorkspaceTopologyStore {
           for (const entry of value.workspaces) this.workspaces.set(entry.workspaceId, entry);
           return;
         }
+        let soleMigratedId: string | null = null;
         for (const entry of value.workspaces) {
           const workspaceId = randomUUID();
           this.workspaces.set(workspaceId, { workspaceId, topology: entry.topology, updatedAt: this.now() });
-          this.lastWorkspaceId = workspaceId;
+          soleMigratedId = workspaceId;
         }
+        this.lastWorkspaceId = value.workspaces.length === 1 ? soleMigratedId : null;
         this.dirty = true;
         await this.flush();
       });

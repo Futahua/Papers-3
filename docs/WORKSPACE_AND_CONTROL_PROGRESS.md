@@ -585,6 +585,11 @@ A1.2h durable identity and pure remapping basis:
   Closing a native window drops only its live association, not its disk record.
 - [x] Explicitly migrate schema-v1 lifetime snapshot keys to newly minted
   durable IDs rather than silently overstating their historical semantics.
+- [x] Validate envelope relationships: unique v1/v2 workspace identities and
+  non-null `lastWorkspaceId` referencing an existing record; quarantine
+  malformed relationships instead of collapsing them through a Map.
+- [x] Migrate one legacy snapshot as selected, but multiple legacy snapshots
+  with `lastWorkspaceId: null`; v1 array order never invents selection authority.
 - [x] Add pure `remapWorkspaceTopologySurfaceIds(topology, oldToFresh)` that
   rewrites surfaces, group membership and active IDs while preserving project,
   tab/group order, focus, split orientation/tree and weights.
