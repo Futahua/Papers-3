@@ -134,18 +134,33 @@ export function App(): React.JSX.Element {
   // Hiding only applies to a Hermes this window owns. When Hermes is docked to
   // another Papers window, pressing Dock here TAKES it -- an explicit transfer
   // the creator asked for -- rather than hiding a dock they cannot see.
+  const reportHermesFailure = useCallback((caught: unknown): void => {
+    setHostErrors((previous) => [
+      ...previous,
+      {
+        component: 'Hermes',
+        what: 'The Hermes window could not be hidden.',
+        known: String(caught instanceof Error ? caught.message : caught),
+        intact: 'Hermes and its current placement were not changed.',
+        retryUseful: true,
+        inspect: 'The Hermes window remains available in its current placement.',
+        recover: 'Try hiding Hermes again.',
+      },
+    ]);
+  }, []);
+
   const toggleDock = useCallback(() => {
     if (hermes.placement === 'docked' && hermes.ownedByThisWindow) {
-      void host().hermes.hideDock().then(() => undefined);
+      void host().hermes.hideDock().catch(reportHermesFailure);
     } else {
       void host().hermes.dock(dockBounds()).then(setHermes);
     }
-  }, [hermes.placement, hermes.ownedByThisWindow]);
+  }, [hermes.placement, hermes.ownedByThisWindow, reportHermesFailure]);
 
   const toggleWindow = useCallback(() => {
-    if (hermes.placement === 'detached') void host().hermes.hideWindow().then(() => undefined);
+    if (hermes.placement === 'detached') void host().hermes.hideWindow().catch(reportHermesFailure);
     else void host().hermes.showWindow().then(setHermes);
-  }, [hermes.placement]);
+  }, [hermes.placement, reportHermesFailure]);
 
   const createNewWindow = useCallback((): void => {
     void host().app.newWindow().catch((caught) => {

@@ -733,6 +733,7 @@ export class HermesSurface {
   // -------------------------------------------------------------- placements
 
   async dock(bounds: SurfaceBounds): Promise<HermesSurfaceState> {
+    const previousDockBounds = this.dockBounds;
     this.dockBounds = bounds;
     try {
       this.setState({ status: 'starting' });
@@ -752,6 +753,10 @@ export class HermesSurface {
       }, 400);
       this.setState({ placement: 'docked', status: 'ready' });
     } catch (error) {
+      // A transfer may have temporarily installed another window's relative
+      // bounds. If its native move failed, the facade restores the old owner,
+      // so restore that owner's geometry as the matching authoritative target.
+      this.dockBounds = previousDockBounds;
       this.setState({ status: 'error', detail: message(error) });
     }
     return this.state;

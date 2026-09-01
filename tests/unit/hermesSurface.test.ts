@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { HermesSurface, type HermesPlacement } from '../../src/main/hermes/hermesSurface';
+import { HermesSurface, type HermesPlacement, type SurfaceBounds } from '../../src/main/hermes/hermesSurface';
 
 type SurfaceInternals = {
   placement: HermesPlacement;
+  dockBounds: SurfaceBounds | null;
   ensureDesktop: () => Promise<void>;
   controlHermes: (command: Record<string, unknown>) => Promise<{ ok: boolean } | null>;
 };
@@ -28,6 +29,20 @@ describe('HermesSurface control acknowledgements', () => {
 
     expect(state).toMatchObject({ placement: 'closed', status: 'error' });
     expect(state.detail).toContain('window bounds');
+  });
+
+  it('restores the previous owner bounds when a dock transfer is rejected', async () => {
+    const { surface, internals } = createSurface();
+    const ownerBounds = { x: 700, y: 40, width: 500, height: 760 };
+    const candidateBounds = { x: 900, y: 40, width: 300, height: 600 };
+    internals.placement = 'docked';
+    internals.dockBounds = ownerBounds;
+    internals.controlHermes = vi.fn(async () => ({ ok: false }));
+
+    await surface.dock(candidateBounds);
+
+    expect(internals.dockBounds).toBe(ownerBounds);
+    expect(surface.state).toMatchObject({ placement: 'docked', status: 'error' });
   });
 
   it('does not commit detached placement when focus has no valid reply', async () => {
