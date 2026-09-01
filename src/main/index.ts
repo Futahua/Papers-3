@@ -46,6 +46,7 @@ import {
   COMPACT_WIDGET_MIN_HEIGHT,
   type CompactWidgetSession,
 } from './windows/compactWidgetSession';
+import { createPapersWindow } from './windows/papersWindowFactory';
 import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
@@ -300,37 +301,20 @@ async function bootstrap(): Promise<void> {
     screen.getAllDisplays().map((display) => display.workArea),
   );
 
-  mainWindow = new BaseWindow({
-    ...(savedBounds ?? { width: 1360, height: 860 }),
-    minWidth: 900,
-    minHeight: 600,
-    title: 'Papers',
-    frame: !papersSettings.transparentWindow,
-    transparent: papersSettings.transparentWindow,
-    backgroundColor: papersSettings.transparentWindow ? TRANSPARENT_SURFACE_COLOR : '#efede7',
-    ...(appIcon ? { icon: appIcon } : {}),
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      // The native overlay is a painted Windows region, not a composited page
-      // surface. Keep it opaque and theme-matched even when the rest of the
-      // window is transparent; Electron/Windows does not reliably preserve a
-      // zero-alpha overlay colour and can expose its channel payload as cyan.
-      color: '#efede7',
-      symbolColor: '#20201e',
-      height: TITLE_BAR_HEIGHT,
-    },
-  });
-
   const preloadDir = path.join(app.getAppPath(), 'out', 'preload');
   const detachRegistry = new BackpackSurfaceRegistry();
   let detachSession: WindowDetachSession | null = null;
   const widgetRegistry = new BackpackSurfaceRegistry();
   let widgetSession: CompactWidgetSession | null = null;
-  const backpackProjectRuntime = new BackpackProjectRuntime(
-    mainWindow,
-    path.join(preloadDir, 'backpackProject.cjs'),
-    papersSettings.transparentWindow,
-    (projectId) => {
+  const windowInstance = createPapersWindow({
+    bounds: savedBounds ?? undefined,
+    appIcon,
+    transparent: papersSettings.transparentWindow,
+    hostPreloadPath: path.join(preloadDir, 'host.cjs'),
+    projectPreloadPath: path.join(preloadDir, 'backpackProject.cjs'),
+    rendererUrl: process.env['ELECTRON_RENDERER_URL'],
+    rendererFile: path.join(app.getAppPath(), 'out', 'renderer', 'index.html'),
+    onProjectSurfaceClosed: (projectId) => {
       detachSession?.closeProject(projectId).catch(() => undefined);
       detachRegistry.unregisterWorkspaceForProject(projectId);
       // Compact widgets are independent pet windows, not child views of the
@@ -339,17 +323,10 @@ async function bootstrap(): Promise<void> {
       // it remains visible/usable and can reconnect when the project is
       // entered again. App shutdown still owns closeAll().
     },
-  );
-  hostView = new WebContentsView({
-    webPreferences: {
-      preload: path.join(preloadDir, 'host.cjs'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      webviewTag: false,
-    },
   });
-  mainWindow.contentView.addChildView(hostView);
+  mainWindow = windowInstance.window;
+  hostView = windowInstance.hostView;
+  const backpackProjectRuntime = windowInstance.backpackProjectRuntime;
   // Phase 1B: this window and its renderer are now addressable as a context
   // rather than as the module's single `mainWindow`/`hostView` pair.
   // Only the first window at launch may reopen the persisted most-recent
@@ -382,26 +359,6 @@ async function bootstrap(): Promise<void> {
     }
   };
   applyHostSurface(papersSettings.transparentWindow);
-  // Chromium recreates the renderer surface while navigating the host view.
-  // Reapply both transparent layers after each committed load; otherwise the
-  // new child compositor can fall back to its opaque black default even though
-  // the DOM itself correctly computes transparent backgrounds.
-  hostView.webContents.on('did-finish-load', () => {
-    applyHostSurface(papersSettings.transparentWindow);
-  });
-  const fitHost = (windowId: number): void => {
-    const context = papersWindows.get(windowId);
-    if (!context || context.owned.window.isDestroyed() || context.owned.hostView.webContents.isDestroyed()) return;
-    const { width, height } = context.owned.window.getContentBounds();
-    context.owned.hostView.setBounds({ x: 0, y: 0, width, height });
-  };
-  const windowId = mainWindow.id;
-  fitHost(windowId);
-  mainWindow.on('resize', () => {
-    fitHost(windowId);
-    const context = papersWindows.get(windowId);
-    context?.owned.backpackProjectRuntime.fit();
-  });
 
   // The production Hermes experience IS the existing Hermes Desktop product.
   // Papers runs one Hermes backend and positions the real Hermes Desktop
@@ -438,16 +395,6 @@ async function bootstrap(): Promise<void> {
     if (papersWindows.hermesDockOwner() !== mainWindow?.id) return;
     hermesSurface.onPapersActivated();
   });
-
-  const installHostNavigationGuards = (view: WebContentsView): void => {
-    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    view.webContents.on('will-navigate', (event, url) => {
-    const devUrl = process.env['ELECTRON_RENDERER_URL'];
-    const allowedPrefix = devUrl ?? 'file://';
-    if (!url.startsWith(allowedPrefix)) event.preventDefault();
-    });
-  };
-  installHostNavigationGuards(hostView);
 
   // ------------------------------------------------------------ composition
   const canvasState = new CanvasSessionState((items) => facade.emitShelfChanged(items));
@@ -1347,12 +1294,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   }
 
   // ---------------------------------------------------------------- load UI
-  const devUrl = process.env['ELECTRON_RENDERER_URL'];
-  if (devUrl) {
-    await hostView.webContents.loadURL(devUrl);
-  } else {
-    await hostView.webContents.loadFile(path.join(app.getAppPath(), 'out', 'renderer', 'index.html'));
-  }
+  await windowInstance.loadHostRenderer();
 
   // Look for a newer Papers once the interface is up. Silent unless a real
   // update is downloaded and ready; a packaged build only.
