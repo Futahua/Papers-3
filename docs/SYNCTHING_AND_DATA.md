@@ -96,6 +96,7 @@ Update this table whenever a real feature creates persistent data.
 | Hermes session token | `Papers/Data/hermes-backend-token` | Papers | **Machine-local. Never sync** | **Yes** | One Papers per machine | Regenerated on next launch; delete freely |
 | Resolved Hermes location | `Papers/Data/hermes-location.json` | Papers | **Machine-local. Never sync** — it names one machine's folders | No | No | Rewritten automatically on next successful resolution; delete freely |
 | Downloaded Papers updates | `Papers/Data/papers-updater` (electron-updater cache) | electron-updater | Machine-local cache | No | No | Re-downloaded from the GitHub release |
+| Opt-in developer-control descriptor | Explicit `PAPERS_DEV_CONTROL_DESCRIPTOR` path, or `<userData>/dev-control.json` while enabled | Running Papers process | **Ephemeral and machine-local. Never sync or commit** | **Yes: contains a process-specific bearer token and named-pipe address** | One running Papers process owns and replaces its descriptor | Removed on normal shutdown; stale files are harmless after the owning process/pipe exits and may be deleted |
 
 ## Current Syncthing caution
 

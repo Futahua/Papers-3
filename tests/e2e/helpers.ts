@@ -19,7 +19,7 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 
 export async function launchPapers(
   existingUserData?: string,
-  options: { fixtures?: boolean } = { fixtures: true },
+  options: { fixtures?: boolean; devControlDescriptor?: string } = { fixtures: true },
 ): Promise<LaunchedApp> {
   const userDataDir =
     existingUserData ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'papers3-e2e-')));
@@ -33,6 +33,10 @@ export async function launchPapers(
       ...process.env,
       PAPERS_TEST_USER_DATA: userDataDir,
       PAPERS_ENABLE_FIXTURES: options.fixtures === false ? '0' : '1',
+      ...(options.devControlDescriptor ? {
+        PAPERS_DEV_CONTROL: '1',
+        PAPERS_DEV_CONTROL_DESCRIPTOR: options.devControlDescriptor,
+      } : {}),
       ELECTRON_ENABLE_LOGGING: '1',
     },
   });

@@ -17,6 +17,7 @@
     "test:e2e": "electron-vite build && vitest run --config vitest.e2e.config.ts",
     "test:e2e:product": "electron-vite build && vitest run --config vitest.e2e.config.ts tests/e2e/product-shell.e2e.ts",
     "test:e2e:fixtures": "electron-vite build && vitest run --config vitest.e2e.config.ts tests/e2e/killtest.e2e.ts tests/e2e/repository-workflow.e2e.ts",
+    "papersctl": "node tools/papersctl.mjs",
     "demo:seed": "node tools/seed-demo-backpack.mjs",
     "fixture:logseq": "node tools/logseq-fixture.mjs setup",
     "fixture:logseq:status": "node tools/logseq-fixture.mjs status",

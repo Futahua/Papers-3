@@ -25,6 +25,7 @@ import { registerResourceExecutors } from './resources/resourceExecutors';
 import { AgentRunService } from './agents/runService';
 import { PapersHostFacade } from './hostFacade';
 import { PapersUpdater } from './papersUpdater';
+import { startPapersControlServer, type PapersControlServer } from './control/papersControlServer';
 import { papersDataDirArgument } from './papersDataDir';
 import { randomUUID } from 'node:crypto';
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
@@ -372,11 +373,12 @@ async function bootstrap(): Promise<void> {
       }
     },
   });
-  const createAdditionalPapersWindow = async (): Promise<void> => {
-    await composeAdditionalPapersWindow({
+  const createAdditionalPapersWindow = async (): Promise<number> => {
+    const created = await composeAdditionalPapersWindow({
       createWindow: () => makePapersWindow(undefined),
       lifecycleDependencies,
     });
+    return created.window.id;
   };
   const preparedWindow = preparePapersWindow(windowInstance, lifecycleDependencies(registry.lastActiveBackpackId));
   mainWindow = windowInstance.window;
@@ -1258,8 +1260,35 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   registerPapersWindowIpc({
     ipcMain,
     isHostSender: (sender) => facade.isHostSender(sender),
-    createAdditionalWindow: createAdditionalPapersWindow,
+    createAdditionalWindow: async () => { await createAdditionalPapersWindow(); },
   });
+  let papersControlServer: PapersControlServer | null = null;
+  if (process.env['PAPERS_DEV_CONTROL'] === '1') {
+    const descriptorPath = process.env['PAPERS_DEV_CONTROL_DESCRIPTOR']
+      ?? path.join(baseDir, 'dev-control.json');
+    const windowsSnapshot = () => papersWindows.all().map((context) => ({
+      windowId: context.windowId,
+      hostAlive: !context.owned.hostView.webContents.isDestroyed(),
+      nativeWindowAlive: !context.owned.window.isDestroyed(),
+      enteredBackpackId: context.enteredBackpackId,
+    }));
+    papersControlServer = await startPapersControlServer({
+      descriptorPath,
+      dependencies: {
+        windows: windowsSnapshot,
+        snapshot: () => ({
+          schemaVersion: 1,
+          build: facade.buildIdentity(),
+          windows: windowsSnapshot(),
+          hermes: {
+            ...hermesSurface.state,
+            ownerWindowId: papersWindows.hermesDockOwner(),
+          },
+        }),
+        createWindow: async () => ({ windowId: await createAdditionalPapersWindow() }),
+      },
+    });
+  }
   // Best-effort owned shutdown before app exit; the helper factory stop
   // owns stdin close, termination escalation and exactly-once terminal
   // reporting (Assignment 015).
@@ -1272,7 +1301,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       const detachClose = detachSession!.closeAll().catch(() => undefined);
       const widgetClose = widgetSession!.closeAll().catch(() => undefined);
       windowPickSession.cancel().catch(() => undefined);
-      capabilityQuitPromise = Promise.all([detachClose, widgetClose, windowCapabilityService.stop().catch(() => undefined)]).then(() => {
+      const controlClose = papersControlServer?.close().catch(() => undefined);
+      capabilityQuitPromise = Promise.all([detachClose, widgetClose, controlClose, windowCapabilityService.stop().catch(() => undefined)]).then(() => {
         hermesSurface.shutdown();
         capabilityQuitComplete = true;
         app.quit();
