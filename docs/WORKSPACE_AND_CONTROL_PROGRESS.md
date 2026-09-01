@@ -212,6 +212,24 @@ gaps, now addressed after `12d99b2`:
 Current validation after those fixes: typecheck passed, production build
 passed, and the full Vitest suite passed with 636 tests and 4 skipped.
 
+The completed review of `d9a7d3c` confirmed those projection fixes and found
+one final owner-resolution seam. Detached workspace cleanup and delivery had
+resolved `projectId` first, so activity in window A could close or miss the
+same project's detached surface owned by window B. The follow-up implementation
+now:
+
+- carries the owning native `windowId` through the project-surface-close
+  callback;
+- closes a detached project only when both project and owner window match;
+- unregisters only the closing owner's workspace registration;
+- searches all same-project workspace registrations for the exact owner before
+  delivering detached lifecycle messages.
+
+Regressions cover owner-scoped detach close and exact workspace selection when
+the same project has registrations from two windows. Current validation after
+this seam: typecheck passed, production build passed, and the full Vitest suite
+passed with 638 tests and 4 skipped.
+
 Implementation submitted through `a03ff39`:
 
 - Native project presentations now live in a per-window collection keyed by
@@ -273,6 +291,8 @@ renderer tabs or splits.
   for one project; preserve a surviving surface from another project.
 - [x] Make cross-window "still active anywhere" checks follow active logical
   surfaces rather than legacy `enteredBackpackId`.
+- [x] Make detached workspace cleanup and lifecycle delivery resolve exact
+  `{projectId, owningWindowId}` rather than the first project-wide match.
 - [x] Prove collection-level A/B independence and exact close behavior in unit
   tests; live application proof remains pending until the host can create two
   surfaces through the user workflow/control plane.

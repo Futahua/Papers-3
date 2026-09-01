@@ -508,6 +508,18 @@ describe('window detach session', () => {
     expect(h.registry.size).toBe(1);
   });
 
+  it('owner-scoped close leaves the same project detached for another window alone', async () => {
+    const h = makeHarness();
+    h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
+    await h.session.open({ projectId: 'bp-a', entryUrl: 'papers-backpack://bp-a/ns/u/public/index.html', owningWindowId: 2 });
+    const window = h.windows[0]!;
+
+    await h.session.closeProjectForOwner('bp-a', 1);
+
+    expect(window.destroyed).toBe(false);
+    expect(h.session.isOpen('bp-a')).toBe(true);
+  });
+
   it('reattach and closeProject share the flush/stop path', async () => {
     const h = makeHarness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);

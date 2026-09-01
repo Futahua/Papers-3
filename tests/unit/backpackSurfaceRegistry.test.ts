@@ -90,6 +90,14 @@ describe('backpack surface registry', () => {
     expect(registry.hasSurface('bp-other', WORKSPACE_SURFACE_KIND)).toBe(false);
   });
 
+  it('finds the exact accepted workspace when a project has multiple owners', () => {
+    const registry = new BackpackSurfaceRegistry();
+    registry.register(101, 'bp-project', WORKSPACE_SURFACE_KIND);
+    registry.register(202, 'bp-project', WORKSPACE_SURFACE_KIND);
+
+    expect(registry.surfaceForProject('bp-project', WORKSPACE_SURFACE_KIND, (id) => id === 202)?.id).toBe(202);
+  });
+
   it('clear empties every registration', () => {
     const registry = new BackpackSurfaceRegistry();
     registry.register(101, 'bp-a', WORKSPACE_SURFACE_KIND);

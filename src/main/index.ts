@@ -354,9 +354,14 @@ async function bootstrap(): Promise<void> {
     },
     () => facade.emitHermesSurface(),
   );
-  const onProjectSurfaceClosed = (_surfaceId: string, projectId: string): void => {
-    detachSession?.closeProject(projectId).catch(() => undefined);
-    detachRegistry.unregisterWorkspaceForProject(projectId);
+  const onProjectSurfaceClosed = (windowId: number, _surfaceId: string, projectId: string): void => {
+    detachSession?.closeProjectForOwner(projectId, windowId).catch(() => undefined);
+    const workspace = detachRegistry.surfaceForProject(
+      projectId,
+      'workspace',
+      (senderId) => surfaceContexts.contextForSender(senderId)?.windowId === windowId,
+    );
+    if (workspace) detachRegistry.unregister(workspace.id);
   };
   const makePapersWindow = (bounds?: WindowBounds) => createPapersWindow({
     bounds,
@@ -763,13 +768,15 @@ async function bootstrap(): Promise<void> {
       },
     },
     ipcMain,
-    // Routed to the OWNING window's workspace. surfaceForProject returns the
-    // first workspace showing a project, which is ambiguous once two windows
-    // do -- so the owner recorded at detach time decides.
+    // Resolve project and owner together. Looking up the first project match
+    // and checking ownership afterwards would miss a later exact match.
     sendToWorkspace: (projectId, owningWindowId, channel, payload) => {
-      const workspace = detachRegistry.surfaceForProject(projectId, 'workspace');
+      const workspace = detachRegistry.surfaceForProject(
+        projectId,
+        'workspace',
+        (senderId) => surfaceContexts.contextForSender(senderId)?.windowId === owningWindowId,
+      );
       if (!workspace) return false;
-      if (surfaceContexts.contextForSender(workspace.id)?.windowId !== owningWindowId) return false;
       const contents = webContents.fromId(workspace.id);
       if (!contents || contents.isDestroyed()) return false;
       contents.send(channel, payload);

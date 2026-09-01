@@ -132,9 +132,13 @@ export class BackpackSurfaceRegistry {
     return removed;
   }
 
-  surfaceForProject(projectId: string, kind: SurfaceKind): { id: number; surface: RegisteredSurface } | null {
+  surfaceForProject(
+    projectId: string,
+    kind: SurfaceKind,
+    accepts: (webContentsId: number) => boolean = () => true,
+  ): { id: number; surface: RegisteredSurface } | null {
     for (const [id, surface] of this.surfaces) {
-      if (surface.projectId === projectId && surface.kind === kind) return { id, surface };
+      if (surface.projectId === projectId && surface.kind === kind && accepts(id)) return { id, surface };
     }
     return null;
   }

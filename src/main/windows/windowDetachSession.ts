@@ -124,6 +124,7 @@ export interface WindowDetachSession {
   focus(projectId: string, transferId?: string): boolean;
   reattach(projectId: string): Promise<void>;
   closeProject(projectId: string): Promise<void>;
+  closeProjectForOwner(projectId: string, owningWindowId: number): Promise<void>;
   closeAll(): Promise<void>;
   isOpen(projectId: string): boolean;
   registerDetachIpc(): void;
@@ -474,6 +475,12 @@ export function createWindowDetachSession(deps: WindowDetachSessionDependencies)
     },
 
     closeProject(projectId) {
+      return stop(projectId);
+    },
+
+    closeProjectForOwner(projectId, owningWindowId) {
+      const entry = entries.get(projectId);
+      if (!entry || entry.owningWindowId !== owningWindowId) return Promise.resolve();
       return stop(projectId);
     },
 
