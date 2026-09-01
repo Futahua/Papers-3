@@ -953,13 +953,16 @@ signed off the infrastructure exact head above.
   barrier after its final await; startup hydration acquires the same sorted
   project ownership gates through resolve, allocation, delivery, and commit;
   add held-pair host-open and held-registry hydration races.
+- [x] A3.3r5 hardening: startup hydration also checks the target window’s
+  workspace-mutation boundary after final availability validation and before
+  any allocation, delivery, or commit; add held-target move/hydration coverage.
 - [ ] Reviewer sign-off on exact pushed head
-  `33184889b810b55145b6d642f6fba1d6663f5715`.
+  `1dc5ef6f0cafddd216d43ba897becbd89bad0534`.
 
 A3.3 validation so far: typecheck passed; focused move/protocol/persistence/
-collection tests passed 80/80; full Vitest passed 717/721 (4 skipped); build
+collection tests passed 80/80; full Vitest passed 718/722 (4 skipped); build
 and diff checks passed; live workspace-tabs and developer-control Electron
-acceptance passed 3/3. The A3.3r4 exact-head review remains pending.
+acceptance passed 3/3. The A3.3r5 exact-head review remains pending.
 
 ## Persistent pickup checklist for every new session
 
