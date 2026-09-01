@@ -941,7 +941,7 @@ signed off the infrastructure exact head above.
 - [ ] Reviewer sign-off on the A3.3 exact head.
 
 A3.3 validation so far: typecheck passed; focused move/protocol tests passed
-57/57; full Vitest passed 711/715 (4 skipped); build and diff checks passed;
+58/58; full Vitest passed 712/716 (4 skipped); build and diff checks passed;
 live workspace-tabs and developer-control Electron acceptance passed 3/3. The
 A3.3r exact-head review remains pending.
 
