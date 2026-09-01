@@ -60,7 +60,7 @@ describe('Papers developer control server', () => {
     const createWindow = vi.fn(async () => ({ windowId: 7 }));
     const server = await startPapersControlServer({
       descriptorPath,
-      dependencies: { snapshot: () => ({ ready: true }), windows: () => [], createWindow },
+      dependencies: { surfaces: () => [], surface: () => null, snapshot: () => ({ ready: true }), windows: () => [], createWindow },
     });
     const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as typeof server.descriptor;
 
@@ -91,7 +91,7 @@ describe('Papers developer control server', () => {
     const descriptorPath = join(root, 'control.json');
     const server = await startPapersControlServer({
       descriptorPath,
-      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 1 }) },
+      dependencies: { surfaces: () => [], surface: () => null, snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 1 }) },
     });
 
     // Connect and send NOTHING. server.close() alone waits for existing
@@ -117,7 +117,7 @@ describe('Papers developer control server', () => {
 
     await expect(startPapersControlServer({
       descriptorPath,
-      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 1 }) },
+      dependencies: { surfaces: () => [], surface: () => null, snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 1 }) },
       publishDescriptor: async (temporary) => {
         // The listen() has already succeeded at this point, which is exactly
         // the window that used to leave a hidden pipe listening with no
@@ -138,7 +138,7 @@ describe('Papers developer control server', () => {
     const descriptorPath = join(root, 'control.json');
     const server = await startPapersControlServer({
       descriptorPath,
-      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 5 }) },
+      dependencies: { surfaces: () => [], surface: () => null, snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 5 }) },
     });
     const { socket, readLine } = await connect(server.descriptor.pipe);
 
@@ -165,7 +165,7 @@ describe('Papers developer control server', () => {
     const descriptorPath = join(root, 'control.json');
     const server = await startPapersControlServer({
       descriptorPath,
-      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 9 }) },
+      dependencies: { surfaces: () => [], surface: () => null, snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 9 }) },
     });
     const { socket, readLine } = await connect(server.descriptor.pipe);
 
@@ -198,7 +198,7 @@ describe('Papers developer control server', () => {
     const descriptorPath = join(root, 'control.json');
     const server = await startPapersControlServer({
       descriptorPath,
-      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 1 }) },
+      dependencies: { surfaces: () => [], surface: () => null, snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 1 }) },
     });
     const { socket, readLine } = await connect(server.descriptor.pipe);
 
@@ -225,6 +225,8 @@ describe('Papers developer control server', () => {
       dependencies: {
         snapshot: () => ({}),
         windows: () => [],
+        surfaces: () => [],
+        surface: () => null,
         createWindow: async () => {
           await new Promise<void>((resolve) => { release = resolve; });
           created = true;
@@ -267,6 +269,8 @@ describe('Papers developer control server', () => {
       dependencies: {
         snapshot: () => ({}),
         windows: () => [],
+        surfaces: () => [],
+        surface: () => null,
         createWindow: async () => { created += 1; return { windowId: created }; },
       },
     });

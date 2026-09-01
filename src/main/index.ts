@@ -1312,6 +1312,20 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             ownerWindowId: papersWindows.hermesDockOwner(),
           },
         }),
+        surfaces: () => logicalSurfaces.project(),
+        /**
+         * The shared control-side target resolver: the window must be live and
+         * the surface must be live IN that window. Nothing is resolved by
+         * proximity -- a surface in another window is simply not this target.
+         */
+        surface: ({ windowId, surfaceId }) => {
+          if (!papersWindows.has(windowId)) return null;
+          if (!logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
+          const found = logicalSurfaces.get(surfaceId);
+          return found
+            ? { surfaceId: found.surfaceId, windowId: found.windowId, projectId: found.projectId, kind: found.kind }
+            : null;
+        },
         createWindow: async () => ({ windowId: await createAdditionalPapersWindow() }),
       },
     });

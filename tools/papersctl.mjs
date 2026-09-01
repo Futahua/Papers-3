@@ -2,7 +2,7 @@
 import { connectPapersControl, readDescriptor } from './papersControlClient.mjs';
 
 function usage() {
-  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|window.create> [--descriptor <path>]');
+  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|inspect.surfaces|inspect.surface|window.create> [--descriptor <path>] [--window <id>] [--surface <id>]');
 }
 
 const args = process.argv.slice(2);

@@ -24,6 +24,8 @@ describe('shared Papers control client', () => {
       descriptorPath,
       dependencies: {
         // window.create is deliberately slow; inspect.windows is immediate.
+        surfaces: () => [],
+        surface: () => null,
         createWindow: async () => {
           await new Promise<void>((resolve) => { releaseSlow = resolve; });
           return { windowId: 42 };
@@ -64,6 +66,8 @@ describe('shared Papers control client', () => {
     const server = await startPapersControlServer({
       descriptorPath,
       dependencies: {
+        surfaces: () => [],
+        surface: () => null,
         createWindow: async () => ({ windowId: 1 }),
         windows: () => [],
         snapshot: () => ({}),

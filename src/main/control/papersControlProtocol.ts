@@ -12,6 +12,24 @@ const safeBuildSchema = z.object({
   packaged: z.boolean(),
 }).strict();
 
+const surfaceKindSchema = z.enum(['host', 'project', 'detached', 'widget']);
+
+/** The logical projection: identity and ownership only. No sender ids, URLs,
+ * roots or layout keys -- a layout key is project-defined opaque data and is
+ * not disclosed by default. */
+const controlSurfaceSchema = z.object({
+  surfaceId: z.string(),
+  windowId: z.number().int(),
+  projectId: z.string(),
+  kind: surfaceKindSchema,
+}).strict();
+
+/** A target names both, and both must agree with live state. */
+const surfaceTargetSchema = z.object({
+  windowId: z.number().int(),
+  surfaceId: z.string().min(1).max(128),
+}).strict();
+
 const controlWindowSchema = z.object({
   windowId: z.number().int(),
   hostAlive: z.boolean(),
@@ -38,6 +56,18 @@ const snapshotSchema = z.object({
 export const papersControlCommands = {
   'inspect.snapshot': { input: emptyParamsSchema, output: snapshotSchema, scope: 'app', effect: 'query' },
   'inspect.windows': { input: emptyParamsSchema, output: z.array(controlWindowSchema), scope: 'app', effect: 'query' },
+  'inspect.surfaces': {
+    input: emptyParamsSchema,
+    output: z.array(controlSurfaceSchema),
+    scope: 'app',
+    effect: 'query',
+  },
+  'inspect.surface': {
+    input: surfaceTargetSchema,
+    output: controlSurfaceSchema,
+    scope: 'surface',
+    effect: 'query',
+  },
   'window.create': {
     input: emptyParamsSchema,
     output: z.object({ windowId: z.number().int() }).strict(),
@@ -49,6 +79,18 @@ export const papersControlCommands = {
 export type PapersControlMethod = keyof typeof papersControlCommands;
 
 export interface PapersControlDependencies {
+  /** Every live logical surface, projected. */
+  surfaces(): unknown;
+  /**
+   * The one surface a target names, or null.
+   *
+   * Refuses rather than resolving anything near it: a surface that exists in
+   * another window is not this target, and there is no falling back to "the
+   * window's only surface". Control authority is the authenticated session
+   * plus explicit targets -- it never obtains or manufactures a sender id to
+   * reuse sender-based authorization.
+   */
+  surface(target: { windowId: number; surfaceId: string }): unknown;
   snapshot(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
@@ -77,6 +119,13 @@ export async function dispatchPapersControl(
   const definition = papersControlCommands[request.method];
   definition.input.parse(request.params ?? {});
   switch (request.method) {
+    case 'inspect.surfaces': return papersControlCommands[request.method].output.parse(dependencies.surfaces());
+    case 'inspect.surface': {
+      const target = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const found = dependencies.surface(target);
+      if (!found) throw new Error('That surface is not open in that Papers window.');
+      return papersControlCommands[request.method].output.parse(found);
+    }
     case 'inspect.snapshot': return papersControlCommands[request.method].output.parse(dependencies.snapshot());
     case 'inspect.windows': return papersControlCommands[request.method].output.parse(dependencies.windows());
     case 'window.create': return papersControlCommands[request.method].output.parse(await dependencies.createWindow());
