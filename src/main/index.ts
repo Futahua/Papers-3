@@ -35,6 +35,7 @@ import { registerWindowPickIpc } from './ipc/windowPickIpc';
 import { registerWindowDetachIpc } from './ipc/windowDetachIpc';
 import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
+import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
@@ -102,6 +103,9 @@ let mainWindow: BaseWindow | null = null;
 /** Phase 1A: which project each sender may act for. One registry for the
  * application; the bindings inside it are per surface. */
 const surfaceContexts = createSurfaceContextRegistry();
+/** Phase 1B: the Papers windows that exist. Per-window ownership lives here;
+ * application-level services stay application-level. */
+const papersWindows = createPapersWindowRegistry();
 
 /**
  * Phase 1A: bind a Papers-owned project surface so it can act for its project.
@@ -290,6 +294,10 @@ async function bootstrap(): Promise<void> {
     },
   });
   mainWindow.contentView.addChildView(hostView);
+  // Phase 1B: this window and its renderer are now addressable as a context
+  // rather than as the module's single `mainWindow`/`hostView` pair.
+  papersWindows.add(mainWindow.id);
+  papersWindows.setHostSender(mainWindow.id, hostView.webContents.id);
   const applyHostSurface = (transparent: boolean): void => {
     // The host view is a child surface: its zero alpha is not honoured, so a
     // white RGB payload paints literally and every transparent page above it
@@ -420,17 +428,13 @@ async function bootstrap(): Promise<void> {
     ),
     isBackpackProjectSender: isProjectSurfaceSender,
     surfaces: surfaceContexts,
-    // One window today, so the answer is that window — but only for a sender
-    // this process actually knows. An unknown sender gets null and is refused,
-    // rather than being bound to a window it may not belong to. Phase 1B
-    // replaces this with a real window lookup.
-    windowIdForSender: (senderId) => {
-      if (!mainWindow) return null;
-      const known = hostView?.webContents.id === senderId
-        || backpackProjectRuntime.senderId === senderId
-        || surfaceContexts.contextForSender(senderId) !== null;
-      return known ? mainWindow.id : null;
-    },
+    // Phase 1B: a real lookup. A host renderer resolves through the window
+    // registry; a project/detached/widget sender resolves through the surface
+    // binding it already has. Anything else is refused rather than attributed
+    // to whichever window happens to exist.
+    windowIdForSender: (senderId) => papersWindows.windowForSender(senderId)
+      ?? surfaceContexts.contextForSender(senderId)?.windowId
+      ?? (backpackProjectRuntime.senderId === senderId ? mainWindow?.id ?? null : null),
     showBackpackProjectSurface: async (url) => {
       await backpackProjectRuntime.show(url);
       // Phase 1A: bind both senders that may act for this project — the host
@@ -1269,6 +1273,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     // its binding survives as stale registry data. It matters once Phase 1B
     // lets one Papers window close while others keep the process alive.
     surfaceContexts.unbindWindow(ownedWindowId);
+    papersWindows.remove(ownedWindowId);
     mainWindow = null;
     hostView = null;
   });
