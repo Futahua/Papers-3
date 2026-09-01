@@ -749,7 +749,7 @@ pushed head. No control, UI, or load transaction was included in this slice.
   ordering, duplicate project tabs, rollback, exact cleanup, and one commit.
 - [x] Add `papersctl layout.list`, `layout.save --window … --name …`, and
   `layout.load --window … --layout …`.
-- [ ] Reviewer sign-off on the exact pushed head.
+- [x] Reviewer sign-off on exact head `e4a96f21dc154e3a875751504cba4c9e89782d24`.
 
 A2.1c implementation validation: typecheck passed, full Vitest passed 60/60
 files with 691 passed and 4 skipped tests, build passed, and `git diff --check`
@@ -778,18 +778,70 @@ to A2.1d.
 
 A2.1d validation: typecheck passed, the focused real Electron acceptance passed
 1/1 after making secondary-window targeting use its explicit native `windowId`.
-Full unit suite and build are rerun before review. No overwrite, rename, delete,
-merge, startup selection, or management screen was added.
+Full unit suite passed 691/695 (4 skipped), build and diff checks passed, and
+the reviewer found no concrete UI, authority, convergence, lifecycle,
+persistence or acceptance defect. No overwrite, rename, delete, merge, startup
+selection, or management screen was added.
 
 ### Later gates
 
-- [ ] A2 — named Save Layout / Load Layout.
+- [x] A2 — named Save Layout / Load Layout (A2.1a–d signed off at
+  `e4a96f21dc154e3a875751504cba4c9e89782d24`).
+- [ ] A3.1 — define cross-native-window move transaction and authority
+  contract.
 - [ ] A3 — cross-native-window move transaction with recreate/rebind fallback.
 - [ ] Electron-version compatibility test for optional live WCV reparenting.
 - [ ] B2 — richer `papersctl`, event subscriptions and authorized confirmation
   challenges for destructive operations.
 - [ ] B3 — thin stdio MCP adapter over the same local control protocol; no
   duplicated business logic.
+
+### A3.1 cross-native-window move contract (design slice)
+
+- [x] Explicit source target `{sourceWindowId, surfaceId}` and destination
+  `{targetWindowId, targetGroupId, targetIndex}`; reject missing, foreign,
+  retired, non-project or non-live window identities. The source is proved by
+  the authenticated host sender; the destination is an explicit live Papers
+  window and is never the focused/primary window by inference.
+- [x] Validate both workspace topologies against exact live project sets before
+  mutation. Compute the source topology with `surfaceId` removed and the
+  destination topology with the same `surfaceId` inserted by the existing
+  `moveWorkspaceSurface` rules; validate both prospective sets before touching
+  native state.
+- [x] Choose recreate/rebind as the first Electron `43.1.1` implementation.
+  `BackpackProjectRuntime` currently owns a fixed `BaseWindow` and exposes no
+  reparent operation, so A3 must prepare a destination presentation from the
+  project service's freshly resolved URL. A later optional live WCV reparent
+  path needs an Electron-version compatibility test; neither native
+  presentation nor `WebContents` identity is durable product state.
+- [x] Define one serialized move transaction per application. Its phases are:
+  capture and validate both windows/topologies; resolve and revalidate the
+  project; prepare the destination runtime without changing logical ownership;
+  wait for the destination renderer to load; queue one destination and one
+  source topology event as the handoff boundary; move the logical surface,
+  rebind all project senders from source to destination, update both active /
+  entered projections, and persist each durable workspace record exactly once;
+  only then retire the source native presentation. Control inspection and
+  renderers must not observe the prepared duplicate as canonical state.
+- [x] Define rollback at every await and commit boundary. Before the handoff
+  boundary, destroy only the prepared destination presentation and leave source
+  topology, logical ownership, sender bindings and durable records untouched.
+  If sender rebinding or either durable write fails after the boundary, restore
+  the in-memory source/destination snapshots, rebind the original sender set,
+  remove the destination presentation, and persist compensating snapshots as
+  needed. Preserve the logical `surfaceId` throughout; retire it only if the
+  original native presentation cannot be restored and the source is no longer
+  safe to expose.
+- [x] Keep native teardown best-effort after canonical commit, with no rollback
+  from a late destroyed-object error. Add the control command, sender-binding
+  tests, native recreate/rebind tests, durable two-workspace failure tests and
+  a focused two-window Electron acceptance only after this contract is reviewed.
+
+A3.1 is now a concrete design slice awaiting reviewer confirmation; no A3
+implementation has started. A3 must not copy window IDs, sender IDs or native
+presentation state into durable layout/workspace files. The two workspace
+records remain independently durable, with the move operation responsible for
+coordinating their in-memory canonical snapshots and compensating writes.
 
 ## Persistent pickup checklist for every new session
 
