@@ -52,3 +52,12 @@ export function preparePapersWindow(
     },
   };
 }
+
+/** Create, register, and activate a later Papers window as one operation. */
+export async function createRegisteredPapersWindow(
+  create: () => PapersWindowInstance,
+  dependencies: PapersWindowLifecycleDependencies,
+): Promise<PapersWindowInstance> {
+  const prepared = preparePapersWindow(create(), dependencies);
+  return prepared.loadAndRollback();
+}

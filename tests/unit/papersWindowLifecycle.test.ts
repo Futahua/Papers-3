@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 
-import { preparePapersWindow } from '../../src/main/windows/papersWindowLifecycle';
+import { createRegisteredPapersWindow, preparePapersWindow } from '../../src/main/windows/papersWindowLifecycle';
 import type { PapersWindowInstance } from '../../src/main/windows/papersWindowFactory';
 
 function windowStub() {
@@ -51,5 +51,17 @@ describe('prepared Papers window lifecycle', () => {
 
     (current.window as never as EventEmitter).emit('closed');
     expect(finalize).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers an atomic create/register/load operation for later windows', async () => {
+    const order: string[] = [];
+    const current = instance(async () => { order.push('load'); });
+    const result = await createRegisteredPapersWindow(
+      () => { order.push('create'); return current; },
+      { register: () => { order.push('register'); }, finalize: vi.fn() },
+    );
+
+    expect(result).toBe(current);
+    expect(order).toEqual(['create', 'register', 'load']);
   });
 });
