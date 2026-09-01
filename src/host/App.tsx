@@ -159,6 +159,22 @@ export function App(): React.JSX.Element {
         setProjectUrl(active?.url ?? null);
         setEntered(active?.projectId ?? null);
       }),
+      bridge.events.onWorkspaceLayoutLoaded(({ projects, topology }) => {
+        // The main-process replacement transaction has already validated and
+        // committed the canonical topology. Consume its complete descriptor
+        // set before Dockview derives any native presentation; this is the
+        // same externally-restored boundary used by startup hydration.
+        topologyCommitArmed.current = true;
+        openProjectsRef.current = projects;
+        setOpenProjects(projects);
+        externallyRestoredTopology.current = true;
+        setWorkspaceTopology(topology);
+        const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
+        const active = projects.find((project) => project.surfaceId === focused?.activeSurfaceId) ?? null;
+        setSurfaceId(active?.surfaceId ?? null);
+        setProjectUrl(active?.url ?? null);
+        setEntered(active?.projectId ?? null);
+      }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),
     ];

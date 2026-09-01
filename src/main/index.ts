@@ -59,6 +59,7 @@ import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { WorkspaceTopologyStore } from './persistence/workspaceTopologyStore';
+import { WorkspaceLayoutStore } from './persistence/workspaceLayoutStore';
 import { hydrateStartupWorkspace } from './persistence/startupWorkspaceHydration';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import {
@@ -289,6 +290,8 @@ async function bootstrap(): Promise<void> {
   const paths = papersPaths(baseDir);
   const workspaceTopologyStore = new WorkspaceTopologyStore(paths);
   await workspaceTopologyStore.initialize();
+  const workspaceLayoutStore = new WorkspaceLayoutStore(paths);
+  await workspaceLayoutStore.initialize();
   const settingsStore = new AtomicJsonStore(paths.settingsFile, { recoveryDir: paths.recoveryDir });
   const settingsReport = await settingsStore.load<PapersSettings>();
   let papersSettings: PapersSettings = {
@@ -611,6 +614,7 @@ async function bootstrap(): Promise<void> {
         console.error('[workspace-topology] durable commit failed', error);
       });
     },
+    workspaceLayouts: workspaceLayoutStore,
     activeSurfaceId: (windowId) => papersWindows.activeSurfaceId(windowId),
     setActiveSurfaceId: (windowId, surfaceId) => papersWindows.setActiveSurfaceId(windowId, surfaceId),
     clearEnteredBackpackEverywhere: (backpackId) => papersWindows.clearEnteredBackpackEverywhere(backpackId),
@@ -1440,6 +1444,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         closeWorkspace: (windowId, surfaceId, topology) =>
           facade.closeWorkspaceSurfaceFromControl(windowId, surfaceId, topology),
         openWorkspace: (windowId, projectId) => facade.openWorkspaceSurfaceFromControl(windowId, projectId),
+        listWorkspaceLayouts: () => facade.listWorkspaceLayouts(),
+        saveWorkspaceLayout: (windowId, name) => facade.saveWorkspaceLayoutFromControl(windowId, name),
+        loadWorkspaceLayout: (windowId, layoutId) => facade.loadWorkspaceLayoutFromControl(windowId, layoutId),
         /**
          * The shared control-side target resolver: the window must be live and
          * the surface must be live IN that window. Nothing is resolved by
@@ -1472,6 +1479,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       capabilityQuitPromise = (papersControlServer?.close().catch(() => undefined) ?? Promise.resolve())
         .then(() => Promise.all([
           workspaceTopologyStore.flush().catch((error) => console.error('[workspace-topology] shutdown flush failed', error)),
+          workspaceLayoutStore.flush().catch((error) => console.error('[workspace-layout] shutdown flush failed', error)),
           detachSession!.closeAll().catch(() => undefined),
           widgetSession!.closeAll().catch(() => undefined),
           windowCapabilityService.stop().catch(() => undefined),

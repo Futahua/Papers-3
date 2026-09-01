@@ -4,6 +4,7 @@ import { PapersHostFacade, type FacadeDeps } from '../../src/main/hostFacade';
 import { createLogicalSurfaceRegistry } from '../../src/main/windows/logicalSurfaceRegistry';
 import { createSurfaceContextRegistry } from '../../src/main/windows/surfaceContextRegistry';
 import { createWorkspaceTopology, openWorkspaceSurface, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
+import type { NamedWorkspaceLayout } from '../../src/main/persistence/workspaceLayoutStore';
 
 const PROJECT = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 const OTHER = 'bp-a5d07080-7210-45e6-b3f1-93978873a2fe';
@@ -37,6 +38,14 @@ function createFacade() {
     workspaceTopologies.set(windowId, topology);
   });
   const markLeft = vi.fn(async () => {});
+  const workspaceLayouts = {
+    list: vi.fn(async () => []),
+    get: vi.fn(async (_id: string): Promise<NamedWorkspaceLayout | null> => null),
+    create: vi.fn(async (name: string, topology: ReturnType<typeof createWorkspaceTopology>) => ({
+      layoutId: '3f0f8c9c-4d3c-4c3c-8c3c-3f0f8c9c4d3c', name, topology,
+      createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
+    })),
+  };
   const facade = new PapersHostFacade({
     surfaces,
     logicalSurfaces,
@@ -54,6 +63,7 @@ function createFacade() {
     setActiveSurfaceId,
     workspaceTopology: (windowId: number) => workspaceTopologies.get(windowId) ?? null,
     setWorkspaceTopology,
+    workspaceLayouts,
     clearEnteredBackpackEverywhere: vi.fn(),
     listLogicalSurfaces: () => logicalSurfaces.project(),
     retireProjectSurfaces: (projectId: string) => { logicalSurfaces.retireProject(projectId); },
@@ -81,6 +91,7 @@ function createFacade() {
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
     setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, archivedProjects, markLeft,
+    workspaceLayouts,
   };
 }
 
@@ -367,6 +378,112 @@ describe('surface routing in the host facade', () => {
     expect(logicalSurfaces.get(first.surfaceId)).not.toBeNull();
     expect(logicalSurfaces.get(second.surfaceId)).not.toBeNull();
     expect(closeAttachedProjectSurface).not.toHaveBeenCalled();
+  });
+
+  it('saves the exact target window topology without changing workspace state', async () => {
+    const { facade, logicalSurfaces, workspaceTopologies, workspaceLayouts, setWorkspaceTopology } = createFacade();
+    const surface = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const topology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: surface.surfaceId, projectId: PROJECT, title: 'Alpha',
+    });
+    workspaceTopologies.set(1, topology);
+
+    const saved = await facade.saveWorkspaceLayoutFromControl(1, ' Research ');
+
+    expect(workspaceLayouts.create).toHaveBeenCalledWith(' Research ', topology);
+    expect(saved.name).toBe(' Research ');
+    expect(setWorkspaceTopology).not.toHaveBeenCalled();
+  });
+
+  it('aborts layout load after post-await availability changes without allocating replacements', async () => {
+    const {
+      facade, logicalSurfaces, workspaceTopologies, workspaceLayouts, openProject,
+      archivedProjects, sendToWindow, setWorkspaceTopology,
+    } = createFacade();
+    const old = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const oldTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: old.surfaceId, projectId: PROJECT, title: 'Old',
+    });
+    workspaceTopologies.set(1, oldTopology);
+    const savedTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: 'saved-a', projectId: OTHER, title: 'Beta',
+    });
+    workspaceLayouts.get.mockResolvedValue({
+      layoutId: '3f0f8c9c-4d3c-4c3c-8c3c-3f0f8c9c4d3c', name: 'Saved', topology: savedTopology,
+      createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
+    });
+    let release!: () => void;
+    openProject.mockImplementation(async (id: string) => new Promise((resolve) => {
+      release = () => resolve({ url: `papers-backpack://${id}/open` });
+    }));
+    const loading = facade.loadWorkspaceLayoutFromControl(1, '3f0f8c9c-4d3c-4c3c-8c3c-3f0f8c9c4d3c');
+    for (let attempt = 0; attempt < 10 && openProject.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve();
+    }
+    // The manifest lookup is still in flight. Make the authoritative registry
+    // unavailable before allowing the await to finish.
+    archivedProjects.add(OTHER);
+    release();
+    await expect(loading).rejects.toThrow(/not available/);
+    expect(sendToWindow).not.toHaveBeenCalled();
+    expect(setWorkspaceTopology).not.toHaveBeenCalled();
+    expect(logicalSurfaces.get(old.surfaceId)).not.toBeNull();
+    expect(logicalSurfaces.project()).toHaveLength(1);
+  });
+
+  it('loads duplicate project tabs with independent fresh identities and one commit', async () => {
+    const {
+      facade, logicalSurfaces, workspaceTopologies, workspaceLayouts, closeAttachedProjectSurface,
+      sendToWindow, setWorkspaceTopology, setActiveSurfaceId, setEnteredBackpack,
+    } = createFacade();
+    const old = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    workspaceTopologies.set(1, openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: old.surfaceId, projectId: OTHER, title: 'Old',
+    }));
+    const savedTopology = openWorkspaceSurface(openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: 'saved-a', projectId: PROJECT, title: 'Alpha 1',
+    }), { surfaceId: 'saved-b', projectId: PROJECT, title: 'Alpha 2' });
+    const layoutId = '3f0f8c9c-4d3c-4c3c-8c3c-3f0f8c9c4d3c';
+    workspaceLayouts.get.mockResolvedValue({
+      layoutId, name: 'Saved', topology: savedTopology,
+      createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
+    });
+
+    const loaded = await facade.loadWorkspaceLayoutFromControl(1, layoutId);
+    const fresh = loaded.topology.surfaces.map((surface) => surface.surfaceId);
+
+    expect(fresh).toHaveLength(2);
+    expect(new Set(fresh).size).toBe(2);
+    expect(fresh).not.toContain(old.surfaceId);
+    expect(logicalSurfaces.get(old.surfaceId)).toBeNull();
+    expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, old.surfaceId);
+    expect(sendToWindow).toHaveBeenCalledTimes(1);
+    expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:workspace-layout-loaded', expect.objectContaining({ layoutId, topology: loaded.topology }));
+    expect(setWorkspaceTopology).toHaveBeenCalledTimes(1);
+    expect(setActiveSurfaceId).toHaveBeenCalledWith(1, fresh[1]);
+    expect(setEnteredBackpack).toHaveBeenCalledWith(1, PROJECT);
+  });
+
+  it('rolls back fresh logical surfaces when combined layout delivery fails', async () => {
+    const { facade, logicalSurfaces, workspaceTopologies, workspaceLayouts, sendToWindow, setWorkspaceTopology } = createFacade();
+    const old = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    workspaceTopologies.set(1, openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: old.surfaceId, projectId: OTHER, title: 'Old',
+    }));
+    const savedTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: 'saved-a', projectId: PROJECT, title: 'Alpha',
+    });
+    const layoutId = '3f0f8c9c-4d3c-4c3c-8c3c-3f0f8c9c4d3c';
+    workspaceLayouts.get.mockResolvedValue({
+      layoutId, name: 'Saved', topology: savedTopology,
+      createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
+    });
+    sendToWindow.mockImplementationOnce(() => { throw new Error('renderer unavailable'); });
+
+    await expect(facade.loadWorkspaceLayoutFromControl(1, layoutId)).rejects.toThrow(/renderer unavailable/);
+    expect(logicalSurfaces.get(old.surfaceId)).not.toBeNull();
+    expect(logicalSurfaces.project()).toEqual([expect.objectContaining({ surfaceId: old.surfaceId })]);
+    expect(setWorkspaceTopology).not.toHaveBeenCalled();
   });
 
   it('does not mark a Backpack left while another window has an active surface for it', async () => {

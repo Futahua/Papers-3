@@ -4,10 +4,11 @@ import {
   controlRequestSchema,
   dispatchPapersControl,
   PAPERS_CONTROL_PROTOCOL_VERSION,
+  type PapersControlMethod,
 } from '../../src/main/control/papersControlProtocol';
 import { createWorkspaceTopology, openWorkspaceSurface, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
 
-function request(method: 'inspect.snapshot' | 'inspect.windows' | 'inspect.surfaces' | 'inspect.surface' | 'inspect.workspace' | 'window.create', params: unknown = {}) {
+function request(method: PapersControlMethod, params: unknown = {}) {
   return controlRequestSchema.parse({
     id: 'r1',
     token: 'secret',
@@ -43,6 +44,31 @@ describe('Papers developer control protocol', () => {
       .resolves.toEqual([window]);
     await expect(dispatchPapersControl(dependencies, request('window.create')))
       .resolves.toEqual({ windowId: 3 });
+  });
+
+  it('dispatches named-layout list/save/load with explicit window targets', async () => {
+    const layout = {
+      layoutId: '3f0f8c9c-4d3c-4c3c-8c3c-3f0f8c9c4d3c',
+      name: 'Research',
+      topology: createWorkspaceTopology(),
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    };
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+      createWindow: async () => ({ windowId: 3 }),
+      listWorkspaceLayouts: vi.fn(async () => [layout]),
+      saveWorkspaceLayout: vi.fn(async (_windowId: number, name: string) => ({ ...layout, name })),
+      loadWorkspaceLayout: vi.fn(async (windowId: number, layoutId: string) => ({ windowId, layoutId, topology: layout.topology })),
+    };
+
+    await expect(dispatchPapersControl(dependencies, request('layout.list'))).resolves.toEqual([layout]);
+    await expect(dispatchPapersControl(dependencies, request('layout.save', { windowId: 7, name: 'Saved' })))
+      .resolves.toEqual({ ...layout, name: 'Saved' });
+    await expect(dispatchPapersControl(dependencies, request('layout.load', { windowId: 7, layoutId: layout.layoutId })))
+      .resolves.toEqual({ windowId: 7, layoutId: layout.layoutId, topology: layout.topology });
+    expect(dependencies.saveWorkspaceLayout).toHaveBeenCalledWith(7, 'Saved');
+    expect(dependencies.loadWorkspaceLayout).toHaveBeenCalledWith(7, layout.layoutId);
   });
 
   it('rejects unknown methods and unexpected parameters', async () => {

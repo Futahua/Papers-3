@@ -723,12 +723,41 @@ the named-layout replace-load transaction after reviewer review.
 - [x] Reject duplicate normalized names, duplicate IDs, malformed topology and
   invalid envelope state through validation/quarantine.
 - [x] Ensure durable create failure leaves no in-memory phantom layout.
-- [ ] Reviewer sign-off.
+- [x] Reviewer sign-off on exact head `cf9faf696a89ca1b334cce55c6bc38bc75135bce`.
 
 A2.1b validation: typecheck passed and focused named-layout store tests passed
 5/5, covering atomic round-trip/cloning, concurrent create serialization,
 duplicate/invalid names, malformed-state quarantine, redaction, and failed-save
-no-phantom behavior. No control, UI, or load transaction is wired yet.
+no-phantom behavior. Reviewer found no concrete blocker and signed the exact
+pushed head. No control, UI, or load transaction was included in this slice.
+
+### A2.1c exact-window named-layout control transaction
+
+- [x] Add exact-window `layout.list`, `layout.save` and `layout.load` control
+  commands; neither save nor load may infer an active/current window.
+- [x] Make `layout.save` capture only the target window's validated canonical
+  topology and create one durable named layout without changing workspace
+  identity or revision.
+- [x] Make `layout.load` resolve every saved Backpack before allocating any
+  replacement surface, recheck availability after awaits, remap every saved
+  surface to a fresh runtime identity, and fail closed on any missing project.
+- [x] Deliver one combined `host:event:workspace-layout-loaded` payload and
+  replace the target only after complete validation/delivery; failures retire
+  only invocation-created surfaces and preserve the old topology, revision and
+  workspace identity.
+- [x] Add focused transaction and control-protocol regression coverage for
+  ordering, duplicate project tabs, rollback, exact cleanup, and one commit.
+- [x] Add `papersctl layout.list`, `layout.save --window … --name …`, and
+  `layout.load --window … --layout …`.
+- [ ] Reviewer sign-off on the exact pushed head.
+
+A2.1c implementation validation: typecheck passed, full Vitest passed 60/60
+files with 690 passed and 4 skipped tests, build passed, and `git diff --check`
+passed. Focused facade/control coverage includes resolve-first archive races,
+duplicate project tabs with independent fresh identities, delivery rollback,
+one combined event, exact old-set cleanup, and one final topology commit.
+Reviewer sign-off is still pending on the exact pushed head. UI remains deferred
+to A2.1d.
 
 ### Later gates
 

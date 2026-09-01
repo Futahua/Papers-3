@@ -39,6 +39,14 @@ const surfaceTargetSchema = z.object({
   surfaceId: z.string().min(1).max(128),
 }).strict();
 const windowTargetSchema = z.object({ windowId: z.number().int() }).strict();
+const layoutTargetSchema = z.object({ windowId: z.number().int(), layoutId: z.string().uuid() }).strict();
+const namedLayoutSchema = z.object({
+  layoutId: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  topology: validatedWorkspaceTopologySchema,
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+}).strict();
 
 const controlWindowSchema = z.object({
   windowId: z.number().int(),
@@ -83,6 +91,24 @@ export const papersControlCommands = {
     output: z.object({ windowId: z.number().int(), revision: z.number().int().nonnegative(), topology: workspaceTopologySchema }).strict(),
     scope: 'window',
     effect: 'query',
+  },
+  'layout.list': {
+    input: emptyParamsSchema,
+    output: z.array(namedLayoutSchema),
+    scope: 'app',
+    effect: 'query',
+  },
+  'layout.save': {
+    input: z.object({ windowId: z.number().int(), name: z.string().min(1).max(120) }).strict(),
+    output: namedLayoutSchema,
+    scope: 'window',
+    effect: 'mutate',
+  },
+  'layout.load': {
+    input: layoutTargetSchema,
+    output: z.object({ windowId: z.number().int(), layoutId: z.string().uuid(), topology: workspaceTopologySchema }).strict(),
+    scope: 'window',
+    effect: 'mutate',
   },
   'layout.restore': {
     input: z.object({ windowId: z.number().int(), topology: validatedWorkspaceTopologySchema }).strict(),
@@ -144,6 +170,9 @@ export interface PapersControlDependencies {
   restoreWorkspace?(windowId: number, topology: z.infer<typeof workspaceTopologySchema>): unknown;
   closeWorkspace?(windowId: number, surfaceId: string, topology: z.infer<typeof workspaceTopologySchema>): unknown;
   openWorkspace?(windowId: number, projectId: string): Promise<unknown>;
+  listWorkspaceLayouts?(): Promise<unknown>;
+  saveWorkspaceLayout?(windowId: number, name: string): Promise<unknown>;
+  loadWorkspaceLayout?(windowId: number, layoutId: string): Promise<unknown>;
   snapshot(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
@@ -184,6 +213,23 @@ export async function dispatchPapersControl(
       const workspace = dependencies.workspace?.(windowId) ?? null;
       if (!workspace) throw new Error('That Papers window has not committed workspace topology.');
       return papersControlCommands[request.method].output.parse({ windowId, ...(workspace as object) });
+    }
+    case 'layout.list': {
+      const layouts = await dependencies.listWorkspaceLayouts?.();
+      if (!layouts) throw new Error('Named workspace layouts are unavailable.');
+      return papersControlCommands[request.method].output.parse(layouts);
+    }
+    case 'layout.save': {
+      const { windowId, name } = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const layout = await dependencies.saveWorkspaceLayout?.(windowId, name);
+      if (!layout) throw new Error('That Papers window cannot save a named workspace layout.');
+      return papersControlCommands[request.method].output.parse(layout);
+    }
+    case 'layout.load': {
+      const { windowId, layoutId } = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const loaded = await dependencies.loadWorkspaceLayout?.(windowId, layoutId);
+      if (!loaded) throw new Error('That Papers window cannot load a named workspace layout.');
+      return papersControlCommands[request.method].output.parse(loaded);
     }
     case 'layout.restore': {
       const { windowId, topology } = papersControlCommands[request.method].input.parse(request.params ?? {});

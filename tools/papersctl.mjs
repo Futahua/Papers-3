@@ -3,7 +3,7 @@ import { connectPapersControl, readDescriptor } from './papersControlClient.mjs'
 import { readFile } from 'node:fs/promises';
 
 function usage() {
-  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|inspect.surfaces|inspect.surface|inspect.workspace|workspace.open|workspace.activate|workspace.close|layout.split|layout.moveSurface|layout.restore|window.create> [--descriptor <path>] [--window <id>] [--project <id>] [--surface <id>] [--direction <right|down>] [--group <id>] [--index <n>] [--topology <json-file>]');
+  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|inspect.surfaces|inspect.surface|inspect.workspace|layout.list|layout.save|layout.load|workspace.open|workspace.activate|workspace.close|layout.split|layout.moveSurface|layout.restore|window.create> [--descriptor <path>] [--window <id>] [--project <id>] [--surface <id>] [--layout <id>] [--name <name>] [--direction <right|down>] [--group <id>] [--index <n>] [--topology <json-file>]');
 }
 
 const args = process.argv.slice(2);
@@ -15,6 +15,8 @@ const descriptorPath = descriptorFlag >= 0
 const windowFlag = args.indexOf('--window');
 const surfaceFlag = args.indexOf('--surface');
 const projectFlag = args.indexOf('--project');
+const layoutFlag = args.indexOf('--layout');
+const nameFlag = args.indexOf('--name');
 const topologyFlag = args.indexOf('--topology');
 const directionFlag = args.indexOf('--direction');
 const groupFlag = args.indexOf('--group');
@@ -31,6 +33,10 @@ if (!method || !descriptorPath) {
       }
     : method === 'inspect.workspace'
       ? { windowId: Number(args[windowFlag + 1]) }
+      : method === 'layout.save'
+        ? { windowId: Number(args[windowFlag + 1]), name: args[nameFlag + 1] }
+      : method === 'layout.load'
+        ? { windowId: Number(args[windowFlag + 1]), layoutId: args[layoutFlag + 1] }
       : method === 'workspace.open'
         ? { windowId: Number(args[windowFlag + 1]), projectId: args[projectFlag + 1] }
       : method === 'layout.restore'
@@ -50,6 +56,8 @@ if (!method || !descriptorPath) {
   if ((method === 'inspect.surface' && (
     windowFlag < 0 || surfaceFlag < 0 || !Number.isInteger(params.windowId) || !params.surfaceId
   )) || (method === 'inspect.workspace' && (windowFlag < 0 || !Number.isInteger(params.windowId)))
+    || (method === 'layout.save' && (windowFlag < 0 || nameFlag < 0 || !Number.isInteger(params.windowId) || !params.name))
+    || (method === 'layout.load' && (windowFlag < 0 || layoutFlag < 0 || !Number.isInteger(params.windowId) || !params.layoutId))
     || (method === 'workspace.open' && (windowFlag < 0 || projectFlag < 0 || !Number.isInteger(params.windowId) || !params.projectId))
     || (method === 'layout.restore' && (
       windowFlag < 0 || topologyFlag < 0 || !Number.isInteger(params.windowId) || !params.topology

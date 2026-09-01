@@ -40,8 +40,16 @@ import type { AgentRunService, InvocationPreview } from './agents/runService';
 import type { PermissionPrompter } from './capabilities/capabilityBroker';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { backpackDir, canvasFile, type PapersPaths } from './persistence/paths';
+import type { NamedWorkspaceLayout, WorkspaceLayoutStore } from './persistence/workspaceLayoutStore';
 import type { HostFacade } from './ipc/hostIpc';
-import { assertValidWorkspaceTopology, closeWorkspaceSurface, openWorkspaceSurface, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import {
+  assertValidWorkspaceTopology,
+  closeWorkspaceSurface,
+  createWorkspaceTopology,
+  openWorkspaceSurface,
+  remapWorkspaceTopologySurfaceIds,
+  type WorkspaceTopologyV1,
+} from '@shared/workspaceTopology';
 
 interface CanvasPersistedState {
   schemaVersion: 1;
@@ -150,6 +158,7 @@ export interface FacadeDeps {
   workspaceTopology?: (windowId: number) => WorkspaceTopologyV1 | null;
   hydrateStartupWorkspace?: (windowId: number) => Promise<{ hydrated: boolean }>;
   setWorkspaceTopology: (windowId: number, topology: WorkspaceTopologyV1) => void;
+  workspaceLayouts: WorkspaceLayoutStore;
 }
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
@@ -811,6 +820,101 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.clearWindowBounds();
   }
 
+  async listWorkspaceLayouts(): Promise<ReadonlyArray<NamedWorkspaceLayout>> {
+    return this.deps.workspaceLayouts.list();
+  }
+
+  async saveWorkspaceLayoutFromControl(windowId: number, name: string): Promise<NamedWorkspaceLayout> {
+    this.requireLiveWorkspaceWindow(windowId);
+    const topology = this.deps.workspaceTopology?.(windowId) ?? null;
+    if (!topology) throw new Error('That Papers window has not committed workspace topology.');
+    this.validateWorkspaceTopology(windowId, topology);
+    return this.deps.workspaceLayouts.create(name, topology);
+  }
+
+  async loadWorkspaceLayoutFromControl(windowId: number, layoutId: string): Promise<{
+    windowId: number;
+    layoutId: string;
+    topology: WorkspaceTopologyV1;
+  }> {
+    this.requireLiveWorkspaceWindow(windowId);
+    const layout = await this.deps.workspaceLayouts.get(layoutId);
+    if (!layout) throw new Error('That named workspace layout does not exist.');
+
+    // Capture and validate the old canonical set before the first await. A
+    // fresh target may not have committed an empty topology yet, but it still
+    // has an exact empty old set and receives a new workspace id on commit.
+    const initialOldTopology = this.deps.workspaceTopology?.(windowId) ?? createWorkspaceTopology();
+    const initialOldSurfaces = this.currentProjectSurfaceSet(windowId);
+    this.validateWorkspaceTopologyAgainst(windowId, initialOldTopology, initialOldSurfaces);
+
+    const resolved = await Promise.all(layout.topology.surfaces.map(async (savedSurface) => {
+      const backpack = this.deps.registry.find(savedSurface.projectId);
+      if (!backpack || backpack.archived) throw new Error(`Backpack ${savedSurface.projectId} is not available.`);
+      const project = await this.deps.backpackProjects.open(savedSurface.projectId);
+      if (!project) throw new Error(`Backpack ${savedSurface.projectId} has no usable project surface.`);
+      return { savedSurface, url: project.url };
+    }));
+
+    // Project resolution crosses the filesystem/manifest await. Recheck all
+    // authoritative availability before allocating any replacement surface.
+    for (const { savedSurface } of resolved) {
+      const backpack = this.deps.registry.find(savedSurface.projectId);
+      if (!backpack || backpack.archived) throw new Error(`Backpack ${savedSurface.projectId} is not available.`);
+    }
+
+    // Re-read after awaits: a concurrent close/archive/layout mutation wins.
+    const currentOldTopology = this.deps.workspaceTopology?.(windowId) ?? createWorkspaceTopology();
+    const currentOldSurfaces = this.currentProjectSurfaceSet(windowId);
+    this.validateWorkspaceTopologyAgainst(windowId, currentOldTopology, currentOldSurfaces);
+
+    const allocated: string[] = [];
+    try {
+      const freshBySavedId = new Map<string, string>();
+      for (const { savedSurface } of resolved) {
+        const fresh = this.deps.logicalSurfaces.create({
+          windowId,
+          projectId: savedSurface.projectId,
+          kind: 'project',
+        });
+        allocated.push(fresh.surfaceId);
+        freshBySavedId.set(savedSurface.surfaceId, fresh.surfaceId);
+      }
+      const topology = remapWorkspaceTopologySurfaceIds(layout.topology, freshBySavedId);
+      const freshSet = topology.surfaces.map((surface) => ({ surfaceId: surface.surfaceId, projectId: surface.projectId }));
+      this.validateWorkspaceTopologyAgainst(windowId, topology, freshSet);
+      const projects = resolved.map(({ savedSurface, url }) => ({
+        surfaceId: freshBySavedId.get(savedSurface.surfaceId)!,
+        projectId: savedSurface.projectId,
+        title: savedSurface.title,
+        url,
+      }));
+
+      // This is the sole renderer delivery for a successful replacement. No
+      // await or mutation is allowed between delivery and the commit boundary.
+      this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-layout-loaded', {
+        layoutId: layout.layoutId,
+        projects,
+        topology,
+      });
+      if (currentOldSurfaces.length > 0) {
+        this.retireWorkspaceSurfacesForReplacement(windowId, currentOldSurfaces);
+      }
+      const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
+      const activeSurfaceId = focused?.activeSurfaceId ?? null;
+      const activeProject = activeSurfaceId
+        ? topology.surfaces.find((surface) => surface.surfaceId === activeSurfaceId)?.projectId ?? null
+        : null;
+      this.deps.setActiveSurfaceId(windowId, activeSurfaceId);
+      this.deps.setEnteredBackpack(windowId, activeProject);
+      this.deps.setWorkspaceTopology(windowId, topology);
+      return { windowId, layoutId: layout.layoutId, topology };
+    } catch (caught) {
+      for (const surfaceId of allocated) this.deps.logicalSurfaces.retire(surfaceId);
+      throw caught;
+    }
+  }
+
   commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may commit workspace topology.');
@@ -895,9 +999,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   private validateWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {
-    const live = this.deps.logicalSurfaces.listForWindow(windowId)
-      .filter((surface) => surface.kind === 'project');
-    this.validateWorkspaceTopologyAgainstSet(windowId, topology, live);
+    this.validateWorkspaceTopologyAgainstSet(windowId, topology, this.currentProjectSurfaceSet(windowId));
+  }
+
+  private currentProjectSurfaceSet(windowId: number): Array<{ surfaceId: string; projectId: string }> {
+    return this.deps.logicalSurfaces.listForWindow(windowId)
+      .filter((surface) => surface.kind === 'project')
+      .map(({ surfaceId, projectId }) => ({ surfaceId, projectId }));
+  }
+
+  private requireLiveWorkspaceWindow(windowId: number): void {
+    if (!this.deps.hostWindowIds().includes(windowId)) throw new Error('That Papers window is not live.');
   }
 
   /** Validate a prospective topology against an explicit surface set. Startup

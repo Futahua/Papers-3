@@ -205,6 +205,11 @@ interface HostBridge {
       projects: Array<{ surfaceId: string; projectId: string; title: string; url: string }>;
       topology: WorkspaceTopologyV1;
     }) => void): () => void;
+    onWorkspaceLayoutLoaded(cb: (payload: {
+      layoutId: string;
+      projects: Array<{ surfaceId: string; projectId: string; title: string; url: string }>;
+      topology: WorkspaceTopologyV1;
+    }) => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;
