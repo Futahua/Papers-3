@@ -1366,6 +1366,31 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           try {
             await move.restorePair(pairSnapshot, sourceWorkspaceId, targetWorkspaceId);
           } catch (restoreError) {
+            const targetIsLive = this.deps.hostWindowIds().includes(request.targetWindowId)
+              && !move.isWindowClosing?.(request.targetWindowId);
+            if (!targetIsLive) {
+              // The durable pair is already forward, but the destination can
+              // no longer host it. Do not adopt a prepared runtime into a
+              // destroyed/closing native window or leave it behind for the
+              // finalizer's earlier hideAll() to miss.
+              discardPrepared();
+              for (const senderId of this.deps.surfaces.sendersForSurface(request.surfaceId)) {
+                this.deps.surfaces.unbind(senderId);
+              }
+              this.deps.logicalSurfaces.retire(request.surfaceId);
+              closeSourceBestEffort();
+              move.setWorkspaceState(
+                request.sourceWindowId,
+                stateForTopology(initialSourceState, sourceNext),
+              );
+              try {
+                this.deps.sendToWindowOrThrow(request.sourceWindowId, 'host:event:workspace-surface-moved', sourceEvent);
+              } catch { /* source renderer may also have gone away */ }
+              throw new AggregateError(
+                [caught, restoreError],
+                'Cross-window move compensation failed; target closed and durable forward state retained.',
+              );
+            }
             retainForwardState = true;
             try {
               if (!this.deps.logicalSurfaces.isLiveIn(request.surfaceId, request.targetWindowId)) {

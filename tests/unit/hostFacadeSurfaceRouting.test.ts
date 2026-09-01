@@ -527,6 +527,56 @@ describe('surface routing in the host facade', () => {
     expect(workspaceTopologies.has(2)).toBe(false);
   });
 
+  it('does not adopt into a closed target when forward compensation also fails', async () => {
+    const {
+      facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
+      closingWindows, commitPair, restorePair, prepareProjectSurface,
+      closeAttachedProjectSurface, sendToWindow,
+    } = createFacade();
+    const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const sourceTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: moved.surfaceId, projectId: PROJECT, title: 'Alpha',
+    });
+    workspaceTopologies.set(1, sourceTopology);
+    workspaceIds.set(1, 'ws-source');
+    surfaces.bind(FRAME, {
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
+    });
+    const adopt = vi.fn();
+    const discard = vi.fn();
+    prepareProjectSurface.mockResolvedValueOnce({ senderId: 99, adopt, discard });
+    restorePair.mockRejectedValueOnce(new Error('durable restore unavailable'));
+    let releasePair!: () => void;
+    commitPair.mockImplementationOnce(() => new Promise<void>((resolve) => { releasePair = resolve; }));
+
+    const moving = facade.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: 1,
+      surfaceId: moved.surfaceId,
+      targetWindowId: 2,
+      targetGroupId: 'group-main',
+      targetIndex: 0,
+    });
+    for (let attempt = 0; attempt < 20 && commitPair.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve();
+    }
+    closingWindows.add(2);
+    releasePair();
+
+    await expect(moving).rejects.toThrow(/target closed and durable forward state retained/);
+    expect(commitPair).toHaveBeenCalledTimes(1);
+    expect(restorePair).toHaveBeenCalledTimes(1);
+    expect(adopt).not.toHaveBeenCalled();
+    expect(discard).toHaveBeenCalledTimes(1);
+    expect(logicalSurfaces.get(moved.surfaceId)).toBeNull();
+    expect(surfaces.contextForSender(FRAME)).toBeNull();
+    expect(surfaces.contextForSender(99)).toBeNull();
+    expect(workspaceTopologies.get(1)?.surfaces).toEqual([]);
+    expect(workspaceTopologies.has(2)).toBe(false);
+    expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, moved.surfaceId);
+    expect(sendToWindow.mock.calls.filter(([, channel]) => channel === 'host:event:workspace-surface-moved'))
+      .toHaveLength(1);
+  });
+
   it('restores the pair, logical owner, bindings, and notified hosts when target delivery fails', async () => {
     const {
       facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
