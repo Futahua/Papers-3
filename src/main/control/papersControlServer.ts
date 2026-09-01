@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 
 import {
   controlEventNameSchema,
+  controlRequestIdSchema,
   controlRequestSchema,
   dispatchPapersControl,
   PAPERS_CONTROL_PROTOCOL_VERSION,
@@ -196,11 +197,14 @@ export async function startPapersControlServer({
         send(socket, { id: null, ok: false, error: 'request too large' });
         socket.destroy();
       },
-      onFrame: (line) => {
+        onFrame: (line) => {
         const dispatched = (async () => {
           let requestId: string | number | null = null;
           try {
-            const request = controlRequestSchema.parse(JSON.parse(line));
+            const raw = JSON.parse(line) as { id?: unknown };
+            const rawId = controlRequestIdSchema.safeParse(raw.id);
+            if (rawId.success) requestId = rawId.data;
+            const request = controlRequestSchema.parse(raw);
             requestId = request.id;
             if (!sameSecret(request.token, token)) throw new Error('unauthorized');
             // Nothing may mutate after the shutdown barrier.

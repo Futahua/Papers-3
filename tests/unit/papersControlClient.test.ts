@@ -40,8 +40,8 @@ describe('shared Papers control client', () => {
       const slow = connection.call('window.create');
       const fast = connection.call('inspect.windows');
 
-      // Let the second call be issued if it were going to be. Serialization
-      // means it has not even been written yet.
+      // Let the slow handler start before releasing it. The client permits
+      // overlapping calls; responses may therefore arrive out of order.
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(releaseSlow).not.toBeNull();
       releaseSlow!();
@@ -85,6 +85,39 @@ describe('shared Papers control client', () => {
       const after = await connection.call('inspect.windows') as { ok: boolean; result?: unknown };
       expect(after.ok).toBe(true);
       expect(after.result).toEqual([]);
+    } finally {
+      connection.close();
+      await server.close();
+    }
+  });
+
+  it('correlates a schema refusal beside a slow valid request', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-client-'));
+    const descriptorPath = join(root, 'control.json');
+    let releaseSlow: (() => void) | null = null;
+    const server = await startPapersControlServer({
+      descriptorPath,
+      dependencies: {
+        surfaces: () => [],
+        surface: () => null,
+        createWindow: async () => {
+          await new Promise<void>((resolve) => { releaseSlow = resolve; });
+          return { windowId: 42 };
+        },
+        windows: () => [],
+        snapshot: () => ({}),
+      },
+    });
+
+    const connection = await connectPapersControl(server.descriptor);
+    try {
+      const slow = connection.call('window.create');
+      const refused = connection.call('renderer.executeJavaScript');
+      await vi.waitFor(() => expect(releaseSlow).not.toBeNull());
+
+      await expect(refused).resolves.toMatchObject({ id: 2, ok: false });
+      releaseSlow!();
+      await expect(slow).resolves.toMatchObject({ id: 1, ok: true, result: { windowId: 42 } });
     } finally {
       connection.close();
       await server.close();

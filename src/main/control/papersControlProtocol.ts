@@ -277,6 +277,11 @@ export const controlRequestSchema = z.object({
   params: z.unknown().optional(),
 }).strict();
 
+/** The server uses this before full request parsing so a refusal for an
+ * unknown method or malformed envelope can still be correlated to its caller.
+ * Values that are not valid request ids remain intentionally uncorrelatable. */
+export const controlRequestIdSchema = z.union([z.string().min(1).max(128), z.number().int()]);
+
 export type PapersControlRequest = z.infer<typeof controlRequestSchema>;
 
 /** Dispatch semantic commands without inventing a renderer sender identity.

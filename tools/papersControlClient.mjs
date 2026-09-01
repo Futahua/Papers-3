@@ -85,11 +85,17 @@ export async function connectPapersControl(descriptor) {
           continue;
         }
         const id = frame?.id;
-        const entry = id === null
-          ? pending.values().next().value
-          : pending.get(id);
+        if (id === null) {
+          // A null id means the server could not safely recover a request id
+          // (for example invalid JSON or a missing/invalid id). Never guess
+          // which overlapping request caused it; all pending calls must be
+          // failed rather than silently misassociated.
+          if (pending.size > 0) throw new Error('uncorrelated control response');
+          continue;
+        }
+        const entry = pending.get(id);
         if (!entry) continue;
-        pending.delete(id === null ? entry.id : id);
+        pending.delete(id);
         entry.resolve(frame);
       }
     } catch (error) {
