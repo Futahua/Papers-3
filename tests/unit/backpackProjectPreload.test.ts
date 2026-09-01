@@ -35,6 +35,56 @@ describe('Backpack project protocol alignment', () => {
     vi.resetModules();
   });
 
+  it('0A: a refused checked save travels as a delivered result, not a failed request', async () => {
+    await import('../../src/preload/backpackProject');
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+
+    // The host refuses the save: its own `ok: false` must not overwrite the
+    // transport envelope, or the project sees a broken host instead of a
+    // conflict it can act on.
+    mocks.invoke.mockResolvedValue({ ok: false, code: 'STALE_REVISION', revision: 'b'.repeat(64) });
+    dispatch({
+      type: 'papers:project:state-save-checked',
+      requestId: 'save-1',
+      state: '{"schemaVersion":1,"groups":[],"shortcuts":[]}',
+      revision: 'a'.repeat(64),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      'host:backpack-project:state-save-checked',
+      '{"schemaVersion":1,"groups":[],"shortcuts":[]}',
+      'a'.repeat(64),
+    );
+    expect(posts).toContainEqual({
+      type: 'papers:host:result',
+      requestId: 'save-1',
+      ok: true,
+      stateSave: { ok: false, code: 'STALE_REVISION', revision: 'b'.repeat(64) },
+    });
+  });
+
+  it('0A: an accepted checked save arrives under the same wrapper', async () => {
+    await import('../../src/preload/backpackProject');
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ ok: true, revision: 'c'.repeat(64) });
+    dispatch({
+      type: 'papers:project:state-save-checked',
+      requestId: 'save-2',
+      state: '{"schemaVersion":1,"groups":[],"shortcuts":[]}',
+      revision: 'a'.repeat(64),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(posts).toContainEqual({
+      type: 'papers:host:result',
+      requestId: 'save-2',
+      ok: true,
+      stateSave: { ok: true, revision: 'c'.repeat(64) },
+    });
+  });
+
   it('derives workspace identity and resolves one-way ACK requests immediately', async () => {
     await import('../../src/preload/backpackProject');
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));

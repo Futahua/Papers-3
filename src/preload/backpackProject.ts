@@ -178,7 +178,11 @@ window.addEventListener('message', (event) => {
   // the document plus its revision, then offers a save that names the revision
   // it was built on. Papers refuses the save if that revision is stale.
   if (request.type === 'papers:project:state-load-versioned') task = ipcRenderer.invoke('host:backpack-project:state-load-versioned').then((loaded) => ({ state: JSON.stringify((loaded as { state: unknown }).state), revision: (loaded as { revision: string }).revision }));
-  if (request.type === 'papers:project:state-save-checked' && typeof request.state === 'string' && typeof request.revision === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save-checked', request.state, request.revision);
+  // Wrapped under `stateSave`, like every other nested result here. A refused
+  // save carries its own `ok: false`, and the transport envelope spreads the
+  // payload over `ok: true` -- unwrapped, a stale revision would arrive at the
+  // project as a failed request instead of the typed answer it is.
+  if (request.type === 'papers:project:state-save-checked' && typeof request.state === 'string' && typeof request.revision === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save-checked', request.state, request.revision).then((result) => ({ stateSave: result }));
   if (request.type === 'papers:project:as-you-go-pick-target' && (request.kind === 'file' || request.kind === 'folder')) task = ipcRenderer.invoke('host:backpack-project:pick-target', request.kind).then((selection) => ({ target: selection?.target ?? null, icon: selection?.icon ?? null }));
   if (request.type === 'papers:project:as-you-go-shortcut-icon' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:shortcut-icon', request.actionId).then((icon) => ({ icon }));
   if (request.type === 'papers:project:as-you-go-launch' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:launch-shortcut', request.actionId);
