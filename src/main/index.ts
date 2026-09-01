@@ -355,6 +355,7 @@ async function bootstrap(): Promise<void> {
   let widgetSession: CompactWidgetSession | null = null;
   let reconcileHermesForClosingWindow: (windowId: number) => Promise<void> = async () => undefined;
   let primaryWindowIdForHydration: number | null = null;
+  let primaryHydrationPromise: Promise<{ hydrated: boolean }> | null = null;
   // One Hermes backend is shared by all Papers windows. The callback is late
   // bound because the facade is composed after the first window is prepared.
   const hermesSurface = new HermesSurface(
@@ -562,9 +563,11 @@ async function bootstrap(): Promise<void> {
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
     workspaceTopology: (windowId) => workspaceTopologies.get(windowId) ?? null,
-    hydrateStartupWorkspace: async (windowId) => {
-      if (windowId !== primaryWindowIdForHydration) return { hydrated: false };
-      const result = await hydrateStartupWorkspace(windowId, {
+    hydrateStartupWorkspace: (windowId) => {
+      if (windowId !== primaryWindowIdForHydration) return Promise.resolve({ hydrated: false });
+      if (primaryHydrationPromise) return primaryHydrationPromise;
+      primaryHydrationPromise = (async () => {
+        const result = await hydrateStartupWorkspace(windowId, {
         snapshot: await workspaceTopologyStore.selectedSnapshot(),
         findAvailableBackpack: (projectId) => {
           const backpack = registry.find(projectId);
@@ -587,10 +590,14 @@ async function bootstrap(): Promise<void> {
           papersWindows.setEnteredBackpack(windowId, projectId);
           workspaceTopologies.set(windowId, topology);
           workspaceTopologyRevisions.set(windowId, (workspaceTopologyRevisions.get(windowId) ?? 0) + 1);
-          void workspaceTopologyStore.commit(workspaceId, topology);
+          void workspaceTopologyStore.commit(workspaceId, topology).catch((error) => {
+            console.error('[workspace-topology] hydration durable commit failed', error);
+          });
         },
-      });
-      return { hydrated: Boolean(result) };
+        });
+        return { hydrated: Boolean(result) };
+      })();
+      return primaryHydrationPromise;
     },
     setWorkspaceTopology: (windowId, topology) => {
       workspaceTopologies.set(windowId, topology);

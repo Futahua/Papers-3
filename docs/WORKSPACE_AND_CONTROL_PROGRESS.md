@@ -618,6 +618,9 @@ A1.2i all-or-nothing primary startup hydration:
   snapshot.
 - [x] Recheck every persisted Backpack after all project-opening awaits and
   before fresh surface allocation.
+- [x] Memoize the primary hydration promise in main so StrictMode/repeated IPC
+  calls cannot allocate or deliver a second restored workspace.
+- [x] Keep hydration persistence failures visible through main diagnostics.
 - [ ] Complete live seeded-v2 restore acceptance and reviewer sign-off.
 - [ ] Live seeded-v2 primary restore; fresh IDs/order/focus/weights; durable ID
   reuse after mutation; additional window remains fresh.
