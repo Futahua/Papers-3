@@ -425,10 +425,21 @@ export class HermesSurface {
     });
   }
 
+  /** A placement is authoritative only after Hermes acknowledges the matching
+   * native window operation. Timeouts, malformed replies and explicit failures
+   * must leave the previous placement intact. */
+  private async requireControl(command: Record<string, unknown>, failure: string): Promise<void> {
+    const reply = await this.controlHermes(command);
+    if (!reply?.ok) throw new Error(failure);
+  }
+
   /** Move the docked window and (optionally) raise it above Papers. */
   private async moveHermesTo(rect: Rect, opts: { focus?: boolean; raise?: boolean } = {}): Promise<void> {
     this.suppressReportsUntil = Date.now() + 400;
-    await this.controlHermes({ op: 'setBounds', bounds: rect, focus: opts.focus, raise: opts.raise });
+    await this.requireControl(
+      { op: 'setBounds', bounds: rect, focus: opts.focus, raise: opts.raise },
+      'Hermes Desktop did not acknowledge its requested window bounds.',
+    );
   }
 
   /**
@@ -736,7 +747,7 @@ export class HermesSurface {
       setTimeout(() => {
         if (this.placement === 'docked') {
           const settled = this.absoluteDockRect(this.dockBounds ?? bounds);
-          if (settled) void this.moveHermesTo(settled, { raise: true });
+          if (settled) void this.moveHermesTo(settled, { raise: true }).catch(() => {});
         }
       }, 400);
       this.setState({ placement: 'docked', status: 'ready' });
@@ -752,7 +763,7 @@ export class HermesSurface {
     this.dockBounds = bounds;
     if (this.placement !== 'docked' || !this.controlPort) return;
     const rect = this.absoluteDockRect(bounds);
-    if (rect) void this.moveHermesTo(rect, { raise: true });
+    if (rect) void this.moveHermesTo(rect, { raise: true }).catch(() => {});
   }
 
   /** Papers was activated/focused: raise the docked Hermes above Papers, but
@@ -765,7 +776,7 @@ export class HermesSurface {
   /** Hide the docked placement without terminating Hermes or its session. */
   async hideDock(): Promise<void> {
     if (this.placement !== 'docked') return;
-    await this.controlHermes({ op: 'minimize' });
+    await this.requireControl({ op: 'minimize' }, 'Hermes Desktop did not acknowledge minimize.');
     this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle' });
   }
 
@@ -774,7 +785,7 @@ export class HermesSurface {
     try {
       this.setState({ status: 'starting' });
       await this.ensureDesktop();
-      await this.controlHermes({ op: 'focus' });
+      await this.requireControl({ op: 'focus' }, 'Hermes Desktop did not acknowledge focus.');
       this.setState({ placement: 'detached', status: 'ready' });
     } catch (error) {
       this.setState({ status: 'error', detail: message(error) });
@@ -785,7 +796,7 @@ export class HermesSurface {
   /** Hide the detached window (minimize; keep Hermes + session alive). */
   async hideDetached(): Promise<void> {
     if (this.placement !== 'detached') return;
-    await this.controlHermes({ op: 'minimize' });
+    await this.requireControl({ op: 'minimize' }, 'Hermes Desktop did not acknowledge minimize.');
     this.setState({ placement: 'closed', status: this.desktopAlive() ? 'ready' : 'idle' });
   }
 

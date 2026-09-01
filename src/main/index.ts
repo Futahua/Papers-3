@@ -360,9 +360,16 @@ async function bootstrap(): Promise<void> {
     onClose: (instance: Parameters<typeof preparePapersWindow>[0]) => instance.backpackProjectRuntime.hide(),
     finalize: async (windowId: number) => {
       await widgetSession?.closeOwnedByWindow(windowId).catch(() => undefined);
-      await reconcileHermesForClosingWindow(windowId);
-      surfaceContexts.unbindWindow(windowId);
-      papersWindows.remove(windowId);
+      try {
+        await reconcileHermesForClosingWindow(windowId);
+      } finally {
+        // A failed native minimize must not strand the already-closed Papers
+        // window in either registry. Keep Hermes's physical placement truthful,
+        // release the vanished owner, and project that state to survivors.
+        surfaceContexts.unbindWindow(windowId);
+        papersWindows.remove(windowId);
+        facade.emitHermesSurface();
+      }
     },
   });
   const createAdditionalPapersWindow = async (): Promise<void> => {

@@ -274,6 +274,20 @@ describe('Hermes dock ownership across windows', () => {
       .toMatchObject({ placement: 'closed', ownedByThisWindow: false });
   });
 
+  it('does not release ownership or report closed when owner-close minimize fails', async () => {
+    const failure = new Error('Hermes Desktop did not acknowledge minimize.');
+    const { facade, surface, sent, owner } = createHermesFacade({
+      initialOwner: 1,
+      hideDock: async () => { throw failure; },
+    });
+
+    await expect(facade.onPapersWindowClosing(1)).rejects.toThrow(failure);
+
+    expect(surface.state).toMatchObject({ placement: 'docked', status: 'ready' });
+    expect(owner()).toBe(1);
+    expect(sent).toHaveLength(0);
+  });
+
   it('serializes owner close before a later dock transfer', async () => {
     let settleHide!: () => void;
     const pendingHide = new Promise<void>((resolve) => { settleHide = resolve; });
