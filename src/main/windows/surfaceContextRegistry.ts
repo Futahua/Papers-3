@@ -34,6 +34,18 @@
 export type SurfaceKind = 'host' | 'project' | 'detached' | 'widget';
 
 export interface SurfaceContext {
+  /**
+   * The logical surface this sender is currently rendering, when it has one.
+   *
+   * A0.1: the LogicalSurfaceRegistry is the authority for what surfaces exist;
+   * this registry binds current Electron senders to them. A sender dying does
+   * not end the surface -- it ends this binding -- so a renderer can be rebuilt
+   * and re-bound to the same surfaceId.
+   *
+   * Optional during migration: detached and widget surfaces are bound before
+   * they have a logical identity of their own.
+   */
+  surfaceId?: string;
   /** The Backpack whose project this surface is showing. */
   projectId: string;
   /** Identifies the native window a surface belongs to, so a window can be
@@ -49,6 +61,12 @@ export interface SurfaceContextRegistry {
   unbindProject(projectId: string): void;
   /** The project this sender may act for, or null. Never a guess. */
   projectForSender(senderId: number): string | null;
+  /** The logical surface this sender is rendering, or null. Never taken from a
+   * payload: a sender proves its own binding. */
+  surfaceForSender(senderId: number): string | null;
+  /** The senders currently rendering one logical surface. Usually one, but
+   * zero while a view is being rebuilt. */
+  sendersForSurface(surfaceId: string): number[];
   contextForSender(senderId: number): SurfaceContext | null;
   /** Every sender currently bound to a project — used to notify exactly the
    * surfaces that care, instead of broadcasting to whoever is listening. */
@@ -98,6 +116,14 @@ export function createSurfaceContextRegistry(): SurfaceContextRegistry {
 
     projectForSender(senderId) {
       return bySender.get(senderId)?.projectId ?? null;
+    },
+
+    surfaceForSender(senderId) {
+      return bySender.get(senderId)?.surfaceId ?? null;
+    },
+
+    sendersForSurface(surfaceId) {
+      return sendersWhere((context) => context.surfaceId === surfaceId);
     },
 
     contextForSender(senderId) {

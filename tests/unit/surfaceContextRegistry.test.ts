@@ -194,3 +194,49 @@ describe('surface context registry', () => {
     expect(registry.projectForSender(11)).toBe('bp-a');
   });
 });
+
+describe('sender bindings point at logical surfaces', () => {
+  it('resolves the logical surface a sender is rendering', () => {
+    const registry = createSurfaceContextRegistry();
+    registry.bind(11, { surfaceId: 'sf-1', projectId: 'bp-a', windowId: 1, kind: 'project' });
+
+    expect(registry.surfaceForSender(11)).toBe('sf-1');
+    expect(registry.sendersForSurface('sf-1')).toEqual([11]);
+  });
+
+  it('lets a renderer die and come back as the same surface', () => {
+    const registry = createSurfaceContextRegistry();
+    registry.bind(11, { surfaceId: 'sf-1', projectId: 'bp-a', windowId: 1, kind: 'project' });
+
+    // The WebContentsView crashed. Its binding goes; the surface does not,
+    // because the surface is not this registry's to end.
+    registry.unbind(11);
+    expect(registry.sendersForSurface('sf-1')).toEqual([]);
+
+    // The replacement view binds to the SAME logical surface.
+    registry.bind(12, { surfaceId: 'sf-1', projectId: 'bp-a', windowId: 1, kind: 'project' });
+    expect(registry.surfaceForSender(12)).toBe('sf-1');
+    expect(registry.sendersForSurface('sf-1')).toEqual([12]);
+  });
+
+  it('keeps two surfaces of one project distinguishable', () => {
+    const registry = createSurfaceContextRegistry();
+    registry.bind(11, { surfaceId: 'sf-1', projectId: 'bp-a', windowId: 1, kind: 'project' });
+    registry.bind(21, { surfaceId: 'sf-2', projectId: 'bp-a', windowId: 2, kind: 'project' });
+
+    // Same project, different surfaces: project identity alone can no longer
+    // answer "which one".
+    expect(registry.surfaceForSender(11)).toBe('sf-1');
+    expect(registry.surfaceForSender(21)).toBe('sf-2');
+    expect(registry.sendersForSurface('sf-1')).toEqual([11]);
+  });
+
+  it('reports no surface for a sender bound without one', () => {
+    const registry = createSurfaceContextRegistry();
+    // Detached and widget surfaces are bound before they have a logical
+    // identity of their own; they must not borrow someone else's.
+    registry.bind(31, { projectId: 'bp-a', windowId: 1, kind: 'widget' });
+    expect(registry.surfaceForSender(31)).toBeNull();
+    expect(registry.sendersForSurface('sf-1')).toEqual([]);
+  });
+});

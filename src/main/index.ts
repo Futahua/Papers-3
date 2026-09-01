@@ -38,6 +38,7 @@ import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
 import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
 import { controlBuildIdentity } from './buildIdentity';
+import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
@@ -109,6 +110,11 @@ let mainWindow: BaseWindow | null = null;
 /** Phase 1A: which project each sender may act for. One registry for the
  * application; the bindings inside it are per surface. */
 const surfaceContexts = createSurfaceContextRegistry();
+/**
+ * A0.1: the authority for which surfaces exist. Sender bindings above point at
+ * these; a renderer dying ends a binding, not a surface.
+ */
+const logicalSurfaces = createLogicalSurfaceRegistry();
 /**
  * Phase 1B: what each Papers window owns. Its native window, its host view and
  * its project runtime are per-window; the Backpack registry, project service,
@@ -507,6 +513,10 @@ async function bootstrap(): Promise<void> {
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
     clearEnteredBackpackEverywhere: (backpackId) => papersWindows.clearEnteredBackpackEverywhere(backpackId),
+    // Archiving or removing a Backpack retires every surface showing it, in
+    // any window: the thing itself became unavailable.
+    retireProjectSurfaces: (projectId) => { logicalSurfaces.retireProject(projectId); },
+    listLogicalSurfaces: () => logicalSurfaces.project(),
     retireBackpackProjectSurfaces: async (backpackId) => {
       await Promise.all([
         detachSession?.closeProject(backpackId).catch(() => undefined),
@@ -553,7 +563,18 @@ async function bootstrap(): Promise<void> {
       const owningWindowId = papersWindows.windowForSender(senderId)
         ?? surfaceContexts.contextForSender(senderId)?.windowId;
       if (projectId && frameSender !== null && owningWindowId !== undefined) {
-        surfaceContexts.bind(frameSender, { projectId, windowId: owningWindowId, kind: 'project' });
+        // One logical surface per project view. Its id outlives this
+        // particular WebContentsView: a reload rebinds the same surfaceId.
+        const existing = logicalSurfaces
+          .listForWindow(owningWindowId)
+          .find((candidate) => candidate.projectId === projectId && candidate.kind === 'project');
+        const surface = existing ?? logicalSurfaces.create({ windowId: owningWindowId, projectId, kind: 'project' });
+        surfaceContexts.bind(frameSender, {
+          surfaceId: surface.surfaceId,
+          projectId,
+          windowId: owningWindowId,
+          kind: 'project',
+        });
         // show() replaces a live surface by hiding the old one first, so
         // without this a dead frame's id would stay bound.
         runtime.onFrameDestroyed(frameSender, () => surfaceContexts.unbind(frameSender));

@@ -74,6 +74,11 @@ export interface FacadeDeps {
   enteredBackpack: (windowId: number) => string | null;
   setEnteredBackpack: (windowId: number, backpackId: string | null) => void;
   clearEnteredBackpackEverywhere: (backpackId: string) => void;
+  /** Retire every logical surface showing a Backpack that has become
+   * unavailable. Distinct from unbinding senders: the surfaces themselves end. */
+  retireProjectSurfaces: (projectId: string) => void;
+  /** The control-facing projection of live logical surfaces. */
+  listLogicalSurfaces: () => Array<{ surfaceId: string; windowId: number; projectId: string; kind: string }>;
   /** Retire auxiliary project surfaces only when the project is unavailable. */
   retireBackpackProjectSurfaces: (backpackId: string) => Promise<void>;
   restoreBackpack: (windowId: number) => string | null;
@@ -254,6 +259,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       }
       await this.deps.retireBackpackProjectSurfaces(id);
       this.deps.clearEnteredBackpackEverywhere(id);
+      this.deps.retireProjectSurfaces(id);
       this.deps.surfaces.unbindProject(id);
     } else {
       await this.deps.registry.setArchived(id, archived);
@@ -271,6 +277,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     }
     await this.deps.retireBackpackProjectSurfaces(id);
     this.deps.clearEnteredBackpackEverywhere(id);
+    this.deps.retireProjectSurfaces(id);
     this.deps.surfaces.unbindProject(id);
     this.emitBackpacksChanged();
   }
