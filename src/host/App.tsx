@@ -45,7 +45,7 @@ export function App(): React.JSX.Element {
   const [basicOpen, setBasicOpen] = useState(false);
   const [entered, setEntered] = useState<string | null>(null);
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
-  const [hermes, setHermes] = useState<HermesSurfaceStatus>({ placement: 'closed', status: 'idle' });
+  const [hermes, setHermes] = useState<HermesSurfaceStatus>({ placement: 'closed', status: 'idle', ownedByThisWindow: false });
   const [hostErrors, setHostErrors] = useState<HostErrorPayload[]>([]);
   const basicRef = useRef<HTMLDivElement | null>(null);
 
@@ -121,10 +121,16 @@ export function App(): React.JSX.Element {
 
   // True toggles: dock/hide the sidebar and detach/hide the window. Hiding
   // never terminates Hermes; the same session returns on the next open.
+  // Hiding only applies to a Hermes this window owns. When Hermes is docked to
+  // another Papers window, pressing Dock here TAKES it -- an explicit transfer
+  // the creator asked for -- rather than hiding a dock they cannot see.
   const toggleDock = useCallback(() => {
-    if (hermes.placement === 'docked') void host().hermes.hideDock().then(() => undefined);
-    else void host().hermes.dock(dockBounds()).then(setHermes);
-  }, [hermes.placement]);
+    if (hermes.placement === 'docked' && hermes.ownedByThisWindow) {
+      void host().hermes.hideDock().then(() => undefined);
+    } else {
+      void host().hermes.dock(dockBounds()).then(setHermes);
+    }
+  }, [hermes.placement, hermes.ownedByThisWindow]);
 
   const toggleWindow = useCallback(() => {
     if (hermes.placement === 'detached') void host().hermes.hideWindow().then(() => undefined);

@@ -40,9 +40,18 @@ export type HermesPlacement = 'closed' | 'docked' | 'detached';
 export type HermesStatusKind = 'idle' | 'starting' | 'ready' | 'error';
 
 export interface HermesSurfaceStatus {
+  /** Global truth about Hermes: there is one Hermes, in one placement. */
   placement: HermesPlacement;
   status: HermesStatusKind;
   detail?: string;
+  /**
+   * Whether THIS window owns the docked Hermes. Relative to the recipient, not
+   * a property of Hermes: with Hermes docked to another window, this window
+   * sees `docked` with `ownedByThisWindow: false`, and its dock control offers
+   * to take Hermes rather than to hide someone else's. False for closed and
+   * detached, where ownership does not apply.
+   */
+  ownedByThisWindow: boolean;
 }
 
 export interface HostErrorPayload {

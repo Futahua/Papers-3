@@ -360,15 +360,25 @@ async function bootstrap(): Promise<void> {
   // The production Hermes experience IS the existing Hermes Desktop product.
   // Papers runs one Hermes backend and positions the real Hermes Desktop
   // window as a docked sidebar or a detached window — never a second chat UI.
-  const hermesSurface = new HermesSurface(mainWindow, (state) => {
-    hostView?.webContents.send('host:event:hermes-surface', state);
-  });
+  // Phase 1B.4: Hermes is told which live window to compute dock geometry
+  // against; the docking relationship itself lives in the window registry.
+  const hermesSurface = new HermesSurface(
+    () => {
+      const owner = papersWindows.hermesDockOwner();
+      return owner === null ? null : papersWindows.get(owner)?.owned.window ?? null;
+    },
+    () => facade.emitHermesSurface(),
+  );
 
   // Keep a docked Hermes window aligned to Papers as it moves or resizes.
   // setDockBounds also raises Hermes above Papers (non-topmost) so it follows
   // Papers to the front without becoming globally always-on-top.
+  // Every Papers window may carry these handlers, but they are inert unless
+  // that window owns the dock: moving or resizing a window that does not own
+  // Hermes must not drag Hermes around.
   const realignHermesDock = (): void => {
-    if (!mainWindow) return;
+    const owner = papersWindows.hermesDockOwner();
+    if (owner === null || owner !== mainWindow?.id) return;
     const { width } = mainWindow.getContentBounds();
     hermesSurface.setDockBounds(dockBoundsFor(width));
   };
@@ -377,7 +387,12 @@ async function bootstrap(): Promise<void> {
   // When Papers is activated, raise the docked Hermes above it (moveTop), so
   // clicking Papers keeps the pair together — but only via non-topmost raise, so
   // switching to another application leaves both windows ordinary.
-  mainWindow.on('focus', () => hermesSurface.onPapersActivated());
+  // Focus raises a docked Hermes only for the window that owns it. Focus is
+  // never an ownership transfer (D-021).
+  mainWindow.on('focus', () => {
+    if (papersWindows.hermesDockOwner() !== mainWindow?.id) return;
+    hermesSurface.onPapersActivated();
+  });
 
   hostView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   hostView.webContents.on('will-navigate', (event, url) => {
@@ -466,6 +481,9 @@ async function bootstrap(): Promise<void> {
       if (contents && !contents.isDestroyed()) contents.send(channel, payload);
     },
     hostWindowForSender: (senderId) => papersWindows.windowForSender(senderId),
+    hostWindowIds: () => papersWindows.windowIds,
+    hermesDockOwner: () => papersWindows.hermesDockOwner(),
+    setHermesDockOwner: (windowId) => papersWindows.setHermesDockOwner(windowId),
     // The Canvas runtime is still application-level and attached to the first
     // window, so this has one answer today. Recording the relationship rather
     // than assuming it means per-window Canvas would need no delivery change.
@@ -1324,6 +1342,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
 
   const ownedWindowId = mainWindow.id;
   mainWindow.on('closed', () => {
+    // Releasing the dock is not shutting Hermes down: Papers owns the docking
+    // connection, not Hermes's lifetime.
+    if (papersWindows.hermesDockOwner() === ownedWindowId) papersWindows.setHermesDockOwner(null);
     hermesSurface.shutdown();
     // The project, detached and widget senders unbind themselves when their
     // WebContents dies, but the host sender has no such hook -- without this

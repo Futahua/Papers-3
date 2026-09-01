@@ -64,6 +64,12 @@ export interface FacadeDeps {
   /** The window a HOST renderer belongs to, or null if this sender is not a
    * live host. Every registered host is legitimate; there is no primary. */
   hostWindowForSender: (senderId: number) => number | null;
+  /** Every live Papers window, for the per-recipient Hermes projection. */
+  hostWindowIds: () => number[];
+  /** The docking relationship lives in the window registry, never inside
+   * HermesSurface -- one owner, one place. */
+  hermesDockOwner: () => number | null;
+  setHermesDockOwner: (windowId: number | null) => void;
   /** The window whose Canvas runtime a program event belongs to. One runtime
    * today, so one answer -- but the relationship is recorded rather than
    * assumed, so per-window Canvas would keep the same delivery semantics. */
@@ -698,35 +704,92 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.adapter.health;
   }
 
-  hermesSurfaceStatus(): unknown {
-    return this.deps.hermesSurface.state;
+  /**
+   * Hermes presentation, as this particular window should read it.
+   *
+   * `placement` is global truth about Hermes -- closed, docked or detached.
+   * `ownedByThisWindow` is relative to the recipient. If Hermes is docked to
+   * window B, then B is told { docked, owned: true } and A is told
+   * { docked, owned: false }, and A's dock button therefore offers to TAKE
+   * Hermes rather than to hide someone else's. A fourth placement value would
+   * have mixed global state with the recipient's perspective.
+   *
+   * Ownership does not apply to closed or detached, where it is simply false.
+   */
+  private hermesPresentationFor(windowId: number | null): unknown {
+    return {
+      ...this.deps.hermesSurface.state,
+      ownedByThisWindow: windowId !== null && this.deps.hermesDockOwner() === windowId,
+    };
   }
 
-  /** Dock the real Hermes Desktop window at Papers-relative bounds. */
-  dockHermes(bounds: SurfaceBounds): Promise<unknown> {
-    return this.deps.hermesSurface.dock(bounds);
+  hermesSurfaceStatus(senderId: number): unknown {
+    return this.hermesPresentationFor(this.deps.hostWindowForSender(senderId));
   }
 
-  /** Keep the docked Hermes window aligned as Papers moves/resizes. */
-  setHermesDockBounds(bounds: SurfaceBounds): void {
+  /**
+   * Dock the real Hermes Desktop window at Papers-relative bounds.
+   *
+   * This is the ONLY transfer of dock ownership, and it is deliberate: the
+   * creator pressed Dock in this window. Focus never transfers ownership,
+   * because a single global Hermes window that followed focus would move a
+   * live agent session between windows by accident (D-021).
+   */
+  async dockHermes(senderId: number, bounds: SurfaceBounds): Promise<unknown> {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may dock Hermes.');
+    this.deps.setHermesDockOwner(windowId);
+    await this.deps.hermesSurface.dock(bounds);
+    this.emitHermesSurface();
+    return this.hermesPresentationFor(windowId);
+  }
+
+  /** Keep the docked Hermes window aligned as Papers moves/resizes. Accepted
+   * only from the current owner: a resize in one window must never reposition
+   * a Hermes docked to another. */
+  setHermesDockBounds(senderId: number, bounds: SurfaceBounds): void {
+    if (!this.isHermesDockOwner(senderId)) return;
     this.deps.hermesSurface.setDockBounds(bounds);
   }
 
-  /** Hide the docked placement without terminating Hermes or its session. */
-  hideHermesDock(): Promise<void> {
-    return this.deps.hermesSurface.hideDock();
+  /** Hide the docked placement without terminating Hermes or its session.
+   * Only the owner may hide it; a non-owner that wants Hermes uses dock,
+   * which transfers ownership rather than taking it away from someone. */
+  async hideHermesDock(senderId: number): Promise<void> {
+    if (!this.isHermesDockOwner(senderId)) return;
+    await this.deps.hermesSurface.hideDock();
+    this.deps.setHermesDockOwner(null);
+    this.emitHermesSurface();
   }
 
   /** Detach Hermes into a free-floating window (same experience, same session). */
-  showHermesWindow(): Promise<unknown> {
+  async showHermesWindow(): Promise<unknown> {
     // Hermes stays global. Entering a Backpack never changes Hermes's working
     // directory, so the window launches with no Backpack-derived context.
-    return this.deps.hermesSurface.showDetached();
+    const result = await this.deps.hermesSurface.showDetached();
+    // A detached Hermes belongs to no Papers window.
+    this.deps.setHermesDockOwner(null);
+    this.emitHermesSurface();
+    return result;
   }
 
   /** Hide the detached window without terminating Hermes or its session. */
-  hideHermesWindow(): Promise<void> {
-    return this.deps.hermesSurface.hideDetached();
+  async hideHermesWindow(): Promise<void> {
+    await this.deps.hermesSurface.hideDetached();
+    this.emitHermesSurface();
+  }
+
+  private isHermesDockOwner(senderId: number): boolean {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    return windowId !== null && this.deps.hermesDockOwner() === windowId;
+  }
+
+  /** Every window hears the same placement, each with its own answer to
+   * whether it owns the dock. */
+  emitHermesSurface(): void {
+    for (const windowId of this.deps.hostWindowIds()) {
+      this.deps.sendToWindow(windowId, 'host:event:hermes-surface', this.hermesPresentationFor(windowId));
+    }
   }
 
   defaultRunCwd(backpackId: string): string {

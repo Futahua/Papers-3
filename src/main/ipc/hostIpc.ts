@@ -91,10 +91,10 @@ export interface HostFacade {
   composedPrompt(runId: string): string;
 
   hermesHealth(): unknown;
-  hermesSurfaceStatus(): unknown;
-  dockHermes(bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
-  setHermesDockBounds(bounds: { x: number; y: number; width: number; height: number }): void;
-  hideHermesDock(): Promise<void>;
+  hermesSurfaceStatus(senderId: number): unknown;
+  dockHermes(senderId: number, bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
+  setHermesDockBounds(senderId: number, bounds: { x: number; y: number; width: number; height: number }): void;
+  hideHermesDock(senderId: number): Promise<void>;
   showHermesWindow(): Promise<unknown>;
   hideHermesWindow(): Promise<void>;
 }
@@ -324,12 +324,15 @@ export function registerHostIpc(facade: HostFacade): void {
   );
 
   handle('host:hermes:health', () => facade.hermesHealth());
-  handle('host:hermes:surface-status', () => facade.hermesSurfaceStatus());
-  handle('host:hermes:dock', (_e, bounds) => facade.dockHermes(boundsSchema.parse(bounds)));
-  handle('host:hermes:set-dock-bounds', (_e, bounds) =>
-    facade.setHermesDockBounds(boundsSchema.parse(bounds)),
+  // Phase 1B.4: every dock operation is sender-authorized. Docking transfers
+  // ownership to the asking window; repositioning and hiding are accepted only
+  // from the window that currently owns the dock.
+  handle('host:hermes:surface-status', (event) => facade.hermesSurfaceStatus(event.sender.id));
+  handle('host:hermes:dock', (event, bounds) => facade.dockHermes(event.sender.id, boundsSchema.parse(bounds)));
+  handle('host:hermes:set-dock-bounds', (event, bounds) =>
+    facade.setHermesDockBounds(event.sender.id, boundsSchema.parse(bounds)),
   );
-  handle('host:hermes:hide-dock', () => facade.hideHermesDock());
+  handle('host:hermes:hide-dock', (event) => facade.hideHermesDock(event.sender.id));
   handle('host:hermes:show-window', () => facade.showHermesWindow());
   handle('host:hermes:hide-window', () => facade.hideHermesWindow());
 }

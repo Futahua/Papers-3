@@ -138,8 +138,16 @@ export class HermesSurface {
    *  above Papers (moveTop) without making it globally topmost. */
   private lastRaiseAt = 0;
 
+  /**
+   * Phase 1B.4: Hermes owns no Papers window.
+   *
+   * The docking relationship lives in the window registry, and this surface is
+   * simply told which live window to compute geometry against. Holding a
+   * permanent window here would create a second, hidden dock owner that could
+   * disagree with the registry.
+   */
   constructor(
-    private readonly window: BaseWindow,
+    private readonly ownerWindow: () => BaseWindow | null,
     private readonly onStateChange: (state: HermesSurfaceState) => void = () => {},
   ) {}
 
@@ -334,13 +342,18 @@ export class HermesSurface {
 
   // ------------------------------------------------------------- geometry
 
-  private contentRect(): Rect {
-    const c = this.window.getContentBounds();
+  private contentRect(): Rect | null {
+    const window = this.ownerWindow();
+    if (!window || window.isDestroyed()) return null;
+    const c = window.getContentBounds();
     return { x: c.x, y: c.y, width: c.width, height: c.height };
   }
 
-  private absoluteDockRect(bounds: SurfaceBounds): Rect {
+  private absoluteDockRect(bounds: SurfaceBounds): Rect | null {
     const c = this.contentRect();
+    // No live owner means there is nothing to dock against. Every caller
+    // treats that as "do not move Hermes" rather than guessing a rectangle.
+    if (!c) return null;
     return {
       x: c.x + Math.round(bounds.x),
       y: c.y + Math.round(bounds.y),
@@ -350,7 +363,7 @@ export class HermesSurface {
   }
 
   private defaultDockBounds(): SurfaceBounds {
-    const c = this.contentRect();
+    const c = this.contentRect() ?? { x: 0, y: 0, width: 1280, height: 860 };
     const width = Math.max(380, Math.min(620, Math.round(c.width * 0.4)));
     return { x: Math.max(0, c.width - width), y: 48, width, height: Math.max(400, c.height - 48) };
   }
@@ -358,6 +371,7 @@ export class HermesSurface {
   /** True when a docked window has been dragged meaningfully off its strip. */
   private draggedOffStrip(rect: Rect): boolean {
     const target = this.absoluteDockRect(this.dockBounds ?? this.defaultDockBounds());
+    if (!target) return false;
     return (
       Math.abs(rect.x - target.x) > DOCK_DETACH_SLOP_DIP ||
       Math.abs(rect.y - target.y) > DOCK_DETACH_SLOP_DIP
@@ -713,13 +727,16 @@ export class HermesSurface {
       this.setState({ status: 'starting' });
       await this.ensureDesktop();
       const rect = this.absoluteDockRect(bounds);
+      // No live owning window means nothing to dock against.
+      if (!rect) throw new Error('No Papers window is available to dock Hermes to.');
       // Place the strip and raise it above Papers (non-topmost), not globally
       // always-on-top — so it sits above Papers but never over other apps.
       await this.moveHermesTo(rect, { focus: true, raise: true });
       // Re-assert once after Hermes settles any boot geometry.
       setTimeout(() => {
         if (this.placement === 'docked') {
-          void this.moveHermesTo(this.absoluteDockRect(this.dockBounds ?? bounds), { raise: true });
+          const settled = this.absoluteDockRect(this.dockBounds ?? bounds);
+          if (settled) void this.moveHermesTo(settled, { raise: true });
         }
       }, 400);
       this.setState({ placement: 'docked', status: 'ready' });
@@ -734,7 +751,8 @@ export class HermesSurface {
   setDockBounds(bounds: SurfaceBounds): void {
     this.dockBounds = bounds;
     if (this.placement !== 'docked' || !this.controlPort) return;
-    void this.moveHermesTo(this.absoluteDockRect(bounds), { raise: true });
+    const rect = this.absoluteDockRect(bounds);
+    if (rect) void this.moveHermesTo(rect, { raise: true });
   }
 
   /** Papers was activated/focused: raise the docked Hermes above Papers, but
