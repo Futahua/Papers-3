@@ -961,13 +961,38 @@ signed off the infrastructure exact head above.
   staged destination, retires/unbinds the moved surface, tears down the source,
   and advances the source projection without adopting into the dead target.
   Add target-close plus restore-failure coverage.
-- [ ] Reviewer sign-off on exact pushed head
-  `b8717bb840be56c0a422398f6e11f3fc24d63994`.
+- [x] Reviewer sign-off on exact pushed head
+  `b8717bb840be56c0a422398f6e11f3fc24d63994` (reviewed at pushed tip
+  `a3b7f6fa90ab9c6a7db7ce7fad0c0328304f51e6`).
 
 A3.3 validation so far: typecheck passed; focused move/protocol/persistence/
 collection tests passed 81/81; full Vitest passed 719/723 (4 skipped); build
 and diff checks passed; live workspace-tabs and developer-control Electron
-acceptance passed 3/3. The A3.3r6 exact-head review remains pending.
+acceptance passed 3/3. The A3.3 exact-head review is signed off.
+Reviewer signed off A3.3 forward canonicalization at the exact implementation
+head above with no remaining concrete defect. The next narrow slice is the
+authenticated host-sender `moveSurfaceToWindow` adapter: accept only
+`surfaceId` plus explicit target fields from the renderer, derive
+`sourceWindowId` from authenticated `event.sender.id`, and delegate to the
+same reviewed transaction.
+
+### A3.4 authenticated host-sender move adapter
+
+- [x] Add `host:workspace:move-surface-to-window` with a strict payload of only
+  `{surfaceId, targetWindowId, targetGroupId, targetIndex}`; reject any
+  renderer-supplied `sourceWindowId`.
+- [x] Derive `sourceWindowId` exclusively from the authenticated host sender
+  and delegate to the same `moveWorkspaceSurfaceAcrossWindows` transaction.
+- [x] Expose the operation through host preload/bridge and cover correct-source
+  routing, wrong-window rejection, payload spoofing, and strict schema tests.
+- [ ] Reviewer sign-off on exact pushed head
+  `b7d4bcac93aedd1ee795aca5eeddc16651bf508d`.
+
+A3.4 validation so far: typecheck passed; full Vitest passed 723/727 (4
+skipped); focused move/protocol/persistence/collection/host-IPC tests passed
+85/85; production build and diff checks passed; live workspace-tabs and
+developer-control Electron acceptance passed 3/3. The A3.4 exact-head review
+remains pending.
 
 ## Persistent pickup checklist for every new session
 
