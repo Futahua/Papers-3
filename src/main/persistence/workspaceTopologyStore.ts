@@ -32,6 +32,7 @@ const durableSchema = z.object({
 });
 const readableSchema = z.union([legacySchema, durableSchema]);
 type DurableRecord = z.infer<typeof durableSchema>['workspaces'][number];
+export type SelectedWorkspaceSnapshot = Readonly<DurableRecord>;
 
 /** Durable snapshots only. Loading never opens projects or resurrects a
  * persisted surface id; v1 lifetime keys migrate to fresh durable IDs. */
@@ -86,6 +87,14 @@ export class WorkspaceTopologyStore {
     this.dirty = true;
     if (!this.writing) this.writing = this.drain().finally(() => { this.writing = null; });
     await this.writing;
+  }
+
+  /** Read-only startup selection. Does not reorder, consume or persist. */
+  async selectedSnapshot(): Promise<SelectedWorkspaceSnapshot | null> {
+    await this.initialize();
+    if (!this.lastWorkspaceId) return null;
+    const selected = this.workspaces.get(this.lastWorkspaceId);
+    return selected ? structuredClone(selected) : null;
   }
 
   async flush(): Promise<void> {

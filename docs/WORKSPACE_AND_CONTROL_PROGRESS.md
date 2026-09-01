@@ -599,7 +599,22 @@ A1.2h durable identity and pure remapping basis:
 
 A1.2h still does not consume `lastWorkspaceId`, open projects, allocate startup
 surfaces, construct mappings, or restore layout automatically. Reviewer sign-off
-remains.
+completed at exact head `100f2817fec005a33e04f2eacaa7c955b94bc6ca`.
+
+A1.2i all-or-nothing primary startup hydration:
+
+- [x] Add read-only selected snapshot access; it does not consume, reorder or
+  persist, and a null selector makes no automatic choice.
+- [ ] Make main the sole startup restore authority and gate renderer initial
+  empty topology commit until hydration decision.
+- [ ] Resolve every persisted surface project/URL before allocating anything.
+- [ ] Allocate fresh surfaces, build exact old→fresh map, remap once, validate,
+  atomically deliver all descriptors+topology, then commit under the selected
+  durable workspace ID.
+- [ ] All-or-nothing rollback and fresh-UI decision without empty snapshot
+  overwrite on failure/no selection.
+- [ ] Live seeded-v2 primary restore; fresh IDs/order/focus/weights; durable ID
+  reuse after mutation; additional window remains fresh.
 - [ ] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
   assertions through the control plane.
 - [ ] Reviewer sign-off.

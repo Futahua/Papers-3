@@ -41,6 +41,17 @@ describe('WorkspaceTopologyStore', () => {
     expect(persisted.workspaces.find((entry) => entry.workspaceId === keyA)?.topology).toEqual(opened);
     expect(persisted.workspaces.filter((entry) => entry.workspaceId === keyA)).toHaveLength(1);
     expect(persisted.workspaces.find((entry) => entry.workspaceId === keyB)?.topology).toEqual(empty);
+    const selected = await store.selectedSnapshot();
+    expect(selected).toMatchObject({ workspaceId: keyB, topology: empty });
+    if (selected) selected.topology.groups[0]!.groupId = 'mutated-copy';
+    expect((await store.selectedSnapshot())?.topology.groups[0]?.groupId).toBe('group-main');
+  });
+
+  it('returns no selected snapshot when selection metadata is null', async () => {
+    const paths = papersPaths(directory);
+    await fs.mkdir(path.dirname(paths.workspaceTopologiesFile), { recursive: true });
+    await fs.writeFile(paths.workspaceTopologiesFile, JSON.stringify({ schemaVersion: 2, lastWorkspaceId: null, workspaces: [] }));
+    await expect(new WorkspaceTopologyStore(paths).selectedSnapshot()).resolves.toBeNull();
   });
 
   it('quarantines structurally invalid persisted topology instead of consuming it', async () => {
