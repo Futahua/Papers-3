@@ -541,6 +541,7 @@ async function bootstrap(): Promise<void> {
     ),
     isBackpackProjectSender: isProjectSurfaceSender,
     surfaces: surfaceContexts,
+    logicalSurfaces,
     // Phase 1B: a real lookup, with no singleton fallback left. A host
     // renderer resolves through the window registry; a project, detached or
     // widget sender resolves through the surface binding it already carries.
@@ -548,7 +549,7 @@ async function bootstrap(): Promise<void> {
     windowIdForSender: (senderId) => papersWindows.windowForSender(senderId)
       ?? surfaceContexts.contextForSender(senderId)?.windowId
       ?? null,
-    showBackpackProjectSurface: async (senderId, url) => {
+    showBackpackProjectSurface: async (senderId, surfaceId, url) => {
       const runtime = runtimeForSender(senderId);
       if (!runtime) throw new Error('This surface has no Papers window.');
       await runtime.show(url);
@@ -563,14 +564,12 @@ async function bootstrap(): Promise<void> {
       const owningWindowId = papersWindows.windowForSender(senderId)
         ?? surfaceContexts.contextForSender(senderId)?.windowId;
       if (projectId && frameSender !== null && owningWindowId !== undefined) {
-        // One logical surface per project view. Its id outlives this
-        // particular WebContentsView: a reload rebinds the same surfaceId.
-        const existing = logicalSurfaces
-          .listForWindow(owningWindowId)
-          .find((candidate) => candidate.projectId === projectId && candidate.kind === 'project');
-        const surface = existing ?? logicalSurfaces.create({ windowId: owningWindowId, projectId, kind: 'project' });
+        // The surface already exists: the host created it when the project
+        // was opened and named it in this call. Binding the frame is attaching
+        // a transport to a known identity, never allocating a new one -- "same
+        // project" must never come to mean "same surface".
         surfaceContexts.bind(frameSender, {
-          surfaceId: surface.surfaceId,
+          surfaceId,
           projectId,
           windowId: owningWindowId,
           kind: 'project',

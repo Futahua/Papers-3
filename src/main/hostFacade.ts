@@ -27,6 +27,7 @@ import type {
   SaveStateResult,
 } from './backpacks/backpackProjectService';
 import { parseBackpackProjectWebUrl } from './backpacks/backpackProjectWebLink';
+import type { LogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import type { SurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { BACKPACK_PROJECT_SCHEME } from './backpacks/backpackProjectService';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
@@ -91,6 +92,8 @@ export interface FacadeDeps {
    * project requests resolve through their own sender instead of ambient
    * state. */
   surfaces: SurfaceContextRegistry;
+  /** A0.1: the authority for which surfaces exist. */
+  logicalSurfaces: LogicalSurfaceRegistry;
   /**
    * The Papers window a sender belongs to, or null when the host cannot say.
    *
@@ -107,7 +110,7 @@ export interface FacadeDeps {
   isBackpackProjectSender: (sender: WebContents) => boolean;
   /** Phase 1B: both take the asking sender, so they act on THAT window's
    * project runtime instead of implicitly meaning "the one runtime". */
-  showBackpackProjectSurface: (senderId: number, url: string) => Promise<void>;
+  showBackpackProjectSurface: (senderId: number, surfaceId: string, url: string) => Promise<void>;
   hideBackpackProjectSurface: (senderId: number) => void;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
@@ -353,15 +356,24 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   /**
-   * Phase 1A: the project this sender may act for.
+   * A0.2: a PROJECT FRAME acting for the surface it actually renders.
    *
-   * The sender is the authority. An unbound sender is refused rather than
-   * resolved against whatever project happens to be current, because that
-   * fallback is exactly how one window's board reaches another window's file.
+   * The sender's own binding is the authority and a payload cannot override
+   * it. Strengthened beyond the binding alone: the logical surface must still
+   * be live and its fields must agree with the binding, which catches a stale
+   * sender whose surface has already been retired.
    */
   private requireProjectForSender(senderId: number): string {
-    const id = this.deps.surfaces.projectForSender(senderId);
-    if (!id) throw new Error('Enter a Backpack project before using it.');
+    const context = this.deps.surfaces.contextForSender(senderId);
+    const id = context?.projectId;
+    if (!context || !id) throw new Error('Enter a Backpack project before using it.');
+    if (context.surfaceId) {
+      const surface = this.deps.logicalSurfaces.get(context.surfaceId);
+      if (!surface) throw new Error('This surface is no longer open.');
+      if (surface.projectId !== id || surface.windowId !== context.windowId) {
+        throw new Error('This surface no longer matches its Papers window.');
+      }
+    }
     const backpack = this.deps.registry.find(id);
     if (!backpack || backpack.archived) {
       this.deps.surfaces.unbindProject(id);
@@ -370,6 +382,38 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return id;
   }
 
+  /**
+   * A0.2: a HOST renderer naming an explicit target.
+   *
+   * A host sender proves which WINDOW it is and nothing more. It must name the
+   * surface it means, and both ids must agree with current state.
+   *
+   * Deliberately no "if the window has exactly one surface, infer it" shortcut,
+   * even temporarily: the same call would silently target a surface with one
+   * open and become ambiguous with two, so a missing-target bug would work
+   * throughout early development and break only once a second tab existed.
+   */
+  private requireHostSurfaceTarget(senderId: number, surfaceId: string): { surfaceId: string; projectId: string; windowId: number } {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may act on a surface.');
+    if (!this.deps.logicalSurfaces.isLiveIn(surfaceId, windowId)) {
+      throw new Error('That surface is not open in this Papers window.');
+    }
+    const surface = this.deps.logicalSurfaces.get(surfaceId);
+    if (!surface) throw new Error('That surface is not open in this Papers window.');
+    const backpack = this.deps.registry.find(surface.projectId);
+    if (!backpack || backpack.archived) throw new Error('This Backpack project is no longer available.');
+    // The surface is authoritative for which project this is -- never
+    // enteredBackpackId, which is a UI projection, not a target.
+    return { surfaceId, projectId: surface.projectId, windowId };
+  }
+
+  /**
+   * A0.2: a creation operation, so it does NOT require an existing surface.
+   * Authority is the real host sender proving its window, plus an explicit
+   * project id. It returns the surfaceId that every later operation on this
+   * view must name.
+   */
   async openBackpackProject(senderId: number, id: string): Promise<OpenBackpackProject | null> {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may open a Backpack project.');
@@ -385,18 +429,26 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.surfaces.unbind(senderId);
     // Bind the asking host surface immediately, so every later request from
     // this window resolves through its own sender rather than ambient state.
-    if (project) {
-      this.deps.surfaces.bind(senderId, { projectId: id, windowId, kind: 'host' });
+    if (!project) {
+      this.emitBackpacksChanged();
+      return null;
     }
+    this.deps.surfaces.bind(senderId, { projectId: id, windowId, kind: 'host' });
+    // The creation operation allocates the logical surface and hands back its
+    // id. Every later operation on this view names that id explicitly.
+    const surface = this.deps.logicalSurfaces.create({ windowId, projectId: id, kind: 'project' });
     this.emitBackpacksChanged();
-    return project;
+    return { ...project, surfaceId: surface.surfaceId };
   }
 
-  async closeBackpackProject(senderId: number): Promise<void> {
-    const windowId = this.deps.hostWindowForSender(senderId);
+  async closeBackpackProject(senderId: number, surfaceId: string): Promise<void> {
+    // Leaving retires the surface: this is the creator closing the view, not a
+    // renderer being rebuilt, so its id is spent for good.
+    const { windowId } = this.requireHostSurfaceTarget(senderId, surfaceId);
     this.deps.hideBackpackProjectSurface(senderId);
+    this.deps.logicalSurfaces.retire(surfaceId);
     this.deps.surfaces.unbind(senderId);
-    if (windowId !== null) this.deps.setEnteredBackpack(windowId, null);
+    this.deps.setEnteredBackpack(windowId, null);
     this.emitBackpacksChanged();
   }
 
@@ -413,8 +465,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * The frame binding that follows is then a consequence of an identity
    * already checked, not a second source of truth.
    */
-  async showBackpackProjectSurface(senderId: number, url: string): Promise<void> {
-    const projectId = this.requireProjectForSender(senderId);
+  async showBackpackProjectSurface(senderId: number, surfaceId: string, url: string): Promise<void> {
+    const { projectId } = this.requireHostSurfaceTarget(senderId, surfaceId);
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -424,7 +476,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || parsed.host !== projectId) {
       throw new Error('This surface may not show another Backpack project.');
     }
-    await this.deps.showBackpackProjectSurface(senderId, url);
+    await this.deps.showBackpackProjectSurface(senderId, surfaceId, url);
   }
 
   /**
@@ -444,8 +496,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    *
    * Idempotent: an unbound sender's hide is a no-op, not an error.
    */
-  hideBackpackProjectSurface(senderId: number): void {
-    if (!this.deps.surfaces.contextForSender(senderId)) return;
+  hideBackpackProjectSurface(senderId: number, surfaceId: string): void {
+    // Hiding is still not leaving, so the surface stays live and bound; this
+    // only takes down the view. An unknown target is refused rather than
+    // silently hiding whatever this window happens to show.
+    this.requireHostSurfaceTarget(senderId, surfaceId);
     this.deps.hideBackpackProjectSurface(senderId);
   }
 

@@ -121,10 +121,13 @@ interface HostBridge {
   };
   /** Host seam for an independently maintained, machine-bound Backpack project. */
   backpackProject: {
-    open(id: string): Promise<{ url: string } | null>;
-    close(): Promise<void>;
-    showSurface(url: string): Promise<void>;
-    hideSurface(): Promise<void>;
+    /** Opening allocates the logical surface and returns its id. Every later
+     * operation on that view names the id explicitly: main never infers the
+     * target from "the window's only surface". */
+    open(id: string): Promise<{ url: string; surfaceId: string } | null>;
+    close(surfaceId: string): Promise<void>;
+    showSurface(surfaceId: string, url: string): Promise<void>;
+    hideSurface(surfaceId: string): Promise<void>;
     runAction(actionId: string): Promise<void>;
     copyText(text: string): Promise<void>;
     projectStateLoad(): Promise<unknown>;

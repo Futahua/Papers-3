@@ -27,9 +27,9 @@ export interface HostFacade {
   startupRestoreBackpackId(senderId: number): string | null;
 
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
-  closeBackpackProject(senderId: number): Promise<void>;
-  showBackpackProjectSurface(senderId: number, url: string): Promise<void>;
-  hideBackpackProjectSurface(senderId: number): void;
+  closeBackpackProject(senderId: number, surfaceId: string): Promise<void>;
+  showBackpackProjectSurface(senderId: number, surfaceId: string, url: string): Promise<void>;
+  hideBackpackProjectSurface(senderId: number, surfaceId: string): void;
   requestCloseBackpackProject(senderId: number): void;
   runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
   copyBackpackProjectText(senderId: number, text: string): void;
@@ -117,6 +117,8 @@ const backpackRemovalIdSchema = z
   .regex(/^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const backpackProjectActionIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/i);
 const backpackProjectStateSchema = z.string().min(2).max(5_000_000);
+/** An opaque logical surface id. Never parsed for meaning. */
+const surfaceIdSchema = z.string().min(1).max(128);
 /** A sha256 hex digest, or the sentinel for "no state file yet". */
 const backpackProjectRevisionSchema = z.union([z.literal('absent'), z.string().regex(/^[0-9a-f]{64}$/)]);
 const backpackProjectTextSchema = z.string().min(1).max(50_000);
@@ -182,11 +184,21 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:open', (event, id) =>
     facade.openBackpackProject(event.sender.id, backpackRemovalIdSchema.parse(id)),
   );
-  handle('host:backpack-project:close', (event) => facade.closeBackpackProject(event.sender.id));
-  handle('host:backpack-project:show-surface', (event, url) =>
-    facade.showBackpackProjectSurface(event.sender.id, z.string().url().max(2_048).parse(url)),
+  handle('host:backpack-project:close', (event, surfaceId) =>
+    facade.closeBackpackProject(event.sender.id, surfaceIdSchema.parse(surfaceId)),
   );
-  handle('host:backpack-project:hide-surface', (event) => facade.hideBackpackProjectSurface(event.sender.id));
+  // A0.2: the host names its target. No inference from "the window's only
+  // surface" -- that would work until a second one existed.
+  handle('host:backpack-project:show-surface', (event, surfaceId, url) =>
+    facade.showBackpackProjectSurface(
+      event.sender.id,
+      surfaceIdSchema.parse(surfaceId),
+      z.string().url().max(2_048).parse(url),
+    ),
+  );
+  handle('host:backpack-project:hide-surface', (event, surfaceId) =>
+    facade.hideBackpackProjectSurface(event.sender.id, surfaceIdSchema.parse(surfaceId)),
+  );
   handle('host:backpack-project:run-action', (event, actionId) =>
     facade.runBackpackProjectAction(event.sender.id, backpackProjectActionIdSchema.parse(actionId)),
   );

@@ -50,9 +50,9 @@ const api = {
   // roots and action targets never cross into a renderer.
   backpackProject: {
     open: (id: string) => ipcRenderer.invoke('host:backpack-project:open', id),
-    close: () => ipcRenderer.invoke('host:backpack-project:close'),
-    showSurface: (url: string) => ipcRenderer.invoke('host:backpack-project:show-surface', url),
-    hideSurface: () => ipcRenderer.invoke('host:backpack-project:hide-surface'),
+    close: (surfaceId: string) => ipcRenderer.invoke('host:backpack-project:close', surfaceId),
+    showSurface: (surfaceId: string, url: string) => ipcRenderer.invoke('host:backpack-project:show-surface', surfaceId, url),
+    hideSurface: (surfaceId: string) => ipcRenderer.invoke('host:backpack-project:hide-surface', surfaceId),
     runAction: (actionId: string) =>
       ipcRenderer.invoke('host:backpack-project:run-action', actionId),
     copyText: (text: string) => ipcRenderer.invoke('host:backpack-project:copy-text', text),

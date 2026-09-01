@@ -14,6 +14,8 @@ export const BACKPACK_PROJECT_SCHEME = 'papers-backpack';
 
 export interface OpenBackpackProject {
   url: string;
+  /** Assigned by the host when the logical surface is created. */
+  surfaceId?: string;
 }
 
 interface ProjectBinding {

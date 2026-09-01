@@ -45,6 +45,14 @@ export function App(): React.JSX.Element {
   const [basicOpen, setBasicOpen] = useState(false);
   const [entered, setEntered] = useState<string | null>(null);
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
+  /**
+   * The logical surface this window is showing.
+   *
+   * Held here purely so the renderer can name its own target: main verifies
+   * what we pass and never invents it, so a window with no open surface simply
+   * has nothing to act on.
+   */
+  const [surfaceId, setSurfaceId] = useState<string | null>(null);
   const [hermes, setHermes] = useState<HermesSurfaceStatus>({ placement: 'closed', status: 'idle', ownedByThisWindow: false });
   const [hostErrors, setHostErrors] = useState<HostErrorPayload[]>([]);
   const basicRef = useRef<HTMLDivElement | null>(null);
@@ -71,6 +79,7 @@ export function App(): React.JSX.Element {
       try {
         const project = await bridge.backpackProject.open(id);
         setProjectUrl(project?.url ?? null);
+        setSurfaceId(project?.surfaceId ?? null);
         setEntered(id);
       } catch (caught) {
         setHostErrors((previous) => [
@@ -100,10 +109,13 @@ export function App(): React.JSX.Element {
         // Another window may archive/remove the Backpack while this renderer
         // is showing it. The main process already tore down the surface; this
         // synchronizes the local React state with that authoritative event.
-        void bridge.backpackProject.close().catch(() => undefined).finally(() => {
-          setProjectUrl(null);
-          setEntered(null);
-        });
+        void (surfaceId ? bridge.backpackProject.close(surfaceId) : Promise.resolve())
+          .catch(() => undefined)
+          .finally(() => {
+            setProjectUrl(null);
+            setSurfaceId(null);
+            setEntered(null);
+          });
         setView('backpacks');
       }),
       bridge.events.onHermesSurface(setHermes),
@@ -211,6 +223,7 @@ export function App(): React.JSX.Element {
       .backpackProject.open(id)
       .then((project) => {
         setProjectUrl(project?.url ?? null);
+        setSurfaceId(project?.surfaceId ?? null);
         setEntered(id);
       })
       .catch((caught) =>
@@ -230,14 +243,14 @@ export function App(): React.JSX.Element {
   };
 
   const leaveEnteredBackpack = useCallback((): void => {
-    void host()
-      .backpackProject.close()
+    void (surfaceId ? host().backpackProject.close(surfaceId) : Promise.resolve())
       .catch(() => undefined)
       .finally(() => {
         setProjectUrl(null);
+        setSurfaceId(null);
         setEntered(null);
       });
-  }, []);
+  }, [surfaceId]);
 
   const openBasicOrReturnToBackpacks = (): void => {
     if (entered !== null) {
@@ -346,7 +359,7 @@ export function App(): React.JSX.Element {
 
       {enteredBackpack &&
         (projectUrl ? (
-          <BackpackProjectFrame url={projectUrl} onDismiss={leaveEnteredBackpack} />
+          <BackpackProjectFrame url={projectUrl} surfaceId={surfaceId} onDismiss={leaveEnteredBackpack} />
         ) : (
           <EmptyBackpackWarning
             backpackName={enteredBackpack.name}
