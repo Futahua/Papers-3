@@ -54,6 +54,62 @@ describe('WorkspaceTopologyStore', () => {
     await expect(new WorkspaceTopologyStore(paths).selectedSnapshot()).resolves.toBeNull();
   });
 
+  it('commits both workspace records atomically without changing startup selection', async () => {
+    const paths = papersPaths(directory);
+    const store = new WorkspaceTopologyStore(paths, () => '2026-09-02T00:00:00.000Z');
+    const sourceId = '11111111-1111-4111-8111-111111111111';
+    const targetId = '22222222-2222-4222-8222-222222222222';
+    const source = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: 'sf-source', projectId: 'bp-source', title: 'Source',
+    });
+    const target = createWorkspaceTopology('target-group');
+    await store.commit(sourceId, source);
+    await store.commit(targetId, target);
+
+    await store.commitPair({
+      source: { workspaceId: sourceId, topology: createWorkspaceTopology() },
+      target: { workspaceId: targetId, topology: openWorkspaceSurface(target, {
+        surfaceId: 'sf-source', projectId: 'bp-source', title: 'Source',
+      }) },
+      lastWorkspaceId: sourceId,
+    });
+
+    const persisted = JSON.parse(await fs.readFile(paths.workspaceTopologiesFile, 'utf8')) as {
+      lastWorkspaceId: string;
+      workspaces: Array<{ workspaceId: string; topology: typeof source }>;
+    };
+    expect(persisted.lastWorkspaceId).toBe(sourceId);
+    expect(persisted.workspaces).toHaveLength(2);
+    expect(persisted.workspaces.find((entry) => entry.workspaceId === sourceId)?.topology.surfaces).toEqual([]);
+    expect(persisted.workspaces.find((entry) => entry.workspaceId === targetId)?.topology.surfaces)
+      .toEqual([{ surfaceId: 'sf-source', projectId: 'bp-source', title: 'Source' }]);
+  });
+
+  it('restores a pair and removes a newly minted target workspace on compensation', async () => {
+    const paths = papersPaths(directory);
+    const store = new WorkspaceTopologyStore(paths);
+    const sourceId = '33333333-3333-4333-8333-333333333333';
+    const targetId = '44444444-4444-4444-8444-444444444444';
+    const original = createWorkspaceTopology();
+    await store.commit(sourceId, original);
+    const before = await store.snapshotPair(sourceId, targetId);
+
+    await store.commitPair({
+      source: { workspaceId: sourceId, topology: openWorkspaceSurface(original, {
+        surfaceId: 'sf-moved', projectId: 'bp-moved', title: 'Moved',
+      }) },
+      target: { workspaceId: targetId, topology: createWorkspaceTopology('target') },
+      lastWorkspaceId: sourceId,
+    });
+    await store.restorePairWithIds(before, sourceId, targetId);
+
+    const persisted = JSON.parse(await fs.readFile(paths.workspaceTopologiesFile, 'utf8')) as {
+      workspaces: Array<{ workspaceId: string; topology: typeof original }>;
+    };
+    expect(persisted.workspaces.map((entry) => entry.workspaceId)).toEqual([sourceId]);
+    expect(persisted.workspaces[0]?.topology).toEqual(original);
+  });
+
   it('quarantines structurally invalid persisted topology instead of consuming it', async () => {
     const paths = papersPaths(directory);
     await fs.mkdir(path.dirname(paths.workspaceTopologiesFile), { recursive: true });

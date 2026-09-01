@@ -2,6 +2,12 @@ import { BaseWindow, type WebContents } from 'electron';
 
 import { BackpackProjectRuntime } from './backpackProjectRuntime';
 
+export interface PreparedProjectSurface {
+  runtime: BackpackProjectRuntime;
+  adopt(): void;
+  discard(): void;
+}
+
 /**
  * The native project presentations owned by one Papers window.
  *
@@ -45,6 +51,36 @@ export class BackpackProjectSurfaceCollection {
     );
     this.runtimes.set(surfaceId, runtime);
     return runtime;
+  }
+
+  /**
+   * Create a native project presentation that is not yet canonical. The
+   * caller loads it with `present: false` and establishes authority gating
+   * before navigation; adoption is the only point at which it enters this
+   * collection and becomes visible. The staged runtime has no close callback,
+   * so discard cannot trigger canonical detach/widget cleanup.
+   */
+  prepare(surfaceId: string): PreparedProjectSurface {
+    if (this.runtimes.has(surfaceId)) throw new Error('project surface is already present in this window');
+    const runtime = new BackpackProjectRuntime(this.window, this.preloadPath, this.transparent);
+    let adopted = false;
+    return {
+      runtime,
+      adopt: () => {
+        if (adopted) return;
+        if (this.runtimes.has(surfaceId)) throw new Error('project surface was adopted twice');
+        adopted = true;
+        this.runtimes.set(surfaceId, runtime);
+        runtime.present();
+      },
+      discard: () => {
+        if (adopted) {
+          this.close(surfaceId);
+          return;
+        }
+        runtime.hide();
+      },
+    };
   }
 
   /** Destroy one attached presentation, leaving logical retirement to its owner. */

@@ -38,6 +38,7 @@ import { registerWindowDetachIpc } from './ipc/windowDetachIpc';
 import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
 import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
+import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
 import { controlBuildIdentity } from './buildIdentity';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
@@ -116,6 +117,7 @@ let mainWindow: BaseWindow | null = null;
 /** Phase 1A: which project each sender may act for. One registry for the
  * application; the bindings inside it are per surface. */
 const surfaceContexts = createSurfaceContextRegistry();
+const projectSurfaceAuthority = createProjectSurfaceAuthorityBarrier();
 /**
  * A0.1: the authority for which surfaces exist. Sender bindings above point at
  * these; a renderer dying ends a binding, not a surface.
@@ -537,7 +539,8 @@ async function bootstrap(): Promise<void> {
     isAllowedProjectSurfaceSender({
       senderId: sender.id,
       url: sender.mainFrame.url,
-      isWorkspaceSender: runtimeForSender(sender.id)?.isSender(sender) ?? false,
+      isWorkspaceSender: (runtimeForSender(sender.id)?.isSender(sender) ?? false)
+        || projectSurfaceAuthority.isPending(sender.id),
       detachRegistry,
       widgetRegistry,
     });
@@ -653,6 +656,7 @@ async function bootstrap(): Promise<void> {
     ),
     isBackpackProjectSender: isProjectSurfaceSender,
     surfaces: surfaceContexts,
+    waitForBackpackProjectAuthority: (senderId) => projectSurfaceAuthority.wait(senderId),
     logicalSurfaces,
     // Phase 1B: a real lookup, with no singleton fallback left. A host
     // renderer resolves through the window registry; a project, detached or

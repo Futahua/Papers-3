@@ -79,14 +79,12 @@ export class BackpackProjectRuntime {
     this.applySurface();
   }
 
-  async show(url: string): Promise<void> {
+  async show(url: string, options: { present?: boolean; beforeLoad?: (senderId: number) => void } = {}): Promise<void> {
+    const present = options.present ?? true;
     const parsed = new URL(url);
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:`) throw new Error('Only a bound Backpack project may use the project surface.');
     if (this.view && this.projectId === parsed.host && this.entryUrl === url) {
-      if (!this.presented && !this.window.isDestroyed()) {
-        this.window.contentView.addChildView(this.view);
-        this.presented = true;
-      }
+      if (present) this.present();
       this.fit();
       this.applySurface();
       return;
@@ -99,7 +97,7 @@ export class BackpackProjectRuntime {
     this.view = view;
     this.projectId = parsed.host;
     this.entryUrl = url;
-    this.presented = true;
+    this.presented = present;
     view.webContents.on('destroyed', () => {
       if (this.view !== view) return;
       this.view = null;
@@ -118,10 +116,19 @@ export class BackpackProjectRuntime {
         event.preventDefault();
       }
     });
-    this.window.contentView.addChildView(view);
+    options.beforeLoad?.(view.webContents.id);
+    if (present) this.window.contentView.addChildView(view);
     this.fit();
     await view.webContents.loadURL(url);
     this.applySurface();
+  }
+
+  /** Attach a prepared view to its owning window at canonical adoption. */
+  present(): void {
+    if (!this.view || this.presented || this.window.isDestroyed()) return;
+    this.window.contentView.addChildView(this.view);
+    this.presented = true;
+    this.fit();
   }
 
   /** Remove the native view from composition without ending its renderer. */

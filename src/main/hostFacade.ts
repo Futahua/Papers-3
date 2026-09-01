@@ -114,6 +114,9 @@ export interface FacadeDeps {
    * project requests resolve through their own sender instead of ambient
    * state. */
   surfaces: SurfaceContextRegistry;
+  /** Staged project renderers wait here before project IPC authority is
+   * checked. Non-staged senders resolve immediately. */
+  waitForBackpackProjectAuthority?: (senderId: number) => Promise<void>;
   /** A0.1: the authority for which surfaces exist. */
   logicalSurfaces: LogicalSurfaceRegistry;
   /**
@@ -244,6 +247,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   isBackpackProjectSender(sender: WebContents): boolean {
     return this.deps.isBackpackProjectSender(sender);
+  }
+
+  waitForBackpackProjectAuthority(senderId: number): Promise<void> {
+    return this.deps.waitForBackpackProjectAuthority?.(senderId) ?? Promise.resolve();
   }
 
   // ------------------------------------------------------------- backpacks

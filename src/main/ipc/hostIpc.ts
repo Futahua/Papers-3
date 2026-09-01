@@ -12,6 +12,7 @@ import { parseWorkspaceTopology, type WorkspaceTopologyV1 } from '@shared/worksp
 export interface HostFacade {
   isHostSender(sender: WebContents): boolean;
   isBackpackProjectSender(sender: WebContents): boolean;
+  waitForBackpackProjectAuthority?(senderId: number): Promise<void>;
 
   buildIdentity(): unknown;
   updateStatus(): unknown;
@@ -155,10 +156,11 @@ export function registerHostIpc(facade: HostFacade): void {
     handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
     projectAllowed = false,
   ): void => {
-    ipcMain.handle(channel, (event, ...args) => {
+    ipcMain.handle(channel, async (event, ...args) => {
       const projectAction = channel.startsWith('host:backpack-project:') &&
         !channel.endsWith(':open') && !channel.endsWith(':close') &&
         !channel.endsWith(':show-surface') && !channel.endsWith(':hide-surface');
+      if (projectAction) await facade.waitForBackpackProjectAuthority?.(event.sender.id);
       guard(event, projectAllowed || projectAction);
       return handler(event, ...args);
     });

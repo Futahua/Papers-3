@@ -260,6 +260,37 @@ export function moveWorkspaceSurface(
   return next;
 }
 
+/** Insert a surface that belongs to another workspace into an explicit group.
+ * Cross-window move uses this before any same-topology reorder operation:
+ * `moveWorkspaceSurface` intentionally requires the surface to already exist
+ * in its input topology, while the destination topology does not contain it
+ * yet. */
+export function insertWorkspaceSurface(
+  topology: WorkspaceTopologyV1,
+  surface: WorkspaceSurface,
+  groupId = topology.focusedGroupId,
+  targetIndex = Number.MAX_SAFE_INTEGER,
+): WorkspaceTopologyV1 {
+  if (topology.surfaces.some((candidate) => candidate.surfaceId === surface.surfaceId)) {
+    throw new Error(`surface ${surface.surfaceId} already exists`);
+  }
+  const group = topology.groups.find((candidate) => candidate.groupId === groupId);
+  if (!group) throw new Error(`group ${groupId} does not exist`);
+  const surfaceIds = [...group.surfaceIds];
+  const index = Math.max(0, Math.min(Math.trunc(targetIndex), surfaceIds.length));
+  surfaceIds.splice(index, 0, surface.surfaceId);
+  const next: WorkspaceTopologyV1 = {
+    ...topology,
+    surfaces: [...topology.surfaces, { ...surface }],
+    groups: topology.groups.map((candidate) => candidate.groupId === groupId
+      ? { ...candidate, surfaceIds, activeSurfaceId: surface.surfaceId }
+      : { ...candidate, surfaceIds: [...candidate.surfaceIds] }),
+    focusedGroupId: groupId,
+  };
+  assertValidWorkspaceTopology(next);
+  return next;
+}
+
 export function closeWorkspaceSurface(topology: WorkspaceTopologyV1, surfaceId: string): WorkspaceTopologyV1 {
   const source = topology.groups.find((group) => group.surfaceIds.includes(surfaceId));
   if (!source) throw new Error(`surface ${surfaceId} does not exist`);

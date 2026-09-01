@@ -5,6 +5,7 @@ import {
   assertValidWorkspaceTopology,
   closeWorkspaceSurface,
   createWorkspaceTopology,
+  insertWorkspaceSurface,
   openWorkspaceSurface,
   moveWorkspaceSurface,
   remapWorkspaceTopologySurfaceIds,
@@ -14,6 +15,26 @@ import {
 } from '../../src/shared/workspaceTopology';
 
 describe('workspace topology', () => {
+  it('inserts a cross-window surface at an explicit destination index', () => {
+    let target = createWorkspaceTopology();
+    target = openWorkspaceSurface(target, { surfaceId: 'sf-a', projectId: 'bp-a', title: 'A' });
+    target = openWorkspaceSurface(target, { surfaceId: 'sf-b', projectId: 'bp-b', title: 'B' });
+
+    const inserted = insertWorkspaceSurface(
+      target,
+      { surfaceId: 'sf-moved', projectId: 'bp-moved', title: 'Moved' },
+      'group-main',
+      1,
+    );
+
+    expect(inserted.groups[0]?.surfaceIds).toEqual(['sf-a', 'sf-moved', 'sf-b']);
+    expect(inserted.groups[0]?.activeSurfaceId).toBe('sf-moved');
+    expect(inserted.focusedGroupId).toBe('group-main');
+    expect(() => insertWorkspaceSurface(inserted, {
+      surfaceId: 'sf-moved', projectId: 'bp-other', title: 'Other',
+    })).toThrow(/already exists/);
+  });
+
   it('owns stable product identities without Dockview state', () => {
     let topology = createWorkspaceTopology();
     topology = openWorkspaceSurface(topology, { surfaceId: 'sf-a', projectId: 'bp-a', title: 'A' });

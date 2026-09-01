@@ -34,6 +34,19 @@ const readableSchema = z.union([legacySchema, durableSchema]);
 type DurableRecord = z.infer<typeof durableSchema>['workspaces'][number];
 export type SelectedWorkspaceSnapshot = Readonly<DurableRecord>;
 
+export interface WorkspacePairCommit {
+  source: { workspaceId: string; topology: WorkspaceTopologyV1 };
+  target: { workspaceId: string; topology: WorkspaceTopologyV1 };
+  /** Cross-window moves must not change startup selection as a side effect. */
+  lastWorkspaceId: string | null;
+}
+
+export interface WorkspacePairSnapshot {
+  source: DurableRecord | null;
+  target: DurableRecord | null;
+  lastWorkspaceId: string | null;
+}
+
 /** Durable snapshots only. Loading never opens projects or resurrects a
  * persisted surface id; v1 lifetime keys migrate to fresh durable IDs. */
 export class WorkspaceTopologyStore {
@@ -84,6 +97,87 @@ export class WorkspaceTopologyStore {
       workspaceId, topology: parseWorkspaceTopology(topology), updatedAt: this.now(),
     });
     this.lastWorkspaceId = workspaceId;
+    this.dirty = true;
+    if (!this.writing) this.writing = this.drain().finally(() => { this.writing = null; });
+    await this.writing;
+  }
+
+  /**
+   * Replace two workspace records in one durable JSON save. A cross-window
+   * move must never persist its source and target as two independently visible
+   * writes, because a process death between ordinary commits would leave a
+   * half-move on disk.
+   */
+  async commitPair(pair: WorkspacePairCommit): Promise<void> {
+    if (pair.source.workspaceId === pair.target.workspaceId) {
+      throw new Error('workspace pair must name two distinct workspaces');
+    }
+    await this.initialize();
+    const sourceTopology = parseWorkspaceTopology(pair.source.topology);
+    const targetTopology = parseWorkspaceTopology(pair.target.topology);
+    if (pair.lastWorkspaceId !== null
+      && pair.lastWorkspaceId !== pair.source.workspaceId
+      && pair.lastWorkspaceId !== pair.target.workspaceId
+      && !this.workspaces.has(pair.lastWorkspaceId)) {
+      throw new Error('lastWorkspaceId must reference an existing workspace');
+    }
+    const previousSource = this.workspaces.get(pair.source.workspaceId);
+    const previousTarget = this.workspaces.get(pair.target.workspaceId);
+    const previousLastWorkspaceId = this.lastWorkspaceId;
+    this.workspaces.set(pair.source.workspaceId, {
+      workspaceId: pair.source.workspaceId,
+      topology: sourceTopology,
+      updatedAt: this.now(),
+    });
+    this.workspaces.set(pair.target.workspaceId, {
+      workspaceId: pair.target.workspaceId,
+      topology: targetTopology,
+      updatedAt: this.now(),
+    });
+    this.lastWorkspaceId = pair.lastWorkspaceId;
+    this.dirty = true;
+    if (!this.writing) this.writing = this.drain().finally(() => { this.writing = null; });
+    try {
+      await this.writing;
+    } catch (error) {
+      if (previousSource) this.workspaces.set(pair.source.workspaceId, previousSource);
+      else this.workspaces.delete(pair.source.workspaceId);
+      if (previousTarget) this.workspaces.set(pair.target.workspaceId, previousTarget);
+      else this.workspaces.delete(pair.target.workspaceId);
+      this.lastWorkspaceId = previousLastWorkspaceId;
+      this.dirty = false;
+      throw error;
+    }
+  }
+
+  /** Capture the exact records needed to compensate a pair transaction. */
+  async snapshotPair(sourceWorkspaceId: string, targetWorkspaceId: string): Promise<WorkspacePairSnapshot> {
+    if (sourceWorkspaceId === targetWorkspaceId) throw new Error('workspace pair must name two distinct workspaces');
+    await this.initialize();
+    const clone = (record: DurableRecord | undefined): DurableRecord | null => record ? structuredClone(record) : null;
+    return {
+      source: clone(this.workspaces.get(sourceWorkspaceId)),
+      target: clone(this.workspaces.get(targetWorkspaceId)),
+      lastWorkspaceId: this.lastWorkspaceId,
+    };
+  }
+
+  /** Restore a pair when one side was absent and its ID therefore needs to be
+   * supplied explicitly for deletion. */
+  async restorePairWithIds(
+    snapshot: WorkspacePairSnapshot,
+    sourceWorkspaceId: string,
+    targetWorkspaceId: string,
+  ): Promise<void> {
+    if (sourceWorkspaceId === targetWorkspaceId) throw new Error('workspace pair must name two distinct workspaces');
+    await this.initialize();
+    const apply = (record: DurableRecord | null, id: string): void => {
+      if (record) this.workspaces.set(record.workspaceId, structuredClone(record));
+      else this.workspaces.delete(id);
+    };
+    apply(snapshot.source, sourceWorkspaceId);
+    apply(snapshot.target, targetWorkspaceId);
+    this.lastWorkspaceId = snapshot.lastWorkspaceId;
     this.dirty = true;
     if (!this.writing) this.writing = this.drain().finally(() => { this.writing = null; });
     await this.writing;
