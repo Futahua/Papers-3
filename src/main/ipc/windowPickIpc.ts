@@ -61,10 +61,10 @@ export function registerWindowPickIpc({
   session,
   isSender,
 }: WindowPickIpcDependencies): void {
-  let ownerSenderId: number | null = null;
+  let owner: { senderId: number; generation: number } | null = null;
 
   const requireOwner = (sender: WebContents): void => {
-    if (ownerSenderId !== null && ownerSenderId !== sender.id) {
+    if (owner && owner.senderId !== sender.id) {
       throw new Error('denied: sender does not own the active picker');
     }
   };
@@ -84,26 +84,29 @@ export function registerWindowPickIpc({
     const members = raw['members'].map(parseMemberDescriptor);
     const sender = event.sender;
     requireOwner(sender);
-    if (ownerSenderId === null) {
-      ownerSenderId = sender.id;
-      if (typeof (sender as WebContents & { once?: unknown }).once === 'function') {
-        sender.once('destroyed', () => {
-          if (ownerSenderId === sender.id) {
-            ownerSenderId = null;
-            void session.cancel();
-          }
-        });
-      }
+    const claim = {
+      senderId: sender.id,
+      generation: owner?.senderId === sender.id ? owner.generation + 1 : 1,
+    };
+    owner = claim;
+    if (typeof (sender as WebContents & { once?: unknown }).once === 'function') {
+      sender.once('destroyed', () => {
+        if (owner?.generation === claim.generation) {
+          owner = null;
+          void session.cancel();
+        }
+      });
     }
     const result = await session.begin({
       memberDescriptors: members,
       onResult: (result: WindowPickResult) => {
+        if (owner?.generation === claim.generation) owner = null;
         if (!sender.isDestroyed()) {
           sender.send('papers:window-pick:result', result);
         }
       },
     });
-    if (result.outcome !== 'started' && ownerSenderId === sender.id) ownerSenderId = null;
+    if (result.outcome !== 'started' && owner?.generation === claim.generation) owner = null;
     console.info('[045-direct-pick] session-begin-result', result.outcome,
       result.outcome === 'failed' ? (result.error ?? '') : '');
     return result;
@@ -118,7 +121,7 @@ export function registerWindowPickIpc({
       throw new Error('pick cancel payload must be empty');
     }
     await session.cancel();
-    ownerSenderId = null;
+    owner = null;
     return { outcome: 'cancelled' };
   });
 
@@ -146,7 +149,7 @@ export function registerWindowPickIpc({
       throw new Error('pick commit payload must be empty');
     }
     await session.commit();
-    ownerSenderId = null;
+    owner = null;
     return { outcome: 'committed' };
   });
 }
