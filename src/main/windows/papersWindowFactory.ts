@@ -14,6 +14,7 @@ export interface PapersWindowFactoryOptions {
   bounds?: WindowBounds;
   appIcon?: string;
   transparent: boolean;
+  currentTransparent: () => boolean;
   hostPreloadPath: string;
   projectPreloadPath: string;
   onProjectSurfaceClosed?: (projectId: string) => void;
@@ -62,7 +63,7 @@ export function createPapersWindow(options: PapersWindowFactoryOptions): PapersW
   );
 
   const applyHostSurface = (): void => {
-    hostView.setBackgroundColor(options.transparent ? TRANSPARENT_CHILD_SURFACE_COLOR : OPAQUE_SURFACE_COLOR);
+    hostView.setBackgroundColor(options.currentTransparent() ? TRANSPARENT_CHILD_SURFACE_COLOR : OPAQUE_SURFACE_COLOR);
   };
   applyHostSurface();
   hostView.webContents.on('did-finish-load', applyHostSurface);

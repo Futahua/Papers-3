@@ -310,6 +310,7 @@ async function bootstrap(): Promise<void> {
     bounds: savedBounds ?? undefined,
     appIcon,
     transparent: papersSettings.transparentWindow,
+    currentTransparent: () => papersSettings.transparentWindow,
     hostPreloadPath: path.join(preloadDir, 'host.cjs'),
     projectPreloadPath: path.join(preloadDir, 'backpackProject.cjs'),
     rendererUrl: process.env['ELECTRON_RENDERER_URL'],
