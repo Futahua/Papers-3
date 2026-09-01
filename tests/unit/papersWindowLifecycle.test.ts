@@ -117,4 +117,19 @@ describe('prepared Papers window lifecycle', () => {
 
     expect(installed).toEqual([10, 20]);
   });
+
+  it('waits for asynchronous finalization before destroying after load failure', async () => {
+    const current = instance(async () => { throw new Error('load failed'); });
+    let release!: () => void;
+    const cleanup = new Promise<void>((resolve) => { release = resolve; });
+    const finalize = vi.fn(() => cleanup);
+    const pending = preparePapersWindow(current, { register: vi.fn(), finalize }).loadAndRollback();
+
+    await Promise.resolve();
+    expect(current.window.destroy).not.toHaveBeenCalled();
+    release();
+    await expect(pending).rejects.toThrow('load failed');
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(current.window.destroy).toHaveBeenCalledTimes(1);
+  });
 });
