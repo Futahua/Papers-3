@@ -58,6 +58,7 @@ import { finalizePapersWindow } from './windows/papersWindowFinalization';
 import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
+import { WorkspaceTopologyStore } from './persistence/workspaceTopologyStore';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import {
   OPAQUE_SURFACE_COLOR,
@@ -133,6 +134,7 @@ interface PapersWindowOwned {
 const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
 const workspaceTopologies = new Map<number, WorkspaceTopologyV1>();
 const workspaceTopologyRevisions = new Map<number, number>();
+const workspaceKeys = new Map<number, string>();
 
 /** The exact project runtime belonging to a bound project-frame sender. A host
  * sender is only a window actor and must use an explicit surface id. */
@@ -283,6 +285,8 @@ function dockBoundsFor(content: { width: number; height: number }): {
 async function bootstrap(): Promise<void> {
   const baseDir = app.getPath('userData');
   const paths = papersPaths(baseDir);
+  const workspaceTopologyStore = new WorkspaceTopologyStore(paths);
+  await workspaceTopologyStore.initialize();
   const settingsStore = new AtomicJsonStore(paths.settingsFile, { recoveryDir: paths.recoveryDir });
   const settingsReport = await settingsStore.load<PapersSettings>();
   let papersSettings: PapersSettings = {
@@ -410,6 +414,7 @@ async function bootstrap(): Promise<void> {
         clearWorkspaceTopology: (id) => {
           workspaceTopologies.delete(id);
           workspaceTopologyRevisions.delete(id);
+          workspaceKeys.delete(id);
         },
         removeWindow: (id) => { papersWindows.remove(id); },
         emitHermesSurface: () => facade.emitHermesSurface(),
@@ -550,6 +555,12 @@ async function bootstrap(): Promise<void> {
     setWorkspaceTopology: (windowId, topology) => {
       workspaceTopologies.set(windowId, topology);
       workspaceTopologyRevisions.set(windowId, (workspaceTopologyRevisions.get(windowId) ?? 0) + 1);
+      let workspaceKey = workspaceKeys.get(windowId);
+      if (!workspaceKey) {
+        workspaceKey = randomUUID();
+        workspaceKeys.set(windowId, workspaceKey);
+      }
+      void workspaceTopologyStore.commit(workspaceKey, topology).catch(() => undefined);
     },
     activeSurfaceId: (windowId) => papersWindows.activeSurfaceId(windowId),
     setActiveSurfaceId: (windowId, surfaceId) => papersWindows.setActiveSurfaceId(windowId, surfaceId),

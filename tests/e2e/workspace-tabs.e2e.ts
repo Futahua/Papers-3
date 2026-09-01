@@ -246,5 +246,21 @@ describe('A1 workspace tabs', () => {
     }, 10_000, 'authoritative project close with surviving Beta active');
     expect(await hostPage.getByRole('tab', { name: 'Alpha' }).count()).toBe(0);
     expect(await hostPage.getByRole('tab', { name: 'Beta' }).count()).toBe(1);
+
+    const persistedPath = path.join(launched.userDataDir, 'PapersData', 'workspace-topologies.json');
+    await waitFor(async () => {
+      try {
+        const persisted = JSON.parse(await fs.readFile(persistedPath, 'utf8')) as {
+          workspaces: Array<{ topology: { surfaces: Array<{ projectId: string }> } }>;
+        };
+        return persisted.workspaces.some((workspace) =>
+          workspace.topology.surfaces.length === 1
+          && workspace.topology.surfaces[0]?.projectId === B);
+      } catch {
+        return false;
+      }
+    }, 10_000, 'atomically persisted final Papers topology');
+    const persistedText = await fs.readFile(persistedPath, 'utf8');
+    expect(persistedText).not.toMatch(/dockview|webContents|senderId|windowId/i);
   });
 });

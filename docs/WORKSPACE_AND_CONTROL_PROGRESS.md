@@ -404,7 +404,7 @@ A1.2 canonical-topology work in progress:
 - [x] Reconcile Dockview from external Papers topology mutations for the
   supported flat/single-split model, with API-origin/generation feedback
   suppression and convergence checks before every Dockview mutation.
-- [ ] Persist only validated/atomic schema-v1 Papers topology; do not persist
+- [x] Persist only validated/atomic schema-v1 Papers topology; do not persist
   Dockview JSON, sender ids, WebContents ids or native window ids.
 - [x] Expose validated read-only topology through `inspect.workspace` and
   `papersctl inspect.workspace --window`, without Dockview serialization.
@@ -463,6 +463,25 @@ A1.2c reverse convergence:
   geometry, group collapse/recreation and retained native sender identity.
 
 A1.2c validation: typecheck passed, full Vitest 655 passed / 4 skipped,
+production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
+Electron E2E 1/1 passed, and diff check passed.
+
+A1.2d atomic persistence:
+
+- [x] Persist schema-v1 Papers topology through `AtomicJsonStore` using stable
+  UUID workspace keys rather than Electron/native window ids.
+- [x] Serialize and coalesce concurrent main-process commits; one writer drains
+  the newest topology snapshots without parallel file replacement races.
+- [x] Validate the complete persisted envelope and every nested topology on
+  load; quarantine invalid state rather than consuming or deleting it.
+- [x] Keep persisted snapshots write-only for now. Automatic startup hydration
+  remains blocked on the explicit surface-identity mapping policy and cannot be
+  overwritten accidentally by a hydration implementation that does not exist.
+- [x] Live Electron acceptance proves the final one-surface topology reaches
+  disk and the persisted JSON contains no Dockview, WebContents, sender or
+  native-window identity.
+
+A1.2d validation: typecheck passed, full Vitest 657 passed / 4 skipped,
 production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
 Electron E2E 1/1 passed, and diff check passed.
 - [ ] Keyboard tab selection and accessibility acceptance.

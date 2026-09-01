@@ -14,6 +14,7 @@ export interface PapersPaths {
   backpacksDir: string;
   integrationsDir: string;
   hermesIntegrationFile: string;
+  workspaceTopologiesFile: string;
 }
 
 export function papersPaths(baseDir: string): PapersPaths {
@@ -28,6 +29,7 @@ export function papersPaths(baseDir: string): PapersPaths {
     backpacksDir: path.join(root, 'backpacks'),
     integrationsDir: path.join(root, 'integrations'),
     hermesIntegrationFile: path.join(root, 'integrations', 'hermes.json'),
+    workspaceTopologiesFile: path.join(root, 'workspace-topologies.json'),
   };
 }
 
