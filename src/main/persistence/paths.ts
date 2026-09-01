@@ -15,6 +15,7 @@ export interface PapersPaths {
   integrationsDir: string;
   hermesIntegrationFile: string;
   workspaceTopologiesFile: string;
+  workspaceLayoutsFile: string;
 }
 
 export function papersPaths(baseDir: string): PapersPaths {
@@ -30,6 +31,7 @@ export function papersPaths(baseDir: string): PapersPaths {
     integrationsDir: path.join(root, 'integrations'),
     hermesIntegrationFile: path.join(root, 'integrations', 'hermes.json'),
     workspaceTopologiesFile: path.join(root, 'workspace-topologies.json'),
+    workspaceLayoutsFile: path.join(root, 'workspace-layouts.json'),
   };
 }
 

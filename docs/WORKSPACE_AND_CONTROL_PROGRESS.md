@@ -704,12 +704,31 @@ fixture/restart failures; the focused A1 acceptance tests are green.
   surfaces may coexist and remain untouched.
 - [x] Add unit coverage for prospective validation, exact complete-set
   enforcement, and no-mutation-on-invalid-cleanup.
-- [ ] Reviewer sign-off.
+- [x] Reviewer sign-off on exact head `51c1df7e976cc73d75c660adbf51be8e6db94e44`.
 
 A2.1a validation: typecheck passed and focused host-facade unit tests passed
 27/27, including old+fresh coexistence and invalid-set no-mutation cases. The
 production seam is intentionally not used by ordinary close; it is ready for
 the named-layout replace-load transaction after reviewer review.
+
+### A2.1b app-level named-layout persistence
+
+- [x] Add separate `PapersData/workspace-layouts.json` persistence through
+  `AtomicJsonStore` and `PapersPaths.workspaceLayoutsFile`.
+- [x] Persist only validated named layouts with UUID `layoutId`, trimmed
+  bounded names, topology, and creation/update timestamps; exclude workspace,
+  window, URL, sender/WebContents, Dockview and native presentation identity.
+- [x] Provide serialized create-only `create(name, topology)`, read-only
+  `list()`/`get(layoutId)`, and `flush()` store operations.
+- [x] Reject duplicate normalized names, duplicate IDs, malformed topology and
+  invalid envelope state through validation/quarantine.
+- [x] Ensure durable create failure leaves no in-memory phantom layout.
+- [ ] Reviewer sign-off.
+
+A2.1b validation: typecheck passed and focused named-layout store tests passed
+5/5, covering atomic round-trip/cloning, concurrent create serialization,
+duplicate/invalid names, malformed-state quarantine, redaction, and failed-save
+no-phantom behavior. No control, UI, or load transaction is wired yet.
 
 ### Later gates
 
