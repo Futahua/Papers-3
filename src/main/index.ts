@@ -435,7 +435,14 @@ async function bootstrap(): Promise<void> {
     },
   });
 
-  const updater = new PapersUpdater(() => hostView?.webContents ?? null);
+  // Application-level state, so every live host hears it. The updater itself
+  // holds no window reference.
+  const updater = new PapersUpdater((next) => {
+    for (const context of papersWindows.all()) {
+      const contents = context.owned.hostView.webContents;
+      if (!contents.isDestroyed()) contents.send('host:event:update-status', next);
+    }
+  });
   const isProjectSurfaceSender = (sender: WebContents): boolean =>
     isAllowedProjectSurfaceSender({
       senderId: sender.id,
@@ -446,7 +453,23 @@ async function bootstrap(): Promise<void> {
     });
 
   const facade = new PapersHostFacade({
-    hostContents: () => hostView?.webContents ?? null,
+    // Phase 1B.3: delivery with explicit semantics. Broadcast reaches every
+    // live host renderer; sendToWindow reaches exactly one.
+    broadcastToHosts: (channel, payload) => {
+      for (const context of papersWindows.all()) {
+        const contents = context.owned.hostView.webContents;
+        if (!contents.isDestroyed()) contents.send(channel, payload);
+      }
+    },
+    sendToWindow: (windowId, channel, payload) => {
+      const contents = papersWindows.get(windowId)?.owned.hostView.webContents;
+      if (contents && !contents.isDestroyed()) contents.send(channel, payload);
+    },
+    hostWindowForSender: (senderId) => papersWindows.windowForSender(senderId),
+    // The Canvas runtime is still application-level and attached to the first
+    // window, so this has one answer today. Recording the relationship rather
+    // than assuming it means per-window Canvas would need no delivery change.
+    canvasRuntimeWindow: () => mainWindow?.id ?? null,
     updater,
     registry,
     backpackProjects,

@@ -60,10 +60,12 @@ export class PapersUpdater {
   private started = false;
 
   /**
-   * The host renderer, supplied as a getter because Papers builds its host view
-   * after this object exists and can rebuild it later.
+   * Updater state is application-level: one updater, one answer, and every
+   * Papers window shows the same thing. So this object knows nothing about
+   * windows -- it reports a change and the composition root decides who hears
+   * it. `current` still covers a renderer that connects after an event fired.
    */
-  constructor(private readonly hostContents: () => WebContents | null) {}
+  constructor(private readonly onStateChanged: (next: UpdateState) => void = () => {}) {}
 
   /** Latest known state, for a renderer that connects after an event fired. */
   get current(): UpdateState {
@@ -72,10 +74,7 @@ export class PapersUpdater {
 
   private setState(next: UpdateState): void {
     this.state = next;
-    const contents = this.hostContents();
-    if (contents && !contents.isDestroyed()) {
-      contents.send('host:event:update-status', next);
-    }
+    this.onStateChanged(next);
   }
 
   /**

@@ -47,7 +47,27 @@ interface CanvasPersistedState {
 }
 
 export interface FacadeDeps {
-  hostContents: () => WebContents | null;
+  /**
+   * Phase 1B.3 delivery. Two primitives with explicit semantics, replacing a
+   * single "the host" target:
+   *
+   *   broadcastToHosts  application-level facts every window must see
+   *   sendToWindow      something that belongs to one window and would be
+   *                     misleading anywhere else
+   *
+   * Neither is a substitute for the other, and neither is
+   * `sendersForProject` -- project membership is a different question from
+   * window membership.
+   */
+  broadcastToHosts: (channel: string, payload: unknown) => void;
+  sendToWindow: (windowId: number, channel: string, payload: unknown) => void;
+  /** The window a HOST renderer belongs to, or null if this sender is not a
+   * live host. Every registered host is legitimate; there is no primary. */
+  hostWindowForSender: (senderId: number) => number | null;
+  /** The window whose Canvas runtime a program event belongs to. One runtime
+   * today, so one answer -- but the relationship is recorded rather than
+   * assumed, so per-window Canvas would keep the same delivery semantics. */
+  canvasRuntimeWindow: () => number | null;
   /** Phase 1A: which project a sender may act for. Supplied by the host so
    * project requests resolve through their own sender instead of ambient
    * state. */
@@ -103,33 +123,48 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (contents && !contents.isDestroyed()) contents.send(channel, payload);
   }
 
-  private send(channel: string, payload: unknown): void {
-    const contents = this.deps.hostContents();
-    if (contents && !contents.isDestroyed()) contents.send(channel, payload);
+  /** An application-level fact: every live host renderer must see it. */
+  private broadcast(channel: string, payload: unknown): void {
+    this.deps.broadcastToHosts(channel, payload);
+  }
+
+  /**
+   * Something that belongs to the Canvas runtime's window. Delivered to that
+   * window rather than broadcast, because a program's status, shelf, save
+   * result or permission prompt shown in a window that is not running it
+   * would be misleading.
+   */
+  private sendToRuntimeOwner(channel: string, payload: unknown): void {
+    const windowId = this.deps.canvasRuntimeWindow();
+    if (windowId === null) return;
+    this.deps.sendToWindow(windowId, channel, payload);
   }
 
   emitBackpacksChanged(): void {
-    this.send('host:event:backpacks-changed', this.listBackpacks());
+    this.broadcast('host:event:backpacks-changed', this.listBackpacks());
   }
   emitProgramStatus(status: ProgramStatus): void {
-    this.send('host:event:program-status', status);
+    this.sendToRuntimeOwner('host:event:program-status', status);
   }
   emitShelfChanged(items: ShelfContribution[]): void {
-    this.send('host:event:shelf-changed', items);
+    this.sendToRuntimeOwner('host:event:shelf-changed', items);
   }
   emitSaveStatus(status: SaveStatus, detail?: string): void {
-    this.send('host:event:save-status', { status, detail: detail ?? null });
+    // Program state save (programIpc), not the Backpack document path.
+    this.sendToRuntimeOwner('host:event:save-status', { status, detail: detail ?? null });
   }
   emitRunsChanged(snapshot: AgentRunSnapshot): void {
-    this.send('host:event:runs-changed', snapshot);
+    this.broadcast('host:event:runs-changed', snapshot);
   }
   emitHermesHealth(): void {
-    this.send('host:event:hermes-health', this.deps.adapter.health);
+    this.broadcast('host:event:hermes-health', this.deps.adapter.health);
   }
 
+  /** Every registered host renderer is legitimate. There is no primary host:
+   * a second window's renderer must pass this guard exactly as the first
+   * window's does. */
   isHostSender(sender: WebContents): boolean {
-    const contents = this.deps.hostContents();
-    return contents !== null && sender.id === contents.id;
+    return this.deps.hostWindowForSender(sender.id) !== null;
   }
 
   isBackpackProjectSender(sender: WebContents): boolean {
@@ -550,7 +585,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   prompt(prompt: PendingPermissionPrompt): Promise<PermissionDecision> {
     return new Promise<PermissionDecision>((resolve) => {
       this.pendingPermissionPrompts.set(prompt.promptId, resolve);
-      this.send('host:event:permission-prompt', prompt);
+      this.sendToRuntimeOwner('host:event:permission-prompt', prompt);
       // Deny automatically if the creator does not respond within 5 minutes.
       setTimeout(() => {
         const pending = this.pendingPermissionPrompts.get(prompt.promptId);
@@ -573,7 +608,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   confirmInvocation(preview: InvocationPreview): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       this.pendingInvocationPreviews.set(preview.previewId, resolve);
-      this.send('host:event:invocation-preview', preview);
+      this.sendToRuntimeOwner('host:event:invocation-preview', preview);
       setTimeout(() => {
         const pending = this.pendingInvocationPreviews.get(preview.previewId);
         if (pending) {
