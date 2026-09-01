@@ -11,6 +11,7 @@ import {
   activateWorkspaceSurface,
   closeWorkspaceSurface,
   createWorkspaceTopology,
+  moveWorkspaceSurface,
   openWorkspaceSurface,
   splitWorkspaceGroup,
 } from '@shared/workspaceTopology';
@@ -59,7 +60,7 @@ export function App(): React.JSX.Element {
   const [entered, setEntered] = useState<string | null>(null);
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
   const [openProjects, setOpenProjects] = useState<OpenWorkspaceProject[]>([]);
-  const [, setWorkspaceTopology] = useState(createWorkspaceTopology);
+  const [workspaceTopology, setWorkspaceTopology] = useState(createWorkspaceTopology);
   /**
    * The logical surface this window is showing.
    *
@@ -342,6 +343,10 @@ export function App(): React.JSX.Element {
     });
   }, []);
 
+  const moveWorkspaceProject = useCallback((movedSurfaceId: string, targetGroupId: string, targetIndex: number): void => {
+    setWorkspaceTopology((topology) => moveWorkspaceSurface(topology, movedSurfaceId, targetGroupId, targetIndex));
+  }, []);
+
   const openBasicOrReturnToBackpacks = (): void => {
     if (entered !== null) {
       setView('backpacks');
@@ -453,10 +458,12 @@ export function App(): React.JSX.Element {
       {openProjects.length > 0 && entered !== null && (
         <WorkspaceDock
           projects={openProjects}
+          topology={workspaceTopology}
           activeSurfaceId={surfaceId}
           onActivate={activateWorkspaceProject}
           onClose={closeWorkspaceProject}
           onSplit={splitWorkspaceProject}
+          onMove={moveWorkspaceProject}
         />
       )}
 

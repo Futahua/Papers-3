@@ -9,6 +9,7 @@ import {
 import 'dockview-react/dist/styles/dockview.css';
 
 import { BackpackProjectFrame } from './BackpackProjectFrame';
+import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 export interface OpenWorkspaceProject {
   surfaceId: string;
@@ -44,22 +45,40 @@ function WorkspacePanel(props: IDockviewPanelProps<WorkspacePanelParams>): React
 
 export function WorkspaceDock(props: {
   projects: OpenWorkspaceProject[];
+  topology: WorkspaceTopologyV1;
   activeSurfaceId: string | null;
   onActivate: (surfaceId: string) => void;
   onClose: (surfaceId: string) => void;
   onSplit: (surfaceId: string, direction: 'right' | 'down') => void;
+  onMove: (surfaceId: string, targetGroupId: string, targetIndex: number) => void;
 }): React.JSX.Element {
-  const { projects, activeSurfaceId, onActivate, onClose, onSplit } = props;
+  const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove } = props;
   const apiRef = useRef<DockviewApi | null>(null);
   const projectsRef = useRef(projects);
+  const topologyRef = useRef(topology);
   const synchronizingRemovals = useRef(new Set<string>());
   const disposing = useRef(false);
+  const groupIds = useRef(new Map<string, string>());
+  const apiSubscriptions = useRef<Array<{ dispose(): void }>>([]);
   const [nativeSuspended, setNativeSuspended] = useState(false);
   projectsRef.current = projects;
+  topologyRef.current = topology;
 
   useEffect(() => {
     disposing.current = false;
-    return () => { disposing.current = true; };
+    return () => {
+      disposing.current = true;
+      apiSubscriptions.current.splice(0).forEach((subscription) => subscription.dispose());
+    };
+  }, []);
+
+  const refreshGroupIds = useCallback((api: DockviewApi): void => {
+    for (const group of topologyRef.current.groups) {
+      const matchingPanel = group.surfaceIds
+        .map((id) => api.getPanel(id))
+        .find((panel) => panel !== undefined);
+      if (matchingPanel) groupIds.current.set(matchingPanel.group.id, group.groupId);
+    }
   }, []);
 
   useEffect(() => {
@@ -92,19 +111,29 @@ export function WorkspaceDock(props: {
   const onReady = useCallback((event: DockviewReadyEvent): void => {
     apiRef.current = event.api;
     addMissingPanels(event.api);
-    event.api.onDidActivePanelChange(({ panel }) => {
+    refreshGroupIds(event.api);
+    apiSubscriptions.current.push(event.api.onDidActivePanelChange(({ panel }) => {
       if (panel) onActivate(panel.id);
-    });
-    event.api.onDidRemovePanel((panel) => {
+    }));
+    apiSubscriptions.current.push(event.api.onDidRemovePanel((panel) => {
       if (disposing.current) return;
       if (synchronizingRemovals.current.delete(panel.id)) return;
       onClose(panel.id);
-    });
-    event.api.onWillShowOverlay(() => {
+    }));
+    apiSubscriptions.current.push(event.api.onDidMovePanel(({ panel, to }) => {
+      const targetGroupId = groupIds.current.get(to.id);
+      if (!targetGroupId) return;
+      const targetIndex = to.panels.findIndex((candidate) => candidate.id === panel.id);
+      if (targetIndex >= 0) onMove(panel.id, targetGroupId, targetIndex);
+    }));
+    apiSubscriptions.current.push(event.api.onWillShowOverlay(() => {
       flushSync(() => setNativeSuspended(true));
-    });
-    event.api.onDidDrop(() => setNativeSuspended(false));
-  }, [addMissingPanels, onActivate, onClose]);
+    }));
+    apiSubscriptions.current.push(event.api.onDidDrop(() => {
+      refreshGroupIds(event.api);
+      setNativeSuspended(false);
+    }));
+  }, [addMissingPanels, onActivate, onClose, onMove, refreshGroupIds]);
 
   useEffect(() => {
     const api = apiRef.current;
@@ -118,7 +147,8 @@ export function WorkspaceDock(props: {
     }
     const active = activeSurfaceId ? api.getPanel(activeSurfaceId) : undefined;
     if (active && api.activePanel?.id !== active.id) active.api.setActive();
-  }, [activeSurfaceId, addMissingPanels, projects]);
+    refreshGroupIds(api);
+  }, [activeSurfaceId, addMissingPanels, projects, refreshGroupIds]);
 
   const splitActive = useCallback((direction: 'right' | 'down'): void => {
     const panel = apiRef.current?.activePanel;
@@ -128,6 +158,7 @@ export function WorkspaceDock(props: {
       position: direction === 'right' ? 'right' : 'bottom',
     });
     onSplit(panel.id, direction);
+    groupIds.current.set(panel.group.id, `group-${panel.id}`);
   }, [onSplit]);
 
   return (

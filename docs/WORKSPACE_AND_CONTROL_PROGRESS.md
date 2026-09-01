@@ -384,6 +384,23 @@ A1.1 lifecycle hardening after reviewer feedback:
 Validation after A1.1: typecheck passed, full Vitest 649 passed / 4 skipped,
 production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
 Electron E2E 1/1 passed, and diff check passed.
+
+A1.2 canonical-topology work in progress:
+
+- [x] Retain the schema-v1 topology value in `App` and pass it into the layout
+  renderer instead of discarding the value and keeping only its setter.
+- [x] Translate Dockview's committed panel-move event into the Papers-owned
+  `moveWorkspaceSurface` transition for known same-window groups.
+- [x] Collapse the source group/tree node when its final surface moves away,
+  matching semantic close behavior and preventing empty product groups.
+- [ ] Prove real tab reorder and same-window group DnD update Papers topology.
+- [ ] Reconcile Dockview from external Papers topology mutations.
+- [ ] Persist only validated/atomic schema-v1 Papers topology; do not persist
+  Dockview JSON, sender ids, WebContents ids or native window ids.
+- [ ] Expose semantic topology inspection/control through the developer control
+  plane rather than requiring DOM inspection.
+- [ ] Decide restart identity mapping separately before consuming persisted
+  surface ids during automatic restoration.
 - [ ] Keyboard tab selection and accessibility acceptance.
 - [ ] Automatic restore of last tab/split workspace.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.

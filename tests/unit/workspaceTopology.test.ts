@@ -93,4 +93,21 @@ describe('workspace topology', () => {
     expect(topology.root).toEqual({ kind: 'group', groupId: 'group-main' });
     expect(topology.surfaces.map((surface) => surface.surfaceId)).toEqual(['sf-a', 'sf-b']);
   });
+
+  it('collapses a source group when its final surface moves away', () => {
+    let topology = createWorkspaceTopology();
+    topology = openWorkspaceSurface(topology, { surfaceId: 'sf-a', projectId: 'bp-a', title: 'A' });
+    topology = openWorkspaceSurface(topology, { surfaceId: 'sf-b', projectId: 'bp-b', title: 'B' });
+    topology = splitWorkspaceGroup(topology, {
+      groupId: 'group-main', newGroupId: 'group-right', surfaceId: 'sf-b',
+      orientation: 'horizontal', position: 'after',
+    });
+
+    topology = moveWorkspaceSurface(topology, 'sf-b', 'group-main', 1);
+
+    expect(topology.groups).toEqual([{
+      groupId: 'group-main', surfaceIds: ['sf-a', 'sf-b'], activeSurfaceId: 'sf-b',
+    }]);
+    expect(topology.root).toEqual({ kind: 'group', groupId: 'group-main' });
+  });
 });

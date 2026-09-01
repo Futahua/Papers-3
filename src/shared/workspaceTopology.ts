@@ -159,9 +159,12 @@ export function moveWorkspaceSurface(
   const without = target.surfaceIds.filter((candidate) => candidate !== surfaceId);
   const index = Math.max(0, Math.min(Math.trunc(targetIndex), without.length));
   without.splice(index, 0, surfaceId);
-  const next: WorkspaceTopologyV1 = {
-    ...topology,
-    groups: topology.groups.map((group) => {
+  const removeEmptySource = source.groupId !== targetGroupId
+    && source.surfaceIds.length === 1
+    && topology.groups.length > 1;
+  const groups = topology.groups
+    .filter((group) => !removeEmptySource || group.groupId !== source.groupId)
+    .map((group) => {
       if (group.groupId === targetGroupId) return { ...group, surfaceIds: without, activeSurfaceId: surfaceId };
       if (group.groupId !== source.groupId) return { ...group, surfaceIds: [...group.surfaceIds] };
       const surfaceIds = group.surfaceIds.filter((candidate) => candidate !== surfaceId);
@@ -170,7 +173,13 @@ export function moveWorkspaceSurface(
         surfaceIds,
         activeSurfaceId: group.activeSurfaceId === surfaceId ? surfaceIds[0] ?? null : group.activeSurfaceId,
       };
-    }),
+    });
+  const root = removeEmptySource ? removeGroupNode(topology.root, source.groupId) : topology.root;
+  if (!root) throw new Error('workspace must retain one group');
+  const next: WorkspaceTopologyV1 = {
+    ...topology,
+    groups,
+    root,
     focusedGroupId: targetGroupId,
   };
   assertValidWorkspaceTopology(next);
