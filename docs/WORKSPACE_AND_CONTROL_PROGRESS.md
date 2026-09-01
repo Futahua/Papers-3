@@ -174,8 +174,10 @@ fixture/restart failures were previously observed and remain separately scoped.
 
 ## Current reviewer status
 
-The browser reviewer completed its review of exact `af4e26c`; the next review is
-pending for `a03ff39`.
+The browser reviewer completed the A3.4 review; the B2.1 review is pending for
+the pushed implementation head `d2c728c`.
+
+The prior A3 review history is retained below.
 
 Prior verdict on `e053c95`:
 
@@ -1035,18 +1037,18 @@ be defined and reviewed separately.
 The reviewer’s next-milestone recommendation after A3.4 is this narrow
 programmatic-control slice:
 
-- [ ] Keep `papersctl` and the shared `papersControlClient` at parity with all
+- [x] Keep `papersctl` and the shared `papersControlClient` at parity with all
   already-authorized semantic commands, including explicit cross-window move
   identities.
-- [ ] Add authenticated connection-local subscriptions with explicit,
+- [x] Add authenticated connection-local subscriptions with explicit,
   schema-validated event frames and response/event demultiplexing while a
   request is outstanding.
-- [ ] Permit only redacted semantic events; never emit URLs, filesystem roots,
+- [x] Permit only redacted semantic events; never emit URLs, filesystem roots,
   sender/WebContents IDs, native handles, Dockview internals, or renderer/native
   identity.
-- [ ] Prove subscription isolation, malformed frame/refusal behavior, and
+- [x] Prove subscription isolation, malformed frame/refusal behavior, and
   stable machine-readable `papersctl` event output in unit coverage.
-- [ ] Add one live Electron acceptance where a subscribed client observes a
+- [x] Add one live Electron acceptance where a subscribed client observes a
   real semantic change while ordinary requests remain correct.
 
 The initial implementation uses `window.created` and `workspace.changed` as
@@ -1054,6 +1056,13 @@ the deliberately small event vocabulary. Subscription is connection-local and
 the server validates every complete frame before fan-out. Destructive
 confirmation, MCP/stdio transport, optional Electron compatibility, release,
 installation and packaging remain out of scope.
+
+Implementation candidate `d2c728c` is pushed for review. Validation at this
+candidate: `npm run typecheck` passed; full Vitest passed 726/730 (4 skipped);
+production build passed; live developer-control Electron E2E passed 3/3; and
+`git diff --check` passed. The pre-existing user-owned modification to
+`docs/evidence/worker-comparison.json` was not staged or changed by this gate.
+The B2.1 milestone remains open until the reviewer signs off the exact head.
 
 ## Persistent pickup checklist for every new session
 
