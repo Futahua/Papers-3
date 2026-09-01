@@ -488,7 +488,7 @@ production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
 Electron E2E 1/1 passed, and diff check passed.
 - [ ] Keyboard tab selection and accessibility acceptance.
 - [x] Automatic restore of last tab/split workspace.
-- [ ] Archive/remove and crash/reload behavior across multiple live surfaces.
+- [x] Archive/remove and crash/reload behavior across multiple live surfaces.
 - [ ] Add control commands such as `workspace.open`, `workspace.activate`,
   `workspace.close`, `layout.split`, `layout.moveSurface`, `layout.restore`.
   Implemented and live-validated: `workspace.open`, `workspace.activate`,
@@ -634,6 +634,25 @@ identity-mapping, renderer-convergence, persistence, or acceptance blocker.
 The next narrow slice is A1.2j: archive/remove plus crash/reload durability
 across a multi-surface workspace. Keep additional windows fresh and preserve
 the persistence-redaction assertions.
+
+A1.2j archive/remove and crash/reload durability:
+
+- [x] Archive a project through the real Backpack IPC path and retire only its
+  live logical/native surfaces across the workspace.
+- [x] Persist the canonical survivor topology under the same durable
+  `workspaceId`, with no archived project remaining in the snapshot.
+- [x] Relaunch from the same user-data state and automatically hydrate only
+  surviving projects with fresh runtime surface ids.
+- [x] Remove an already archived project and prove it is not resurrected.
+- [x] Abruptly terminate and relaunch the app after the removal commit; prove
+  atomic persistence restores only the surviving projects.
+- [x] Keep later windows fresh and retain persistence redaction assertions.
+- [ ] Reviewer sign-off.
+
+A1.2j validation: dedicated archive/reload Electron E2E passed 1/1;
+typecheck passed; full Vitest passed with 677 tests and 4 skipped; and the
+dedicated startup-hydration E2E remains 1/1. The broader legacy Electron suite
+still has the previously documented unrelated fixture/restart failures.
 
 A1.2i validation: the dedicated seeded-v2 startup Electron E2E passed 1/1;
 typecheck passed; full Vitest passed with 677 tests and 4 skipped; production
