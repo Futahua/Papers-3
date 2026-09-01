@@ -122,9 +122,11 @@ export interface WindowDetachSession {
     { ok: true } | { ok: false; error: string }
   >;
   focus(projectId: string, transferId?: string): boolean;
+  focusProjectForOwner(projectId: string, owningWindowId: number): boolean;
   reattach(projectId: string): Promise<void>;
+  reattachProjectForOwner(projectId: string, owningWindowId: number): Promise<boolean>;
   closeProject(projectId: string): Promise<void>;
-  closeProjectForOwner(projectId: string, owningWindowId: number): Promise<void>;
+  closeProjectForOwner(projectId: string, owningWindowId: number): Promise<boolean>;
   closeAll(): Promise<void>;
   isOpen(projectId: string): boolean;
   registerDetachIpc(): void;
@@ -470,18 +472,33 @@ export function createWindowDetachSession(deps: WindowDetachSessionDependencies)
       return true;
     },
 
+    focusProjectForOwner(projectId, owningWindowId) {
+      const entry = entries.get(projectId);
+      if (!entry || entry.owningWindowId !== owningWindowId || entry.closing || entry.window.isDestroyed()) return false;
+      entry.window.focus();
+      return true;
+    },
+
     reattach(projectId) {
       return stop(projectId);
+    },
+
+    async reattachProjectForOwner(projectId, owningWindowId) {
+      const entry = entries.get(projectId);
+      if (!entry || entry.owningWindowId !== owningWindowId) return false;
+      await stop(projectId);
+      return true;
     },
 
     closeProject(projectId) {
       return stop(projectId);
     },
 
-    closeProjectForOwner(projectId, owningWindowId) {
+    async closeProjectForOwner(projectId, owningWindowId) {
       const entry = entries.get(projectId);
-      if (!entry || entry.owningWindowId !== owningWindowId) return Promise.resolve();
-      return stop(projectId);
+      if (!entry || entry.owningWindowId !== owningWindowId) return false;
+      await stop(projectId);
+      return true;
     },
 
     async closeAll() {

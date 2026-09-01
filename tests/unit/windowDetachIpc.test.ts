@@ -26,8 +26,11 @@ function fakeSession(): WindowDetachSession {
   return {
     open: vi.fn(async () => ({ ok: true })),
     focus: vi.fn(() => true),
+    focusProjectForOwner: vi.fn(() => true),
     reattach: vi.fn(async () => undefined),
+    reattachProjectForOwner: vi.fn(async () => true),
     closeProject: vi.fn(async () => undefined),
+    closeProjectForOwner: vi.fn(async () => true),
     closeAll: vi.fn(async () => undefined),
     isOpen: vi.fn(() => false),
     registerDetachIpc: vi.fn(),
@@ -186,17 +189,47 @@ describe('window detach IPC', () => {
 
   it('detach-open surfaces the session failure as an error', async () => {
     const { ipcMain, invoke } = fakeIpcMain();
+    const registry = new BackpackSurfaceRegistry();
     const session = fakeSession();
     (session.open as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, error: 'already open' });
     registerWindowDetachIpc({
       ipcMain,
-      registry: new BackpackSurfaceRegistry(),
+      registry,
       session,
       windowIdForWorkspaceSender: () => 1,
       isWorkspaceSender: () => true,
        resolveEntryUrl: vi.fn(() => ENTRY),
     });
     await expect((await invoke('papers:backpack:detach-open', 7, { projectId: 'bp-a' })).result).rejects.toThrow(/already open/);
+    expect(registry.surface(7)).toBeNull();
+  });
+
+  it('same-project workspace commands cannot control another window owner', async () => {
+    const { ipcMain, invoke } = fakeIpcMain();
+    const registry = new BackpackSurfaceRegistry();
+    registry.register(7, 'bp-a', WORKSPACE_SURFACE_KIND);
+    const session = fakeSession();
+    (session.focusProjectForOwner as unknown as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (session.reattachProjectForOwner as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    (session.closeProjectForOwner as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    registerWindowDetachIpc({
+      ipcMain,
+      registry,
+      session,
+      windowIdForWorkspaceSender: () => 1,
+      isWorkspaceSender: (sender, projectId) => sender.id === 7 && projectId === 'bp-a',
+      resolveEntryUrl: vi.fn(() => ENTRY),
+    });
+
+    await expect((await invoke('papers:backpack:detach-focus', 7, { projectId: 'bp-a' })).result)
+      .resolves.toEqual({ ok: false });
+    await expect((await invoke('papers:backpack:detach-reattach', 7, { projectId: 'bp-a' })).result)
+      .rejects.toThrow(/another Papers window/);
+    await expect((await invoke('papers:backpack:detach-close', 7, { projectId: 'bp-a' })).result)
+      .rejects.toThrow(/another Papers window/);
+    expect(session.focus).not.toHaveBeenCalled();
+    expect(session.reattach).not.toHaveBeenCalled();
+    expect(session.closeProject).not.toHaveBeenCalled();
   });
 
   it('detach-reattach delegates CLOSED production push to the session', async () => {
@@ -214,7 +247,7 @@ describe('window detach IPC', () => {
     });
     const { result, send } = await invoke('papers:backpack:detach-reattach', 7, { projectId: 'bp-a' });
     expect(await result).toEqual({ ok: true });
-    expect(session.reattach).toHaveBeenCalledWith('bp-a');
+    expect(session.reattachProjectForOwner).toHaveBeenCalledWith('bp-a', 1);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -239,8 +272,8 @@ describe('window detach IPC', () => {
     await expect((await invoke('papers:backpack:detach-close', 7, { projectId: 'bp-a', extra: 1 })).result).rejects.toThrow(/exactly/);
     // Unregistered sender for close.
     await expect((await invoke('papers:backpack:detach-close', 99, { projectId: 'bp-a' })).result).rejects.toThrow(/denied/);
-    expect(session.reattach).not.toHaveBeenCalled();
-    expect(session.closeProject).not.toHaveBeenCalled();
+    expect(session.reattachProjectForOwner).not.toHaveBeenCalled();
+    expect(session.closeProjectForOwner).not.toHaveBeenCalled();
   });
 
   it('detach-close delegates CLOSED production push to the session', async () => {
@@ -258,7 +291,7 @@ describe('window detach IPC', () => {
     });
     const { result, send } = await invoke('papers:backpack:detach-close', 7, { projectId: 'bp-a' });
     expect(await result).toEqual({ ok: true });
-    expect(session.closeProject).toHaveBeenCalledWith('bp-a');
+    expect(session.closeProjectForOwner).toHaveBeenCalledWith('bp-a', 1);
     expect(send).not.toHaveBeenCalled();
   });
 });

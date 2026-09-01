@@ -230,6 +230,24 @@ the same project has registrations from two windows. Current validation after
 this seam: typecheck passed, production build passed, and the full Vitest suite
 passed with 638 tests and 4 skipped.
 
+The completed review of `07359f0` found the corresponding explicit IPC seam:
+workspace-originated focus/reattach/close still used project-only session
+methods, and a failed duplicate detach-open retained the newly created
+workspace registration. The follow-up now:
+
+- resolves the authenticated workspace sender's native window for focus,
+  reattach and close;
+- invokes owner-exact session methods and refuses a different owner's detached
+  surface;
+- rolls back only a registration created by a failed detach-open attempt.
+
+Current validation: typecheck passed, production build passed, full Vitest
+passed with 639 tests and 4 skipped, and dev-control Electron E2E passed 2/2.
+The broader legacy Electron suite remains non-green in this environment across
+unrelated fixture workflows (permission/startup timeouts and a missing
+`crypto.randomUUID` in the worker fixture); no failure implicated these detach
+paths.
+
 Implementation submitted through `a03ff39`:
 
 - Native project presentations now live in a per-window collection keyed by
@@ -293,6 +311,8 @@ renderer tabs or splits.
   surfaces rather than legacy `enteredBackpackId`.
 - [x] Make detached workspace cleanup and lifecycle delivery resolve exact
   `{projectId, owningWindowId}` rather than the first project-wide match.
+- [x] Make workspace-originated detach focus/reattach/close owner-exact and
+  roll back registrations created by rejected duplicate opens.
 - [x] Prove collection-level A/B independence and exact close behavior in unit
   tests; live application proof remains pending until the host can create two
   surfaces through the user workflow/control plane.

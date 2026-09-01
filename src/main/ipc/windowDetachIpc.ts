@@ -79,18 +79,28 @@ function ensureWorkspaceSurface(
   registry: BackpackSurfaceRegistry,
   senderId: number,
   projectId: string,
-): void {
+): boolean {
   const existing = registry.surface(senderId);
   if (existing) {
     if (existing.projectId !== projectId || existing.kind !== WORKSPACE_SURFACE_KIND) {
       throw new Error('denied: sender is bound to another project surface');
     }
-    return;
+    return false;
   }
   if (registry.size >= MAX_REGISTERED_SURFACES) {
     throw new Error('denied: surface registry capacity reached');
   }
   registry.register(senderId, projectId, WORKSPACE_SURFACE_KIND);
+  return true;
+}
+
+function requireWorkspaceOwner(
+  sender: WebContents,
+  windowIdForWorkspaceSender: (sender: WebContents) => number | null,
+): number {
+  const windowId = windowIdForWorkspaceSender(sender);
+  if (windowId === null) throw new Error('denied: workspace has no Papers window');
+  return windowId;
 }
 
 export function registerWindowDetachIpc({
@@ -116,13 +126,15 @@ export function registerWindowDetachIpc({
     if (!isWorkspaceSender(event.sender, projectId)) {
       throw new Error('denied: not the bound project frame for this project');
     }
-    ensureWorkspaceSurface(registry, event.sender.id, projectId);
     const entryUrl = resolveEntryUrl(event.sender, projectId);
     if (!entryUrl) throw new Error('denied: no live workspace entry for this project');
-    const owningWindowId = windowIdForWorkspaceSender(event.sender);
-    if (owningWindowId === null) throw new Error('denied: workspace has no Papers window');
+    const owningWindowId = requireWorkspaceOwner(event.sender, windowIdForWorkspaceSender);
+    const registeredHere = ensureWorkspaceSurface(registry, event.sender.id, projectId);
     const opened = await session.open({ projectId, entryUrl, owningWindowId, bounds });
-    if (!opened.ok) throw new Error(opened.error);
+    if (!opened.ok) {
+      if (registeredHere) registry.unregister(event.sender.id);
+      throw new Error(opened.error);
+    }
     return { ok: true };
   });
 
@@ -132,7 +144,10 @@ export function registerWindowDetachIpc({
       if (!isWorkspaceSender(event.sender, projectId)) throw new Error('denied: not the bound project frame for this project');
       const surface = registry.surface(event.sender.id);
       if (!surface || surface.projectId !== projectId || surface.kind !== WORKSPACE_SURFACE_KIND) throw new Error('denied: sender is not a registered workspace surface for this project');
-      await session.reattach(projectId);
+      const owningWindowId = requireWorkspaceOwner(event.sender, windowIdForWorkspaceSender);
+      if (!await session.reattachProjectForOwner(projectId, owningWindowId)) {
+        throw new Error('denied: detached surface belongs to another Papers window');
+      }
       return { ok: true };
     }
     const transfer = parseTokenTransfer(raw);
@@ -152,7 +167,8 @@ export function registerWindowDetachIpc({
       if (!isWorkspaceSender(event.sender, projectId)) throw new Error('denied: not the bound project frame for this project');
       const surface = registry.surface(event.sender.id);
       if (!surface || surface.projectId !== projectId || surface.kind !== WORKSPACE_SURFACE_KIND) throw new Error('denied: sender is not a registered workspace surface for this project');
-      return { ok: session.focus(projectId) };
+      const owningWindowId = requireWorkspaceOwner(event.sender, windowIdForWorkspaceSender);
+      return { ok: session.focusProjectForOwner(projectId, owningWindowId) };
     }
     const transfer = parseTokenTransfer(raw);
     const surface = registry.surface(event.sender.id);
@@ -176,7 +192,10 @@ export function registerWindowDetachIpc({
     if (!surface || surface.projectId !== projectId || surface.kind !== WORKSPACE_SURFACE_KIND) {
       throw new Error('denied: sender is not a registered workspace surface for this project');
     }
-    await session.closeProject(projectId);
+    const owningWindowId = requireWorkspaceOwner(event.sender, windowIdForWorkspaceSender);
+    if (!await session.closeProjectForOwner(projectId, owningWindowId)) {
+      throw new Error('denied: detached surface belongs to another Papers window');
+    }
     return { ok: true };
   });
 }
