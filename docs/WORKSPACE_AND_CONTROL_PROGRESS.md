@@ -1057,8 +1057,9 @@ the server validates every complete frame before fan-out. Destructive
 confirmation, MCP/stdio transport, optional Electron compatibility, release,
 installation and packaging remain out of scope.
 
-Implementation candidate `d2c728c` is pushed for review. Validation at this
-candidate: `npm run typecheck` passed; full Vitest passed 726/730 (4 skipped);
+Implementation candidate `3bf0f6a` is pushed for review (event implementation
+base `d2c728c`). Validation at this candidate: `npm run typecheck` passed; full
+Vitest passed 727/731 (4 skipped);
 production build passed; live developer-control Electron E2E passed 3/3; and
 `git diff --check` passed. The pre-existing user-owned modification to
 `docs/evidence/worker-comparison.json` was not staged or changed by this gate.
