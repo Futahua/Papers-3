@@ -201,6 +201,53 @@ describe('WorkspaceTopologyStore', () => {
       .toEqual([{ surfaceId: 'sf-moved', projectId: 'bp-moved', title: 'Moved' }]);
   });
 
+  it('flush waits for queued mutations behind a held pair save', async () => {
+    const paths = papersPaths(directory);
+    const store = new WorkspaceTopologyStore(paths);
+    const sourceId = '99999999-9999-4999-8999-999999999999';
+    const targetId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const original = createWorkspaceTopology();
+    await store.commit(sourceId, original);
+    await store.commit(targetId, createWorkspaceTopology('target'));
+
+    const internal = store as unknown as { store: { save(value: unknown): Promise<void> } };
+    const save = internal.store.save.bind(internal.store);
+    let first = true;
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const enteredSave = new Promise<void>((resolve) => { entered = resolve; });
+    internal.store.save = async (value) => {
+      if (first) {
+        first = false;
+        entered();
+        await held;
+      }
+      return save(value);
+    };
+
+    const pair = store.commitPair({
+      source: { workspaceId: sourceId, topology: original },
+      target: { workspaceId: targetId, topology: createWorkspaceTopology('moved-target') },
+      lastWorkspaceId: sourceId,
+    });
+    await enteredSave;
+    const ordinary = store.commit(sourceId, openWorkspaceSurface(original, {
+      surfaceId: 'sf-after-flush', projectId: 'bp-after-flush', title: 'After flush',
+    }));
+    let flushed = false;
+    const flush = store.flush().then(() => { flushed = true; });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+    release();
+    await pair;
+    await ordinary;
+    await flush;
+    expect(flushed).toBe(true);
+    const selected = await store.selectedSnapshot();
+    expect(selected?.topology.surfaces[0]?.surfaceId).toBe('sf-after-flush');
+  });
+
   it('quarantines structurally invalid persisted topology instead of consuming it', async () => {
     const paths = papersPaths(directory);
     await fs.mkdir(path.dirname(paths.workspaceTopologiesFile), { recursive: true });

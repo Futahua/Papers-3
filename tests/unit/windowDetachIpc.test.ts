@@ -70,6 +70,25 @@ describe('window detach IPC', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it('waits for staged authority before detach-open can execute', async () => {
+    const { ipcMain, invoke } = fakeIpcMain();
+    const registry = new BackpackSurfaceRegistry();
+    const session = fakeSession();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    registerWindowDetachIpc({
+      ipcMain, registry, session, windowIdForWorkspaceSender: () => 1,
+      isWorkspaceSender: (sender, projectId) => sender.id === 7 && projectId === 'bp-a',
+      waitForAuthority: () => gate,
+      resolveEntryUrl: () => ENTRY,
+    });
+    const pending = invoke('papers:backpack:detach-open', 7, { projectId: 'bp-a' }).result;
+    await Promise.resolve();
+    expect(session.open).not.toHaveBeenCalled();
+    release();
+    await expect(pending).resolves.toEqual({ ok: true });
+  });
+
   it('018X1R rejects detached routes when the current sender origin is wrong', async () => {
     const { ipcMain, invoke } = fakeIpcMain();
     const registry = new BackpackSurfaceRegistry();

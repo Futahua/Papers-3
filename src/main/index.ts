@@ -927,6 +927,7 @@ async function bootstrap(): Promise<void> {
         return false;
       }
     },
+    waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     windowIdForWorkspaceSender: windowIdForProjectSender,
     isDetachedSender: (sender, projectId) => {
       const surface = detachRegistry.surface(sender.id);
@@ -1052,6 +1053,7 @@ async function bootstrap(): Promise<void> {
     ipcMain,
     registry: widgetRegistry,
     session: widgetSession,
+    waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     windowIdForWorkspaceSender: windowIdForProjectSender,
     hidePreview: hideWidgetPreview,
     dismissCandidatePicker: (sender) => {

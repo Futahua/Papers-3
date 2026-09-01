@@ -90,11 +90,21 @@ export class BackpackProjectSurfaceCollection {
           // it must not look like an ordinary user close to detach/widget
           // ownership observers.
           lifecycleActive = false;
-          runtime.hide();
           this.runtimes.delete(surfaceId);
+          try {
+            runtime.hide();
+          } catch (caught) {
+            // The canonical collection is already restored; a late Electron
+            // teardown error must not leave an orphan keyed by this surface.
+            console.error(`[workspace-move] staged native discard failed for ${surfaceId}:`, caught);
+          }
           return;
         }
-        runtime.hide();
+        try {
+          runtime.hide();
+        } catch (caught) {
+          console.error(`[workspace-move] staged native discard failed for ${surfaceId}:`, caught);
+        }
       },
     };
   }

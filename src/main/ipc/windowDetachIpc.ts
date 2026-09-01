@@ -27,6 +27,7 @@ export interface WindowDetachIpcDependencies {
   session: WindowDetachSession;
   /** True only for the genuine bound project frame of the given project. */
   isWorkspaceSender: (sender: WebContents, projectId: string) => boolean;
+  waitForAuthority?: (sender: WebContents) => Promise<void>;
   /** Ownership resolved once, at the authenticated boundary; null denies. */
   windowIdForWorkspaceSender: (sender: WebContents) => number | null;
   isDetachedSender?: (sender: WebContents, projectId: string) => boolean;
@@ -108,11 +109,13 @@ export function registerWindowDetachIpc({
   registry,
   session,
   isWorkspaceSender,
+  waitForAuthority,
   resolveEntryUrl,
   isDetachedSender = () => false,
   windowIdForWorkspaceSender,
 }: WindowDetachIpcDependencies): void {
   ipcMain.handle('papers:backpack:detach-open', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!isPlainObject(raw)) throw new Error('detach open payload must be an object');
     if (!exactKeys(raw, ['projectId']) && !exactKeys(raw, ['projectId', 'bounds'])) {
       throw new Error('detach open payload contains unknown fields');
@@ -139,6 +142,7 @@ export function registerWindowDetachIpc({
   });
 
   ipcMain.handle('papers:backpack:detach-reattach', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (isPlainObject(raw) && exactKeys(raw, ['projectId'])) {
       const projectId = parseProjectId(raw['projectId']);
       if (!isWorkspaceSender(event.sender, projectId)) throw new Error('denied: not the bound project frame for this project');
@@ -162,6 +166,7 @@ export function registerWindowDetachIpc({
   });
 
   ipcMain.handle('papers:backpack:detach-focus', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (isPlainObject(raw) && exactKeys(raw, ['projectId'])) {
       const projectId = parseProjectId(raw['projectId']);
       if (!isWorkspaceSender(event.sender, projectId)) throw new Error('denied: not the bound project frame for this project');
@@ -181,6 +186,7 @@ export function registerWindowDetachIpc({
   });
 
   ipcMain.handle('papers:backpack:detach-close', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!isPlainObject(raw) || !exactKeys(raw, ['projectId'])) {
       throw new Error('detach close payload must be exactly {projectId}');
     }

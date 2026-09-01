@@ -95,7 +95,7 @@ export class WorkspaceTopologyStore {
         }
         this.lastWorkspaceId = value.workspaces.length === 1 ? soleMigratedId : null;
         this.dirty = true;
-        await this.flush();
+        await this.flushDirty();
       });
     }
     return this.initialized;
@@ -225,6 +225,13 @@ export class WorkspaceTopologyStore {
   }
 
   async flush(): Promise<void> {
+    return this.enqueue(async () => { await this.initialize(); await this.flushDirty(); });
+  }
+
+  /** Unlocked flush used only by initialization while it is already inside
+   * the store's mutation queue. Public callers must use `flush()` so queued
+   * mutations are included before shutdown proceeds. */
+  private async flushDirty(): Promise<void> {
     if (this.writing) await this.writing;
     if (this.dirty) {
       this.writing = this.drain().finally(() => { this.writing = null; });

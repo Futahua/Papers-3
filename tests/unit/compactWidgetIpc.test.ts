@@ -4,7 +4,7 @@ import { BackpackSurfaceRegistry, COMPACT_WIDGET_SURFACE_KIND, WORKSPACE_SURFACE
 import { registerCompactWidgetIpc } from '../../src/main/ipc/compactWidgetIpc';
 import type { CompactWidgetSession } from '../../src/main/windows/compactWidgetSession';
 
-function harness() {
+function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>) {
   const handlers = new Map<string, (event: { sender: { id: number } }, raw: unknown) => Promise<unknown>>();
   const ipcMain = { handle: vi.fn((channel: string, handler: (event: { sender: { id: number } }, raw: unknown) => Promise<unknown>) => handlers.set(channel, handler)) };
   const registry = new BackpackSurfaceRegistry();
@@ -19,6 +19,7 @@ function harness() {
     ipcMain,
     registry,
     session,
+    waitForAuthority,
     windowIdForWorkspaceSender: () => 1,
     isWorkspaceSender: (sender, projectId) => sender.id === 1 && projectId === 'bp-a',
     isWidgetSender: (sender, projectId) => sender.id === 2 && projectId === 'bp-a',
@@ -32,6 +33,17 @@ function harness() {
 }
 
 describe('compact widget IPC', () => {
+  it('waits for staged authority before widget-open can execute', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const h = harness(() => gate);
+    const pending = h.invoke('papers:backpack:widget-open', 1, { projectId: 'bp-a', layoutKey: 'layout-a' });
+    await Promise.resolve();
+    expect(h.session.open).not.toHaveBeenCalled();
+    release();
+    await expect(pending).resolves.toEqual({ ok: true, reused: false });
+  });
+
   it('opens and focuses only from the registered workspace sender', async () => {
     const h = harness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);

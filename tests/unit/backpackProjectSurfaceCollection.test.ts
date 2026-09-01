@@ -137,7 +137,8 @@ describe('BackpackProjectSurfaceCollection', () => {
     stagedClose?.('project-x');
     expect(closed).toHaveBeenCalledWith('surface-p', 'project-x');
 
-    prepared.discard();
+    runtime.hide.mockImplementation(() => { throw new Error('destroyed'); });
+    expect(() => prepared.discard()).not.toThrow();
     expect(runtime.hide).toHaveBeenCalledTimes(1);
     stagedClose?.('project-x');
     expect(closed).toHaveBeenCalledTimes(1);

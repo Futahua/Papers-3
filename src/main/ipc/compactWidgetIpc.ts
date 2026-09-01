@@ -10,6 +10,7 @@ export interface CompactWidgetIpcDependencies {
   registry: BackpackSurfaceRegistry;
   session: CompactWidgetSession;
   isWorkspaceSender: (sender: WebContents, projectId: string) => boolean;
+  waitForAuthority?: (sender: WebContents) => Promise<void>;
   /**
    * The Papers window a genuine workspace sender belongs to; null denies.
    *
@@ -64,8 +65,9 @@ function ensureWorkspaceSurface(
   registry.register(senderId, projectId, WORKSPACE_SURFACE_KIND);
 }
 
-export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, windowIdForWorkspaceSender, isWidgetSender, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
+export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
   ipcMain.handle('papers:backpack:widget-open', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget open payload is malformed');
     const projectId = key(raw.projectId, 'projectId');
     const layoutKey = key(raw.layoutKey, 'layoutKey');
@@ -79,6 +81,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
   });
 
   ipcMain.handle('papers:backpack:widget-focus', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget focus payload is malformed');
     const projectId = key(raw.projectId, 'projectId');
     const layoutKey = key(raw.layoutKey, 'layoutKey');
@@ -95,6 +98,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
   });
 
   ipcMain.handle('papers:backpack:widget-close', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!object(raw)) throw new Error('widget close payload is malformed');
     if (exact(raw, ['projectId', 'layoutKey'])) {
       const projectId = key(raw.projectId, 'projectId');
@@ -123,6 +127,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
   // 024: the widget page reports its bounded card content size after each
   // render so the host refits the frameless window to the compact card.
   ipcMain.handle('papers:backpack:widget-report-size', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['token', 'width', 'height'])) throw new Error('widget size payload is malformed');
     const token = key(raw.token, 'token');
     const width = raw.width;
@@ -140,6 +145,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
   });
 
   ipcMain.handle('papers:backpack:widget-preview-show', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['token', 'imageUrl', 'title', 'width', 'height', 'anchor'])) throw new Error('widget preview payload is malformed');
     const token = key(raw.token, 'token');
     const surface = registry.surface(event.sender.id);
@@ -164,6 +170,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
   });
 
   ipcMain.handle('papers:backpack:widget-preview-hide', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['token'])) throw new Error('widget preview hide payload is malformed');
     const token = key(raw.token, 'token');
     const surface = registry.surface(event.sender.id);
@@ -175,6 +182,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
   });
 
   ipcMain.handle('papers:backpack:widget-context-menu', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['token'])) throw new Error('widget context menu payload is malformed');
     const token = key(raw.token, 'token');
     const surface = registry.surface(event.sender.id);
@@ -186,6 +194,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
   });
 
   ipcMain.handle('papers:backpack:window-candidate-picker', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!object(raw) || !Array.isArray(raw.candidates) || raw.candidates.length > 64) throw new Error('window candidate picker payload is malformed');
     let authorized = false;
     if (exact(raw, ['projectId', 'candidates'])) {
@@ -218,6 +227,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
   });
 
   ipcMain.handle('papers:backpack:window-candidate-picker-close', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!object(raw)) throw new Error('window candidate picker close payload is malformed');
     let authorized = false;
     if (exact(raw, ['projectId'])) {
