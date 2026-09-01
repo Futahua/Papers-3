@@ -48,6 +48,7 @@ import {
 } from './windows/compactWidgetSession';
 import { createPapersWindow } from './windows/papersWindowFactory';
 import { preparePapersWindow } from './windows/papersWindowLifecycle';
+import { createAdditionalPapersWindow as composeAdditionalPapersWindow } from './windows/additionalPapersWindow';
 import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
@@ -316,8 +317,12 @@ async function bootstrap(): Promise<void> {
     },
     () => facade.emitHermesSurface(),
   );
-  const windowInstance = createPapersWindow({
-    bounds: savedBounds ?? undefined,
+  const onProjectSurfaceClosed = (projectId: string): void => {
+    detachSession?.closeProject(projectId).catch(() => undefined);
+    detachRegistry.unregisterWorkspaceForProject(projectId);
+  };
+  const makePapersWindow = (bounds?: WindowBounds) => createPapersWindow({
+    bounds,
     appIcon,
     transparent: papersSettings.transparentWindow,
     currentTransparent: () => papersSettings.transparentWindow,
@@ -325,16 +330,9 @@ async function bootstrap(): Promise<void> {
     projectPreloadPath: path.join(preloadDir, 'backpackProject.cjs'),
     rendererUrl: process.env['ELECTRON_RENDERER_URL'],
     rendererFile: path.join(app.getAppPath(), 'out', 'renderer', 'index.html'),
-    onProjectSurfaceClosed: (projectId) => {
-      detachSession?.closeProject(projectId).catch(() => undefined);
-      detachRegistry.unregisterWorkspaceForProject(projectId);
-      // Compact widgets are independent pet windows, not child views of the
-      // entered Backpack. Returning to the Backpack list tears down only the
-      // workspace surface; the widget and its capability token stay live so
-      // it remains visible/usable and can reconnect when the project is
-      // entered again. App shutdown still owns closeAll().
-    },
+    onProjectSurfaceClosed,
   });
+  const windowInstance = makePapersWindow(savedBounds ?? undefined);
   const lifecycleDependencies = (restoreBackpackId: string | null) => ({
     register: (instance: Parameters<typeof preparePapersWindow>[0]) => {
       papersWindows.add(instance.window.id, {
@@ -363,6 +361,10 @@ async function bootstrap(): Promise<void> {
       surfaceContexts.unbindWindow(windowId);
       papersWindows.remove(windowId);
     },
+  });
+  const createAdditionalPapersWindow = () => composeAdditionalPapersWindow({
+    createWindow: () => makePapersWindow(undefined),
+    lifecycleDependencies,
   });
   const preparedWindow = preparePapersWindow(windowInstance, lifecycleDependencies(registry.lastActiveBackpackId));
   mainWindow = windowInstance.window;
