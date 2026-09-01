@@ -102,17 +102,41 @@ describe('A1.2k keyboard tab accessibility', () => {
     const byProject = new Map(surfaces.map((surface) => [surface.projectId, surface.surfaceId]));
     const hostPage = await launched.app.firstWindow();
 
-    for (const [projectId, title] of [[ALPHA, 'Alpha'], [BETA, 'Beta']] as const) {
+    const activeTab = async (): Promise<{ name: string; selected: string | null } | null> =>
+      hostPage.evaluate(() => {
+        const element = document.activeElement;
+        if (!element || element.getAttribute('role') !== 'tab') return null;
+        return {
+          name: element.getAttribute('aria-label') ?? element.textContent?.trim() ?? '',
+          selected: element.getAttribute('aria-selected'),
+        };
+      });
+    let focusedTab: { name: string; selected: string | null } | null = null;
+    for (let index = 0; index < 80 && !focusedTab; index += 1) {
+      await hostPage.keyboard.press('Tab');
+      focusedTab = await activeTab();
+    }
+    expect(focusedTab?.name).toContain('Beta');
+    expect(focusedTab?.selected).toBe('true');
+
+    for (const [projectId, title, direction] of [
+      [ALPHA, 'Alpha', 'ArrowLeft'],
+      [BETA, 'Beta', 'ArrowRight'],
+    ] as const) {
+      let reached = await activeTab();
+      for (let index = 0; index < 4 && !reached?.name.includes(title); index += 1) {
+        await hostPage.keyboard.press(direction);
+        reached = await activeTab();
+      }
+      expect(reached?.name).toContain(title);
+      expect(reached?.selected).toBe('false');
+      await hostPage.keyboard.press('Enter');
       const tab = hostPage.getByRole('tab', { name: title });
-      expect(await tab.count()).toBe(1);
-      expect(await tab.getAttribute('aria-label')).toBeTruthy();
-      await tab.focus();
-      expect(await tab.evaluate((element) => document.activeElement === element)).toBe(true);
-      await tab.press('Enter');
       await waitFor(async () => (await tab.getAttribute('aria-selected')) === 'true', 10_000, `${title} selected by keyboard`);
       await waitFor(async () => {
         const current = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
-        return current.some((surface) => surface.projectId === projectId && surface.presentation === 'visible');
+        return current.some((surface) => surface.projectId === projectId && surface.presentation === 'visible')
+          && current.some((surface) => surface.projectId !== projectId && surface.presentation === 'hidden');
       }, 10_000, `${title} native presentation selected by keyboard`);
       const workspace = await call('inspect.workspace', { windowId }) as {
         topology: { groups: Array<{ activeSurfaceId: string | null }>; focusedGroupId: string };

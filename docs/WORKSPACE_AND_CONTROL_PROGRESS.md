@@ -667,9 +667,11 @@ previously documented unrelated fixture/restart failures.
 - [ ] Reviewer sign-off.
 
 A1.2k validation: dedicated keyboard-accessibility Electron E2E passed 1/1;
-it focuses and activates Alpha and Beta with Enter, verifies accessible names
-and selected state, and checks canonical active-surface plus native presentation
-convergence. Reviewer sign-off is pending.
+it reaches the active tab through real Tab navigation, moves across the tab
+strip with ArrowLeft/ArrowRight, activates Alpha and Beta with Enter, verifies
+accessible names and selected state, and checks canonical active-surface plus
+native presentation convergence including the inactive tab becoming hidden.
+Reviewer sign-off is pending.
 
 A1.2i validation: the dedicated seeded-v2 startup Electron E2E passed 1/1;
 typecheck passed; full Vitest passed with 677 tests and 4 skipped; production
