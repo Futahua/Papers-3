@@ -24,6 +24,7 @@ function createFacade() {
   const closeBackpackProjectSurface = vi.fn();
   const openProject = vi.fn(async (id: string) => id === PROJECT || id === OTHER ? { url: `papers-backpack://${id}/open` } : null);
   const archivedProjects = new Set<string>();
+  const removedProjects = new Set<string>();
   const sendToWindow = vi.fn();
   const focusedSurfaces = new Map<number, string | null>();
   const enteredBackpacks = new Map<number, string | null>();
@@ -63,6 +64,10 @@ function createFacade() {
       createdAt: '2026-09-01T00:00:00.000Z', updatedAt: '2026-09-01T00:00:00.000Z',
     })),
   };
+  const setArchived = vi.fn(async (id: string, archived: boolean) => {
+    if (archived) archivedProjects.add(id); else archivedProjects.delete(id);
+  });
+  const remove = vi.fn(async (id: string) => { removedProjects.add(id); });
   const facade = new PapersHostFacade({
     surfaces,
     logicalSurfaces,
@@ -119,14 +124,12 @@ function createFacade() {
     closeAttachedProjectSurface,
     closeBackpackProjectSurface,
     registry: {
-      find: (id: string) => (id === PROJECT || id === OTHER ? {
+      find: (id: string) => (id === PROJECT || id === OTHER) && !removedProjects.has(id) ? {
         id, name: id === PROJECT ? 'Alpha' : 'Beta', archived: archivedProjects.has(id),
-      } : null),
+      } : null,
       list: () => [],
-      setArchived: vi.fn(async (id: string, archived: boolean) => {
-        if (archived) archivedProjects.add(id); else archivedProjects.delete(id);
-      }),
-      remove: vi.fn(async () => {}),
+      setArchived,
+      remove,
       markLeft,
     },
     runtime: { stopActive: vi.fn(async () => {}) },
@@ -140,7 +143,7 @@ function createFacade() {
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
     setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, archivedProjects, markLeft,
-    workspaceLayouts, workspaceIds, workspaceRevisions, closingWindows,
+    removedProjects, setArchived, remove, workspaceLayouts, workspaceIds, workspaceRevisions, closingWindows,
     commitPair, restorePair, prepareProjectSurface,
   };
 }
@@ -447,6 +450,45 @@ describe('surface routing in the host facade', () => {
     await moving;
     await finalization;
     expect(finalized).toBe(true);
+  });
+
+  it.each([
+    ['archive', 'setArchived'],
+    ['remove', 'remove'],
+  ] as const)('gates new project ownership while %s persistence is in flight', async (operation, persistence) => {
+    const { facade, logicalSurfaces, workspaceTopologies, setArchived, remove, archivedProjects, removedProjects, openProject } = createFacade();
+    workspaceTopologies.set(2, createWorkspaceTopology());
+    let releaseRegistrySave!: () => void;
+    const registrySave = new Promise<void>((resolve) => { releaseRegistrySave = resolve; });
+    if (persistence === 'setArchived') {
+      setArchived.mockImplementationOnce(async (id: string, archived: boolean) => {
+        await registrySave;
+        if (archived) archivedProjects.add(id); else archivedProjects.delete(id);
+      });
+    } else {
+      remove.mockImplementationOnce(async (id: string) => {
+        await registrySave;
+        removedProjects.add(id);
+      });
+    }
+
+    const changingAvailability = operation === 'archive'
+      ? facade.setBackpackArchived(PROJECT, true)
+      : facade.removeBackpack(PROJECT);
+    for (let attempt = 0; attempt < 20 && (persistence === 'setArchived' ? setArchived : remove).mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect((persistence === 'setArchived' ? setArchived : remove)).toHaveBeenCalledTimes(1);
+
+    const opening = facade.openWorkspaceSurfaceFromControl(2, PROJECT);
+    await Promise.resolve();
+    expect(openProject).not.toHaveBeenCalled();
+    expect(logicalSurfaces.project()).toEqual([]);
+
+    releaseRegistrySave();
+    await changingAvailability;
+    await expect(opening).rejects.toThrow(/not available/);
+    expect(logicalSurfaces.project()).toEqual([]);
   });
 
   it('aborts a pair when either window starts finalization before handoff', async () => {

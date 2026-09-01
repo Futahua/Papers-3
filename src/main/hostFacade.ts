@@ -215,6 +215,13 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private workspaceMoveTail: Promise<void> = Promise.resolve();
   private readonly workspaceMutationLocks = new Set<number>();
   private readonly workspaceMutationWaiters = new Map<number, Set<() => void>>();
+  /**
+   * Archive/remove changes project availability globally. Serialize those
+   * changes with every operation that can create a new logical surface for
+   * the same project, so an owner snapshot cannot become stale across an
+   * awaited registry write.
+   */
+  private readonly projectOwnershipTails = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: FacadeDeps) {}
 
@@ -237,6 +244,31 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const result = this.workspaceMoveTail.then(operation, operation);
     this.workspaceMoveTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  private runProjectOwnership<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.projectOwnershipTails.get(projectId) ?? Promise.resolve();
+    let release!: () => void;
+    const turn = new Promise<void>((resolve) => { release = resolve; });
+    // Keep the resolved tail in the map. Removing it at release would let a
+    // third caller bypass a second caller that was already queued behind us.
+    this.projectOwnershipTails.set(projectId, previous.then(() => turn));
+    return previous.then(async () => {
+      try {
+        return await operation();
+      } finally {
+        release();
+      }
+    });
+  }
+
+  private runProjectOwnershipGates<T>(projectIds: readonly string[], operation: () => Promise<T>): Promise<T> {
+    const uniqueProjectIds = [...new Set(projectIds)].sort();
+    const runAt = (index: number): Promise<T> => {
+      if (index >= uniqueProjectIds.length) return operation();
+      return this.runProjectOwnership(uniqueProjectIds[index]!, () => runAt(index + 1));
+    };
+    return runAt(0);
   }
 
   private acquireWorkspaceMutation(windowIds: readonly number[]): () => void {
@@ -387,21 +419,23 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async setBackpackArchived(id: string, archived: boolean): Promise<void> {
     if (archived) {
-      const releaseMutation = this.acquireWorkspaceMutationForProject(id);
-      try {
-        // Persist first. If persistence fails, live windows must keep their
-        // current project and identity because the Backpack is still available.
-        await this.deps.registry.setArchived(id, archived);
-        // The Backpack itself became unavailable, so EVERY window that entered
-        // it must leave. This is one of the few operations that legitimately
-        // reaches across windows; an ordinary leave touches only its own.
-        this.closeAndRetireLogicalProjectSurfaces(id, true);
-        await this.deps.retireBackpackProjectSurfaces(id);
-        this.deps.clearEnteredBackpackEverywhere(id);
-        this.deps.surfaces.unbindProject(id);
-      } finally {
-        releaseMutation();
-      }
+      await this.runProjectOwnership(id, async () => {
+        const releaseMutation = this.acquireWorkspaceMutationForProject(id);
+        try {
+          // Persist first. If persistence fails, live windows must keep their
+          // current project and identity because the Backpack is still available.
+          await this.deps.registry.setArchived(id, archived);
+          // The Backpack itself became unavailable, so EVERY window that entered
+          // it must leave. This is one of the few operations that legitimately
+          // reaches across windows; an ordinary leave touches only its own.
+          this.closeAndRetireLogicalProjectSurfaces(id, true);
+          await this.deps.retireBackpackProjectSurfaces(id);
+          this.deps.clearEnteredBackpackEverywhere(id);
+          this.deps.surfaces.unbindProject(id);
+        } finally {
+          releaseMutation();
+        }
+      });
     } else {
       await this.deps.registry.setArchived(id, archived);
     }
@@ -409,17 +443,19 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async removeBackpack(id: string): Promise<void> {
-    const releaseMutation = this.acquireWorkspaceMutationForProject(id);
-    try {
-      await this.deps.registry.remove(id);
-      this.closeAndRetireLogicalProjectSurfaces(id, true);
-      await this.deps.retireBackpackProjectSurfaces(id);
-      this.deps.clearEnteredBackpackEverywhere(id);
-      this.deps.surfaces.unbindProject(id);
-      this.emitBackpacksChanged();
-    } finally {
-      releaseMutation();
-    }
+    await this.runProjectOwnership(id, async () => {
+      const releaseMutation = this.acquireWorkspaceMutationForProject(id);
+      try {
+        await this.deps.registry.remove(id);
+        this.closeAndRetireLogicalProjectSurfaces(id, true);
+        await this.deps.retireBackpackProjectSurfaces(id);
+        this.deps.clearEnteredBackpackEverywhere(id);
+        this.deps.surfaces.unbindProject(id);
+        this.emitBackpacksChanged();
+      } finally {
+        releaseMutation();
+      }
+    });
   }
 
   private acquireWorkspaceMutationForProject(projectId: string): () => void {
@@ -584,6 +620,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * view must name.
    */
   async openBackpackProject(senderId: number, id: string): Promise<OpenBackpackProject | null> {
+    return this.runProjectOwnership(id, () => this.openBackpackProjectUngated(senderId, id));
+  }
+
+  private async openBackpackProjectUngated(senderId: number, id: string): Promise<OpenBackpackProject | null> {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may open a Backpack project.');
     const backpack = this.deps.registry.find(id);
@@ -969,6 +1009,19 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.requireLiveWorkspaceWindow(windowId);
     const layout = await this.deps.workspaceLayouts.get(layoutId);
     if (!layout) throw new Error('That named workspace layout does not exist.');
+
+    return this.runProjectOwnershipGates(
+      layout.topology.surfaces.map((surface) => surface.projectId),
+      () => this.loadWorkspaceLayoutFromControlLoaded(windowId, layout),
+    );
+  }
+
+  private async loadWorkspaceLayoutFromControlLoaded(windowId: number, layout: NamedWorkspaceLayout): Promise<{
+    windowId: number;
+    layoutId: string;
+    topology: WorkspaceTopologyV1;
+  }> {
+    this.requireLiveWorkspaceWindow(windowId);
 
     // Capture and validate the old canonical set before the first await. A
     // fresh target may not have committed an empty topology yet, but it still
@@ -1424,6 +1477,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async openWorkspaceSurfaceFromControl(windowId: number, projectId: string): Promise<{
+    windowId: number; surfaceId: string; projectId: string; topology: WorkspaceTopologyV1;
+  }> {
+    return this.runProjectOwnership(projectId, () => this.openWorkspaceSurfaceFromControlUngated(windowId, projectId));
+  }
+
+  private async openWorkspaceSurfaceFromControlUngated(windowId: number, projectId: string): Promise<{
     windowId: number; surfaceId: string; projectId: string; topology: WorkspaceTopologyV1;
   }> {
     const initialBackpack = this.deps.registry.find(projectId);

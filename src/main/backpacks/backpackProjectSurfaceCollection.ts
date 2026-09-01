@@ -77,11 +77,15 @@ export class BackpackProjectSurfaceCollection {
     return {
       runtime,
       adopt: () => {
-        if (adopted) return;
-        if (this.runtimes.has(surfaceId)) throw new Error('project surface was adopted twice');
-        adopted = true;
-        this.runtimes.set(surfaceId, runtime);
-        lifecycleActive = true;
+        if (!adopted) {
+          if (this.runtimes.has(surfaceId)) throw new Error('project surface was adopted twice');
+          adopted = true;
+          this.runtimes.set(surfaceId, runtime);
+          lifecycleActive = true;
+        }
+        // Keep collection insertion idempotent, but retry native presentation
+        // after a first addChildView/fit failure. The facade may need this
+        // during forward canonicalization after durable compensation fails.
         runtime.present();
       },
       discard: () => {

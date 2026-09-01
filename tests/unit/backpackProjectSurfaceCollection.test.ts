@@ -153,4 +153,16 @@ describe('BackpackProjectSurfaceCollection', () => {
     expect(() => collection.close('surface-p')).not.toThrow();
     expect(collection.get('surface-p')).toBeNull();
   });
+
+  it('retries native presentation after a first adoption failure', () => {
+    const { collection } = collectionWithFakes();
+    const prepared = collection.prepare('surface-q');
+    const runtime = prepared.runtime as unknown as FakeRuntime;
+    runtime.present.mockImplementationOnce(() => { throw new Error('addChildView failed'); });
+
+    expect(() => prepared.adopt()).toThrow(/addChildView failed/);
+    expect(collection.get('surface-q')).toBe(runtime);
+    expect(() => prepared.adopt()).not.toThrow();
+    expect(runtime.present).toHaveBeenCalledTimes(2);
+  });
 });
