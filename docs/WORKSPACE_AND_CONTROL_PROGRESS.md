@@ -866,6 +866,14 @@ selection, or management screen was added.
   {senderId, adopt, discard}` seam; `discard` cannot fire canonical close
   cleanup, while `adopt` installs the normal destination collection ownership
   only at handoff.
+- [x] Make staging authority-safe: a staged destination WebContents must not
+  be a fully executing, unbound project page that receives rejected startup IPC
+  before adoption. The staging seam must either gate project application
+  execution until canonical adoption or queue/withhold project IPC behind a
+  staging barrier released only when the new sender is atomically bound to the
+  target `{surfaceId, projectId, targetWindowId}`. It must not bind the staged
+  sender early to either window, and it must never permit two simultaneously
+  authoritative renderers for one logical surface.
 - [x] Keep source and destination authority adapters separate. Host IPC derives
   `sourceWindowId` from its authenticated sender and accepts only `surfaceId`
   plus an explicit target; developer control authorizes explicit
@@ -883,7 +891,9 @@ no A3 implementation has started. A3 must not copy window IDs, sender IDs or
 native presentation state into durable layout/workspace files. The two
 workspace records remain independently represented but are committed through
 one atomic file save, with the move operation responsible for coordinating
-their in-memory canonical snapshots and compensating restore.
+their in-memory canonical snapshots and compensating restore. The staged
+project renderer is not considered prepared until its authority barrier is
+also safe.
 
 ## Persistent pickup checklist for every new session
 
