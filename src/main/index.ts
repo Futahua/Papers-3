@@ -47,6 +47,7 @@ import {
   type CompactWidgetSession,
 } from './windows/compactWidgetSession';
 import { createPapersWindow } from './windows/papersWindowFactory';
+import { preparePapersWindow } from './windows/papersWindowLifecycle';
 import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
@@ -325,6 +326,31 @@ async function bootstrap(): Promise<void> {
       // entered again. App shutdown still owns closeAll().
     },
   });
+  const preparedWindow = preparePapersWindow(windowInstance, {
+    register: (instance) => {
+      mainWindow = instance.window;
+      hostView = instance.hostView;
+      papersWindows.add(
+        instance.window.id,
+        {
+          window: instance.window,
+          hostView: instance.hostView,
+          backpackProjectRuntime: instance.backpackProjectRuntime,
+        },
+        registry.lastActiveBackpackId,
+      );
+      papersWindows.setHostSender(instance.window.id, instance.hostView.webContents.id);
+    },
+    onClose: (instance) => instance.backpackProjectRuntime.hide(),
+    finalize: (windowId) => {
+      void widgetSession?.closeOwnedByWindow(windowId);
+      const ownedHostView = papersWindows.get(windowId)?.owned.hostView;
+      surfaceContexts.unbindWindow(windowId);
+      papersWindows.remove(windowId);
+      if (mainWindow?.id === windowId) mainWindow = null;
+      if (hostView === ownedHostView) hostView = null;
+    },
+  });
   mainWindow = windowInstance.window;
   hostView = windowInstance.hostView;
   const backpackProjectRuntime = windowInstance.backpackProjectRuntime;
@@ -333,13 +359,6 @@ async function bootstrap(): Promise<void> {
   // Only the first window at launch may reopen the persisted most-recent
   // Backpack. A window created later carries null, so New Window opens fresh
   // rather than duplicating whatever was last used.
-  const isFirstWindow = papersWindows.size === 0;
-  papersWindows.add(
-    mainWindow.id,
-    { window: mainWindow, hostView, backpackProjectRuntime },
-    isFirstWindow ? registry.lastActiveBackpackId : null,
-  );
-  papersWindows.setHostSender(mainWindow.id, hostView.webContents.id);
   const applyHostSurface = (transparent: boolean): void => {
     // The host view is a child surface: its zero alpha is not honoured, so a
     // white RGB payload paints literally and every transparent page above it
@@ -1295,7 +1314,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   }
 
   // ---------------------------------------------------------------- load UI
-  await windowInstance.loadHostRenderer();
+  await preparedWindow.loadAndRollback();
 
   // Look for a newer Papers once the interface is up. Silent unless a real
   // update is downloaded and ready; a packaged build only.
@@ -1339,42 +1358,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // effort, own single-instance, decoupled from the Hermes Desktop surface.
   startPhoneConnector();
 
-  // Detach the Backpack child surface before the BaseWindow is destroyed:
-  // `closed` fires after native destruction, where removeChildView throws
-  // "Object has been destroyed" (the cleanup landed there with the
-  // transparent surfaces, bf15f93). `close` still runs while the window is
-  // alive, and hide() is idempotent, so an earlier host-IPC hide followed
-  // by this one is harmless. Post-destruction bookkeeping stays in `closed`.
-  mainWindow.on('close', () => {
-    backpackProjectRuntime.hide();
-    // A user closing one Papers window must not quit the application: other
-    // Papers windows may still be live. Application-wide shutdown is initiated
-    // by before-quit, which performs the bounded global cleanup first.
-  });
-
-  const ownedWindowId = mainWindow.id;
-  mainWindow.on('closed', () => {
-    // Releasing the dock is not shutting Hermes down: Papers owns the docking
-    // connection, not Hermes's lifetime.
-    if (papersWindows.hermesDockOwner() === ownedWindowId) papersWindows.setHermesDockOwner(null);
-    // The project, detached and widget senders unbind themselves when their
-    // WebContents dies, but the host sender has no such hook -- without this
-    // its binding survives as stale registry data. It matters once Phase 1B
-    // lets one Papers window close while others keep the process alive.
-    // Creation and destruction are one unit: a context that can make a
-    // project frame but cannot reliably take down exactly its own is not an
-    // ownership primitive. Its surfaces release first, then the context.
-    papersWindows.get(ownedWindowId)?.owned.backpackProjectRuntime.hide();
-    // Widgets belonging to this window die with it, BEFORE its bindings are
-    // released: a widget outliving its window would be an authorized project
-    // sender with no routing context.
-    void widgetSession?.closeOwnedByWindow(ownedWindowId);
-    const ownedHostView = papersWindows.get(ownedWindowId)?.owned.hostView;
-    surfaceContexts.unbindWindow(ownedWindowId);
-    papersWindows.remove(ownedWindowId);
-    if (mainWindow?.id === ownedWindowId) mainWindow = null;
-    if (hostView === ownedHostView) hostView = null;
-  });
+  // Per-window close/finalize ownership is installed by preparePapersWindow;
+  // bootstrap only retains these aliases for primary/fixture compatibility.
 }
 
 app.whenReady().then(() => {
