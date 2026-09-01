@@ -23,6 +23,8 @@ export interface StartupWorkspaceHydrationDeps {
   commit: (workspaceId: string, topology: WorkspaceTopologyV1) => void;
   /** Serialize project ownership creation with archive/remove availability changes. */
   runWithProjectOwnershipGates?: <T>(projectIds: readonly string[], operation: () => Promise<T>) => Promise<T>;
+  /** Fail closed if a live window mutation already owns the canonical boundary. */
+  assertWorkspaceMutationAvailable?: (windowId: number) => void;
 }
 
 /**
@@ -64,6 +66,10 @@ async function hydrateStartupWorkspaceUngated(
         throw new Error(`Backpack ${oldSurface.projectId} is not available.`);
       }
     }
+    // Hydration has no await after this point. If a move already owns the
+    // target window, fail before allocating/delivering any fresh surface; if
+    // hydration wins this JS turn, it completes before a move can acquire it.
+    deps.assertWorkspaceMutationAvailable?.(windowId);
     for (const { old, fresh } of opened) {
       const surface = deps.createSurface({ windowId, projectId: old.projectId });
       allocated.push(surface.surfaceId);

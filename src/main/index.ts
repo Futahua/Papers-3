@@ -610,6 +610,8 @@ async function bootstrap(): Promise<void> {
         },
         runWithProjectOwnershipGates: (projectIds, operation) =>
           facade.withProjectOwnershipGates(projectIds, operation),
+        assertWorkspaceMutationAvailable: (targetWindowId) =>
+          facade.assertWorkspaceMutationAvailable(targetWindowId),
         });
         return { hydrated: Boolean(result) };
       })();

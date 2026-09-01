@@ -292,7 +292,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     };
   }
 
-  private assertWorkspaceMutationAvailable(windowId: number): void {
+  /** Narrow fail-closed guard for creation paths outside the facade. */
+  assertWorkspaceMutationAvailable(windowId: number): void {
     if (this.workspaceMutationLocks.has(windowId)) throw new Error('Workspace mutation is busy.');
   }
 

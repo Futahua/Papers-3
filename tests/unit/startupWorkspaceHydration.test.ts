@@ -84,4 +84,27 @@ describe('startup workspace hydration transaction', () => {
     await expect(hydrating).rejects.toThrow(/not available/);
     expect(createSurface).not.toHaveBeenCalled();
   });
+
+  it('does not allocate while the target window mutation boundary is held', async () => {
+    const createSurface = vi.fn(() => ({ surfaceId: 'orphan' }));
+    const deliver = vi.fn();
+    const commit = vi.fn();
+    const assertWorkspaceMutationAvailable = vi.fn(() => {
+      throw new Error('Workspace mutation is busy.');
+    });
+
+    await expect(hydrateStartupWorkspace(1, {
+      snapshot: snapshot(),
+      findAvailableBackpack: () => ({ name: 'ok' }),
+      openProject: async (projectId) => ({ url: `papers-backpack://${projectId}/fresh` }),
+      createSurface,
+      retireSurface: vi.fn(), validate: vi.fn(), deliver, commit,
+      assertWorkspaceMutationAvailable,
+    })).rejects.toThrow(/Workspace mutation is busy/);
+
+    expect(assertWorkspaceMutationAvailable).toHaveBeenCalledWith(1);
+    expect(createSurface).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+  });
 });
