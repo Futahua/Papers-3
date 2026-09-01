@@ -408,8 +408,9 @@ A1.2 canonical-topology work in progress:
   Dockview JSON, sender ids, WebContents ids or native window ids.
 - [x] Expose validated read-only topology through `inspect.workspace` and
   `papersctl inspect.workspace --window`, without Dockview serialization.
-- [ ] Decide restart identity mapping separately before consuming persisted
-  surface ids during automatic restoration.
+- [x] Decide restart identity mapping separately before consuming persisted
+  surface ids during automatic restoration; A1.2h/i use durable workspace ids
+  plus fresh runtime surface remapping.
 
 A1.2b validation: typecheck passed, full Vitest 652 passed / 4 skipped,
 production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
