@@ -827,8 +827,10 @@ selection, or management screen was added.
   logical `surfaceId` to the target, unbinds only old sender contexts for that
   exact surface, binds only the newly prepared destination project sender to
   `{surfaceId, projectId, targetWindowId, kind:'project'}`, updates both
-  in-memory topologies/revisions/projections, emits the source and destination
-  topology events, and finally performs best-effort source native teardown.
+  in-memory topologies/revisions/projections, and delivers one complete
+  `{projects, topology}` projection to each affected host. The source projection
+  removes the descriptor; the destination projection adds the moved descriptor
+  with its resolved URL. Finally, perform best-effort source native teardown.
   The staged duplicate is never canonical or exposed to control inspection.
 - [x] Use a dedicated `commitWorkspacePair`-style persistence primitive for the
   shared `workspace-topologies.json`; two sequential `commit()` calls are not
@@ -846,9 +848,17 @@ selection, or management screen was added.
   bindings, discard the staged/adopted destination presentation, and perform
   one compensating atomic pair restore (including removal of a newly allocated
   target workspace record). If one renderer was already notified, send it one
-  compensating topology event describing the restored snapshot. Preserve the
+  compensating complete `{projects, topology}` projection, not a topology-only
+  event, so its descriptor set and topology return together. Preserve the
   logical `surfaceId` throughout; retire it only if the original native
   presentation cannot be restored and the source is no longer safe to expose.
+- [x] Define renderer consumption for the move projection: replace the affected
+  host's complete `openProjects` descriptor set before setting topology, arm the
+  established externally-restored suppression latch, then derive active/entered
+  state from the focused group's descriptor-backed active surface. The same
+  complete-projection shape is required for compensation; a topology-only event
+  is insufficient because `App.tsx` stores descriptors separately from
+  `workspaceTopology`.
 - [x] Make staging lifecycle-silent: a prepared runtime must not be inserted
   into the ordinary canonical project-surface collection before adoption,
   because ordinary `close()` can invoke `onSurfaceClosed` and mutate detach /
