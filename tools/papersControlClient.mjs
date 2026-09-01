@@ -62,19 +62,41 @@ export async function connectPapersControl(descriptor) {
   socket.setEncoding('utf8');
   const reader = createLineReader(socket);
   let nextId = 0;
+  /**
+   * Requests are serialized per connection.
+   *
+   * The server dispatches each frame independently, so responses may complete
+   * out of order. A client that simply awaits "the next line" would hand the
+   * first caller the second caller's reply -- silently, and only when calls
+   * overlap. Semantic control is stateful, so deterministic ordering is worth
+   * more than pipelining here, and it leaves shutdown one clean tail per
+   * socket to drain.
+   */
+  let tail = Promise.resolve();
 
   return {
     socket,
-    async call(method, params = {}) {
-      nextId += 1;
-      socket.write(`${JSON.stringify({
-        id: nextId,
-        token: descriptor.token,
-        protocolVersion: descriptor.protocolVersion,
-        method,
-        params,
-      })}\n`);
-      return JSON.parse(await reader.readLine());
+    call(method, params = {}) {
+      const run = tail.then(async () => {
+        nextId += 1;
+        const id = nextId;
+        socket.write(`${JSON.stringify({
+          id,
+          token: descriptor.token,
+          protocolVersion: descriptor.protocolVersion,
+          method,
+          params,
+        })}\n`);
+        const response = JSON.parse(await reader.readLine());
+        // Belt and braces: never hand back a reply that is not this request's.
+        if (response.id !== id && response.id !== null) {
+          throw new Error(`control response id ${String(response.id)} did not match request ${id}`);
+        }
+        return response;
+      });
+      // A failed call must not wedge the queue for the next one.
+      tail = run.then(() => undefined, () => undefined);
+      return run;
     },
     close() {
       socket.end();

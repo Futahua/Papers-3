@@ -1302,11 +1302,18 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     if (capabilityQuitComplete) return;
     event.preventDefault();
     if (!capabilityQuitPromise) {
-      const detachClose = detachSession!.closeAll().catch(() => undefined);
-      const widgetClose = widgetSession!.closeAll().catch(() => undefined);
       windowPickSession.cancel().catch(() => undefined);
-      const controlClose = papersControlServer?.close().catch(() => undefined);
-      capabilityQuitPromise = Promise.all([detachClose, widgetClose, controlClose, windowCapabilityService.stop().catch(() => undefined)]).then(() => {
+      // Control drains FIRST. A control mutation already in flight must not
+      // overlap teardown of the services a newly created window depends on, so
+      // the developer command plane is fully quiet before global shutdown
+      // begins.
+      capabilityQuitPromise = (papersControlServer?.close().catch(() => undefined) ?? Promise.resolve())
+        .then(() => Promise.all([
+          detachSession!.closeAll().catch(() => undefined),
+          widgetSession!.closeAll().catch(() => undefined),
+          windowCapabilityService.stop().catch(() => undefined),
+        ]))
+        .then(() => {
         hermesSurface.shutdown();
         capabilityQuitComplete = true;
         app.quit();

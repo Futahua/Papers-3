@@ -123,6 +123,17 @@ export async function startPapersControlServer({
    * cannot help, because such a client never sends a token.
    */
   const sockets = new Set<Socket>();
+  /**
+   * Dispatches that have already started.
+   *
+   * The `closing` barrier stops new commands, but a command already past
+   * admission -- window.create waiting on a renderer load, say -- would
+   * otherwise keep running while detach, widget and capability teardown were
+   * already under way, and finish by registering a window that expects
+   * services which are going down. Shutdown is therefore a drain, not just a
+   * gate: close() does not resolve until what started has settled.
+   */
+  const inFlight = new Set<Promise<void>>();
   let closing = false;
 
   const server: Server = createServer((socket) => {
@@ -143,7 +154,7 @@ export async function startPapersControlServer({
         socket.destroy();
       },
       onFrame: (line) => {
-        void (async () => {
+        const dispatched = (async () => {
           let requestId: string | number | null = null;
           try {
             const request = controlRequestSchema.parse(JSON.parse(line));
@@ -157,6 +168,8 @@ export async function startPapersControlServer({
             send(socket, { id: requestId, ok: false, error: errorText(error) });
           }
         })();
+        inFlight.add(dispatched);
+        void dispatched.finally(() => inFlight.delete(dispatched));
       },
     });
     socket.on('data', (chunk: string) => frames.push(chunk));
@@ -178,6 +191,10 @@ export async function startPapersControlServer({
     const finished = new Promise<void>((resolve) => server.close(() => resolve()));
     for (const socket of [...sockets]) socket.destroy();
     sockets.clear();
+    // Drain what was already running. No cancellation semantics are needed:
+    // the invariant is only that nothing new starts after the barrier and that
+    // close() waits for what did.
+    while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
     await finished;
     if (process.platform !== 'win32') await unlink(pipe).catch(() => undefined);
   }

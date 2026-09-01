@@ -215,6 +215,49 @@ describe('Papers developer control server', () => {
   });
 });
 
+  it('does not resolve close until a command that already started has settled', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-'));
+    const descriptorPath = join(root, 'control.json');
+    let release: (() => void) | null = null;
+    let created = false;
+    const server = await startPapersControlServer({
+      descriptorPath,
+      dependencies: {
+        snapshot: () => ({}),
+        windows: () => [],
+        createWindow: async () => {
+          await new Promise<void>((resolve) => { release = resolve; });
+          created = true;
+          return { windowId: 1 };
+        },
+      },
+    });
+    const { socket } = await connect(server.descriptor.pipe);
+    socket.write(`${JSON.stringify({
+      id: 1,
+      token: server.descriptor.token,
+      protocolVersion: server.descriptor.protocolVersion,
+      method: 'window.create',
+      params: {},
+    })}\n`);
+
+    // Wait until the command is genuinely in flight.
+    await vi.waitFor(() => expect(release).not.toBeNull());
+
+    let closed = false;
+    const closing = server.close().then(() => { closed = true; });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // A barrier alone would let close() resolve here, while window.create is
+    // still running and about to register a window against services that
+    // global teardown is already dismantling.
+    expect(closed).toBe(false);
+
+    release!();
+    await closing;
+    expect(closed).toBe(true);
+    expect(created).toBe(true);
+  });
+
 /**
  * Framing, tested with exact chunk sequences. A real socket chooses its own
  * delivery boundaries, so a socket-level test cannot reliably deliver two
