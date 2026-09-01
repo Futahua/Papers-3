@@ -938,12 +938,18 @@ signed off the infrastructure exact head above.
   from the pair boundary; retain forward canonical state if compensating durable
   restore fails; and make source native collection removal unconditional before
   best-effort teardown. Add race, restore-failure, and throwing-close tests.
+- [x] A3.3r2 hardening: archive/remove now acquire the same per-project window
+  authority before registry persistence; locked availability is rechecked before
+  pair commit; failed-restore forward fallback also tears down the source
+  collection; and composed adoption retries after a first presentation throw.
+  Add archive/remove, source-cleanup, and double-failure adoption coverage.
 - [ ] Reviewer sign-off on the A3.3 exact head.
 
-A3.3 validation so far: typecheck passed; focused move/protocol tests passed
-58/58; full Vitest passed 712/716 (4 skipped); build and diff checks passed;
+A3.3 validation so far: typecheck passed; focused move/protocol/persistence/
+collection tests passed 77/77; full Vitest passed 713/717 (4 skipped); build
+and diff checks passed;
 live workspace-tabs and developer-control Electron acceptance passed 3/3. The
-A3.3r exact-head review remains pending.
+A3.3r2 exact-head review remains pending.
 
 ## Persistent pickup checklist for every new session
 

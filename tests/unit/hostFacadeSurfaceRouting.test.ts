@@ -126,6 +126,7 @@ function createFacade() {
       setArchived: vi.fn(async (id: string, archived: boolean) => {
         if (archived) archivedProjects.add(id); else archivedProjects.delete(id);
       }),
+      remove: vi.fn(async () => {}),
       markLeft,
     },
     runtime: { stopActive: vi.fn(async () => {}) },
@@ -409,7 +410,7 @@ describe('surface routing in the host facade', () => {
   it('excludes ordinary topology commits and window finalization from the pair boundary', async () => {
     const {
       facade, logicalSurfaces, workspaceTopologies, workspaceIds,
-      commitPair,
+      archivedProjects, commitPair,
     } = createFacade();
     const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     const sourceTopology = openWorkspaceSurface(createWorkspaceTopology(), {
@@ -433,6 +434,9 @@ describe('surface routing in the host facade', () => {
     expect(commitPair).toHaveBeenCalledTimes(1);
     expect(() => facade.commitWorkspaceTopology(11, createWorkspaceTopology()))
       .toThrow(/Workspace mutation is busy/);
+    await expect(facade.setBackpackArchived(PROJECT, true)).rejects.toThrow(/Workspace mutation is busy/);
+    await expect(facade.removeBackpack(PROJECT)).rejects.toThrow(/Workspace mutation is busy/);
+    expect(archivedProjects.has(PROJECT)).toBe(false);
     expect(workspaceTopologies.get(1)).toEqual(sourceTopology);
 
     let finalized = false;
@@ -520,7 +524,7 @@ describe('surface routing in the host facade', () => {
   it('retains forward canonical state when compensating persistence fails', async () => {
     const {
       facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
-      sendToWindow, restorePair,
+      sendToWindow, restorePair, closeAttachedProjectSurface,
     } = createFacade();
     const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     workspaceTopologies.set(1, openWorkspaceSurface(createWorkspaceTopology(), {
@@ -553,10 +557,52 @@ describe('surface routing in the host facade', () => {
     expect(surfaces.contextForSender(FRAME)).toBeNull();
     expect(workspaceTopologies.get(1)?.surfaces).toEqual([]);
     expect(workspaceTopologies.get(2)?.surfaces.map(({ surfaceId }) => surfaceId)).toEqual([moved.surfaceId]);
+    expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, moved.surfaceId);
     expect(sendToWindow.mock.calls.filter(([, channel]) => channel === 'host:event:workspace-surface-moved'))
       .toEqual(expect.arrayContaining([
         [1, 'host:event:workspace-surface-moved', expect.objectContaining({ topology: expect.any(Object) })],
       ]));
+  });
+
+  it('retries composed adoption when first presentation throws and restore also fails', async () => {
+    const {
+      facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
+      sendToWindow, restorePair, prepareProjectSurface,
+    } = createFacade();
+    const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    workspaceTopologies.set(1, openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: moved.surfaceId, projectId: PROJECT, title: 'Alpha',
+    }));
+    workspaceIds.set(1, 'ws-source');
+    surfaces.bind(FRAME, {
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
+    });
+    const adopt = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('destination presentation unavailable'); })
+      .mockImplementationOnce(() => undefined);
+    const discard = vi.fn();
+    prepareProjectSurface.mockResolvedValueOnce({ senderId: 99, adopt, discard });
+    restorePair.mockRejectedValueOnce(new Error('durable restore unavailable'));
+    sendToWindow.mockImplementation((windowId, channel) => {
+      if (channel === 'host:event:workspace-surface-moved' && windowId === 2) {
+        throw new Error('target renderer unavailable');
+      }
+    });
+
+    await expect(facade.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: 1,
+      surfaceId: moved.surfaceId,
+      targetWindowId: 2,
+      targetGroupId: 'group-main',
+      targetIndex: 0,
+    })).rejects.toThrow(/durable forward state retained/);
+
+    expect(adopt).toHaveBeenCalledTimes(2);
+    expect(discard).not.toHaveBeenCalled();
+    expect(surfaces.contextForSender(99)).toEqual({
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 2, kind: 'project',
+    });
+    expect(logicalSurfaces.isLiveIn(moved.surfaceId, 2)).toBe(true);
   });
 
   it('validates a prospective topology against an explicit fresh surface set', () => {

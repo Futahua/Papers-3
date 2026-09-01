@@ -387,16 +387,21 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async setBackpackArchived(id: string, archived: boolean): Promise<void> {
     if (archived) {
-      // Persist first. If persistence fails, live windows must keep their
-      // current project and identity because the Backpack is still available.
-      await this.deps.registry.setArchived(id, archived);
-      // The Backpack itself became unavailable, so EVERY window that entered
-      // it must leave. This is one of the few operations that legitimately
-      // reaches across windows; an ordinary leave touches only its own.
-      this.closeAndRetireLogicalProjectSurfaces(id);
-      await this.deps.retireBackpackProjectSurfaces(id);
-      this.deps.clearEnteredBackpackEverywhere(id);
-      this.deps.surfaces.unbindProject(id);
+      const releaseMutation = this.acquireWorkspaceMutationForProject(id);
+      try {
+        // Persist first. If persistence fails, live windows must keep their
+        // current project and identity because the Backpack is still available.
+        await this.deps.registry.setArchived(id, archived);
+        // The Backpack itself became unavailable, so EVERY window that entered
+        // it must leave. This is one of the few operations that legitimately
+        // reaches across windows; an ordinary leave touches only its own.
+        this.closeAndRetireLogicalProjectSurfaces(id, true);
+        await this.deps.retireBackpackProjectSurfaces(id);
+        this.deps.clearEnteredBackpackEverywhere(id);
+        this.deps.surfaces.unbindProject(id);
+      } finally {
+        releaseMutation();
+      }
     } else {
       await this.deps.registry.setArchived(id, archived);
     }
@@ -404,20 +409,34 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async removeBackpack(id: string): Promise<void> {
-    await this.deps.registry.remove(id);
-    this.closeAndRetireLogicalProjectSurfaces(id);
-    await this.deps.retireBackpackProjectSurfaces(id);
-    this.deps.clearEnteredBackpackEverywhere(id);
-    this.deps.surfaces.unbindProject(id);
-    this.emitBackpacksChanged();
+    const releaseMutation = this.acquireWorkspaceMutationForProject(id);
+    try {
+      await this.deps.registry.remove(id);
+      this.closeAndRetireLogicalProjectSurfaces(id, true);
+      await this.deps.retireBackpackProjectSurfaces(id);
+      this.deps.clearEnteredBackpackEverywhere(id);
+      this.deps.surfaces.unbindProject(id);
+      this.emitBackpacksChanged();
+    } finally {
+      releaseMutation();
+    }
+  }
+
+  private acquireWorkspaceMutationForProject(projectId: string): () => void {
+    const windowIds = [...new Set(this.deps.listLogicalSurfaces()
+      .filter((surface) => surface.projectId === projectId && surface.kind === 'project')
+      .map((surface) => surface.windowId))];
+    return this.acquireWorkspaceMutation(windowIds);
   }
 
   /** Close every attached presentation before retiring its logical identity.
    * Capture first: retireProjectSurfaces intentionally removes the records. */
-  private closeAndRetireLogicalProjectSurfaces(projectId: string): void {
+  private closeAndRetireLogicalProjectSurfaces(projectId: string, mutationAlreadyHeld = false): void {
     const targets = this.deps.listLogicalSurfaces()
       .filter((surface) => surface.projectId === projectId && surface.kind === 'project');
-    for (const { windowId, surfaceId } of targets) this.closeLogicalProjectSurface(windowId, surfaceId);
+    for (const { windowId, surfaceId } of targets) {
+      this.closeLogicalProjectSurface(windowId, surfaceId, undefined, mutationAlreadyHeld);
+    }
     this.deps.retireProjectSurfaces(projectId);
   }
 
@@ -1159,6 +1178,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       let preparedDisposed = false;
       let releaseMutation: (() => void) | null = null;
       let preparedAdopted = false;
+      let retainForwardState = false;
       const discardPrepared = () => {
         if (prepared && !preparedDisposed) {
           preparedDisposed = true;
@@ -1202,6 +1222,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           lockedTargetState.topology ?? createWorkspaceTopology(),
           this.currentProjectSurfaceSet(request.targetWindowId),
         );
+        const lockedBackpack = this.deps.registry.find(sourceSurface.projectId);
+        if (!lockedBackpack || lockedBackpack.archived) {
+          throw new Error('The moved Backpack became unavailable before the cross-window move commit.');
+        }
 
         await move.commitPair({
           source: { workspaceId: sourceWorkspaceId, topology: sourceNext },
@@ -1228,6 +1252,13 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           targetWindowId: request.targetWindowId,
           ...targetAfter,
         };
+        const closeSourceBestEffort = () => {
+          try {
+            this.deps.closeAttachedProjectSurface(request.sourceWindowId, request.surfaceId);
+          } catch (closeError) {
+            console.error(`[workspace-move] source native teardown failed for ${request.surfaceId}:`, closeError);
+          }
+        };
         try {
           this.requireLiveWorkspaceWindow(request.sourceWindowId);
           this.requireLiveWorkspaceWindow(request.targetWindowId);
@@ -1246,8 +1277,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
             windowId: request.targetWindowId,
             kind: 'project',
           });
-          preparedAdopted = true;
           prepared.adopt();
+          preparedAdopted = true;
           move.setWorkspaceState(
             request.sourceWindowId,
             stateForTopology(initialSourceState, sourceNext),
@@ -1260,11 +1291,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           this.deps.sendToWindowOrThrow(request.sourceWindowId, 'host:event:workspace-surface-moved', sourceEvent);
           targetNotified = true;
           this.deps.sendToWindowOrThrow(request.targetWindowId, 'host:event:workspace-surface-moved', targetEvent);
-          try {
-            this.deps.closeAttachedProjectSurface(request.sourceWindowId, request.surfaceId);
-          } catch (caught) {
-            console.error(`[workspace-move] source native teardown failed for ${request.surfaceId}:`, caught);
-          }
+          closeSourceBestEffort();
           return {
             surfaceId: request.surfaceId,
             sourceWindowId: request.sourceWindowId,
@@ -1280,6 +1307,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           try {
             await move.restorePair(pairSnapshot, sourceWorkspaceId, targetWorkspaceId);
           } catch (restoreError) {
+            retainForwardState = true;
             try {
               if (!this.deps.logicalSurfaces.isLiveIn(request.surfaceId, request.targetWindowId)) {
                 if (!this.deps.logicalSurfaces.moveToWindow(request.surfaceId, request.targetWindowId)) {
@@ -1290,8 +1318,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
                 this.deps.surfaces.unbind(senderId);
               }
               if (!preparedAdopted) {
-                preparedAdopted = true;
                 prepared.adopt();
+                preparedAdopted = true;
               }
               this.deps.surfaces.bind(prepared.senderId, {
                 surfaceId: request.surfaceId,
@@ -1316,6 +1344,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
                   this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-surface-moved', event);
                 } catch { /* canonical/durable state remains authoritative */ }
               }
+              closeSourceBestEffort();
             } catch (forwardError) {
               throw new AggregateError(
                 [caught, restoreError, forwardError],
@@ -1364,7 +1393,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           throw caught;
         }
       } catch (caught) {
-        discardPrepared();
+        if (!retainForwardState) discardPrepared();
         throw caught;
       } finally {
         releaseMutation?.();
@@ -1380,8 +1409,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.setWorkspaceTopology(windowId, topology);
   }
 
-  restoreWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {
-    this.assertWorkspaceMutationAvailable(windowId);
+  restoreWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1, mutationAlreadyHeld = false): void {
+    if (!mutationAlreadyHeld) this.assertWorkspaceMutationAvailable(windowId);
     this.validateWorkspaceTopology(windowId, topology);
     const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
     const activeSurfaceId = focused?.activeSurfaceId ?? null;
@@ -1446,15 +1475,16 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     windowId: number,
     surfaceId: string,
     topology = this.deps.workspaceTopology?.(windowId) ?? null,
+    mutationAlreadyHeld = false,
   ): WorkspaceTopologyV1 {
     if (!topology) throw new Error('That Papers window has not committed workspace topology.');
-    this.assertWorkspaceMutationAvailable(windowId);
+    if (!mutationAlreadyHeld) this.assertWorkspaceMutationAvailable(windowId);
     this.validateWorkspaceTopology(windowId, topology);
     this.deps.closeAttachedProjectSurface(windowId, surfaceId);
     this.deps.logicalSurfaces.retire(surfaceId);
     for (const senderId of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(senderId);
     const next = closeWorkspaceSurface(topology, surfaceId);
-    this.restoreWorkspaceTopology(windowId, next);
+    this.restoreWorkspaceTopology(windowId, next, mutationAlreadyHeld);
     this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', { surfaceId });
     return next;
   }
