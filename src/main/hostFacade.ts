@@ -805,9 +805,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * Ownership does not apply to closed or detached, where it is simply false.
    */
   private hermesPresentationFor(windowId: number | null): unknown {
+    const state = this.deps.hermesSurface.state;
     return {
-      ...this.deps.hermesSurface.state,
-      ownedByThisWindow: windowId !== null && this.deps.hermesDockOwner() === windowId,
+      ...state,
+      ownedByThisWindow: state.placement === 'docked' && windowId !== null && this.deps.hermesDockOwner() === windowId,
     };
   }
 
@@ -826,8 +827,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async dockHermes(senderId: number, bounds: SurfaceBounds): Promise<unknown> {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may dock Hermes.');
+    const previousOwner = this.deps.hermesDockOwner();
     this.deps.setHermesDockOwner(windowId);
-    await this.deps.hermesSurface.dock(bounds);
+    const result = await this.deps.hermesSurface.dock(bounds);
+    if (result.placement !== 'docked' || result.status !== 'ready') {
+      this.deps.setHermesDockOwner(previousOwner);
+    }
     this.emitHermesSurface();
     return this.hermesPresentationFor(windowId);
   }
@@ -854,9 +859,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async showHermesWindow(): Promise<unknown> {
     // Hermes stays global. Entering a Backpack never changes Hermes's working
     // directory, so the window launches with no Backpack-derived context.
+    const previousOwner = this.deps.hermesDockOwner();
     const result = await this.deps.hermesSurface.showDetached();
-    // A detached Hermes belongs to no Papers window.
-    this.deps.setHermesDockOwner(null);
+    if (result.placement === 'detached' && result.status === 'ready') {
+      // A detached Hermes belongs to no Papers window.
+      this.deps.setHermesDockOwner(null);
+    } else {
+      this.deps.setHermesDockOwner(previousOwner);
+    }
     this.emitHermesSurface();
     return result;
   }

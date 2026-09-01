@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { PapersHostFacade, type FacadeDeps } from '../../src/main/hostFacade';
+import type { HermesSurfaceState } from '../../src/main/hermes/hermesSurface';
 
 /**
  * Delivery is the part that breaks quietly once a second window exists: an
@@ -123,14 +124,22 @@ describe('the updater knows nothing about windows', () => {
  * belongs to another. Ownership is the whole guard here, so each operation is
  * asserted from a non-owner as well as from the owner.
  */
-function createHermesFacade() {
+function createHermesFacade({
+  surfaceState = { placement: 'docked', status: 'ready' },
+  dock = async () => surfaceState,
+  showDetached = async () => ({ placement: 'detached', status: 'ready' }),
+}: {
+  surfaceState?: HermesSurfaceState;
+  dock?: () => Promise<HermesSurfaceState>;
+  showDetached?: () => Promise<HermesSurfaceState>;
+} = {}) {
   const sent: Array<{ windowId: number; channel: string; payload: unknown }> = [];
   const surface = {
-    state: { placement: 'docked' as const, status: 'ready' as const },
-    dock: vi.fn(async () => ({ placement: 'docked', status: 'ready' })),
+    state: surfaceState,
+    dock: vi.fn(dock),
     setDockBounds: vi.fn(),
     hideDock: vi.fn(async () => {}),
-    showDetached: vi.fn(async () => ({ placement: 'detached', status: 'ready' })),
+    showDetached: vi.fn(showDetached),
     hideDetached: vi.fn(async () => {}),
   };
   let owner: number | null = 2;
@@ -186,6 +195,16 @@ describe('Hermes dock ownership across windows', () => {
     expect(hermesEvents.find((e) => e.windowId === 2)?.payload).toMatchObject({ ownedByThisWindow: false });
   });
 
+  it('restores the previous owner when a dock attempt reports failure', async () => {
+    const failed = { placement: 'docked', status: 'error', detail: 'dock failed' } satisfies HermesSurfaceState;
+    const { facade, owner } = createHermesFacade({ surfaceState: failed, dock: async () => failed });
+
+    await facade.dockHermes(A, { x: 0, y: 0, width: 400, height: 800 });
+
+    expect(owner()).toBe(2);
+    expect(facade.hermesSurfaceStatus(A)).toMatchObject({ placement: 'docked', status: 'error', ownedByThisWindow: false });
+  });
+
   it('refuses to dock for a sender that is not a Papers window', async () => {
     const { facade, surface } = createHermesFacade();
     await expect(facade.dockHermes(999, { x: 0, y: 0, width: 400, height: 800 }))
@@ -197,6 +216,21 @@ describe('Hermes dock ownership across windows', () => {
     const { facade, owner } = createHermesFacade();
     await facade.showHermesWindow();
     expect(owner()).toBeNull();
+  });
+
+  it('restores the previous owner when detaching reports failure', async () => {
+    const failed = { placement: 'docked', status: 'error', detail: 'detach failed' } satisfies HermesSurfaceState;
+    const { facade, owner } = createHermesFacade({ surfaceState: failed, showDetached: async () => failed });
+
+    await expect(facade.showHermesWindow()).resolves.toMatchObject({ placement: 'docked', status: 'error' });
+
+    expect(owner()).toBe(2);
+  });
+
+  it('reports no window ownership unless Hermes is actually docked', () => {
+    const { facade } = createHermesFacade({ surfaceState: { placement: 'detached', status: 'ready' } });
+
+    expect(facade.hermesSurfaceStatus(B)).toMatchObject({ placement: 'detached', ownedByThisWindow: false });
   });
 
   it('releases ownership when the owner hides the dock', async () => {
