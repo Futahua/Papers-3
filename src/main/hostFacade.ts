@@ -486,13 +486,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // Leaving retires the surface: this is the creator closing the view, not a
     // renderer being rebuilt, so its id is spent for good.
     const { windowId } = this.requireHostSurfaceTarget(senderId, surfaceId);
-    this.deps.closeBackpackProjectSurface(senderId, surfaceId);
-    this.deps.logicalSurfaces.retire(surfaceId);
-    if (this.deps.activeSurfaceId(windowId) === surfaceId) {
-      const replacement = this.deps.logicalSurfaces.listForWindow(windowId)[0] ?? null;
-      this.deps.setActiveSurfaceId(windowId, replacement?.surfaceId ?? null);
-      this.deps.setEnteredBackpack(windowId, replacement?.projectId ?? null);
-    }
+    this.closeLogicalProjectSurface(windowId, surfaceId);
     this.emitBackpacksChanged();
   }
 

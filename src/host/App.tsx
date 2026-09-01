@@ -327,22 +327,10 @@ export function App(): React.JSX.Element {
   }, [openProjects]);
 
   const closeWorkspaceProject = useCallback((closingSurfaceId: string): void => {
-    void host().backpackProject.close(closingSurfaceId)
-      .catch(() => undefined)
-      .finally(() => {
-        setOpenProjects((projects) => {
-          const remaining = projects.filter((project) => project.surfaceId !== closingSurfaceId);
-          if (surfaceIdRef.current === closingSurfaceId) {
-            const replacement = remaining[0] ?? null;
-            setSurfaceId(replacement?.surfaceId ?? null);
-            setProjectUrl(replacement?.url ?? null);
-            setEntered(replacement?.projectId ?? null);
-            if (replacement) void host().backpackProject.activateSurface(replacement.surfaceId).catch(() => undefined);
-          }
-          return remaining;
-        });
-        setWorkspaceTopology((topology) => closeTopologySurface(topology, closingSurfaceId));
-      });
+    // Main owns the complete terminal-close transaction and emits canonical
+    // topology before the cleanup event; the renderer must not pick a second
+    // successor or locally commit a competing topology.
+    void host().backpackProject.close(closingSurfaceId).catch(() => undefined);
   }, []);
 
   const splitWorkspaceProject = useCallback((splitSurfaceId: string, direction: 'right' | 'down'): void => {

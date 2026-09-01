@@ -524,8 +524,9 @@ A1.2f reviewer hardening (fresh review of `9a3c79f`):
   Backpack from the canonical focused group's active surface.
 - [x] Remove renderer-side close successor selection/activation. Main topology
   is the sole successor authority, including three-or-more-surface layouts.
-- [x] Route project-originated close, archive/remove and developer-control
-  close through the same main-owned terminal surface transaction: validate
+- [x] Route ordinary Dockview/user close, project-originated close,
+  archive/remove and developer-control close through the same main-owned
+  terminal surface transaction: validate
   current topology before retirement, close/retire/unbind exactly, derive the
   canonical successor, persist it, emit topology, then emit cleanup notice.
 - [x] Make every reconciliation generation schedule the suppression-latch

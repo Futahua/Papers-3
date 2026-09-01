@@ -267,18 +267,18 @@ describe('A1 workspace tabs', () => {
     };
     const gammaSurface = threeWorkspace.topology.surfaces.find((surface) => surface.projectId === C)!.surfaceId;
     await call('layout.split', { windowId, surfaceId: gammaSurface, direction: 'right' });
-    const alphaContents = await launched.app.evaluate(({ webContents }, projectId) =>
-      webContents.getAllWebContents().find((contents) => contents.getURL().startsWith(`papers-backpack://${projectId}/`))?.id ?? null,
-    A);
-    expect(alphaContents).not.toBeNull();
-    await launched.app.evaluate(({ webContents }, senderId) => webContents.fromId(senderId!)!
-      .executeJavaScript(`window.postMessage({ type: 'papers:project:close' }, '*')`), alphaContents);
+    expect(await evalInHost<boolean>(launched.app, `(() => {
+      const tab = [...document.querySelectorAll('.dv-tab')].find((candidate) => candidate.textContent?.includes('Alpha'));
+      const close = tab?.querySelector('button, [class*="action"]');
+      close?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return Boolean(close);
+    })()`)).toBe(true);
     await waitFor(async () => {
       const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
       return surfaces.length === 2
         && surfaces.some((surface) => surface.projectId === C && surface.presentation === 'visible')
         && !surfaces.some((surface) => surface.projectId === A);
-    }, 10_000, 'project-originated close preserves canonical Gamma focus');
+    }, 10_000, 'ordinary Dockview close preserves canonical Gamma focus');
     expect(await hostPage.getByRole('tab', { name: 'Alpha' }).count()).toBe(0);
     expect(await hostPage.getByRole('tab', { name: 'Beta' }).count()).toBe(1);
     expect(await hostPage.getByRole('tab', { name: 'Gamma' }).getAttribute('aria-selected')).toBe('true');

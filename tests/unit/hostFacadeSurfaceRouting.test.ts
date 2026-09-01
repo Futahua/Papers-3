@@ -118,8 +118,9 @@ describe('surface routing in the host facade', () => {
   });
 
   it('leaving retires the surface, so its id is spent for good', async () => {
-    const { facade, surfaces, logicalSurfaces, closeBackpackProjectSurface } = createFacade();
+    const { facade, surfaces, logicalSurfaces, closeAttachedProjectSurface, workspaceTopologies } = createFacade();
     const surface = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    workspaceTopologies.set(1, openWorkspaceSurface(createWorkspaceTopology(), { surfaceId: surface.surfaceId, projectId: PROJECT, title: 'A' }));
 
     await facade.closeBackpackProject(HOST, surface.surfaceId);
 
@@ -127,7 +128,7 @@ describe('surface routing in the host facade', () => {
     // project binding to remove -- it proves a window, nothing more.
     expect(surfaces.projectForSender(HOST)).toBeNull();
     expect(logicalSurfaces.get(surface.surfaceId)).toBeNull();
-    expect(closeBackpackProjectSurface).toHaveBeenCalledWith(HOST, surface.surfaceId);
+    expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, surface.surfaceId);
     // A stale client repeating the call gets a refusal, not another window's
     // surface.
     await expect(facade.closeBackpackProject(HOST, surface.surfaceId))
@@ -135,10 +136,14 @@ describe('surface routing in the host facade', () => {
   });
 
   it('closing a non-focused surface preserves the focused surface projection', async () => {
-    const { facade, logicalSurfaces, setActiveSurfaceId } = createFacade();
+    const { facade, logicalSurfaces, setActiveSurfaceId, workspaceTopologies } = createFacade();
     const a = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     const b = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
     setActiveSurfaceId(1, b.surfaceId);
+    workspaceTopologies.set(1, openWorkspaceSurface(
+      openWorkspaceSurface(createWorkspaceTopology(), { surfaceId: a.surfaceId, projectId: PROJECT, title: 'A' }),
+      { surfaceId: b.surfaceId, projectId: OTHER, title: 'B' },
+    ));
 
     await facade.closeBackpackProject(HOST, a.surfaceId);
 
