@@ -174,8 +174,9 @@ fixture/restart failures were previously observed and remain separately scoped.
 
 ## Current reviewer status
 
-The browser reviewer signed off A3.4 and B2.1. The next eligible recorded gate
-is the Electron 43.1.1 live-WebContentsView reparent compatibility test.
+The browser reviewer signed off A3.4, B2.1 and the Electron 43.1.1 WCV
+compatibility gate. The next eligible recorded gate is the A0.4 residual
+same-project multi-surface evidence test.
 
 The prior A3 review history is retained below.
 
@@ -1072,7 +1073,7 @@ post-reparent interaction and source/target close behavior. Either result
 closes the compatibility gate; recreate/rebind remains the correctness path,
 with no production behavior change.
 
-### Electron 43.1.1 live-WebContentsView reparent compatibility — review pending
+### Electron 43.1.1 live-WebContentsView reparent compatibility — signed off
 
 The standalone acceptance probe creates two real `BaseWindow`s and one loaded
 `WebContentsView`, detaches it from the source, attaches it to the target, and
@@ -1089,11 +1090,16 @@ probe explicitly closes the WCV and verifies its `destroyed` lifecycle. This
 is evidence only: Papers continues to use recreate/rebind as the correctness
 path, and no production behavior or A3 transaction selection changes.
 
-Candidate exact pushed head: `bbe0727`. Validation at this candidate:
+Implementation exact head `bbe07275df114ebfd5b97956a98fae38342a52c3` is pushed
+at review tip `18c9e564afab2703facac9c89ba41e5195b6cdb1`. Validation at this
+candidate:
 `npm run typecheck` passed; full Vitest passed 727/731 (4 skipped); production
 build passed; combined developer-control and compatibility Electron E2E passed
-4/4; and `git diff --check` passed. Reviewer sign-off is pending on this exact
-head.
+4/4; and `git diff --check` passed. Reviewer found no concrete defect.
+
+Next narrow eligible gate: the A0.4 residual evidence test for two distinct
+same-project surfaces in one live window, with independent native presentation,
+exact-surface interaction/routing, and exact close-survivor inspection.
 
 ## Persistent pickup checklist for every new session
 
