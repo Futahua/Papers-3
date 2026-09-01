@@ -35,6 +35,7 @@ import { registerWindowPickIpc } from './ipc/windowPickIpc';
 import { registerWindowDetachIpc } from './ipc/windowDetachIpc';
 import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
+import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
 import { createWindowDetachSession, isAllowedDetachedNavigation, type WindowDetachSession } from './windows/windowDetachSession';
@@ -98,6 +99,9 @@ if (
 }
 
 let mainWindow: BaseWindow | null = null;
+/** Phase 1A: which project each sender may act for. One registry for the
+ * application; the bindings inside it are per surface. */
+const surfaceContexts = createSurfaceContextRegistry();
 let hostView: WebContentsView | null = null;
 
 // A second launch belongs to the existing Papers window. Auxiliary Backpack
@@ -390,9 +394,26 @@ async function bootstrap(): Promise<void> {
       () => randomUUID(),
     ),
     isBackpackProjectSender: isProjectSurfaceSender,
-    showBackpackProjectSurface: (url) => backpackProjectRuntime.show(url),
+    surfaces: surfaceContexts,
+    showBackpackProjectSurface: async (url) => {
+      await backpackProjectRuntime.show(url);
+      // Phase 1A: bind both senders that may act for this project — the host
+      // view that opened it and the project frame it hosts. The project id is
+      // the surface origin's host, so the binding is derived from the surface
+      // itself rather than from whatever was opened most recently.
+      const projectId = backpackProjectRuntime.liveProjectId;
+      const windowId = mainWindow?.id ?? 0;
+      if (projectId) {
+        const frameSender = backpackProjectRuntime.senderId;
+        if (frameSender !== null) surfaceContexts.bind(frameSender, { projectId, windowId });
+        const host = hostView?.webContents.id;
+        if (host !== undefined) surfaceContexts.bind(host, { projectId, windowId });
+      }
+    },
     hideBackpackProjectSurface: () => {
       windowPickSession.cancel().catch(() => undefined);
+      const projectId = backpackProjectRuntime.liveProjectId;
+      if (projectId) surfaceContexts.unbindProject(projectId);
       backpackProjectRuntime.hide();
     },
     runtime,

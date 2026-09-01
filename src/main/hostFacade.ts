@@ -27,6 +27,7 @@ import type {
   SaveStateResult,
 } from './backpacks/backpackProjectService';
 import { parseBackpackProjectWebUrl } from './backpacks/backpackProjectWebLink';
+import type { SurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
 import type { ProgramCatalog } from './canvas/programLoader';
@@ -46,6 +47,10 @@ interface CanvasPersistedState {
 
 export interface FacadeDeps {
   hostContents: () => WebContents | null;
+  /** Phase 1A: which project a sender may act for. Supplied by the host so
+   * project requests resolve through their own sender instead of ambient
+   * state. */
+  surfaces: SurfaceContextRegistry;
   updater: PapersUpdater;
   registry: BackpackRegistry;
   backpackProjects: BackpackProjectService;
@@ -203,6 +208,24 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.registry.lastActiveBackpackId;
   }
 
+  /**
+   * Phase 1A: the project this sender may act for.
+   *
+   * The sender is the authority. An unbound sender is refused rather than
+   * resolved against whatever project happens to be current, because that
+   * fallback is exactly how one window's board reaches another window's file.
+   */
+  private requireProjectForSender(senderId: number): string {
+    const id = this.deps.surfaces.projectForSender(senderId);
+    if (!id) throw new Error('Enter a Backpack project before using it.');
+    const backpack = this.deps.registry.find(id);
+    if (!backpack || backpack.archived) {
+      this.deps.surfaces.unbindProject(id);
+      throw new Error('This Backpack project is no longer available.');
+    }
+    return id;
+  }
+
   private requireBackpackProjectOpen(): string {
     const id = this.currentBackpackProjectId;
     if (!id) throw new Error('Enter a Backpack project before using it.');
@@ -256,12 +279,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   /** Load with the revision needed to save safely afterwards. */
-  async loadBackpackProjectStateVersioned(): Promise<LoadedBackpackProjectState> {
-    return this.deps.backpackProjects.loadStateVersioned(this.requireBackpackProjectOpen());
+  async loadBackpackProjectStateVersioned(senderId: number): Promise<LoadedBackpackProjectState> {
+    return this.deps.backpackProjects.loadStateVersioned(this.requireProjectForSender(senderId));
   }
 
-  async loadBackpackProjectState(): Promise<unknown> {
-    return this.deps.backpackProjects.loadState(this.requireBackpackProjectOpen());
+  async loadBackpackProjectState(senderId: number): Promise<unknown> {
+    return this.deps.backpackProjects.loadState(this.requireProjectForSender(senderId));
   }
 
   /**
@@ -286,8 +309,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.delegateWave.call(backpackId, operation, params);
   }
 
-  async saveBackpackProjectState(rawState: string): Promise<void> {
-    await this.deps.backpackProjects.saveState(this.requireBackpackProjectOpen(), rawState);
+  async saveBackpackProjectState(senderId: number, rawState: string): Promise<void> {
+    await this.deps.backpackProjects.saveState(this.requireProjectForSender(senderId), rawState);
   }
 
   /**
@@ -299,11 +322,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * and never becomes knowledge of what a Backpack document means.
    */
   async saveBackpackProjectStateChecked(
+    senderId: number,
     rawState: string,
     expectedRevision: string,
   ): Promise<SaveStateResult> {
     return this.deps.backpackProjects.saveState(
-      this.requireBackpackProjectOpen(),
+      this.requireProjectForSender(senderId),
       rawState,
       expectedRevision,
     );

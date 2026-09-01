@@ -33,15 +33,15 @@ export interface HostFacade {
   requestCloseBackpackProject(): void;
   runBackpackProjectAction(actionId: string): Promise<void>;
   copyBackpackProjectText(text: string): void;
-  loadBackpackProjectState(): Promise<unknown>;
-  loadBackpackProjectStateVersioned(): Promise<unknown>;
+  loadBackpackProjectState(senderId: number): Promise<unknown>;
+  loadBackpackProjectStateVersioned(senderId: number): Promise<unknown>;
   callDelegateWave(
     backpackId: string,
     operation: string,
     params: Record<string, unknown>,
   ): Promise<unknown>;
-  saveBackpackProjectState(rawState: string): Promise<void>;
-  saveBackpackProjectStateChecked(rawState: string, expectedRevision: string): Promise<unknown>;
+  saveBackpackProjectState(senderId: number, rawState: string): Promise<void>;
+  saveBackpackProjectStateChecked(senderId: number, rawState: string, expectedRevision: string): Promise<unknown>;
   pickBackpackProjectTarget(
     kind: 'file' | 'folder',
   ): Promise<{ target: string; icon: string | null } | null>;
@@ -195,19 +195,24 @@ export function registerHostIpc(facade: HostFacade): void {
     return facade.callDelegateWave(request.backpackId, request.operation, request.params ?? {});
   });
 
-  handle('host:backpack-project:state-load', () => facade.loadBackpackProjectState());
-  handle('host:backpack-project:state-save', (_e, state) =>
-    facade.saveBackpackProjectState(backpackProjectStateSchema.parse(state)),
+  // Phase 1A: the sender is the authority on which project a request is for.
+  // These deliberately no longer resolve against application-global state.
+  handle('host:backpack-project:state-load', (event) =>
+    facade.loadBackpackProjectState(event.sender.id),
+  );
+  handle('host:backpack-project:state-save', (event, state) =>
+    facade.saveBackpackProjectState(event.sender.id, backpackProjectStateSchema.parse(state)),
   );
   // Versioned pair. `state-load-versioned` returns the document plus the
   // revision observed, and `state-save-checked` refuses a save built on a
   // revision that is no longer current. The unversioned pair above remains for
   // the single-writer path until every surface has moved across.
-  handle('host:backpack-project:state-load-versioned', () =>
-    facade.loadBackpackProjectStateVersioned(),
+  handle('host:backpack-project:state-load-versioned', (event) =>
+    facade.loadBackpackProjectStateVersioned(event.sender.id),
   );
-  handle('host:backpack-project:state-save-checked', (_e, state, revision) =>
+  handle('host:backpack-project:state-save-checked', (event, state, revision) =>
     facade.saveBackpackProjectStateChecked(
+      event.sender.id,
       backpackProjectStateSchema.parse(state),
       backpackProjectRevisionSchema.parse(revision),
     ),

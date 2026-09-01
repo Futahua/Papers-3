@@ -18,6 +18,16 @@ export class BackpackProjectRuntime {
     this.transparent = transparent;
   }
 
+  /** The project frame's sender id, so the host can bind it to a project. */
+  get senderId(): number | null {
+    return this.view ? this.view.webContents.id : null;
+  }
+
+  /** The project this surface is currently showing. */
+  get liveProjectId(): string | null {
+    return this.projectId;
+  }
+
   isSender(sender: WebContents): boolean {
     return this.view !== null && sender.id === this.view.webContents.id;
   }
