@@ -92,6 +92,10 @@ dock/detach/hide.
 - `61c21cd` — redact Hermes error prose and raise shutdown admission barrier.
 - `e053c95` — repair the actual `papersctl` executable and exercise it in the
   real Electron E2E.
+- `af4e26c` — replace the one-runtime-per-window assumption with a
+  `surfaceId`-keyed native runtime collection, fix exact hide/close routing,
+  retire dead-window logical surfaces before delayed Hermes reconciliation, and
+  expose safe native presentation state through control inspection.
 
 Current semantic control capabilities:
 
@@ -100,6 +104,9 @@ Current semantic control capabilities:
 - `inspect.surfaces`
 - `inspect.surface --window <id> --surface <id>`
 - `window.create`
+
+Surface inspection also reports safe presentation state (`not-created`,
+`hidden`, or `visible`) without exposing sender ids, URLs or filesystem paths.
 
 Properties already enforced:
 
@@ -146,25 +153,27 @@ developer-control actor
   -> must match current registries
 ```
 
-## Validation evidence at `e053c95`
+## Validation evidence at `962f3b8`
 
 - `npm run typecheck` — passed.
-- `npm test` — 628 passed, 4 skipped; 54 files passed, 1 skipped.
+- `npm test` — 633 passed, 4 skipped; 55 files passed, 1 skipped.
 - `npm run build` — passed.
 - `npx vitest run --config vitest.e2e.config.ts tests/e2e/dev-control.e2e.ts`
   — 2/2 passed, including the real `papersctl` executable controlling a running
   Electron Papers process without DOM injection.
+- Focused A0.4 collection/finalization/routing tests — 45/45 passed.
 - `git diff --check` — passed before commit.
-- Branch was pushed to `origin/agent/surface-context-routing`.
+- Branch was pushed to `origin/agent/surface-context-routing` at `962f3b8`.
 
 Do not claim the historical full product E2E suite is wholly green: unrelated
 fixture/restart failures were previously observed and remain separately scoped.
 
 ## Current reviewer status
 
-The browser reviewer completed its review of exact `e053c95`.
+The browser reviewer completed its review of exact `af4e26c`; the next review is
+pending for `962f3b8`.
 
-Verdict:
+Prior verdict on `e053c95`:
 
 - A0 identity/authority and archive/remove targeting are closed.
 - B1.1 remains closed with no new control-plane security or shutdown regression.
@@ -176,6 +185,30 @@ Verdict:
 - One smaller lifecycle-ordering correction remains: on native-window death,
   unbind senders and retire logical surfaces before awaiting potentially delayed
   Hermes reconciliation. Window authority may remain until reconciliation ends.
+
+The `af4e26c` review found two concrete gaps, now addressed in `962f3b8`:
+
+- ordinary semantic close removes its exact runtime collection entry, while
+  hide preserves the entry for renderer remount;
+- the window now tracks an explicit focused `activeSurfaceId`, and active
+  Backpack/list/run projections no longer clear when a non-focused surface is
+  closed.
+
+Implementation submitted in `962f3b8`:
+
+- Native project presentations now live in a per-window collection keyed by
+  durable `surfaceId`; no layout framework or DOM-hosted Backpack content was
+  added.
+- Host show/hide/close and frame sender lookup resolve the exact surface.
+- `inspect.surfaces` and `inspect.surface` report `presentation` as
+  `not-created`, `hidden`, or `visible`, without sender ids or paths.
+- Window-wide fit, transparency and close fan-out are covered by focused unit
+  tests.
+- Finalization retires sender bindings and logical surfaces before awaiting
+  Hermes reconciliation.
+- A focused-surface projection preserves the surviving surface when another
+  surface closes; legacy `enteredBackpackId` remains only as a no-surface/UI and
+  fixture fallback.
 
 Reviewer conversation:
 `https://chatgpt.com/c/6a963c1d-a728-83ec-b504-7d312e94fcc0`
@@ -195,33 +228,41 @@ verify any finding against exact current source before changing code.
 - [x] Preserve unrelated project surfaces.
 - [x] Receive reviewer sign-off on exact `e053c95` for identity/authority,
   archive/remove targeting and B1.1.
-- [ ] Reorder native-window finalization so dead-window logical surfaces are
+- [x] Reorder native-window finalization so dead-window logical surfaces are
   retired before awaiting Hermes reconciliation.
-- [ ] Prove through control inspection that a dead window has zero logical
-  surfaces while Hermes reconciliation is deliberately delayed.
+- [x] Add the delayed-finalization regression proving retirement occurs before
+  Hermes reconciliation completes.
 
 ### Gate A0.4 — per-window surface runtime collection, no Dockview yet
 
 Purpose: remove the final one-runtime-per-native-window assumption before adding
 renderer tabs or splits.
 
-- [ ] Replace `PapersWindowOwned.backpackProjectRuntime` with a
+- [x] Replace `PapersWindowOwned.backpackProjectRuntime` with a
   surfaceId-keyed per-window manager/collection.
-- [ ] Make `papersWindowFactory.ts` construct the collection.
-- [ ] Make `runtimeForSender()` resolve the exact surface runtime.
-- [ ] Make `allRuntimes()` enumerate every attached surface runtime.
-- [ ] Make host show/hide/open/close act on an explicit `surfaceId` runtime.
-- [ ] Ensure `closeAttachedProjectSurface(windowId, surfaceId)` destroys/hides
+- [x] Make `papersWindowFactory.ts` construct the collection.
+- [x] Make `runtimeForSender()` resolve the exact surface runtime.
+- [x] Make `allRuntimes()` enumerate every attached surface runtime.
+- [x] Make host show/hide/open/close act on an explicit `surfaceId` runtime.
+- [x] Ensure `closeAttachedProjectSurface(windowId, surfaceId)` destroys/hides
   only the named runtime; closing P must leave Q physically and logically live.
-- [ ] Remove `enteredBackpackId` as workspace authority; retain only a clearly
-  documented active/focused/legacy projection where needed for current UI/MRU.
-- [ ] Prove one native window can hold A→project X and B→project Y.
-- [ ] Show/hide A without affecting B.
+- [x] Keep `enteredBackpackId` only as the documented active/focused/MRU
+  projection; target authority uses the logical surface registry.
+- [x] Replace list, runs, Canvas and return-to-origin active lookups with the
+  explicit active-surface projection, retaining `enteredBackpackId` only for
+  no-surface/UI and fixture fallback.
+- [x] Prove collection-level A/B independence and exact close behavior in unit
+  tests; live application proof remains pending until the host can create two
+  surfaces through the user workflow/control plane.
+- [ ] Prove one native window can hold A→project X and B→project Y in a live
+  Electron workflow.
+- [ ] Show/hide A without affecting B in a live Electron workflow.
 - [ ] Prove two distinct surfaces can show the same project.
 - [ ] Destroy/recreate a renderer transport while retaining logical `surfaceId`.
-- [ ] Closing the native window retires every owned runtime and surface.
-- [ ] Resize and transparency changes fan out to every runtime entry.
-- [ ] Add semantic control commands/inspection as each operation becomes real;
+- [x] Close handling fans out to every owned runtime, and finalization retires
+  every logical surface; live multi-surface Electron proof remains pending.
+- [x] Resize and transparency changes fan out to every runtime entry.
+- [x] Add semantic control inspection as each operation becomes real;
   do not use DOM scripting as the primary verification path.
 - [ ] Reviewer sign-off before Dockview.
 
