@@ -174,8 +174,8 @@ fixture/restart failures were previously observed and remain separately scoped.
 
 ## Current reviewer status
 
-The browser reviewer completed the A3.4 review; the B2.1 review is pending for
-the pushed implementation head `d2c728c`.
+The browser reviewer signed off A3.4 and B2.1. The next eligible recorded gate
+is the Electron 43.1.1 live-WebContentsView reparent compatibility test.
 
 The prior A3 review history is retained below.
 
@@ -1032,7 +1032,7 @@ is signed off with no correctness or security defect.
 A3 is complete. No A3.5 or A4 scope is inferred here; the next milestone must
 be defined and reviewed separately.
 
-### B2.1 control-client parity and safe event subscriptions — in progress
+### B2.1 control-client parity and safe event subscriptions — signed off
 
 The reviewer’s next-milestone recommendation after A3.4 is this narrow
 programmatic-control slice:
@@ -1057,13 +1057,20 @@ the server validates every complete frame before fan-out. Destructive
 confirmation, MCP/stdio transport, optional Electron compatibility, release,
 installation and packaging remain out of scope.
 
-Implementation candidate `3bf0f6a` is pushed for review (event implementation
-base `d2c728c`). Validation at this candidate: `npm run typecheck` passed; full
-Vitest passed 727/731 (4 skipped);
-production build passed; live developer-control Electron E2E passed 3/3; and
+Implementation exact head `3bf0f6a0f161e3884c6d10a57522e3eceb2821eb` is
+pushed with event implementation base
+`d2c728c1d9a4a031d753b68554a49034fcf76e1a`; reviewer sign-off was recorded at
+exact pushed docs tip `dfd8ccb51bcc3464f8282ed0d7c35e1440989e75`. Validation:
+`npm run typecheck` passed; full Vitest passed 727/731 (4 skipped); production
+build passed; live developer-control Electron E2E passed 3/3; and
 `git diff --check` passed. The pre-existing user-owned modification to
 `docs/evidence/worker-comparison.json` was not staged or changed by this gate.
-The B2.1 milestone remains open until the reviewer signs off the exact head.
+
+Next narrow gate: test only whether Electron 43.1.1 can live-reparent one
+already-loaded WebContentsView between two real BaseWindows, including a
+post-reparent interaction and source/target close behavior. Either result
+closes the compatibility gate; recreate/rebind remains the correctness path,
+with no production behavior change.
 
 ## Persistent pickup checklist for every new session
 
