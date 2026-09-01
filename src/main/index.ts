@@ -144,13 +144,33 @@ function allRuntimes(): BackpackProjectRuntime[] {
  * own id: ownership is what routing cares about. This is identity only; the
  * 018 handshake still decides when such a surface may write.
  */
+/**
+ * The Papers window a detach/widget surface belongs to.
+ *
+ * It is the window whose surface asked for it — but neither session API
+ * carries the requesting sender into `createWindow`, so it is inferred from
+ * the project's currently bound surfaces. That inference is exact while one
+ * window shows a project and AMBIGUOUS if two do, which is why threading the
+ * requesting sender through the detach and widget sessions is a prerequisite
+ * for the New Window entry point rather than something to guess at now.
+ */
+function owningWindowForProject(projectId: string): number | null {
+  const windows = new Set<number>();
+  for (const senderId of surfaceContexts.sendersForProject(projectId)) {
+    const windowId = surfaceContexts.contextForSender(senderId)?.windowId;
+    if (windowId !== undefined) windows.add(windowId);
+  }
+  const [only] = [...windows];
+  return windows.size === 1 && only !== undefined ? only : null;
+}
+
 function bindOwnedProjectSurface(
   window: BrowserWindow,
   projectId: string,
   kind: 'detached' | 'widget',
 ): void {
-  const owningWindowId = mainWindow?.id;
-  if (owningWindowId === undefined) return;
+  const owningWindowId = owningWindowForProject(projectId);
+  if (owningWindowId === null) return;
   const senderId = window.webContents.id;
   surfaceContexts.bind(senderId, { projectId, windowId: owningWindowId, kind });
   // A dead sender can no longer act, and leaving its id bound would let a
@@ -195,18 +215,23 @@ interface PapersSettings {
  * below the top bar. The renderer and main process must agree on this so the
  * host UI leaves room for the docked window and Papers realignment matches.
  */
-function dockBoundsFor(contentWidth: number): {
+/**
+ * The dock strip, in the coordinates of the window that owns Hermes.
+ *
+ * Both dimensions come from that window. Taking the width from the owner and
+ * the height from the primary window would size Hermes against two different
+ * windows at once, which is invisible while there is one of them and wrong the
+ * moment there are two.
+ */
+function dockBoundsFor(content: { width: number; height: number }): {
   x: number;
   y: number;
   width: number;
   height: number;
 } {
-  const width = Math.max(DOCK_MIN_WIDTH, Math.min(DOCK_MAX_WIDTH, Math.round(contentWidth * DOCK_WIDTH_FRACTION)));
-  const height = Math.max(
-    400,
-    Math.round((mainWindow?.getContentBounds().height ?? 860) - TOP_BAR_HEIGHT),
-  );
-  return { x: Math.max(0, contentWidth - width), y: TOP_BAR_HEIGHT, width, height };
+  const width = Math.max(DOCK_MIN_WIDTH, Math.min(DOCK_MAX_WIDTH, Math.round(content.width * DOCK_WIDTH_FRACTION)));
+  const height = Math.max(400, Math.round(content.height - TOP_BAR_HEIGHT));
+  return { x: Math.max(0, content.width - width), y: TOP_BAR_HEIGHT, width, height };
 }
 
 async function bootstrap(): Promise<void> {
@@ -379,8 +404,7 @@ async function bootstrap(): Promise<void> {
   const realignHermesDock = (): void => {
     const owner = papersWindows.hermesDockOwner();
     if (owner === null || owner !== mainWindow?.id) return;
-    const { width } = mainWindow.getContentBounds();
-    hermesSurface.setDockBounds(dockBoundsFor(width));
+    hermesSurface.setDockBounds(dockBoundsFor(mainWindow.getContentBounds()));
   };
   mainWindow.on('resize', realignHermesDock);
   mainWindow.on('move', realignHermesDock);
