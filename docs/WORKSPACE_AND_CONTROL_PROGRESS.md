@@ -985,14 +985,44 @@ same reviewed transaction.
   and delegate to the same `moveWorkspaceSurfaceAcrossWindows` transaction.
 - [x] Expose the operation through host preload/bridge and cover correct-source
   routing, wrong-window rejection, payload spoofing, and strict schema tests.
-- [ ] Reviewer sign-off on exact pushed head
-  `b7d4bcac93aedd1ee795aca5eeddc16651bf508d`.
+- [x] Reviewer sign-off on exact pushed head
+  `b7d4bcac93aedd1ee795aca5eeddc16651bf508d` (reviewed at pushed tip
+  `166632d1066e20e90e98e9eb0f2eb184aa15b702`).
 
 A3.4 validation so far: typecheck passed; full Vitest passed 723/727 (4
 skipped); focused move/protocol/persistence/collection/host-IPC tests passed
 85/85; production build and diff checks passed; live workspace-tabs and
 developer-control Electron acceptance passed 3/3. The A3.4 exact-head review
-remains pending.
+is signed off with no correctness or security defect.
+
+### A3 closure
+
+- [x] Keep durable workspace state limited to validated topology/workspace
+  identity; native windows, WebContents, sender IDs, URLs and Dockview
+  internals remain live-only.
+- [x] Keep cross-window moves serialized through exact source/target topology
+  and logical-surface validation, hidden authority-gated preparation, one
+  atomic pair save, exact sender replacement, and complete host projections.
+- [x] Keep ordinary topology mutation, archive/remove availability changes,
+  project ownership creation, startup hydration, and window finalization
+  excluded from an in-flight move boundary.
+- [x] Preserve canonical recovery for delivery failure, durable restore
+  failure, native teardown failure, presentation retry, and close/dead-target
+  double failure.
+- [x] Expose the same reviewed move transaction through both authenticated
+  developer control and authenticated host IPC, with host source identity
+  derived from `event.sender.id`.
+- [x] A3 implementation and adapter gates are signed off at exact heads
+  `b8717bb840be56c0a422398f6e11f3fc24d63994` and
+  `b7d4bcac93aedd1ee795aca5eeddc16651bf508d`; the latest pushed documentation
+  tip is `166632d1066e20e90e98e9eb0f2eb184aa15b702`.
+- [x] Final A3 evidence: typecheck passed; full Vitest passed 723/727 (4
+  skipped); focused validation passed 85/85; production build and diff checks
+  passed; live workspace-tabs and developer-control Electron acceptance passed
+  3/3.
+
+A3 is complete. No A3.5 or A4 scope is inferred here; the next milestone must
+be defined and reviewed separately.
 
 ## Persistent pickup checklist for every new session
 
