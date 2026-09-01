@@ -364,16 +364,20 @@ async function bootstrap(): Promise<void> {
     onClose: (instance) => instance.backpackProjectRuntime.hide(),
     finalize: (windowId) => {
       void widgetSession?.closeOwnedByWindow(windowId);
-      const ownedHostView = papersWindows.get(windowId)?.owned.hostView;
       surfaceContexts.unbindWindow(windowId);
       papersWindows.remove(windowId);
-      if (mainWindow?.id === windowId) mainWindow = null;
-      if (hostView === ownedHostView) hostView = null;
     },
   });
   mainWindow = windowInstance.window;
   hostView = windowInstance.hostView;
   const backpackProjectRuntime = windowInstance.backpackProjectRuntime;
+  // These aliases are bootstrap/fixture compatibility only. Their cleanup is
+  // deliberately first-window-specific; reusable window finalization must not
+  // let a later window rewrite or clear the primary fixture relationship.
+  windowInstance.window.once('closed', () => {
+    if (mainWindow?.id === windowInstance.window.id) mainWindow = null;
+    if (hostView === windowInstance.hostView) hostView = null;
+  });
   // Phase 1B: this window and its renderer are now addressable as a context
   // rather than as the module's single `mainWindow`/`hostView` pair.
   // Only the first window at launch may reopen the persisted most-recent
