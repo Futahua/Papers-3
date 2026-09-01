@@ -8,6 +8,7 @@ export class BackpackProjectRuntime {
   private projectId: string | null = null;
   private entryUrl: string | null = null;
   private transparent: boolean;
+  private bounds: { x: number; y: number; width: number; height: number } | null = null;
 
   constructor(
     private readonly window: BaseWindow,
@@ -99,8 +100,17 @@ export class BackpackProjectRuntime {
 
   fit(): void {
     if (!this.view) return;
+    if (this.bounds) {
+      this.view.setBounds(this.bounds);
+      return;
+    }
     const { width, height } = this.window.getContentBounds();
     this.view.setBounds({ x: 0, y: 40, width, height: Math.max(0, height - 40) });
+  }
+
+  setBounds(bounds: { x: number; y: number; width: number; height: number }): void {
+    this.bounds = { ...bounds };
+    this.fit();
   }
 
   hide(): void {

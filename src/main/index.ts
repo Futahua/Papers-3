@@ -623,6 +623,10 @@ async function bootstrap(): Promise<void> {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
     },
+    setBackpackProjectSurfaceBounds: (senderId, surfaceId, bounds) => {
+      const windowId = papersWindows.windowForSender(senderId);
+      if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
+    },
     runtime,
     canvasState,
     catalog: () => catalog,

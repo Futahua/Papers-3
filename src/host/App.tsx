@@ -1,12 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { host, type BackpacksList, type HermesSurfaceStatus, type HostErrorPayload } from './bridge';
-import { BackpackProjectFrame } from './BackpackProjectFrame';
 import { BackpacksPane } from './BackpacksPane';
 import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
 import { EmptyBackpackWarning } from './EmptyBackpackWarning';
 import { HermesControls } from './HermesControls';
+import { WorkspaceDock, type OpenWorkspaceProject } from './WorkspaceDock';
+import {
+  activateWorkspaceSurface,
+  closeWorkspaceSurface,
+  createWorkspaceTopology,
+  openWorkspaceSurface,
+} from '@shared/workspaceTopology';
 
 /** Papers content-relative docked-Hermes rectangle. Must match the main
  *  process dock geometry (the slim title-bar height) so the host UI reserves
@@ -30,6 +36,12 @@ const VIEW_LABEL: Record<BasicView, string> = {
   settings: 'Settings',
 };
 
+function closeTopologySurface(topology: ReturnType<typeof createWorkspaceTopology>, surfaceId: string) {
+  return topology.surfaces.some((surface) => surface.surfaceId === surfaceId)
+    ? closeWorkspaceSurface(topology, surfaceId)
+    : topology;
+}
+
 /**
  * Papers production shell.
  *
@@ -45,6 +57,8 @@ export function App(): React.JSX.Element {
   const [basicOpen, setBasicOpen] = useState(false);
   const [entered, setEntered] = useState<string | null>(null);
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
+  const [openProjects, setOpenProjects] = useState<OpenWorkspaceProject[]>([]);
+  const [, setWorkspaceTopology] = useState(createWorkspaceTopology);
   /**
    * The logical surface this window is showing.
    *
@@ -84,6 +98,14 @@ export function App(): React.JSX.Element {
         setProjectUrl(project?.url ?? null);
         setSurfaceId(project?.surfaceId ?? null);
         setEntered(id);
+        if (project) {
+          const title = list.backpacks.find((backpack) => backpack.id === id)?.name ?? id;
+          setOpenProjects([{ surfaceId: project.surfaceId, projectId: id, title, url: project.url }]);
+          setWorkspaceTopology(openWorkspaceSurface(
+            createWorkspaceTopology(),
+            { surfaceId: project.surfaceId, projectId: id, title },
+          ));
+        }
       } catch (caught) {
         setHostErrors((previous) => [
           ...previous,
@@ -109,19 +131,17 @@ export function App(): React.JSX.Element {
     const subs = [
       bridge.events.onBackpacksChanged(setBackpacks),
       bridge.events.onBackpackProjectCloseRequest((payload) => {
-        // Only act when it is THIS window's shown surface being closed.
-        if (!payload?.surfaceId || payload.surfaceId !== surfaceIdRef.current) return;
+        if (!payload?.surfaceId) return;
         // Another window may archive/remove the Backpack while this renderer
-        // is showing it. The main process already tore down the surface; this
-        // synchronizes the local React state with that authoritative event.
-        void (surfaceId ? bridge.backpackProject.close(surfaceId) : Promise.resolve())
-          .catch(() => undefined)
-          .finally(() => {
-            setProjectUrl(null);
-            setSurfaceId(null);
-            setEntered(null);
-          });
-        setView('backpacks');
+        // is showing it. Main already retired the exact surface; synchronize
+        // every tab, including an inactive one whose panel is unmounted.
+        setOpenProjects((projects) => projects.filter((project) => project.surfaceId !== payload.surfaceId));
+        setWorkspaceTopology((topology) => closeTopologySurface(topology, payload.surfaceId));
+        if (surfaceIdRef.current === payload.surfaceId) {
+          setProjectUrl(null);
+          setSurfaceId(null);
+          setEntered(null);
+        }
       }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),
@@ -230,6 +250,17 @@ export function App(): React.JSX.Element {
         setProjectUrl(project?.url ?? null);
         setSurfaceId(project?.surfaceId ?? null);
         setEntered(id);
+        if (project) {
+          const title = backpacks.backpacks.find((backpack) => backpack.id === id)?.name ?? id;
+          setOpenProjects((projects) => [
+            ...projects,
+            { surfaceId: project.surfaceId, projectId: id, title, url: project.url },
+          ]);
+          setWorkspaceTopology((topology) => openWorkspaceSurface(
+            topology,
+            { surfaceId: project.surfaceId, projectId: id, title },
+          ));
+        }
       })
       .catch((caught) =>
         setHostErrors((previous) => [
@@ -248,20 +279,57 @@ export function App(): React.JSX.Element {
   };
 
   const leaveEnteredBackpack = useCallback((): void => {
-    void (surfaceId ? host().backpackProject.close(surfaceId) : Promise.resolve())
+    const closingSurfaceId = surfaceId;
+    void (closingSurfaceId ? host().backpackProject.close(closingSurfaceId) : Promise.resolve())
       .catch(() => undefined)
       .finally(() => {
+        if (closingSurfaceId) {
+          setOpenProjects((projects) => projects.filter((project) => project.surfaceId !== closingSurfaceId));
+          setWorkspaceTopology((topology) => closeTopologySurface(topology, closingSurfaceId));
+        }
         setProjectUrl(null);
         setSurfaceId(null);
         setEntered(null);
       });
   }, [surfaceId]);
 
+  const activateWorkspaceProject = useCallback((nextSurfaceId: string): void => {
+    const project = openProjects.find((candidate) => candidate.surfaceId === nextSurfaceId);
+    if (!project) return;
+    setSurfaceId(project.surfaceId);
+    setProjectUrl(project.url);
+    setEntered(project.projectId);
+    setWorkspaceTopology((topology) => activateWorkspaceSurface(topology, project.surfaceId));
+    void host().backpackProject.activateSurface(project.surfaceId).catch(() => undefined);
+  }, [openProjects]);
+
+  const closeWorkspaceProject = useCallback((closingSurfaceId: string): void => {
+    void host().backpackProject.close(closingSurfaceId)
+      .catch(() => undefined)
+      .finally(() => {
+        setOpenProjects((projects) => {
+          const remaining = projects.filter((project) => project.surfaceId !== closingSurfaceId);
+          if (surfaceIdRef.current === closingSurfaceId) {
+            const replacement = remaining[0] ?? null;
+            setSurfaceId(replacement?.surfaceId ?? null);
+            setProjectUrl(replacement?.url ?? null);
+            setEntered(replacement?.projectId ?? null);
+            if (replacement) void host().backpackProject.activateSurface(replacement.surfaceId).catch(() => undefined);
+          }
+          return remaining;
+        });
+        setWorkspaceTopology((topology) => closeTopologySurface(topology, closingSurfaceId));
+      });
+  }, []);
+
   const openBasicOrReturnToBackpacks = (): void => {
     if (entered !== null) {
       setView('backpacks');
       setBasicOpen(false);
-      leaveEnteredBackpack();
+      // This is a picker transition, not semantic close. Dockview unmounts
+      // and hides the native presentation while the logical tabs stay alive.
+      setEntered(null);
+      setProjectUrl(null);
       return;
     }
 
@@ -362,15 +430,22 @@ export function App(): React.JSX.Element {
       {view === 'tools' && <ToolsPane />}
       {view === 'settings' && <SettingsPane />}
 
-      {enteredBackpack &&
-        (projectUrl ? (
-          <BackpackProjectFrame url={projectUrl} surfaceId={surfaceId} onDismiss={leaveEnteredBackpack} />
-        ) : (
+      {openProjects.length > 0 && entered !== null && (
+        <WorkspaceDock
+          projects={openProjects}
+          activeSurfaceId={surfaceId}
+          onActivate={activateWorkspaceProject}
+          onClose={closeWorkspaceProject}
+        />
+      )}
+
+      {enteredBackpack && !projectUrl &&
+        (
           <EmptyBackpackWarning
             backpackName={enteredBackpack.name}
             onDismiss={leaveEnteredBackpack}
           />
-        ))}
+        )}
 
       {hermes.status === 'error' && hermes.detail && (
         <div className="error-banner hermes-error">

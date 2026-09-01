@@ -123,6 +123,11 @@ export interface FacadeDeps {
    * project runtime instead of implicitly meaning "the one runtime". */
   showBackpackProjectSurface: (senderId: number, surfaceId: string, url: string) => Promise<void>;
   hideBackpackProjectSurface: (senderId: number, surfaceId: string) => void;
+  setBackpackProjectSurfaceBounds: (
+    senderId: number,
+    surfaceId: string,
+    bounds: { x: number; y: number; width: number; height: number },
+  ) => void;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
@@ -499,6 +504,13 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.emitBackpacksChanged();
   }
 
+  activateBackpackProjectSurface(senderId: number, surfaceId: string): void {
+    const { windowId, projectId } = this.requireHostSurfaceTarget(senderId, surfaceId);
+    this.deps.setActiveSurfaceId(windowId, surfaceId);
+    this.deps.setEnteredBackpack(windowId, projectId);
+    this.emitBackpacksChanged();
+  }
+
   /**
    * Binding order, which is load-bearing:
    *
@@ -549,6 +561,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // silently hiding whatever this window happens to show.
     this.requireHostSurfaceTarget(senderId, surfaceId);
     this.deps.hideBackpackProjectSurface(senderId, surfaceId);
+  }
+
+  setBackpackProjectSurfaceBounds(
+    senderId: number,
+    surfaceId: string,
+    bounds: { x: number; y: number; width: number; height: number },
+  ): void {
+    this.requireHostSurfaceTarget(senderId, surfaceId);
+    this.deps.setBackpackProjectSurfaceBounds(senderId, surfaceId, bounds);
   }
 
   /**

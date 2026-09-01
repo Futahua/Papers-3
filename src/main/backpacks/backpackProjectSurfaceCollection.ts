@@ -67,6 +67,10 @@ export class BackpackProjectSurfaceCollection {
     for (const runtime of this.runtimes.values()) runtime.fit();
   }
 
+  setBounds(surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): void {
+    this.ensure(surfaceId).setBounds(bounds);
+  }
+
   setTransparent(enabled: boolean): void {
     this.transparent = enabled;
     for (const runtime of this.runtimes.values()) runtime.setTransparent(enabled);

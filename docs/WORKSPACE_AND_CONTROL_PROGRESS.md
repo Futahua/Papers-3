@@ -314,34 +314,51 @@ renderer tabs or splits.
 - [x] Make workspace-originated detach focus/reattach/close owner-exact and
   roll back registrations created by rejected duplicate opens.
 - [x] Prove collection-level A/B independence and exact close behavior in unit
-  tests; live application proof remains pending until the host can create two
-  surfaces through the user workflow/control plane.
-- [ ] Prove one native window can hold A→project X and B→project Y in a live
-  Electron workflow.
-- [ ] Show/hide A without affecting B in a live Electron workflow.
+  tests.
+- [x] Prove one native window can hold A→project X and B→project Y in a live
+  Electron/control workflow (`workspace-tabs.e2e.ts`).
+- [x] Show/hide A without affecting B in a live Electron/control workflow.
 - [ ] Prove two distinct surfaces can show the same project.
 - [ ] Destroy/recreate a renderer transport while retaining logical `surfaceId`.
 - [x] Close handling fans out to every owned runtime, and finalization retires
-  every logical surface; live multi-surface Electron proof remains pending.
+  every logical surface.
 - [x] Resize and transparency changes fan out to every runtime entry.
 - [x] Add semantic control inspection as each operation becomes real;
   do not use DOM scripting as the primary verification path.
-- [ ] Reviewer sign-off before Dockview.
+- [x] Reviewer sign-off at `06edf24`; A0.4 is closed and Dockview A1 may begin.
 
 ### Gate A1 — first usable tabs and splits in one native window
 
-- [ ] Add and pin the selected layout dependency after current license/activity
-  verification.
-- [ ] Build Papers' versioned workspace topology model:
+- [x] Verify Dockview's current package: `dockview-react` 8.2.0, MIT, active
+  upstream; pin exactly 8.2.0. Enterprise features are not used.
+- [x] Build Papers' versioned workspace topology model:
   surfaces, tab groups, active tab, split orientation/weights and focused group.
-- [ ] Integrate layout renderer chrome without putting actual Backpack content
+- [x] Integrate layout renderer chrome without putting actual Backpack content
   into the DOM.
-- [ ] Open, activate, reorder and close tabs.
+- [x] Open, activate and close tabs through exact logical `surfaceId` targets.
+- [ ] Persist Dockview drag reorder into the Papers topology model.
 - [ ] Split Right and Split Down.
 - [ ] Drag tabs between same-window groups.
-- [ ] Report pane rectangles to main and position/show/hide native WCVs.
+- [x] Report the active pane rectangle to main and position/show/hide its exact
+  native WCV without covering Dockview tab chrome.
 - [ ] Hide relevant WCVs during drag/drop overlays so native views cannot cover
   drop targets; restore after commit/cancel.
+
+First A1 slice at the current branch head:
+
+- pinned `dockview-react` 8.2.0 (MIT; no Enterprise dependency);
+- added the Papers-owned schema-versioned topology and pure open/activate/move/
+  split/close transitions; Dockview serialization is not product state;
+- added semantic host activation and pane-bounds IPC, both authorized against
+  the exact logical surface;
+- tab visibility drives exact native WCV show/hide, and returning to the
+  Backpack picker preserves logical tabs rather than semantically closing them;
+- live Electron/control acceptance proves Alpha/Beta tabs in one native window
+  and presentation transitions `visible ↔ hidden` independently.
+
+Validation: typecheck passed, full Vitest 646 passed / 4 skipped, production
+build passed, dev-control Electron E2E 2/2 passed, workspace-tabs Electron E2E
+1/1 passed, and diff check passed.
 - [ ] Keyboard tab selection and accessibility acceptance.
 - [ ] Automatic restore of last tab/split workspace.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.

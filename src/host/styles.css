@@ -672,10 +672,35 @@ input:focus-visible {
 
 /* ------------------------------------------------------- Backpack project */
 
-.backpack-project-frame {
+.workspace-dock {
   position: absolute;
   inset: var(--titlebar-height) 0 0;
-  z-index: 35;
+  z-index: 34;
+  min-width: 0;
+  min-height: 0;
+  background: var(--paper);
+  --dv-background-color: var(--paper);
+  --dv-paneview-header-border-color: var(--line);
+  --dv-tabs-and-actions-container-background-color: var(--paper-deep);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--raised-strong);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--paper-deep);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--raised);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--paper-deep);
+  --dv-tab-divider-color: var(--line);
+  --dv-separator-border: var(--line-strong);
+  --dv-active-sash-color: var(--green);
+}
+
+.workspace-dock > .dockview-react {
+  width: 100%;
+  height: 100%;
+}
+
+.backpack-project-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
   background: var(--paper);
 }
 

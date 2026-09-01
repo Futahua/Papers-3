@@ -1,0 +1,109 @@
+import { promises as fs } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
+// @ts-expect-error -- shared production control client is plain ESM.
+import { connectPapersControl, readDescriptor } from '../../tools/papersControlClient.mjs';
+
+const A = 'bp-11111111-1111-4111-8111-111111111111';
+const B = 'bp-22222222-2222-4222-8222-222222222222';
+let launched: LaunchedApp;
+let descriptorPath: string;
+
+async function call(method: string): Promise<unknown> {
+  const connection = await connectPapersControl(await readDescriptor(descriptorPath));
+  try {
+    const response = await connection.call(method) as { ok: boolean; result?: unknown; error?: string };
+    if (!response.ok) throw new Error(response.error ?? 'control request failed');
+    return response.result;
+  } finally {
+    connection.close();
+  }
+}
+
+async function seedProject(userDataDir: string, id: string, name: string): Promise<{ id: string; name: string; root: string }> {
+  const root = path.join(userDataDir, `project-${name.toLowerCase()}`);
+  await fs.mkdir(path.join(root, 'public'), { recursive: true });
+  await fs.writeFile(path.join(root, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: id, entry: 'public/index.html' }));
+  await fs.writeFile(path.join(root, 'public', 'index.html'), `<!doctype html><h1>${name}</h1>`);
+  return { id, name, root };
+}
+
+beforeAll(async () => {
+  const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'papers3-workspace-tabs-'));
+  descriptorPath = path.join(userDataDir, 'dev-control.json');
+  const projects = [
+    await seedProject(userDataDir, A, 'Alpha'),
+    await seedProject(userDataDir, B, 'Beta'),
+  ];
+  const createdAt = '2026-09-01T00:00:00.000Z';
+  const backpacks = projects.map(({ id, name }) => ({
+    id, name, type: 'environment', createdAt, lastEnteredAt: null, archived: false, workspacePath: null,
+  }));
+  const dataDir = path.join(userDataDir, 'PapersData');
+  await fs.mkdir(dataDir, { recursive: true });
+  await fs.writeFile(path.join(dataDir, 'registry.json'), JSON.stringify({ schemaVersion: 1, backpacks, lastActiveBackpackId: null }));
+  await fs.writeFile(path.join(dataDir, 'backpack-projects.json'), JSON.stringify({
+    schemaVersion: 1,
+    projects: Object.fromEntries(projects.map(({ id, root }) => [id, { root }])),
+  }));
+  for (const backpack of backpacks) {
+    const directory = path.join(dataDir, 'backpacks', backpack.id);
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(path.join(directory, 'backpack.json'), JSON.stringify({ schemaVersion: 1, ...backpack }));
+  }
+  launched = await launchPapers(userDataDir, { fixtures: false, devControlDescriptor: descriptorPath });
+  await waitFor(async () => {
+    try { await readDescriptor(descriptorPath); return true; } catch { return false; }
+  }, 10_000, 'workspace control descriptor');
+}, 30_000);
+
+afterAll(async () => {
+  await launched?.close();
+  if (launched?.userDataDir) await fs.rm(launched.userDataDir, { recursive: true, force: true });
+});
+
+function enterBackpack(name: string): string {
+  return `(() => {
+    const card = [...document.querySelectorAll('.backpack-card')].find((item) =>
+      item.querySelector('.name')?.textContent?.trim() === ${JSON.stringify(name)});
+    const enter = [...(card?.querySelectorAll('button') ?? [])].find((button) => button.textContent?.trim() === 'Enter');
+    enter?.click();
+    return Boolean(enter);
+  })()`;
+}
+
+describe('A1 workspace tabs', () => {
+  it('keeps two logical projects in one native window and swaps native presentation by tab', async () => {
+    expect(await evalInHost<boolean>(launched.app, enterBackpack('Alpha'))).toBe(true);
+    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>)
+      .some((surface) => surface.projectId === A && surface.presentation === 'visible'), 10_000, 'visible Alpha surface');
+
+    expect(await evalInHost<boolean>(launched.app, `(() => {
+      const button = document.querySelector('.titlebar .pill-button');
+      button?.click();
+      return Boolean(button);
+    })()`)).toBe(true);
+    await waitFor(() => evalInHost<boolean>(launched.app, `Boolean([...document.querySelectorAll('.backpack-card .name')]
+      .find((node) => node.textContent?.trim() === 'Beta'))`), 10_000, 'Backpack picker');
+    expect(await evalInHost<boolean>(launched.app, enterBackpack('Beta'))).toBe(true);
+
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.length === 2
+        && surfaces.some((surface) => surface.projectId === A && surface.presentation === 'hidden')
+        && surfaces.some((surface) => surface.projectId === B && surface.presentation === 'visible');
+    }, 10_000, 'two tab surfaces with Beta active');
+    expect(await evalInHost<string[]>(launched.app, `[...document.querySelectorAll('.dv-tab')]
+      .map((tab) => tab.textContent?.trim() ?? '').filter(Boolean)`)).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
+    const hostPage = await launched.app.firstWindow();
+    await hostPage.getByRole('tab', { name: 'Alpha' }).click();
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.some((surface) => surface.projectId === A && surface.presentation === 'visible')
+        && surfaces.some((surface) => surface.projectId === B && surface.presentation === 'hidden');
+    }, 10_000, 'Alpha tab activation');
+  });
+});

@@ -7,6 +7,7 @@ type FakeRuntime = {
   hide: ReturnType<typeof vi.fn>;
   fit: ReturnType<typeof vi.fn>;
   setTransparent: ReturnType<typeof vi.fn>;
+  setBounds: ReturnType<typeof vi.fn>;
   isSender: ReturnType<typeof vi.fn>;
   entryUrlForProject: ReturnType<typeof vi.fn>;
 };
@@ -23,6 +24,7 @@ function collectionWithFakes() {
         hide: vi.fn(),
         fit: vi.fn(),
         setTransparent: vi.fn(),
+        setBounds: vi.fn(),
         isSender: vi.fn(() => false),
         entryUrlForProject: vi.fn(() => surfaceId === 'surface-p' ? 'papers-backpack://project-x/entry.html' : null),
       };
@@ -92,5 +94,17 @@ describe('BackpackProjectSurfaceCollection', () => {
       expect(runtime.setTransparent).toHaveBeenCalledWith(true);
       expect(runtime.hide).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it('applies pane bounds only to the named surface runtime', () => {
+    const { collection, runtimes } = collectionWithFakes();
+    collection.ensure('surface-p');
+    collection.ensure('surface-q');
+    const bounds = { x: 12, y: 78, width: 640, height: 480 };
+
+    collection.setBounds('surface-p', bounds);
+
+    expect(runtimes.get('surface-p')!.setBounds).toHaveBeenCalledWith(bounds);
+    expect(runtimes.get('surface-q')!.setBounds).not.toHaveBeenCalled();
   });
 });

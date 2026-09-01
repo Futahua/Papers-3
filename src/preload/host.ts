@@ -51,7 +51,10 @@ const api = {
   backpackProject: {
     open: (id: string) => ipcRenderer.invoke('host:backpack-project:open', id),
     close: (surfaceId: string) => ipcRenderer.invoke('host:backpack-project:close', surfaceId),
+    activateSurface: (surfaceId: string) => ipcRenderer.invoke('host:backpack-project:activate-surface', surfaceId),
     showSurface: (surfaceId: string, url: string) => ipcRenderer.invoke('host:backpack-project:show-surface', surfaceId, url),
+    setSurfaceBounds: (surfaceId: string, bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('host:backpack-project:set-surface-bounds', surfaceId, bounds),
     hideSurface: (surfaceId: string) => ipcRenderer.invoke('host:backpack-project:hide-surface', surfaceId),
     // A0.2.1: project-scoped operations are NOT exposed to the host
     // renderer. They resolved through the host's own project binding, so once

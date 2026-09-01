@@ -28,8 +28,10 @@ export interface HostFacade {
 
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
   closeBackpackProject(senderId: number, surfaceId: string): Promise<void>;
+  activateBackpackProjectSurface(senderId: number, surfaceId: string): void;
   showBackpackProjectSurface(senderId: number, surfaceId: string, url: string): Promise<void>;
   hideBackpackProjectSurface(senderId: number, surfaceId: string): void;
+  setBackpackProjectSurfaceBounds(senderId: number, surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): void;
   requestCloseBackpackProject(senderId: number): void;
   runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
   copyBackpackProjectText(senderId: number, text: string): void;
@@ -187,6 +189,9 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:close', (event, surfaceId) =>
     facade.closeBackpackProject(event.sender.id, surfaceIdSchema.parse(surfaceId)),
   );
+  handle('host:backpack-project:activate-surface', (event, surfaceId) =>
+    facade.activateBackpackProjectSurface(event.sender.id, surfaceIdSchema.parse(surfaceId)),
+  );
   // A0.2: the host names its target. No inference from "the window's only
   // surface" -- that would work until a second one existed.
   handle('host:backpack-project:show-surface', (event, surfaceId, url) =>
@@ -195,6 +200,9 @@ export function registerHostIpc(facade: HostFacade): void {
       surfaceIdSchema.parse(surfaceId),
       z.string().url().max(2_048).parse(url),
     ),
+  );
+  handle('host:backpack-project:set-surface-bounds', (event, surfaceId, bounds) =>
+    facade.setBackpackProjectSurfaceBounds(event.sender.id, surfaceIdSchema.parse(surfaceId), boundsSchema.parse(bounds)),
   );
   handle('host:backpack-project:hide-surface', (event, surfaceId) =>
     facade.hideBackpackProjectSurface(event.sender.id, surfaceIdSchema.parse(surfaceId)),

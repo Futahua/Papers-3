@@ -148,6 +148,16 @@ describe('surface routing in the host facade', () => {
     expect(facade.listBackpacks(HOST).activeBackpackId).toBe(OTHER);
   });
 
+  it('activates an exact logical surface and synchronizes its fallback projection', () => {
+    const { facade, logicalSurfaces, setActiveSurfaceId, setEnteredBackpack } = createFacade();
+    const surface = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+
+    facade.activateBackpackProjectSurface(HOST, surface.surfaceId);
+
+    expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, surface.surfaceId);
+    expect(setEnteredBackpack).toHaveBeenLastCalledWith(1, OTHER);
+  });
+
   it('does not mark a Backpack left while another window has an active surface for it', async () => {
     const { facade, logicalSurfaces, setActiveSurfaceId, setEnteredBackpack, markLeft } = createFacade();
     const local = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });

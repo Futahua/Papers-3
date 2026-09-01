@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 
 import { host } from './bridge';
 
@@ -12,22 +12,33 @@ export function BackpackProjectFrame(props: {
   /** The logical surface this frame shows. Main verifies it; it is never
    * inferred from "the window's only surface". */
   surfaceId: string | null;
-  onDismiss: () => void;
+  visible?: boolean;
 }): React.JSX.Element {
-  const { url, surfaceId, onDismiss } = props;
+  const { url, surfaceId, visible = true } = props;
+  const frameRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => {
-    if (!surfaceId) return undefined;
-    void host().backpackProject.showSurface(surfaceId, url);
-    const unsubscribe = host().events.onBackpackProjectCloseRequest((payload) => {
-      // Ignore a close aimed at some other surface in this window.
-      if (payload?.surfaceId === surfaceId) onDismiss();
-    });
+  useLayoutEffect(() => {
+    if (!surfaceId || !visible) return undefined;
+    const frame = frameRef.current;
+    if (!frame) return undefined;
+    const syncBounds = (): void => {
+      const rect = frame.getBoundingClientRect();
+      void host().backpackProject.setSurfaceBounds(surfaceId, {
+        x: Math.max(0, Math.round(rect.x)),
+        y: Math.max(0, Math.round(rect.y)),
+        width: Math.max(0, Math.round(rect.width)),
+        height: Math.max(0, Math.round(rect.height)),
+      });
+    };
+    syncBounds();
+    const observer = new ResizeObserver(syncBounds);
+    observer.observe(frame);
+    void host().backpackProject.showSurface(surfaceId, url).then(syncBounds);
     return () => {
-      unsubscribe();
+      observer.disconnect();
       void host().backpackProject.hideSurface(surfaceId);
     };
-  }, [onDismiss, surfaceId, url]);
+  }, [surfaceId, url, visible]);
 
-  return <section className="backpack-project-frame" aria-label="Backpack project" />;
+  return <section ref={frameRef} className="backpack-project-frame" aria-label="Backpack project" />;
 }

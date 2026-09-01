@@ -126,7 +126,10 @@ interface HostBridge {
      * target from "the window's only surface". */
     open(id: string): Promise<{ url: string; surfaceId: string } | null>;
     close(surfaceId: string): Promise<void>;
+    /** Focus this already-open logical surface in its owning Papers window. */
+    activateSurface(surfaceId: string): Promise<void>;
     showSurface(surfaceId: string, url: string): Promise<void>;
+    setSurfaceBounds(surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     hideSurface(surfaceId: string): Promise<void>;
     // Project-scoped operations live on the project frame's own bridge; the
     // host renderer cannot act on a project without naming a surface.
