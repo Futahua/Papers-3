@@ -372,12 +372,13 @@ async function bootstrap(): Promise<void> {
   const preparedWindow = preparePapersWindow(windowInstance, lifecycleDependencies(registry.lastActiveBackpackId));
   mainWindow = windowInstance.window;
   hostView = windowInstance.hostView;
+  const primaryWindow = windowInstance.window;
   const backpackProjectRuntime = windowInstance.backpackProjectRuntime;
   // These aliases are bootstrap/fixture compatibility only. Their cleanup is
   // deliberately first-window-specific; reusable window finalization must not
   // let a later window rewrite or clear the primary fixture relationship.
   windowInstance.window.once('closed', () => {
-    if (mainWindow?.id === windowInstance.window.id) mainWindow = null;
+    if (mainWindow === primaryWindow) mainWindow = null;
     if (hostView === windowInstance.hostView) hostView = null;
   });
   // Phase 1B: this window and its renderer are now addressable as a context

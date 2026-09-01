@@ -387,6 +387,32 @@ describe('production Papers shell', () => {
     expect(await Promise.all(protectedFixtureFiles.map(hashFile))).toEqual(protectedFixtureHashes);
   }, 60_000);
 
+  it('opens and closes a secondary Papers window through the host bridge', async () => {
+    const { app } = launched;
+    const nativeWindowCount = (): Promise<number> => app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows().length);
+    await waitFor(() => nativeWindowCount().then((count) => count === 1), 20_000, 'primary Papers window');
+
+    expect(await evalInHost<boolean>(app, clickScript('button[aria-label="New window"]'))).toBe(true);
+    await waitFor(() => nativeWindowCount().then((count) => count === 2), 20_000, 'secondary Papers window');
+
+    const secondaryRestore = await app.evaluate(async ({ BaseWindow }) => {
+      const windows = BaseWindow.getAllWindows();
+      const secondary = windows[windows.length - 1];
+      if (!secondary) throw new Error('missing secondary Papers window');
+      const host = secondary.contentView.children[0] as Electron.WebContentsView | undefined;
+      if (!host) throw new Error('missing secondary host view');
+      return host.webContents.executeJavaScript('window.papersHost.backpacks.startupRestore()', true);
+    });
+    expect(secondaryRestore).toBeNull();
+
+    await app.evaluate(({ BaseWindow }) => {
+      const windows = BaseWindow.getAllWindows();
+      windows[windows.length - 1]?.close();
+    });
+    await waitFor(() => nativeWindowCount().then((count) => count === 1), 20_000, 'secondary Papers window close');
+    expect(await nativeWindowCount()).toBe(1);
+  }, 60_000);
+
   it('shows Basic with Backpacks, Tools and Settings and hosts Hermes own chat', async () => {
     const { app } = launched;
 
