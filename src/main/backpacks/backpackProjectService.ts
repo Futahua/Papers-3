@@ -6,7 +6,7 @@
  */
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { parseBackpackProjectWebUrl } from './backpackProjectWebLink';
 import { resolveWebLinkIcon } from './backpackProjectSiteIcon';
 
@@ -35,6 +35,40 @@ export interface BackpackProjectState {
   schemaVersion: 1;
   groups: unknown[];
   shortcuts: unknown[];
+}
+
+/**
+ * Revision of the state file a reader observed, used for compare-and-set saves.
+ *
+ * It is the hash of the exact bytes on disk, so Papers keeps no parallel
+ * bookkeeping that could drift from the file, and an edit made outside Papers
+ * is caught by the same check as a second surface. Papers still never parses
+ * meaning out of the document: the hash is over opaque bytes.
+ */
+export type BackpackProjectStateRevision = string;
+
+/** Revision reported when no state file exists yet. A first writer passes this
+ * to mean "create it only if it is still absent". */
+export const ABSENT_STATE_REVISION: BackpackProjectStateRevision = 'absent';
+
+export interface LoadedBackpackProjectState {
+  state: BackpackProjectState;
+  revision: BackpackProjectStateRevision;
+}
+
+/**
+ * A save either lands, or is refused because someone else wrote first. A
+ * refusal is a normal outcome, not an error: the caller reloads and decides
+ * what to do. It is deliberately NOT an exception, so a stale writer cannot be
+ * mistaken for a broken host.
+ */
+export type SaveStateResult =
+  | { ok: true; revision: BackpackProjectStateRevision }
+  | { ok: false; code: 'STALE_REVISION'; revision: BackpackProjectStateRevision };
+
+/** Hash of the exact file bytes. */
+function revisionOfBytes(bytes: string): BackpackProjectStateRevision {
+  return createHash('sha256').update(bytes, 'utf8').digest('hex');
 }
 
 /** Injectable boundary for the atomic state replacement. The rename and the
@@ -185,7 +219,7 @@ async function containedPublicPath(root: string, requested: string): Promise<str
 }
 
 export class BackpackProjectService {
-  private readonly stateSaveQueues = new Map<string, Promise<void>>();
+  private readonly stateSaveQueues = new Map<string, Promise<SaveStateResult>>();
 
   constructor(
     private readonly bindingsFile: string,
@@ -325,6 +359,15 @@ export class BackpackProjectService {
 
   /** Project-owned state for an independently maintained Backpack explorer. */
   async loadState(backpackId: string): Promise<BackpackProjectState | null> {
+    return (await this.loadStateVersioned(backpackId)).state;
+  }
+
+  /**
+   * The same load, plus the revision the caller must present to save without
+   * overwriting somebody else. A seeded default carries ABSENT_STATE_REVISION,
+   * so the first save still has something exact to compare against.
+   */
+  async loadStateVersioned(backpackId: string): Promise<LoadedBackpackProjectState> {
     const manifest = await this.manifest(backpackId);
     if (!manifest) throw new Error('Backpack project is not bound on this machine.');
     while (true) {
@@ -334,38 +377,75 @@ export class BackpackProjectService {
       if (this.stateSaveQueues.get(backpackId) === pending) break;
     }
     const statePath = path.join(manifest.root, 'state.json');
+    let bytes: string;
     try {
-      const parsed = JSON.parse(await fs.readFile(statePath, 'utf8')) as BackpackProjectState;
-      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups) || !Array.isArray(parsed.shortcuts)) {
-        throw new Error('invalid state');
-      }
-      return parsed;
+      bytes = await fs.readFile(statePath, 'utf8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Backpack project state could not be read.');
       const actions = await this.actions(backpackId);
       return {
-        schemaVersion: 1,
-        groups: [],
-        shortcuts: actions.map((action) => ({
-          id: `shortcut-${action.id}`,
-          parentId: 'root',
-          name: action.id === 'clips' ? 'CLIPS' : action.id === 'sloptop-mode' ? 'SLOPTOP MODE' : action.id === 'slop-engine' ? 'slop_engine' : action.id,
-          description: '',
-          target: action.target,
-          icon: null,
-        })),
+        revision: ABSENT_STATE_REVISION,
+        state: {
+          schemaVersion: 1,
+          groups: [],
+          shortcuts: actions.map((action) => ({
+            id: `shortcut-${action.id}`,
+            parentId: 'root',
+            name: action.id === 'clips' ? 'CLIPS' : action.id === 'sloptop-mode' ? 'SLOPTOP MODE' : action.id === 'slop-engine' ? 'slop_engine' : action.id,
+            description: '',
+            target: action.target,
+            icon: null,
+          })),
+        },
       };
+    }
+    let parsed: BackpackProjectState;
+    try {
+      parsed = JSON.parse(bytes) as BackpackProjectState;
+      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups) || !Array.isArray(parsed.shortcuts)) {
+        throw new Error('invalid state');
+      }
+    } catch {
+      throw new Error('Backpack project state could not be read.');
+    }
+    return { state: parsed, revision: revisionOfBytes(bytes) };
+  }
+
+  /** The revision currently on disk, read inside the save queue so a
+   * compare-and-set cannot straddle another write. */
+  private async currentRevision(root: string): Promise<BackpackProjectStateRevision> {
+    try {
+      return revisionOfBytes(await fs.readFile(path.join(root, 'state.json'), 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ABSENT_STATE_REVISION;
+      throw new Error('Backpack project state could not be read.');
     }
   }
 
-  async saveState(backpackId: string, rawState: string): Promise<void> {
+  /**
+   * Save the whole document.
+   *
+   * `expectedRevision` is the revision the caller last observed. When it is
+   * supplied and no longer matches what is on disk, nothing is written and the
+   * caller is told so. Without it the write proceeds unconditionally, which is
+   * only safe while a project has a single writer.
+   *
+   * The queue alone cannot prevent loss: it serialises A1 -> B1 -> A2, and A2
+   * still carries a whole board that predates B1. The revision check is what
+   * turns that silent erase into a refusal.
+   */
+  async saveState(
+    backpackId: string,
+    rawState: string,
+    expectedRevision?: BackpackProjectStateRevision,
+  ): Promise<SaveStateResult> {
     const previous = this.stateSaveQueues.get(backpackId) ?? Promise.resolve();
     const operation = previous
       .catch(() => undefined)
-      .then(() => this.saveStateNow(backpackId, rawState));
+      .then(() => this.saveStateNow(backpackId, rawState, expectedRevision));
     this.stateSaveQueues.set(backpackId, operation);
     try {
-      await operation;
+      return await operation;
     } finally {
       if (this.stateSaveQueues.get(backpackId) === operation) {
         this.stateSaveQueues.delete(backpackId);
@@ -373,7 +453,11 @@ export class BackpackProjectService {
     }
   }
 
-  private async saveStateNow(backpackId: string, rawState: string): Promise<void> {
+  private async saveStateNow(
+    backpackId: string,
+    rawState: string,
+    expectedRevision?: BackpackProjectStateRevision,
+  ): Promise<SaveStateResult> {
     if (rawState.length > 5_000_000) throw new Error('Backpack project state is too large.');
     const manifest = await this.manifest(backpackId);
     if (!manifest) throw new Error('Backpack project is not bound on this machine.');
@@ -396,10 +480,15 @@ export class BackpackProjectService {
         throw new Error('Backpack project shortcut targets must be absolute paths or http(s) URLs.');
       }
     }
+    if (expectedRevision !== undefined) {
+      const current = await this.currentRevision(manifest.root);
+      if (current !== expectedRevision) return { ok: false, code: 'STALE_REVISION', revision: current };
+    }
     const statePath = path.join(manifest.root, 'state.json');
     const tempPath = `${statePath}.tmp-${process.pid}-${randomUUID()}`;
+    const bytes = JSON.stringify(parsed, null, 2) + '\n';
     try {
-      await fs.writeFile(tempPath, JSON.stringify(parsed, null, 2) + '\n', {
+      await fs.writeFile(tempPath, bytes, {
         encoding: 'utf8',
       });
       // Windows intermittently denies replacing the existing state.json with
@@ -407,6 +496,7 @@ export class BackpackProjectService {
       // handle. Retry only that transient contention for a bounded interval;
       // a failed attempt leaves the prior complete state untouched.
       await replaceFileAtomically(tempPath, statePath, this.replaceOptions);
+      return { ok: true, revision: revisionOfBytes(bytes) };
     } finally {
       await fs.rm(tempPath, { force: true }).catch(() => undefined);
     }

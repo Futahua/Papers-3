@@ -1,6 +1,6 @@
 import { ipcRenderer, webUtils } from 'electron';
 
-interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
+interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -174,6 +174,11 @@ window.addEventListener('message', (event) => {
   if (request.type === 'papers:project:copy-text' && typeof request.text === 'string') task = ipcRenderer.invoke('host:backpack-project:copy-text', request.text);
   if (request.type === 'papers:project:as-you-go-load') task = ipcRenderer.invoke('host:backpack-project:state-load').then((state) => ({ state: JSON.stringify(state) }));
   if (request.type === 'papers:project:as-you-go-save' && typeof request.state === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save', request.state);
+  // Versioned pair, named without any Backpack's identity: a project asks for
+  // the document plus its revision, then offers a save that names the revision
+  // it was built on. Papers refuses the save if that revision is stale.
+  if (request.type === 'papers:project:state-load-versioned') task = ipcRenderer.invoke('host:backpack-project:state-load-versioned').then((loaded) => ({ state: JSON.stringify((loaded as { state: unknown }).state), revision: (loaded as { revision: string }).revision }));
+  if (request.type === 'papers:project:state-save-checked' && typeof request.state === 'string' && typeof request.revision === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save-checked', request.state, request.revision);
   if (request.type === 'papers:project:as-you-go-pick-target' && (request.kind === 'file' || request.kind === 'folder')) task = ipcRenderer.invoke('host:backpack-project:pick-target', request.kind).then((selection) => ({ target: selection?.target ?? null, icon: selection?.icon ?? null }));
   if (request.type === 'papers:project:as-you-go-shortcut-icon' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:shortcut-icon', request.actionId).then((icon) => ({ icon }));
   if (request.type === 'papers:project:as-you-go-launch' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:launch-shortcut', request.actionId);

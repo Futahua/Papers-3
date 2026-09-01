@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { BackpackProjectService, type BackpackProjectState } from '../../src/main/backpacks/backpackProjectService';
+import { ABSENT_STATE_REVISION, BackpackProjectService, type BackpackProjectState } from '../../src/main/backpacks/backpackProjectService';
 
 const backpackId = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 const actionId = 'open-clips';
@@ -251,6 +251,96 @@ describe('BackpackProjectService', () => {
     await expect(loading).resolves.toEqual(states[1]);
   });
 
+  it('0A: a save built on a stale revision is refused instead of overwriting', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {});
+    const board = (name: string) => JSON.stringify({ schemaVersion: 1, groups: [{ id: name, parentId: 'root', name }], shortcuts: [] });
+
+    // Two surfaces both read the same revision.
+    const surfaceA = await service.loadStateVersioned(backpackId);
+    const surfaceB = await service.loadStateVersioned(backpackId);
+    expect(surfaceA.revision).toBe(surfaceB.revision);
+
+    // B writes first and wins.
+    const wroteB = await service.saveState(backpackId, board('B1'), surfaceB.revision);
+    expect(wroteB.ok).toBe(true);
+
+    // A now writes a whole board that predates B1. Without the check this
+    // silently erases B1; with it, A is told to reload.
+    const wroteA = await service.saveState(backpackId, board('A2'), surfaceA.revision);
+    expect(wroteA).toMatchObject({ ok: false, code: 'STALE_REVISION' });
+
+    const after = await service.loadStateVersioned(backpackId);
+    expect(after.state.groups).toEqual([{ id: 'B1', parentId: 'root', name: 'B1' }]);
+    expect(after.revision).toBe((wroteB as { revision: string }).revision);
+  });
+
+  it('0A: a save presenting the current revision lands and reports the next one', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {});
+    const first = await service.loadStateVersioned(backpackId);
+    const saved = await service.saveState(
+      backpackId,
+      JSON.stringify({ schemaVersion: 1, groups: [{ id: 'g', parentId: 'root', name: 'G' }], shortcuts: [] }),
+      first.revision,
+    );
+    expect(saved.ok).toBe(true);
+    const next = await service.loadStateVersioned(backpackId);
+    expect(next.revision).toBe((saved as { revision: string }).revision);
+    expect(next.revision).not.toBe(first.revision);
+
+    // Re-presenting the revision that was just superseded is refused.
+    await expect(
+      service.saveState(backpackId, JSON.stringify({ schemaVersion: 1, groups: [], shortcuts: [] }), first.revision),
+    ).resolves.toMatchObject({ ok: false, code: 'STALE_REVISION' });
+  });
+
+  it('0A: an absent state file has its own revision, so only one writer creates it', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {});
+    const seeded = await service.loadStateVersioned(backpackId);
+    expect(seeded.revision).toBe(ABSENT_STATE_REVISION);
+
+    const created = await service.saveState(backpackId, JSON.stringify({ schemaVersion: 1, groups: [], shortcuts: [] }), ABSENT_STATE_REVISION);
+    expect(created.ok).toBe(true);
+
+    // A second surface that also believed the file was absent must not clobber it.
+    await expect(
+      service.saveState(backpackId, JSON.stringify({ schemaVersion: 1, groups: [{ id: 'x', parentId: 'root', name: 'X' }], shortcuts: [] }), ABSENT_STATE_REVISION),
+    ).resolves.toMatchObject({ ok: false, code: 'STALE_REVISION' });
+  });
+
+  it('0A: an edit made outside Papers is caught by the same check', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {});
+    await service.saveState(backpackId, JSON.stringify({ schemaVersion: 1, groups: [], shortcuts: [] }));
+    const observed = await service.loadStateVersioned(backpackId);
+
+    await fs.writeFile(
+      path.join(projectRoot, 'state.json'),
+      JSON.stringify({ schemaVersion: 1, groups: [{ id: 'outside', parentId: 'root', name: 'Outside' }], shortcuts: [] }, null, 2) + '\n',
+      'utf8',
+    );
+
+    await expect(
+      service.saveState(backpackId, JSON.stringify({ schemaVersion: 1, groups: [], shortcuts: [] }), observed.revision),
+    ).resolves.toMatchObject({ ok: false, code: 'STALE_REVISION' });
+  });
+
+  it('0A: a save with no expected revision still writes, keeping the single-writer path', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {});
+    await service.saveState(backpackId, JSON.stringify({ schemaVersion: 1, groups: [], shortcuts: [] }));
+    const written = await service.saveState(
+      backpackId,
+      JSON.stringify({ schemaVersion: 1, groups: [{ id: 'legacy', parentId: 'root', name: 'Legacy' }], shortcuts: [] }),
+    );
+    expect(written.ok).toBe(true);
+    await expect(service.loadState(backpackId)).resolves.toMatchObject({
+      groups: [{ id: 'legacy', parentId: 'root', name: 'Legacy' }],
+    });
+  });
+
   it('launches only a shortcut target held by the project state', async () => {
     await writeProject();
     const opened: string[] = [];
@@ -383,7 +473,7 @@ describe('BackpackProjectService', () => {
       }],
     };
 
-    await expect(service.saveState(backpackId, JSON.stringify(webState))).resolves.toBeUndefined();
+    await expect(service.saveState(backpackId, JSON.stringify(webState))).resolves.toMatchObject({ ok: true });
     await expect(service.loadState(backpackId)).resolves.toEqual(webState);
 
     webState.shortcuts[0]!.target = 'javascript:alert(1)';

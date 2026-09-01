@@ -34,12 +34,14 @@ export interface HostFacade {
   runBackpackProjectAction(actionId: string): Promise<void>;
   copyBackpackProjectText(text: string): void;
   loadBackpackProjectState(): Promise<unknown>;
+  loadBackpackProjectStateVersioned(): Promise<unknown>;
   callDelegateWave(
     backpackId: string,
     operation: string,
     params: Record<string, unknown>,
   ): Promise<unknown>;
   saveBackpackProjectState(rawState: string): Promise<void>;
+  saveBackpackProjectStateChecked(rawState: string, expectedRevision: string): Promise<unknown>;
   pickBackpackProjectTarget(
     kind: 'file' | 'folder',
   ): Promise<{ target: string; icon: string | null } | null>;
@@ -111,6 +113,8 @@ const backpackRemovalIdSchema = z
   .regex(/^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const backpackProjectActionIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/i);
 const backpackProjectStateSchema = z.string().min(2).max(5_000_000);
+/** A sha256 hex digest, or the sentinel for "no state file yet". */
+const backpackProjectRevisionSchema = z.union([z.literal('absent'), z.string().regex(/^[0-9a-f]{64}$/)]);
 const backpackProjectTextSchema = z.string().min(1).max(50_000);
 const backpackProjectWebUrlSchema = z.string().min(8).max(2_048);
 const backpackProjectDroppedPathsSchema = z.array(z.string().min(1).max(32_768)).min(1).max(64);
@@ -194,6 +198,19 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:state-load', () => facade.loadBackpackProjectState());
   handle('host:backpack-project:state-save', (_e, state) =>
     facade.saveBackpackProjectState(backpackProjectStateSchema.parse(state)),
+  );
+  // Versioned pair. `state-load-versioned` returns the document plus the
+  // revision observed, and `state-save-checked` refuses a save built on a
+  // revision that is no longer current. The unversioned pair above remains for
+  // the single-writer path until every surface has moved across.
+  handle('host:backpack-project:state-load-versioned', () =>
+    facade.loadBackpackProjectStateVersioned(),
+  );
+  handle('host:backpack-project:state-save-checked', (_e, state, revision) =>
+    facade.saveBackpackProjectStateChecked(
+      backpackProjectStateSchema.parse(state),
+      backpackProjectRevisionSchema.parse(revision),
+    ),
   );
   handle('host:backpack-project:pick-target', (_e, kind) =>
     facade.pickBackpackProjectTarget(z.enum(['file', 'folder']).parse(kind)),

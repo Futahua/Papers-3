@@ -22,7 +22,9 @@ import type { PapersUpdater } from './papersUpdater';
 import type { BackpackRegistry } from './backpacks/backpackRegistry';
 import type {
   BackpackProjectService,
+  LoadedBackpackProjectState,
   OpenBackpackProject,
+  SaveStateResult,
 } from './backpacks/backpackProjectService';
 import { parseBackpackProjectWebUrl } from './backpacks/backpackProjectWebLink';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
@@ -253,6 +255,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     clipboard.writeText(text);
   }
 
+  /** Load with the revision needed to save safely afterwards. */
+  async loadBackpackProjectStateVersioned(): Promise<LoadedBackpackProjectState> {
+    return this.deps.backpackProjects.loadStateVersioned(this.requireBackpackProjectOpen());
+  }
+
   async loadBackpackProjectState(): Promise<unknown> {
     return this.deps.backpackProjects.loadState(this.requireBackpackProjectOpen());
   }
@@ -281,6 +288,25 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async saveBackpackProjectState(rawState: string): Promise<void> {
     await this.deps.backpackProjects.saveState(this.requireBackpackProjectOpen(), rawState);
+  }
+
+  /**
+   * Compare-and-set save. The caller presents the revision it last read; a save
+   * built on an older revision is refused instead of overwriting the newer one.
+   *
+   * Papers does not inspect the document to decide this -- the revision is a
+   * hash of opaque bytes -- so the refusal stays a host-level safety property
+   * and never becomes knowledge of what a Backpack document means.
+   */
+  async saveBackpackProjectStateChecked(
+    rawState: string,
+    expectedRevision: string,
+  ): Promise<SaveStateResult> {
+    return this.deps.backpackProjects.saveState(
+      this.requireBackpackProjectOpen(),
+      rawState,
+      expectedRevision,
+    );
   }
 
   async pickBackpackProjectTarget(
