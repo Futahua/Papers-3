@@ -110,7 +110,7 @@ export function FixtureApp(): React.JSX.Element {
   // Canvas runtime. Production never auto-enters a Backpack.
   useEffect(() => {
     void (async () => {
-      const lastActive = await host().backpacks.lastActive();
+      const lastActive = await host().backpacks.startupRestore();
       if (!lastActive) return;
       try {
         await host().backpacks.enter(lastActive);

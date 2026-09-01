@@ -112,7 +112,10 @@ interface HostBridge {
     remove(id: string): Promise<void>;
     enter(id: string): Promise<{ backpack: BackpackSummary }>;
     leave(): Promise<void>;
-    lastActive(): Promise<string | null>;
+    /** The Backpack THIS window may reopen on startup, or null. Only the
+     * first window at launch has one: a window opened later starts fresh
+     * rather than duplicating the most recently used Backpack. */
+    startupRestore(): Promise<string | null>;
   };
   /** Host seam for an independently maintained, machine-bound Backpack project. */
   backpackProject: {

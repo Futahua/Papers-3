@@ -69,6 +69,12 @@ export interface FacadeDeps {
   /** The docking relationship lives in the window registry, never inside
    * HermesSurface -- one owner, one place. */
   hermesDockOwner: () => number | null;
+  /** Per-window Backpack identity. "Entered" belongs to a window; the
+   * persisted most-recent Backpack stays application-level. */
+  enteredBackpack: (windowId: number) => string | null;
+  setEnteredBackpack: (windowId: number, backpackId: string | null) => void;
+  clearEnteredBackpackEverywhere: (backpackId: string) => void;
+  restoreBackpack: (windowId: number) => string | null;
   setHermesDockOwner: (windowId: number | null) => void;
   /** The window whose Canvas runtime a program event belongs to. One runtime
    * today, so one answer -- but the relationship is recorded rather than
@@ -115,7 +121,6 @@ export interface FacadeDeps {
 }
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
-  private currentBackpackId: string | null = null;
   private readonly pendingPermissionPrompts = new Map<string, (d: PermissionDecision) => void>();
   private readonly pendingInvocationPreviews = new Map<string, (approved: boolean) => void>();
 
@@ -146,8 +151,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.sendToWindow(windowId, channel, payload);
   }
 
+  /**
+   * Globally triggered, but projected per recipient: the Backpack list is the
+   * same everywhere while `activeBackpackId` differs by window. Broadcasting
+   * one payload would put one window's active Backpack into every window.
+   */
   emitBackpacksChanged(): void {
-    this.broadcast('host:event:backpacks-changed', this.listBackpacks());
+    for (const windowId of this.deps.hostWindowIds()) {
+      this.deps.sendToWindow(windowId, 'host:event:backpacks-changed', this.listBackpacksFor(windowId));
+    }
   }
   emitProgramStatus(status: ProgramStatus): void {
     this.sendToRuntimeOwner('host:event:program-status', status);
@@ -177,13 +189,24 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.isBackpackProjectSender(sender);
   }
 
-  get activeBackpackId(): string | null {
-    return this.currentBackpackId;
+  // ------------------------------------------------------------- backpacks
+  /**
+   * The Backpack list, as this window sees it.
+   *
+   * The list itself is application-level; `activeBackpackId` is not -- it is
+   * whichever Backpack THIS window has entered. Two windows in different
+   * Backpacks must each see their own, which is the same recipient-projection
+   * shape as Hermes dock ownership.
+   */
+  listBackpacksFor(windowId: number | null): { backpacks: BackpackSummary[]; activeBackpackId: string | null } {
+    return {
+      backpacks: this.deps.registry.list(),
+      activeBackpackId: windowId === null ? null : this.deps.enteredBackpack(windowId),
+    };
   }
 
-  // ------------------------------------------------------------- backpacks
-  listBackpacks(): { backpacks: BackpackSummary[]; activeBackpackId: string | null } {
-    return { backpacks: this.deps.registry.list(), activeBackpackId: this.currentBackpackId };
+  listBackpacks(senderId: number): { backpacks: BackpackSummary[]; activeBackpackId: string | null } {
+    return this.listBackpacksFor(this.deps.hostWindowForSender(senderId));
   }
 
   async createBackpack(name: string, _type: string): Promise<BackpackSummary> {
@@ -198,19 +221,20 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async setBackpackArchived(id: string, archived: boolean): Promise<void> {
-    if (archived && this.currentBackpackId === id) {
-      await this.leaveBackpack();
+    if (archived) {
+      // The Backpack itself became unavailable, so EVERY window that entered
+      // it must leave. This is one of the few operations that legitimately
+      // reaches across windows; an ordinary leave touches only its own.
+      this.deps.clearEnteredBackpackEverywhere(id);
+      this.deps.surfaces.unbindProject(id);
     }
-    // Archiving releases every surface bound to it, in any window; a surface
-    // must not keep acting for a Backpack the creator has put away.
-    if (archived) this.deps.surfaces.unbindProject(id);
     await this.deps.registry.setArchived(id, archived);
     this.emitBackpacksChanged();
   }
 
   async removeBackpack(id: string): Promise<void> {
     await this.deps.registry.remove(id);
-    if (this.currentBackpackId === id) this.currentBackpackId = null;
+    this.deps.clearEnteredBackpackEverywhere(id);
     this.deps.surfaces.unbindProject(id);
     this.emitBackpacksChanged();
   }
@@ -226,14 +250,20 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     await this.canvasStore(backpackId).save(state);
   }
 
-  async enterBackpack(id: string): Promise<{ backpack: BackpackSummary }> {
+  async enterBackpack(senderId: number, id: string): Promise<{ backpack: BackpackSummary }> {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may enter a Backpack.');
     const backpack = this.deps.registry.find(id);
     if (!backpack) throw new Error(`Backpack ${id} not found`);
     if (backpack.archived) throw new Error('Cannot enter an archived Backpack');
-    if (this.currentBackpackId && this.currentBackpackId !== id) {
+    const previous = this.deps.enteredBackpack(windowId);
+    if (previous && previous !== id) {
       await this.deps.runtime.stopActive();
     }
-    this.currentBackpackId = id;
+    this.deps.setEnteredBackpack(windowId, id);
+    // Entering updates the application-level most-recent record, which is a
+    // legitimate application fact -- unlike "what is active now", which is
+    // per window.
     await this.deps.registry.markEntered(id);
     this.emitBackpacksChanged();
 
@@ -256,15 +286,27 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return { backpack };
   }
 
-  async leaveBackpack(): Promise<void> {
+  async leaveBackpack(senderId: number): Promise<void> {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) return;
     await this.deps.runtime.stopActive();
-    this.currentBackpackId = null;
-    await this.deps.registry.markLeft();
+    this.deps.setEnteredBackpack(windowId, null);
+    // Deliberately NOT registry.markLeft(): one window becoming empty says
+    // nothing about the application's most-recent Backpack, and clearing it
+    // would erase a fact another window is still living in.
     this.emitBackpacksChanged();
   }
 
-  lastActiveBackpackId(): string | null {
-    return this.deps.registry.lastActiveBackpackId;
+  /**
+   * The Backpack this window may reopen on startup, or null.
+   *
+   * Only the first window at launch carries a candidate. A window opened later
+   * gets null, so New Window gives a fresh window rather than a second copy of
+   * whatever was open last.
+   */
+  startupRestoreBackpackId(senderId: number): string | null {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    return windowId === null ? null : this.deps.restoreBackpack(windowId);
   }
 
   /**
@@ -512,12 +554,26 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     };
   }
 
+  /**
+   * The Backpack the Canvas runtime is working in.
+   *
+   * Canvas is fixture-gated and attached to one window, so it resolves against
+   * that window's entered Backpack explicitly rather than reading whatever
+   * some window happens to have open.
+   */
+  private requireCanvasBackpack(): string {
+    const windowId = this.deps.canvasRuntimeWindow();
+    const backpackId = windowId === null ? null : this.deps.enteredBackpack(windowId);
+    if (!backpackId) throw new Error('No Backpack is active');
+    return backpackId;
+  }
+
   async startProgram(programId: string): Promise<void> {
-    if (!this.currentBackpackId) throw new Error('No Backpack is active');
+    const backpackId = this.requireCanvasBackpack();
     const manifest = this.deps.catalog().programs.get(programId);
     if (!manifest) throw new Error(`Program ${programId} not found`);
-    await this.deps.runtime.start(this.currentBackpackId, manifest);
-    await this.persistLastProgram(this.currentBackpackId, programId);
+    await this.deps.runtime.start(backpackId, manifest);
+    await this.persistLastProgram(backpackId, programId);
   }
 
   async stopProgram(): Promise<void> {
@@ -525,19 +581,19 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     await this.deps.runtime.stopActive();
     if (active) {
       this.deps.canvasState.onProgramStopped(active.programId);
-      if (this.currentBackpackId) {
-        await this.persistLastProgram(this.currentBackpackId, null);
-      }
+      const windowId = this.deps.canvasRuntimeWindow();
+      const backpackId = windowId === null ? null : this.deps.enteredBackpack(windowId);
+      if (backpackId) await this.persistLastProgram(backpackId, null);
     }
   }
 
   async restartProgram(programId: string): Promise<void> {
-    if (!this.currentBackpackId) throw new Error('No Backpack is active');
+    const backpackId = this.requireCanvasBackpack();
     const manifest = this.deps.catalog().programs.get(programId);
     if (!manifest) throw new Error(`Program ${programId} not found`);
     await this.deps.runtime.stopActive();
     this.deps.canvasState.onProgramStopped(programId);
-    await this.deps.runtime.start(this.currentBackpackId, manifest);
+    await this.deps.runtime.start(backpackId, manifest);
   }
 
   clearQuarantine(programId: string): void {
@@ -633,8 +689,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   // ------------------------------------------------------------------ runs
-  listRuns(): unknown {
-    return this.deps.runService().list(this.currentBackpackId);
+  /** Runs are listed for the Backpack the asking window has entered. */
+  listRuns(senderId: number): unknown {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    return this.deps.runService().list(windowId === null ? null : this.deps.enteredBackpack(windowId));
   }
 
   getRun(runId: string): unknown {
@@ -672,11 +730,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return { sessionId, opened: false };
   }
 
-  async returnToOrigin(runId: string): Promise<void> {
+  /** Returning to a run's origin happens in the window that asked, so it does
+   * not drag another window into that Backpack. */
+  async returnToOrigin(senderId: number, runId: string): Promise<void> {
     const run = this.deps.runService().get(runId);
     if (!run) throw new Error(`run ${runId} not found`);
-    if (this.currentBackpackId !== run.backpackId) {
-      await this.enterBackpack(run.backpackId);
+    const windowId = this.deps.hostWindowForSender(senderId);
+    const entered = windowId === null ? null : this.deps.enteredBackpack(windowId);
+    if (entered !== run.backpackId) {
+      await this.enterBackpack(senderId, run.backpackId);
     }
     if (this.deps.runtime.activeProgram?.programId !== run.programId) {
       await this.startProgram(run.programId);

@@ -16,7 +16,9 @@ function createFacade({ hostWindows = [1, 2], runtimeWindow = 1 as number | null
     sendToWindow: (windowId: number, channel: string, payload: unknown) => targeted.push({ windowId, channel, payload }),
     hostWindowForSender: (senderId: number) => (senderId >= 10 && hostWindows.includes(senderId - 9) ? senderId - 9 : null),
     canvasRuntimeWindow: () => runtimeWindow,
+    hostWindowIds: () => hostWindows,
     registry: { list: () => [], lastActiveBackpackId: null },
+    enteredBackpack: (windowId: number) => (windowId === 1 ? 'bp-a' : 'bp-b'),
     adapter: { health: { ok: true } },
     surfaces: { contextForSender: () => null },
   } as unknown as FacadeDeps);
@@ -27,16 +29,31 @@ describe('host event delivery across windows', () => {
   it('broadcasts application-level facts to every live host', () => {
     const { facade, broadcasts, targeted } = createFacade();
 
-    facade.emitBackpacksChanged();
     facade.emitRunsChanged({ runs: [] } as never);
     facade.emitHermesHealth();
 
     expect(broadcasts.map((b) => b.channel)).toEqual([
-      'host:event:backpacks-changed',
       'host:event:runs-changed',
       'host:event:hermes-health',
     ]);
     expect(targeted).toEqual([]);
+  });
+
+  it('projects the Backpack list per recipient rather than broadcasting one payload', () => {
+    // Globally triggered, but each window must be told the Backpack IT entered.
+    // A single broadcast would put one window's active Backpack into all of them.
+    const { facade, broadcasts, targeted } = createFacade();
+
+    facade.emitBackpacksChanged();
+
+    expect(broadcasts).toEqual([]);
+    expect(targeted.map((t) => [t.windowId, t.channel])).toEqual([
+      [1, 'host:event:backpacks-changed'],
+      [2, 'host:event:backpacks-changed'],
+    ]);
+    // Each window is told the Backpack it entered, not a shared one.
+    expect(targeted.map((t) => (t.payload as { activeBackpackId: string }).activeBackpackId))
+      .toEqual(['bp-a', 'bp-b']);
   });
 
   it('sends program events to the runtime owner window, not to every window', () => {

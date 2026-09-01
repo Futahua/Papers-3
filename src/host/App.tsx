@@ -64,7 +64,7 @@ export function App(): React.JSX.Element {
     const restoreBackpack = async (): Promise<void> => {
       const list = await bridge.backpacks.list();
       setBackpacks(list);
-      const id = await bridge.backpacks.lastActive();
+      const id = await bridge.backpacks.startupRestore();
       if (!id || !list.backpacks.some((backpack) => backpack.id === id && !backpack.archived)) {
         return;
       }

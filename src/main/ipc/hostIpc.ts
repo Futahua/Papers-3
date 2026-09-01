@@ -17,14 +17,14 @@ export interface HostFacade {
   checkForUpdate(): Promise<unknown>;
   installUpdate(): Promise<void>;
 
-  listBackpacks(): unknown;
+  listBackpacks(senderId: number): unknown;
   createBackpack(name: string, type: string): Promise<unknown>;
   renameBackpack(id: string, name: string): Promise<void>;
   setBackpackArchived(id: string, archived: boolean): Promise<void>;
   removeBackpack(id: string): Promise<void>;
-  enterBackpack(id: string): Promise<unknown>;
-  leaveBackpack(): Promise<void>;
-  lastActiveBackpackId(): string | null;
+  enterBackpack(senderId: number, id: string): Promise<unknown>;
+  leaveBackpack(senderId: number): Promise<void>;
+  startupRestoreBackpackId(senderId: number): string | null;
 
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
   closeBackpackProject(senderId: number): Promise<void>;
@@ -79,13 +79,13 @@ export interface HostFacade {
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
   respondToPrompt(promptId: string, decision: PermissionDecision): void;
 
-  listRuns(): unknown;
+  listRuns(senderId: number): unknown;
   getRun(runId: string): unknown;
   cancelRun(runId: string): Promise<void>;
   respondRunInteraction(runId: string, requestId: string, optionId: string): Promise<void>;
   retryRun(runId: string): Promise<unknown>;
   inspectRunInHermes(runId: string): Promise<unknown>;
-  returnToOrigin(runId: string): Promise<void>;
+  returnToOrigin(senderId: number, runId: string): Promise<void>;
   respondInvocation(previewId: string, approved: boolean): void;
   replyToRun(runId: string, text: string): Promise<void>;
   composedPrompt(runId: string): string;
@@ -159,7 +159,7 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:app:check-for-update', () => facade.checkForUpdate());
   handle('host:app:install-update', () => facade.installUpdate());
 
-  handle('host:backpacks:list', () => facade.listBackpacks());
+  handle('host:backpacks:list', (event) => facade.listBackpacks(event.sender.id));
   handle('host:backpacks:create', (_e, name, type) =>
     facade.createBackpack(backpackNameSchema.parse(name), z.enum(['environment', 'canvas']).parse(type)),
   );
@@ -172,9 +172,12 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpacks:remove', (_e, id) =>
     facade.removeBackpack(backpackRemovalIdSchema.parse(id)),
   );
-  handle('host:backpacks:enter', (_e, id) => facade.enterBackpack(idSchema.parse(id)));
-  handle('host:backpacks:leave', () => facade.leaveBackpack());
-  handle('host:backpacks:last-active', () => facade.lastActiveBackpackId());
+  handle('host:backpacks:enter', (event, id) => facade.enterBackpack(event.sender.id, idSchema.parse(id)));
+  handle('host:backpacks:leave', (event) => facade.leaveBackpack(event.sender.id));
+  // Renamed from last-active: only the first window at launch carries a
+  // restore candidate, so a window opened later does not reopen the persisted
+  // most-recent Backpack.
+  handle('host:backpacks:startup-restore', (event) => facade.startupRestoreBackpackId(event.sender.id));
 
   handle('host:backpack-project:open', (event, id) =>
     facade.openBackpackProject(event.sender.id, backpackRemovalIdSchema.parse(id)),
@@ -296,7 +299,7 @@ export function registerHostIpc(facade: HostFacade): void {
     facade.respondToPrompt(idSchema.parse(promptId), decisionSchema.parse(decision)),
   );
 
-  handle('host:runs:list', () => facade.listRuns());
+  handle('host:runs:list', (event) => facade.listRuns(event.sender.id));
   handle('host:runs:get', (_e, runId) => facade.getRun(idSchema.parse(runId)));
   handle('host:runs:cancel', (_e, runId) => facade.cancelRun(idSchema.parse(runId)));
   handle('host:runs:respond-interaction', (_e, runId, requestId, optionId) =>
@@ -310,8 +313,8 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:runs:inspect-in-hermes', (_e, runId) =>
     facade.inspectRunInHermes(idSchema.parse(runId)),
   );
-  handle('host:runs:return-to-origin', (_e, runId) =>
-    facade.returnToOrigin(idSchema.parse(runId)),
+  handle('host:runs:return-to-origin', (event, runId) =>
+    facade.returnToOrigin(event.sender.id, idSchema.parse(runId)),
   );
   handle('host:runs:respond-invocation', (_e, previewId, approved) =>
     facade.respondInvocation(idSchema.parse(previewId), z.boolean().parse(approved)),

@@ -175,8 +175,16 @@ export class BackpackRegistry {
     await this.persist();
   }
 
+  /**
+   * Deliberately no longer clears `lastActiveBackpackId`.
+   *
+   * That field is an application-level most-recent record, and one window
+   * leaving its Backpack says nothing about it -- another window may still be
+   * living in one. Clearing it here would erase a fact that is not this
+   * window's to erase. Kept as a no-op so the call sites and their meaning
+   * stay visible rather than silently disappearing.
+   */
   async markLeft(): Promise<void> {
-    this.state.lastActiveBackpackId = null;
-    await this.persist();
+    // Intentionally empty: see above.
   }
 }

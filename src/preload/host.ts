@@ -41,7 +41,7 @@ const api = {
     remove: (id: string) => ipcRenderer.invoke('host:backpacks:remove', id),
     enter: (id: string) => ipcRenderer.invoke('host:backpacks:enter', id),
     leave: () => ipcRenderer.invoke('host:backpacks:leave'),
-    lastActive: () => ipcRenderer.invoke('host:backpacks:last-active'),
+    startupRestore: () => ipcRenderer.invoke('host:backpacks:startup-restore'),
   },
 
   // Narrow host seam for independently maintained Backpack projects. Project

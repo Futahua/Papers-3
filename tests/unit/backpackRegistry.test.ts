@@ -57,16 +57,19 @@ describe('BackpackRegistry', () => {
     expect(second.find(created.id)?.workspacePath).toBeNull();
   });
 
-  it('clears last-active when leaving and when archiving the active backpack', async () => {
+  it('keeps last-active when one window leaves, and clears it only when the Backpack is archived', async () => {
     const registry = await freshRegistry();
     const created = await registry.create('Active', 'canvas');
     await registry.markEntered(created.id);
     expect(registry.lastActiveBackpackId).toBe(created.id);
 
+    // Leaving is per window now. One window becoming empty says nothing about
+    // the application's most-recent Backpack -- another window may still be in
+    // one -- so this record survives.
     await registry.markLeft();
-    expect(registry.lastActiveBackpackId).toBeNull();
+    expect(registry.lastActiveBackpackId).toBe(created.id);
 
-    await registry.markEntered(created.id);
+    // Archiving is different: the Backpack itself became unavailable.
     await registry.setArchived(created.id, true);
     expect(registry.lastActiveBackpackId).toBeNull();
   });

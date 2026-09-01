@@ -34,10 +34,22 @@ export interface PapersWindowContext<Owned> {
   /** The per-window objects. Returned by reference -- they are the live
    * things, not a description of them. */
   owned: Owned;
+  /**
+   * The Backpack this window has entered. Per window, because two windows may
+   * be in different Backpacks -- that is the point of having two.
+   */
+  enteredBackpackId: string | null;
+  /**
+   * The Backpack this window may restore at startup, if any. Set when the
+   * window is created: the first window at launch may carry the persisted
+   * most-recent Backpack; a window opened later carries null, so New Window
+   * gives a fresh window rather than a second copy of the last one.
+   */
+  restoreBackpackId: string | null;
 }
 
 export interface PapersWindowRegistry<Owned> {
-  add(windowId: number, owned: Owned): PapersWindowContext<Owned>;
+  add(windowId: number, owned: Owned, restoreBackpackId?: string | null): PapersWindowContext<Owned>;
   remove(windowId: number): void;
   has(windowId: number): boolean;
   get(windowId: number): PapersWindowContext<Owned> | null;
@@ -48,6 +60,19 @@ export interface PapersWindowRegistry<Owned> {
   ownedForSender(senderId: number): Owned | null;
   /** Record this window's Papers renderer. */
   setHostSender(windowId: number, senderId: number | null): void;
+  /** What this window has entered, and the setter for entering/leaving. */
+  enteredBackpack(windowId: number): string | null;
+  setEnteredBackpack(windowId: number, backpackId: string | null): void;
+  /** The startup restore candidate for this window; null for a window opened
+   * after launch. Reading it does not consume the persisted MRU -- the
+   * registry that stores that stays a dumb store. */
+  restoreBackpack(windowId: number): string | null;
+  /**
+   * Clear a Backpack from every window that entered it. Correct only when the
+   * Backpack itself has become unavailable (archived or removed); one window
+   * leaving its own Backpack must never touch another's.
+   */
+  clearEnteredBackpackEverywhere(backpackId: string): void;
   /** The window a sender belongs to, or null when it belongs to none. Never a
    * guess: an unknown sender must be refused, not attributed to whichever
    * window happens to exist. */
@@ -72,12 +97,38 @@ export function createPapersWindowRegistry<Owned>(): PapersWindowRegistry<Owned>
   let hermesOwner: number | null = null;
 
   return {
-    add(windowId, owned) {
+    add(windowId, owned, restoreBackpackId = null) {
       const existing = byWindow.get(windowId);
       if (existing) return existing;
-      const context: PapersWindowContext<Owned> = { windowId, hostSenderId: null, owned };
+      const context: PapersWindowContext<Owned> = {
+        windowId,
+        hostSenderId: null,
+        owned,
+        enteredBackpackId: null,
+        restoreBackpackId,
+      };
       byWindow.set(windowId, context);
       return context;
+    },
+
+    enteredBackpack(windowId) {
+      return byWindow.get(windowId)?.enteredBackpackId ?? null;
+    },
+
+    setEnteredBackpack(windowId, backpackId) {
+      const context = byWindow.get(windowId);
+      if (!context) return;
+      context.enteredBackpackId = backpackId;
+    },
+
+    restoreBackpack(windowId) {
+      return byWindow.get(windowId)?.restoreBackpackId ?? null;
+    },
+
+    clearEnteredBackpackEverywhere(backpackId) {
+      for (const context of byWindow.values()) {
+        if (context.enteredBackpackId === backpackId) context.enteredBackpackId = null;
+      }
     },
 
     all() {

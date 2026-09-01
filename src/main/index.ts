@@ -348,11 +348,15 @@ async function bootstrap(): Promise<void> {
   mainWindow.contentView.addChildView(hostView);
   // Phase 1B: this window and its renderer are now addressable as a context
   // rather than as the module's single `mainWindow`/`hostView` pair.
-  papersWindows.add(mainWindow.id, {
-    window: mainWindow,
-    hostView,
-    backpackProjectRuntime,
-  });
+  // Only the first window at launch may reopen the persisted most-recent
+  // Backpack. A window created later carries null, so New Window opens fresh
+  // rather than duplicating whatever was last used.
+  const isFirstWindow = papersWindows.size === 0;
+  papersWindows.add(
+    mainWindow.id,
+    { window: mainWindow, hostView, backpackProjectRuntime },
+    isFirstWindow ? registry.lastActiveBackpackId : null,
+  );
   papersWindows.setHostSender(mainWindow.id, hostView.webContents.id);
   const applyHostSurface = (transparent: boolean): void => {
     // The host view is a child surface: its zero alpha is not honoured, so a
@@ -507,6 +511,10 @@ async function bootstrap(): Promise<void> {
     hostWindowForSender: (senderId) => papersWindows.windowForSender(senderId),
     hostWindowIds: () => papersWindows.windowIds,
     hermesDockOwner: () => papersWindows.hermesDockOwner(),
+    enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
+    setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
+    clearEnteredBackpackEverywhere: (backpackId) => papersWindows.clearEnteredBackpackEverywhere(backpackId),
+    restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
     setHermesDockOwner: (windowId) => papersWindows.setHermesDockOwner(windowId),
     // The Canvas runtime is still application-level and attached to the first
     // window, so this has one answer today. Recording the relationship rather
