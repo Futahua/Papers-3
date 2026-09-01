@@ -26,7 +26,7 @@ import { registerResourceExecutors } from './resources/resourceExecutors';
 import { AgentRunService } from './agents/runService';
 import { PapersHostFacade } from './hostFacade';
 import { PapersUpdater } from './papersUpdater';
-import { startPapersControlServer, type PapersControlServer } from './control/papersControlServer';
+import { createPapersControlEventHub, startPapersControlServer, type PapersControlServer } from './control/papersControlServer';
 import { papersDataDirArgument } from './papersDataDir';
 import { randomUUID } from 'node:crypto';
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
@@ -1497,8 +1497,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       nativeWindowAlive: !context.owned.window.isDestroyed(),
       enteredBackpackId: context.enteredBackpackId,
     }));
+    const controlEventHub = createPapersControlEventHub();
     papersControlServer = await startPapersControlServer({
       descriptorPath,
+      eventHub: controlEventHub,
       dependencies: {
         windows: windowsSnapshot,
         snapshot: () => ({
@@ -1543,6 +1545,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           return found ? projectSurfaceControlSnapshot(found) : null;
         },
         createWindow: async () => ({ windowId: await createAdditionalPapersWindow() }),
+        publishEvent: (event, payload) => controlEventHub.publish(event, payload),
       },
     });
   }

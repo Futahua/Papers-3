@@ -4,10 +4,14 @@ import { createServer, type Server, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 
 import {
+  controlEventNameSchema,
   controlRequestSchema,
   dispatchPapersControl,
   PAPERS_CONTROL_PROTOCOL_VERSION,
+  papersControlEventFrameSchema,
+  papersControlCommands,
   type PapersControlDependencies,
+  type PapersControlEventName,
 } from './papersControlProtocol';
 
 /**
@@ -77,6 +81,39 @@ export interface PapersControlServer {
   close(): Promise<void>;
 }
 
+export interface PapersControlEventHub {
+  attach(socket: Socket): void;
+  detach(socket: Socket): void;
+  subscribe(socket: Socket, events: readonly PapersControlEventName[]): void;
+  publish(event: PapersControlEventName, payload: unknown): void;
+}
+
+/** Connection-local semantic event fan-out. The hub validates the complete
+ * frame before sending it, so an accidental internal payload cannot widen the
+ * authenticated boundary into URLs, roots, sender ids or native handles. */
+export function createPapersControlEventHub(): PapersControlEventHub {
+  const subscriptions = new Map<Socket, Set<PapersControlEventName>>();
+  return {
+    attach(socket) {
+      subscriptions.set(socket, new Set());
+    },
+    detach(socket) {
+      subscriptions.delete(socket);
+    },
+    subscribe(socket, events) {
+      const current = subscriptions.get(socket);
+      if (!current) return;
+      for (const event of events) current.add(controlEventNameSchema.parse(event));
+    },
+    publish(event, payload) {
+      const frame = papersControlEventFrameSchema.parse({ type: 'event', event, payload });
+      for (const [socket, events] of subscriptions) {
+        if (events.has(event)) send(socket, frame);
+      }
+    },
+  };
+}
+
 function sameSecret(actual: string, expected: string): boolean {
   const left = Buffer.from(actual);
   const right = Buffer.from(expected);
@@ -100,6 +137,7 @@ export async function startPapersControlServer({
   dependencies,
   processId = process.pid,
   publishDescriptor,
+  eventHub = createPapersControlEventHub(),
 }: {
   descriptorPath: string;
   dependencies: PapersControlDependencies;
@@ -107,6 +145,7 @@ export async function startPapersControlServer({
   /** Seam for proving the startup rollback: a publication failure after
    * `listen` must leave nothing listening and nothing on disk. */
   publishDescriptor?: (temporaryPath: string, finalPath: string) => Promise<void>;
+  eventHub?: PapersControlEventHub;
 }): Promise<PapersControlServer> {
   const token = randomBytes(32).toString('hex');
   const nonce = randomBytes(12).toString('hex');
@@ -142,10 +181,14 @@ export async function startPapersControlServer({
       return;
     }
     sockets.add(socket);
+    eventHub.attach(socket);
     socket.setEncoding('utf8');
     // A peer vanishing mid-write must not raise an unhandled error.
     socket.on('error', () => undefined);
-    socket.on('close', () => sockets.delete(socket));
+    socket.on('close', () => {
+      sockets.delete(socket);
+      eventHub.detach(socket);
+    });
 
     const frames = createFrameReader({
       maxFrameBytes: MAX_FRAME_BYTES,
@@ -162,6 +205,10 @@ export async function startPapersControlServer({
             if (!sameSecret(request.token, token)) throw new Error('unauthorized');
             // Nothing may mutate after the shutdown barrier.
             if (closing) throw new Error('control server is shutting down');
+            if (request.method === 'events.subscribe') {
+              const subscription = papersControlCommands['events.subscribe'].input.parse(request.params ?? {});
+              eventHub.subscribe(socket, subscription.events);
+            }
             const result = await dispatchPapersControl(dependencies, request);
             send(socket, { id: request.id, ok: true, result });
           } catch (error) {

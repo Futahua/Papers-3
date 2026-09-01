@@ -1,6 +1,6 @@
 # Workspace composition and programmatic control — persistent progress
 
-Last updated: 2026-09-01  
+Last updated: 2026-09-02
 Working branch: `agent/surface-context-routing`  
 Canonical checkout used in this work: `D:\Letters\MatTroiSeConMoc\Products\Papers\Source`
 
@@ -103,6 +103,10 @@ Current semantic control capabilities:
 - `inspect.windows`
 - `inspect.surfaces`
 - `inspect.surface --window <id> --surface <id>`
+- `inspect.workspace --window <id>`
+- `layout.list`, `layout.save`, `layout.load`, `layout.restore`
+- `workspace.open`, `workspace.activate`, `workspace.close`
+- `layout.split`, `layout.moveSurface`, `layout.moveSurfaceToWindow`
 - `window.create`
 
 Surface inspection also reports safe presentation state (`not-created`,
@@ -1025,6 +1029,31 @@ is signed off with no correctness or security defect.
 
 A3 is complete. No A3.5 or A4 scope is inferred here; the next milestone must
 be defined and reviewed separately.
+
+### B2.1 control-client parity and safe event subscriptions — in progress
+
+The reviewer’s next-milestone recommendation after A3.4 is this narrow
+programmatic-control slice:
+
+- [ ] Keep `papersctl` and the shared `papersControlClient` at parity with all
+  already-authorized semantic commands, including explicit cross-window move
+  identities.
+- [ ] Add authenticated connection-local subscriptions with explicit,
+  schema-validated event frames and response/event demultiplexing while a
+  request is outstanding.
+- [ ] Permit only redacted semantic events; never emit URLs, filesystem roots,
+  sender/WebContents IDs, native handles, Dockview internals, or renderer/native
+  identity.
+- [ ] Prove subscription isolation, malformed frame/refusal behavior, and
+  stable machine-readable `papersctl` event output in unit coverage.
+- [ ] Add one live Electron acceptance where a subscribed client observes a
+  real semantic change while ordinary requests remain correct.
+
+The initial implementation uses `window.created` and `workspace.changed` as
+the deliberately small event vocabulary. Subscription is connection-local and
+the server validates every complete frame before fan-out. Destructive
+confirmation, MCP/stdio transport, optional Electron compatibility, release,
+installation and packaging remain out of scope.
 
 ## Persistent pickup checklist for every new session
 

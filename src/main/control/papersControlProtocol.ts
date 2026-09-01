@@ -55,6 +55,61 @@ const movedWorkspaceSchema = z.object({
   targetTopology: workspaceTopologySchema,
 }).strict();
 
+export const papersControlEventNames = ['window.created', 'workspace.changed'] as const;
+export const controlEventNameSchema = z.enum(papersControlEventNames);
+export type PapersControlEventName = z.infer<typeof controlEventNameSchema>;
+
+const windowCreatedEventPayloadSchema = z.object({
+  windowId: z.number().int(),
+}).strict();
+
+const workspaceChangedEventPayloadSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('open'),
+    windowId: z.number().int(),
+    surfaceId: z.string().min(1),
+    projectId: z.string().min(1),
+    topology: workspaceTopologySchema,
+  }).strict(),
+  z.object({
+    kind: z.enum(['activate', 'close', 'load', 'move', 'restore', 'split']),
+    windowId: z.number().int(),
+    topology: workspaceTopologySchema,
+    layoutId: z.string().uuid().optional(),
+    surfaceId: z.string().min(1).optional(),
+  }).strict(),
+  z.object({
+    kind: z.literal('move-to-window'),
+    surfaceId: z.string().min(1),
+    sourceWindowId: z.number().int(),
+    targetWindowId: z.number().int(),
+    sourceTopology: workspaceTopologySchema,
+    targetTopology: workspaceTopologySchema,
+  }).strict(),
+]);
+
+export const papersControlEventFrameSchema = z.discriminatedUnion('event', [
+  z.object({
+    type: z.literal('event'),
+    event: z.literal('window.created'),
+    payload: windowCreatedEventPayloadSchema,
+  }).strict(),
+  z.object({
+    type: z.literal('event'),
+    event: z.literal('workspace.changed'),
+    payload: workspaceChangedEventPayloadSchema,
+  }).strict(),
+]);
+
+export type PapersControlEventFrame = z.infer<typeof papersControlEventFrameSchema>;
+const eventSubscriptionSchema = z.object({
+  events: z.array(controlEventNameSchema).min(1).max(papersControlEventNames.length),
+}).strict().superRefine((value, context) => {
+  if (new Set(value.events).size !== value.events.length) {
+    context.addIssue({ code: 'custom', message: 'events must not contain duplicates', path: ['events'] });
+  }
+});
+
 const controlWindowSchema = z.object({
   windowId: z.number().int(),
   hostAlive: z.boolean(),
@@ -156,6 +211,11 @@ export const papersControlCommands = {
     output: movedWorkspaceSchema,
     scope: 'app', effect: 'mutate',
   },
+  'events.subscribe': {
+    input: eventSubscriptionSchema,
+    output: z.object({ subscribed: z.array(controlEventNameSchema) }).strict(),
+    scope: 'app', effect: 'query',
+  },
   'layout.split': {
     input: surfaceTargetSchema.extend({ direction: z.enum(['right', 'down']) }).strict(),
     output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
@@ -201,6 +261,9 @@ export interface PapersControlDependencies {
   snapshot(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
+  /** Publish only schema-validated, redacted semantic events to subscribed
+   * control connections. The transport owns connection-local fan-out. */
+  publishEvent?(event: PapersControlEventName, payload: unknown): void;
 }
 
 const methodNames = Object.keys(papersControlCommands) as [PapersControlMethod, ...PapersControlMethod[]];
@@ -226,6 +289,10 @@ export async function dispatchPapersControl(
   const definition = papersControlCommands[request.method];
   definition.input.parse(request.params ?? {});
   switch (request.method) {
+    case 'events.subscribe': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      return papersControlCommands[request.method].output.parse({ subscribed: params.events });
+    }
     case 'inspect.surfaces': return papersControlCommands[request.method].output.parse(dependencies.surfaces());
     case 'inspect.surface': {
       const target = papersControlCommands[request.method].input.parse(request.params ?? {});
@@ -254,26 +321,30 @@ export async function dispatchPapersControl(
       const { windowId, layoutId } = papersControlCommands[request.method].input.parse(request.params ?? {});
       const loaded = await dependencies.loadWorkspaceLayout?.(windowId, layoutId);
       if (!loaded) throw new Error('That Papers window cannot load a named workspace layout.');
-      return papersControlCommands[request.method].output.parse(loaded);
+      const result = papersControlCommands[request.method].output.parse(loaded);
+      dependencies.publishEvent?.('workspace.changed', { kind: 'load', ...result });
+      return result;
     }
     case 'layout.moveSurfaceToWindow': {
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});
       const moved = await dependencies.moveWorkspaceSurfaceAcrossWindows?.(params);
       if (!moved) throw new Error('Cross-window workspace moves are unavailable.');
-      const result = moved as {
+      const movedResult = moved as {
         surfaceId: string;
         sourceWindowId: number;
         targetWindowId: number;
         source: { topology: z.infer<typeof workspaceTopologySchema> };
         target: { topology: z.infer<typeof workspaceTopologySchema> };
       };
-      return papersControlCommands[request.method].output.parse({
-        surfaceId: result.surfaceId,
-        sourceWindowId: result.sourceWindowId,
-        targetWindowId: result.targetWindowId,
-        sourceTopology: result.source.topology,
-        targetTopology: result.target.topology,
+      const result = papersControlCommands[request.method].output.parse({
+        surfaceId: movedResult.surfaceId,
+        sourceWindowId: movedResult.sourceWindowId,
+        targetWindowId: movedResult.targetWindowId,
+        sourceTopology: movedResult.source.topology,
+        targetTopology: movedResult.target.topology,
       });
+      dependencies.publishEvent?.('workspace.changed', { kind: 'move-to-window', ...result });
+      return result;
     }
     case 'layout.restore': {
       const { windowId, topology } = papersControlCommands[request.method].input.parse(request.params ?? {});
@@ -288,13 +359,17 @@ export async function dispatchPapersControl(
       }
       const restored = dependencies.restoreWorkspace?.(windowId, topology);
       if (!restored) throw new Error('That Papers window cannot restore workspace topology.');
-      return papersControlCommands[request.method].output.parse({ windowId, topology: restored });
+      const result = papersControlCommands[request.method].output.parse({ windowId, topology: restored });
+      dependencies.publishEvent?.('workspace.changed', { kind: 'restore', ...result });
+      return result;
     }
     case 'workspace.open': {
       const { windowId, projectId } = papersControlCommands[request.method].input.parse(request.params ?? {});
       const opened = await dependencies.openWorkspace?.(windowId, projectId);
       if (!opened) throw new Error('That Papers window cannot open the workspace project.');
-      return papersControlCommands[request.method].output.parse(opened);
+      const result = papersControlCommands[request.method].output.parse(opened);
+      dependencies.publishEvent?.('workspace.changed', { kind: 'open', ...result });
+      return result;
     }
     case 'workspace.activate':
     case 'workspace.close':
@@ -312,7 +387,9 @@ export async function dispatchPapersControl(
       } else if (request.method === 'workspace.close') {
         const closed = dependencies.closeWorkspace?.(params.windowId, params.surfaceId, topology);
         if (!closed) throw new Error('That Papers window cannot close the workspace surface.');
-        return papersControlCommands[request.method].output.parse({ windowId: params.windowId, topology: closed });
+        const result = papersControlCommands[request.method].output.parse({ windowId: params.windowId, topology: closed });
+        dependencies.publishEvent?.('workspace.changed', { kind: 'close', ...result });
+        return result;
       } else if (request.method === 'layout.moveSurface') {
         const move = papersControlCommands['layout.moveSurface'].input.parse(request.params ?? {});
         topology = moveWorkspaceSurface(topology, move.surfaceId, move.targetGroupId, move.targetIndex);
@@ -335,10 +412,25 @@ export async function dispatchPapersControl(
       }
       const restored = dependencies.restoreWorkspace?.(params.windowId, topology);
       if (!restored) throw new Error('That Papers window cannot mutate workspace topology.');
-      return papersControlCommands[request.method].output.parse({ windowId: params.windowId, topology: restored });
+      const result = papersControlCommands[request.method].output.parse({ windowId: params.windowId, topology: restored });
+      const kind = request.method === 'workspace.activate'
+        ? 'activate'
+        : request.method === 'layout.moveSurface' ? 'move' : 'split';
+      dependencies.publishEvent?.('workspace.changed', {
+        kind,
+        ...result,
+        ...(request.method === 'workspace.activate' || request.method === 'layout.moveSurface'
+          ? { surfaceId: params.surfaceId }
+          : {}),
+      });
+      return result;
     }
     case 'inspect.snapshot': return papersControlCommands[request.method].output.parse(dependencies.snapshot());
     case 'inspect.windows': return papersControlCommands[request.method].output.parse(dependencies.windows());
-    case 'window.create': return papersControlCommands[request.method].output.parse(await dependencies.createWindow());
+    case 'window.create': {
+      const result = papersControlCommands[request.method].output.parse(await dependencies.createWindow());
+      dependencies.publishEvent?.('window.created', result);
+      return result;
+    }
   }
 }

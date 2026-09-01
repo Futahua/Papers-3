@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -72,5 +72,26 @@ describe('developer control plane', () => {
       expect.objectContaining({ hostAlive: true, nativeWindowAlive: true }),
       expect.objectContaining({ hostAlive: true, nativeWindowAlive: true }),
     ]);
+  });
+
+  it('delivers a real window-created event to one subscribed client while requests stay usable', async () => {
+    const actor = await connectPapersControl(await readDescriptor(descriptorPath));
+    const cli = spawn(process.execPath, [
+      join(process.cwd(), 'tools', 'papersctl.mjs'),
+      'events.subscribe', '--events', 'window.created', '--descriptor', descriptorPath,
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    cli.stdout.setEncoding('utf8');
+    let stdout = '';
+    cli.stdout.on('data', (chunk: string) => { stdout += chunk; });
+    try {
+      await waitFor(async () => stdout.includes('"type":"subscription"'), 10_000, 'papersctl event subscription');
+      const created = await actor.call('window.create') as { ok: boolean; result?: { windowId: number } };
+      expect(created).toMatchObject({ ok: true, result: { windowId: expect.any(Number) } });
+      await waitFor(async () => stdout.includes(`"event":"window.created"`) && stdout.includes(`"windowId":${created.result?.windowId}`), 10_000, 'papersctl window-created event');
+      await expect(actor.call('inspect.windows')).resolves.toMatchObject({ ok: true, result: expect.any(Array) });
+    } finally {
+      actor.close();
+      cli.kill();
+    }
   });
 });

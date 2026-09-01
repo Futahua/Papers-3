@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createFrameReader, startPapersControlServer } from '../../src/main/control/papersControlServer';
+import { createFrameReader, createPapersControlEventHub, startPapersControlServer } from '../../src/main/control/papersControlServer';
 
 /**
  * Reads a complete newline-terminated frame rather than assuming one `data`
@@ -291,6 +291,43 @@ describe('Papers developer control server', () => {
     await closing;
     expect(created).toBe(0);
     void readLine;
+  });
+
+  it('fans events out only to the subscribed authenticated connection', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-'));
+    const descriptorPath = join(root, 'control.json');
+    const eventHub = createPapersControlEventHub();
+    const server = await startPapersControlServer({
+      descriptorPath,
+      eventHub,
+      dependencies: {
+        snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+        createWindow: async () => ({ windowId: 1 }),
+        publishEvent: (event, payload) => eventHub.publish(event, payload),
+      },
+    });
+    const first = await connect(server.descriptor.pipe);
+    const second = await connect(server.descriptor.pipe);
+    const request = (id: number) => JSON.stringify({
+      id, token: server.descriptor.token, protocolVersion: server.descriptor.protocolVersion,
+      method: 'events.subscribe', params: { events: ['window.created'] },
+    }) + '\n';
+    try {
+      first.socket.write(request(1));
+      await expect(first.readLine()).resolves.toContain('"ok":true');
+      eventHub.publish('window.created', { windowId: 9 });
+      await expect(first.readLine()).resolves.toContain('"windowId":9');
+      await expect(Promise.race([
+        second.readLine(),
+        new Promise((resolve) => setTimeout(() => resolve('no event'), 100)),
+      ])).resolves.toBe('no event');
+      expect(() => eventHub.publish('window.created', { windowId: 9, url: 'papers-backpack://secret' }))
+        .toThrow();
+    } finally {
+      first.socket.destroy();
+      second.socket.destroy();
+      await server.close();
+    }
   });
 
 /**

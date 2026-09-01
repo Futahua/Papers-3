@@ -54,51 +54,73 @@ export async function readDescriptor(descriptorPath) {
   return JSON.parse(await readFile(resolve(descriptorPath), 'utf8'));
 }
 
-/** Open a control connection. The caller sends requests and reads replies in
- * order; the connection is closed with `close()`. */
+/** Open a control connection. Responses and asynchronous event frames share
+ * one stream, so a single demultiplexer owns reads for the whole socket. */
 export async function connectPapersControl(descriptor) {
   const socket = createConnection(descriptor.pipe);
   await once(socket, 'connect');
   socket.setEncoding('utf8');
   const reader = createLineReader(socket);
   let nextId = 0;
-  /**
-   * Requests are serialized per connection.
-   *
-   * The server dispatches each frame independently, so responses may complete
-   * out of order. A client that simply awaits "the next line" would hand the
-   * first caller the second caller's reply -- silently, and only when calls
-   * overlap. Semantic control is stateful, so deterministic ordering is worth
-   * more than pipelining here, and it leaves shutdown one clean tail per
-   * socket to drain.
-   */
-  let tail = Promise.resolve();
+  const pending = new Map();
+  const eventHandlers = new Set();
+  let ended = null;
+
+  const failPending = (error) => {
+    ended = error;
+    for (const { reject } of pending.values()) reject(error);
+    pending.clear();
+  };
+
+  // Do not let a response reader race with another response reader. Events
+  // may arrive while any request is outstanding and are delivered without
+  // consuming a request response.
+  void (async () => {
+    try {
+      while (!ended) {
+        const line = await reader.readLine();
+        const frame = JSON.parse(line);
+        if (frame?.type === 'event') {
+          for (const handler of eventHandlers) handler(frame);
+          continue;
+        }
+        const id = frame?.id;
+        const entry = id === null
+          ? pending.values().next().value
+          : pending.get(id);
+        if (!entry) continue;
+        pending.delete(id === null ? entry.id : id);
+        entry.resolve(frame);
+      }
+    } catch (error) {
+      failPending(error);
+    }
+  })();
 
   return {
     socket,
     call(method, params = {}) {
-      const run = tail.then(async () => {
-        nextId += 1;
-        const id = nextId;
-        socket.write(`${JSON.stringify({
-          id,
-          token: descriptor.token,
-          protocolVersion: descriptor.protocolVersion,
-          method,
-          params,
-        })}\n`);
-        const response = JSON.parse(await reader.readLine());
-        // Belt and braces: never hand back a reply that is not this request's.
-        if (response.id !== id && response.id !== null) {
-          throw new Error(`control response id ${String(response.id)} did not match request ${id}`);
-        }
-        return response;
+      if (ended) return Promise.reject(ended);
+      nextId += 1;
+      const id = nextId;
+      const response = new Promise((resolve, reject) => {
+        pending.set(id, { id, resolve, reject });
       });
-      // A failed call must not wedge the queue for the next one.
-      tail = run.then(() => undefined, () => undefined);
-      return run;
+      socket.write(`${JSON.stringify({
+        id,
+        token: descriptor.token,
+        protocolVersion: descriptor.protocolVersion,
+        method,
+        params,
+      })}\n`);
+      return response;
+    },
+    onEvent(handler) {
+      eventHandlers.add(handler);
+      return () => eventHandlers.delete(handler);
     },
     close() {
+      if (!ended) failPending(new Error('control connection closed'));
       socket.end();
     },
   };

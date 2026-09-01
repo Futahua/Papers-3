@@ -1,9 +1,9 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { startPapersControlServer } from '../../src/main/control/papersControlServer';
+import { createPapersControlEventHub, startPapersControlServer } from '../../src/main/control/papersControlServer';
 // @ts-expect-error -- the shared control client is plain ESM shipped with the tools.
 import { connectPapersControl } from '../../tools/papersControlClient.mjs';
 
@@ -86,6 +86,51 @@ describe('shared Papers control client', () => {
       expect(after.ok).toBe(true);
       expect(after.result).toEqual([]);
     } finally {
+      connection.close();
+      await server.close();
+    }
+  });
+
+  it('demultiplexes an event that arrives while a request is outstanding', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-client-'));
+    const descriptorPath = join(root, 'control.json');
+    const eventHub = createPapersControlEventHub();
+    let releaseCreate: (() => void) | null = null;
+    const server = await startPapersControlServer({
+      descriptorPath,
+      eventHub,
+      dependencies: {
+        surfaces: () => [],
+        surface: () => null,
+        createWindow: async () => {
+          await new Promise<void>((resolve) => { releaseCreate = resolve; });
+          return { windowId: 42 };
+        },
+        windows: () => [],
+        snapshot: () => ({}),
+        publishEvent: (event, payload) => eventHub.publish(event, payload),
+      },
+    });
+
+    const connection = await connectPapersControl(server.descriptor);
+    const events: unknown[] = [];
+    const stop = connection.onEvent((event: unknown) => events.push(event));
+    try {
+      await expect(connection.call('events.subscribe', { events: ['window.created'] }))
+        .resolves.toMatchObject({ ok: true, result: { subscribed: ['window.created'] } });
+      const creating = connection.call('window.create');
+      await vi.waitFor(() => expect(releaseCreate).not.toBeNull());
+
+      // This frame is asynchronous and precedes the response for window.create.
+      eventHub.publish('window.created', { windowId: 99 });
+      await vi.waitFor(() => expect(events).toEqual([
+        { type: 'event', event: 'window.created', payload: { windowId: 99 } },
+      ]));
+
+      releaseCreate!();
+      await expect(creating).resolves.toMatchObject({ ok: true, result: { windowId: 42 } });
+    } finally {
+      stop();
       connection.close();
       await server.close();
     }

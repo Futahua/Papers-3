@@ -4,6 +4,7 @@ import {
   controlRequestSchema,
   dispatchPapersControl,
   PAPERS_CONTROL_PROTOCOL_VERSION,
+  papersControlEventFrameSchema,
   type PapersControlMethod,
 } from '../../src/main/control/papersControlProtocol';
 import { createWorkspaceTopology, openWorkspaceSurface, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
@@ -44,6 +45,28 @@ describe('Papers developer control protocol', () => {
       .resolves.toEqual([window]);
     await expect(dispatchPapersControl(dependencies, request('window.create')))
       .resolves.toEqual({ windowId: 3 });
+  });
+
+  it('validates subscriptions and emits only redacted semantic frames', async () => {
+    const publishEvent = vi.fn();
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+      createWindow: vi.fn(async () => ({ windowId: 3 })), publishEvent,
+    };
+
+    await expect(dispatchPapersControl(dependencies, request('events.subscribe', {
+      events: ['window.created', 'workspace.changed'],
+    }))).resolves.toEqual({ subscribed: ['window.created', 'workspace.changed'] });
+    await dispatchPapersControl(dependencies, request('window.create'));
+    expect(publishEvent).toHaveBeenCalledWith('window.created', { windowId: 3 });
+    expect(() => papersControlEventFrameSchema.parse({
+      type: 'event', event: 'window.created', payload: {
+        windowId: 3, url: 'papers-backpack://private', root: 'C:\\private', senderId: 8,
+      },
+    })).toThrow();
+    await expect(dispatchPapersControl(dependencies, request('events.subscribe', {
+      events: ['window.created', 'window.created'],
+    }))).rejects.toThrow(/duplicates/);
   });
 
   it('dispatches named-layout list/save/load with explicit window targets', async () => {
