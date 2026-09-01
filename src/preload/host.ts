@@ -77,6 +77,9 @@ const api = {
 
   layout: {
     hydrateStartupWorkspace: () => ipcRenderer.invoke('host:workspace:hydrate-startup'),
+    list: () => ipcRenderer.invoke('host:layout:list'),
+    save: (name: string) => ipcRenderer.invoke('host:layout:save', name),
+    load: (layoutId: string) => ipcRenderer.invoke('host:layout:load', layoutId),
     setProgramBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke('host:layout:set-program-bounds', bounds),
     setOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-overlay', active),

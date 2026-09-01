@@ -824,6 +824,22 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.workspaceLayouts.list();
   }
 
+  saveWorkspaceLayout(senderId: number, name: string): Promise<NamedWorkspaceLayout> {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may save a named workspace layout.');
+    return this.saveWorkspaceLayoutFromControl(windowId, name);
+  }
+
+  loadWorkspaceLayout(senderId: number, layoutId: string): Promise<{
+    windowId: number;
+    layoutId: string;
+    topology: WorkspaceTopologyV1;
+  }> {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may load a named workspace layout.');
+    return this.loadWorkspaceLayoutFromControl(windowId, layoutId);
+  }
+
   async saveWorkspaceLayoutFromControl(windowId: number, name: string): Promise<NamedWorkspaceLayout> {
     this.requireLiveWorkspaceWindow(windowId);
     const topology = this.deps.workspaceTopology?.(windowId) ?? null;

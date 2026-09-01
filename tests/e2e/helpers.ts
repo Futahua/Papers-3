@@ -65,6 +65,24 @@ export async function evalInHost<T>(app: ElectronApplication, script: string): P
   }, script) as Promise<T>;
 }
 
+/** Run JS inside a specific Papers host view. Additional native windows are
+ * not always exposed as Playwright Page objects, so tests target their host
+ * WebContents through Electron's window registry. */
+export async function evalInHostWindow<T>(
+  app: ElectronApplication,
+  windowId: number,
+  script: string,
+): Promise<T> {
+  return app.evaluate(async ({ BaseWindow }, args) => {
+    const win = BaseWindow.getAllWindows().find((candidate) => candidate.id === args.windowId);
+    if (!win) throw new Error(`no window with id ${args.windowId}`);
+    const views = win.contentView.children as Electron.WebContentsView[];
+    const host = views[0];
+    if (!host) throw new Error('no host view');
+    return host.webContents.executeJavaScript(args.script, true);
+  }, { windowId, script }) as Promise<T>;
+}
+
 /** Run JS inside the independently loaded native Backpack-project view. */
 export async function evalInBackpackProject<T>(
   app: ElectronApplication,

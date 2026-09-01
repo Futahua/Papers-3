@@ -145,6 +145,13 @@ interface HostBridge {
   };
   layout: {
     hydrateStartupWorkspace(): Promise<{ hydrated: boolean }>;
+    list(): Promise<Array<{
+      layoutId: string; name: string; topology: WorkspaceTopologyV1; createdAt: string; updatedAt: string;
+    }>>;
+    save(name: string): Promise<{
+      layoutId: string; name: string; topology: WorkspaceTopologyV1; createdAt: string; updatedAt: string;
+    }>;
+    load(layoutId: string): Promise<{ windowId: number; layoutId: string; topology: WorkspaceTopologyV1 }>;
     setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setOverlayActive(active: boolean): Promise<void>;
     setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;

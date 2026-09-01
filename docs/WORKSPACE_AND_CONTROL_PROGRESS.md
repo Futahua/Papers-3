@@ -762,6 +762,25 @@ queued successful layout cannot be contradicted by rollback of its fresh ids.
 Reviewer sign-off is still pending on the exact pushed head. UI remains deferred
 to A2.1d.
 
+### A2.1d minimal Layouts UI and live acceptance
+
+- [x] Add a title-bar Layouts popover with name entry, Save current layout,
+  named-layout list, Load actions, busy state and visible error feedback.
+- [x] Expose renderer operations through authenticated host IPC that derives the
+  target window from its sender; the renderer never supplies a native window ID.
+- [x] Consume the combined load event by replacing the descriptor set before
+  Dockview/native presentation convergence, with external-restore commit
+  suppression.
+- [x] Add a real Electron acceptance test for UI save, material mutation, UI
+  load, fresh IDs, persistence, a second-window independent load, and an
+  unavailable-project failure that preserves the target.
+- [ ] Reviewer sign-off on the exact pushed head.
+
+A2.1d validation: typecheck passed, the focused real Electron acceptance passed
+1/1 after making secondary-window targeting use its explicit native `windowId`.
+Full unit suite and build are rerun before review. No overwrite, rename, delete,
+merge, startup selection, or management screen was added.
+
 ### Later gates
 
 - [ ] A2 — named Save Layout / Load Layout.

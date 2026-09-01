@@ -79,6 +79,9 @@ export interface HostFacade {
   saveWindowBounds(senderId: number): Promise<{ x: number; y: number; width: number; height: number } | null>;
   clearWindowBounds(): Promise<void>;
   commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void;
+  listWorkspaceLayouts(): Promise<unknown>;
+  saveWorkspaceLayout(senderId: number, name: string): Promise<unknown>;
+  loadWorkspaceLayout(senderId: number, layoutId: string): Promise<unknown>;
 
   listPermissions(): unknown;
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
@@ -312,6 +315,13 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:settings:clear-window-bounds', () => facade.clearWindowBounds());
   handle('host:workspace:commit-topology', (event, topology) =>
     facade.commitWorkspaceTopology(event.sender.id, parseWorkspaceTopology(topology)),
+  );
+  handle('host:layout:list', () => facade.listWorkspaceLayouts());
+  handle('host:layout:save', (event, name) =>
+    facade.saveWorkspaceLayout(event.sender.id, z.string().min(1).max(120).parse(name)),
+  );
+  handle('host:layout:load', (event, layoutId) =>
+    facade.loadWorkspaceLayout(event.sender.id, z.string().uuid().parse(layoutId)),
   );
 
   handle('host:permissions:list', () => facade.listPermissions());
