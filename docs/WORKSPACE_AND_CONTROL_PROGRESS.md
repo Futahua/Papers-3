@@ -524,6 +524,10 @@ A1.2f reviewer hardening (fresh review of `9a3c79f`):
   Backpack from the canonical focused group's active surface.
 - [x] Remove renderer-side close successor selection/activation. Main topology
   is the sole successor authority, including three-or-more-surface layouts.
+- [x] Route project-originated close, archive/remove and developer-control
+  close through the same main-owned terminal surface transaction: validate
+  current topology before retirement, close/retire/unbind exactly, derive the
+  canonical successor, persist it, emit topology, then emit cleanup notice.
 - [x] Make every reconciliation generation schedule the suppression-latch
   clear, including a no-op generation superseding a mutating generation.
 - [x] Allocate fresh split group ids when a derived id survives a prior
@@ -532,7 +536,9 @@ A1.2f reviewer hardening (fresh review of `9a3c79f`):
   failures visible in main diagnostics instead of swallowing them.
 - [x] Add regressions for semantic-invalid restore with no mutation,
   unsupported orientation restore, retained group-id history, semantic disk
-  validation, external host-tab activation and duplicate-restore unlatching.
+  validation, external host-tab activation, duplicate-restore unlatching, and
+  three-surface project-originated/archive close where canonical focus is not
+  the first logical-registry survivor.
 
 A1.2f validation: typecheck passed, full Vitest 661 passed / 4 skipped,
 production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs

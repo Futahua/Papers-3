@@ -9,6 +9,7 @@ import { connectPapersControl, readDescriptor } from '../../tools/papersControlC
 
 const A = 'bp-11111111-1111-4111-8111-111111111111';
 const B = 'bp-22222222-2222-4222-8222-222222222222';
+const C = 'bp-33333333-3333-4333-8333-333333333333';
 let launched: LaunchedApp;
 let descriptorPath: string;
 
@@ -44,6 +45,7 @@ beforeAll(async () => {
   const projects = [
     await seedProject(userDataDir, A, 'Alpha'),
     await seedProject(userDataDir, B, 'Beta'),
+    await seedProject(userDataDir, C, 'Gamma'),
   ];
   const createdAt = '2026-09-01T00:00:00.000Z';
   const backpacks = projects.map(({ id, name }) => ({
@@ -250,15 +252,43 @@ describe('A1 workspace tabs', () => {
         && await hostPage.locator('.dv-groupview').count() === 1;
     }, 10_000, 'moving final tab collapses Papers and Dockview source group');
 
-    await call('workspace.close', { windowId, surfaceId: surfaceByProject.get(A)! });
+    expect(await evalInHost<boolean>(launched.app, `(() => {
+      const button = document.querySelector('.titlebar .pill-button');
+      button?.click();
+      return Boolean(button);
+    })()`)).toBe(true);
+    await waitFor(() => evalInHost<boolean>(launched.app, `Boolean([...document.querySelectorAll('.backpack-card .name')]
+      .find((node) => node.textContent?.trim() === 'Gamma'))`), 10_000, 'Backpack picker for Gamma');
+    expect(await evalInHost<boolean>(launched.app, enterBackpack('Gamma'))).toBe(true);
+    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string }>).some((surface) => surface.projectId === C),
+      10_000, 'Gamma workspace surface');
+    const threeWorkspace = await call('inspect.workspace', { windowId }) as {
+      topology: { surfaces: Array<{ surfaceId: string; projectId: string }> };
+    };
+    const gammaSurface = threeWorkspace.topology.surfaces.find((surface) => surface.projectId === C)!.surfaceId;
+    await call('layout.split', { windowId, surfaceId: gammaSurface, direction: 'right' });
+    const alphaContents = await launched.app.evaluate(({ webContents }, projectId) =>
+      webContents.getAllWebContents().find((contents) => contents.getURL().startsWith(`papers-backpack://${projectId}/`))?.id ?? null,
+    A);
+    expect(alphaContents).not.toBeNull();
+    await launched.app.evaluate(({ webContents }, senderId) => webContents.fromId(senderId!)!
+      .executeJavaScript(`window.postMessage({ type: 'papers:project:close' }, '*')`), alphaContents);
     await waitFor(async () => {
       const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
-      return surfaces.length === 1
-        && surfaces[0]?.projectId === B
-        && surfaces[0]?.presentation === 'visible';
-    }, 10_000, 'authoritative project close with surviving Beta active');
+      return surfaces.length === 2
+        && surfaces.some((surface) => surface.projectId === C && surface.presentation === 'visible')
+        && !surfaces.some((surface) => surface.projectId === A);
+    }, 10_000, 'project-originated close preserves canonical Gamma focus');
     expect(await hostPage.getByRole('tab', { name: 'Alpha' }).count()).toBe(0);
     expect(await hostPage.getByRole('tab', { name: 'Beta' }).count()).toBe(1);
+    expect(await hostPage.getByRole('tab', { name: 'Gamma' }).getAttribute('aria-selected')).toBe('true');
+
+    await evalInHost(launched.app, `window.papersHost.backpacks.setArchived(${JSON.stringify(B)}, true)`);
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.length === 1 && surfaces[0]?.projectId === C && surfaces[0]?.presentation === 'visible';
+    }, 10_000, 'archive close preserves canonical Gamma focus');
+    expect(await hostPage.getByRole('tab', { name: 'Beta' }).count()).toBe(0);
 
     const persistedPath = path.join(launched.userDataDir, 'PapersData', 'workspace-topologies.json');
     await waitFor(async () => {
@@ -268,7 +298,7 @@ describe('A1 workspace tabs', () => {
         };
         return persisted.workspaces.some((workspace) =>
           workspace.topology.surfaces.length === 1
-          && workspace.topology.surfaces[0]?.projectId === B);
+          && workspace.topology.surfaces[0]?.projectId === C);
       } catch {
         return false;
       }

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PapersHostFacade, type FacadeDeps } from '../../src/main/hostFacade';
 import { createLogicalSurfaceRegistry } from '../../src/main/windows/logicalSurfaceRegistry';
 import { createSurfaceContextRegistry } from '../../src/main/windows/surfaceContextRegistry';
-import { createWorkspaceTopology, openWorkspaceSurface } from '../../src/shared/workspaceTopology';
+import { createWorkspaceTopology, openWorkspaceSurface, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
 
 const PROJECT = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 const OTHER = 'bp-a5d07080-7210-45e6-b3f1-93978873a2fe';
@@ -30,7 +30,10 @@ function createFacade() {
   const setEnteredBackpack = vi.fn((windowId: number, backpackId: string | null) => {
     enteredBackpacks.set(windowId, backpackId);
   });
-  const setWorkspaceTopology = vi.fn();
+  const workspaceTopologies = new Map<number, ReturnType<typeof createWorkspaceTopology>>();
+  const setWorkspaceTopology = vi.fn((windowId: number, topology: ReturnType<typeof createWorkspaceTopology>) => {
+    workspaceTopologies.set(windowId, topology);
+  });
   const markLeft = vi.fn(async () => {});
   const facade = new PapersHostFacade({
     surfaces,
@@ -46,6 +49,7 @@ function createFacade() {
     setEnteredBackpack,
     activeSurfaceId: (windowId: number) => focusedSurfaces.get(windowId) ?? null,
     setActiveSurfaceId,
+    workspaceTopology: (windowId: number) => workspaceTopologies.get(windowId) ?? null,
     setWorkspaceTopology,
     clearEnteredBackpackEverywhere: vi.fn(),
     listLogicalSurfaces: () => logicalSurfaces.project(),
@@ -69,7 +73,7 @@ function createFacade() {
     facade, surfaces, logicalSurfaces, hideBackpackProjectSurface,
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
-    setEnteredBackpack, setWorkspaceTopology, markLeft,
+    setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, markLeft,
   };
 }
 
@@ -143,13 +147,20 @@ describe('surface routing in the host facade', () => {
     expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, b.surfaceId);
   });
 
-  it('project-originated close retires its exact surface and selects a survivor', () => {
+  it('project-originated close uses canonical focus rather than the first registry survivor', () => {
     const {
       facade, surfaces, logicalSurfaces, closeAttachedProjectSurface,
-      sendToWindow, setActiveSurfaceId, setEnteredBackpack,
+      sendToWindow, setActiveSurfaceId, setEnteredBackpack, workspaceTopologies,
     } = createFacade();
     const closing = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     const survivor = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    const canonical = logicalSurfaces.create({ windowId: 1, projectId: 'bp-c', kind: 'project' });
+    let topology = createWorkspaceTopology();
+    topology = openWorkspaceSurface(topology, { surfaceId: closing.surfaceId, projectId: PROJECT, title: 'A' });
+    topology = openWorkspaceSurface(topology, { surfaceId: survivor.surfaceId, projectId: OTHER, title: 'B' });
+    topology = openWorkspaceSurface(topology, { surfaceId: canonical.surfaceId, projectId: 'bp-c', title: 'C' });
+    topology = splitWorkspaceGroup(topology, { groupId: 'group-main', newGroupId: 'group-c', surfaceId: canonical.surfaceId, orientation: 'horizontal', position: 'after' });
+    workspaceTopologies.set(1, topology);
     surfaces.bind(FRAME, {
       surfaceId: closing.surfaceId,
       projectId: PROJECT,
@@ -164,8 +175,9 @@ describe('surface routing in the host facade', () => {
     expect(logicalSurfaces.get(closing.surfaceId)).toBeNull();
     expect(logicalSurfaces.get(survivor.surfaceId)).not.toBeNull();
     expect(surfaces.contextForSender(FRAME)).toBeNull();
-    expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, survivor.surfaceId);
-    expect(setEnteredBackpack).toHaveBeenLastCalledWith(1, OTHER);
+    expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, canonical.surfaceId);
+    expect(setEnteredBackpack).toHaveBeenLastCalledWith(1, 'bp-c');
+    expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:workspace-topology', expect.objectContaining({ focusedGroupId: 'group-c' }));
     expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:backpack-project-close-request', {
       surfaceId: closing.surfaceId,
     });
@@ -326,13 +338,18 @@ describe('project-unavailability lifecycle uses logical surface identity', () =>
   it('archives every exact project surface without touching another project', async () => {
     const {
       facade, logicalSurfaces, closeAttachedProjectSurface, sendToWindow,
-      setActiveSurfaceId, setEnteredBackpack,
+      setActiveSurfaceId, setEnteredBackpack, workspaceTopologies,
     } = createFacade();
     const a = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     const b = logicalSurfaces.create({ windowId: 2, projectId: PROJECT, kind: 'project' });
     const other = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
     setActiveSurfaceId(1, a.surfaceId);
     setActiveSurfaceId(2, b.surfaceId);
+    workspaceTopologies.set(1, openWorkspaceSurface(
+      openWorkspaceSurface(createWorkspaceTopology(), { surfaceId: a.surfaceId, projectId: PROJECT, title: 'A' }),
+      { surfaceId: other.surfaceId, projectId: OTHER, title: 'Other' },
+    ));
+    workspaceTopologies.set(2, openWorkspaceSurface(createWorkspaceTopology(), { surfaceId: b.surfaceId, projectId: PROJECT, title: 'A' }));
 
     await facade.setBackpackArchived(PROJECT, true);
 

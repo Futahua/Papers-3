@@ -552,6 +552,7 @@ async function bootstrap(): Promise<void> {
     hermesDockOwner: () => papersWindows.hermesDockOwner(),
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
+    workspaceTopology: (windowId) => workspaceTopologies.get(windowId) ?? null,
     setWorkspaceTopology: (windowId, topology) => {
       workspaceTopologies.set(windowId, topology);
       workspaceTopologyRevisions.set(windowId, (workspaceTopologyRevisions.get(windowId) ?? 0) + 1);

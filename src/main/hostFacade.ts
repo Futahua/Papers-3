@@ -145,6 +145,7 @@ export interface FacadeDeps {
   saveWindowBounds: (senderId: number) => Promise<{ x: number; y: number; width: number; height: number } | null>;
   /** Forget the preset so Papers reopens at its default size. */
   clearWindowBounds: () => Promise<void>;
+  workspaceTopology?: (windowId: number) => WorkspaceTopologyV1 | null;
   setWorkspaceTopology: (windowId: number, topology: WorkspaceTopologyV1) => void;
 }
 
@@ -310,19 +311,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private closeAndRetireLogicalProjectSurfaces(projectId: string): void {
     const targets = this.deps.listLogicalSurfaces()
       .filter((surface) => surface.projectId === projectId && surface.kind === 'project');
-    for (const { windowId, surfaceId } of targets) {
-      this.deps.closeAttachedProjectSurface(windowId, surfaceId);
-      this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', { surfaceId });
-    }
+    for (const { windowId, surfaceId } of targets) this.closeLogicalProjectSurface(windowId, surfaceId);
     this.deps.retireProjectSurfaces(projectId);
-
-    for (const windowId of new Set(targets.map((surface) => surface.windowId))) {
-      const activeSurfaceId = this.deps.activeSurfaceId(windowId);
-      if (activeSurfaceId && this.deps.logicalSurfaces.get(activeSurfaceId)) continue;
-      const replacement = this.deps.logicalSurfaces.listForWindow(windowId)[0] ?? null;
-      this.deps.setActiveSurfaceId(windowId, replacement?.surfaceId ?? null);
-      this.deps.setEnteredBackpack(windowId, replacement?.projectId ?? null);
-    }
   }
 
   private canvasStore(backpackId: string): AtomicJsonStore {
@@ -597,20 +587,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (!context?.surfaceId) return;
     const surface = this.deps.logicalSurfaces.get(context.surfaceId);
     if (!surface || surface.windowId !== context.windowId) return;
-    this.deps.closeAttachedProjectSurface(context.windowId, context.surfaceId);
-    this.deps.logicalSurfaces.retire(context.surfaceId);
-    this.deps.surfaces.unbind(senderId);
-
-    if (this.deps.activeSurfaceId(context.windowId) === context.surfaceId) {
-      const replacement = this.deps.logicalSurfaces.listForWindow(context.windowId)[0] ?? null;
-      this.deps.setActiveSurfaceId(context.windowId, replacement?.surfaceId ?? null);
-      this.deps.setEnteredBackpack(context.windowId, replacement?.projectId ?? null);
-    }
-    this.deps.sendToWindow(
-      context.windowId,
-      'host:event:backpack-project-close-request',
-      { surfaceId: context.surfaceId },
-    );
+    this.closeLogicalProjectSurface(context.windowId, context.surfaceId);
   }
 
   async runBackpackProjectAction(senderId: number, actionId: string): Promise<void> {
@@ -856,6 +833,16 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (!surface || surface.windowId !== windowId || surface.kind !== 'project') {
       throw new Error('That surface is not open in that Papers window.');
     }
+    return this.closeLogicalProjectSurface(windowId, surfaceId, topology);
+  }
+
+  /** One main-owned terminal close transaction for every close producer. */
+  private closeLogicalProjectSurface(
+    windowId: number,
+    surfaceId: string,
+    topology = this.deps.workspaceTopology?.(windowId) ?? null,
+  ): WorkspaceTopologyV1 {
+    if (!topology) throw new Error('That Papers window has not committed workspace topology.');
     this.validateWorkspaceTopology(windowId, topology);
     this.deps.closeAttachedProjectSurface(windowId, surfaceId);
     this.deps.logicalSurfaces.retire(surfaceId);
