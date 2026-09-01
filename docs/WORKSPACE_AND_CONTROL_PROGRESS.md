@@ -943,13 +943,19 @@ signed off the infrastructure exact head above.
   pair commit; failed-restore forward fallback also tears down the source
   collection; and composed adoption retries after a first presentation throw.
   Add archive/remove, source-cleanup, and double-failure adoption coverage.
-- [ ] Reviewer sign-off on the A3.3 exact head.
+- [x] A3.3r3 hardening: archive/remove and every live project-surface creation
+  path share a project-level ownership gate across awaited registry/project
+  work; the gate is held through availability cleanup, and native collection
+  adoption retries presentation after a first `present()` failure without
+  duplicating collection ownership. Add held-registry-save archive/remove and
+  real collection retry regressions.
+- [ ] Reviewer sign-off on exact pushed head
+  `042d1c403b8ca7ae0c2bda2e5f73de184331fdd3`.
 
 A3.3 validation so far: typecheck passed; focused move/protocol/persistence/
-collection tests passed 77/77; full Vitest passed 713/717 (4 skipped); build
-and diff checks passed;
-live workspace-tabs and developer-control Electron acceptance passed 3/3. The
-A3.3r2 exact-head review remains pending.
+collection tests passed 80/80; full Vitest passed 716/720 (4 skipped); build
+and diff checks passed; live workspace-tabs and developer-control Electron
+acceptance passed 3/3. The A3.3r3 exact-head review remains pending.
 
 ## Persistent pickup checklist for every new session
 
