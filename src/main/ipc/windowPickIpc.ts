@@ -68,6 +68,8 @@ export function registerWindowPickIpc({
       throw new Error('denied: sender does not own the active picker');
     }
   };
+  const stillOwns = (claim: { senderId: number; generation: number }): boolean =>
+    owner !== null && owner.senderId === claim.senderId && owner.generation === claim.generation;
 
   ipcMain.handle('papers:window-pick:begin', async (event, raw) => {
     console.info('[045-direct-pick] ipc-begin-received', event.sender.id);
@@ -83,6 +85,7 @@ export function registerWindowPickIpc({
     }
     const members = raw['members'].map(parseMemberDescriptor);
     const sender = event.sender;
+    if (owner) throw new Error('another native picker session is already active');
     requireOwner(sender);
     const claim = {
       senderId: sender.id,
@@ -91,7 +94,7 @@ export function registerWindowPickIpc({
     owner = claim;
     if (typeof (sender as WebContents & { once?: unknown }).once === 'function') {
       sender.once('destroyed', () => {
-        if (owner?.generation === claim.generation) {
+        if (stillOwns(claim)) {
           owner = null;
           void session.cancel();
         }
@@ -100,13 +103,13 @@ export function registerWindowPickIpc({
     const result = await session.begin({
       memberDescriptors: members,
       onResult: (result: WindowPickResult) => {
-        if (owner?.generation === claim.generation) owner = null;
+        if (stillOwns(claim)) owner = null;
         if (!sender.isDestroyed()) {
           sender.send('papers:window-pick:result', result);
         }
       },
     });
-    if (result.outcome !== 'started' && owner?.generation === claim.generation) owner = null;
+    if (result.outcome !== 'started' && stillOwns(claim)) owner = null;
     console.info('[045-direct-pick] session-begin-result', result.outcome,
       result.outcome === 'failed' ? (result.error ?? '') : '');
     return result;
