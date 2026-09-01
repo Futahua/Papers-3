@@ -44,6 +44,13 @@ export async function hydrateStartupWorkspace(
       if (!project) throw new Error(`Backpack ${oldSurface.projectId} has no usable project surface.`);
       opened.push({ old: oldSurface, fresh: { ...oldSurface, url: project.url } });
     }
+    // Availability may change while the asynchronous project lookups above
+    // are in flight. Recheck the complete set before any allocation.
+    for (const oldSurface of snapshot.topology.surfaces) {
+      if (!deps.findAvailableBackpack(oldSurface.projectId)) {
+        throw new Error(`Backpack ${oldSurface.projectId} is not available.`);
+      }
+    }
     for (const { old, fresh } of opened) {
       const surface = deps.createSurface({ windowId, projectId: old.projectId });
       allocated.push(surface.surfaceId);

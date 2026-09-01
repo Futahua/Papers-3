@@ -66,6 +66,7 @@ export function App(): React.JSX.Element {
   openProjectsRef.current = openProjects;
   const [workspaceTopology, setWorkspaceTopology] = useState(createWorkspaceTopology);
   const [hydrationReady, setHydrationReady] = useState(false);
+  const topologyCommitArmed = useRef(false);
   const externallyRestoredTopology = useRef(false);
   /**
    * The logical surface this window is showing.
@@ -87,13 +88,13 @@ export function App(): React.JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (!hydrationReady) return;
     void host().settings.get().then((settings) => {
       document.documentElement.dataset.transparentWindow = String(settings.transparentWindow);
     }).catch(() => undefined);
-  }, []);
+  }, [hydrationReady]);
 
   useEffect(() => {
+    if (!hydrationReady || (!topologyCommitArmed.current && workspaceTopology.surfaces.length === 0)) return;
     if (externallyRestoredTopology.current) {
       externallyRestoredTopology.current = false;
       return;
@@ -123,6 +124,7 @@ export function App(): React.JSX.Element {
         setWorkspaceTopology((topology) => closeTopologySurface(topology, payload.surfaceId));
       }),
       bridge.events.onWorkspaceTopology((topology) => {
+        topologyCommitArmed.current = true;
         externallyRestoredTopology.current = true;
         setWorkspaceTopology(topology);
         const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
@@ -133,6 +135,7 @@ export function App(): React.JSX.Element {
         setEntered(activeProject?.projectId ?? null);
       }),
       bridge.events.onWorkspaceProjectOpened(({ project, topology }) => {
+        topologyCommitArmed.current = true;
         openProjectsRef.current = [
           ...openProjectsRef.current.filter((candidate) => candidate.surfaceId !== project.surfaceId),
           project,
@@ -145,6 +148,7 @@ export function App(): React.JSX.Element {
         setEntered(project.projectId);
       }),
       bridge.events.onWorkspaceHydrated(({ projects, topology }) => {
+        topologyCommitArmed.current = true;
         openProjectsRef.current = projects;
         setOpenProjects(projects);
         externallyRestoredTopology.current = true;
@@ -271,6 +275,7 @@ export function App(): React.JSX.Element {
         setSurfaceId(project?.surfaceId ?? null);
         setEntered(id);
         if (project) {
+          topologyCommitArmed.current = true;
           const title = backpacks.backpacks.find((backpack) => backpack.id === id)?.name ?? id;
           setOpenProjects((projects) => [
             ...projects,

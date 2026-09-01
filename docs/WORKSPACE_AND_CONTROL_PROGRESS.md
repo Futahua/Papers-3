@@ -613,6 +613,11 @@ A1.2i all-or-nothing primary startup hydration:
   retire only invocation-owned surfaces on failure.
 - [x] Wire primary-window startup IPC and one combined descriptors+topology
   hydration event; additional windows return fresh/no-hydration decisions.
+- [x] Gate initial empty topology commits until the hydration decision and
+  keep no-selection/failure from immediately persisting a replacement empty
+  snapshot.
+- [x] Recheck every persisted Backpack after all project-opening awaits and
+  before fresh surface allocation.
 - [ ] Complete live seeded-v2 restore acceptance and reviewer sign-off.
 - [ ] Live seeded-v2 primary restore; fresh IDs/order/focus/weights; durable ID
   reuse after mutation; additional window remains fresh.
