@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { workspaceTopologySchema, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { parseWorkspaceTopology, validatedWorkspaceTopologySchema, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { AtomicJsonStore } from './atomicStore';
 import type { PapersPaths } from './paths';
 
@@ -8,7 +8,7 @@ const persistedWorkspaceTopologiesSchema = z.object({
   schemaVersion: z.literal(1),
   workspaces: z.array(z.object({
     workspaceKey: z.string().uuid(),
-    topology: workspaceTopologySchema,
+    topology: validatedWorkspaceTopologySchema,
   }).strict()),
 }).strict();
 
@@ -46,10 +46,19 @@ export class WorkspaceTopologyStore {
 
   async commit(workspaceKey: string, topology: WorkspaceTopologyV1): Promise<void> {
     await this.initialize();
-    this.topologies.set(workspaceKey, topology);
+    this.topologies.set(workspaceKey, parseWorkspaceTopology(topology));
     this.dirty = true;
     if (!this.writing) this.writing = this.drain().finally(() => { this.writing = null; });
     await this.writing;
+  }
+
+  async flush(): Promise<void> {
+    await this.initialize();
+    if (this.writing) await this.writing;
+    if (this.dirty) {
+      this.writing = this.drain().finally(() => { this.writing = null; });
+      await this.writing;
+    }
   }
 
   private async drain(): Promise<void> {

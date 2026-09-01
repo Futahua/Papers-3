@@ -117,6 +117,8 @@ describe('A1 workspace tabs', () => {
     await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>).some(
       (surface) => surface.projectId === A && surface.presentation === 'visible'),
     10_000, 'semantic workspace activation');
+    await waitFor(async () => (await hostPage.getByRole('tab', { name: 'Alpha' }).getAttribute('aria-selected')) === 'true',
+      10_000, 'semantic activation converges host active tab');
     await hostPage.getByRole('tab', { name: 'Beta' }).click();
     const alphaTab = hostPage.getByRole('tab', { name: 'Alpha' });
     const alphaBox = await alphaTab.boundingBox();
@@ -158,6 +160,8 @@ describe('A1 workspace tabs', () => {
     10_000, 'Papers topology forces Dockview tab order');
     expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
       .toBe(reorderedWorkspace.revision + 1);
+    await call('layout.restore', { windowId, topology: reverseOrder });
+    await hostPage.waitForTimeout(50);
     expect(await projectSenderId(A)).toBe(alphaSenderId);
     await hostPage.getByRole('tab', { name: 'Alpha' }).click();
     await waitFor(async () => {

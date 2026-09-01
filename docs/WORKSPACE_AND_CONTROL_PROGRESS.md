@@ -468,8 +468,10 @@ Electron E2E 1/1 passed, and diff check passed.
 
 A1.2d atomic persistence:
 
-- [x] Persist schema-v1 Papers topology through `AtomicJsonStore` using stable
-  UUID workspace keys rather than Electron/native window ids.
+- [x] Persist schema-v1 Papers topology through `AtomicJsonStore` using
+  runtime-independent UUID snapshot keys rather than Electron/native window
+  ids. These keys are currently stable only for one live window lifetime and
+  are not yet restart workspace identity.
 - [x] Serialize and coalesce concurrent main-process commits; one writer drains
   the newest topology snapshots without parallel file replacement races.
 - [x] Validate the complete persisted envelope and every nested topology on
@@ -509,6 +511,38 @@ A1.2e semantic control operations:
 A1.2e validation: typecheck passed, full Vitest 657 passed / 4 skipped,
 production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
 Electron E2E 1/1 passed, and diff check passed.
+
+A1.2f reviewer hardening (fresh review of `9a3c79f`):
+
+- [x] Apply cross-field topology invariants at control ingress, main authority
+  validation, persistence commit and persistence load; invalid state never
+  advances canonical revision or reaches durable state.
+- [x] Refuse topology outside the currently realizable flat one-/two-group
+  model. Refuse in-place split orientation/root-order changes until Dockview
+  can realize them exactly; external topology mutation is all-or-refuse.
+- [x] Converge the renderer shell's `surfaceId`, project URL and entered
+  Backpack from the canonical focused group's active surface.
+- [x] Remove renderer-side close successor selection/activation. Main topology
+  is the sole successor authority, including three-or-more-surface layouts.
+- [x] Make every reconciliation generation schedule the suppression-latch
+  clear, including a no-op generation superseding a mutating generation.
+- [x] Allocate fresh split group ids when a derived id survives a prior
+  collapse/re-split history.
+- [x] Flush topology persistence during owned shutdown and make commit/flush
+  failures visible in main diagnostics instead of swallowing them.
+- [x] Add regressions for semantic-invalid restore with no mutation,
+  unsupported orientation restore, retained group-id history, semantic disk
+  validation, external host-tab activation and duplicate-restore unlatching.
+
+A1.2f validation: typecheck passed, full Vitest 661 passed / 4 skipped,
+production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
+Electron E2E 1/1 passed, and diff check passed. Reviewer re-review remains.
+
+Creator authorization note (2026-09-01): the creator explicitly authorized
+continuing all scoped work with the reviewer. `workspace.close` is treated as
+closing an open runtime surface, not deleting Backpack/project data; it remains
+exact-target only. Any future data-deleting control operation still requires
+the two-phase confirmation design below.
 - [ ] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
   assertions through the control plane.
 - [ ] Reviewer sign-off.

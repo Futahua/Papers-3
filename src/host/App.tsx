@@ -62,6 +62,8 @@ export function App(): React.JSX.Element {
   const [entered, setEntered] = useState<string | null>(null);
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
   const [openProjects, setOpenProjects] = useState<OpenWorkspaceProject[]>([]);
+  const openProjectsRef = useRef<OpenWorkspaceProject[]>([]);
+  openProjectsRef.current = openProjects;
   const [workspaceTopology, setWorkspaceTopology] = useState(createWorkspaceTopology);
   const externallyRestoredTopology = useRef(false);
   /**
@@ -150,13 +152,6 @@ export function App(): React.JSX.Element {
         // every tab, including an inactive one whose panel is unmounted.
         setOpenProjects((projects) => {
           const remaining = projects.filter((project) => project.surfaceId !== payload.surfaceId);
-          if (surfaceIdRef.current === payload.surfaceId) {
-            const replacement = remaining[0] ?? null;
-            setProjectUrl(replacement?.url ?? null);
-            setSurfaceId(replacement?.surfaceId ?? null);
-            setEntered(replacement?.projectId ?? null);
-            if (replacement) void bridge.backpackProject.activateSurface(replacement.surfaceId).catch(() => undefined);
-          }
           return remaining;
         });
         setWorkspaceTopology((topology) => closeTopologySurface(topology, payload.surfaceId));
@@ -164,6 +159,12 @@ export function App(): React.JSX.Element {
       bridge.events.onWorkspaceTopology((topology) => {
         externallyRestoredTopology.current = true;
         setWorkspaceTopology(topology);
+        const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
+        const nextSurfaceId = focused?.activeSurfaceId ?? null;
+        const activeProject = openProjectsRef.current.find((project) => project.surfaceId === nextSurfaceId) ?? null;
+        setSurfaceId(nextSurfaceId);
+        setProjectUrl(activeProject?.url ?? null);
+        setEntered(activeProject?.projectId ?? null);
       }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),

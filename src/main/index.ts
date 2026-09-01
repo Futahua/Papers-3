@@ -560,7 +560,9 @@ async function bootstrap(): Promise<void> {
         workspaceKey = randomUUID();
         workspaceKeys.set(windowId, workspaceKey);
       }
-      void workspaceTopologyStore.commit(workspaceKey, topology).catch(() => undefined);
+      void workspaceTopologyStore.commit(workspaceKey, topology).catch((error) => {
+        console.error('[workspace-topology] durable commit failed', error);
+      });
     },
     activeSurfaceId: (windowId) => papersWindows.activeSurfaceId(windowId),
     setActiveSurfaceId: (windowId, surfaceId) => papersWindows.setActiveSurfaceId(windowId, surfaceId),
@@ -1421,6 +1423,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // begins.
       capabilityQuitPromise = (papersControlServer?.close().catch(() => undefined) ?? Promise.resolve())
         .then(() => Promise.all([
+          workspaceTopologyStore.flush().catch((error) => console.error('[workspace-topology] shutdown flush failed', error)),
           detachSession!.closeAll().catch(() => undefined),
           widgetSession!.closeAll().catch(() => undefined),
           windowCapabilityService.stop().catch(() => undefined),

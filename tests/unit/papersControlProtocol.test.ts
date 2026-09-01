@@ -5,7 +5,7 @@ import {
   dispatchPapersControl,
   PAPERS_CONTROL_PROTOCOL_VERSION,
 } from '../../src/main/control/papersControlProtocol';
-import { createWorkspaceTopology } from '../../src/shared/workspaceTopology';
+import { createWorkspaceTopology, openWorkspaceSurface, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
 
 function request(method: 'inspect.snapshot' | 'inspect.windows' | 'inspect.surfaces' | 'inspect.surface' | 'inspect.workspace' | 'window.create', params: unknown = {}) {
   return controlRequestSchema.parse({
@@ -116,6 +116,49 @@ describe('Papers developer control protocol', () => {
     };
 
     await expect(dispatchPapersControl(dependencies, request('inspect.snapshot'))).rejects.toThrow();
+  });
+});
+
+describe('workspace mutation hardening', () => {
+  const requestMutation = (method: 'layout.restore' | 'layout.split', params: unknown) => controlRequestSchema.parse({
+    id: 'mutation', token: 'secret', protocolVersion: PAPERS_CONTROL_PROTOCOL_VERSION, method, params,
+  });
+  const one = openWorkspaceSurface(createWorkspaceTopology(), { surfaceId: 'sf-a', projectId: 'bp-a', title: 'A' });
+  const two = openWorkspaceSurface(one, { surfaceId: 'sf-b', projectId: 'bp-b', title: 'B' });
+  const split = splitWorkspaceGroup(two, {
+    groupId: 'group-main', newGroupId: 'group-sf-b', surfaceId: 'sf-b',
+    orientation: 'horizontal', position: 'after',
+  });
+  const surface = ({ windowId, surfaceId }: { windowId: number; surfaceId: string }) =>
+    windowId === 1 && split.surfaces.some((candidate) => candidate.surfaceId === surfaceId)
+      ? { windowId, surfaceId, projectId: 'bp', kind: 'project' as const, presentation: 'visible' as const }
+      : null;
+  const base = {
+    snapshot: () => ({}), windows: () => [], surfaces: () => [], surface,
+    createWindow: async () => ({ windowId: 1 }), workspace: () => ({ topology: split, revision: 1 }),
+  };
+
+  it('refuses cross-field-invalid restore before revision mutation', async () => {
+    const invalid = { ...split, groups: split.groups.map((group) => ({ ...group, surfaceIds: [...group.surfaceIds, 'sf-a'] })) };
+    const restoreWorkspace = vi.fn();
+    await expect(dispatchPapersControl({ ...base, restoreWorkspace }, requestMutation('layout.restore', { windowId: 1, topology: invalid })))
+      .rejects.toThrow();
+    expect(restoreWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('refuses an in-place split orientation change that cannot be exact', async () => {
+    const restoreWorkspace = vi.fn();
+    const vertical = { ...split, root: { ...split.root, orientation: 'vertical' as const } };
+    await expect(dispatchPapersControl({ ...base, restoreWorkspace }, requestMutation('layout.restore', { windowId: 1, topology: vertical })))
+      .rejects.toThrow(/orientation or root order/);
+    expect(restoreWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('allocates a fresh group id when the derived id survived earlier history', async () => {
+    const collapsed = { ...two, groups: [{ ...two.groups[0]!, groupId: 'group-sf-b' }], root: { kind: 'group' as const, groupId: 'group-sf-b' }, focusedGroupId: 'group-sf-b' };
+    const restoreWorkspace = vi.fn((_windowId, topology) => topology);
+    await expect(dispatchPapersControl({ ...base, workspace: () => ({ topology: collapsed }), restoreWorkspace }, requestMutation('layout.split', { windowId: 1, surfaceId: 'sf-b', direction: 'right' })))
+      .resolves.toMatchObject({ topology: { groups: expect.arrayContaining([expect.objectContaining({ groupId: 'group-sf-b-2' })]) } });
   });
 });
 

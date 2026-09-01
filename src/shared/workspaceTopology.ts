@@ -57,10 +57,17 @@ export const workspaceTopologySchema: z.ZodType<WorkspaceTopologyV1> = z.object(
   focusedGroupId: z.string().min(1),
 }).strict();
 
+/** Shape plus cross-field invariants for untrusted control/disk ingress. */
+export const validatedWorkspaceTopologySchema = workspaceTopologySchema.superRefine((topology, context) => {
+  try {
+    assertValidWorkspaceTopology(topology);
+  } catch (caught) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: caught instanceof Error ? caught.message : String(caught) });
+  }
+});
+
 export function parseWorkspaceTopology(value: unknown): WorkspaceTopologyV1 {
-  const topology = workspaceTopologySchema.parse(value);
-  assertValidWorkspaceTopology(topology);
-  return topology;
+  return validatedWorkspaceTopologySchema.parse(value);
 }
 
 export function createWorkspaceTopology(groupId = 'group-main'): WorkspaceTopologyV1 {

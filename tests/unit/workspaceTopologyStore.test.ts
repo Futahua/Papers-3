@@ -51,4 +51,18 @@ describe('WorkspaceTopologyStore', () => {
     const recovered = await fs.readdir(paths.recoveryDir);
     expect(recovered.some((name) => name.includes('workspace-topologies.json') && name.endsWith('.corrupt'))).toBe(true);
   });
+
+  it('quarantines topology that is shaped correctly but violates cross-field invariants', async () => {
+    const paths = papersPaths(directory);
+    const valid = openWorkspaceSurface(createWorkspaceTopology(), { surfaceId: 'sf-a', projectId: 'bp-a', title: 'A' });
+    const invalid = { ...valid, groups: [{ ...valid.groups[0]!, surfaceIds: ['sf-a', 'sf-a'] }] };
+    await fs.mkdir(path.dirname(paths.workspaceTopologiesFile), { recursive: true });
+    await fs.writeFile(paths.workspaceTopologiesFile, JSON.stringify({
+      schemaVersion: 1,
+      workspaces: [{ workspaceKey: '11111111-1111-4111-8111-111111111111', topology: invalid }],
+    }));
+    const store = new WorkspaceTopologyStore(paths);
+    await expect(store.initialize()).resolves.toBeUndefined();
+    expect((await fs.readdir(paths.recoveryDir)).some((name) => name.endsWith('.corrupt'))).toBe(true);
+  });
 });

@@ -162,6 +162,10 @@ export function WorkspaceDock(props: {
       if (active && target.activePanel?.id !== active.id) mutate(() => active.api.setActive());
     }
 
+    const focused = desiredGroups.find((group) => group.groupId === desired.focusedGroupId);
+    const focusedPanel = focused?.activeSurfaceId ? api.getPanel(focused.activeSurfaceId) : undefined;
+    if (focusedPanel && api.activePanel?.id !== focusedPanel.id) mutate(() => focusedPanel.api.setActive());
+
     if (splitRoot && firstSplitGroupId) {
       const first = dockGroupFor(firstSplitGroupId);
       const weight = splitRoot.weights[0];
@@ -175,11 +179,9 @@ export function WorkspaceDock(props: {
       }
     }
 
-    if (mutated) {
-      window.setTimeout(() => {
-        if (reconciliationGeneration.current === generation) reconciling.current = false;
-      }, 0);
-    }
+    window.setTimeout(() => {
+      if (reconciliationGeneration.current === generation) reconciling.current = false;
+    }, 0);
   }, [refreshGroupIds]);
 
   useEffect(() => {

@@ -41,7 +41,7 @@ import type { PermissionPrompter } from './capabilities/capabilityBroker';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { backpackDir, canvasFile, type PapersPaths } from './persistence/paths';
 import type { HostFacade } from './ipc/hostIpc';
-import { closeWorkspaceSurface, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { assertValidWorkspaceTopology, closeWorkspaceSurface, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 interface CanvasPersistedState {
   schemaVersion: 1;
@@ -877,6 +877,13 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (topology.surfaces.some((surface) => liveById.get(surface.surfaceId) !== surface.projectId)) {
       throw new Error('Workspace topology surface identity does not match its Papers window.');
     }
+    assertValidWorkspaceTopology(topology);
+    const flatRoot = topology.root.kind === 'group'
+      ? topology.groups.length === 1 && topology.root.groupId === topology.groups[0]?.groupId
+      : topology.groups.length === 2
+        && topology.root.children.length === 2
+        && topology.root.children.every((child) => child.kind === 'group');
+    if (!flatRoot) throw new Error('Only an exact flat one- or two-group workspace topology is currently supported.');
   }
 
   // ----------------------------------------------------------- permissions

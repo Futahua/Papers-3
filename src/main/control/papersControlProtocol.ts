@@ -3,6 +3,7 @@ import {
   activateWorkspaceSurface,
   moveWorkspaceSurface,
   splitWorkspaceGroup,
+  validatedWorkspaceTopologySchema,
   workspaceTopologySchema,
 } from '@shared/workspaceTopology';
 
@@ -84,7 +85,7 @@ export const papersControlCommands = {
     effect: 'query',
   },
   'layout.restore': {
-    input: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
+    input: z.object({ windowId: z.number().int(), topology: validatedWorkspaceTopologySchema }).strict(),
     output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
     scope: 'window',
     effect: 'mutate',
@@ -178,6 +179,15 @@ export async function dispatchPapersControl(
     }
     case 'layout.restore': {
       const { windowId, topology } = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const current = dependencies.workspace?.(windowId) as { topology?: z.infer<typeof workspaceTopologySchema> } | null;
+      if (!current?.topology) throw new Error('That Papers window has not committed workspace topology.');
+      if (current.topology.root.kind === 'split' && topology.root.kind === 'split') {
+        const currentOrder = current.topology.root.children.map((child) => child.kind === 'group' ? child.groupId : '').join('\0');
+        const requestedOrder = topology.root.children.map((child) => child.kind === 'group' ? child.groupId : '').join('\0');
+        if (current.topology.root.orientation !== topology.root.orientation || currentOrder !== requestedOrder) {
+          throw new Error('Changing an existing split orientation or root order is not supported exactly yet.');
+        }
+      }
       const restored = dependencies.restoreWorkspace?.(windowId, topology);
       if (!restored) throw new Error('That Papers window cannot restore workspace topology.');
       return papersControlCommands[request.method].output.parse({ windowId, topology: restored });
@@ -207,9 +217,13 @@ export async function dispatchPapersControl(
         if (topology.root.kind === 'split') throw new Error('Nested workspace splits are not supported yet.');
         const source = topology.groups.find((group) => group.surfaceIds.includes(params.surfaceId));
         if (!source) throw new Error('That surface is not represented in workspace topology.');
+        let newGroupId = `group-${params.surfaceId}`;
+        for (let suffix = 2; topology.groups.some((group) => group.groupId === newGroupId); suffix += 1) {
+          newGroupId = `group-${params.surfaceId}-${suffix}`;
+        }
         topology = splitWorkspaceGroup(topology, {
           groupId: source.groupId,
-          newGroupId: `group-${params.surfaceId}`,
+          newGroupId,
           surfaceId: params.surfaceId,
           orientation: split.direction === 'right' ? 'horizontal' : 'vertical',
           position: 'after',
