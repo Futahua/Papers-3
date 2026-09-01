@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { launchPapers, waitFor, type LaunchedApp } from './helpers';
@@ -9,6 +11,7 @@ import { connectPapersControl, readDescriptor } from '../../tools/papersControlC
 
 let launched: LaunchedApp;
 let descriptorPath: string;
+const execFileAsync = promisify(execFile);
 
 /**
  * Uses the SHARED control client, so this proves the real framing
@@ -44,6 +47,16 @@ afterAll(async () => {
 });
 
 describe('developer control plane', () => {
+  it('uses the real papersctl executable against the running app', async () => {
+    const { stdout } = await execFileAsync(process.execPath, [
+      join(process.cwd(), 'tools', 'papersctl.mjs'),
+      'inspect.snapshot',
+      '--descriptor', descriptorPath,
+    ]);
+
+    expect(JSON.parse(stdout)).toMatchObject({ schemaVersion: 1, windows: [{ hostAlive: true }] });
+  });
+
   it('inspects coherent state and creates a real secondary window without DOM control', async () => {
     await expect(call('inspect.snapshot')).resolves.toMatchObject({
       schemaVersion: 1,

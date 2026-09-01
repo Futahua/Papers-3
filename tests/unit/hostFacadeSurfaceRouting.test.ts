@@ -18,6 +18,8 @@ function createFacade() {
   const logicalSurfaces = createLogicalSurfaceRegistry(() => `sf-${++n}`);
   const hideBackpackProjectSurface = vi.fn((_senderId: number) => {});
   const showBackpackProjectSurface = vi.fn(async (_senderId: number, _surfaceId: string, _url: string) => {});
+  const closeAttachedProjectSurface = vi.fn();
+  const sendToWindow = vi.fn();
   const facade = new PapersHostFacade({
     surfaces,
     logicalSurfaces,
@@ -25,20 +27,31 @@ function createFacade() {
     // Realistic: only the host renderer of window 1 resolves. An unknown
     // sender is not a Papers window.
     hostWindowForSender: (senderId: number) => (senderId === 11 ? 1 : null),
-    hostWindowIds: () => [1],
-    sendToWindow: () => {},
+    hostWindowIds: () => [1, 2],
+    sendToWindow,
+    broadcastToHosts: vi.fn(),
     enteredBackpack: () => null,
     setEnteredBackpack: vi.fn(),
+    clearEnteredBackpackEverywhere: vi.fn(),
+    listLogicalSurfaces: () => logicalSurfaces.project(),
+    retireProjectSurfaces: (projectId: string) => { logicalSurfaces.retireProject(projectId); },
+    retireBackpackProjectSurfaces: vi.fn(async () => {}),
+    closeAttachedProjectSurface,
+    isBackpackEnteredAnywhere: () => false,
     registry: {
       find: (id: string) => (id === PROJECT || id === OTHER ? { id, archived: false } : null),
       list: () => [],
+      setArchived: vi.fn(async () => {}),
     },
     showBackpackProjectSurface,
     hideBackpackProjectSurface,
     // Present only so the guard is what refuses, not a missing service.
     backpackProjects: { saveState: vi.fn(async () => ({ ok: true, revision: 'r1' })) },
   } as unknown as FacadeDeps);
-  return { facade, surfaces, logicalSurfaces, hideBackpackProjectSurface, showBackpackProjectSurface };
+  return {
+    facade, surfaces, logicalSurfaces, hideBackpackProjectSurface,
+    showBackpackProjectSurface, closeAttachedProjectSurface, sendToWindow,
+  };
 }
 
 describe('surface routing in the host facade', () => {
@@ -191,5 +204,28 @@ describe('a host renderer is not a project surface', () => {
 
     await expect(facade.saveBackpackProjectState(FRAME, '{}'))
       .rejects.toThrow(/no longer open/);
+  });
+});
+
+describe('project-unavailability lifecycle uses logical surface identity', () => {
+  it('archives every exact project surface without touching another project', async () => {
+    const { facade, logicalSurfaces, closeAttachedProjectSurface, sendToWindow } = createFacade();
+    const a = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const b = logicalSurfaces.create({ windowId: 2, projectId: PROJECT, kind: 'project' });
+    const other = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+
+    await facade.setBackpackArchived(PROJECT, true);
+
+    expect(closeAttachedProjectSurface.mock.calls).toEqual([
+      [1, a.surfaceId],
+      [2, b.surfaceId],
+    ]);
+    expect(sendToWindow.mock.calls.filter(([, channel]) => channel === 'host:event:backpack-project-close-request')).toEqual([
+      [1, 'host:event:backpack-project-close-request', { surfaceId: a.surfaceId }],
+      [2, 'host:event:backpack-project-close-request', { surfaceId: b.surfaceId }],
+    ]);
+    expect(logicalSurfaces.get(a.surfaceId)).toBeNull();
+    expect(logicalSurfaces.get(b.surfaceId)).toBeNull();
+    expect(logicalSurfaces.get(other.surfaceId)).not.toBeNull();
   });
 });

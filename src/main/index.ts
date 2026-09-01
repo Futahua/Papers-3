@@ -53,6 +53,7 @@ import {
 import { createPapersWindow } from './windows/papersWindowFactory';
 import { preparePapersWindow } from './windows/papersWindowLifecycle';
 import { createAdditionalPapersWindow as composeAdditionalPapersWindow } from './windows/additionalPapersWindow';
+import { finalizePapersWindow } from './windows/papersWindowFinalization';
 import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
@@ -367,17 +368,14 @@ async function bootstrap(): Promise<void> {
     },
     onClose: (instance: Parameters<typeof preparePapersWindow>[0]) => instance.backpackProjectRuntime.hide(),
     finalize: async (windowId: number) => {
-      await widgetSession?.closeOwnedByWindow(windowId).catch(() => undefined);
-      try {
-        await reconcileHermesForClosingWindow(windowId);
-      } finally {
-        // A failed native minimize must not strand the already-closed Papers
-        // window in either registry. Keep Hermes's physical placement truthful,
-        // release the vanished owner, and project that state to survivors.
-        surfaceContexts.unbindWindow(windowId);
-        papersWindows.remove(windowId);
-        facade.emitHermesSurface();
-      }
+      await finalizePapersWindow(windowId, {
+        closeOwnedWidgets: async (id) => { await widgetSession?.closeOwnedByWindow(id); },
+        reconcileHermes: reconcileHermesForClosingWindow,
+        unbindSurfaceSenders: (id) => surfaceContexts.unbindWindow(id),
+        retireLogicalSurfaces: (id) => { logicalSurfaces.retireWindow(id); },
+        removeWindow: (id) => papersWindows.remove(id),
+        emitHermesSurface: () => facade.emitHermesSurface(),
+      });
     },
   });
   const createAdditionalPapersWindow = async (): Promise<number> => {
@@ -522,6 +520,9 @@ async function bootstrap(): Promise<void> {
         detachSession?.closeProject(backpackId).catch(() => undefined),
         widgetSession?.closeProject(backpackId).catch(() => undefined),
       ]);
+    },
+    closeAttachedProjectSurface: (windowId) => {
+      papersWindows.get(windowId)?.owned.backpackProjectRuntime.hide();
     },
     restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
     isBackpackEnteredAnywhere: (backpackId) => papersWindows.all()

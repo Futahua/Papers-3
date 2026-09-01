@@ -82,6 +82,10 @@ export interface FacadeDeps {
   listLogicalSurfaces: () => Array<{ surfaceId: string; windowId: number; projectId: string; kind: string }>;
   /** Retire auxiliary project surfaces only when the project is unavailable. */
   retireBackpackProjectSurfaces: (backpackId: string) => Promise<void>;
+  /** Tear down one attached workspace presentation by logical identity. The
+   * host renderer is only a window actor and is never looked up as a project
+   * surface. */
+  closeAttachedProjectSurface: (windowId: number, surfaceId: string) => void;
   restoreBackpack: (windowId: number) => string | null;
   /** Whether any live window still has this Backpack entered. */
   isBackpackEnteredAnywhere: (backpackId: string) => boolean;
@@ -256,12 +260,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       // The Backpack itself became unavailable, so EVERY window that entered
       // it must leave. This is one of the few operations that legitimately
       // reaches across windows; an ordinary leave touches only its own.
-      for (const windowId of this.deps.hostWindowIds()) {
-        if (this.deps.enteredBackpack(windowId) !== id) continue;
-        const hostSender = this.deps.surfaces.hostSenderForWindow(windowId);
-        if (hostSender !== null) this.deps.hideBackpackProjectSurface(hostSender);
-        this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', null);
-      }
+      this.closeLogicalProjectSurfaces(id);
       await this.deps.retireBackpackProjectSurfaces(id);
       this.deps.clearEnteredBackpackEverywhere(id);
       this.deps.retireProjectSurfaces(id);
@@ -274,17 +273,23 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async removeBackpack(id: string): Promise<void> {
     await this.deps.registry.remove(id);
-    for (const windowId of this.deps.hostWindowIds()) {
-      if (this.deps.enteredBackpack(windowId) !== id) continue;
-      const hostSender = this.deps.surfaces.hostSenderForWindow(windowId);
-      if (hostSender !== null) this.deps.hideBackpackProjectSurface(hostSender);
-      this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', null);
-    }
+    this.closeLogicalProjectSurfaces(id);
     await this.deps.retireBackpackProjectSurfaces(id);
     this.deps.clearEnteredBackpackEverywhere(id);
     this.deps.retireProjectSurfaces(id);
     this.deps.surfaces.unbindProject(id);
     this.emitBackpacksChanged();
+  }
+
+  /** Close every attached presentation before retiring its logical identity.
+   * Capture first: retireProjectSurfaces intentionally removes the records. */
+  private closeLogicalProjectSurfaces(projectId: string): void {
+    const targets = this.deps.listLogicalSurfaces()
+      .filter((surface) => surface.projectId === projectId && surface.kind === 'project');
+    for (const { windowId, surfaceId } of targets) {
+      this.deps.closeAttachedProjectSurface(windowId, surfaceId);
+      this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', { surfaceId });
+    }
   }
 
   private canvasStore(backpackId: string): AtomicJsonStore {
