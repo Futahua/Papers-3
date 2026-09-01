@@ -1072,7 +1072,7 @@ post-reparent interaction and source/target close behavior. Either result
 closes the compatibility gate; recreate/rebind remains the correctness path,
 with no production behavior change.
 
-### Electron 43.1.1 live-WebContentsView reparent compatibility — signed off
+### Electron 43.1.1 live-WebContentsView reparent compatibility — review pending
 
 The standalone acceptance probe creates two real `BaseWindow`s and one loaded
 `WebContentsView`, detaches it from the source, attaches it to the target, and
@@ -1088,6 +1088,12 @@ Observed result: compatible for the live detach/attach operation on Electron
 probe explicitly closes the WCV and verifies its `destroyed` lifecycle. This
 is evidence only: Papers continues to use recreate/rebind as the correctness
 path, and no production behavior or A3 transaction selection changes.
+
+Candidate exact pushed head: `bbe0727`. Validation at this candidate:
+`npm run typecheck` passed; full Vitest passed 727/731 (4 skipped); production
+build passed; combined developer-control and compatibility Electron E2E passed
+4/4; and `git diff --check` passed. Reviewer sign-off is pending on this exact
+head.
 
 ## Persistent pickup checklist for every new session
 
