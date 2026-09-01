@@ -63,6 +63,26 @@ describe('window pick IPC', () => {
     await expect(invoke('papers:window-pick:cancel', 1, {})).rejects.toThrow('not a Backpack project sender');
   });
 
+  it('waits for staged authority before starting a native picker', async () => {
+    const { ipcMain, invoke } = fakeIpcMain();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const session = fakeSession();
+    registerWindowPickIpc({
+      ipcMain,
+      session,
+      isSender: () => true,
+      waitForAuthority: () => gate,
+    });
+
+    const pending = invoke('papers:window-pick:begin', 1, { members: [DESCRIPTOR] });
+    await Promise.resolve();
+    expect(session.calls).toEqual([]);
+    release();
+    await expect(pending).resolves.toEqual({ outcome: 'started' });
+    expect(session.calls).toHaveLength(1);
+  });
+
   it('cancel requires an empty payload', async () => {
     const { ipcMain, invoke } = fakeIpcMain();
     registerWindowPickIpc({ ipcMain, session: fakeSession(), isSender: () => true });

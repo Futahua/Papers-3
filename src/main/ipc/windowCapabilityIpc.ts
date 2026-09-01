@@ -45,6 +45,7 @@ export interface WindowCapabilityIpcDependencies {
   ipcMain: Pick<IpcMain, 'handle'>;
   service: WindowCapabilityService;
   isSender: (sender: WebContents) => boolean;
+  waitForAuthority?: (sender: WebContents) => Promise<void>;
   /** Resolves only the trusted native host that owns this already-authorized
    * Backpack surface. The raw HWND never crosses the renderer boundary. */
   resolveCallerHwnd?: (sender: WebContents) => string | null;
@@ -177,6 +178,7 @@ export function registerWindowCapabilityIpc({
   ipcMain,
   service,
   isSender,
+  waitForAuthority,
   resolveCallerHwnd,
 }: WindowCapabilityIpcDependencies): void {
   let nativePeekActive = false;
@@ -186,6 +188,7 @@ export function registerWindowCapabilityIpc({
     invoke: (input: TInput, event: IpcMainInvokeEvent) => Promise<IpcResult>,
   ): void {
     ipcMain.handle(channel, async (event, raw) => {
+      await waitForAuthority?.(event.sender);
       if (!isSender(event.sender)) {
         throw new Error('denied: not a Backpack project sender');
       }

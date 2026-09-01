@@ -56,6 +56,16 @@ export class WorkspaceTopologyStore {
   private initialized: Promise<void> | null = null;
   private writing: Promise<void> | null = null;
   private dirty = false;
+  private mutationTail: Promise<void> = Promise.resolve();
+
+  /** Serialize state mutation as well as the resulting file save. Sharing
+   * only `writing` is insufficient: a queued ordinary commit could otherwise
+   * mutate the in-memory map while a pair save is awaiting disk. */
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(operation, operation);
+    this.mutationTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
 
   constructor(paths: PapersPaths, private readonly now = () => new Date().toISOString()) {
     this.store = new AtomicJsonStore(paths.workspaceTopologiesFile, {
@@ -92,14 +102,14 @@ export class WorkspaceTopologyStore {
   }
 
   async commit(workspaceId: string, topology: WorkspaceTopologyV1): Promise<void> {
-    await this.initialize();
-    this.workspaces.set(workspaceId, {
-      workspaceId, topology: parseWorkspaceTopology(topology), updatedAt: this.now(),
+    return this.enqueue(async () => {
+      await this.initialize();
+      this.workspaces.set(workspaceId, {
+        workspaceId, topology: parseWorkspaceTopology(topology), updatedAt: this.now(),
+      });
+      this.lastWorkspaceId = workspaceId;
+      await this.persistDirty();
     });
-    this.lastWorkspaceId = workspaceId;
-    this.dirty = true;
-    if (!this.writing) this.writing = this.drain().finally(() => { this.writing = null; });
-    await this.writing;
   }
 
   /**
@@ -112,54 +122,57 @@ export class WorkspaceTopologyStore {
     if (pair.source.workspaceId === pair.target.workspaceId) {
       throw new Error('workspace pair must name two distinct workspaces');
     }
-    await this.initialize();
-    const sourceTopology = parseWorkspaceTopology(pair.source.topology);
-    const targetTopology = parseWorkspaceTopology(pair.target.topology);
-    if (pair.lastWorkspaceId !== null
-      && pair.lastWorkspaceId !== pair.source.workspaceId
-      && pair.lastWorkspaceId !== pair.target.workspaceId
-      && !this.workspaces.has(pair.lastWorkspaceId)) {
-      throw new Error('lastWorkspaceId must reference an existing workspace');
-    }
-    const previousSource = this.workspaces.get(pair.source.workspaceId);
-    const previousTarget = this.workspaces.get(pair.target.workspaceId);
-    const previousLastWorkspaceId = this.lastWorkspaceId;
-    this.workspaces.set(pair.source.workspaceId, {
-      workspaceId: pair.source.workspaceId,
-      topology: sourceTopology,
-      updatedAt: this.now(),
+    return this.enqueue(async () => {
+      await this.initialize();
+      const sourceTopology = parseWorkspaceTopology(pair.source.topology);
+      const targetTopology = parseWorkspaceTopology(pair.target.topology);
+      if (pair.lastWorkspaceId !== null
+        && pair.lastWorkspaceId !== pair.source.workspaceId
+        && pair.lastWorkspaceId !== pair.target.workspaceId
+        && !this.workspaces.has(pair.lastWorkspaceId)) {
+        throw new Error('lastWorkspaceId must reference an existing workspace');
+      }
+      const previousSource = this.workspaces.get(pair.source.workspaceId);
+      const previousTarget = this.workspaces.get(pair.target.workspaceId);
+      const previousLastWorkspaceId = this.lastWorkspaceId;
+      const previousDirty = this.dirty;
+      this.workspaces.set(pair.source.workspaceId, {
+        workspaceId: pair.source.workspaceId,
+        topology: sourceTopology,
+        updatedAt: this.now(),
+      });
+      this.workspaces.set(pair.target.workspaceId, {
+        workspaceId: pair.target.workspaceId,
+        topology: targetTopology,
+        updatedAt: this.now(),
+      });
+      this.lastWorkspaceId = pair.lastWorkspaceId;
+      try {
+        await this.persistDirty();
+      } catch (error) {
+        if (previousSource) this.workspaces.set(pair.source.workspaceId, previousSource);
+        else this.workspaces.delete(pair.source.workspaceId);
+        if (previousTarget) this.workspaces.set(pair.target.workspaceId, previousTarget);
+        else this.workspaces.delete(pair.target.workspaceId);
+        this.lastWorkspaceId = previousLastWorkspaceId;
+        this.dirty = previousDirty;
+        throw error;
+      }
     });
-    this.workspaces.set(pair.target.workspaceId, {
-      workspaceId: pair.target.workspaceId,
-      topology: targetTopology,
-      updatedAt: this.now(),
-    });
-    this.lastWorkspaceId = pair.lastWorkspaceId;
-    this.dirty = true;
-    if (!this.writing) this.writing = this.drain().finally(() => { this.writing = null; });
-    try {
-      await this.writing;
-    } catch (error) {
-      if (previousSource) this.workspaces.set(pair.source.workspaceId, previousSource);
-      else this.workspaces.delete(pair.source.workspaceId);
-      if (previousTarget) this.workspaces.set(pair.target.workspaceId, previousTarget);
-      else this.workspaces.delete(pair.target.workspaceId);
-      this.lastWorkspaceId = previousLastWorkspaceId;
-      this.dirty = false;
-      throw error;
-    }
   }
 
   /** Capture the exact records needed to compensate a pair transaction. */
   async snapshotPair(sourceWorkspaceId: string, targetWorkspaceId: string): Promise<WorkspacePairSnapshot> {
     if (sourceWorkspaceId === targetWorkspaceId) throw new Error('workspace pair must name two distinct workspaces');
-    await this.initialize();
-    const clone = (record: DurableRecord | undefined): DurableRecord | null => record ? structuredClone(record) : null;
-    return {
-      source: clone(this.workspaces.get(sourceWorkspaceId)),
-      target: clone(this.workspaces.get(targetWorkspaceId)),
-      lastWorkspaceId: this.lastWorkspaceId,
-    };
+    return this.enqueue(async () => {
+      await this.initialize();
+      const clone = (record: DurableRecord | undefined): DurableRecord | null => record ? structuredClone(record) : null;
+      return {
+        source: clone(this.workspaces.get(sourceWorkspaceId)),
+        target: clone(this.workspaces.get(targetWorkspaceId)),
+        lastWorkspaceId: this.lastWorkspaceId,
+      };
+    });
   }
 
   /** Restore a pair when one side was absent and its ID therefore needs to be
@@ -170,17 +183,37 @@ export class WorkspaceTopologyStore {
     targetWorkspaceId: string,
   ): Promise<void> {
     if (sourceWorkspaceId === targetWorkspaceId) throw new Error('workspace pair must name two distinct workspaces');
-    await this.initialize();
-    const apply = (record: DurableRecord | null, id: string): void => {
-      if (record) this.workspaces.set(record.workspaceId, structuredClone(record));
-      else this.workspaces.delete(id);
-    };
-    apply(snapshot.source, sourceWorkspaceId);
-    apply(snapshot.target, targetWorkspaceId);
-    this.lastWorkspaceId = snapshot.lastWorkspaceId;
-    this.dirty = true;
-    if (!this.writing) this.writing = this.drain().finally(() => { this.writing = null; });
-    await this.writing;
+    if (snapshot.source && snapshot.source.workspaceId !== sourceWorkspaceId) {
+      throw new Error('workspace pair source snapshot does not match its identity');
+    }
+    if (snapshot.target && snapshot.target.workspaceId !== targetWorkspaceId) {
+      throw new Error('workspace pair target snapshot does not match its identity');
+    }
+    return this.enqueue(async () => {
+      await this.initialize();
+      const currentSource = this.workspaces.get(sourceWorkspaceId);
+      const currentTarget = this.workspaces.get(targetWorkspaceId);
+      const currentLastWorkspaceId = this.lastWorkspaceId;
+      const currentDirty = this.dirty;
+      const apply = (record: DurableRecord | null, id: string): void => {
+        if (record) this.workspaces.set(record.workspaceId, structuredClone(record));
+        else this.workspaces.delete(id);
+      };
+      apply(snapshot.source, sourceWorkspaceId);
+      apply(snapshot.target, targetWorkspaceId);
+      this.lastWorkspaceId = snapshot.lastWorkspaceId;
+      try {
+        await this.persistDirty();
+      } catch (error) {
+        if (currentSource) this.workspaces.set(sourceWorkspaceId, currentSource);
+        else this.workspaces.delete(sourceWorkspaceId);
+        if (currentTarget) this.workspaces.set(targetWorkspaceId, currentTarget);
+        else this.workspaces.delete(targetWorkspaceId);
+        this.lastWorkspaceId = currentLastWorkspaceId;
+        this.dirty = currentDirty;
+        throw error;
+      }
+    });
   }
 
   /** Read-only startup selection. Does not reorder, consume or persist. */
@@ -197,6 +230,12 @@ export class WorkspaceTopologyStore {
       this.writing = this.drain().finally(() => { this.writing = null; });
       await this.writing;
     }
+  }
+
+  private async persistDirty(): Promise<void> {
+    this.dirty = true;
+    if (!this.writing) this.writing = this.drain().finally(() => { this.writing = null; });
+    await this.writing;
   }
 
   private async drain(): Promise<void> {

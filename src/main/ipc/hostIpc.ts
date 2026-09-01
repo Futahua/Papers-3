@@ -283,8 +283,10 @@ export function registerHostIpc(facade: HostFacade): void {
     facade.resolveBackpackProjectWebLinkIcon(event.sender.id, backpackProjectWebUrlSchema.parse(url)),
   );
   ipcMain.on('host:backpack-project:request-close', (event) => {
-    if (!facade.isBackpackProjectSender(event.sender)) return;
-    facade.requestCloseBackpackProject(event.sender.id);
+    void facade.waitForBackpackProjectAuthority?.(event.sender.id).then(() => {
+      if (!facade.isBackpackProjectSender(event.sender)) return;
+      facade.requestCloseBackpackProject(event.sender.id);
+    }).catch(() => undefined);
   });
 
   handle('host:programs:catalog', () => facade.programCatalog());

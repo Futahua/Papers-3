@@ -8,6 +8,8 @@ export interface PreparedProjectSurface {
   discard(): void;
 }
 
+type RuntimeFactory = (surfaceId: string, onSurfaceClosed?: (projectId: string) => void) => BackpackProjectRuntime;
+
 /**
  * The native project presentations owned by one Papers window.
  *
@@ -31,7 +33,7 @@ export class BackpackProjectSurfaceCollection {
     private readonly preloadPath: string,
     private transparent: boolean,
     private readonly onSurfaceClosed?: (surfaceId: string, projectId: string) => void,
-    private readonly createRuntime?: (surfaceId: string) => BackpackProjectRuntime,
+    private readonly createRuntime?: RuntimeFactory,
   ) {}
 
   get(surfaceId: string): BackpackProjectRuntime | null {
@@ -43,11 +45,9 @@ export class BackpackProjectSurfaceCollection {
     const existing = this.runtimes.get(surfaceId);
     if (existing) return existing;
 
-    const runtime = this.createRuntime?.(surfaceId) ?? new BackpackProjectRuntime(
-      this.window,
-      this.preloadPath,
-      this.transparent,
-      (projectId) => this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId),
+    const onSurfaceClosed = (projectId: string): void => this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
+    const runtime = this.createRuntime?.(surfaceId, onSurfaceClosed) ?? new BackpackProjectRuntime(
+      this.window, this.preloadPath, this.transparent, onSurfaceClosed,
     );
     this.runtimes.set(surfaceId, runtime);
     return runtime;
@@ -62,7 +62,17 @@ export class BackpackProjectSurfaceCollection {
    */
   prepare(surfaceId: string): PreparedProjectSurface {
     if (this.runtimes.has(surfaceId)) throw new Error('project surface is already present in this window');
-    const runtime = new BackpackProjectRuntime(this.window, this.preloadPath, this.transparent);
+    let lifecycleActive = false;
+    const runtime = this.createRuntime?.(surfaceId, (projectId) => {
+      if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
+    }) ?? new BackpackProjectRuntime(
+      this.window,
+      this.preloadPath,
+      this.transparent,
+      (projectId) => {
+        if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
+      },
+    );
     let adopted = false;
     return {
       runtime,
@@ -71,11 +81,17 @@ export class BackpackProjectSurfaceCollection {
         if (this.runtimes.has(surfaceId)) throw new Error('project surface was adopted twice');
         adopted = true;
         this.runtimes.set(surfaceId, runtime);
+        lifecycleActive = true;
         runtime.present();
       },
       discard: () => {
         if (adopted) {
-          this.close(surfaceId);
+          // Compensation is intentionally lifecycle-silent even after adopt:
+          // it must not look like an ordinary user close to detach/widget
+          // ownership observers.
+          lifecycleActive = false;
+          runtime.hide();
+          this.runtimes.delete(surfaceId);
           return;
         }
         runtime.hide();

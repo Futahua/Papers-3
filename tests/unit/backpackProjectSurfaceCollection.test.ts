@@ -5,6 +5,7 @@ import { createLogicalSurfaceRegistry } from '../../src/main/windows/logicalSurf
 
 type FakeRuntime = {
   hide: ReturnType<typeof vi.fn>;
+  present: ReturnType<typeof vi.fn>;
   conceal: ReturnType<typeof vi.fn>;
   fit: ReturnType<typeof vi.fn>;
   setTransparent: ReturnType<typeof vi.fn>;
@@ -23,6 +24,7 @@ function collectionWithFakes() {
     (surfaceId) => {
       const runtime: FakeRuntime = {
         hide: vi.fn(),
+        present: vi.fn(),
         conceal: vi.fn(),
         fit: vi.fn(),
         setTransparent: vi.fn(),
@@ -108,5 +110,37 @@ describe('BackpackProjectSurfaceCollection', () => {
 
     expect(runtimes.get('surface-p')!.setBounds).toHaveBeenCalledWith(bounds);
     expect(runtimes.get('surface-q')!.setBounds).not.toHaveBeenCalled();
+  });
+
+  it('restores normal close lifecycle on adoption but keeps compensation silent', () => {
+    const closed = vi.fn();
+    let stagedClose: ((projectId: string) => void) | undefined;
+    const runtime = {
+      hide: vi.fn(), present: vi.fn(), conceal: vi.fn(), fit: vi.fn(),
+      setTransparent: vi.fn(), setBounds: vi.fn(), isSender: vi.fn(() => false),
+      entryUrlForProject: vi.fn(() => null),
+    } as unknown as FakeRuntime;
+    const collection = new BackpackProjectSurfaceCollection(
+      {} as never,
+      '/tmp/preload.cjs',
+      false,
+      closed,
+      (_surfaceId, onClosed) => {
+        stagedClose = onClosed;
+        return runtime as never;
+      },
+    );
+
+    const prepared = collection.prepare('surface-p');
+    prepared.adopt();
+    expect(runtime.present).toHaveBeenCalledTimes(1);
+    stagedClose?.('project-x');
+    expect(closed).toHaveBeenCalledWith('surface-p', 'project-x');
+
+    prepared.discard();
+    expect(runtime.hide).toHaveBeenCalledTimes(1);
+    stagedClose?.('project-x');
+    expect(closed).toHaveBeenCalledTimes(1);
+    expect(collection.get('surface-p')).toBeNull();
   });
 });

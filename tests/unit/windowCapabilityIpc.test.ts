@@ -86,6 +86,31 @@ describe('windowCapabilityIpc', () => {
     ]);
   });
 
+  it('waits for staged authority before running capability operations', async () => {
+    const ipc = fakeIpcMain();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const service = fakeService();
+    service.listCandidates = async () => {
+      calls += 1;
+      return { outcome: 'success', candidates: [] };
+    };
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service,
+      isSender: () => true,
+      waitForAuthority: () => gate,
+    });
+
+    const pending = ipc.invoke('papers:window-capability:list', 41, undefined);
+    await Promise.resolve();
+    expect(calls).toBe(0);
+    release();
+    await expect(pending).resolves.toEqual({ outcome: 'success', candidates: [] });
+    expect(calls).toBe(1);
+  });
+
   it('uses native DWM live preview for widget Shift-hover when its trusted host HWND resolves', async () => {
     const ipc = fakeIpcMain();
     const calls: Array<[string, unknown, unknown?]> = [];

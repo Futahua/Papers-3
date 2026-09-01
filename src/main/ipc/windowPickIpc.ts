@@ -23,6 +23,7 @@ export interface WindowPickIpcDependencies {
   ipcMain: Pick<IpcMain, 'handle'>;
   session: WindowPickSession;
   isSender: (sender: WebContents) => boolean;
+  waitForAuthority?: (sender: WebContents) => Promise<void>;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -60,6 +61,7 @@ export function registerWindowPickIpc({
   ipcMain,
   session,
   isSender,
+  waitForAuthority,
 }: WindowPickIpcDependencies): void {
   let owner: { senderId: number; generation: number } | null = null;
 
@@ -73,6 +75,7 @@ export function registerWindowPickIpc({
 
   ipcMain.handle('papers:window-pick:begin', async (event, raw) => {
     console.info('[045-direct-pick] ipc-begin-received', event.sender.id);
+    await waitForAuthority?.(event.sender);
     if (!isSender(event.sender)) {
       console.warn('[045-direct-pick] ipc-sender-rejected', event.sender.id);
       throw new Error('denied: not a Backpack project sender');
@@ -116,6 +119,7 @@ export function registerWindowPickIpc({
   });
 
   ipcMain.handle('papers:window-pick:cancel', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!isSender(event.sender)) {
       throw new Error('denied: not a Backpack project sender');
     }
@@ -132,6 +136,7 @@ export function registerWindowPickIpc({
   // staged set; a toggle key (e.g. Space) stages the hovered window. Both are
   // empty-payload invokes gated on the Backpack sender.
   ipcMain.handle('papers:window-pick:stage', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!isSender(event.sender)) {
       throw new Error('denied: not a Backpack project sender');
     }
@@ -144,6 +149,7 @@ export function registerWindowPickIpc({
   });
 
   ipcMain.handle('papers:window-pick:commit', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
     if (!isSender(event.sender)) {
       throw new Error('denied: not a Backpack project sender');
     }

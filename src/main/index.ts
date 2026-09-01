@@ -539,8 +539,7 @@ async function bootstrap(): Promise<void> {
     isAllowedProjectSurfaceSender({
       senderId: sender.id,
       url: sender.mainFrame.url,
-      isWorkspaceSender: (runtimeForSender(sender.id)?.isSender(sender) ?? false)
-        || projectSurfaceAuthority.isPending(sender.id),
+      isWorkspaceSender: runtimeForSender(sender.id)?.isSender(sender) ?? false,
       detachRegistry,
       widgetRegistry,
     });
@@ -775,6 +774,7 @@ async function bootstrap(): Promise<void> {
     ipcMain,
     service: windowCapabilityService,
     isSender: isProjectSurfaceSender,
+    waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     resolveCallerHwnd: (sender) => {
       const owner = BrowserWindow.fromWebContents(sender);
       if (!owner || owner.isDestroyed()) return null;
@@ -824,6 +824,7 @@ async function bootstrap(): Promise<void> {
     ipcMain,
     session: windowPickSession,
     isSender: isProjectSurfaceSender,
+    waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
   });
   // 018H1: generic Papers-owned detached Backpack surface seam - one
   // sandboxed BrowserWindow per registered project/surface request, an
