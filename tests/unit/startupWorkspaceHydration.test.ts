@@ -55,4 +55,33 @@ describe('startup workspace hydration transaction', () => {
     })).rejects.toThrow(/host unavailable/);
     expect(retireSurface.mock.calls).toEqual([['fresh-a'], ['fresh-b']]);
   });
+
+  it('does not allocate while project ownership gates are held', async () => {
+    const createSurface = vi.fn(() => ({ surfaceId: 'orphan' }));
+    const gateSpy = vi.fn();
+    const gateImplementation = async <T>(_projectIds: readonly string[], operation: () => Promise<T>): Promise<T> => {
+      gateSpy(_projectIds, operation);
+      await new Promise<void>((resolve) => { releaseGate = resolve; });
+      return operation();
+    };
+    let releaseGate!: () => void;
+    let available = true;
+    const hydrating = hydrateStartupWorkspace(1, {
+      snapshot: snapshot(),
+      findAvailableBackpack: (projectId) => available ? { name: projectId } : null,
+      openProject: async (projectId) => ({ url: `papers-backpack://${projectId}/fresh` }),
+      createSurface,
+      retireSurface: vi.fn(), validate: vi.fn(), deliver: vi.fn(), commit: vi.fn(),
+      runWithProjectOwnershipGates: gateImplementation,
+    });
+
+    await Promise.resolve();
+    expect(gateSpy).toHaveBeenCalledWith(['bp-a', 'bp-b'], expect.any(Function));
+    expect(createSurface).not.toHaveBeenCalled();
+
+    available = false;
+    releaseGate();
+    await expect(hydrating).rejects.toThrow(/not available/);
+    expect(createSurface).not.toHaveBeenCalled();
+  });
 });

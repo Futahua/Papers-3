@@ -56,6 +56,7 @@ function createFacade() {
     discard: vi.fn(),
   }));
   const markLeft = vi.fn(async () => {});
+  const markEntered = vi.fn(async () => {});
   const workspaceLayouts = {
     list: vi.fn(async () => []),
     get: vi.fn(async (_id: string): Promise<NamedWorkspaceLayout | null> => null),
@@ -131,6 +132,7 @@ function createFacade() {
       setArchived,
       remove,
       markLeft,
+      markEntered,
     },
     runtime: { stopActive: vi.fn(async () => {}) },
     showBackpackProjectSurface,
@@ -143,7 +145,7 @@ function createFacade() {
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
     setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, archivedProjects, markLeft,
-    removedProjects, setArchived, remove, workspaceLayouts, workspaceIds, workspaceRevisions, closingWindows,
+    removedProjects, setArchived, remove, markEntered, workspaceLayouts, workspaceIds, workspaceRevisions, closingWindows,
     commitPair, restorePair, prepareProjectSurface,
   };
 }
@@ -413,7 +415,7 @@ describe('surface routing in the host facade', () => {
   it('excludes ordinary topology commits and window finalization from the pair boundary', async () => {
     const {
       facade, logicalSurfaces, workspaceTopologies, workspaceIds,
-      archivedProjects, commitPair,
+      archivedProjects, commitPair, setEnteredBackpack, setActiveSurfaceId,
     } = createFacade();
     const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     const sourceTopology = openWorkspaceSurface(createWorkspaceTopology(), {
@@ -437,6 +439,11 @@ describe('surface routing in the host facade', () => {
     expect(commitPair).toHaveBeenCalledTimes(1);
     expect(() => facade.commitWorkspaceTopology(11, createWorkspaceTopology()))
       .toThrow(/Workspace mutation is busy/);
+    const surfacesBeforeDirectOpen = logicalSurfaces.project();
+    await expect(facade.openBackpackProject(HOST, PROJECT)).rejects.toThrow(/Workspace mutation is busy/);
+    expect(logicalSurfaces.project()).toEqual(surfacesBeforeDirectOpen);
+    expect(setEnteredBackpack).not.toHaveBeenCalled();
+    expect(setActiveSurfaceId).not.toHaveBeenCalled();
     await expect(facade.setBackpackArchived(PROJECT, true)).rejects.toThrow(/Workspace mutation is busy/);
     await expect(facade.removeBackpack(PROJECT)).rejects.toThrow(/Workspace mutation is busy/);
     expect(archivedProjects.has(PROJECT)).toBe(false);

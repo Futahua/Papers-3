@@ -262,7 +262,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     });
   }
 
-  private runProjectOwnershipGates<T>(projectIds: readonly string[], operation: () => Promise<T>): Promise<T> {
+  /** Shared with startup hydration, whose surface allocator lives outside the facade. */
+  withProjectOwnershipGates<T>(projectIds: readonly string[], operation: () => Promise<T>): Promise<T> {
     const uniqueProjectIds = [...new Set(projectIds)].sort();
     const runAt = (index: number): Promise<T> => {
       if (index >= uniqueProjectIds.length) return operation();
@@ -631,6 +632,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (backpack.archived) throw new Error('Restore this Backpack before entering it.');
     const project = await this.deps.backpackProjects.open(id);
     await this.deps.registry.markEntered(id);
+    // Both awaits above can overlap the move pair's awaited durable commit.
+    // Recheck the per-window boundary before changing any window projection or
+    // allocating a logical surface outside that pair's validated set.
+    this.assertWorkspaceMutationAvailable(windowId);
     // A null project is a successful entry into a valid empty Backpack. The
     // window must still become entered and the registry must still record the
     // application MRU; only the project-surface binding is conditional.
@@ -1010,7 +1015,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const layout = await this.deps.workspaceLayouts.get(layoutId);
     if (!layout) throw new Error('That named workspace layout does not exist.');
 
-    return this.runProjectOwnershipGates(
+    return this.withProjectOwnershipGates(
       layout.topology.surfaces.map((surface) => surface.projectId),
       () => this.loadWorkspaceLayoutFromControlLoaded(windowId, layout),
     );

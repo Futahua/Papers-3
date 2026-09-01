@@ -608,6 +608,8 @@ async function bootstrap(): Promise<void> {
             console.error('[workspace-topology] hydration durable commit failed', error);
           });
         },
+        runWithProjectOwnershipGates: (projectIds, operation) =>
+          facade.withProjectOwnershipGates(projectIds, operation),
         });
         return { hydrated: Boolean(result) };
       })();

@@ -21,6 +21,8 @@ export interface StartupWorkspaceHydrationDeps {
   validate: (topology: WorkspaceTopologyV1) => void;
   deliver: (projects: HydratedWorkspaceProject[], topology: WorkspaceTopologyV1) => void;
   commit: (workspaceId: string, topology: WorkspaceTopologyV1) => void;
+  /** Serialize project ownership creation with archive/remove availability changes. */
+  runWithProjectOwnershipGates?: <T>(projectIds: readonly string[], operation: () => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -34,6 +36,17 @@ export async function hydrateStartupWorkspace(
 ): Promise<{ workspaceId: string; projects: HydratedWorkspaceProject[]; topology: WorkspaceTopologyV1 } | null> {
   const snapshot = deps.snapshot;
   if (!snapshot) return null;
+  const projectIds = [...new Set(snapshot.topology.surfaces.map((surface) => surface.projectId))];
+  const run = deps.runWithProjectOwnershipGates
+    ?? (<T>(_: readonly string[], operation: () => Promise<T>) => operation());
+  return run(projectIds, () => hydrateStartupWorkspaceUngated(windowId, deps, snapshot));
+}
+
+async function hydrateStartupWorkspaceUngated(
+  windowId: number,
+  deps: StartupWorkspaceHydrationDeps,
+  snapshot: SelectedWorkspaceSnapshot,
+): Promise<{ workspaceId: string; projects: HydratedWorkspaceProject[]; topology: WorkspaceTopologyV1 }> {
   const opened: Array<{ old: WorkspaceSurface; fresh: HydratedWorkspaceProject }> = [];
   const allocated: string[] = [];
   try {
