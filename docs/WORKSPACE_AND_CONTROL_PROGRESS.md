@@ -885,15 +885,38 @@ selection, or management screen was added.
   from a late destroyed-object error. Add the control command, sender-binding
   tests, native recreate/rebind tests, durable two-workspace failure tests and
   a focused two-window Electron acceptance only after this contract is reviewed.
+- [x] Reviewer sign-off on exact head
+  `adfd9796a7f9c3f21ca037681f86b08a92cb3ec2`.
 
-A3.1 is now a concrete corrected design slice awaiting reviewer confirmation;
-no A3 implementation has started. A3 must not copy window IDs, sender IDs or
-native presentation state into durable layout/workspace files. The two
-workspace records remain independently represented but are committed through
-one atomic file save, with the move operation responsible for coordinating
-their in-memory canonical snapshots and compensating restore. The staged
-project renderer is not considered prepared until its authority barrier is
-also safe.
+A3.1 is signed off and implementation is proceeding at the infrastructure
+boundary. A3 must not copy window IDs, sender IDs or native presentation state
+into durable layout/workspace files. The two workspace records remain
+independently represented but are committed through one atomic file save, with
+the move operation responsible for coordinating their in-memory canonical
+snapshots and compensating restore. The staged project renderer is not
+considered prepared until its authority barrier is also safe.
+
+### A3.2 cross-window move infrastructure
+
+- [x] Add pure `insertWorkspaceSurface(...)` semantics for a moved descriptor
+  that is absent from the destination topology; preserve explicit target group,
+  index, active surface and focus invariants.
+- [x] Add `WorkspaceTopologyStore.commitPair(...)` for one awaited durable save
+  of source and target records while preserving pre-move `lastWorkspaceId`.
+- [x] Add pair snapshots and compensating restore with explicit deletion of a
+  newly introduced target workspace record.
+- [x] Add a project authority barrier that queues staged project IPC until
+  adoption and rejects it on discard; integrate the gate before the normal
+  project sender guard.
+- [x] Add a native runtime presentation option for hidden preparation and a
+  lifecycle-silent collection `prepare(...)->{runtime,adopt,discard}` seam.
+- [ ] Reviewer sign-off on the infrastructure exact head
+  `0c1865b`.
+
+A3.2 implementation validation so far: typecheck passed; focused topology,
+workspace-store, authority-barrier and surface-collection tests passed 29/29.
+The full move transaction, sender adoption wiring, control command and live
+two-window acceptance remain pending.
 
 ## Persistent pickup checklist for every new session
 
