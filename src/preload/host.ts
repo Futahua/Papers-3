@@ -53,29 +53,13 @@ const api = {
     close: (surfaceId: string) => ipcRenderer.invoke('host:backpack-project:close', surfaceId),
     showSurface: (surfaceId: string, url: string) => ipcRenderer.invoke('host:backpack-project:show-surface', surfaceId, url),
     hideSurface: (surfaceId: string) => ipcRenderer.invoke('host:backpack-project:hide-surface', surfaceId),
-    runAction: (actionId: string) =>
-      ipcRenderer.invoke('host:backpack-project:run-action', actionId),
-    copyText: (text: string) => ipcRenderer.invoke('host:backpack-project:copy-text', text),
-    projectStateLoad: () => ipcRenderer.invoke('host:backpack-project:state-load'),
-    projectStateSave: (state: string) => ipcRenderer.invoke('host:backpack-project:state-save', state),
-    projectStateLoadVersioned: () => ipcRenderer.invoke('host:backpack-project:state-load-versioned'),
-    projectStateSaveChecked: (state: string, revision: string) =>
-      ipcRenderer.invoke('host:backpack-project:state-save-checked', state, revision),
-    projectPickTarget: (kind: string) => ipcRenderer.invoke('host:backpack-project:pick-target', kind),
-    projectShortcutIcon: (shortcutId: string) =>
-      ipcRenderer.invoke('host:backpack-project:shortcut-icon', shortcutId),
-    projectLaunchShortcut: (shortcutId: string) => ipcRenderer.invoke('host:backpack-project:launch-shortcut', shortcutId),
-    projectRevealShortcut: (shortcutId: string) => ipcRenderer.invoke('host:backpack-project:reveal-shortcut', shortcutId),
-    projectOpenWebLink: (url: string) =>
-      ipcRenderer.invoke('host:backpack-project:open-web-link', url),
-    projectResolveDroppedTargets: (files: File[]) => {
-      const paths = files
-        .map((file) => webUtils.getPathForFile(file))
-        .filter((filePath) => filePath.length > 0);
-      return ipcRenderer.invoke('host:backpack-project:resolve-dropped-targets', paths);
-    },
-    projectResolveWebLinkIcon: (url: string) =>
-      ipcRenderer.invoke('host:backpack-project:resolve-web-link-icon', url),
+    // A0.2.1: project-scoped operations are NOT exposed to the host
+    // renderer. They resolved through the host's own project binding, so once
+    // a window can hold two tabs a host call would act on whichever project
+    // the host was last bound to -- the wrong-project class again, in a new
+    // place. These channels belong to the project frame, whose sender proves
+    // its own {surfaceId, projectId, windowId}. If host UI ever needs one, it
+    // gets an explicitly targeted variant, not this.
   },
 
   programs: {

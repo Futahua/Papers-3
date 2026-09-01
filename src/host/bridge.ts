@@ -128,23 +128,8 @@ interface HostBridge {
     close(surfaceId: string): Promise<void>;
     showSurface(surfaceId: string, url: string): Promise<void>;
     hideSurface(surfaceId: string): Promise<void>;
-    runAction(actionId: string): Promise<void>;
-    copyText(text: string): Promise<void>;
-    projectStateLoad(): Promise<unknown>;
-    projectStateSave(state: string): Promise<void>;
-    projectPickTarget(
-      kind: 'file' | 'folder',
-    ): Promise<{ target: string; icon: string | null } | null>;
-    projectShortcutIcon(shortcutId: string): Promise<string | null>;
-    projectLaunchShortcut(shortcutId: string): Promise<void>;
-    projectRevealShortcut(shortcutId: string): Promise<void>;
-    projectOpenWebLink(url: string): Promise<void>;
-    projectResolveDroppedTargets(
-      files: File[],
-    ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>>;
-    projectResolveWebLinkIcon(
-      url: string,
-    ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }>;
+    // Project-scoped operations live on the project frame's own bridge; the
+    // host renderer cannot act on a project without naming a surface.
   };
   programs: {
     catalog(): Promise<CatalogInfo>;
@@ -202,7 +187,9 @@ interface HostBridge {
   };
   events: {
     onBackpacksChanged(cb: (p: BackpacksList) => void): () => void;
-    onBackpackProjectCloseRequest(cb: () => void): () => void;
+    /** The project frame asked Papers to leave it. Carries the exact surface,
+     * so a window holding several does not close the wrong one. */
+    onBackpackProjectCloseRequest(cb: (payload: { surfaceId: string }) => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;

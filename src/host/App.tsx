@@ -53,6 +53,9 @@ export function App(): React.JSX.Element {
    * has nothing to act on.
    */
   const [surfaceId, setSurfaceId] = useState<string | null>(null);
+  /** Read inside subscriptions that outlive a render. */
+  const surfaceIdRef = useRef<string | null>(null);
+  surfaceIdRef.current = surfaceId;
   const [hermes, setHermes] = useState<HermesSurfaceStatus>({ placement: 'closed', status: 'idle', ownedByThisWindow: false });
   const [hostErrors, setHostErrors] = useState<HostErrorPayload[]>([]);
   const basicRef = useRef<HTMLDivElement | null>(null);
@@ -105,7 +108,9 @@ export function App(): React.JSX.Element {
 
     const subs = [
       bridge.events.onBackpacksChanged(setBackpacks),
-      bridge.events.onBackpackProjectCloseRequest(() => {
+      bridge.events.onBackpackProjectCloseRequest((payload) => {
+        // Only act when it is THIS window's shown surface being closed.
+        if (!payload?.surfaceId || payload.surfaceId !== surfaceIdRef.current) return;
         // Another window may archive/remove the Backpack while this renderer
         // is showing it. The main process already tore down the surface; this
         // synchronizes the local React state with that authoritative event.

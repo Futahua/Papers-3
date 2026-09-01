@@ -83,11 +83,12 @@ describe('surface routing in the host facade', () => {
 
   it('leaving retires the surface, so its id is spent for good', async () => {
     const { facade, surfaces, logicalSurfaces } = createFacade();
-    surfaces.bind(HOST, { projectId: PROJECT, windowId: 1, kind: 'host' });
     const surface = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
 
     await facade.closeBackpackProject(HOST, surface.surfaceId);
 
+    // A0.2.1: the host was never a project surface, so there is no host
+    // project binding to remove -- it proves a window, nothing more.
     expect(surfaces.projectForSender(HOST)).toBeNull();
     expect(logicalSurfaces.get(surface.surfaceId)).toBeNull();
     // A stale client repeating the call gets a refusal, not another window's
@@ -151,5 +152,44 @@ describe('surface routing in the host facade', () => {
       .rejects.toThrow(/Only a Papers window may act on a surface/);
     await expect(facade.saveBackpackProjectState(999, '{}'))
       .rejects.toThrow(/Enter a Backpack project/);
+  });
+});
+
+describe('a host renderer is not a project surface', () => {
+  const HOST = 11;
+  const FRAME = 12;
+
+  it('refuses an untargeted project operation from a host sender', async () => {
+    const { facade, logicalSurfaces } = createFacade();
+    logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+
+    // These channels resolve through the SENDER's own project binding. A host
+    // has none, so a host call is refused rather than acting on whichever
+    // project the window last opened -- which, with two tabs, is the
+    // wrong-project class all over again.
+    await expect(facade.saveBackpackProjectState(HOST, '{}'))
+      .rejects.toThrow(/Enter a Backpack project/);
+    await expect(facade.runBackpackProjectAction(HOST, 'clips'))
+      .rejects.toThrow(/Enter a Backpack project/);
+  });
+
+  it('lets the project frame act, because its binding proves its own surface', async () => {
+    const { facade, surfaces, logicalSurfaces } = createFacade();
+    const surface = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    surfaces.bind(FRAME, { surfaceId: surface.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project' });
+
+    await expect(facade.saveBackpackProjectState(FRAME, '{}')).resolves.toBeUndefined();
+  });
+
+  it('refuses a project frame whose surface has been retired', async () => {
+    const { facade, surfaces, logicalSurfaces } = createFacade();
+    const surface = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    surfaces.bind(FRAME, { surfaceId: surface.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project' });
+
+    // The surface is gone but this sender has not been torn down yet.
+    logicalSurfaces.retire(surface.surfaceId);
+
+    await expect(facade.saveBackpackProjectState(FRAME, '{}'))
+      .rejects.toThrow(/no longer open/);
   });
 });

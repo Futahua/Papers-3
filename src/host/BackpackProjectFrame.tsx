@@ -19,7 +19,10 @@ export function BackpackProjectFrame(props: {
   useEffect(() => {
     if (!surfaceId) return undefined;
     void host().backpackProject.showSurface(surfaceId, url);
-    const unsubscribe = host().events.onBackpackProjectCloseRequest(onDismiss);
+    const unsubscribe = host().events.onBackpackProjectCloseRequest((payload) => {
+      // Ignore a close aimed at some other surface in this window.
+      if (payload?.surfaceId === surfaceId) onDismiss();
+    });
     return () => {
       unsubscribe();
       void host().backpackProject.hideSurface(surfaceId);

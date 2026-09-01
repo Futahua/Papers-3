@@ -426,14 +426,16 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // window must still become entered and the registry must still record the
     // application MRU; only the project-surface binding is conditional.
     this.deps.setEnteredBackpack(windowId, id);
-    this.deps.surfaces.unbind(senderId);
     // Bind the asking host surface immediately, so every later request from
     // this window resolves through its own sender rather than ambient state.
     if (!project) {
       this.emitBackpacksChanged();
       return null;
     }
-    this.deps.surfaces.bind(senderId, { projectId: id, windowId, kind: 'host' });
+    // A0.2.1: the host renderer is NOT bound as a project surface. It proves
+    // a window through the window registry; project authority belongs to the
+    // frame that actually renders the project, and to explicitly targeted host
+    // commands.
     // The creation operation allocates the logical surface and hands back its
     // id. Every later operation on this view names that id explicitly.
     const surface = this.deps.logicalSurfaces.create({ windowId, projectId: id, kind: 'project' });
@@ -447,7 +449,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const { windowId } = this.requireHostSurfaceTarget(senderId, surfaceId);
     this.deps.hideBackpackProjectSurface(senderId);
     this.deps.logicalSurfaces.retire(surfaceId);
-    this.deps.surfaces.unbind(senderId);
     this.deps.setEnteredBackpack(windowId, null);
     this.emitBackpacksChanged();
   }
@@ -512,12 +513,26 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * closing one surface must not close the other. Window identity is the
    * question here, not project identity.
    */
+  /**
+   * A project frame asking Papers to leave it.
+   *
+   * Carries the exact surface, taken from the frame's own binding. A close
+   * request with no target would mean "whatever surface that host currently
+   * has selected", which is wrong the moment a window holds more than one.
+   *
+   * Delivered to that surface's own window: two windows may show one project,
+   * and closing here must not close there.
+   */
   requestCloseBackpackProject(senderId: number): void {
     const context = this.deps.surfaces.contextForSender(senderId);
-    if (!context) return;
-    const hostSender = this.deps.surfaces.hostSenderForWindow(context.windowId);
-    if (hostSender === null) return;
-    this.sendTo(hostSender, 'host:event:backpack-project-close-request', null);
+    if (!context?.surfaceId) return;
+    const surface = this.deps.logicalSurfaces.get(context.surfaceId);
+    if (!surface || surface.windowId !== context.windowId) return;
+    this.deps.sendToWindow(
+      context.windowId,
+      'host:event:backpack-project-close-request',
+      { surfaceId: context.surfaceId },
+    );
   }
 
   async runBackpackProjectAction(senderId: number, actionId: string): Promise<void> {
