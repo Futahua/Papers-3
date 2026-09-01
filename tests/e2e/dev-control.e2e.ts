@@ -1,36 +1,30 @@
-import { once } from 'node:events';
 import { mkdtemp, readFile } from 'node:fs/promises';
-import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { launchPapers, waitFor, type LaunchedApp } from './helpers';
+// @ts-expect-error -- the shared control client is plain ESM shipped with the tools.
+import { connectPapersControl, readDescriptor } from '../../tools/papersControlClient.mjs';
 
 let launched: LaunchedApp;
 let descriptorPath: string;
 
+/**
+ * Uses the SHARED control client, so this proves the real framing
+ * implementation rather than a second hand-written approximation that could
+ * agree with a broken server.
+ */
 async function call(method: string): Promise<unknown> {
-  const descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as {
-    pipe: string;
-    token: string;
-    protocolVersion: number;
-  };
-  const socket = createConnection(descriptor.pipe);
-  await once(socket, 'connect');
-  socket.setEncoding('utf8');
-  socket.write(`${JSON.stringify({
-    id: method,
-    token: descriptor.token,
-    protocolVersion: descriptor.protocolVersion,
-    method,
-    params: {},
-  })}\n`);
-  const [chunk] = await once(socket, 'data') as [string];
-  socket.end();
-  const response = JSON.parse(chunk.trim()) as { ok: boolean; result?: unknown; error?: string };
-  if (!response.ok) throw new Error(response.error ?? 'control request failed');
-  return response.result;
+  const descriptor = await readDescriptor(descriptorPath);
+  const connection = await connectPapersControl(descriptor);
+  try {
+    const response = await connection.call(method) as { ok: boolean; result?: unknown; error?: string };
+    if (!response.ok) throw new Error(response.error ?? 'control request failed');
+    return response.result;
+  } finally {
+    connection.close();
+  }
 }
 
 beforeAll(async () => {

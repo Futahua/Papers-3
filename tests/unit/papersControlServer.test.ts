@@ -1,20 +1,56 @@
 import { once } from 'node:events';
-import { mkdtemp, readFile } from 'node:fs/promises';
-import { createConnection } from 'node:net';
+import { access, mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { createConnection, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
-import { startPapersControlServer } from '../../src/main/control/papersControlServer';
+import { createFrameReader, startPapersControlServer } from '../../src/main/control/papersControlServer';
 
-async function call(pipe: string, payload: unknown): Promise<Record<string, unknown>> {
+/**
+ * Reads a complete newline-terminated frame rather than assuming one `data`
+ * event is one message. The old helper made that assumption and so could not
+ * expose the framing bug it shared with the client.
+ */
+function lineReader(socket: Socket): { readLine(): Promise<string> } {
+  let buffer = '';
+  const waiting: Array<(line: string) => void> = [];
+  const settle = (): void => {
+    while (waiting.length > 0) {
+      const newline = buffer.indexOf('\n');
+      if (newline < 0) break;
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      waiting.shift()?.(line);
+    }
+  };
+  socket.on('data', (chunk: string) => { buffer += chunk; settle(); });
+  return {
+    readLine() {
+      const newline = buffer.indexOf('\n');
+      if (newline >= 0) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        return Promise.resolve(line);
+      }
+      return new Promise<string>((resolve) => { waiting.push(resolve); });
+    },
+  };
+}
+
+async function connect(pipe: string): Promise<{ socket: Socket; readLine(): Promise<string> }> {
   const socket = createConnection(pipe);
   await once(socket, 'connect');
   socket.setEncoding('utf8');
+  return { socket, ...lineReader(socket) };
+}
+
+async function call(pipe: string, payload: unknown): Promise<Record<string, unknown>> {
+  const { socket, readLine } = await connect(pipe);
   socket.write(`${JSON.stringify(payload)}\n`);
-  const [chunk] = await once(socket, 'data') as [string];
+  const line = await readLine();
   socket.end();
-  return JSON.parse(chunk.trim()) as Record<string, unknown>;
+  return JSON.parse(line) as Record<string, unknown>;
 }
 
 describe('Papers developer control server', () => {
@@ -48,5 +84,199 @@ describe('Papers developer control server', () => {
 
     await server.close();
     await expect(readFile(descriptorPath, 'utf8')).rejects.toThrow();
+  });
+
+  it('shuts down promptly even while an idle client holds a connection open', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-'));
+    const descriptorPath = join(root, 'control.json');
+    const server = await startPapersControlServer({
+      descriptorPath,
+      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 1 }) },
+    });
+
+    // Connect and send NOTHING. server.close() alone waits for existing
+    // connections, so without tracking and destroying sockets this would hang
+    // for as long as the client felt like staying -- and Papers awaits this
+    // close before quitting.
+    const idle = createConnection(server.descriptor.pipe);
+    await once(idle, 'connect');
+
+    await expect(Promise.race([
+      server.close().then(() => 'closed'),
+      new Promise((resolve) => setTimeout(() => resolve('hung'), 2000)),
+    ])).resolves.toBe('closed');
+    // The server ended it; the client observes that rather than lingering.
+    await Promise.race([once(idle, 'close'), new Promise((r) => setTimeout(r, 1000))]);
+    expect(idle.destroyed).toBe(true);
+  });
+
+  it('rolls back the listening pipe and leaves no artifact when publishing the descriptor fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-'));
+    const descriptorPath = join(root, 'control.json');
+    let pipeName: string | null = null;
+
+    await expect(startPapersControlServer({
+      descriptorPath,
+      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 1 }) },
+      publishDescriptor: async (temporary) => {
+        // The listen() has already succeeded at this point, which is exactly
+        // the window that used to leave a hidden pipe listening with no
+        // descriptor and no registered cleanup.
+        pipeName = temporary;
+        throw new Error('publication failed');
+      },
+    })).rejects.toThrow(/publication failed/);
+
+    expect(pipeName).not.toBeNull();
+    // No descriptor and no temporary file left behind.
+    await expect(access(descriptorPath)).rejects.toBeTruthy();
+    expect((await readdir(root)).filter((name) => name.includes('.tmp'))).toEqual([]);
+  });
+
+  it('reads a request that arrives split across deliveries', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-'));
+    const descriptorPath = join(root, 'control.json');
+    const server = await startPapersControlServer({
+      descriptorPath,
+      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 5 }) },
+    });
+    const { socket, readLine } = await connect(server.descriptor.pipe);
+
+    const frame = `${JSON.stringify({
+      id: 1,
+      token: server.descriptor.token,
+      protocolVersion: server.descriptor.protocolVersion,
+      method: 'window.create',
+      params: {},
+    })}
+`;
+    // A stream carries bytes, not messages.
+    socket.write(frame.slice(0, 10));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    socket.write(frame.slice(10));
+
+    expect(JSON.parse(await readLine())).toMatchObject({ id: 1, ok: true });
+    socket.end();
+    await server.close();
+  });
+
+  it('accepts two requests coalesced into one delivery, capping per frame rather than cumulatively', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-'));
+    const descriptorPath = join(root, 'control.json');
+    const server = await startPapersControlServer({
+      descriptorPath,
+      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 9 }) },
+    });
+    const { socket, readLine } = await connect(server.descriptor.pipe);
+
+    // Two individually legal frames, each padded past half the 64 KiB limit,
+    // arriving in one delivery. Under a cumulative cap the pair is rejected as
+    // one oversized request even though neither exceeds the limit -- so what
+    // matters here is that BOTH are answered, each by its own id, and that
+    // neither is refused for size.
+    const padded = (id: number) => `${JSON.stringify({
+      id,
+      token: server.descriptor.token,
+      protocolVersion: server.descriptor.protocolVersion,
+      method: 'window.create',
+      params: { pad: 'x'.repeat(40 * 1024) },
+    })}\n`;
+    socket.write(padded(1) + padded(2));
+
+    const first = JSON.parse(await readLine()) as { id: unknown; error?: string };
+    const second = JSON.parse(await readLine()) as { id: unknown; error?: string };
+    expect([first.id, second.id]).toEqual([1, 2]);
+    expect(first.error ?? '').not.toContain('too large');
+    expect(second.error ?? '').not.toContain('too large');
+
+    socket.end();
+    await server.close();
+  });
+
+  it('refuses a single frame larger than the limit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-control-'));
+    const descriptorPath = join(root, 'control.json');
+    const server = await startPapersControlServer({
+      descriptorPath,
+      dependencies: { snapshot: () => ({}), windows: () => [], createWindow: async () => ({ windowId: 1 }) },
+    });
+    const { socket, readLine } = await connect(server.descriptor.pipe);
+
+    socket.write(`${JSON.stringify({
+      id: 1,
+      token: server.descriptor.token,
+      protocolVersion: server.descriptor.protocolVersion,
+      method: 'window.create',
+      params: { pad: 'x'.repeat(80 * 1024) },
+    })}\n`);
+
+    expect(JSON.parse(await readLine())).toMatchObject({ ok: false, error: 'request too large' });
+    await server.close();
+  });
+});
+
+/**
+ * Framing, tested with exact chunk sequences. A real socket chooses its own
+ * delivery boundaries, so a socket-level test cannot reliably deliver two
+ * requests together -- which is the case a cumulative cap gets wrong. These
+ * drive the reader directly.
+ */
+describe('control frame reader', () => {
+  function reader(maxFrameBytes = 64) {
+    const frames: string[] = [];
+    let oversize = 0;
+    const subject = createFrameReader({
+      maxFrameBytes,
+      onFrame: (line) => frames.push(line),
+      onOversize: () => { oversize += 1; },
+    });
+    return { subject, frames, oversized: () => oversize };
+  }
+
+  it('assembles a frame split across deliveries', () => {
+    const r = reader();
+    r.subject.push('{"a":');
+    expect(r.frames).toEqual([]);
+    r.subject.push('1}' + '\n');
+    expect(r.frames).toEqual(['{"a":1}']);
+  });
+
+  it('splits two frames that arrive in one delivery', () => {
+    const r = reader();
+    r.subject.push('{"a":1}' + '\n' + '{"a":2}' + '\n');
+    expect(r.frames).toEqual(['{"a":1}', '{"a":2}']);
+    expect(r.oversized()).toBe(0);
+  });
+
+  it('caps per frame, not cumulatively: two legal frames delivered together both pass', () => {
+    const r = reader(64);
+    // Each frame is 40 bytes -- legal. Their sum is 80, which a cumulative cap
+    // would refuse as one oversized request.
+    const frame = 'x'.repeat(40) + '\n';
+    r.subject.push(frame + frame);
+    expect(r.frames).toHaveLength(2);
+    expect(r.oversized()).toBe(0);
+  });
+
+  it('refuses a single frame over the cap', () => {
+    const r = reader(64);
+    r.subject.push('x'.repeat(65) + '\n');
+    expect(r.frames).toEqual([]);
+    expect(r.oversized()).toBe(1);
+  });
+
+  it('refuses an unterminated residual that grows past the cap', () => {
+    const r = reader(64);
+    // No newline ever arrives; the buffer must not grow without bound.
+    r.subject.push('x'.repeat(65));
+    expect(r.oversized()).toBe(1);
+  });
+
+  it('stops reading after refusing, so a destroyed socket delivers nothing more', () => {
+    const r = reader(64);
+    r.subject.push('x'.repeat(65) + '\n');
+    r.subject.push('{"a":1}' + '\n');
+    expect(r.frames).toEqual([]);
+    expect(r.oversized()).toBe(1);
   });
 });

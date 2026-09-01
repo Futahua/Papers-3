@@ -37,6 +37,7 @@ import { registerWindowDetachIpc } from './ipc/windowDetachIpc';
 import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
 import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
+import { controlBuildIdentity } from './buildIdentity';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
@@ -1278,7 +1279,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         windows: windowsSnapshot,
         snapshot: () => ({
           schemaVersion: 1,
-          build: facade.buildIdentity(),
+          // A dedicated control-safe projection, never the renderer-facing
+          // identity: that one carries installDir, dataDir and a
+          // machine-stamped summary.
+          build: controlBuildIdentity(),
           windows: windowsSnapshot(),
           hermes: {
             ...hermesSurface.state,

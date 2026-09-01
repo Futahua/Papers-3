@@ -79,3 +79,31 @@ export function buildIdentity(): BuildIdentity {
     summary: `${version} · ${commit} · ${machine}`,
   };
 }
+
+/**
+ * The build facts a developer-control client may see.
+ *
+ * Deliberately NOT the renderer-facing identity. That one carries `installDir`,
+ * `dataDir` and a machine-stamped `summary`, which would send absolute paths --
+ * and usually a username -- across a boundary whose contract promises no roots.
+ * A separate projection means widening `BuildIdentity` later cannot silently
+ * widen what control discloses.
+ */
+export interface ControlBuildIdentity {
+  version: string;
+  commit: string;
+  branch: string;
+  builtAt: string;
+  packaged: boolean;
+}
+
+export function controlBuildIdentity(): ControlBuildIdentity {
+  const identity = buildIdentity();
+  return {
+    version: identity.version,
+    commit: identity.commit,
+    branch: identity.branch,
+    builtAt: identity.builtAt,
+    packaged: identity.packaged,
+  };
+}

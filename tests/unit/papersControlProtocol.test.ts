@@ -18,16 +18,26 @@ function request(method: 'inspect.snapshot' | 'inspect.windows' | 'window.create
 
 describe('Papers developer control protocol', () => {
   it('dispatches only the small semantic command catalog', async () => {
+    // Results must satisfy the catalog's declared output shape: the boundary
+    // validates what it is about to disclose rather than trusting whatever a
+    // dependency returns.
+    const window = { windowId: 1, hostAlive: true, nativeWindowAlive: true, enteredBackpackId: null };
+    const snapshot = {
+      schemaVersion: 1 as const,
+      build: { version: '1.3.10', commit: 'abc1234', branch: 'main', builtAt: 'unknown', packaged: false },
+      windows: [window],
+      hermes: { placement: 'closed' as const, status: 'idle' as const, ownerWindowId: null },
+    };
     const dependencies = {
-      snapshot: vi.fn(() => ({ windows: 2 })),
-      windows: vi.fn(() => [{ windowId: 1 }]),
+      snapshot: vi.fn(() => snapshot),
+      windows: vi.fn(() => [window]),
       createWindow: vi.fn(async () => ({ windowId: 3 })),
     };
 
     await expect(dispatchPapersControl(dependencies, request('inspect.snapshot')))
-      .resolves.toEqual({ windows: 2 });
+      .resolves.toEqual(snapshot);
     await expect(dispatchPapersControl(dependencies, request('inspect.windows')))
-      .resolves.toEqual([{ windowId: 1 }]);
+      .resolves.toEqual([window]);
     await expect(dispatchPapersControl(dependencies, request('window.create')))
       .resolves.toEqual({ windowId: 3 });
   });
@@ -46,5 +56,32 @@ describe('Papers developer control protocol', () => {
       windows: () => [],
       createWindow: async () => ({}),
     }, request('window.create', { senderId: 10 }))).rejects.toThrow();
+  });
+
+  it('refuses to disclose a snapshot carrying filesystem roots', async () => {
+    // The contract is "no roots". Enforced here rather than trusted: widening
+    // the renderer-facing build identity must not silently widen what the
+    // control boundary discloses.
+    const leaky = {
+      schemaVersion: 1 as const,
+      build: {
+        version: '1.3.10',
+        commit: 'abc1234',
+        branch: 'main',
+        builtAt: 'unknown',
+        packaged: false,
+        installDir: 'C:\Users\someone\AppData\Local\Papers',
+        dataDir: 'C:\Users\someone\AppData\Roaming\Papers',
+      },
+      windows: [],
+      hermes: { placement: 'closed' as const, status: 'idle' as const, ownerWindowId: null },
+    };
+    const dependencies = {
+      snapshot: vi.fn(() => leaky),
+      windows: vi.fn(() => []),
+      createWindow: vi.fn(async () => ({ windowId: 1 })),
+    };
+
+    await expect(dispatchPapersControl(dependencies, request('inspect.snapshot'))).rejects.toThrow();
   });
 });

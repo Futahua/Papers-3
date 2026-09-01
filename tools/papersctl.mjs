@@ -1,8 +1,5 @@
 #!/usr/bin/env node
-import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
-import { createConnection } from 'node:net';
-import { resolve } from 'node:path';
+import { connectPapersControl, readDescriptor } from './papersControlClient.mjs';
 
 function usage() {
   console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|window.create> [--descriptor <path>]');

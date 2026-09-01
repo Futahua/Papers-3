@@ -4,10 +4,42 @@ export const PAPERS_CONTROL_PROTOCOL_VERSION = 1;
 
 const emptyParamsSchema = z.object({}).strict().default({});
 
+const safeBuildSchema = z.object({
+  version: z.string(),
+  commit: z.string(),
+  branch: z.string(),
+  builtAt: z.string(),
+  packaged: z.boolean(),
+}).strict();
+
+const controlWindowSchema = z.object({
+  windowId: z.number().int(),
+  hostAlive: z.boolean(),
+  nativeWindowAlive: z.boolean(),
+  enteredBackpackId: z.string().nullable(),
+}).strict();
+
+const snapshotSchema = z.object({
+  schemaVersion: z.literal(1),
+  build: safeBuildSchema,
+  windows: z.array(controlWindowSchema),
+  hermes: z.object({
+    placement: z.enum(['closed', 'docked', 'detached']),
+    status: z.enum(['idle', 'starting', 'ready', 'error']),
+    detail: z.string().optional(),
+    ownerWindowId: z.number().int().nullable(),
+  }).strict(),
+}).strict();
+
 export const papersControlCommands = {
-  'inspect.snapshot': { input: emptyParamsSchema },
-  'inspect.windows': { input: emptyParamsSchema },
-  'window.create': { input: emptyParamsSchema },
+  'inspect.snapshot': { input: emptyParamsSchema, output: snapshotSchema, scope: 'app', effect: 'query' },
+  'inspect.windows': { input: emptyParamsSchema, output: z.array(controlWindowSchema), scope: 'app', effect: 'query' },
+  'window.create': {
+    input: emptyParamsSchema,
+    output: z.object({ windowId: z.number().int() }).strict(),
+    scope: 'app',
+    effect: 'mutate',
+  },
 } as const;
 
 export type PapersControlMethod = keyof typeof papersControlCommands;
@@ -18,7 +50,8 @@ export interface PapersControlDependencies {
   createWindow(): Promise<unknown>;
 }
 
-const methodSchema = z.enum(['inspect.snapshot', 'inspect.windows', 'window.create']);
+const methodNames = Object.keys(papersControlCommands) as [PapersControlMethod, ...PapersControlMethod[]];
+const methodSchema = z.enum(methodNames);
 
 export const controlRequestSchema = z.object({
   id: z.union([z.string().min(1).max(128), z.number().int()]),
@@ -40,8 +73,8 @@ export async function dispatchPapersControl(
   const definition = papersControlCommands[request.method];
   definition.input.parse(request.params ?? {});
   switch (request.method) {
-    case 'inspect.snapshot': return dependencies.snapshot();
-    case 'inspect.windows': return dependencies.windows();
-    case 'window.create': return dependencies.createWindow();
+    case 'inspect.snapshot': return papersControlCommands[request.method].output.parse(dependencies.snapshot());
+    case 'inspect.windows': return papersControlCommands[request.method].output.parse(dependencies.windows());
+    case 'window.create': return papersControlCommands[request.method].output.parse(await dependencies.createWindow());
   }
 }
