@@ -804,10 +804,13 @@ selection, or management screen was added.
   the authenticated host sender; the destination is an explicit live Papers
   window and is never the focused/primary window by inference.
 - [x] Validate both workspace topologies against exact live project sets before
-  mutation. Compute the source topology with `surfaceId` removed and the
-  destination topology with the same `surfaceId` inserted by the existing
-  `moveWorkspaceSurface` rules; validate both prospective sets before touching
-  native state.
+  mutation. Compute `sourceNext` with `closeWorkspaceSurface(sourceTopology,
+  surfaceId)`. Compute `targetNext` by inserting the moved descriptor into the
+  explicit target group, then applying the existing `moveWorkspaceSurface`
+  ordering semantics (or an equivalent pure `insertWorkspaceSurface` helper);
+  validate both prospective sets before touching native state. The destination
+  cannot call `moveWorkspaceSurface` against the pre-move target alone because
+  that helper requires the surface to already be present in that topology.
 - [x] Choose recreate/rebind as the first Electron `43.1.1` implementation.
   `BackpackProjectRuntime` currently owns a fixed `BaseWindow` and exposes no
   reparent operation, so A3 must prepare a destination presentation from the
@@ -816,32 +819,61 @@ selection, or management screen was added.
   presentation nor `WebContents` identity is durable product state.
 - [x] Define one serialized move transaction per application. Its phases are:
   capture and validate both windows/topologies; resolve and revalidate the
-  project; prepare the destination runtime without changing logical ownership;
-  wait for the destination renderer to load; queue one destination and one
-  source topology event as the handoff boundary; move the logical surface,
-  rebind all project senders from source to destination, update both active /
-  entered projections, and persist each durable workspace record exactly once;
-  only then retire the source native presentation. Control inspection and
-  renderers must not observe the prepared duplicate as canonical state.
-- [x] Define rollback at every await and commit boundary. Before the handoff
-  boundary, destroy only the prepared destination presentation and leave source
-  topology, logical ownership, sender bindings and durable records untouched.
-  If sender rebinding or either durable write fails after the boundary, restore
-  the in-memory source/destination snapshots, rebind the original sender set,
-  remove the destination presentation, and persist compensating snapshots as
-  needed. Preserve the logical `surfaceId` throughout; retire it only if the
-  original native presentation cannot be restored and the source is no longer
-  safe to expose.
+  project; preflight both host destinations; prepare a lifecycle-silent staged
+  destination runtime and wait for its renderer to load; compute/validate
+  `sourceNext` and `targetNext`; atomically persist both durable workspace
+  records with one awaited store save; then perform the synchronous canonical
+  handoff with no further asynchronous failure boundary. The handoff moves the
+  logical `surfaceId` to the target, unbinds only old sender contexts for that
+  exact surface, binds only the newly prepared destination project sender to
+  `{surfaceId, projectId, targetWindowId, kind:'project'}`, updates both
+  in-memory topologies/revisions/projections, emits the source and destination
+  topology events, and finally performs best-effort source native teardown.
+  The staged duplicate is never canonical or exposed to control inspection.
+- [x] Use a dedicated `commitWorkspacePair`-style persistence primitive for the
+  shared `workspace-topologies.json`; two sequential `commit()` calls are not
+  crash-atomic. The primitive replaces both existing records in one
+  `AtomicJsonStore.save()` and preserves the pre-move `lastWorkspaceId` rather
+  than selecting whichever side was written second. An initially unassigned
+  target receives a new durable workspace ID inside this transaction; the
+  primitive also supports an atomic compensating restore that removes that
+  newly introduced record if the canonical handoff must be undone.
+- [x] Define rollback at every await and commit boundary. Before pair
+  persistence, discard only the staged destination presentation and leave
+  source topology, logical ownership, sender bindings and durable records
+  untouched. If canonical handoff or either post-commit renderer delivery
+  fails, restore the source/destination in-memory snapshots and exact sender
+  bindings, discard the staged/adopted destination presentation, and perform
+  one compensating atomic pair restore (including removal of a newly allocated
+  target workspace record). If one renderer was already notified, send it one
+  compensating topology event describing the restored snapshot. Preserve the
+  logical `surfaceId` throughout; retire it only if the original native
+  presentation cannot be restored and the source is no longer safe to expose.
+- [x] Make staging lifecycle-silent: a prepared runtime must not be inserted
+  into the ordinary canonical project-surface collection before adoption,
+  because ordinary `close()` can invoke `onSurfaceClosed` and mutate detach /
+  widget ownership. It needs an explicit `prepareProjectSurface(...) ->
+  {senderId, adopt, discard}` seam; `discard` cannot fire canonical close
+  cleanup, while `adopt` installs the normal destination collection ownership
+  only at handoff.
+- [x] Keep source and destination authority adapters separate. Host IPC derives
+  `sourceWindowId` from its authenticated sender and accepts only `surfaceId`
+  plus an explicit target; developer control authorizes explicit
+  `sourceWindowId`, `surfaceId` and target through its authenticated control
+  session. Both call the same core transaction. Never rebind a source
+  WebContents to the target window, and never project-wide rebind same-project,
+  widget, detached or unrelated tab senders.
 - [x] Keep native teardown best-effort after canonical commit, with no rollback
   from a late destroyed-object error. Add the control command, sender-binding
   tests, native recreate/rebind tests, durable two-workspace failure tests and
   a focused two-window Electron acceptance only after this contract is reviewed.
 
-A3.1 is now a concrete design slice awaiting reviewer confirmation; no A3
-implementation has started. A3 must not copy window IDs, sender IDs or native
-presentation state into durable layout/workspace files. The two workspace
-records remain independently durable, with the move operation responsible for
-coordinating their in-memory canonical snapshots and compensating writes.
+A3.1 is now a concrete corrected design slice awaiting reviewer confirmation;
+no A3 implementation has started. A3 must not copy window IDs, sender IDs or
+native presentation state into durable layout/workspace files. The two
+workspace records remain independently represented but are committed through
+one atomic file save, with the move operation responsible for coordinating
+their in-memory canonical snapshots and compensating restore.
 
 ## Persistent pickup checklist for every new session
 
