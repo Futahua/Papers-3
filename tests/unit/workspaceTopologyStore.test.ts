@@ -110,6 +110,97 @@ describe('WorkspaceTopologyStore', () => {
     expect(persisted.workspaces[0]?.topology).toEqual(original);
   });
 
+  it('serializes an ordinary commit behind a held pair save', async () => {
+    const paths = papersPaths(directory);
+    const store = new WorkspaceTopologyStore(paths);
+    const sourceId = '55555555-5555-4555-8555-555555555555';
+    const targetId = '66666666-6666-4666-8666-666666666666';
+    const original = createWorkspaceTopology();
+    await store.commit(sourceId, original);
+    await store.commit(targetId, createWorkspaceTopology('target'));
+
+    const internal = store as unknown as { store: { save(value: unknown): Promise<void> } };
+    const save = internal.store.save.bind(internal.store);
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const enteredSave = new Promise<void>((resolve) => { entered = resolve; });
+    internal.store.save = async (value) => {
+      entered();
+      await held;
+      return save(value);
+    };
+
+    const pair = store.commitPair({
+      source: { workspaceId: sourceId, topology: original },
+      target: { workspaceId: targetId, topology: createWorkspaceTopology('moved-target') },
+      lastWorkspaceId: sourceId,
+    });
+    await enteredSave;
+    let ordinaryFinished = false;
+    const ordinary = store.commit(sourceId, openWorkspaceSurface(original, {
+      surfaceId: 'sf-after', projectId: 'bp-after', title: 'After',
+    })).then(() => { ordinaryFinished = true; });
+    await Promise.resolve();
+    expect(ordinaryFinished).toBe(false);
+    release();
+    await pair;
+    await ordinary;
+    expect(ordinaryFinished).toBe(true);
+    const selected = await store.selectedSnapshot();
+    expect(selected?.workspaceId).toBe(sourceId);
+    expect(selected?.topology.surfaces).toEqual([{ surfaceId: 'sf-after', projectId: 'bp-after', title: 'After' }]);
+  });
+
+  it('keeps pair state consistent when pair save or compensation save fails', async () => {
+    const paths = papersPaths(directory);
+    const store = new WorkspaceTopologyStore(paths);
+    const sourceId = '77777777-7777-4777-8777-777777777777';
+    const targetId = '88888888-8888-4888-8888-888888888888';
+    const source = createWorkspaceTopology();
+    const target = createWorkspaceTopology('target');
+    await store.commit(sourceId, source);
+    await store.commit(targetId, target);
+    const internal = store as unknown as { store: { save(value: unknown): Promise<void> } };
+    const save = internal.store.save.bind(internal.store);
+    let fail = true;
+    internal.store.save = async (value) => {
+      if (fail) {
+        fail = false;
+        throw new Error('held pair failure');
+      }
+      return save(value);
+    };
+    await expect(store.commitPair({
+      source: { workspaceId: sourceId, topology: openWorkspaceSurface(source, {
+        surfaceId: 'sf-moved', projectId: 'bp-moved', title: 'Moved',
+      }) },
+      target: { workspaceId: targetId, topology: target },
+      lastWorkspaceId: sourceId,
+    })).rejects.toThrow('held pair failure');
+
+    const afterPairFailure = JSON.parse(await fs.readFile(paths.workspaceTopologiesFile, 'utf8')) as {
+      workspaces: Array<{ workspaceId: string; topology: typeof source }>;
+    };
+    expect(afterPairFailure.workspaces.find((entry) => entry.workspaceId === sourceId)?.topology).toEqual(source);
+
+    const before = await store.snapshotPair(sourceId, targetId);
+    await store.commitPair({
+      source: { workspaceId: sourceId, topology: openWorkspaceSurface(source, {
+        surfaceId: 'sf-moved', projectId: 'bp-moved', title: 'Moved',
+      }) },
+      target: { workspaceId: targetId, topology: target },
+      lastWorkspaceId: sourceId,
+    });
+    fail = true;
+    await expect(store.restorePairWithIds(before, sourceId, targetId)).rejects.toThrow('held pair failure');
+    const afterRestoreFailure = JSON.parse(await fs.readFile(paths.workspaceTopologiesFile, 'utf8')) as {
+      workspaces: Array<{ workspaceId: string; topology: typeof source }>;
+    };
+    expect(afterRestoreFailure.workspaces.find((entry) => entry.workspaceId === sourceId)?.topology.surfaces)
+      .toEqual([{ surfaceId: 'sf-moved', projectId: 'bp-moved', title: 'Moved' }]);
+  });
+
   it('quarantines structurally invalid persisted topology instead of consuming it', async () => {
     const paths = papersPaths(directory);
     await fs.mkdir(path.dirname(paths.workspaceTopologiesFile), { recursive: true });
