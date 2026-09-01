@@ -89,7 +89,7 @@ export function registerWindowPickIpc({
     requireOwner(sender);
     const claim = {
       senderId: sender.id,
-      generation: owner?.senderId === sender.id ? owner.generation + 1 : 1,
+      generation: 1,
     };
     owner = claim;
     if (typeof (sender as WebContents & { once?: unknown }).once === 'function') {
