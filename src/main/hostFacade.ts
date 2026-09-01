@@ -222,18 +222,32 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async setBackpackArchived(id: string, archived: boolean): Promise<void> {
     if (archived) {
+      // Persist first. If persistence fails, live windows must keep their
+      // current project and identity because the Backpack is still available.
+      await this.deps.registry.setArchived(id, archived);
       // The Backpack itself became unavailable, so EVERY window that entered
       // it must leave. This is one of the few operations that legitimately
       // reaches across windows; an ordinary leave touches only its own.
+      for (const windowId of this.deps.hostWindowIds()) {
+        if (this.deps.enteredBackpack(windowId) !== id) continue;
+        const hostSender = this.deps.surfaces.hostSenderForWindow(windowId);
+        if (hostSender !== null) this.deps.hideBackpackProjectSurface(hostSender);
+      }
       this.deps.clearEnteredBackpackEverywhere(id);
       this.deps.surfaces.unbindProject(id);
+    } else {
+      await this.deps.registry.setArchived(id, archived);
     }
-    await this.deps.registry.setArchived(id, archived);
     this.emitBackpacksChanged();
   }
 
   async removeBackpack(id: string): Promise<void> {
     await this.deps.registry.remove(id);
+    for (const windowId of this.deps.hostWindowIds()) {
+      if (this.deps.enteredBackpack(windowId) !== id) continue;
+      const hostSender = this.deps.surfaces.hostSenderForWindow(windowId);
+      if (hostSender !== null) this.deps.hideBackpackProjectSurface(hostSender);
+    }
     this.deps.clearEnteredBackpackEverywhere(id);
     this.deps.surfaces.unbindProject(id);
     this.emitBackpacksChanged();
