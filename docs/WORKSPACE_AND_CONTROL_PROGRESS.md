@@ -562,8 +562,12 @@ A1.2g main-authoritative `workspace.open`:
   focused group, make it canonical active, and commit/revise/persist it.
 - [x] Deliver one atomic main→host event containing trusted project descriptor
   plus resulting topology, so App has URL metadata before Dockview renders.
-- [x] Roll back invocation-owned surface, active/entered projection and
-  topology if post-allocation delivery fails; preserve pre-existing surfaces.
+- [x] Re-resolve live window topology and Backpack availability after the
+  project-lookup await, so concurrent layout/close/archive wins without stale
+  canonical rollback.
+- [x] Require fail-closed exact-host delivery before active/entered/revision/
+  persistence mutation. Delivery failure retires only the invocation-owned
+  fresh surface and leaves canonical state/revision untouched.
 - [x] Add `papersctl workspace.open --window <id> --project <id>`.
 - [x] Live A/B/C E2E opens Gamma through control, verifies the real host tab,
   then continues actual Dockview close/archive and persistence acceptance.

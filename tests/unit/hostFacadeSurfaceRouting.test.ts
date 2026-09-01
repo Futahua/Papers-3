@@ -22,6 +22,7 @@ function createFacade() {
   const closeAttachedProjectSurface = vi.fn();
   const closeBackpackProjectSurface = vi.fn();
   const openProject = vi.fn(async (id: string) => id === PROJECT || id === OTHER ? { url: `papers-backpack://${id}/open` } : null);
+  const archivedProjects = new Set<string>();
   const sendToWindow = vi.fn();
   const focusedSurfaces = new Map<number, string | null>();
   const enteredBackpacks = new Map<number, string | null>();
@@ -45,6 +46,7 @@ function createFacade() {
     hostWindowForSender: (senderId: number) => (senderId === 11 ? 1 : null),
     hostWindowIds: () => [1, 2],
     sendToWindow,
+    sendToWindowOrThrow: sendToWindow,
     broadcastToHosts: vi.fn(),
     enteredBackpack: (windowId: number) => enteredBackpacks.get(windowId) ?? null,
     setEnteredBackpack,
@@ -59,9 +61,13 @@ function createFacade() {
     closeAttachedProjectSurface,
     closeBackpackProjectSurface,
     registry: {
-      find: (id: string) => (id === PROJECT || id === OTHER ? { id, name: id === PROJECT ? 'Alpha' : 'Beta', archived: false } : null),
+      find: (id: string) => (id === PROJECT || id === OTHER ? {
+        id, name: id === PROJECT ? 'Alpha' : 'Beta', archived: archivedProjects.has(id),
+      } : null),
       list: () => [],
-      setArchived: vi.fn(async () => {}),
+      setArchived: vi.fn(async (id: string, archived: boolean) => {
+        if (archived) archivedProjects.add(id); else archivedProjects.delete(id);
+      }),
       markLeft,
     },
     runtime: { stopActive: vi.fn(async () => {}) },
@@ -74,7 +80,7 @@ function createFacade() {
     facade, surfaces, logicalSurfaces, hideBackpackProjectSurface,
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
-    setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, markLeft,
+    setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, archivedProjects, markLeft,
   };
 }
 
@@ -110,6 +116,40 @@ describe('surface routing in the host facade', () => {
     workspaceTopologies.set(1, original);
     sendToWindow.mockImplementationOnce(() => { throw new Error('host unavailable'); });
     await expect(facade.openWorkspaceSurfaceFromControl(1, PROJECT)).rejects.toThrow(/host unavailable/);
+    expect(logicalSurfaces.project()).toEqual([]);
+    expect(workspaceTopologies.get(1)).toEqual(original);
+  });
+
+  it('re-resolves canonical topology after project lookup awaits', async () => {
+    const { facade, logicalSurfaces, workspaceTopologies, openProject } = createFacade();
+    const a = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const b = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    const original = openWorkspaceSurface(openWorkspaceSurface(createWorkspaceTopology(),
+      { surfaceId: a.surfaceId, projectId: PROJECT, title: 'A' }),
+    { surfaceId: b.surfaceId, projectId: OTHER, title: 'B' });
+    workspaceTopologies.set(1, original);
+    let release!: (value: { url: string }) => void;
+    openProject.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const opening = facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    await Promise.resolve();
+    const latest = { ...original, groups: [{ ...original.groups[0]!, surfaceIds: [b.surfaceId, a.surfaceId] }] };
+    workspaceTopologies.set(1, latest);
+    release({ url: `papers-backpack://${PROJECT}/open` });
+    const opened = await opening;
+    expect(opened.topology.groups[0]?.surfaceIds.slice(0, 2)).toEqual([b.surfaceId, a.surfaceId]);
+  });
+
+  it('refuses an archive that wins while project lookup awaits without reverting topology', async () => {
+    const { facade, logicalSurfaces, workspaceTopologies, openProject, archivedProjects } = createFacade();
+    const original = createWorkspaceTopology();
+    workspaceTopologies.set(1, original);
+    let release!: (value: { url: string }) => void;
+    openProject.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    const opening = facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    await Promise.resolve();
+    archivedProjects.add(PROJECT);
+    release({ url: `papers-backpack://${PROJECT}/open` });
+    await expect(opening).rejects.toThrow(/not available/);
     expect(logicalSurfaces.project()).toEqual([]);
     expect(workspaceTopologies.get(1)).toEqual(original);
   });

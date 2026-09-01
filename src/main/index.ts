@@ -547,6 +547,11 @@ async function bootstrap(): Promise<void> {
       const contents = papersWindows.get(windowId)?.owned.hostView.webContents;
       if (contents && !contents.isDestroyed()) contents.send(channel, payload);
     },
+    sendToWindowOrThrow: (windowId, channel, payload) => {
+      const contents = papersWindows.get(windowId)?.owned.hostView.webContents;
+      if (!contents || contents.isDestroyed()) throw new Error('That Papers window host is unavailable.');
+      contents.send(channel, payload);
+    },
     hostWindowForSender: (senderId) => papersWindows.windowForSender(senderId),
     hostWindowIds: () => papersWindows.windowIds,
     hermesDockOwner: () => papersWindows.hermesDockOwner(),

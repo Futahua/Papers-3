@@ -63,6 +63,8 @@ export interface FacadeDeps {
    */
   broadcastToHosts: (channel: string, payload: unknown) => void;
   sendToWindow: (windowId: number, channel: string, payload: unknown) => void;
+  /** Exact host delivery for transactions that cannot succeed headlessly. */
+  sendToWindowOrThrow: (windowId: number, channel: string, payload: unknown) => void;
   /** The window a HOST renderer belongs to, or null if this sender is not a
    * live host. Every registered host is legitimate; there is no primary. */
   hostWindowForSender: (senderId: number) => number | null;
@@ -825,15 +827,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async openWorkspaceSurfaceFromControl(windowId: number, projectId: string): Promise<{
     windowId: number; surfaceId: string; projectId: string; topology: WorkspaceTopologyV1;
   }> {
+    const initialBackpack = this.deps.registry.find(projectId);
+    if (!initialBackpack || initialBackpack.archived) throw new Error('That Backpack is not available.');
+    const project = await this.deps.backpackProjects.open(projectId);
+    if (!project) throw new Error('That Backpack has no usable project surface.');
+    // The project lookup awaited filesystem work. Re-resolve every authority
+    // fact after that boundary so a concurrent close/layout/archive wins.
     const topology = this.deps.workspaceTopology?.(windowId) ?? null;
     if (!topology) throw new Error('That Papers window has not committed workspace topology.');
     this.validateWorkspaceTopology(windowId, topology);
     const backpack = this.deps.registry.find(projectId);
     if (!backpack || backpack.archived) throw new Error('That Backpack is not available.');
-    const project = await this.deps.backpackProjects.open(projectId);
-    if (!project) throw new Error('That Backpack has no usable project surface.');
-    const previousActiveSurfaceId = this.deps.activeSurfaceId(windowId);
-    const previousEnteredBackpack = this.deps.enteredBackpack(windowId);
     const surface = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
     try {
       const next = openWorkspaceSurface(topology, {
@@ -842,19 +846,18 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         title: backpack.name,
       });
       this.validateWorkspaceTopology(windowId, next);
-      this.deps.setActiveSurfaceId(windowId, surface.surfaceId);
-      this.deps.setEnteredBackpack(windowId, projectId);
-      this.deps.setWorkspaceTopology(windowId, next);
-      this.deps.sendToWindow(windowId, 'host:event:workspace-project-opened', {
+      // Queue exact renderer delivery first. Electron cannot handle it until
+      // this main-process stack yields; canonical commit follows immediately.
+      this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-project-opened', {
         project: { surfaceId: surface.surfaceId, projectId, title: backpack.name, url: project.url },
         topology: next,
       });
+      this.deps.setActiveSurfaceId(windowId, surface.surfaceId);
+      this.deps.setEnteredBackpack(windowId, projectId);
+      this.deps.setWorkspaceTopology(windowId, next);
       return { windowId, surfaceId: surface.surfaceId, projectId, topology: next };
     } catch (caught) {
       this.deps.logicalSurfaces.retire(surface.surfaceId);
-      this.deps.setActiveSurfaceId(windowId, previousActiveSurfaceId);
-      this.deps.setEnteredBackpack(windowId, previousEnteredBackpack);
-      this.deps.setWorkspaceTopology(windowId, topology);
       throw caught;
     }
   }
