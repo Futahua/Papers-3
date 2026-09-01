@@ -364,7 +364,18 @@ async function bootstrap(): Promise<void> {
     // reads as a white panel. Verified over CDP — with the whole DOM computing
     // rgba(0,0,0,0), the canvas was still white until this base changed.
     const color = transparent ? TRANSPARENT_CHILD_SURFACE_COLOR : OPAQUE_SURFACE_COLOR;
-    hostView?.setBackgroundColor(color);
+    // This is an application-wide appearance setting. Repaint every live
+    // Papers window, not only the bootstrap window captured by this closure.
+    for (const context of papersWindows.all()) {
+      if (!context.owned.hostView.webContents.isDestroyed()) {
+        context.owned.hostView.setBackgroundColor(color);
+      }
+      if (!context.owned.window.isDestroyed()) {
+        context.owned.window.setBackgroundColor(
+          transparent ? TRANSPARENT_SURFACE_COLOR : OPAQUE_SURFACE_COLOR,
+        );
+      }
+    }
   };
   applyHostSurface(papersSettings.transparentWindow);
   // Chromium recreates the renderer surface while navigating the host view.
@@ -373,9 +384,6 @@ async function bootstrap(): Promise<void> {
   // the DOM itself correctly computes transparent backgrounds.
   hostView.webContents.on('did-finish-load', () => {
     applyHostSurface(papersSettings.transparentWindow);
-    mainWindow?.setBackgroundColor(
-      papersSettings.transparentWindow ? TRANSPARENT_SURFACE_COLOR : OPAQUE_SURFACE_COLOR,
-    );
   });
   const fitHost = (): void => {
     if (!mainWindow || !hostView) return;
@@ -573,14 +581,20 @@ async function bootstrap(): Promise<void> {
     hermesSurface,
     runService: () => runService,
     paths,
-    setTitleBarOverlay: (color, symbolColor) => {
+    setTitleBarOverlay: (senderId, color, symbolColor) => {
       // Repaint the native window controls to match the active Papers theme.
-      mainWindow?.setTitleBarOverlay?.({ color, symbolColor, height: TITLE_BAR_HEIGHT });
-      // Keep the surrounding window background in step so a theme switch has no
-      // flash of the old colour behind the controls.
-      const windowSurfaceColor = papersSettings.transparentWindow ? TRANSPARENT_SURFACE_COLOR : color;
-      mainWindow?.setBackgroundColor(windowSurfaceColor);
-      applyHostSurface(papersSettings.transparentWindow);
+      const windowId = papersWindows.windowForSender(senderId);
+      const context = windowId === null ? null : papersWindows.get(windowId);
+      if (!context || context.owned.window.isDestroyed() || context.owned.hostView.webContents.isDestroyed()) {
+        return;
+      }
+      context.owned.window.setTitleBarOverlay?.({ color, symbolColor, height: TITLE_BAR_HEIGHT });
+      context.owned.window.setBackgroundColor(
+        papersSettings.transparentWindow ? TRANSPARENT_SURFACE_COLOR : color,
+      );
+      context.owned.hostView.setBackgroundColor(
+        papersSettings.transparentWindow ? TRANSPARENT_CHILD_SURFACE_COLOR : OPAQUE_SURFACE_COLOR,
+      );
     },
     getSettings: () => ({ ...papersSettings }),
     setTransparentWindow: async (enabled) => {
@@ -593,10 +607,11 @@ async function bootstrap(): Promise<void> {
       runtime.setTransparentWindow(enabled);
       for (const runtime of allRuntimes()) runtime.setTransparent(enabled);
     },
-    saveWindowBounds: async () => {
+    saveWindowBounds: async (senderId) => {
       // getBounds(), not getContentBounds(): the saved rectangle is restored
       // through the BaseWindow constructor, which takes outer window bounds.
-      const bounds = mainWindow?.getBounds();
+      const windowId = papersWindows.windowForSender(senderId);
+      const bounds = windowId === null ? undefined : papersWindows.get(windowId)?.owned.window.getBounds();
       if (!bounds) return null;
       papersSettings = { ...papersSettings, windowBounds: bounds };
       await settingsStore.save(papersSettings);

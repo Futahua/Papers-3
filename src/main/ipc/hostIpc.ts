@@ -69,10 +69,10 @@ export interface HostFacade {
 
   setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): void;
   setOverlayActive(active: boolean): void;
-  setTitleBarOverlay(color: string, symbolColor: string): void;
+  setTitleBarOverlay(senderId: number, color: string, symbolColor: string): void;
   getSettings(): unknown;
   setTransparentWindow(enabled: boolean): Promise<void>;
-  saveWindowBounds(): Promise<{ x: number; y: number; width: number; height: number } | null>;
+  saveWindowBounds(senderId: number): Promise<{ x: number; y: number; width: number; height: number } | null>;
   clearWindowBounds(): Promise<void>;
 
   listPermissions(): unknown;
@@ -277,14 +277,14 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:layout:set-overlay', (_e, active) =>
     facade.setOverlayActive(z.boolean().parse(active)),
   );
-  handle('host:layout:set-titlebar', (_e, color, symbolColor) =>
-    facade.setTitleBarOverlay(colorSchema.parse(color), colorSchema.parse(symbolColor)),
+  handle('host:layout:set-titlebar', (event, color, symbolColor) =>
+    facade.setTitleBarOverlay(event.sender.id, colorSchema.parse(color), colorSchema.parse(symbolColor)),
   );
   handle('host:settings:get', () => facade.getSettings());
   handle('host:settings:set-transparent-window', (_e, enabled) =>
     facade.setTransparentWindow(z.boolean().parse(enabled)),
   );
-  handle('host:settings:save-window-bounds', () => facade.saveWindowBounds());
+  handle('host:settings:save-window-bounds', (event) => facade.saveWindowBounds(event.sender.id));
   handle('host:settings:clear-window-bounds', () => facade.clearWindowBounds());
 
   handle('host:permissions:list', () => facade.listPermissions());

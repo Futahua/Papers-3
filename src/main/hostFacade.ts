@@ -111,11 +111,11 @@ export interface FacadeDeps {
   runService: () => AgentRunService;
   paths: PapersPaths;
   /** Repaint the native window-controls overlay to match the active theme. */
-  setTitleBarOverlay: (color: string, symbolColor: string) => void;
+  setTitleBarOverlay: (senderId: number, color: string, symbolColor: string) => void;
   getSettings: () => unknown;
   setTransparentWindow: (enabled: boolean) => Promise<void>;
   /** Capture the window's current rectangle as the restore-on-launch preset. */
-  saveWindowBounds: () => Promise<{ x: number; y: number; width: number; height: number } | null>;
+  saveWindowBounds: (senderId: number) => Promise<{ x: number; y: number; width: number; height: number } | null>;
   /** Forget the preset so Papers reopens at its default size. */
   clearWindowBounds: () => Promise<void>;
 }
@@ -614,8 +614,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   /** Match the native min/maximize/close overlay to the active Papers theme. */
-  setTitleBarOverlay(color: string, symbolColor: string): void {
-    this.deps.setTitleBarOverlay(color, symbolColor);
+  setTitleBarOverlay(senderId: number, color: string, symbolColor: string): void {
+    this.deps.setTitleBarOverlay(senderId, color, symbolColor);
   }
 
   getSettings(): unknown {
@@ -626,8 +626,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.deps.setTransparentWindow(enabled);
   }
 
-  saveWindowBounds(): Promise<{ x: number; y: number; width: number; height: number } | null> {
-    return this.deps.saveWindowBounds();
+  saveWindowBounds(senderId: number): Promise<{ x: number; y: number; width: number; height: number } | null> {
+    return this.deps.saveWindowBounds(senderId);
   }
 
   clearWindowBounds(): Promise<void> {
