@@ -349,3 +349,68 @@ moveTop) as Papers moves/resizes, and dragging a docked window off its strip fre
 drag wins over realignment. This supersedes the "drag docking / dock target / edge sliver"
 parts of the earlier docking notes; the one-backend surface and non-topmost raise (D-011,
 D-012 and the security hardening) are unchanged.
+
+## D-019 — A Backpack document is saved by compare-and-set, not by last writer (2026-09-01)
+
+Papers is to open several windows, each able to show a different Backpack — or the same
+Backpack shown differently. That makes two writers to one project document possible for
+the first time.
+
+The existing per-project save queue is not enough. It serialises writes, but each write
+carries a whole board: `A1 -> B1 -> A2` still lets A2 write a document that predates B1,
+and B1 is gone with nothing reported. The creator has been through an unannounced wipe of
+this exact file before; a silent erase is the failure that matters here.
+
+Decision: a load reports the revision it observed, and a save may name the revision it was
+built on. A save whose revision is no longer current is refused and the caller is told,
+rather than written. A refusal is a normal outcome, not an error.
+
+The revision is a hash of the exact bytes on disk. Papers therefore keeps no second record
+that could drift from the file, an edit made outside Papers is caught by the same check,
+and the host still reads no meaning out of the document — it hashes opaque bytes.
+
+The unversioned load/save pair remains and still writes unconditionally, so the
+single-writer path in use today is unchanged. This decides host mechanism only. How two
+surfaces of one project coordinate is a separate decision and belongs to the project.
+
+## D-020 — Two surfaces of one Backpack are coordinated by the project, not merged by Papers (2026-09-01)
+
+Refusing a stale save prevents loss but does not let two surfaces work together. The
+obvious next step — Papers merging two documents — was rejected.
+
+“As you Go” names its own store the single owner of workspace history and persistence, and
+keeps undo/redo locally. Merging two such stores would require Papers to understand groups,
+shortcuts, selection, navigation and undo semantics. That is precisely the schema leakage
+that `ba94ecc` was reverted for.
+
+Decision: a project has one logical document owner at a time. The project owns that
+semantic coordination; Papers provides only a generic lease and message transport, and
+never interprets the document. This follows the existing detached-surface handshake, which
+already transfers ownership rather than permitting two independent writers.
+
+## D-021 — Hermes has one explicit dock owner and never follows focus (2026-09-01)
+
+With several Papers windows, a single global Hermes has to belong somewhere.
+
+Focus-following was rejected: a globally singular Hermes window would jump between Papers
+windows whenever one was clicked, which would move a live agent session by accident.
+
+Decision: one Hermes backend and one Hermes Desktop, as today. Exactly one Papers window
+owns the dock. Clicking another window changes nothing. Pressing Dock in another window
+explicitly transfers ownership to it. A detached Hermes belongs to no Papers window. This
+keeps the deliberate-docking rule of D-015 intact under multiple windows.
+
+## D-022 — A surface carries an opaque project-defined key (2026-09-01)
+
+Two windows showing the same Backpack differently — a “variation” — must not become a
+Backpack schema owned by Papers.
+
+Decision: a Papers surface may carry a `surfaceKey` supplied by the project. Papers
+preserves, routes and restores that key and may not interpret it. Papers never knows that
+a key means a particular group, board, filter or view.
+
+This is the same shape as the `layoutKey` the surface registry already carries, and it
+extends unchanged to panes within a window and to saved layouts.
+
+Not decided here: where saved layouts live, and what a saved layout may contain beyond
+native windows, pane topology, ratios, project ids and opaque surface keys.
