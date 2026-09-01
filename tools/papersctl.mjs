@@ -3,7 +3,7 @@ import { connectPapersControl, readDescriptor } from './papersControlClient.mjs'
 import { readFile } from 'node:fs/promises';
 
 function usage() {
-  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|inspect.surfaces|inspect.surface|inspect.workspace|layout.restore|window.create> [--descriptor <path>] [--window <id>] [--surface <id>] [--topology <json-file>]');
+  console.error('Usage: npm run papersctl -- <inspect.snapshot|inspect.windows|inspect.surfaces|inspect.surface|inspect.workspace|workspace.activate|workspace.close|layout.split|layout.moveSurface|layout.restore|window.create> [--descriptor <path>] [--window <id>] [--surface <id>] [--direction <right|down>] [--group <id>] [--index <n>] [--topology <json-file>]');
 }
 
 const args = process.argv.slice(2);
@@ -15,6 +15,9 @@ const descriptorPath = descriptorFlag >= 0
 const windowFlag = args.indexOf('--window');
 const surfaceFlag = args.indexOf('--surface');
 const topologyFlag = args.indexOf('--topology');
+const directionFlag = args.indexOf('--direction');
+const groupFlag = args.indexOf('--group');
+const indexFlag = args.indexOf('--index');
 
 if (!method || !descriptorPath) {
   usage();
@@ -34,12 +37,27 @@ if (!method || !descriptorPath) {
               ? JSON.parse(await readFile(args[topologyFlag + 1], 'utf8'))
               : undefined,
           }
+      : method === 'workspace.activate' || method === 'workspace.close'
+        ? { windowId: Number(args[windowFlag + 1]), surfaceId: args[surfaceFlag + 1] }
+      : method === 'layout.split'
+        ? { windowId: Number(args[windowFlag + 1]), surfaceId: args[surfaceFlag + 1], direction: args[directionFlag + 1] }
+      : method === 'layout.moveSurface'
+        ? { windowId: Number(args[windowFlag + 1]), surfaceId: args[surfaceFlag + 1], targetGroupId: args[groupFlag + 1], targetIndex: Number(args[indexFlag + 1]) }
       : {};
   if ((method === 'inspect.surface' && (
     windowFlag < 0 || surfaceFlag < 0 || !Number.isInteger(params.windowId) || !params.surfaceId
   )) || (method === 'inspect.workspace' && (windowFlag < 0 || !Number.isInteger(params.windowId)))
     || (method === 'layout.restore' && (
       windowFlag < 0 || topologyFlag < 0 || !Number.isInteger(params.windowId) || !params.topology
+    )) || ((method === 'workspace.activate' || method === 'workspace.close') && (
+      windowFlag < 0 || surfaceFlag < 0 || !Number.isInteger(params.windowId) || !params.surfaceId
+    )) || (method === 'layout.split' && (
+      windowFlag < 0 || surfaceFlag < 0 || directionFlag < 0 || !Number.isInteger(params.windowId)
+      || !params.surfaceId || !['right', 'down'].includes(params.direction)
+    )) || (method === 'layout.moveSurface' && (
+      windowFlag < 0 || surfaceFlag < 0 || groupFlag < 0 || indexFlag < 0
+      || !Number.isInteger(params.windowId) || !params.surfaceId || !params.targetGroupId
+      || !Number.isInteger(params.targetIndex) || params.targetIndex < 0
     ))) {
     usage();
     process.exitCode = 2;

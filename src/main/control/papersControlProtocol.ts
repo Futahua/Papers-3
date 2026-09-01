@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { workspaceTopologySchema } from '@shared/workspaceTopology';
+import {
+  activateWorkspaceSurface,
+  moveWorkspaceSurface,
+  splitWorkspaceGroup,
+  workspaceTopologySchema,
+} from '@shared/workspaceTopology';
 
 export const PAPERS_CONTROL_PROTOCOL_VERSION = 1;
 
@@ -84,6 +89,26 @@ export const papersControlCommands = {
     scope: 'window',
     effect: 'mutate',
   },
+  'workspace.activate': {
+    input: surfaceTargetSchema,
+    output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
+    scope: 'surface', effect: 'mutate',
+  },
+  'workspace.close': {
+    input: surfaceTargetSchema,
+    output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
+    scope: 'surface', effect: 'mutate',
+  },
+  'layout.moveSurface': {
+    input: surfaceTargetSchema.extend({ targetGroupId: z.string().min(1), targetIndex: z.number().int().nonnegative() }).strict(),
+    output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
+    scope: 'surface', effect: 'mutate',
+  },
+  'layout.split': {
+    input: surfaceTargetSchema.extend({ direction: z.enum(['right', 'down']) }).strict(),
+    output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
+    scope: 'surface', effect: 'mutate',
+  },
   'window.create': {
     input: emptyParamsSchema,
     output: z.object({ windowId: z.number().int() }).strict(),
@@ -109,6 +134,7 @@ export interface PapersControlDependencies {
   surface(target: { windowId: number; surfaceId: string }): unknown;
   workspace?(windowId: number): unknown;
   restoreWorkspace?(windowId: number, topology: z.infer<typeof workspaceTopologySchema>): unknown;
+  closeWorkspace?(windowId: number, surfaceId: string, topology: z.infer<typeof workspaceTopologySchema>): unknown;
   snapshot(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
@@ -155,6 +181,43 @@ export async function dispatchPapersControl(
       const restored = dependencies.restoreWorkspace?.(windowId, topology);
       if (!restored) throw new Error('That Papers window cannot restore workspace topology.');
       return papersControlCommands[request.method].output.parse({ windowId, topology: restored });
+    }
+    case 'workspace.activate':
+    case 'workspace.close':
+    case 'layout.moveSurface':
+    case 'layout.split': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      if (!dependencies.surface({ windowId: params.windowId, surfaceId: params.surfaceId })) {
+        throw new Error('That surface is not open in that Papers window.');
+      }
+      const workspace = dependencies.workspace?.(params.windowId) as { topology?: z.infer<typeof workspaceTopologySchema> } | null;
+      if (!workspace?.topology) throw new Error('That Papers window has not committed workspace topology.');
+      let topology = workspace.topology;
+      if (request.method === 'workspace.activate') {
+        topology = activateWorkspaceSurface(topology, params.surfaceId);
+      } else if (request.method === 'workspace.close') {
+        const closed = dependencies.closeWorkspace?.(params.windowId, params.surfaceId, topology);
+        if (!closed) throw new Error('That Papers window cannot close the workspace surface.');
+        return papersControlCommands[request.method].output.parse({ windowId: params.windowId, topology: closed });
+      } else if (request.method === 'layout.moveSurface') {
+        const move = papersControlCommands['layout.moveSurface'].input.parse(request.params ?? {});
+        topology = moveWorkspaceSurface(topology, move.surfaceId, move.targetGroupId, move.targetIndex);
+      } else {
+        const split = papersControlCommands['layout.split'].input.parse(request.params ?? {});
+        if (topology.root.kind === 'split') throw new Error('Nested workspace splits are not supported yet.');
+        const source = topology.groups.find((group) => group.surfaceIds.includes(params.surfaceId));
+        if (!source) throw new Error('That surface is not represented in workspace topology.');
+        topology = splitWorkspaceGroup(topology, {
+          groupId: source.groupId,
+          newGroupId: `group-${params.surfaceId}`,
+          surfaceId: params.surfaceId,
+          orientation: split.direction === 'right' ? 'horizontal' : 'vertical',
+          position: 'after',
+        });
+      }
+      const restored = dependencies.restoreWorkspace?.(params.windowId, topology);
+      if (!restored) throw new Error('That Papers window cannot mutate workspace topology.');
+      return papersControlCommands[request.method].output.parse({ windowId: params.windowId, topology: restored });
     }
     case 'inspect.snapshot': return papersControlCommands[request.method].output.parse(dependencies.snapshot());
     case 'inspect.windows': return papersControlCommands[request.method].output.parse(dependencies.windows());

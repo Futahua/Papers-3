@@ -489,6 +489,26 @@ Electron E2E 1/1 passed, and diff check passed.
 - [ ] Archive/remove and crash/reload behavior across multiple live surfaces.
 - [ ] Add control commands such as `workspace.open`, `workspace.activate`,
   `workspace.close`, `layout.split`, `layout.moveSurface`, `layout.restore`.
+  Implemented and live-validated: `workspace.activate`, `workspace.close`,
+  `layout.split`, `layout.moveSurface`, `layout.restore`; `workspace.open`
+  remains because it must allocate/open the project and synchronize the host's
+  project metadata without fabricating a renderer sender.
+
+A1.2e semantic control operations:
+
+- [x] Add exact-window/surface `workspace.activate`, `workspace.close`,
+  `layout.split` and `layout.moveSurface` commands over canonical topology.
+- [x] Reuse live surface lookup and topology authority validation; no command
+  infers a target from active/current UI state.
+- [x] Make control close terminally destroy the exact runtime, retire the
+  logical surface, unbind its sender and converge the surviving topology/UI.
+- [x] Extend `papersctl` with flags for each semantic command.
+- [x] Live Electron acceptance drives semantic activation, split, restore and
+  close while retaining the visual/DnD/sash assertions.
+
+A1.2e validation: typecheck passed, full Vitest 657 passed / 4 skipped,
+production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
+Electron E2E 1/1 passed, and diff check passed.
 - [ ] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
   assertions through the control plane.
 - [ ] Reviewer sign-off.

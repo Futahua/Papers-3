@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { evalInBackpackProject, evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
+import { evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
 // @ts-expect-error -- shared production control client is plain ESM.
 import { connectPapersControl, readDescriptor } from '../../tools/papersControlClient.mjs';
 
@@ -109,6 +109,15 @@ describe('A1 workspace tabs', () => {
       .map((tab) => tab.textContent?.trim() ?? '').filter(Boolean)`)).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
     const hostPage = await launched.app.firstWindow();
     const windowId = (await call('inspect.surfaces') as Array<{ windowId: number }>)[0]!.windowId;
+    const initialWorkspace = await call('inspect.workspace', { windowId }) as {
+      topology: { surfaces: Array<{ surfaceId: string; projectId: string }> };
+    };
+    const initialAlpha = initialWorkspace.topology.surfaces.find((surface) => surface.projectId === A)!.surfaceId;
+    await call('workspace.activate', { windowId, surfaceId: initialAlpha });
+    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>).some(
+      (surface) => surface.projectId === A && surface.presentation === 'visible'),
+    10_000, 'semantic workspace activation');
+    await hostPage.getByRole('tab', { name: 'Beta' }).click();
     const alphaTab = hostPage.getByRole('tab', { name: 'Alpha' });
     const alphaBox = await alphaTab.boundingBox();
     await hostPage.getByRole('tab', { name: 'Beta' }).dragTo(alphaTab, {
@@ -214,9 +223,9 @@ describe('A1 workspace tabs', () => {
     await call('layout.restore', { windowId, topology: collapsedTopology });
     await waitFor(async () => await hostPage.locator('.dv-groupview').count() === 1,
       10_000, 'Papers group collapse converges Dockview');
-    await call('layout.restore', { windowId, topology: weightedTopology });
+    await call('layout.split', { windowId, surfaceId: surfaceByProject.get(B)!, direction: 'right' });
     await waitFor(async () => await hostPage.locator('.dv-groupview').count() === 2,
-      10_000, 'Papers split topology recreates Dockview group');
+      10_000, 'semantic split recreates Dockview group');
     expect(await projectSenderId(A)).toBe(alphaSenderId);
 
     const movedAlphaBox = await hostPage.getByRole('tab', { name: 'Alpha' }).boundingBox();
@@ -237,7 +246,7 @@ describe('A1 workspace tabs', () => {
         && await hostPage.locator('.dv-groupview').count() === 1;
     }, 10_000, 'moving final tab collapses Papers and Dockview source group');
 
-    await evalInBackpackProject(launched.app, `window.postMessage({ type: 'papers:project:close' }, '*')`);
+    await call('workspace.close', { windowId, surfaceId: surfaceByProject.get(A)! });
     await waitFor(async () => {
       const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
       return surfaces.length === 1

@@ -41,7 +41,7 @@ import type { PermissionPrompter } from './capabilities/capabilityBroker';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { backpackDir, canvasFile, type PapersPaths } from './persistence/paths';
 import type { HostFacade } from './ipc/hostIpc';
-import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { closeWorkspaceSurface, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 interface CanvasPersistedState {
   schemaVersion: 1;
@@ -840,8 +840,30 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   restoreWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {
     this.validateWorkspaceTopology(windowId, topology);
+    const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
+    const activeSurfaceId = focused?.activeSurfaceId ?? null;
+    const activeProject = activeSurfaceId
+      ? topology.surfaces.find((surface) => surface.surfaceId === activeSurfaceId)?.projectId ?? null
+      : null;
+    this.deps.setActiveSurfaceId(windowId, activeSurfaceId);
+    this.deps.setEnteredBackpack(windowId, activeProject);
     this.deps.setWorkspaceTopology(windowId, topology);
     this.deps.sendToWindow(windowId, 'host:event:workspace-topology', topology);
+  }
+
+  closeWorkspaceSurfaceFromControl(windowId: number, surfaceId: string, topology: WorkspaceTopologyV1): WorkspaceTopologyV1 {
+    const surface = this.deps.logicalSurfaces.get(surfaceId);
+    if (!surface || surface.windowId !== windowId || surface.kind !== 'project') {
+      throw new Error('That surface is not open in that Papers window.');
+    }
+    this.validateWorkspaceTopology(windowId, topology);
+    this.deps.closeAttachedProjectSurface(windowId, surfaceId);
+    this.deps.logicalSurfaces.retire(surfaceId);
+    for (const senderId of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(senderId);
+    const next = closeWorkspaceSurface(topology, surfaceId);
+    this.restoreWorkspaceTopology(windowId, next);
+    this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', { surfaceId });
+    return next;
   }
 
   private validateWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {
