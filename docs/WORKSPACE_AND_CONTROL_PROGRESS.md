@@ -621,12 +621,23 @@ A1.2i all-or-nothing primary startup hydration:
 - [x] Memoize the primary hydration promise in main so StrictMode/repeated IPC
   calls cannot allocate or deliver a second restored workspace.
 - [x] Keep hydration persistence failures visible through main diagnostics.
-- [ ] Complete live seeded-v2 restore acceptance and reviewer sign-off.
-- [ ] Live seeded-v2 primary restore; fresh IDs/order/focus/weights; durable ID
+- [x] Complete live seeded-v2 restore acceptance; reviewer final sign-off is
+  pending.
+- [x] Live seeded-v2 primary restore; fresh IDs/order/focus/weights; durable ID
   reuse after mutation; additional window remains fresh.
-- [ ] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
+- [x] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
   assertions through the control plane.
 - [ ] Reviewer sign-off.
+
+A1.2i validation: the dedicated seeded-v2 startup Electron E2E passed 1/1;
+typecheck passed; full Vitest passed with 677 tests and 4 skipped; production
+build passed; and `git diff --check` passed. The dedicated acceptance seeds a
+known v2 workspace, proves automatic primary hydration without UI assistance,
+fresh runtime surface ids, preserved tab/group/focus/split-weight semantics,
+single durable workspace identity after mutation, and a fresh secondary
+window. The complete legacy Electron suite remains non-green in this
+environment for unrelated fixture/restart failures (permission/startup
+timeouts and a worker fixture's missing `crypto.randomUUID`).
 
 ### Later gates
 
