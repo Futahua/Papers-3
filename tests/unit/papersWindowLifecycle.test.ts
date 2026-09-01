@@ -64,4 +64,22 @@ describe('prepared Papers window lifecycle', () => {
     expect(result).toBe(current);
     expect(order).toEqual(['create', 'register', 'load']);
   });
+
+  it('hides the owned runtime before finalizing on normal close', () => {
+    const current = instance(async () => undefined);
+    const order: string[] = [];
+    const hide = current.backpackProjectRuntime.hide as ReturnType<typeof vi.fn>;
+    hide.mockImplementation(() => { order.push('hide'); });
+    const finalize = vi.fn(() => { order.push('finalize'); });
+    preparePapersWindow(current, {
+      register: vi.fn(),
+      onClose: (window) => window.backpackProjectRuntime.hide(),
+      finalize,
+    });
+
+    (current.window as never as EventEmitter).emit('close');
+    (current.window as never as EventEmitter).emit('closed');
+    expect(order).toEqual(['hide', 'finalize']);
+    expect(finalize).toHaveBeenCalledTimes(1);
+  });
 });
