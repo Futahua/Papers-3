@@ -503,7 +503,7 @@ async function bootstrap(): Promise<void> {
     isAllowedProjectSurfaceSender({
       senderId: sender.id,
       url: sender.mainFrame.url,
-      isWorkspaceSender: backpackProjectRuntime.isSender(sender),
+      isWorkspaceSender: runtimeForSender(sender.id)?.isSender(sender) ?? false,
       detachRegistry,
       widgetRegistry,
     });
@@ -1253,7 +1253,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       }).catch(() => hideWidgetPreview(sender.id));
     },
     isWorkspaceSender: (sender, projectId) => {
-      if (!backpackProjectRuntime.isSender(sender)) return false;
+      if (!runtimeForSender(sender.id)?.isSender(sender)) return false;
       try {
         return new URL(sender.mainFrame.url).host === projectId;
       } catch {
