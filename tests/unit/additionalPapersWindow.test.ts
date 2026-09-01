@@ -75,4 +75,30 @@ describe('additional Papers window composer', () => {
     expect(windows.restoreBackpack(11)).toBe('backpack-X');
     expect(second.window.destroy).toHaveBeenCalledTimes(1);
   });
+
+  it('closes B without retiring A or transferring dock ownership', async () => {
+    const windows = createPapersWindowRegistry<Owned>();
+    const first = instance(21, async () => undefined);
+    const second = instance(22, async () => undefined);
+    windows.add(first.window.id, first, 'backpack-X');
+    windows.setHostSender(first.window.id, first.hostView.webContents.id);
+    const lifecycleDependencies = (restoreBackpackId: string | null): PapersWindowLifecycleDependencies => ({
+      register: (current) => {
+        windows.add(current.window.id, current, restoreBackpackId);
+        windows.setHostSender(current.window.id, current.hostView.webContents.id);
+      },
+      onClose: (current) => current.backpackProjectRuntime.hide(),
+      finalize: (windowId) => windows.remove(windowId),
+    });
+
+    await createAdditionalPapersWindow({ createWindow: () => second, lifecycleDependencies });
+    windows.setHermesDockOwner(second.window.id);
+    (second.window as never as EventEmitter).emit('close');
+    (second.window as never as EventEmitter).emit('closed');
+
+    expect(second.backpackProjectRuntime.hide).toHaveBeenCalledTimes(1);
+    expect(windows.windowIds).toEqual([21]);
+    expect(windows.hermesDockOwner()).toBeNull();
+    expect(windows.windowForSender(121)).toBe(21);
+  });
 });
