@@ -135,6 +135,52 @@ describe('surface context registry', () => {
     expect(registry.hostSenderForWindow(1)).toBeNull();
   });
 
+  it('hiding one window leaves the other window showing the same project intact', () => {
+    const registry = createSurfaceContextRegistry();
+    // Both windows show bp-a. Window 1 hides it.
+    registry.bind(11, { projectId: 'bp-a', windowId: 1, kind: 'host' });
+    registry.bind(12, { projectId: 'bp-a', windowId: 1, kind: 'project' });
+    registry.bind(21, { projectId: 'bp-a', windowId: 2, kind: 'host' });
+    registry.bind(22, { projectId: 'bp-a', windowId: 2, kind: 'project' });
+
+    // Scoped by window, which is the whole point: unbindProject would have
+    // stripped window 2's routing authority as well.
+    const hiding = registry.contextForSender(11)!;
+    registry.unbindWindow(hiding.windowId);
+
+    expect(registry.projectForSender(11)).toBeNull();
+    expect(registry.projectForSender(12)).toBeNull();
+    expect(registry.projectForSender(21)).toBe('bp-a');
+    expect(registry.projectForSender(22)).toBe('bp-a');
+    expect(registry.hostSenderForWindow(2)).toBe(21);
+  });
+
+  it('unbinding a window twice is a no-op, because the renderer hides again after closing', () => {
+    const registry = createSurfaceContextRegistry();
+    registry.bind(11, { projectId: 'bp-a', windowId: 1, kind: 'host' });
+    registry.unbindWindow(1);
+    expect(() => registry.unbindWindow(1)).not.toThrow();
+    expect(registry.size).toBe(0);
+  });
+
+  it('binds the detach and widget surfaces, which are authorized project senders too', () => {
+    const registry = createSurfaceContextRegistry();
+    registry.bind(11, { projectId: 'bp-a', windowId: 1, kind: 'host' });
+    registry.bind(12, { projectId: 'bp-a', windowId: 1, kind: 'project' });
+    // Their windowId is the OWNING Papers window, not their own native window.
+    registry.bind(13, { projectId: 'bp-a', windowId: 1, kind: 'detached' });
+    registry.bind(14, { projectId: 'bp-a', windowId: 1, kind: 'widget' });
+
+    // Every one of them can act for the project; an unbound authorized sender
+    // would be refused by every sender-resolved request.
+    for (const sender of [11, 12, 13, 14]) {
+      expect(registry.projectForSender(sender)).toBe('bp-a');
+    }
+    // They belong to the owning window, so closing it releases them all.
+    registry.unbindWindow(1);
+    expect(registry.size).toBe(0);
+  });
+
   it('hands back a copy, so a caller cannot mutate the binding it was told about', () => {
     const registry = createSurfaceContextRegistry();
     const context = { projectId: 'bp-a', windowId: 1, kind: 'host' as const };

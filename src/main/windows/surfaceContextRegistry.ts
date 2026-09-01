@@ -18,16 +18,20 @@
  */
 
 /**
- * Two different senders act for one project, and they are not
- * interchangeable. The `host` surface is the Papers renderer that opened the
- * project; the `project` surface is the Backpack's own frame inside it.
+ * Several senders act for one project, and they are not interchangeable. The
+ * `host` surface is the Papers renderer that opened the project; `project` is
+ * the Backpack's own frame inside it; `detached` and `widget` are the surfaces
+ * the 018 detach and compact-widget paths create. All four are authorized
+ * project senders, so all four must be bound -- an authorized sender with no
+ * context would be refused by every request that resolves through its own
+ * sender.
  *
  * Without this distinction "every sender for project X" is the only question
  * the registry can answer, and that is the wrong question whenever the right
  * one is "which window did this come from" -- two windows may legitimately
  * show the same project.
  */
-export type SurfaceKind = 'host' | 'project';
+export type SurfaceKind = 'host' | 'project' | 'detached' | 'widget';
 
 export interface SurfaceContext {
   /** The Backpack whose project this surface is showing. */

@@ -28,6 +28,7 @@ import type {
 } from './backpacks/backpackProjectService';
 import { parseBackpackProjectWebUrl } from './backpacks/backpackProjectWebLink';
 import type { SurfaceContextRegistry } from './windows/surfaceContextRegistry';
+import { BACKPACK_PROJECT_SCHEME } from './backpacks/backpackProjectService';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
 import type { ProgramCatalog } from './canvas/programLoader';
@@ -51,10 +52,15 @@ export interface FacadeDeps {
    * project requests resolve through their own sender instead of ambient
    * state. */
   surfaces: SurfaceContextRegistry;
-  /** The native window a sender belongs to. Supplied by the host, which owns
-   * the windows; Phase 1B replaces the single-window answer with a real
-   * lookup. */
-  windowIdForSender: (senderId: number) => number;
+  /**
+   * The Papers window a sender belongs to, or null when the host cannot say.
+   *
+   * Fails closed on purpose: manufacturing an id like 0 for an unknown sender
+   * would bind it to a window that may not be the one it came from, which is
+   * the same class of mistake as the ambient project global. Phase 1B replaces
+   * the single-window answer with a real lookup.
+   */
+  windowIdForSender: (senderId: number) => number | null;
   updater: PapersUpdater;
   registry: BackpackRegistry;
   backpackProjects: BackpackProjectService;
@@ -245,12 +251,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     await this.deps.registry.markEntered(id);
     // Bind the asking host surface immediately, so every later request from
     // this window resolves through its own sender rather than ambient state.
-    if (project) {
-      this.deps.surfaces.bind(senderId, {
-        projectId: id,
-        windowId: this.deps.windowIdForSender(senderId),
-        kind: 'host',
-      });
+    const windowId = project ? this.deps.windowIdForSender(senderId) : null;
+    if (project && windowId !== null) {
+      this.deps.surfaces.bind(senderId, { projectId: id, windowId, kind: 'host' });
     }
     this.emitBackpacksChanged();
     return project;
@@ -263,13 +266,48 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.emitBackpacksChanged();
   }
 
+  /**
+   * Binding order, which is load-bearing:
+   *
+   *   open  -> binds the asking host surface to the project
+   *   show  -> verifies the URL belongs to THAT project
+   *   shown -> the created project frame is bound to the same context
+   *
+   * The check below is why the order is safe. Proving the host belongs to some
+   * project is not enough: a host bound to A could otherwise pass a
+   * `papers-backpack://B/...` URL and leave an A-host paired with a B-project.
+   * The frame binding that follows is then a consequence of an identity
+   * already checked, not a second source of truth.
+   */
   showBackpackProjectSurface(senderId: number, url: string): Promise<void> {
-    this.requireProjectForSender(senderId);
+    const projectId = this.requireProjectForSender(senderId);
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error('Backpack project surface URL is not valid.');
+    }
+    if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || parsed.host !== projectId) {
+      throw new Error('This surface may not show another Backpack project.');
+    }
     return this.deps.showBackpackProjectSurface(url);
   }
 
-  hideBackpackProjectSurface(): void {
+  /**
+   * Leave the project shown in THIS window.
+   *
+   * Scoped by window, not by project: two windows may show one project, and
+   * hiding one must not strip the other's routing. Unbinding by project id
+   * would do exactly that.
+   *
+   * Idempotent -- the renderer's cleanup hides again after closing, and an
+   * already-unbound hide is a no-op rather than an error.
+   */
+  hideBackpackProjectSurface(senderId: number): void {
+    const context = this.deps.surfaces.contextForSender(senderId);
+    if (!context) return;
     this.deps.hideBackpackProjectSurface();
+    this.deps.surfaces.unbindWindow(context.windowId);
   }
 
   /**

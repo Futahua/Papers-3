@@ -29,7 +29,7 @@ export interface HostFacade {
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
   closeBackpackProject(senderId: number): Promise<void>;
   showBackpackProjectSurface(senderId: number, url: string): Promise<void>;
-  hideBackpackProjectSurface(): void;
+  hideBackpackProjectSurface(senderId: number): void;
   requestCloseBackpackProject(senderId: number): void;
   runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
   copyBackpackProjectText(senderId: number, text: string): void;
@@ -183,7 +183,7 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:show-surface', (event, url) =>
     facade.showBackpackProjectSurface(event.sender.id, z.string().url().max(2_048).parse(url)),
   );
-  handle('host:backpack-project:hide-surface', () => facade.hideBackpackProjectSurface());
+  handle('host:backpack-project:hide-surface', (event) => facade.hideBackpackProjectSurface(event.sender.id));
   handle('host:backpack-project:run-action', (event, actionId) =>
     facade.runBackpackProjectAction(event.sender.id, backpackProjectActionIdSchema.parse(actionId)),
   );

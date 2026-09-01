@@ -18,6 +18,20 @@ export class BackpackProjectRuntime {
     this.transparent = transparent;
   }
 
+  /**
+   * Run `onDestroyed` when the frame with this sender id goes away. `show()`
+   * hides a live surface before replacing it, so a caller that bound the frame
+   * needs to hear about the death or a dead sender id stays bound.
+   */
+  onFrameDestroyed(senderId: number, onDestroyed: () => void): void {
+    const view = this.view;
+    if (!view || view.webContents.id !== senderId) {
+      onDestroyed();
+      return;
+    }
+    view.webContents.once('destroyed', onDestroyed);
+  }
+
   /** The project frame's sender id, so the host can bind it to a project. */
   get senderId(): number | null {
     return this.view ? this.view.webContents.id : null;

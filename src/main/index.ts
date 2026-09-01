@@ -102,6 +102,31 @@ let mainWindow: BaseWindow | null = null;
 /** Phase 1A: which project each sender may act for. One registry for the
  * application; the bindings inside it are per surface. */
 const surfaceContexts = createSurfaceContextRegistry();
+
+/**
+ * Phase 1A: bind a Papers-owned project surface so it can act for its project.
+ *
+ * The detach and compact-widget surfaces are authorized project senders --
+ * `isAllowedProjectSurfaceSender` admits them -- so once every request resolves
+ * through its own sender, an unbound one would be refused outright. The
+ * `windowId` is the OWNING Papers window, never the detached BrowserWindow's
+ * own id: ownership is what routing cares about. This is identity only; the
+ * 018 handshake still decides when such a surface may write.
+ */
+function bindOwnedProjectSurface(
+  window: BrowserWindow,
+  projectId: string,
+  kind: 'detached' | 'widget',
+): void {
+  const owningWindowId = mainWindow?.id;
+  if (owningWindowId === undefined) return;
+  const senderId = window.webContents.id;
+  surfaceContexts.bind(senderId, { projectId, windowId: owningWindowId, kind });
+  // A dead sender can no longer act, and leaving its id bound would let a
+  // recycled id inherit a project.
+  window.webContents.once('destroyed', () => surfaceContexts.unbind(senderId));
+}
+
 let hostView: WebContentsView | null = null;
 
 // A second launch belongs to the existing Papers window. Auxiliary Backpack
@@ -395,7 +420,17 @@ async function bootstrap(): Promise<void> {
     ),
     isBackpackProjectSender: isProjectSurfaceSender,
     surfaces: surfaceContexts,
-    windowIdForSender: () => mainWindow?.id ?? 0,
+    // One window today, so the answer is that window — but only for a sender
+    // this process actually knows. An unknown sender gets null and is refused,
+    // rather than being bound to a window it may not belong to. Phase 1B
+    // replaces this with a real window lookup.
+    windowIdForSender: (senderId) => {
+      if (!mainWindow) return null;
+      const known = hostView?.webContents.id === senderId
+        || backpackProjectRuntime.senderId === senderId
+        || surfaceContexts.contextForSender(senderId) !== null;
+      return known ? mainWindow.id : null;
+    },
     showBackpackProjectSurface: async (url) => {
       await backpackProjectRuntime.show(url);
       // Phase 1A: bind both senders that may act for this project — the host
@@ -406,18 +441,17 @@ async function bootstrap(): Promise<void> {
       // project frame it now hosts, in the same window.
       const projectId = backpackProjectRuntime.liveProjectId;
       const frameSender = backpackProjectRuntime.senderId;
-      if (projectId && frameSender !== null) {
-        surfaceContexts.bind(frameSender, {
-          projectId,
-          windowId: mainWindow?.id ?? 0,
-          kind: 'project',
-        });
+      const owningWindowId = mainWindow?.id;
+      if (projectId && frameSender !== null && owningWindowId !== undefined) {
+        surfaceContexts.bind(frameSender, { projectId, windowId: owningWindowId, kind: 'project' });
+        // show() replaces a live surface by hiding the old one first, so
+        // without this a dead frame's id would stay bound.
+        backpackProjectRuntime.onFrameDestroyed(frameSender, () => surfaceContexts.unbind(frameSender));
       }
     },
     hideBackpackProjectSurface: () => {
       windowPickSession.cancel().catch(() => undefined);
-      const projectId = backpackProjectRuntime.liveProjectId;
-      if (projectId) surfaceContexts.unbindProject(projectId);
+      // Unbinding is the facade's job now, scoped to the asking window.
       backpackProjectRuntime.hide();
     },
     runtime,
@@ -604,6 +638,7 @@ async function bootstrap(): Promise<void> {
       detachedWindow.once('ready-to-show', () => {
         if (!detachedWindow.isDestroyed()) detachedWindow.showInactive();
       });
+      bindOwnedProjectSurface(detachedWindow, projectId, 'detached');
       return detachedWindow;
     },
     // Cancelling the 016 pick when a registered surface goes away is safe:
@@ -716,6 +751,7 @@ async function bootstrap(): Promise<void> {
       widgetWindow.once('ready-to-show', () => {
         if (!widgetWindow.isDestroyed()) widgetWindow.showInactive();
       });
+      bindOwnedProjectSurface(widgetWindow, projectId, 'widget');
       return widgetWindow;
     },
     isSurfaceOrigin: (senderId, projectId) => {
