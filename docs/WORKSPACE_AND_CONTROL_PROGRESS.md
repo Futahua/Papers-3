@@ -174,9 +174,10 @@ fixture/restart failures were previously observed and remain separately scoped.
 
 ## Current reviewer status
 
-The browser reviewer signed off A3.4, B2.1 and the Electron 43.1.1 WCV
-compatibility gate. The next eligible recorded gate is the A0.4 residual
-same-project multi-surface evidence test.
+The browser reviewer signed off A3.4, B2.1, the Electron 43.1.1 WCV
+compatibility gate and the A0.4 same-project multi-surface evidence gate. The
+next eligible recorded gate is renderer transport destroy/recreate while
+retaining logical `surfaceId`.
 
 The prior A3 review history is retained below.
 
@@ -325,7 +326,7 @@ renderer tabs or splits.
 - [x] Prove one native window can hold A→project X and B→project Y in a live
   Electron/control workflow (`workspace-tabs.e2e.ts`).
 - [x] Show/hide A without affecting B in a live Electron/control workflow.
-- [ ] Prove two distinct surfaces can show the same project.
+- [x] Prove two distinct surfaces can show the same project.
 - [ ] Destroy/recreate a renderer transport while retaining logical `surfaceId`.
 - [x] Close handling fans out to every owned runtime, and finalization retires
   every logical surface.
@@ -1101,7 +1102,7 @@ Next narrow eligible gate: the A0.4 residual evidence test for two distinct
 same-project surfaces in one live window, with independent native presentation,
 exact-surface interaction/routing, and exact close-survivor inspection.
 
-### A0.4 residual same-project surface evidence — review pending
+### A0.4 residual same-project surface evidence — signed off
 
 The standalone acceptance test uses existing authorized control semantics only.
 It creates two fresh surfaces for one project in one live window, proves
@@ -1111,11 +1112,17 @@ name that surface, and closes only the first while the second remains live,
 visible and natively presented. Renderer probes receive distinct markers (`1`
 and `2`) from the two independent project renderers.
 
-Candidate exact pushed head: `9423857`. Focused same-project Electron E2E and
-typecheck pass; full Vitest remains 727/731 (4 skipped), build passes, and the
-combined live A0.4/compatibility/developer-control E2E set passes 5/5. The
-candidate is re-submitted after review tightened two evidence assertions. No
-production behavior, persistence, authority or control redaction is changed.
+Implementation exact head `94238574f22f9fc8714d91febdf73c2bafb7a7a0` was reviewed
+at exact pushed docs tip `a8df036ce8ac1720d76b790f7f1ce7978c4f656d`. Focused
+same-project Electron E2E, typecheck, combined live E2E, full Vitest, build and
+diff checks pass. No production behavior, persistence, authority or control
+redaction changed.
+
+Next narrow residual: destroy/recreate one project renderer transport while
+retaining its logical `surfaceId`, then prove the old sender is unauthorized,
+the new sender is authorized for the exact surface, topology and active state
+remain unchanged, post-recreation interaction works, and normal exact close
+cleans up the recreated runtime.
 
 ## Persistent pickup checklist for every new session
 
