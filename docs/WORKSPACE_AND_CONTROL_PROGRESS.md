@@ -647,12 +647,29 @@ A1.2j archive/remove and crash/reload durability:
 - [x] Abruptly terminate and relaunch the app after the removal commit; prove
   atomic persistence restores only the surviving projects.
 - [x] Keep later windows fresh and retain persistence redaction assertions.
-- [ ] Reviewer sign-off.
+- [x] Reviewer sign-off on exact head `63b84f43801254d03b01890a1b7e0cf836853256`.
 
 A1.2j validation: dedicated archive/reload Electron E2E passed 1/1;
 typecheck passed; full Vitest passed with 677 tests and 4 skipped; and the
-dedicated startup-hydration E2E remains 1/1. The broader legacy Electron suite
-still has the previously documented unrelated fixture/restart failures.
+dedicated startup-hydration E2E remains 1/1. Reviewer signed off exact head
+`63b84f43801254d03b01890a1b7e0cf836853256` with no concrete lifecycle or
+persistence defect. The broader legacy Electron suite still has the
+previously documented unrelated fixture/restart failures.
+
+### A1.2k keyboard tab selection and accessibility acceptance
+
+- [x] Keyboard can reach and select every live workspace tab.
+- [x] Active tab exposes correct selected state and accessible name.
+- [x] Keyboard focus and activation preserve canonical Papers topology and
+  native presentation.
+- [x] Keyboard acceptance covers a multi-surface workspace without relying on
+  mouse-only Dockview gestures.
+- [ ] Reviewer sign-off.
+
+A1.2k validation: dedicated keyboard-accessibility Electron E2E passed 1/1;
+it focuses and activates Alpha and Beta with Enter, verifies accessible names
+and selected state, and checks canonical active-surface plus native presentation
+convergence. Reviewer sign-off is pending.
 
 A1.2i validation: the dedicated seeded-v2 startup Electron E2E passed 1/1;
 typecheck passed; full Vitest passed with 677 tests and 4 skipped; production
