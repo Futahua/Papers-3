@@ -98,4 +98,23 @@ describe('prepared Papers window lifecycle', () => {
     expect(first.window.id).toBe(1);
     expect(second.window.id).toBe(2);
   });
+
+  it('installs per-window behavior for every prepared window', () => {
+    const first = instance(async () => undefined, 10);
+    const second = instance(async () => undefined, 20);
+    const installed: number[] = [];
+
+    preparePapersWindow(first, {
+      register: vi.fn(),
+      install: (current) => installed.push(current.window.id),
+      finalize: vi.fn(),
+    });
+    preparePapersWindow(second, {
+      register: vi.fn(),
+      install: (current) => installed.push(current.window.id),
+      finalize: vi.fn(),
+    });
+
+    expect(installed).toEqual([10, 20]);
+  });
 });
