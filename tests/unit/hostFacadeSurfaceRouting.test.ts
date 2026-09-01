@@ -186,6 +186,37 @@ describe('surface routing in the host facade', () => {
     expect(workspaceTopologies.get(1)).toEqual(original);
   });
 
+  it('derives a host move source from the authenticated sender, never payload data', async () => {
+    const { facade } = createFacade();
+    const move = vi.spyOn(facade, 'moveWorkspaceSurfaceAcrossWindows').mockImplementation(async (request) => ({
+      surfaceId: request.surfaceId,
+      sourceWindowId: request.sourceWindowId,
+      targetWindowId: request.targetWindowId,
+      source: { projects: [], topology: createWorkspaceTopology() },
+      target: { projects: [], topology: createWorkspaceTopology() },
+    }));
+
+    await facade.moveWorkspaceSurfaceFromHost(HOST, {
+      surfaceId: 'sf-moved', targetWindowId: 2, targetGroupId: 'group-main', targetIndex: 0,
+      sourceWindowId: 99,
+    } as never);
+
+    expect(move).toHaveBeenCalledWith({
+      sourceWindowId: 1, surfaceId: 'sf-moved', targetWindowId: 2,
+      targetGroupId: 'group-main', targetIndex: 0,
+    });
+  });
+
+  it('rejects a host move when the named surface belongs to another window', async () => {
+    const { facade, logicalSurfaces, workspaceTopologies } = createFacade();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    const elsewhere = logicalSurfaces.create({ windowId: 2, projectId: PROJECT, kind: 'project' });
+
+    await expect(facade.moveWorkspaceSurfaceFromHost(HOST, {
+      surfaceId: elsewhere.surfaceId, targetWindowId: 2, targetGroupId: 'group-main', targetIndex: 0,
+    })).rejects.toThrow(/not open in the source Papers window/);
+  });
+
   it('re-resolves canonical topology after project lookup awaits', async () => {
     const { facade, logicalSurfaces, workspaceTopologies, openProject } = createFacade();
     const a = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });

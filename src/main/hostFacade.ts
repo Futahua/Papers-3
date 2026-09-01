@@ -197,6 +197,14 @@ export interface WorkspaceSurfaceMoveRequest {
   targetIndex: number;
 }
 
+/** Renderer-supplied portion of a host move. The source is authenticated. */
+export interface HostWorkspaceSurfaceMoveTarget {
+  surfaceId: string;
+  targetWindowId: number;
+  targetGroupId: string;
+  targetIndex: number;
+}
+
 export interface PreparedProjectSurface {
   senderId: number;
   adopt(): void;
@@ -1482,6 +1490,26 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       } finally {
         releaseMutation?.();
       }
+    });
+  }
+
+  /** Host IPC adapter: derive the source exclusively from the authenticated
+   * host sender, then delegate to the reviewed transaction unchanged. */
+  async moveWorkspaceSurfaceFromHost(senderId: number, target: HostWorkspaceSurfaceMoveTarget): Promise<{
+    surfaceId: string;
+    sourceWindowId: number;
+    targetWindowId: number;
+    source: WorkspaceSurfaceMoveProjection;
+    target: WorkspaceSurfaceMoveProjection;
+  }> {
+    const sourceWindowId = this.deps.hostWindowForSender(senderId);
+    if (sourceWindowId === null) throw new Error('Only a Papers host may move a workspace surface.');
+    return this.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId,
+      surfaceId: target.surfaceId,
+      targetWindowId: target.targetWindowId,
+      targetGroupId: target.targetGroupId,
+      targetIndex: target.targetIndex,
     });
   }
 

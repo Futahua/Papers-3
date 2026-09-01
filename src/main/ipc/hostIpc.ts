@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import { backpackNameSchema } from '@shared/schemas';
 import type { PermissionDecision } from '@shared/types';
+import type { HostWorkspaceSurfaceMoveTarget } from '../hostFacade';
 import { parseWorkspaceTopology, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 export interface HostFacade {
@@ -83,6 +84,7 @@ export interface HostFacade {
   listWorkspaceLayouts(): Promise<unknown>;
   saveWorkspaceLayout(senderId: number, name: string): Promise<unknown>;
   loadWorkspaceLayout(senderId: number, layoutId: string): Promise<unknown>;
+  moveWorkspaceSurfaceFromHost(senderId: number, target: HostWorkspaceSurfaceMoveTarget): Promise<unknown>;
 
   listPermissions(): unknown;
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
@@ -132,6 +134,12 @@ const surfaceIdSchema = z.string().min(1).max(128);
 const backpackProjectRevisionSchema = z.union([z.literal('absent'), z.string().regex(/^[0-9a-f]{64}$/)]);
 const backpackProjectTextSchema = z.string().min(1).max(50_000);
 const backpackProjectWebUrlSchema = z.string().min(8).max(2_048);
+export const hostWorkspaceSurfaceMoveTargetSchema = z.object({
+  surfaceId: surfaceIdSchema,
+  targetWindowId: z.number().int().nonnegative(),
+  targetGroupId: z.string().min(1).max(128),
+  targetIndex: z.number().int().nonnegative(),
+}).strict();
 const backpackProjectDroppedPathsSchema = z.array(z.string().min(1).max(32_768)).min(1).max(64);
 const delegateWaveRequestSchema = z
   .object({
@@ -319,6 +327,12 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:settings:clear-window-bounds', () => facade.clearWindowBounds());
   handle('host:workspace:commit-topology', (event, topology) =>
     facade.commitWorkspaceTopology(event.sender.id, parseWorkspaceTopology(topology)),
+  );
+  handle('host:workspace:move-surface-to-window', (event, rawTarget) =>
+    facade.moveWorkspaceSurfaceFromHost(
+      event.sender.id,
+      hostWorkspaceSurfaceMoveTargetSchema.parse(rawTarget),
+    ),
   );
   handle('host:layout:list', () => facade.listWorkspaceLayouts());
   handle('host:layout:save', (event, name) =>
