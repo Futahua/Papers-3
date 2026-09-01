@@ -956,13 +956,18 @@ signed off the infrastructure exact head above.
 - [x] A3.3r5 hardening: startup hydration also checks the target window’s
   workspace-mutation boundary after final availability validation and before
   any allocation, delivery, or commit; add held-target move/hydration coverage.
+- [x] A3.3r6 hardening: when the target closes after pair persistence and
+  compensating persistence also fails, terminal forward handling discards the
+  staged destination, retires/unbinds the moved surface, tears down the source,
+  and advances the source projection without adopting into the dead target.
+  Add target-close plus restore-failure coverage.
 - [ ] Reviewer sign-off on exact pushed head
-  `1dc5ef6f0cafddd216d43ba897becbd89bad0534`.
+  `b8717bb840be56c0a422398f6e11f3fc24d63994`.
 
 A3.3 validation so far: typecheck passed; focused move/protocol/persistence/
-collection tests passed 80/80; full Vitest passed 718/722 (4 skipped); build
+collection tests passed 81/81; full Vitest passed 719/723 (4 skipped); build
 and diff checks passed; live workspace-tabs and developer-control Electron
-acceptance passed 3/3. The A3.3r5 exact-head review remains pending.
+acceptance passed 3/3. The A3.3r6 exact-head review remains pending.
 
 ## Persistent pickup checklist for every new session
 
