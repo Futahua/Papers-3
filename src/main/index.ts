@@ -1390,16 +1390,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // transparent surfaces, bf15f93). `close` still runs while the window is
   // alive, and hide() is idempotent, so an earlier host-IPC hide followed
   // by this one is harmless. Post-destruction bookkeeping stays in `closed`.
-  mainWindow.on('close', (event) => {
+  mainWindow.on('close', () => {
     backpackProjectRuntime.hide();
-    // Closing Papers means closing Papers, including its detached/widget
-    // surfaces. Prevent this first native close while the existing before-quit
-    // owner performs its bounded asynchronous cleanup; its second app.quit()
-    // re-enters here after capabilityQuitComplete and is allowed through.
-    if (!capabilityQuitComplete) {
-      event.preventDefault();
-      app.quit();
-    }
+    // A user closing one Papers window must not quit the application: other
+    // Papers windows may still be live. Application-wide shutdown is initiated
+    // by before-quit, which performs the bounded global cleanup first.
   });
 
   const ownedWindowId = mainWindow.id;
