@@ -141,6 +141,7 @@ const api = {
     onWorkspaceProjectOpened: subscribe('host:event:workspace-project-opened'),
     onWorkspaceHydrated: subscribe('host:event:workspace-hydrated'),
     onWorkspaceLayoutLoaded: subscribe('host:event:workspace-layout-loaded'),
+    onWorkspaceSurfaceMoved: subscribe('host:event:workspace-surface-moved'),
     onProgramStatus: subscribe('host:event:program-status'),
     onShelfChanged: subscribe('host:event:shelf-changed'),
     onSaveStatus: subscribe('host:event:save-status'),

@@ -183,6 +183,21 @@ export function App(): React.JSX.Element {
         setProjectUrl(active?.url ?? null);
         setEntered(active?.projectId ?? null);
       }),
+      bridge.events.onWorkspaceSurfaceMoved(({ projects, topology }) => {
+        // Cross-window handoff is a complete renderer projection, not a
+        // topology-only delta: descriptors and topology are separate state in
+        // App and must converge together before Dockview/native presentation.
+        topologyCommitArmed.current = true;
+        openProjectsRef.current = projects;
+        setOpenProjects(projects);
+        externallyRestoredTopology.current = true;
+        setWorkspaceTopology(topology);
+        const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
+        const active = projects.find((project) => project.surfaceId === focused?.activeSurfaceId) ?? null;
+        setSurfaceId(active?.surfaceId ?? null);
+        setProjectUrl(active?.url ?? null);
+        setEntered(active?.projectId ?? null);
+      }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),
     ];

@@ -71,6 +71,39 @@ describe('Papers developer control protocol', () => {
     expect(dependencies.loadWorkspaceLayout).toHaveBeenCalledWith(7, layout.layoutId);
   });
 
+  it('dispatches cross-window moves with explicit source and target without leaking URLs', async () => {
+    const sourceTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: 'sf-moved', projectId: 'bp-a', title: 'A',
+    });
+    const targetTopology = openWorkspaceSurface(createWorkspaceTopology('target'), {
+      surfaceId: 'sf-moved', projectId: 'bp-a', title: 'A',
+    });
+    const move = vi.fn(async (input: unknown) => ({
+      surfaceId: 'sf-moved', sourceWindowId: 1, targetWindowId: 2,
+      source: { projects: [], topology: createWorkspaceTopology() },
+      target: { projects: [{ surfaceId: 'sf-moved', projectId: 'bp-a', title: 'A', url: 'papers-backpack://bp-a/private' }], topology: targetTopology },
+      input,
+      sourceTopology,
+    }));
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+      createWindow: async () => ({ windowId: 3 }),
+      moveWorkspaceSurfaceAcrossWindows: move,
+    };
+
+    await expect(dispatchPapersControl(dependencies, request('layout.moveSurfaceToWindow', {
+      sourceWindowId: 1, surfaceId: 'sf-moved', targetWindowId: 2,
+      targetGroupId: 'target', targetIndex: 0,
+    }))).resolves.toEqual({
+      surfaceId: 'sf-moved', sourceWindowId: 1, targetWindowId: 2,
+      sourceTopology: createWorkspaceTopology(), targetTopology,
+    });
+    expect(move).toHaveBeenCalledWith({
+      sourceWindowId: 1, surfaceId: 'sf-moved', targetWindowId: 2,
+      targetGroupId: 'target', targetIndex: 0,
+    });
+  });
+
   it('rejects unknown methods and unexpected parameters', async () => {
     expect(() => controlRequestSchema.parse({
       id: 1,

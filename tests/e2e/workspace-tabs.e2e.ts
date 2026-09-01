@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
+import { evalInHost, evalInHostWindow, launchPapers, waitFor, type LaunchedApp } from './helpers';
 // @ts-expect-error -- shared production control client is plain ESM.
 import { connectPapersControl, readDescriptor } from '../../tools/papersControlClient.mjs';
 
@@ -284,6 +284,37 @@ describe('A1 workspace tabs', () => {
       return surfaces.length === 1 && surfaces[0]?.projectId === C && surfaces[0]?.presentation === 'visible';
     }, 10_000, 'archive close preserves canonical Gamma focus');
     expect(await hostPage.getByRole('tab', { name: 'Beta' }).count()).toBe(0);
+
+    const secondary = await call('window.create') as { windowId: number };
+    await waitFor(async () => (await call('inspect.windows') as Array<{ windowId: number }>)
+      .some(({ windowId }) => windowId === secondary.windowId), 10_000, 'cross-window move target');
+    await waitFor(async () => await evalInHostWindow<boolean>(launched.app, secondary.windowId,
+      `Boolean([...document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Layouts'))`),
+    10_000, 'cross-window move target host');
+    const movableGammaSurface = (await call('inspect.surfaces') as Array<{ surfaceId: string; projectId: string; windowId: number }>)
+      .find((surface) => surface.projectId === C && surface.windowId === windowId);
+    expect(movableGammaSurface).toBeDefined();
+    const moved = await call('layout.moveSurfaceToWindow', {
+      sourceWindowId: windowId,
+      surfaceId: movableGammaSurface!.surfaceId,
+      targetWindowId: secondary.windowId,
+      targetGroupId: 'group-main',
+      targetIndex: 0,
+    }) as {
+      sourceTopology: { surfaces: Array<{ surfaceId: string }> };
+      targetTopology: { surfaces: Array<{ surfaceId: string }> };
+    };
+    expect(moved.sourceTopology.surfaces).toEqual([]);
+    expect(moved.targetTopology.surfaces.map(({ surfaceId }) => surfaceId)).toEqual([movableGammaSurface!.surfaceId]);
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ surfaceId: string; projectId: string; windowId: number; presentation: string }>;
+      return surfaces.length === 1
+        && surfaces[0]?.surfaceId === movableGammaSurface!.surfaceId
+        && surfaces[0]?.windowId === secondary.windowId
+        && surfaces[0]?.presentation === 'visible'
+        && await evalInHostWindow<boolean>(launched.app, secondary.windowId,
+          `[...document.querySelectorAll('.dv-tab')].some((tab) => tab.textContent?.trim() === 'Gamma')`);
+    }, 15_000, 'cross-window move converges both host and native project presentation');
 
     const persistedPath = path.join(launched.userDataDir, 'PapersData', 'workspace-topologies.json');
     await waitFor(async () => {

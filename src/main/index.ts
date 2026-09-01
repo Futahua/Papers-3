@@ -617,6 +617,68 @@ async function bootstrap(): Promise<void> {
       });
     },
     workspaceLayouts: workspaceLayoutStore,
+    workspaceMove: {
+      workspaceId: (windowId) => workspaceIds.get(windowId) ?? null,
+      workspaceState: (windowId) => ({
+        topology: workspaceTopologies.get(windowId) ?? null,
+        revision: workspaceTopologyRevisions.get(windowId) ?? 0,
+        workspaceId: workspaceIds.get(windowId) ?? null,
+        activeSurfaceId: papersWindows.activeSurfaceId(windowId),
+        enteredBackpackId: papersWindows.enteredBackpack(windowId),
+      }),
+      setWorkspaceState: (windowId, state) => {
+        if (state.topology) workspaceTopologies.set(windowId, state.topology);
+        else workspaceTopologies.delete(windowId);
+        if (state.revision > 0 || state.topology) workspaceTopologyRevisions.set(windowId, state.revision);
+        else workspaceTopologyRevisions.delete(windowId);
+        if (state.workspaceId) workspaceIds.set(windowId, state.workspaceId);
+        else workspaceIds.delete(windowId);
+        papersWindows.setActiveSurfaceId(windowId, state.activeSurfaceId);
+        papersWindows.setEnteredBackpack(windowId, state.enteredBackpackId);
+      },
+      commitPair: (pair) => workspaceTopologyStore.commitPair(pair),
+      snapshotPair: (sourceWorkspaceId, targetWorkspaceId) =>
+        workspaceTopologyStore.snapshotPair(sourceWorkspaceId, targetWorkspaceId),
+      restorePair: (snapshot, sourceWorkspaceId, targetWorkspaceId) =>
+        workspaceTopologyStore.restorePairWithIds(snapshot, sourceWorkspaceId, targetWorkspaceId),
+      projectEntryUrl: (windowId, projectId) =>
+        papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null,
+      prepareProjectSurface: async (windowId, surfaceId, url) => {
+        const collection = papersWindows.get(windowId)?.owned.projectSurfaces;
+        if (!collection) throw new Error('That Papers target window has no project-surface collection.');
+        const prepared = collection.prepare(surfaceId);
+        let authority: ReturnType<typeof projectSurfaceAuthority.stage> | null = null;
+        let senderId: number | null = null;
+        try {
+          await prepared.runtime.show(url, {
+            present: false,
+            beforeLoad: (id) => {
+              senderId = id;
+              authority = projectSurfaceAuthority.stage(id);
+            },
+          });
+          if (senderId === null || authority === null) throw new Error('Destination project surface did not create a sender.');
+          return {
+            senderId,
+            adopt: () => {
+              prepared.adopt();
+              authority?.adopt();
+              projectSurfaceAuthority.forget(senderId!);
+            },
+            discard: () => {
+              authority?.discard();
+              prepared.discard();
+              if (senderId !== null) projectSurfaceAuthority.forget(senderId);
+            },
+          };
+        } catch (caught) {
+          (authority as ReturnType<typeof projectSurfaceAuthority.stage> | null)?.discard();
+          prepared.discard();
+          if (senderId !== null) projectSurfaceAuthority.forget(senderId);
+          throw caught;
+        }
+      },
+    },
     activeSurfaceId: (windowId) => papersWindows.activeSurfaceId(windowId),
     setActiveSurfaceId: (windowId, surfaceId) => papersWindows.setActiveSurfaceId(windowId, surfaceId),
     clearEnteredBackpackEverywhere: (backpackId) => papersWindows.clearEnteredBackpackEverywhere(backpackId),
@@ -1454,6 +1516,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         listWorkspaceLayouts: () => facade.listWorkspaceLayouts(),
         saveWorkspaceLayout: (windowId, name) => facade.saveWorkspaceLayoutFromControl(windowId, name),
         loadWorkspaceLayout: (windowId, layoutId) => facade.loadWorkspaceLayoutFromControl(windowId, layoutId),
+        moveWorkspaceSurfaceAcrossWindows: (request) => facade.moveWorkspaceSurfaceAcrossWindows(request),
         /**
          * The shared control-side target resolver: the window must be live and
          * the surface must be live IN that window. Nothing is resolved by

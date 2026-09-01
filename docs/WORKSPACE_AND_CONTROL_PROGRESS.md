@@ -787,8 +787,9 @@ selection, or management screen was added.
 
 - [x] A2 — named Save Layout / Load Layout (A2.1a–d signed off at
   `e4a96f21dc154e3a875751504cba4c9e89782d24`).
-- [ ] A3.1 — define cross-native-window move transaction and authority
-  contract.
+- [x] A3.1 — define cross-native-window move transaction and authority
+  contract (signed off at
+  `adfd9796a7f9c3f21ca037681f86b08a92cb3ec2`).
 - [ ] A3 — cross-native-window move transaction with recreate/rebind fallback.
 - [ ] Electron-version compatibility test for optional live WCV reparenting.
 - [ ] B2 — richer `papersctl`, event subscriptions and authorized confirmation
@@ -910,13 +911,35 @@ considered prepared until its authority barrier is also safe.
   project sender guard.
 - [x] Add a native runtime presentation option for hidden preparation and a
   lifecycle-silent collection `prepare(...)->{runtime,adopt,discard}` seam.
-- [ ] Reviewer sign-off on the infrastructure exact head
-  `0c1865b`.
+- [x] Reviewer sign-off on the infrastructure exact head
+  `3da78e69a68d2b6885d65e494d1f1c5b6f57d596`.
 
-A3.2 implementation validation so far: typecheck passed; focused topology,
-workspace-store, authority-barrier and surface-collection tests passed 29/29.
-The full move transaction, sender adoption wiring, control command and live
-two-window acceptance remain pending.
+A3.2 implementation validation: typecheck passed; focused topology,
+workspace-store, authority-barrier and surface-collection tests passed; full
+Vitest passed 702/706 (4 skipped); build and diff checks passed. The reviewer
+signed off the infrastructure exact head above.
+
+### A3.3 application move transaction and control path
+
+- [x] Add one application-serialized `layout.moveSurfaceToWindow` transaction
+  using explicit source/target window and group/index identities.
+- [x] Resolve and validate source/target topology plus exact live logical
+  surface sets, prepare a hidden destination runtime, atomically commit the
+  durable workspace pair, then synchronously move logical ownership and exact
+  sender bindings.
+- [x] Deliver complete `{projects, topology}` projections to both affected
+  hosts, with complete compensating projections after post-commit delivery
+  failure; source native teardown is best-effort after commit.
+- [x] Expose the move through the authenticated developer control protocol
+  without sender IDs, URLs, or native identity in the command result.
+- [x] Add facade success/rollback tests, control dispatch coverage, and a live
+  two-window Electron acceptance covering native presentation convergence.
+- [ ] Reviewer sign-off on the A3.3 exact head.
+
+A3.3 validation so far: typecheck passed; focused move/protocol tests passed
+52/52; full Vitest passed 708/712 (4 skipped); build and diff checks passed.
+The live two-window acceptance is queued for the E2E gate, followed by exact
+head review.
 
 ## Persistent pickup checklist for every new session
 

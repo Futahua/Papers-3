@@ -47,6 +47,13 @@ const namedLayoutSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).strict();
+const movedWorkspaceSchema = z.object({
+  surfaceId: z.string().min(1),
+  sourceWindowId: z.number().int(),
+  targetWindowId: z.number().int(),
+  sourceTopology: workspaceTopologySchema,
+  targetTopology: workspaceTopologySchema,
+}).strict();
 
 const controlWindowSchema = z.object({
   windowId: z.number().int(),
@@ -138,6 +145,17 @@ export const papersControlCommands = {
     output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
     scope: 'surface', effect: 'mutate',
   },
+  'layout.moveSurfaceToWindow': {
+    input: z.object({
+      sourceWindowId: z.number().int(),
+      surfaceId: z.string().min(1).max(128),
+      targetWindowId: z.number().int(),
+      targetGroupId: z.string().min(1).max(128),
+      targetIndex: z.number().int().nonnegative(),
+    }).strict(),
+    output: movedWorkspaceSchema,
+    scope: 'app', effect: 'mutate',
+  },
   'layout.split': {
     input: surfaceTargetSchema.extend({ direction: z.enum(['right', 'down']) }).strict(),
     output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
@@ -173,6 +191,13 @@ export interface PapersControlDependencies {
   listWorkspaceLayouts?(): Promise<unknown>;
   saveWorkspaceLayout?(windowId: number, name: string): Promise<unknown>;
   loadWorkspaceLayout?(windowId: number, layoutId: string): Promise<unknown>;
+  moveWorkspaceSurfaceAcrossWindows?(request: {
+    sourceWindowId: number;
+    surfaceId: string;
+    targetWindowId: number;
+    targetGroupId: string;
+    targetIndex: number;
+  }): Promise<unknown>;
   snapshot(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
@@ -230,6 +255,25 @@ export async function dispatchPapersControl(
       const loaded = await dependencies.loadWorkspaceLayout?.(windowId, layoutId);
       if (!loaded) throw new Error('That Papers window cannot load a named workspace layout.');
       return papersControlCommands[request.method].output.parse(loaded);
+    }
+    case 'layout.moveSurfaceToWindow': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const moved = await dependencies.moveWorkspaceSurfaceAcrossWindows?.(params);
+      if (!moved) throw new Error('Cross-window workspace moves are unavailable.');
+      const result = moved as {
+        surfaceId: string;
+        sourceWindowId: number;
+        targetWindowId: number;
+        source: { topology: z.infer<typeof workspaceTopologySchema> };
+        target: { topology: z.infer<typeof workspaceTopologySchema> };
+      };
+      return papersControlCommands[request.method].output.parse({
+        surfaceId: result.surfaceId,
+        sourceWindowId: result.sourceWindowId,
+        targetWindowId: result.targetWindowId,
+        sourceTopology: result.source.topology,
+        targetTopology: result.target.topology,
+      });
     }
     case 'layout.restore': {
       const { windowId, topology } = papersControlCommands[request.method].input.parse(request.params ?? {});

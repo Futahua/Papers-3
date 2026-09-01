@@ -41,11 +41,13 @@ import type { PermissionPrompter } from './capabilities/capabilityBroker';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { backpackDir, canvasFile, type PapersPaths } from './persistence/paths';
 import type { NamedWorkspaceLayout, WorkspaceLayoutStore } from './persistence/workspaceLayoutStore';
+import type { WorkspacePairCommit, WorkspacePairSnapshot } from './persistence/workspaceTopologyStore';
 import type { HostFacade } from './ipc/hostIpc';
 import {
   assertValidWorkspaceTopology,
   closeWorkspaceSurface,
   createWorkspaceTopology,
+  insertWorkspaceSurface,
   openWorkspaceSurface,
   remapWorkspaceTopologySurfaceIds,
   type WorkspaceTopologyV1,
@@ -162,12 +164,54 @@ export interface FacadeDeps {
   hydrateStartupWorkspace?: (windowId: number) => Promise<{ hydrated: boolean }>;
   setWorkspaceTopology: (windowId: number, topology: WorkspaceTopologyV1) => void;
   workspaceLayouts: WorkspaceLayoutStore;
+  workspaceMove?: {
+    workspaceId(windowId: number): string | null;
+    workspaceState(windowId: number): {
+      topology: WorkspaceTopologyV1 | null;
+      revision: number;
+      workspaceId: string | null;
+      activeSurfaceId: string | null;
+      enteredBackpackId: string | null;
+    };
+    setWorkspaceState(windowId: number, state: {
+      topology: WorkspaceTopologyV1 | null;
+      revision: number;
+      workspaceId: string | null;
+      activeSurfaceId: string | null;
+      enteredBackpackId: string | null;
+    }): void;
+    commitPair(pair: WorkspacePairCommit): Promise<void>;
+    snapshotPair(sourceWorkspaceId: string, targetWorkspaceId: string): Promise<WorkspacePairSnapshot>;
+    restorePair(snapshot: WorkspacePairSnapshot, sourceWorkspaceId: string, targetWorkspaceId: string): Promise<void>;
+    projectEntryUrl(windowId: number, projectId: string): string | null;
+    prepareProjectSurface(windowId: number, surfaceId: string, url: string): Promise<PreparedProjectSurface>;
+  };
+}
+
+export interface WorkspaceSurfaceMoveRequest {
+  sourceWindowId: number;
+  surfaceId: string;
+  targetWindowId: number;
+  targetGroupId: string;
+  targetIndex: number;
+}
+
+export interface PreparedProjectSurface {
+  senderId: number;
+  adopt(): void;
+  discard(): void;
+}
+
+export interface WorkspaceSurfaceMoveProjection {
+  projects: Array<{ surfaceId: string; projectId: string; title: string; url: string }>;
+  topology: WorkspaceTopologyV1;
 }
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private readonly pendingPermissionPrompts = new Map<string, (d: PermissionDecision) => void>();
   private readonly pendingInvocationPreviews = new Map<string, (approved: boolean) => void>();
   private hermesPlacementTail: Promise<void> = Promise.resolve();
+  private workspaceMoveTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: FacadeDeps) {}
 
@@ -183,6 +227,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       () => undefined,
       () => undefined,
     );
+    return result;
+  }
+
+  private runWorkspaceMove<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.workspaceMoveTail.then(operation, operation);
+    this.workspaceMoveTail = result.then(() => undefined, () => undefined);
     return result;
   }
 
@@ -936,6 +986,263 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       for (const surfaceId of allocated) this.deps.logicalSurfaces.retire(surfaceId);
       throw caught;
     }
+  }
+
+  private async resolveWorkspaceMoveProjection(
+    windowId: number,
+    topology: WorkspaceTopologyV1,
+    preferredUrls: ReadonlyMap<string, string>,
+  ): Promise<WorkspaceSurfaceMoveProjection> {
+    const projects = await Promise.all(topology.surfaces.map(async (surface) => {
+      const preferred = preferredUrls.get(`${windowId}\0${surface.projectId}`)
+        ?? this.deps.workspaceMove?.projectEntryUrl(windowId, surface.projectId)
+        ?? null;
+      const project = preferred ? { url: preferred } : await this.deps.backpackProjects.open(surface.projectId);
+      if (!project) throw new Error(`Backpack ${surface.projectId} has no usable project surface.`);
+      return { ...surface, url: project.url };
+    }));
+    return { projects, topology };
+  }
+
+  /** Move one existing logical project surface between two live Papers
+   * windows. The operation is application-serialized because renderer
+   * topology commits and native presentation handoff must share one authority
+   * boundary. */
+  async moveWorkspaceSurfaceAcrossWindows(request: WorkspaceSurfaceMoveRequest): Promise<{
+    surfaceId: string;
+    sourceWindowId: number;
+    targetWindowId: number;
+    source: WorkspaceSurfaceMoveProjection;
+    target: WorkspaceSurfaceMoveProjection;
+  }> {
+    return this.runWorkspaceMove(async () => {
+      const move = this.deps.workspaceMove;
+      if (!move) throw new Error('Cross-window workspace moves are unavailable.');
+      if (!Number.isSafeInteger(request.sourceWindowId) || !Number.isSafeInteger(request.targetWindowId)
+        || !Number.isSafeInteger(request.targetIndex) || request.targetIndex < 0) {
+        throw new Error('Cross-window workspace move target is malformed.');
+      }
+      if (request.sourceWindowId === request.targetWindowId) {
+        throw new Error('Cross-window move requires two different Papers windows.');
+      }
+      this.requireLiveWorkspaceWindow(request.sourceWindowId);
+      this.requireLiveWorkspaceWindow(request.targetWindowId);
+
+      const initialSourceState = move.workspaceState(request.sourceWindowId);
+      const initialTargetState = move.workspaceState(request.targetWindowId);
+      const sourceTopology = initialSourceState.topology;
+      const targetTopology = initialTargetState.topology ?? createWorkspaceTopology();
+      if (!sourceTopology) throw new Error('The source Papers window has no committed workspace topology.');
+      const sourceSurface = this.deps.logicalSurfaces.get(request.surfaceId);
+      if (!sourceSurface || sourceSurface.windowId !== request.sourceWindowId || sourceSurface.kind !== 'project') {
+        throw new Error('That surface is not open in the source Papers window.');
+      }
+      const movedDescriptor = sourceTopology.surfaces.find((surface) => surface.surfaceId === request.surfaceId);
+      if (!movedDescriptor || movedDescriptor.projectId !== sourceSurface.projectId) {
+        throw new Error('The source topology does not represent that project surface.');
+      }
+      this.validateWorkspaceTopologyAgainst(request.sourceWindowId, sourceTopology, this.currentProjectSurfaceSet(request.sourceWindowId));
+      this.validateWorkspaceTopologyAgainst(request.targetWindowId, targetTopology, this.currentProjectSurfaceSet(request.targetWindowId));
+
+      const sourceNext = closeWorkspaceSurface(sourceTopology, request.surfaceId);
+      const targetNext = insertWorkspaceSurface(
+        targetTopology,
+        movedDescriptor,
+        request.targetGroupId,
+        request.targetIndex,
+      );
+      const sourceNextSet = this.currentProjectSurfaceSet(request.sourceWindowId)
+        .filter((surface) => surface.surfaceId !== request.surfaceId);
+      const targetNextSet = [
+        ...this.currentProjectSurfaceSet(request.targetWindowId),
+        { surfaceId: request.surfaceId, projectId: sourceSurface.projectId },
+      ];
+      this.validateWorkspaceTopologyAgainst(request.sourceWindowId, sourceNext, sourceNextSet);
+      this.validateWorkspaceTopologyAgainst(request.targetWindowId, targetNext, targetNextSet);
+
+      const movedProject = await this.deps.backpackProjects.open(sourceSurface.projectId);
+      if (!movedProject) throw new Error(`Backpack ${sourceSurface.projectId} has no usable project surface.`);
+      const preferredUrls = new Map<string, string>([
+        [`${request.targetWindowId}\0${sourceSurface.projectId}`, movedProject.url],
+      ]);
+      const sourceBefore = await this.resolveWorkspaceMoveProjection(
+        request.sourceWindowId,
+        sourceTopology,
+        preferredUrls,
+      );
+      const targetBefore = await this.resolveWorkspaceMoveProjection(
+        request.targetWindowId,
+        targetTopology,
+        preferredUrls,
+      );
+      const sourceAfter = await this.resolveWorkspaceMoveProjection(
+        request.sourceWindowId,
+        sourceNext,
+        preferredUrls,
+      );
+      const targetAfter = await this.resolveWorkspaceMoveProjection(
+        request.targetWindowId,
+        targetNext,
+        preferredUrls,
+      );
+
+      const stateForTopology = (
+        previous: ReturnType<typeof move.workspaceState>,
+        topology: WorkspaceTopologyV1,
+        workspaceId = previous.workspaceId,
+      ): ReturnType<typeof move.workspaceState> => {
+        const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
+        const activeSurfaceId = focused?.activeSurfaceId ?? null;
+        const enteredBackpackId = activeSurfaceId
+          ? topology.surfaces.find((surface) => surface.surfaceId === activeSurfaceId)?.projectId ?? null
+          : null;
+        return {
+          ...previous,
+          topology,
+          revision: previous.revision + 1,
+          workspaceId,
+          activeSurfaceId,
+          enteredBackpackId,
+        };
+      };
+
+      const currentSourceState = move.workspaceState(request.sourceWindowId);
+      const currentTargetState = move.workspaceState(request.targetWindowId);
+      if (currentSourceState.revision !== initialSourceState.revision
+        || currentTargetState.revision !== initialTargetState.revision
+        || !this.deps.logicalSurfaces.isLiveIn(request.surfaceId, request.sourceWindowId)) {
+        throw new Error('Workspace changed while preparing the cross-window move.');
+      }
+      const sourceWorkspaceId = currentSourceState.workspaceId ?? move.workspaceId(request.sourceWindowId);
+      if (!sourceWorkspaceId) throw new Error('The source workspace has no durable identity.');
+      const targetWorkspaceId = currentTargetState.workspaceId ?? move.workspaceId(request.targetWindowId) ?? randomUUID();
+      const pairSnapshot = await move.snapshotPair(sourceWorkspaceId, targetWorkspaceId);
+      let prepared: PreparedProjectSurface | null = null;
+      let preparedDisposed = false;
+      const discardPrepared = () => {
+        if (prepared && !preparedDisposed) {
+          preparedDisposed = true;
+          prepared.discard();
+        }
+      };
+      try {
+        prepared = await move.prepareProjectSurface(request.targetWindowId, request.surfaceId, movedProject.url);
+        const afterPrepareSource = move.workspaceState(request.sourceWindowId);
+        const afterPrepareTarget = move.workspaceState(request.targetWindowId);
+        if (afterPrepareSource.revision !== initialSourceState.revision
+          || afterPrepareTarget.revision !== initialTargetState.revision
+          || !this.deps.logicalSurfaces.isLiveIn(request.surfaceId, request.sourceWindowId)) {
+          throw new Error('Workspace changed while loading the destination project surface.');
+        }
+
+        await move.commitPair({
+          source: { workspaceId: sourceWorkspaceId, topology: sourceNext },
+          target: { workspaceId: targetWorkspaceId, topology: targetNext },
+          lastWorkspaceId: pairSnapshot.lastWorkspaceId,
+        });
+
+        const oldContexts = this.deps.surfaces.sendersForSurface(request.surfaceId)
+          .map((senderId) => ({ senderId, context: this.deps.surfaces.contextForSender(senderId) }))
+          .filter((entry): entry is { senderId: number; context: NonNullable<ReturnType<SurfaceContextRegistry['contextForSender']>> } => entry.context !== null);
+        let sourceNotified = false;
+        let targetNotified = false;
+        let canonicalTouched = false;
+        if (!prepared) throw new Error('Destination project surface preparation was lost.');
+        try {
+          // Mark before each abstract canonical operation: an implementation
+          // may mutate and then throw, and rollback must still run in that
+          // case. The concrete registries are synchronous, but this boundary
+          // is deliberately defensive.
+          canonicalTouched = true;
+          if (!this.deps.logicalSurfaces.moveToWindow(request.surfaceId, request.targetWindowId)) {
+            throw new Error('The logical surface could not be moved to the target window.');
+          }
+          for (const { senderId } of oldContexts) this.deps.surfaces.unbind(senderId);
+          this.deps.surfaces.bind(prepared.senderId, {
+            surfaceId: request.surfaceId,
+            projectId: sourceSurface.projectId,
+            windowId: request.targetWindowId,
+            kind: 'project',
+          });
+          prepared.adopt();
+          move.setWorkspaceState(
+            request.sourceWindowId,
+            stateForTopology(initialSourceState, sourceNext),
+          );
+          move.setWorkspaceState(
+            request.targetWindowId,
+            stateForTopology(initialTargetState, targetNext, targetWorkspaceId),
+          );
+          const sourceEvent = {
+            surfaceId: request.surfaceId,
+            sourceWindowId: request.sourceWindowId,
+            targetWindowId: request.targetWindowId,
+            ...sourceAfter,
+          };
+          const targetEvent = {
+            surfaceId: request.surfaceId,
+            sourceWindowId: request.sourceWindowId,
+            targetWindowId: request.targetWindowId,
+            ...targetAfter,
+          };
+          this.deps.sendToWindowOrThrow(request.sourceWindowId, 'host:event:workspace-surface-moved', sourceEvent);
+          sourceNotified = true;
+          this.deps.sendToWindowOrThrow(request.targetWindowId, 'host:event:workspace-surface-moved', targetEvent);
+          targetNotified = true;
+          try {
+            this.deps.closeAttachedProjectSurface(request.sourceWindowId, request.surfaceId);
+          } catch (caught) {
+            console.error(`[workspace-move] source native teardown failed for ${request.surfaceId}:`, caught);
+          }
+          return {
+            surfaceId: request.surfaceId,
+            sourceWindowId: request.sourceWindowId,
+            targetWindowId: request.targetWindowId,
+            source: sourceAfter,
+            target: targetAfter,
+          };
+        } catch (caught) {
+          // Restore the synchronous canonical state before any awaited
+          // compensation, so no later renderer/control read sees a partial
+          // logical move while the durable pair is being restored.
+          if (canonicalTouched) {
+            this.deps.logicalSurfaces.moveToWindow(request.surfaceId, request.sourceWindowId);
+            this.deps.surfaces.unbind(prepared.senderId);
+            for (const { senderId, context } of oldContexts) this.deps.surfaces.bind(senderId, context);
+            move.setWorkspaceState(request.sourceWindowId, initialSourceState);
+            move.setWorkspaceState(request.targetWindowId, initialTargetState);
+          }
+          discardPrepared();
+          await move.restorePair(pairSnapshot, sourceWorkspaceId, targetWorkspaceId);
+          if (sourceNotified) {
+            try {
+              this.deps.sendToWindowOrThrow(request.sourceWindowId, 'host:event:workspace-surface-moved', {
+                surfaceId: request.surfaceId,
+                sourceWindowId: request.sourceWindowId,
+                targetWindowId: request.targetWindowId,
+                ...sourceBefore,
+                compensating: true,
+              });
+            } catch { /* renderer may have died; durable/in-memory restore remains authoritative */ }
+          }
+          if (targetNotified) {
+            try {
+              this.deps.sendToWindowOrThrow(request.targetWindowId, 'host:event:workspace-surface-moved', {
+                surfaceId: request.surfaceId,
+                sourceWindowId: request.sourceWindowId,
+                targetWindowId: request.targetWindowId,
+                ...targetBefore,
+                compensating: true,
+              });
+            } catch { /* renderer may have died; durable/in-memory restore remains authoritative */ }
+          }
+          throw caught;
+        }
+      } catch (caught) {
+        discardPrepared();
+        throw caught;
+      }
+    });
   }
 
   commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void {

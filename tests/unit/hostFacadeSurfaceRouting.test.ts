@@ -34,9 +34,25 @@ function createFacade() {
     enteredBackpacks.set(windowId, backpackId);
   });
   const workspaceTopologies = new Map<number, ReturnType<typeof createWorkspaceTopology>>();
+  const workspaceIds = new Map<number, string>();
+  const workspaceRevisions = new Map<number, number>();
   const setWorkspaceTopology = vi.fn((windowId: number, topology: ReturnType<typeof createWorkspaceTopology>) => {
     workspaceTopologies.set(windowId, topology);
   });
+  const commitPair = vi.fn(async () => {});
+  const snapshotPair = vi.fn(async (sourceWorkspaceId: string, targetWorkspaceId: string) => ({
+    source: { workspaceId: sourceWorkspaceId, topology: workspaceTopologies.get(1) ?? createWorkspaceTopology(), updatedAt: '2026-09-01T00:00:00.000Z' },
+    target: workspaceTopologies.get(2)
+      ? { workspaceId: targetWorkspaceId, topology: workspaceTopologies.get(2)!, updatedAt: '2026-09-01T00:00:00.000Z' }
+      : null,
+    lastWorkspaceId: sourceWorkspaceId,
+  }));
+  const restorePair = vi.fn(async () => {});
+  const prepareProjectSurface = vi.fn(async () => ({
+    senderId: 99,
+    adopt: vi.fn(),
+    discard: vi.fn(),
+  }));
   const markLeft = vi.fn(async () => {});
   const workspaceLayouts = {
     list: vi.fn(async () => []),
@@ -64,6 +80,36 @@ function createFacade() {
     workspaceTopology: (windowId: number) => workspaceTopologies.get(windowId) ?? null,
     setWorkspaceTopology,
     workspaceLayouts,
+    workspaceMove: {
+      workspaceId: (windowId: number) => workspaceIds.get(windowId) ?? null,
+      workspaceState: (windowId: number) => ({
+        topology: workspaceTopologies.get(windowId) ?? null,
+        revision: workspaceRevisions.get(windowId) ?? 0,
+        workspaceId: workspaceIds.get(windowId) ?? null,
+        activeSurfaceId: focusedSurfaces.get(windowId) ?? null,
+        enteredBackpackId: enteredBackpacks.get(windowId) ?? null,
+      }),
+      setWorkspaceState: (windowId: number, state: {
+        topology: ReturnType<typeof createWorkspaceTopology> | null;
+        revision: number;
+        workspaceId: string | null;
+        activeSurfaceId: string | null;
+        enteredBackpackId: string | null;
+      }) => {
+        if (state.topology) workspaceTopologies.set(windowId, state.topology);
+        else workspaceTopologies.delete(windowId);
+        workspaceRevisions.set(windowId, state.revision);
+        if (state.workspaceId) workspaceIds.set(windowId, state.workspaceId);
+        else workspaceIds.delete(windowId);
+        focusedSurfaces.set(windowId, state.activeSurfaceId);
+        enteredBackpacks.set(windowId, state.enteredBackpackId);
+      },
+      commitPair,
+      snapshotPair,
+      restorePair,
+      projectEntryUrl: () => null,
+      prepareProjectSurface,
+    },
     clearEnteredBackpackEverywhere: vi.fn(),
     listLogicalSurfaces: () => logicalSurfaces.project(),
     retireProjectSurfaces: (projectId: string) => { logicalSurfaces.retireProject(projectId); },
@@ -91,7 +137,7 @@ function createFacade() {
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
     setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, archivedProjects, markLeft,
-    workspaceLayouts,
+    workspaceLayouts, workspaceIds, workspaceRevisions, commitPair, restorePair, prepareProjectSurface,
   };
 }
 
@@ -310,6 +356,93 @@ describe('surface routing in the host facade', () => {
 
     const fabricated = { ...valid, surfaces: [{ ...valid.surfaces[0]!, surfaceId: 'sf-fabricated' }] };
     expect(() => facade.commitWorkspaceTopology(HOST, fabricated)).toThrow(/does not match/);
+  });
+
+  it('moves one logical surface with exact bindings, durable pair, and complete projections', async () => {
+    const {
+      facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
+      workspaceRevisions, sendToWindow, commitPair, prepareProjectSurface,
+      closeAttachedProjectSurface,
+    } = createFacade();
+    const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const survivor = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    const sourceTopology = openWorkspaceSurface(openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: moved.surfaceId, projectId: PROJECT, title: 'Alpha',
+    }), { surfaceId: survivor.surfaceId, projectId: OTHER, title: 'Beta' });
+    workspaceTopologies.set(1, sourceTopology);
+    workspaceIds.set(1, 'ws-source');
+    workspaceIds.set(2, 'ws-target');
+    workspaceRevisions.set(1, 4);
+    workspaceRevisions.set(2, 7);
+    surfaces.bind(FRAME, {
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
+    });
+
+    const result = await facade.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: 1,
+      surfaceId: moved.surfaceId,
+      targetWindowId: 2,
+      targetGroupId: 'group-main',
+      targetIndex: 0,
+    });
+
+    expect(commitPair).toHaveBeenCalledTimes(1);
+    expect(prepareProjectSurface).toHaveBeenCalledWith(2, moved.surfaceId, `papers-backpack://${PROJECT}/open`);
+    expect(logicalSurfaces.isLiveIn(moved.surfaceId, 2)).toBe(true);
+    expect(surfaces.contextForSender(FRAME)).toBeNull();
+    expect(surfaces.contextForSender(99)).toEqual({
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 2, kind: 'project',
+    });
+    expect(workspaceTopologies.get(1)?.surfaces.map(({ surfaceId }) => surfaceId)).toEqual([survivor.surfaceId]);
+    expect(workspaceTopologies.get(2)?.surfaces.map(({ surfaceId }) => surfaceId)).toEqual([moved.surfaceId]);
+    expect(workspaceRevisions.get(1)).toBe(5);
+    expect(workspaceRevisions.get(2)).toBe(8);
+    expect(result.source.projects.map(({ surfaceId }) => surfaceId)).toEqual([survivor.surfaceId]);
+    expect(result.target.projects.map(({ surfaceId }) => surfaceId)).toEqual([moved.surfaceId]);
+    expect(sendToWindow.mock.calls.filter(([, channel]) => channel === 'host:event:workspace-surface-moved')).toHaveLength(2);
+    expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, moved.surfaceId);
+  });
+
+  it('restores the pair, logical owner, bindings, and notified hosts when target delivery fails', async () => {
+    const {
+      facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
+      sendToWindow, restorePair, prepareProjectSurface,
+    } = createFacade();
+    const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const sourceTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: moved.surfaceId, projectId: PROJECT, title: 'Alpha',
+    });
+    workspaceTopologies.set(1, sourceTopology);
+    workspaceIds.set(1, 'ws-source');
+    surfaces.bind(FRAME, {
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
+    });
+    sendToWindow.mockImplementation((windowId, channel) => {
+      if (channel === 'host:event:workspace-surface-moved' && windowId === 2) {
+        throw new Error('target renderer unavailable');
+      }
+    });
+
+    await expect(facade.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: 1,
+      surfaceId: moved.surfaceId,
+      targetWindowId: 2,
+      targetGroupId: 'group-main',
+      targetIndex: 0,
+    })).rejects.toThrow(/target renderer unavailable/);
+
+    expect(restorePair).toHaveBeenCalledTimes(1);
+    expect(logicalSurfaces.isLiveIn(moved.surfaceId, 1)).toBe(true);
+    expect(surfaces.contextForSender(FRAME)).toEqual({
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
+    });
+    expect(surfaces.contextForSender(99)).toBeNull();
+    expect(workspaceTopologies.get(1)).toEqual(sourceTopology);
+    expect(workspaceTopologies.has(2)).toBe(false);
+    expect(prepareProjectSurface.mock.results[0]?.value).toBeDefined();
+    const movedEvents = sendToWindow.mock.calls.filter(([, channel]) => channel === 'host:event:workspace-surface-moved');
+    expect(movedEvents).toHaveLength(3);
+    expect(movedEvents[2]?.[2]).toEqual(expect.objectContaining({ compensating: true }));
   });
 
   it('validates a prospective topology against an explicit fresh surface set', () => {
