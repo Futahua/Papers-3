@@ -279,7 +279,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * The frame binding that follows is then a consequence of an identity
    * already checked, not a second source of truth.
    */
-  showBackpackProjectSurface(senderId: number, url: string): Promise<void> {
+  async showBackpackProjectSurface(senderId: number, url: string): Promise<void> {
     const projectId = this.requireProjectForSender(senderId);
     let parsed: URL;
     try {
@@ -290,24 +290,29 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || parsed.host !== projectId) {
       throw new Error('This surface may not show another Backpack project.');
     }
-    return this.deps.showBackpackProjectSurface(url);
+    await this.deps.showBackpackProjectSurface(url);
   }
 
   /**
-   * Leave the project shown in THIS window.
+   * Take down the attached project surface in THIS window.
    *
-   * Scoped by window, not by project: two windows may show one project, and
-   * hiding one must not strip the other's routing. Unbinding by project id
-   * would do exactly that.
+   * Hiding is not leaving. `BackpackProjectFrame` hides on unmount and shows
+   * again on mount, so the host must stay authorized to show once more --
+   * unbinding it here would refuse the very next showSurface. Compact widgets
+   * outlive a return to the Backpack list and carry the same owning window id,
+   * so they must survive this too.
    *
-   * Idempotent -- the renderer's cleanup hides again after closing, and an
-   * already-unbound hide is a no-op rather than an error.
+   * What unbinds is therefore only what actually dies: the attached frame,
+   * through its own `destroyed` event. Leaving the project is
+   * `closeBackpackProject`, which unbinds the host; archiving or removing a
+   * Backpack unbinds the whole project, because it genuinely becomes
+   * unavailable.
+   *
+   * Idempotent: an unbound sender's hide is a no-op, not an error.
    */
   hideBackpackProjectSurface(senderId: number): void {
-    const context = this.deps.surfaces.contextForSender(senderId);
-    if (!context) return;
+    if (!this.deps.surfaces.contextForSender(senderId)) return;
     this.deps.hideBackpackProjectSurface();
-    this.deps.surfaces.unbindWindow(context.windowId);
   }
 
   /**

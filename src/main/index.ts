@@ -1261,8 +1261,14 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     }
   });
 
+  const ownedWindowId = mainWindow.id;
   mainWindow.on('closed', () => {
     hermesSurface.shutdown();
+    // The project, detached and widget senders unbind themselves when their
+    // WebContents dies, but the host sender has no such hook -- without this
+    // its binding survives as stale registry data. It matters once Phase 1B
+    // lets one Papers window close while others keep the process alive.
+    surfaceContexts.unbindWindow(ownedWindowId);
     mainWindow = null;
     hostView = null;
   });
