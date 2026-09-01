@@ -51,4 +51,15 @@ describe('host preload settings bridge', () => {
       ['host:settings:clear-window-bounds'],
     ]);
   });
+
+  it('exposes app.newWindow without accepting renderer policy', async () => {
+    vi.resetModules();
+    await import('../../src/preload/host');
+
+    const exposure = mocks.exposeInMainWorld.mock.calls.at(-1);
+    const api = exposure?.[1] as { app: { newWindow: () => Promise<unknown> } };
+    await api.app.newWindow();
+
+    expect(mocks.invoke).toHaveBeenCalledWith('host:window:new');
+  });
 });
