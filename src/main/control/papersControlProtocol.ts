@@ -13,15 +13,17 @@ const safeBuildSchema = z.object({
 }).strict();
 
 const surfaceKindSchema = z.enum(['host', 'project', 'detached', 'widget']);
+const surfacePresentationSchema = z.enum(['not-created', 'hidden', 'visible']);
 
-/** The logical projection: identity and ownership only. No sender ids, URLs,
- * roots or layout keys -- a layout key is project-defined opaque data and is
- * not disclosed by default. */
+/** The logical projection: identity, ownership and safe presentation state.
+ * No sender ids, URLs, roots or layout keys -- a layout key is project-defined
+ * opaque data and is not disclosed by default. */
 const controlSurfaceSchema = z.object({
   surfaceId: z.string(),
   windowId: z.number().int(),
   projectId: z.string(),
   kind: surfaceKindSchema,
+  presentation: surfacePresentationSchema,
 }).strict();
 
 /** A target names both, and both must agree with live state. */

@@ -117,7 +117,7 @@ export interface FacadeDeps {
   /** Phase 1B: both take the asking sender, so they act on THAT window's
    * project runtime instead of implicitly meaning "the one runtime". */
   showBackpackProjectSurface: (senderId: number, surfaceId: string, url: string) => Promise<void>;
-  hideBackpackProjectSurface: (senderId: number) => void;
+  hideBackpackProjectSurface: (senderId: number, surfaceId: string) => void;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
@@ -458,7 +458,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // Leaving retires the surface: this is the creator closing the view, not a
     // renderer being rebuilt, so its id is spent for good.
     const { windowId } = this.requireHostSurfaceTarget(senderId, surfaceId);
-    this.deps.hideBackpackProjectSurface(senderId);
+    this.deps.hideBackpackProjectSurface(senderId, surfaceId);
     this.deps.logicalSurfaces.retire(surfaceId);
     this.deps.setEnteredBackpack(windowId, null);
     this.emitBackpacksChanged();
@@ -513,7 +513,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // only takes down the view. An unknown target is refused rather than
     // silently hiding whatever this window happens to show.
     this.requireHostSurfaceTarget(senderId, surfaceId);
-    this.deps.hideBackpackProjectSurface(senderId);
+    this.deps.hideBackpackProjectSurface(senderId, surfaceId);
   }
 
   /**

@@ -19,12 +19,12 @@ function instance(id: number, loadHostRenderer: () => Promise<void>): PapersWind
   return {
     window: window as never,
     hostView: { webContents: { id: id + 100 } } as never,
-    backpackProjectRuntime: { hide: vi.fn() } as never,
+    projectSurfaces: { hideAll: vi.fn() } as never,
     loadHostRenderer,
   };
 }
 
-type Owned = Pick<PapersWindowInstance, 'window' | 'hostView' | 'backpackProjectRuntime'>;
+type Owned = Pick<PapersWindowInstance, 'window' | 'hostView' | 'projectSurfaces'>;
 
 describe('additional Papers window composer', () => {
   it('creates B with fresh restore policy while preserving A as primary', async () => {
@@ -85,7 +85,7 @@ describe('additional Papers window composer', () => {
         windows.add(current.window.id, current, restoreBackpackId);
         windows.setHostSender(current.window.id, current.hostView.webContents.id);
       },
-      onClose: (current) => current.backpackProjectRuntime.hide(),
+      onClose: (current) => current.projectSurfaces.hideAll(),
       finalize: (windowId) => windows.remove(windowId),
     });
 
@@ -94,7 +94,7 @@ describe('additional Papers window composer', () => {
     (second.window as never as EventEmitter).emit('close');
     (second.window as never as EventEmitter).emit('closed');
 
-    expect(second.backpackProjectRuntime.hide).toHaveBeenCalledTimes(1);
+    expect(second.projectSurfaces.hideAll).toHaveBeenCalledTimes(1);
     expect(windows.windowIds).toEqual([21]);
     expect(windows.hermesDockOwner()).toBeNull();
     expect(windows.windowForSender(121)).toBe(21);

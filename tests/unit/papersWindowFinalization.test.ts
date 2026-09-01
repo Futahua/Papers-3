@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { finalizePapersWindow } from '../../src/main/windows/papersWindowFinalization';
 
 describe('Papers window finalization', () => {
-  it('retires logical surfaces before removing their native window', async () => {
+  it('retires logical surfaces before awaiting Hermes and removing their window', async () => {
     const order: string[] = [];
     await finalizePapersWindow(7, {
       closeOwnedWidgets: async () => { order.push('widgets'); },
@@ -14,7 +14,7 @@ describe('Papers window finalization', () => {
       emitHermesSurface: () => { order.push('emit'); },
     });
 
-    expect(order).toEqual(['widgets', 'hermes', 'unbind', 'retire', 'remove', 'emit']);
+    expect(order).toEqual(['widgets', 'unbind', 'retire', 'hermes', 'remove', 'emit']);
   });
 
   it('still retires surfaces and removes the dead window when Hermes reconciliation fails', async () => {
@@ -31,5 +31,26 @@ describe('Papers window finalization', () => {
 
     expect(retire).toHaveBeenCalledWith(9);
     expect(remove).toHaveBeenCalledWith(9);
+  });
+
+  it('retires before a delayed Hermes acknowledgement can expose a dead surface', async () => {
+    let release!: () => void;
+    const reconcile = new Promise<void>((resolve) => { release = resolve; });
+    const order: string[] = [];
+    const pending = finalizePapersWindow(12, {
+      closeOwnedWidgets: async () => {},
+      reconcileHermes: async () => { order.push('hermes-start'); await reconcile; },
+      unbindSurfaceSenders: () => { order.push('unbind'); },
+      retireLogicalSurfaces: () => { order.push('retire'); },
+      removeWindow: () => { order.push('remove'); },
+      emitHermesSurface: () => { order.push('emit'); },
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(['unbind', 'retire', 'hermes-start']);
+    release();
+    await pending;
+    expect(order).toEqual(['unbind', 'retire', 'hermes-start', 'remove', 'emit']);
   });
 });

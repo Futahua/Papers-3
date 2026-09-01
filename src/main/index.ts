@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
+import { BackpackProjectSurfaceCollection } from './backpacks/backpackProjectSurfaceCollection';
 import { CanvasRuntime, defaultProgramsRoot } from './canvas/canvasRuntime';
 import { CanvasSessionState } from './canvas/canvasState';
 import { loadProgramCatalog, type ProgramCatalog } from './canvas/programLoader';
@@ -118,33 +119,58 @@ const surfaceContexts = createSurfaceContextRegistry();
 const logicalSurfaces = createLogicalSurfaceRegistry();
 /**
  * Phase 1B: what each Papers window owns. Its native window, its host view and
- * its project runtime are per-window; the Backpack registry, project service,
+ * its project surface collection is per-window; the Backpack registry, project service,
  * Delegate Wave, updater, capabilities and the single Hermes backend are not,
  * and stay application-level.
  */
 interface PapersWindowOwned {
   window: BaseWindow;
   hostView: WebContentsView;
-  backpackProjectRuntime: BackpackProjectRuntime;
+  projectSurfaces: BackpackProjectSurfaceCollection;
 }
 
 const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
 
-/** The project runtime belonging to the window this sender is in. A host
- * sender resolves through the window registry; a project frame resolves
- * through the surface binding it already carries. */
+/** The exact project runtime belonging to a bound project-frame sender. A host
+ * sender is only a window actor and must use an explicit surface id. */
 function runtimeForSender(senderId: number): BackpackProjectRuntime | null {
-  const owned = papersWindows.ownedForSender(senderId);
-  if (owned) return owned.backpackProjectRuntime;
-  const windowId = surfaceContexts.contextForSender(senderId)?.windowId;
-  if (windowId === undefined) return null;
-  return papersWindows.get(windowId)?.owned.backpackProjectRuntime ?? null;
+  const context = surfaceContexts.contextForSender(senderId);
+  if (!context?.surfaceId) return null;
+  return papersWindows.get(context.windowId)?.owned.projectSurfaces.get(context.surfaceId) ?? null;
+}
+
+/** Resolve a host request to the exact native presentation it names. */
+function runtimeForHostSurface(senderId: number, surfaceId: string): BackpackProjectRuntime | null {
+  const windowId = papersWindows.windowForSender(senderId);
+  if (windowId === null || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
+  return papersWindows.get(windowId)?.owned.projectSurfaces.ensure(surfaceId) ?? null;
 }
 
 /** Every live project runtime — for the few operations that genuinely apply to
  * all of them, such as a settings change. */
 function allRuntimes(): BackpackProjectRuntime[] {
-  return papersWindows.all().map((context) => context.owned.backpackProjectRuntime);
+  return papersWindows.all().flatMap((context) => context.owned.projectSurfaces.all());
+}
+
+function projectSurfaceControlSnapshot(surface: {
+  surfaceId: string;
+  windowId: number;
+  projectId: string;
+  kind: string;
+}): {
+  surfaceId: string;
+  windowId: number;
+  projectId: string;
+  kind: string;
+  presentation: 'not-created' | 'hidden' | 'visible';
+} {
+  const runtime = papersWindows.get(surface.windowId)?.owned.projectSurfaces.get(surface.surfaceId);
+  return {
+    ...surface,
+    presentation: !runtime
+      ? 'not-created'
+      : runtime.liveProjectId === surface.projectId ? 'visible' : 'hidden',
+  };
 }
 
 /**
@@ -328,7 +354,7 @@ async function bootstrap(): Promise<void> {
     },
     () => facade.emitHermesSurface(),
   );
-  const onProjectSurfaceClosed = (projectId: string): void => {
+  const onProjectSurfaceClosed = (_surfaceId: string, projectId: string): void => {
     detachSession?.closeProject(projectId).catch(() => undefined);
     detachRegistry.unregisterWorkspaceForProject(projectId);
   };
@@ -349,7 +375,7 @@ async function bootstrap(): Promise<void> {
       papersWindows.add(instance.window.id, {
         window: instance.window,
         hostView: instance.hostView,
-        backpackProjectRuntime: instance.backpackProjectRuntime,
+        projectSurfaces: instance.projectSurfaces,
       }, restoreBackpackId);
       papersWindows.setHostSender(instance.window.id, instance.hostView.webContents.id);
     },
@@ -366,7 +392,7 @@ async function bootstrap(): Promise<void> {
         if (papersWindows.hermesDockOwner() === windowId) hermesSurface.onPapersActivated();
       });
     },
-    onClose: (instance: Parameters<typeof preparePapersWindow>[0]) => instance.backpackProjectRuntime.hide(),
+    onClose: (instance: Parameters<typeof preparePapersWindow>[0]) => instance.projectSurfaces.hideAll(),
     finalize: async (windowId: number) => {
       await finalizePapersWindow(windowId, {
         closeOwnedWidgets: async (id) => { await widgetSession?.closeOwnedByWindow(id); },
@@ -389,7 +415,6 @@ async function bootstrap(): Promise<void> {
   mainWindow = windowInstance.window;
   hostView = windowInstance.hostView;
   const primaryWindow = windowInstance.window;
-  const backpackProjectRuntime = windowInstance.backpackProjectRuntime;
   // These aliases are bootstrap/fixture compatibility only. Their cleanup is
   // deliberately first-window-specific; reusable window finalization must not
   // let a later window rewrite or clear the primary fixture relationship.
@@ -521,8 +546,8 @@ async function bootstrap(): Promise<void> {
         widgetSession?.closeProject(backpackId).catch(() => undefined),
       ]);
     },
-    closeAttachedProjectSurface: (windowId) => {
-      papersWindows.get(windowId)?.owned.backpackProjectRuntime.hide();
+    closeAttachedProjectSurface: (windowId, surfaceId) => {
+      papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
     },
     restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
     isBackpackEnteredAnywhere: (backpackId) => papersWindows.all()
@@ -553,7 +578,7 @@ async function bootstrap(): Promise<void> {
       ?? surfaceContexts.contextForSender(senderId)?.windowId
       ?? null,
     showBackpackProjectSurface: async (senderId, surfaceId, url) => {
-      const runtime = runtimeForSender(senderId);
+      const runtime = runtimeForHostSurface(senderId, surfaceId);
       if (!runtime) throw new Error('This surface has no Papers window.');
       await runtime.show(url);
       // Phase 1A: bind both senders that may act for this project — the host
@@ -566,7 +591,7 @@ async function bootstrap(): Promise<void> {
       const frameSender = runtime.senderId;
       const owningWindowId = papersWindows.windowForSender(senderId)
         ?? surfaceContexts.contextForSender(senderId)?.windowId;
-      if (projectId && frameSender !== null && owningWindowId !== undefined) {
+      if (projectId && frameSender !== null && owningWindowId !== null) {
         // The surface already exists: the host created it when the project
         // was opened and named it in this call. Binding the frame is attaching
         // a transport to a known identity, never allocating a new one -- "same
@@ -582,9 +607,11 @@ async function bootstrap(): Promise<void> {
         runtime.onFrameDestroyed(frameSender, () => surfaceContexts.unbind(frameSender));
       }
     },
-    hideBackpackProjectSurface: (senderId) => {
-      // Only this window's surface comes down. Unbinding is the facade's job.
-      runtimeForSender(senderId)?.hide();
+    hideBackpackProjectSurface: (senderId, surfaceId) => {
+      // The facade has already validated the target; resolve it again here so
+      // one host can never hide another surface in the same native window.
+      const windowId = papersWindows.windowForSender(senderId);
+      if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
     },
     runtime,
     canvasState,
@@ -845,7 +872,7 @@ async function bootstrap(): Promise<void> {
     preloadPath: path.join(preloadDir, 'backpackProject.cjs'),
     // Owner-scoped: the entry URL comes from that window's own runtime.
     resolveEntryUrl: (projectId, owningWindowId) =>
-      papersWindows.get(owningWindowId)?.owned.backpackProjectRuntime.entryUrlForProject(projectId) ?? null,
+      papersWindows.get(owningWindowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null,
     createWindow: ({ bounds, preloadPath: widgetPreloadPath, projectId, owningWindowId }) => {
       const widgetWindow = new BrowserWindow({
         x: bounds.x,
@@ -1315,7 +1342,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             ownerWindowId: papersWindows.hermesDockOwner(),
           },
         }),
-        surfaces: () => logicalSurfaces.project(),
+        surfaces: () => logicalSurfaces.project().map(projectSurfaceControlSnapshot),
         /**
          * The shared control-side target resolver: the window must be live and
          * the surface must be live IN that window. Nothing is resolved by
@@ -1325,9 +1352,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (!papersWindows.has(windowId)) return null;
           if (!logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
           const found = logicalSurfaces.get(surfaceId);
-          return found
-            ? { surfaceId: found.surfaceId, windowId: found.windowId, projectId: found.projectId, kind: found.kind }
-            : null;
+          return found ? projectSurfaceControlSnapshot(found) : null;
         },
         createWindow: async () => ({ windowId: await createAdditionalPapersWindow() }),
       },

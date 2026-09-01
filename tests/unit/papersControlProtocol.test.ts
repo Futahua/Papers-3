@@ -125,7 +125,13 @@ describe('Papers developer control protocol', () => {
  * round.
  */
 describe('control surface targeting', () => {
-  const SURFACE = { surfaceId: 'sf-1', windowId: 1, projectId: 'bp-a', kind: 'project' as const };
+  const SURFACE = {
+    surfaceId: 'sf-1',
+    windowId: 1,
+    projectId: 'bp-a',
+    kind: 'project' as const,
+    presentation: 'visible' as const,
+  };
 
   function deps(resolve: (target: { windowId: number; surfaceId: string }) => unknown) {
     return {

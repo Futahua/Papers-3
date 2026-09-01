@@ -22,7 +22,7 @@ function instance(loadHostRenderer: () => Promise<void>, id = 42): PapersWindowI
   return {
     window: window as never,
     hostView: {} as never,
-    backpackProjectRuntime: { hide: vi.fn() } as never,
+    projectSurfaces: { hideAll: vi.fn() } as never,
     loadHostRenderer,
   };
 }
@@ -48,7 +48,7 @@ describe('prepared Papers window lifecycle', () => {
 
     await expect(prepared.loadAndRollback()).rejects.toThrow('load failed');
     expect(finalize).toHaveBeenCalledTimes(1);
-    expect(current.backpackProjectRuntime.hide).toHaveBeenCalledTimes(1);
+    expect(current.projectSurfaces.hideAll).toHaveBeenCalledTimes(1);
     expect(current.window.destroy).toHaveBeenCalledTimes(1);
 
     (current.window as never as EventEmitter).emit('closed');
@@ -70,12 +70,12 @@ describe('prepared Papers window lifecycle', () => {
   it('hides the owned runtime before finalizing on normal close', () => {
     const current = instance(async () => undefined);
     const order: string[] = [];
-    const hide = current.backpackProjectRuntime.hide as ReturnType<typeof vi.fn>;
+    const hide = current.projectSurfaces.hideAll as ReturnType<typeof vi.fn>;
     hide.mockImplementation(() => { order.push('hide'); });
     const finalize = vi.fn(() => { order.push('finalize'); });
     preparePapersWindow(current, {
       register: vi.fn(),
-      onClose: (window) => window.backpackProjectRuntime.hide(),
+      onClose: (window) => window.projectSurfaces.hideAll(),
       finalize,
     });
 

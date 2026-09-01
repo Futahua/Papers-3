@@ -45,7 +45,7 @@ export function preparePapersWindow(
         await instance.loadHostRenderer();
         return instance;
       } catch (error) {
-        instance.backpackProjectRuntime.hide();
+        instance.projectSurfaces.hideAll();
         await finalize();
         if (!instance.window.isDestroyed()) instance.window.destroy();
         throw error;

@@ -16,7 +16,7 @@ function createFacade() {
   const surfaces = createSurfaceContextRegistry();
   let n = 0;
   const logicalSurfaces = createLogicalSurfaceRegistry(() => `sf-${++n}`);
-  const hideBackpackProjectSurface = vi.fn((_senderId: number) => {});
+  const hideBackpackProjectSurface = vi.fn((_senderId: number, _surfaceId: string) => {});
   const showBackpackProjectSurface = vi.fn(async (_senderId: number, _surfaceId: string, _url: string) => {});
   const closeAttachedProjectSurface = vi.fn();
   const sendToWindow = vi.fn();
