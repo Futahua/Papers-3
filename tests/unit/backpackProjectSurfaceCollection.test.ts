@@ -144,4 +144,13 @@ describe('BackpackProjectSurfaceCollection', () => {
     expect(closed).toHaveBeenCalledTimes(1);
     expect(collection.get('surface-p')).toBeNull();
   });
+
+  it('removes canonical ownership before a throwing native close', () => {
+    const { collection, runtimes } = collectionWithFakes();
+    collection.ensure('surface-p');
+    runtimes.get('surface-p')!.hide.mockImplementation(() => { throw new Error('destroyed'); });
+
+    expect(() => collection.close('surface-p')).not.toThrow();
+    expect(collection.get('surface-p')).toBeNull();
+  });
 });

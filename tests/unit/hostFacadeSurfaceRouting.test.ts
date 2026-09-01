@@ -36,6 +36,7 @@ function createFacade() {
   const workspaceTopologies = new Map<number, ReturnType<typeof createWorkspaceTopology>>();
   const workspaceIds = new Map<number, string>();
   const workspaceRevisions = new Map<number, number>();
+  const closingWindows = new Set<number>();
   const setWorkspaceTopology = vi.fn((windowId: number, topology: ReturnType<typeof createWorkspaceTopology>) => {
     workspaceTopologies.set(windowId, topology);
   });
@@ -109,6 +110,7 @@ function createFacade() {
       restorePair,
       projectEntryUrl: () => null,
       prepareProjectSurface,
+      isWindowClosing: (windowId: number) => closingWindows.has(windowId),
     },
     clearEnteredBackpackEverywhere: vi.fn(),
     listLogicalSurfaces: () => logicalSurfaces.project(),
@@ -137,7 +139,8 @@ function createFacade() {
     showBackpackProjectSurface, closeAttachedProjectSurface,
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
     setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, archivedProjects, markLeft,
-    workspaceLayouts, workspaceIds, workspaceRevisions, commitPair, restorePair, prepareProjectSurface,
+    workspaceLayouts, workspaceIds, workspaceRevisions, closingWindows,
+    commitPair, restorePair, prepareProjectSurface,
   };
 }
 
@@ -403,6 +406,74 @@ describe('surface routing in the host facade', () => {
     expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, moved.surfaceId);
   });
 
+  it('excludes ordinary topology commits and window finalization from the pair boundary', async () => {
+    const {
+      facade, logicalSurfaces, workspaceTopologies, workspaceIds,
+      commitPair,
+    } = createFacade();
+    const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const sourceTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: moved.surfaceId, projectId: PROJECT, title: 'Alpha',
+    });
+    workspaceTopologies.set(1, sourceTopology);
+    workspaceIds.set(1, 'ws-source');
+
+    let releasePair!: () => void;
+    commitPair.mockImplementationOnce(() => new Promise<void>((resolve) => { releasePair = resolve; }));
+    const moving = facade.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: 1,
+      surfaceId: moved.surfaceId,
+      targetWindowId: 2,
+      targetGroupId: 'group-main',
+      targetIndex: 0,
+    });
+    for (let attempt = 0; attempt < 20 && commitPair.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(commitPair).toHaveBeenCalledTimes(1);
+    expect(() => facade.commitWorkspaceTopology(11, createWorkspaceTopology()))
+      .toThrow(/Workspace mutation is busy/);
+    expect(workspaceTopologies.get(1)).toEqual(sourceTopology);
+
+    let finalized = false;
+    const finalization = facade.waitForWorkspaceMutation(1).then(() => { finalized = true; });
+    await Promise.resolve();
+    expect(finalized).toBe(false);
+    releasePair();
+    await moving;
+    await finalization;
+    expect(finalized).toBe(true);
+  });
+
+  it('aborts a pair when either window starts finalization before handoff', async () => {
+    const {
+      facade, logicalSurfaces, workspaceTopologies, workspaceIds,
+      closingWindows, commitPair, restorePair,
+    } = createFacade();
+    const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const sourceTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: moved.surfaceId, projectId: PROJECT, title: 'Alpha',
+    });
+    workspaceTopologies.set(1, sourceTopology);
+    workspaceIds.set(1, 'ws-source');
+    let releasePair!: () => void;
+    commitPair.mockImplementationOnce(() => new Promise<void>((resolve) => { releasePair = resolve; }));
+    const moving = facade.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: 1, surfaceId: moved.surfaceId, targetWindowId: 2,
+      targetGroupId: 'group-main', targetIndex: 0,
+    });
+    for (let attempt = 0; attempt < 20 && commitPair.mock.calls.length === 0; attempt += 1) {
+      await Promise.resolve();
+    }
+    closingWindows.add(2);
+    releasePair();
+    await expect(moving).rejects.toThrow(/not live/);
+    expect(restorePair).toHaveBeenCalledTimes(1);
+    expect(logicalSurfaces.isLiveIn(moved.surfaceId, 1)).toBe(true);
+    expect(workspaceTopologies.get(1)).toEqual(sourceTopology);
+    expect(workspaceTopologies.has(2)).toBe(false);
+  });
+
   it('restores the pair, logical owner, bindings, and notified hosts when target delivery fails', async () => {
     const {
       facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
@@ -441,8 +512,51 @@ describe('surface routing in the host facade', () => {
     expect(workspaceTopologies.has(2)).toBe(false);
     expect(prepareProjectSurface.mock.results[0]?.value).toBeDefined();
     const movedEvents = sendToWindow.mock.calls.filter(([, channel]) => channel === 'host:event:workspace-surface-moved');
-    expect(movedEvents).toHaveLength(3);
+    expect(movedEvents).toHaveLength(4);
     expect(movedEvents[2]?.[2]).toEqual(expect.objectContaining({ compensating: true }));
+    expect(movedEvents[3]?.[2]).toEqual(expect.objectContaining({ compensating: true }));
+  });
+
+  it('retains forward canonical state when compensating persistence fails', async () => {
+    const {
+      facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
+      sendToWindow, restorePair,
+    } = createFacade();
+    const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    workspaceTopologies.set(1, openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: moved.surfaceId, projectId: PROJECT, title: 'Alpha',
+    }));
+    workspaceIds.set(1, 'ws-source');
+    surfaces.bind(FRAME, {
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
+    });
+    restorePair.mockRejectedValueOnce(new Error('durable restore unavailable'));
+    sendToWindow.mockImplementation((windowId, channel) => {
+      if (channel === 'host:event:workspace-surface-moved' && windowId === 2) {
+        throw new Error('target renderer unavailable');
+      }
+    });
+
+    await expect(facade.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: 1,
+      surfaceId: moved.surfaceId,
+      targetWindowId: 2,
+      targetGroupId: 'group-main',
+      targetIndex: 0,
+    })).rejects.toThrow(/durable forward state retained/);
+
+    expect(restorePair).toHaveBeenCalledTimes(1);
+    expect(logicalSurfaces.isLiveIn(moved.surfaceId, 2)).toBe(true);
+    expect(surfaces.contextForSender(99)).toEqual({
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 2, kind: 'project',
+    });
+    expect(surfaces.contextForSender(FRAME)).toBeNull();
+    expect(workspaceTopologies.get(1)?.surfaces).toEqual([]);
+    expect(workspaceTopologies.get(2)?.surfaces.map(({ surfaceId }) => surfaceId)).toEqual([moved.surfaceId]);
+    expect(sendToWindow.mock.calls.filter(([, channel]) => channel === 'host:event:workspace-surface-moved'))
+      .toEqual(expect.arrayContaining([
+        [1, 'host:event:workspace-surface-moved', expect.objectContaining({ topology: expect.any(Object) })],
+      ]));
   });
 
   it('validates a prospective topology against an explicit fresh surface set', () => {

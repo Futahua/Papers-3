@@ -934,12 +934,16 @@ signed off the infrastructure exact head above.
   without sender IDs, URLs, or native identity in the command result.
 - [x] Add facade success/rollback tests, control dispatch coverage, and a live
   two-window Electron acceptance covering native presentation convergence.
+- [x] A3.3r hardening: exclude ordinary topology commits and window finalization
+  from the pair boundary; retain forward canonical state if compensating durable
+  restore fails; and make source native collection removal unconditional before
+  best-effort teardown. Add race, restore-failure, and throwing-close tests.
 - [ ] Reviewer sign-off on the A3.3 exact head.
 
 A3.3 validation so far: typecheck passed; focused move/protocol tests passed
-52/52; full Vitest passed 708/712 (4 skipped); build and diff checks passed.
-The live two-window acceptance is queued for the E2E gate, followed by exact
-head review.
+57/57; full Vitest passed 711/715 (4 skipped); build and diff checks passed;
+live workspace-tabs and developer-control Electron acceptance passed 3/3. The
+A3.3r exact-head review remains pending.
 
 ## Persistent pickup checklist for every new session
 

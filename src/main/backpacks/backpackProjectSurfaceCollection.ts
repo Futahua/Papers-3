@@ -113,8 +113,15 @@ export class BackpackProjectSurfaceCollection {
   close(surfaceId: string): void {
     const runtime = this.runtimes.get(surfaceId);
     if (!runtime) return;
-    runtime.hide();
     this.runtimes.delete(surfaceId);
+    // Collection ownership is canonical state. Remove it before native
+    // teardown so a late Electron destroyed-object error cannot leave an
+    // orphan that blocks a later prepare/adopt for the same logical surface.
+    try {
+      runtime.hide();
+    } catch (caught) {
+      console.error(`[workspace-move] native close failed for ${surfaceId}:`, caught);
+    }
   }
 
   hide(surfaceId: string): void {

@@ -140,6 +140,7 @@ const workspaceTopologies = new Map<number, WorkspaceTopologyV1>();
 const workspaceTopologyRevisions = new Map<number, number>();
 /** Live-only association. Durable workspace IDs persist; native window IDs do not. */
 const workspaceIds = new Map<number, string>();
+const closingPapersWindows = new Set<number>();
 
 /** The exact project runtime belonging to a bound project-frame sender. A host
  * sender is only a window actor and must use an explicit surface id. */
@@ -413,21 +414,29 @@ async function bootstrap(): Promise<void> {
         if (papersWindows.hermesDockOwner() === windowId) hermesSurface.onPapersActivated();
       });
     },
-    onClose: (instance: Parameters<typeof preparePapersWindow>[0]) => instance.projectSurfaces.hideAll(),
+    onClose: (instance: Parameters<typeof preparePapersWindow>[0]) => {
+      closingPapersWindows.add(instance.window.id);
+      instance.projectSurfaces.hideAll();
+    },
     finalize: async (windowId: number) => {
-      await finalizePapersWindow(windowId, {
-        closeOwnedWidgets: async (id) => { await widgetSession?.closeOwnedByWindow(id); },
-        reconcileHermes: reconcileHermesForClosingWindow,
-        unbindSurfaceSenders: (id) => surfaceContexts.unbindWindow(id),
-        retireLogicalSurfaces: (id) => { logicalSurfaces.retireWindow(id); },
-        clearWorkspaceTopology: (id) => {
-          workspaceTopologies.delete(id);
-          workspaceTopologyRevisions.delete(id);
-          workspaceIds.delete(id);
-        },
-        removeWindow: (id) => { papersWindows.remove(id); },
-        emitHermesSurface: () => facade.emitHermesSurface(),
-      });
+      await facade.waitForWorkspaceMutation(windowId);
+      try {
+        await finalizePapersWindow(windowId, {
+          closeOwnedWidgets: async (id) => { await widgetSession?.closeOwnedByWindow(id); },
+          reconcileHermes: reconcileHermesForClosingWindow,
+          unbindSurfaceSenders: (id) => surfaceContexts.unbindWindow(id),
+          retireLogicalSurfaces: (id) => { logicalSurfaces.retireWindow(id); },
+          clearWorkspaceTopology: (id) => {
+            workspaceTopologies.delete(id);
+            workspaceTopologyRevisions.delete(id);
+            workspaceIds.delete(id);
+          },
+          removeWindow: (id) => { papersWindows.remove(id); },
+          emitHermesSurface: () => facade.emitHermesSurface(),
+        });
+      } finally {
+        closingPapersWindows.delete(windowId);
+      }
     },
   });
   const createAdditionalPapersWindow = async (): Promise<number> => {
@@ -619,6 +628,7 @@ async function bootstrap(): Promise<void> {
     workspaceLayouts: workspaceLayoutStore,
     workspaceMove: {
       workspaceId: (windowId) => workspaceIds.get(windowId) ?? null,
+      isWindowClosing: (windowId) => closingPapersWindows.has(windowId),
       workspaceState: (windowId) => ({
         topology: workspaceTopologies.get(windowId) ?? null,
         revision: workspaceTopologyRevisions.get(windowId) ?? 0,

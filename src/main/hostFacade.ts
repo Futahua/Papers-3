@@ -185,6 +185,7 @@ export interface FacadeDeps {
     restorePair(snapshot: WorkspacePairSnapshot, sourceWorkspaceId: string, targetWorkspaceId: string): Promise<void>;
     projectEntryUrl(windowId: number, projectId: string): string | null;
     prepareProjectSurface(windowId: number, surfaceId: string, url: string): Promise<PreparedProjectSurface>;
+    isWindowClosing?(windowId: number): boolean;
   };
 }
 
@@ -212,6 +213,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private readonly pendingInvocationPreviews = new Map<string, (approved: boolean) => void>();
   private hermesPlacementTail: Promise<void> = Promise.resolve();
   private workspaceMoveTail: Promise<void> = Promise.resolve();
+  private readonly workspaceMutationLocks = new Set<number>();
+  private readonly workspaceMutationWaiters = new Map<number, Set<() => void>>();
 
   constructor(private readonly deps: FacadeDeps) {}
 
@@ -234,6 +237,40 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const result = this.workspaceMoveTail.then(operation, operation);
     this.workspaceMoveTail = result.then(() => undefined, () => undefined);
     return result;
+  }
+
+  private acquireWorkspaceMutation(windowIds: readonly number[]): () => void {
+    const uniqueWindowIds = [...new Set(windowIds)];
+    if (uniqueWindowIds.some((windowId) => this.workspaceMutationLocks.has(windowId))) {
+      throw new Error('Workspace mutation is busy.');
+    }
+    for (const windowId of uniqueWindowIds) this.workspaceMutationLocks.add(windowId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      for (const windowId of uniqueWindowIds) {
+        this.workspaceMutationLocks.delete(windowId);
+        const waiters = this.workspaceMutationWaiters.get(windowId);
+        if (!waiters) continue;
+        this.workspaceMutationWaiters.delete(windowId);
+        for (const resolve of waiters) resolve();
+      }
+    };
+  }
+
+  private assertWorkspaceMutationAvailable(windowId: number): void {
+    if (this.workspaceMutationLocks.has(windowId)) throw new Error('Workspace mutation is busy.');
+  }
+
+  /** Window teardown waits behind an in-flight pair handoff. */
+  waitForWorkspaceMutation(windowId: number): Promise<void> {
+    if (!this.workspaceMutationLocks.has(windowId)) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const waiters = this.workspaceMutationWaiters.get(windowId) ?? new Set<() => void>();
+      waiters.add(resolve);
+      this.workspaceMutationWaiters.set(windowId, waiters);
+    });
   }
 
   // ---------------------------------------------------------------- events
@@ -963,6 +1000,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         url,
       }));
 
+      this.assertWorkspaceMutationAvailable(windowId);
       // This is the sole renderer delivery for a successful replacement. No
       // await or mutation is allowed between delivery and the commit boundary.
       this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-layout-loaded', {
@@ -1119,6 +1157,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       const pairSnapshot = await move.snapshotPair(sourceWorkspaceId, targetWorkspaceId);
       let prepared: PreparedProjectSurface | null = null;
       let preparedDisposed = false;
+      let releaseMutation: (() => void) | null = null;
+      let preparedAdopted = false;
       const discardPrepared = () => {
         if (prepared && !preparedDisposed) {
           preparedDisposed = true;
@@ -1135,6 +1175,34 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           throw new Error('Workspace changed while loading the destination project surface.');
         }
 
+        // Ordinary renderer topology commits and window finalization are
+        // excluded from the last revalidation through pair save and handoff.
+        // The lock is acquired only after preparation, so a competing change
+        // can still win before this point and be rejected by the recheck.
+        releaseMutation = this.acquireWorkspaceMutation([
+          request.sourceWindowId,
+          request.targetWindowId,
+        ]);
+        this.requireLiveWorkspaceWindow(request.sourceWindowId);
+        this.requireLiveWorkspaceWindow(request.targetWindowId);
+        const lockedSourceState = move.workspaceState(request.sourceWindowId);
+        const lockedTargetState = move.workspaceState(request.targetWindowId);
+        if (lockedSourceState.revision !== initialSourceState.revision
+          || lockedTargetState.revision !== initialTargetState.revision
+          || !this.deps.logicalSurfaces.isLiveIn(request.surfaceId, request.sourceWindowId)) {
+          throw new Error('Workspace changed before the cross-window move commit boundary.');
+        }
+        this.validateWorkspaceTopologyAgainst(
+          request.sourceWindowId,
+          lockedSourceState.topology ?? createWorkspaceTopology(),
+          this.currentProjectSurfaceSet(request.sourceWindowId),
+        );
+        this.validateWorkspaceTopologyAgainst(
+          request.targetWindowId,
+          lockedTargetState.topology ?? createWorkspaceTopology(),
+          this.currentProjectSurfaceSet(request.targetWindowId),
+        );
+
         await move.commitPair({
           source: { workspaceId: sourceWorkspaceId, topology: sourceNext },
           target: { workspaceId: targetWorkspaceId, topology: targetNext },
@@ -1148,7 +1216,21 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         let targetNotified = false;
         let canonicalTouched = false;
         if (!prepared) throw new Error('Destination project surface preparation was lost.');
+        const sourceEvent = {
+          surfaceId: request.surfaceId,
+          sourceWindowId: request.sourceWindowId,
+          targetWindowId: request.targetWindowId,
+          ...sourceAfter,
+        };
+        const targetEvent = {
+          surfaceId: request.surfaceId,
+          sourceWindowId: request.sourceWindowId,
+          targetWindowId: request.targetWindowId,
+          ...targetAfter,
+        };
         try {
+          this.requireLiveWorkspaceWindow(request.sourceWindowId);
+          this.requireLiveWorkspaceWindow(request.targetWindowId);
           // Mark before each abstract canonical operation: an implementation
           // may mutate and then throw, and rollback must still run in that
           // case. The concrete registries are synchronous, but this boundary
@@ -1164,6 +1246,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
             windowId: request.targetWindowId,
             kind: 'project',
           });
+          preparedAdopted = true;
           prepared.adopt();
           move.setWorkspaceState(
             request.sourceWindowId,
@@ -1173,22 +1256,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
             request.targetWindowId,
             stateForTopology(initialTargetState, targetNext, targetWorkspaceId),
           );
-          const sourceEvent = {
-            surfaceId: request.surfaceId,
-            sourceWindowId: request.sourceWindowId,
-            targetWindowId: request.targetWindowId,
-            ...sourceAfter,
-          };
-          const targetEvent = {
-            surfaceId: request.surfaceId,
-            sourceWindowId: request.sourceWindowId,
-            targetWindowId: request.targetWindowId,
-            ...targetAfter,
-          };
-          this.deps.sendToWindowOrThrow(request.sourceWindowId, 'host:event:workspace-surface-moved', sourceEvent);
           sourceNotified = true;
-          this.deps.sendToWindowOrThrow(request.targetWindowId, 'host:event:workspace-surface-moved', targetEvent);
+          this.deps.sendToWindowOrThrow(request.sourceWindowId, 'host:event:workspace-surface-moved', sourceEvent);
           targetNotified = true;
+          this.deps.sendToWindowOrThrow(request.targetWindowId, 'host:event:workspace-surface-moved', targetEvent);
           try {
             this.deps.closeAttachedProjectSurface(request.sourceWindowId, request.surfaceId);
           } catch (caught) {
@@ -1202,9 +1273,64 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
             target: targetAfter,
           };
         } catch (caught) {
-          // Restore the synchronous canonical state before any awaited
-          // compensation, so no later renderer/control read sees a partial
-          // logical move while the durable pair is being restored.
+          // The pair is already durable-forward. Try durable compensation
+          // before undoing live canonical state; if compensation itself fails,
+          // retain the forward state everywhere instead of returning with a
+          // durable-forward/live-rollback split brain.
+          try {
+            await move.restorePair(pairSnapshot, sourceWorkspaceId, targetWorkspaceId);
+          } catch (restoreError) {
+            try {
+              if (!this.deps.logicalSurfaces.isLiveIn(request.surfaceId, request.targetWindowId)) {
+                if (!this.deps.logicalSurfaces.moveToWindow(request.surfaceId, request.targetWindowId)) {
+                  throw new Error('The logical surface could not be retained in the durable target state.');
+                }
+              }
+              for (const senderId of this.deps.surfaces.sendersForSurface(request.surfaceId)) {
+                this.deps.surfaces.unbind(senderId);
+              }
+              if (!preparedAdopted) {
+                preparedAdopted = true;
+                prepared.adopt();
+              }
+              this.deps.surfaces.bind(prepared.senderId, {
+                surfaceId: request.surfaceId,
+                projectId: sourceSurface.projectId,
+                windowId: request.targetWindowId,
+                kind: 'project',
+              });
+              move.setWorkspaceState(
+                request.sourceWindowId,
+                stateForTopology(initialSourceState, sourceNext),
+              );
+              move.setWorkspaceState(
+                request.targetWindowId,
+                stateForTopology(initialTargetState, targetNext, targetWorkspaceId),
+              );
+              const forwardEvents = [
+                [request.sourceWindowId, sourceEvent],
+                [request.targetWindowId, targetEvent],
+              ] as const;
+              for (const [windowId, event] of forwardEvents) {
+                try {
+                  this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-surface-moved', event);
+                } catch { /* canonical/durable state remains authoritative */ }
+              }
+            } catch (forwardError) {
+              throw new AggregateError(
+                [caught, restoreError, forwardError],
+                'Cross-window move compensation failed and forward canonicalization was incomplete.',
+              );
+            }
+            throw new AggregateError(
+              [caught, restoreError],
+              'Cross-window move compensation failed; durable forward state retained.',
+            );
+          }
+
+          // Durable compensation succeeded, so now restore the synchronous
+          // canonical state before notifying any host that already saw the
+          // forward projection.
           if (canonicalTouched) {
             this.deps.logicalSurfaces.moveToWindow(request.surfaceId, request.sourceWindowId);
             this.deps.surfaces.unbind(prepared.senderId);
@@ -1213,7 +1339,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
             move.setWorkspaceState(request.targetWindowId, initialTargetState);
           }
           discardPrepared();
-          await move.restorePair(pairSnapshot, sourceWorkspaceId, targetWorkspaceId);
           if (sourceNotified) {
             try {
               this.deps.sendToWindowOrThrow(request.sourceWindowId, 'host:event:workspace-surface-moved', {
@@ -1241,6 +1366,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       } catch (caught) {
         discardPrepared();
         throw caught;
+      } finally {
+        releaseMutation?.();
       }
     });
   }
@@ -1248,11 +1375,13 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may commit workspace topology.');
+    this.assertWorkspaceMutationAvailable(windowId);
     this.validateWorkspaceTopology(windowId, topology);
     this.deps.setWorkspaceTopology(windowId, topology);
   }
 
   restoreWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {
+    this.assertWorkspaceMutationAvailable(windowId);
     this.validateWorkspaceTopology(windowId, topology);
     const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
     const activeSurfaceId = focused?.activeSurfaceId ?? null;
@@ -1279,6 +1408,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.validateWorkspaceTopology(windowId, topology);
     const backpack = this.deps.registry.find(projectId);
     if (!backpack || backpack.archived) throw new Error('That Backpack is not available.');
+    this.assertWorkspaceMutationAvailable(windowId);
     const surface = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
     try {
       const next = openWorkspaceSurface(topology, {
@@ -1318,6 +1448,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     topology = this.deps.workspaceTopology?.(windowId) ?? null,
   ): WorkspaceTopologyV1 {
     if (!topology) throw new Error('That Papers window has not committed workspace topology.');
+    this.assertWorkspaceMutationAvailable(windowId);
     this.validateWorkspaceTopology(windowId, topology);
     this.deps.closeAttachedProjectSurface(windowId, surfaceId);
     this.deps.logicalSurfaces.retire(surfaceId);
@@ -1339,7 +1470,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   private requireLiveWorkspaceWindow(windowId: number): void {
-    if (!this.deps.hostWindowIds().includes(windowId)) throw new Error('That Papers window is not live.');
+    if (!this.deps.hostWindowIds().includes(windowId)
+      || this.deps.workspaceMove?.isWindowClosing?.(windowId)) {
+      throw new Error('That Papers window is not live.');
+    }
   }
 
   /** Validate a prospective topology against an explicit surface set. Startup
@@ -1360,6 +1494,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     oldSurfaces: ReadonlyArray<{ surfaceId: string; projectId: string }>,
   ): void {
     if (!this.deps.hostWindowIds().includes(windowId)) throw new Error('That Papers window is not live.');
+    this.assertWorkspaceMutationAvailable(windowId);
     const ids = oldSurfaces.map((surface) => surface.surfaceId);
     if (new Set(ids).size !== ids.length) {
       throw new Error('Replacement cleanup must name unique old surface identities.');
