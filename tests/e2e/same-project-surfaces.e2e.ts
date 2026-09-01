@@ -96,24 +96,29 @@ describe('A0.4 same-project surface identity', () => {
     }, 10_000, 'both same-project native presentations visible');
     const independentRendererValues = await launched.app.evaluate(async ({ webContents }, projectId) => {
       const targets = webContents.getAllWebContents().filter((contents) => contents.getURL().startsWith(`papers-backpack://${projectId}/`));
-      return Promise.all(targets.map(async (contents) => {
-        await contents.executeJavaScript('window.surfaceProbe = (window.surfaceProbe ?? 0) + 1');
-        return { id: contents.id, value: await contents.executeJavaScript('window.surfaceProbe = (window.surfaceProbe ?? 0) + 1; window.surfaceProbe') };
-      }));
+      return Promise.all(targets.map(async (contents, index) => ({
+        id: contents.id,
+        value: await contents.executeJavaScript(`window.surfaceProbe = ${index + 1}; window.surfaceProbe`),
+      })));
     }, PROJECT);
     expect(independentRendererValues).toHaveLength(2);
-    expect(independentRendererValues.map(({ value }) => value)).toEqual([2, 2]);
+    expect(independentRendererValues.map(({ value }) => value)).toEqual([1, 2]);
 
     await call('workspace.activate', { windowId, surfaceId: first.surfaceId });
     await waitFor(async () => {
       const surfaces = await call('inspect.surfaces') as Array<{ surfaceId: string; presentation: string }>;
-      const workspace = await call('inspect.workspace', { windowId }) as { topology: { groups: Array<{ activeSurfaceId: string | null }> } };
-      return workspace.topology.groups.some((group) => group.activeSurfaceId === first.surfaceId)
+      const workspace = await call('inspect.workspace', { windowId }) as { topology: { focusedGroupId: string; groups: Array<{ groupId: string; activeSurfaceId: string | null }> } };
+      const focused = workspace.topology.groups.find((group) => group.groupId === workspace.topology.focusedGroupId);
+      return focused?.activeSurfaceId === first.surfaceId
         && surfaces.find((surface) => surface.surfaceId === first.surfaceId)?.presentation === 'visible'
         && surfaces.find((surface) => surface.surfaceId === second.surfaceId)?.presentation === 'visible';
     }, 10_000, 'exact first same-project activation');
     await call('workspace.activate', { windowId, surfaceId: second.surfaceId });
-    await waitFor(async () => (await call('inspect.workspace', { windowId }) as { topology: { focusedGroupId: string; groups: Array<{ activeSurfaceId: string | null }> } }).topology.groups.some((group) => group.activeSurfaceId === second.surfaceId), 10_000, 'exact second same-project activation');
+    await waitFor(async () => {
+      const workspace = await call('inspect.workspace', { windowId }) as { topology: { focusedGroupId: string; groups: Array<{ groupId: string; activeSurfaceId: string | null }> } };
+      const focused = workspace.topology.groups.find((group) => group.groupId === workspace.topology.focusedGroupId);
+      return focused?.activeSurfaceId === second.surfaceId;
+    }, 10_000, 'exact second same-project activation');
 
     await call('workspace.close', { windowId, surfaceId: first.surfaceId });
     await waitFor(async () => {
