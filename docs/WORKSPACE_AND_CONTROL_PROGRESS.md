@@ -1101,6 +1101,22 @@ Next narrow eligible gate: the A0.4 residual evidence test for two distinct
 same-project surfaces in one live window, with independent native presentation,
 exact-surface interaction/routing, and exact close-survivor inspection.
 
+### A0.4 residual same-project surface evidence — review pending
+
+The standalone acceptance test uses existing authorized control semantics only.
+It creates two fresh surfaces for one project in one live window, proves
+distinct logical IDs and two native renderers, splits them into simultaneously
+visible panes, activates each exact surface by requiring the focused group to
+name that surface, and closes only the first while the second remains live,
+visible and natively presented. Renderer probes receive distinct markers (`1`
+and `2`) from the two independent project renderers.
+
+Candidate exact pushed head: `9423857`. Focused same-project Electron E2E and
+typecheck pass; full Vitest remains 727/731 (4 skipped), build passes, and the
+combined live A0.4/compatibility/developer-control E2E set passes 5/5. The
+candidate is re-submitted after review tightened two evidence assertions. No
+production behavior, persistence, authority or control redaction is changed.
+
 ## Persistent pickup checklist for every new session
 
 1. Read `HERMES.md` completely and state scope/release boundaries.
