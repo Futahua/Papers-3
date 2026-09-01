@@ -149,7 +149,6 @@ export function registerWindowPickIpc({
       throw new Error('pick commit payload must be empty');
     }
     await session.commit();
-    owner = null;
     return { outcome: 'committed' };
   });
 }
