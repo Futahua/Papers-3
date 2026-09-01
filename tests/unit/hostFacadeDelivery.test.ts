@@ -127,11 +127,15 @@ describe('the updater knows nothing about windows', () => {
 function createHermesFacade({
   surfaceState = { placement: 'docked', status: 'ready' },
   dock = async () => surfaceState,
+  hideDock = async () => {},
   showDetached = async () => ({ placement: 'detached', status: 'ready' }),
+  initialOwner = 2,
 }: {
   surfaceState?: HermesSurfaceState;
   dock?: () => Promise<HermesSurfaceState>;
+  hideDock?: () => Promise<void>;
   showDetached?: () => Promise<HermesSurfaceState>;
+  initialOwner?: number | null;
 } = {}) {
   const sent: Array<{ windowId: number; channel: string; payload: unknown }> = [];
   let currentState = surfaceState;
@@ -142,14 +146,17 @@ function createHermesFacade({
       return currentState;
     }),
     setDockBounds: vi.fn(),
-    hideDock: vi.fn(async () => {}),
+    hideDock: vi.fn(async () => {
+      await hideDock();
+      currentState = { placement: 'closed', status: 'ready' };
+    }),
     showDetached: vi.fn(async () => {
       currentState = await showDetached();
       return currentState;
     }),
     hideDetached: vi.fn(async () => {}),
   };
-  let owner: number | null = 2;
+  let owner: number | null = initialOwner;
   const facade = new PapersHostFacade({
     broadcastToHosts: () => {},
     sendToWindow: (windowId: number, channel: string, payload: unknown) => sent.push({ windowId, channel, payload }),
@@ -253,6 +260,41 @@ describe('Hermes dock ownership across windows', () => {
     expect(surface.showDetached).toHaveBeenCalledTimes(1);
     expect(surface.state).toMatchObject({ placement: 'detached', status: 'ready' });
     expect(owner()).toBeNull();
+  });
+
+  it('hides Hermes and releases ownership before its dock-owning window is removed', async () => {
+    const { facade, surface, sent, owner } = createHermesFacade({ initialOwner: 1 });
+
+    await facade.onPapersWindowClosing(1);
+
+    expect(surface.hideDock).toHaveBeenCalledTimes(1);
+    expect(surface.state).toMatchObject({ placement: 'closed', status: 'ready' });
+    expect(owner()).toBeNull();
+    expect(sent.find((event) => event.windowId === 2 && event.channel === 'host:event:hermes-surface')?.payload)
+      .toMatchObject({ placement: 'closed', ownedByThisWindow: false });
+  });
+
+  it('serializes owner close before a later dock transfer', async () => {
+    let settleHide!: () => void;
+    const pendingHide = new Promise<void>((resolve) => { settleHide = resolve; });
+    const { facade, surface, owner } = createHermesFacade({
+      initialOwner: 1,
+      hideDock: async () => pendingHide,
+    });
+
+    const closing = facade.onPapersWindowClosing(1);
+    await vi.waitFor(() => expect(surface.hideDock).toHaveBeenCalledTimes(1));
+    const docking = facade.dockHermes(B, { x: 10, y: 10, width: 400, height: 800 });
+    await Promise.resolve();
+    expect(surface.dock).not.toHaveBeenCalled();
+
+    settleHide();
+    await closing;
+    await docking;
+
+    expect(surface.dock).toHaveBeenCalledTimes(1);
+    expect(surface.state).toMatchObject({ placement: 'docked', status: 'ready' });
+    expect(owner()).toBe(2);
   });
 
   it('refuses to dock for a sender that is not a Papers window', async () => {

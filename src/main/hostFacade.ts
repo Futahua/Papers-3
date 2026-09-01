@@ -901,6 +901,20 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     });
   }
 
+  /** Reconcile the one global Hermes placement before its dock-owning Papers
+   * window disappears. This shares the placement queue with renderer actions,
+   * so close can neither interleave with nor roll back a later dock/detach. */
+  async onPapersWindowClosing(windowId: number): Promise<void> {
+    return this.runHermesPlacement(async () => {
+      if (this.deps.hermesDockOwner() !== windowId) return;
+      if (this.deps.hermesSurface.state.placement === 'docked') {
+        await this.deps.hermesSurface.hideDock();
+      }
+      this.deps.setHermesDockOwner(null);
+      this.emitHermesSurface();
+    });
+  }
+
   private isHermesDockOwner(senderId: number): boolean {
     const windowId = this.deps.hostWindowForSender(senderId);
     return windowId !== null && this.deps.hermesDockOwner() === windowId;

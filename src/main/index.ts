@@ -309,6 +309,7 @@ async function bootstrap(): Promise<void> {
   let detachSession: WindowDetachSession | null = null;
   const widgetRegistry = new BackpackSurfaceRegistry();
   let widgetSession: CompactWidgetSession | null = null;
+  let reconcileHermesForClosingWindow: (windowId: number) => Promise<void> = async () => undefined;
   // One Hermes backend is shared by all Papers windows. The callback is late
   // bound because the facade is composed after the first window is prepared.
   const hermesSurface = new HermesSurface(
@@ -359,6 +360,7 @@ async function bootstrap(): Promise<void> {
     onClose: (instance: Parameters<typeof preparePapersWindow>[0]) => instance.backpackProjectRuntime.hide(),
     finalize: async (windowId: number) => {
       await widgetSession?.closeOwnedByWindow(windowId).catch(() => undefined);
+      await reconcileHermesForClosingWindow(windowId);
       surfaceContexts.unbindWindow(windowId);
       papersWindows.remove(windowId);
     },
@@ -601,6 +603,7 @@ async function bootstrap(): Promise<void> {
       await settingsStore.save(papersSettings);
     },
   });
+  reconcileHermesForClosingWindow = (windowId) => facade.onPapersWindowClosing(windowId);
 
   registerCoreExecutors({ broker, paths, facade, stateService });
   registerResourceExecutors({ broker, resources: resourceService, git: gitService, paths });
