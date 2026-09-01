@@ -83,6 +83,8 @@ export interface FacadeDeps {
   /** Retire auxiliary project surfaces only when the project is unavailable. */
   retireBackpackProjectSurfaces: (backpackId: string) => Promise<void>;
   restoreBackpack: (windowId: number) => string | null;
+  /** Whether any live window still has this Backpack entered. */
+  isBackpackEnteredAnywhere: (backpackId: string) => boolean;
   setHermesDockOwner: (windowId: number | null) => void;
   /** The window whose Canvas runtime a program event belongs to. One runtime
    * today, so one answer -- but the relationship is recorded rather than
@@ -335,11 +337,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async leaveBackpack(senderId: number): Promise<void> {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) return;
+    const left = this.deps.enteredBackpack(windowId);
     await this.deps.runtime.stopActive();
     this.deps.setEnteredBackpack(windowId, null);
-    // Deliberately NOT registry.markLeft(): one window becoming empty says
-    // nothing about the application's most-recent Backpack, and clearing it
-    // would erase a fact another window is still living in.
+    // "Back to Papers" clears the resumable selection (PRODUCT.md) -- but only
+    // once no window is still in that Backpack. One window leaving must not
+    // erase a fact another window is living in.
+    if (left && !this.deps.isBackpackEnteredAnywhere(left)) {
+      await this.deps.registry.markLeft(left);
+    }
     this.emitBackpacksChanged();
   }
 

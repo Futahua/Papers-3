@@ -176,15 +176,21 @@ export class BackpackRegistry {
   }
 
   /**
-   * Deliberately no longer clears `lastActiveBackpackId`.
+   * Leaving clears the resumable selection -- but only for the Backpack
+   * actually left, and only when the caller has established that no window is
+   * still in it.
    *
-   * That field is an application-level most-recent record, and one window
-   * leaving its Backpack says nothing about it -- another window may still be
-   * living in one. Clearing it here would erase a fact that is not this
-   * window's to erase. Kept as a no-op so the call sites and their meaning
-   * stay visible rather than silently disappearing.
+   * Both halves matter. PRODUCT.md is explicit that "Back to Papers
+   * deliberately leaves the Backpack and clears that resumable selection", so
+   * making this a no-op meant Papers reopened into a Backpack the creator had
+   * explicitly left. But with several windows, one window leaving says nothing
+   * about a Backpack another window is still living in -- hence the id
+   * argument and the caller's check, rather than clearing unconditionally.
    */
-  async markLeft(): Promise<void> {
-    // Intentionally empty: see above.
+  async markLeft(backpackId?: string): Promise<void> {
+    if (backpackId !== undefined && this.state.lastActiveBackpackId !== backpackId) return;
+    if (this.state.lastActiveBackpackId === null) return;
+    this.state.lastActiveBackpackId = null;
+    await this.persist();
   }
 }

@@ -63,10 +63,15 @@ describe('BackpackRegistry', () => {
     await registry.markEntered(created.id);
     expect(registry.lastActiveBackpackId).toBe(created.id);
 
-    // Leaving is per window now. One window becoming empty says nothing about
-    // the application's most-recent Backpack -- another window may still be in
-    // one -- so this record survives.
-    await registry.markLeft();
+    // Leaving the Backpack clears the resumable selection, as PRODUCT.md
+    // requires: Papers must not reopen into a Backpack the creator left.
+    await registry.markLeft(created.id);
+    expect(registry.lastActiveBackpackId).toBeNull();
+
+    // But leaving a DIFFERENT Backpack must not clear it -- with several
+    // windows, one window's exit says nothing about another's.
+    await registry.markEntered(created.id);
+    await registry.markLeft('bp-some-other-backpack');
     expect(registry.lastActiveBackpackId).toBe(created.id);
 
     // Archiving is different: the Backpack itself became unavailable.

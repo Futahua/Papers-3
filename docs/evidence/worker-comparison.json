@@ -1,51 +1,5 @@
 {
-  "generatedAt": "2026-07-30T10:44:54.899Z",
+  "generatedAt": "2026-09-01T08:45:03.753Z",
   "task": "Implement add(a,b) in util.js so node test.js passes",
-  "lanes": [
-    {
-      "lane": "hermes-direct",
-      "worker": "hermes",
-      "runId": "run-8eb69967-1da1-4e53-bbb5-70802df70aef",
-      "sessionId": "2cbb6b70-7085-4962-a7e8-b2e96e24c384",
-      "finalState": "running",
-      "durationMs": 1201339,
-      "interventions": 0,
-      "checksPassed": false,
-      "diffStat": "",
-      "baseRepoCleanAfter": true,
-      "papersRepoUnchanged": false,
-      "delegationProven": true,
-      "summarySnippet": "\"\""
-    },
-    {
-      "lane": "hermes-codex",
-      "worker": "codex",
-      "runId": "run-dc3f3161-fa72-4255-8905-0170cc10fc71",
-      "sessionId": "81cf8118-6bdd-4616-8716-688c4211a3a6",
-      "finalState": "running",
-      "durationMs": 1201321,
-      "interventions": 0,
-      "checksPassed": false,
-      "diffStat": "",
-      "baseRepoCleanAfter": true,
-      "papersRepoUnchanged": true,
-      "delegationProven": false,
-      "summarySnippet": "\"\""
-    },
-    {
-      "lane": "hermes-opencode",
-      "worker": "opencode",
-      "runId": "run-299c1bd2-cebc-47b8-98f6-3bb8f16c7268",
-      "sessionId": "dbd0503a-b765-477f-91ce-416e2a1c849f",
-      "finalState": "completed",
-      "durationMs": 26682,
-      "interventions": 0,
-      "checksPassed": false,
-      "diffStat": "",
-      "baseRepoCleanAfter": true,
-      "papersRepoUnchanged": true,
-      "delegationProven": false,
-      "summarySnippet": "\n\nBlocked before delegation: the specified working directory could not be resolved.\n\nTerminal output:\n```text\n/bin/bash: line 2: cd: /d/Programs/evTEMP/papers3-workers-28FKeS/calc-repo-papers-worktrees/lane-opencode: No such file or directory\n```\n\nOpenCode was not run, no files were edited, and `node test.js` could not be executed.\n\n```json\n{\"checksPassed\":false,\"delegationSucceeded\":false,\"worker\":\"opencode\"}\n```"
-    }
-  ]
+  "lanes": []
 }
