@@ -587,7 +587,6 @@ async function bootstrap(): Promise<void> {
       }
     },
     hideBackpackProjectSurface: (senderId) => {
-      windowPickSession.cancel().catch(() => undefined);
       // Only this window's surface comes down. Unbinding is the facade's job.
       runtimeForSender(senderId)?.hide();
     },
@@ -791,9 +790,7 @@ async function bootstrap(): Promise<void> {
     },
     // Cancelling the 016 pick when a registered surface goes away is safe:
     // cancel is a no-op when no session is active.
-    onSurfaceClosed: () => {
-      windowPickSession.cancel().catch(() => undefined);
-    },
+    onSurfaceClosed: () => {},
   });
   detachSession!.registerDetachIpc();
   registerWindowDetachIpc({

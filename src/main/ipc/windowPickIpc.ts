@@ -61,6 +61,14 @@ export function registerWindowPickIpc({
   session,
   isSender,
 }: WindowPickIpcDependencies): void {
+  let ownerSenderId: number | null = null;
+
+  const requireOwner = (sender: WebContents): void => {
+    if (ownerSenderId !== null && ownerSenderId !== sender.id) {
+      throw new Error('denied: sender does not own the active picker');
+    }
+  };
+
   ipcMain.handle('papers:window-pick:begin', async (event, raw) => {
     console.info('[045-direct-pick] ipc-begin-received', event.sender.id);
     if (!isSender(event.sender)) {
@@ -75,6 +83,18 @@ export function registerWindowPickIpc({
     }
     const members = raw['members'].map(parseMemberDescriptor);
     const sender = event.sender;
+    requireOwner(sender);
+    if (ownerSenderId === null) {
+      ownerSenderId = sender.id;
+      if (typeof (sender as WebContents & { once?: unknown }).once === 'function') {
+        sender.once('destroyed', () => {
+          if (ownerSenderId === sender.id) {
+            ownerSenderId = null;
+            void session.cancel();
+          }
+        });
+      }
+    }
     const result = await session.begin({
       memberDescriptors: members,
       onResult: (result: WindowPickResult) => {
@@ -83,6 +103,7 @@ export function registerWindowPickIpc({
         }
       },
     });
+    if (result.outcome !== 'started' && ownerSenderId === sender.id) ownerSenderId = null;
     console.info('[045-direct-pick] session-begin-result', result.outcome,
       result.outcome === 'failed' ? (result.error ?? '') : '');
     return result;
@@ -92,10 +113,12 @@ export function registerWindowPickIpc({
     if (!isSender(event.sender)) {
       throw new Error('denied: not a Backpack project sender');
     }
+    requireOwner(event.sender);
     if (raw !== undefined && !(isPlainObject(raw) && Object.keys(raw).length === 0)) {
       throw new Error('pick cancel payload must be empty');
     }
     await session.cancel();
+    ownerSenderId = null;
     return { outcome: 'cancelled' };
   });
 
@@ -106,6 +129,7 @@ export function registerWindowPickIpc({
     if (!isSender(event.sender)) {
       throw new Error('denied: not a Backpack project sender');
     }
+    requireOwner(event.sender);
     if (raw !== undefined && !(isPlainObject(raw) && Object.keys(raw).length === 0)) {
       throw new Error('pick stage payload must be empty');
     }
@@ -117,10 +141,12 @@ export function registerWindowPickIpc({
     if (!isSender(event.sender)) {
       throw new Error('denied: not a Backpack project sender');
     }
+    requireOwner(event.sender);
     if (raw !== undefined && !(isPlainObject(raw) && Object.keys(raw).length === 0)) {
       throw new Error('pick commit payload must be empty');
     }
     await session.commit();
+    ownerSenderId = null;
     return { outcome: 'committed' };
   });
 }
