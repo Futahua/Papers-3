@@ -328,16 +328,18 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async openBackpackProject(senderId: number, id: string): Promise<OpenBackpackProject | null> {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may open a Backpack project.');
     this.deps.surfaces.unbind(senderId);
     const backpack = this.deps.registry.find(id);
     if (!backpack) throw new Error(`Backpack ${id} not found`);
     if (backpack.archived) throw new Error('Restore this Backpack before entering it.');
     const project = await this.deps.backpackProjects.open(id);
-    await this.deps.registry.markEntered(id);
     // Bind the asking host surface immediately, so every later request from
     // this window resolves through its own sender rather than ambient state.
-    const windowId = project ? this.deps.windowIdForSender(senderId) : null;
-    if (project && windowId !== null) {
+    if (project) {
+      this.deps.setEnteredBackpack(windowId, id);
+      await this.deps.registry.markEntered(id);
       this.deps.surfaces.bind(senderId, { projectId: id, windowId, kind: 'host' });
     }
     this.emitBackpacksChanged();
@@ -345,9 +347,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async closeBackpackProject(senderId: number): Promise<void> {
+    const windowId = this.deps.hostWindowForSender?.(senderId) ?? null;
     this.deps.hideBackpackProjectSurface(senderId);
     this.deps.surfaces.unbind(senderId);
-    await this.deps.registry.markLeft();
+    if (windowId !== null) this.deps.setEnteredBackpack?.(windowId, null);
     this.emitBackpacksChanged();
   }
 
