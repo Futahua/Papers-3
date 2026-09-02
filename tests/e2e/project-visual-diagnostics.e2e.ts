@@ -96,6 +96,7 @@ describe('project renderer visual diagnostics', () => {
     const domReadyIndex = initialLifecycle.findIndex((record) => record.payload.phase === 'dom-ready');
     expect(navigationStartedIndex).toBeGreaterThanOrEqual(0);
     expect(domReadyIndex).toBeGreaterThan(navigationStartedIndex);
+    expect(initialLifecycle.some((record) => record.payload.phase === 'state-hydrated')).toBe(false);
     expect(await evalInBackpackProject(launched.app, 'Boolean(window.__papersVisualDiagnosticObserverV1)')).toBe(true);
     expect(await evalInBackpackProject(launched.app,
       `typeof window.papersVisualDiagnosticBridgeV1?.reportFirstPaint`)).toBe('undefined');

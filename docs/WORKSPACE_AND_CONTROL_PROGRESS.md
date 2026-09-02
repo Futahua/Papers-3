@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 deterministic lifecycle ordering implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 negative hydration ownership implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -716,9 +716,31 @@ Validation: full Vitest 793 passed/4 skipped across 73 passed/1 skipped files;
 focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
 typecheck; build; diff check.
 
-The exact-SHA reviewer gate must confirm the exact-surface ordering proof,
-successful fixture sequence evidence, independent renderer-fact handling,
-sender-authoritative routing, and no state mutation or polling.
+Reviewer checkpoint: **SIGNED OFF** for C1.2 deterministic lifecycle ordering
+at exact pushed head `ec6f6a4cb81cb1a6561c5983b2120621ae0a7771`. The reviewer
+confirmed production project lifecycle composition before navigation, exact
+sender/surface retention, prepared-sender refusal, and deliberate non-total
+ordering for independent hydration/paint/layout facts.
+
+Next smallest reviewed slice: **C1.2 deterministic negative hydration
+ownership** — prove `state-hydrated` cannot appear for an exact surface unless
+that project explicitly reports it, including DOM-ready/load/paint/layout
+occurring without synthesizing hydration success.
+
+Current implementation checkpoint: the neutral-project E2E now asserts that
+the initial exact-surface lifecycle sequence contains navigation-started and
+dom-ready in that order but contains no state-hydrated record before the
+project calls `reportStateHydrated`. It then verifies hydration appears only
+after that explicit bridge call, while the same fixture independently receives
+first-paint and layout-stable. Main process lifecycle hooks do not read project
+state or infer hydration from any other event.
+Validation: full Vitest 793 passed/4 skipped across 73 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+The exact-SHA reviewer gate must confirm the pre-report negative assertion,
+explicit-report positive assertion, exact sender authority, and no state
+mutation or polling.
 
 ## Architectural boundary / likely owner
 
