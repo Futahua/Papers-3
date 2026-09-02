@@ -9,7 +9,6 @@ export interface VisualObservationFence {
   layoutEpoch: number | null;
   senderBinding: string | null;
 }
-
 export type VisualConsistencyReason =
   | 'layout-changed'
   | 'state-changed'
@@ -50,4 +49,3 @@ export function assessVisualConsistency(
   }
   return { status: 'stable' };
 }
-

@@ -46,7 +46,6 @@ describe('visual observation fences', () => {
     )).toEqual({ status: 'unstable', reason: 'renderer-replaced' });
   });
 });
-
 describe('process instance identity', () => {
   it('uses file identity rather than the spelling of an executable alias', async () => {
     const identities = await Promise.all([
@@ -78,4 +77,3 @@ describe('process instance identity', () => {
     })).rejects.toThrow(/file identity is unavailable/);
   });
 });
-

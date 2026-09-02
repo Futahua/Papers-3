@@ -275,15 +275,18 @@ because one request completed:
   document, render-cycle, or layout change.
 * [x] aliases are tested against the file identity rather than pathname
   equality, and unavailable file identity fails closed.
-* [ ] compose the identity once in the main process and make it available to
-  the observation service.
+* [x] compose the identity once in the opt-in main-process control plane and
+  expose only the redacted `inspect.process` query; ordinary Papers runs do
+  not initialize the diagnostic identity.
 * [ ] implement the bounded renderer observation and native PNG capture.
 * [ ] expose the first read-only `capture.surface` command only after the
   synchronized service exists.
 
-Implementation checkpoint: local focused test `tests/unit/visualObservation.test.ts`
-passes 9/9 and `npm run typecheck` passes. This is not C1.1 completion; the
-remaining unchecked items are the user-visible capture and packaged proof.
+Implementation checkpoint: local focused tests
+`tests/unit/visualObservation.test.ts` (9/9) and
+`tests/unit/papersControlProtocol.test.ts` (21/21) pass, and `npm run typecheck`
+passes. This is not C1.1 completion; the remaining unchecked items are the
+user-visible capture and packaged proof.
 
 ### Required invariant
 

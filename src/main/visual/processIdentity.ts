@@ -17,7 +17,6 @@ export interface ProcessInstanceIdentity {
     canonicalFileId: string;
   };
 }
-
 export interface ProcessIdentityOptions {
   pid: number;
   executablePath: string;
@@ -70,4 +69,3 @@ export async function createProcessInstanceIdentity(
     },
   };
 }
-

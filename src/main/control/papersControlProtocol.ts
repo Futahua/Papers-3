@@ -23,6 +23,21 @@ const safeBuildSchema = z.object({
   packaged: z.boolean(),
 }).strict();
 
+const processInstanceIdentitySchema = z.object({
+  pid: z.number().int().positive(),
+  appInstanceId: z.string().min(1).max(128),
+  startedAt: z.string().datetime(),
+  build: z.object({
+    version: z.string(),
+    commit: z.string(),
+    packaged: z.boolean(),
+  }).strict(),
+  executableIdentity: z.object({
+    // This is an opaque volume/file identity, never a canonical path.
+    canonicalFileId: z.string().min(1).max(256),
+  }).strict(),
+}).strict();
+
 const surfaceKindSchema = z.enum(['host', 'project', 'detached', 'widget']);
 const surfacePresentationSchema = z.enum(['not-created', 'hidden', 'visible']);
 
@@ -152,6 +167,7 @@ const snapshotSchema = z.object({
 
 export const papersControlCommands = {
   'inspect.snapshot': { input: emptyParamsSchema, output: snapshotSchema, scope: 'app', effect: 'query' },
+  'inspect.process': { input: emptyParamsSchema, output: processInstanceIdentitySchema, scope: 'app', effect: 'query' },
   'inspect.windows': { input: emptyParamsSchema, output: z.array(controlWindowSchema), scope: 'app', effect: 'query' },
   'inspect.surfaces': {
     input: emptyParamsSchema,
@@ -294,6 +310,8 @@ export interface PapersControlDependencies {
     targetIndex: number;
   }): Promise<unknown>;
   snapshot(): unknown;
+  /** A safe process-instance projection; it must contain no filesystem path. */
+  processIdentity?(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
   backpack?(projectId: string): unknown;
@@ -388,9 +406,14 @@ export async function dispatchPapersControl(
         name: challenge.target.name,
       });
     }
-    case 'events.subscribe': {
+  case 'events.subscribe': {
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});
       return papersControlCommands[request.method].output.parse({ subscribed: params.events });
+    }
+    case 'inspect.process': {
+      const identity = dependencies.processIdentity?.();
+      if (!identity) throw new Error('Process identity is unavailable.');
+      return papersControlCommands[request.method].output.parse(identity);
     }
     case 'inspect.surfaces': return papersControlCommands[request.method].output.parse(dependencies.surfaces());
     case 'inspect.surface': {

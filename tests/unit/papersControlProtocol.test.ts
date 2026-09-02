@@ -87,16 +87,26 @@ describe('Papers developer control protocol', () => {
       windows: [window],
       hermes: { placement: 'closed' as const, status: 'idle' as const, ownerWindowId: null },
     };
+    const processIdentity = {
+      pid: 321,
+      appInstanceId: 'instance-a',
+      startedAt: '2026-09-02T00:00:00.000Z',
+      build: { version: '1.3.11', commit: 'abc1234', packaged: true },
+      executableIdentity: { canonicalFileId: 'dev:7:ino:99' },
+    };
     const dependencies = {
       snapshot: vi.fn(() => snapshot),
       windows: vi.fn(() => [window]),
       surfaces: () => [],
       surface: () => null,
+      processIdentity: vi.fn(() => processIdentity),
       createWindow: vi.fn(async () => ({ windowId: 3 })),
     };
 
     await expect(dispatchPapersControl(dependencies, request('inspect.snapshot')))
       .resolves.toEqual(snapshot);
+    await expect(dispatchPapersControl(dependencies, request('inspect.process')))
+      .resolves.toEqual(processIdentity);
     await expect(dispatchPapersControl(dependencies, request('inspect.windows')))
       .resolves.toEqual([window]);
     await expect(dispatchPapersControl(dependencies, request('window.create')))
