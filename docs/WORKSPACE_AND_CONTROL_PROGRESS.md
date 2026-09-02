@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 exact project renderer-gone observability implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 real failed-resource exact-surface attribution implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -862,6 +862,33 @@ Validation: typecheck; runtime/surface unit tests 22/22; project visual E2E
 The exact-SHA reviewer gate must confirm real project renderer exit retention,
 current exact-sender authority, staged/stale refusal, bounded reason handling,
 and no recovery or polling side effect.
+
+Next smallest reviewed slice: **C1.2 real failed-resource exact-surface
+attribution** — make a neutral project trigger a real failed script/style/image/
+font request and prove `resource-failed` is retained only under that current
+`{windowId,surfaceId}`, with no URL leakage and stale/prepared sender
+attribution refused.
+
+Current implementation checkpoint: the main-process resource monitor observes
+both Electron transport failures and completed HTTP responses with status 400+
+so failed resources served by Papers' custom protocol are observable as well.
+For either source it resolves the originating WebContents through the current
+surface authority before appending a bounded, redacted `resource-failed`
+record. The record keeps only the safe resource kind and message; complete URLs,
+paths, query strings, and token-like values are excluded. The neutral-project
+E2E requests a missing script from the exact moved project surface, verifies
+the record's exact target and kind, checks that the resource URL and token do
+not appear, and then continues to the renderer-gone proof. Unit coverage also
+exercises HTTP 404 attribution and detach cleanup.
+
+Validation: typecheck; full Vitest 796 passed/4 skipped across 73 passed/1
+skipped files; focused developer-control, renderer-diagnostics, same-project,
+and workspace E2E 9/9; project visual diagnostics E2E 1/1; production build;
+diff check.
+
+The exact-SHA reviewer gate must confirm real failed-resource retention,
+current exact-sender/surface authority, stale/prepared refusal, bounded and
+redacted messages, and no URL leakage, recovery, or polling side effect.
 
 ## Architectural boundary / likely owner
 

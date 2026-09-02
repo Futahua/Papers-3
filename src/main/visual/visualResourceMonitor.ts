@@ -6,11 +6,13 @@ export interface VisualResourceFailureDetails {
   webContentsId?: number;
   resourceType?: string;
   error?: string;
+  statusCode?: number;
 }
 
 /** The narrow Electron webRequest surface used by the visual monitor. */
 export interface VisualResourceSource {
   onErrorOccurred(listener: ((details: VisualResourceFailureDetails) => void) | null): void;
+  onCompleted?(listener: ((details: VisualResourceFailureDetails) => void) | null): void;
 }
 
 export interface VisualResourceMonitor {
@@ -37,7 +39,7 @@ export function attachVisualResourceMonitor(
   resolveTarget: VisualResourceTargetResolver,
   bufferForWindow: (windowId: number) => VisualDiagnosticBuffer | null,
 ): VisualResourceMonitor {
-  const listener = (details: VisualResourceFailureDetails): void => {
+  const recordFailure = (details: VisualResourceFailureDetails, fallback: string): void => {
     const webContentsId = details.webContentsId;
     if (typeof webContentsId !== 'number' || !Number.isSafeInteger(webContentsId) || webContentsId < 1) return;
     const target = resolveTarget({ id: webContentsId });
@@ -46,7 +48,7 @@ export function attachVisualResourceMonitor(
     if (!buffer) return;
     const message = typeof details.error === 'string' && details.error.trim().length > 0
       ? details.error
-      : 'resource load failed';
+      : fallback;
     // `error` has no documented maximum. Redact before applying the
     // resource-failed schema's stricter 2048-character bound, then guard the
     // observer boundary so malformed external detail cannot escape as a main
@@ -62,11 +64,20 @@ export function attachVisualResourceMonitor(
       // Observation must never become a product failure.
     }
   };
+  const errorListener = (details: VisualResourceFailureDetails): void => {
+    recordFailure(details, 'resource load failed');
+  };
+  const completedListener = (details: VisualResourceFailureDetails): void => {
+    if (typeof details.statusCode !== 'number' || !Number.isInteger(details.statusCode) || details.statusCode < 400) return;
+    recordFailure(details, `resource request returned HTTP ${details.statusCode}`);
+  };
 
-  source.onErrorOccurred(listener);
+  source.onErrorOccurred(errorListener);
+  source.onCompleted?.(completedListener);
   return {
     detach() {
       source.onErrorOccurred(null);
+      source.onCompleted?.(null);
     },
   };
 }

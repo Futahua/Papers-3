@@ -211,6 +211,28 @@ describe('project renderer visual diagnostics', () => {
         && record.payload.stage === 'parse' && record.payload.code === 'fixture-failure');
     }, 10_000, 'current replacement hydration render-failed lifecycle');
 
+    await evalInProjectWindow<boolean>(secondary.windowId, `(() => {
+      const script = document.createElement('script');
+      script.src = 'papers-backpack://bp-11111111-1111-4111-8111-111111111111/missing-resource.js?token=resource-secret';
+      document.head.appendChild(script);
+      return true;
+    })()`);
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
+        sequence: number; target: { windowId: number; surfaceId?: string }; payload: { kind?: string; resourceKind?: string; message?: string };
+      }>;
+      return records.some((record) => record.target.surfaceId === second.surfaceId
+        && record.payload.kind === 'resource-failed' && record.payload.resourceKind === 'script');
+    }, 10_000, 'current project failed script resource diagnostic');
+    const resourceFailures = (await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
+      target: { windowId: number; surfaceId?: string }; payload: { kind?: string; resourceKind?: string; message?: string };
+    }>).filter((record) => record.target.surfaceId === second.surfaceId && record.payload.kind === 'resource-failed');
+    const matchingResourceFailure = resourceFailures.find((record) => record.payload.resourceKind === 'script');
+    expect(matchingResourceFailure?.target).toEqual({ windowId: secondary.windowId, surfaceId: second.surfaceId });
+    expect(matchingResourceFailure?.payload).toMatchObject({ kind: 'resource-failed', resourceKind: 'script' });
+    expect(JSON.stringify(resourceFailures)).not.toContain('resource-secret');
+    expect(JSON.stringify(resourceFailures)).not.toContain('missing-resource.js');
+
     await launched.app.evaluate(({ BaseWindow }, targetWindowId) => {
       const window = BaseWindow.getAllWindows().find((candidate) => candidate.id === targetWindowId);
       if (!window) throw new Error(`no window with id ${targetWindowId}`);

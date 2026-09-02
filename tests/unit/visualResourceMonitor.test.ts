@@ -5,11 +5,18 @@ import { attachVisualResourceMonitor, type VisualResourceSource } from '../../sr
 
 class FakeResourceSource implements VisualResourceSource {
   listener: ((details: { webContentsId?: number; resourceType?: string; error?: string }) => void) | null = null;
+  completedListener: ((details: { webContentsId?: number; resourceType?: string; error?: string; statusCode?: number }) => void) | null = null;
   onErrorOccurred = vi.fn((listener: typeof this.listener) => {
     this.listener = listener;
   });
+  onCompleted = vi.fn((listener: typeof this.completedListener) => {
+    this.completedListener = listener;
+  });
   emit(details: { webContentsId?: number; resourceType?: string; error?: string }): void {
     this.listener?.(details);
+  }
+  emitCompleted(details: { webContentsId?: number; resourceType?: string; error?: string; statusCode?: number }): void {
+    this.completedListener?.(details);
   }
 }
 
@@ -47,6 +54,27 @@ describe('visual resource monitor', () => {
     }]);
   });
 
+  it('attributes HTTP failure responses from completed resource requests', () => {
+    const source = new FakeResourceSource();
+    const buffer = createVisualDiagnosticBuffer();
+    const resolveTarget = vi.fn(() => ({ windowId: 4, surfaceId: 'surface-b' }));
+    attachVisualResourceMonitor(source, resolveTarget, () => buffer);
+
+    source.emitCompleted({
+      webContentsId: 12,
+      resourceType: 'script',
+      statusCode: 404,
+      error: 'https://private.example/missing.js?token=secret',
+    });
+
+    expect(buffer.snapshot()).toMatchObject([{
+      target: { windowId: 4, surfaceId: 'surface-b' },
+      payload: { kind: 'resource-failed', resourceKind: 'script', message: '<url><redacted>' },
+    }]);
+    expect(JSON.stringify(buffer.snapshot())).not.toContain('private.example');
+    expect(JSON.stringify(buffer.snapshot())).not.toContain('token=secret');
+  });
+
   it('bounds an overlong Electron error and never lets observation throw', () => {
     const source = new FakeResourceSource();
     const buffer = createVisualDiagnosticBuffer();
@@ -67,5 +95,6 @@ describe('visual resource monitor', () => {
     monitor.detach();
 
     expect(source.onErrorOccurred).toHaveBeenLastCalledWith(null);
+    expect(source.onCompleted).toHaveBeenLastCalledWith(null);
   });
 });
