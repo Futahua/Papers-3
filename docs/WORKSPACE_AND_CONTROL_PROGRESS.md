@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.3 semantic-key identity/surface-local authority foundation signed off at `d440466b87d4234339b3fb5dd0ac6845b0be7fa8`; C1.1 capture correction tranche implemented at `6dff84c`, awaiting exact-SHA reviewer sign-off
+Persistent status: C1.3 semantic-key identity/surface-local authority foundation signed off at `d440466b87d4234339b3fb5dd0ac6845b0be7fa8`; C1.1 capture correction tranche implemented at `dab800a4bf0b755bd411f4be171b24ff4caff797`, awaiting exact-SHA reviewer sign-off
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -389,9 +389,10 @@ renderFailed
 * [x] cross-window adoption and rollback re-establish the exact generation;
 * [x] no capture infers current state by searching historical diagnostics.
 
-Implementation checkpoint: pushed head [`6dff84c`](https://github.com/Futahua/Papers-3/commit/6dff84c)
-adds a preload-generated opaque document instance ID, exact sender/document
-fence correlation, immediate monotonic layout-epoch invalidation, immutable
+Implementation checkpoint: pushed head [`dab800a`](https://github.com/Futahua/Papers-3/commit/dab800a4bf0b755bd411f4be171b24ff4caff797)
+adds a main-issued per-navigation document instance token delivered to the
+newly finished preload, buffered scoped observations until that token arrives,
+exact sender/document fence correlation, immediate monotonic layout-epoch invalidation, immutable
 pre/post capture snapshots, bounded renderer-replacement retry handling, and
 process-ephemeral artifact cleanup across restarts. Focused deterministic tests
 cover document identity, layout invalidation, renderer churn, state changes
