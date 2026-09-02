@@ -41,6 +41,8 @@ describe('bounded visual diagnostic buffer', () => {
 
   it('redacts URLs, local paths and credential-like assignments', () => {
     expect(redactDiagnosticText('file:///C:/private/app.js C:\\Users\\secret\\x.js token=abc123')).toBe('<url> <path> token=<redacted>');
+    expect(redactDiagnosticText('C:\\Program Files\\Papers\\out\\main.js')).toBe('<path>');
+    expect(redactDiagnosticText('C:/Users/name/private/file.js \\\\server\\share\\private\\file.js token = abc123 password: secret-value apiKey="secret"')).toBe('<path> <path> token=<redacted> password=<redacted> apiKey=<redacted>');
   });
 
   it('does not record by itself and clear removes only diagnostic evidence', () => {

@@ -136,8 +136,20 @@ function redactDiagnosticPayload(raw: unknown): unknown {
  * assignments. Keep the diagnostic signal while removing those disclosures. */
 export function redactDiagnosticText(text: string): string {
   return text
-    .replace(/\b(?:https?|file):\/\/[^\s]+/gi, '<url>')
-    .replace(/\b[A-Za-z]:\\[^\s]+/g, '<path>')
-    .replace(/\b(token|password|secret|api[_-]?key)=([^\s]+)/gi, '$1=<redacted>')
+    // Redact credentials first so an unquoted path scan cannot consume the
+    // key/value tail that follows a path with spaces.
+    .replace(/\b(token|password|secret|api[_-]?key)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1=<redacted>')
+    // Keep the contract scheme-agnostic; diagnostic messages may contain
+    // custom app/resource URLs as well as http/file URLs.
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, '<url>')
+    // Quoted drive/UNC paths may contain spaces. The quote is part of the
+    // diagnostic syntax, not evidence that the path should be retained.
+    .replace(/(^|[\s("'\[])(["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]*\2/g, '$1<path>')
+    // Unquoted drive paths are stopped before a credential-like assignment;
+    // this handles `C:\\Program Files\\Papers\\out\\main.js token = ...`.
+    .replace(/(^|[\s("'\[])([A-Za-z]:[\\/](?:(?!\s+(?:(?:token|password|secret|api[_-]?key)\s*[:=]|[A-Za-z]:[\\/]|\\\\))[^<>:"|?*\r\n])+)/gi, '$1<path>')
+    // Unquoted UNC paths conventionally contain no spaces; quoted UNC paths
+    // were handled above.
+    .replace(/(^|[\s("'\[])(\\\\[^\s"'<>]+)/g, '$1<path>')
     .slice(0, 4096);
 }
