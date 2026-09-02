@@ -24,7 +24,12 @@ const rendererOwnedPhases = ['state-hydrated', 'first-paint', 'layout-stable', '
 const rendererDiagnosticPayloadSchema = z.object({
   kind: z.enum(['uncaught-error', 'unhandled-rejection']),
   message: z.string().min(1).max(4096),
-}).strict();
+}).strict().or(z.object({
+  kind: z.literal('hydration-failed'),
+  revision: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/).optional(),
+  stage: z.string().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/),
+  code: z.string().min(1).max(128).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/),
+}).strict());
 
 interface RecentRendererDiagnostic {
   source: RendererDiagnosticSource;
@@ -44,7 +49,7 @@ export function recordRendererVisualSignal(
   target: VisualDiagnosticTarget,
   payload: unknown,
 ): void {
-  const parsed = payload as { kind?: unknown; phase?: unknown; detail?: unknown };
+  const parsed = payload as { kind?: unknown; phase?: unknown; detail?: unknown; revision?: unknown; summary?: unknown };
   if (parsed.kind !== 'lifecycle' || !rendererOwnedPhases.includes(parsed.phase as typeof rendererOwnedPhases[number])) {
     throw new Error('renderer lifecycle signal is not an allowed phase');
   }
@@ -52,6 +57,8 @@ export function recordRendererVisualSignal(
     kind: 'lifecycle',
     phase: parsed.phase,
     ...(typeof parsed.detail === 'string' ? { detail: parsed.detail } : {}),
+    ...(typeof parsed.revision === 'string' ? { revision: parsed.revision } : {}),
+    ...(parsed.summary !== undefined ? { summary: parsed.summary } : {}),
   });
 }
 
@@ -64,6 +71,10 @@ export function recordRendererVisualDiagnostic(
   source: RendererDiagnosticSource = 'observer',
 ): void {
   const parsed = rendererDiagnosticPayloadSchema.parse(payload);
+  if (parsed.kind === 'hydration-failed') {
+    buffer.append(target, parsed);
+    return;
+  }
   const observedAt = Date.now();
   const recent = recentRendererDiagnostics.get(buffer) ?? [];
   for (let index = recent.length - 1; index >= 0; index -= 1) {

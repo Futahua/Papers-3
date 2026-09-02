@@ -10,12 +10,33 @@ export const visualLifecyclePhases = [
 ] as const;
 export type VisualLifecyclePhase = (typeof visualLifecyclePhases)[number];
 
+const hydrationRevisionSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/);
+const hydrationSummarySchema = z.record(
+  z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/),
+  z.number().int().nonnegative().max(1_000_000),
+).superRefine((summary, context) => {
+  if (Object.keys(summary).length > 32) {
+    context.addIssue({ code: 'custom', message: 'hydration summary has too many entries' });
+  }
+});
+
+const lifecyclePayloadSchema = z.object({
+  kind: z.literal('lifecycle'),
+  phase: z.enum(visualLifecyclePhases),
+  detail: z.string().max(2048).optional(),
+  revision: hydrationRevisionSchema.optional(),
+  summary: hydrationSummarySchema.optional(),
+}).strict().superRefine((payload, context) => {
+  if (payload.phase === 'state-hydrated' && !payload.revision) {
+    context.addIssue({ code: 'custom', path: ['revision'], message: 'state-hydrated requires an opaque revision' });
+  }
+  if (payload.phase !== 'state-hydrated' && (payload.revision !== undefined || payload.summary !== undefined)) {
+    context.addIssue({ code: 'custom', message: 'hydration metadata is only valid for state-hydrated' });
+  }
+});
+
 const visualDiagnosticPayloadSchema = z.discriminatedUnion('kind', [
-  z.object({
-    kind: z.literal('lifecycle'),
-    phase: z.enum(visualLifecyclePhases),
-    detail: z.string().max(2048).optional(),
-  }).strict(),
+  lifecyclePayloadSchema,
   z.object({
     kind: z.literal('console'),
     level: z.enum(['debug', 'info', 'log', 'warn', 'error']),
@@ -46,7 +67,9 @@ const visualDiagnosticPayloadSchema = z.discriminatedUnion('kind', [
   }).strict(),
   z.object({
     kind: z.literal('hydration-failed'),
-    message: z.string().min(1).max(2048),
+    revision: hydrationRevisionSchema.optional(),
+    stage: z.string().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/),
+    code: z.string().min(1).max(128).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/),
   }).strict(),
 ]);
 
@@ -69,6 +92,9 @@ export interface VisualDiagnosticBuffer {
   snapshot(): VisualDiagnosticRecord[];
   clear(): void;
 }
+
+export const visualHydrationSummarySchema = hydrationSummarySchema;
+export const visualHydrationRevisionSchema = hydrationRevisionSchema;
 
 const DEFAULT_CAPACITY = 128;
 const MAX_CAPACITY = 512;

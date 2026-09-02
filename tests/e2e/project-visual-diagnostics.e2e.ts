@@ -90,6 +90,16 @@ describe('project renderer visual diagnostics', () => {
       .some((surface) => surface.surfaceId === opened.surfaceId && surface.presentation === 'visible'),
     10_000, 'initial project presentation');
     expect(await evalInBackpackProject(launched.app, 'Boolean(window.__papersVisualDiagnosticObserverV1)')).toBe(true);
+    await evalInBackpackProject(launched.app,
+      `window.papersVisualDiagnosticBridgeV1.reportStateHydrated('neutral-rev-1', { cards: 1, groups: 1 }); true`);
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
+        sequence: number; payload: { kind?: string; phase?: string; revision?: string; summary?: Record<string, number> };
+      }>;
+      return records.some((record) => record.sequence > beforeSequence
+        && record.payload.kind === 'lifecycle' && record.payload.phase === 'state-hydrated'
+        && record.payload.revision === 'neutral-rev-1');
+    }, 10_000, 'project hydration success signal');
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{ sequence: number; payload: { kind?: string } }>;
       return records.filter((record) => record.sequence > beforeSequence
@@ -142,5 +152,17 @@ describe('project renderer visual diagnostics', () => {
         && record.target.surfaceId === second.surfaceId
         && (record.payload.kind === 'uncaught-error' || record.payload.kind === 'unhandled-rejection')).length >= 2;
     }, 10_000, 'current replacement project diagnostics');
+    await evalInProjectWindow<boolean>(secondary.windowId,
+      `window.papersVisualDiagnosticBridgeV1.reportHydrationFailed('neutral-rev-1', 'parse', 'fixture-failure'); true`);
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
+        sequence: number; target: { surfaceId?: string }; payload: { kind?: string; revision?: string; stage?: string; code?: string };
+      }>;
+      return records.some((record) => record.sequence > beforeTargetSequence
+        && record.target.surfaceId === second.surfaceId
+        && record.payload.kind === 'hydration-failed'
+        && record.payload.revision === 'neutral-rev-1'
+        && record.payload.stage === 'parse' && record.payload.code === 'fixture-failure');
+    }, 10_000, 'current replacement hydration failure diagnostic');
   });
 });

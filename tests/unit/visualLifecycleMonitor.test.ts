@@ -47,13 +47,28 @@ describe('visual lifecycle monitor', () => {
   it('accepts only the renderer-owned lifecycle phases and keeps target binding', () => {
     const buffer = createVisualDiagnosticBuffer();
     const monitor = attachVisualLifecycleMonitor(new FakeSource(), { windowId: 4, surfaceId: 'surface-b' }, buffer);
-    monitor.recordRendererSignal({ kind: 'lifecycle', phase: 'state-hydrated', detail: 'revision-4' });
+    monitor.recordRendererSignal({ kind: 'lifecycle', phase: 'state-hydrated', revision: 'revision-4' });
     monitor.recordRendererSignal({ kind: 'lifecycle', phase: 'first-paint' });
     monitor.recordRendererSignal({ kind: 'lifecycle', phase: 'layout-stable' });
     expect(buffer.snapshot()).toHaveLength(3);
     expect(buffer.snapshot()[0]).toMatchObject({ target: { windowId: 4, surfaceId: 'surface-b' } });
     expect(() => monitor.recordRendererSignal({ kind: 'lifecycle', phase: 'dom-ready' })).toThrow();
     expect(() => monitor.recordRendererSignal({ kind: 'arbitrary', phase: 'first-paint' })).toThrow();
+    expect(() => monitor.recordRendererSignal({ kind: 'lifecycle', phase: 'state-hydrated' })).toThrow();
+    expect(() => monitor.recordRendererSignal({ kind: 'lifecycle', phase: 'first-paint', revision: 'rev-1' })).toThrow();
+  });
+
+  it('records structured hydration failures without accepting free-form state text', () => {
+    const buffer = createVisualDiagnosticBuffer();
+    recordRendererVisualDiagnostic(buffer, { windowId: 4, surfaceId: 'surface-b' }, {
+      kind: 'hydration-failed', revision: 'rev-1', stage: 'normalize', code: 'empty-model',
+    });
+    expect(buffer.snapshot()[0]).toMatchObject({
+      payload: { kind: 'hydration-failed', revision: 'rev-1', stage: 'normalize', code: 'empty-model' },
+    });
+    expect(() => recordRendererVisualDiagnostic(buffer, { windowId: 4, surfaceId: 'surface-b' }, {
+      kind: 'hydration-failed', stage: 'normalize', code: 'C:\\private\\state.json', message: 'raw state',
+    })).toThrow();
   });
 
   it('does not create timers or recovery side effects', () => {

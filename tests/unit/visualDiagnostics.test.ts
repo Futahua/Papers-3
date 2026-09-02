@@ -6,7 +6,9 @@ describe('bounded visual diagnostic buffer', () => {
   it('keeps only the most recent records and preserves sequence numbers', () => {
     const buffer = createVisualDiagnosticBuffer({ capacity: 2, now: () => new Date('2026-09-02T00:00:00.000Z') });
     buffer.append({ windowId: 1, surfaceId: 'surface-a' }, { kind: 'lifecycle', phase: 'dom-ready' });
-    buffer.append({ windowId: 1, surfaceId: 'surface-a' }, { kind: 'lifecycle', phase: 'state-hydrated' });
+    buffer.append({ windowId: 1, surfaceId: 'surface-a' }, {
+      kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-1',
+    });
     buffer.append({ windowId: 1, surfaceId: 'surface-a' }, { kind: 'lifecycle', phase: 'first-paint' });
     expect(buffer.snapshot().map((record) => record.sequence)).toEqual([2, 3]);
     expect(buffer.snapshot()[0]).toMatchObject({ observedAt: '2026-09-02T00:00:00.000Z', target: { windowId: 1 } });
@@ -17,7 +19,7 @@ describe('bounded visual diagnostic buffer', () => {
     const payloads = [
       { kind: 'lifecycle', phase: 'navigation-started' },
       { kind: 'lifecycle', phase: 'dom-ready' },
-      { kind: 'lifecycle', phase: 'state-hydrated' },
+      { kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-1' },
       { kind: 'lifecycle', phase: 'first-paint' },
       { kind: 'lifecycle', phase: 'layout-stable' },
       { kind: 'lifecycle', phase: 'render-failed' },
@@ -27,10 +29,30 @@ describe('bounded visual diagnostic buffer', () => {
       { kind: 'navigation-failed', errorCode: -2, message: 'failed' },
       { kind: 'resource-failed', resourceKind: 'script', errorCode: 404, message: 'missing' },
       { kind: 'renderer-gone', reason: 'crashed' },
-      { kind: 'hydration-failed', message: 'bad state' },
+      { kind: 'hydration-failed', stage: 'parse', code: 'bad-state' },
     ] as const;
     for (const payload of payloads) buffer.append({ windowId: 1 }, payload);
     expect(buffer.snapshot()).toHaveLength(payloads.length);
+  });
+
+  it('requires an opaque revision for hydration and keeps summary metadata bounded', () => {
+    const buffer = createVisualDiagnosticBuffer();
+    buffer.append({ windowId: 1 }, {
+      kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-1', summary: { cards: 3 },
+    });
+    buffer.append({ windowId: 1 }, {
+      kind: 'hydration-failed', revision: 'rev-1', stage: 'parse', code: 'invalid-envelope',
+    });
+    expect(() => buffer.append({ windowId: 1 }, { kind: 'lifecycle', phase: 'state-hydrated' })).toThrow();
+    expect(() => buffer.append({ windowId: 1 }, {
+      kind: 'lifecycle', phase: 'state-hydrated', revision: 'C:\\private\\state.json',
+    })).toThrow();
+    expect(() => buffer.append({ windowId: 1 }, {
+      kind: 'hydration-failed', stage: 'parse', code: 'bad/code',
+    })).toThrow();
+    expect(buffer.snapshot()[0]?.payload).toMatchObject({
+      phase: 'state-hydrated', revision: 'rev-1', summary: { cards: 3 },
+    });
   });
 
   it('rejects unknown fields and malformed targets instead of widening the record', () => {

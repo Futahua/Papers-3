@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: reverse Papers→Dockview reconciliation signed off; C1.2 project hydration reporting is next
+Persistent status: C1.2 project hydration reporting implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -586,10 +586,27 @@ semantic close suppression. The E2E confirms canonical restore/open/close
 without delayed echo revisions and immediate resumption of genuine Dockview
 interaction.
 
-Next smallest reviewed slice: **C1.2 generic project hydration reporting** —
+Current smallest reviewed slice: **C1.2 generic project hydration reporting** —
 sender-authoritative `state-hydrated` / `hydration-failed` signals with opaque
 revision and bounded safe metadata, no state bytes, and no Papers-synthesized
 hydration success.
+
+Implementation checkpoint: the opt-in project dev-control bridge exposes fixed
+`reportStateHydrated(revision, summary?)` and
+`reportHydrationFailed(revision?, stage, code)` methods. Revisions are bounded
+delimiter-free opaque tokens; success summaries are limited to 32 named
+nonnegative integer counters; failure stage/code are bounded metadata tokens.
+Main validates the same contract, resolves the exact target from the
+authenticated sender, refuses malformed/foreign signals, and records no raw
+state bytes. Unit and neutral-project E2E coverage proves success and failure
+delivery, spoofed-target refusal, bounded metadata, and exact window/surface
+authority. Validation: full Vitest 784 passed/4 skipped across 72 passed/1
+skipped files; focused developer-control, renderer-diagnostics, and workspace
+E2E 8/8; typecheck; build; diff check.
+
+The exact-SHA reviewer gate must confirm that hydration remains project-owned:
+Papers does not synthesize success from DOM-ready/file reads, and no state
+bytes or renderer-supplied target cross the diagnostic boundary.
 
 ## Architectural boundary / likely owner
 

@@ -1,20 +1,17 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { createProjectVisualDiagnosticBridge, type ProjectVisualDiagnosticBridge } from './projectVisualDiagnostics';
 
 const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
 
 function installVisualDiagnosticListeners(
   ipc: { send(channel: string, payload: unknown): void },
   mainWorld: {
-    exposeInMainWorld(apiKey: string, api: { report(kind: string, message: string): void }): void;
+    exposeInMainWorld(apiKey: string, api: ProjectVisualDiagnosticBridge): void;
     executeInMainWorld(script: { func: () => void }): unknown;
   },
 ): void {
   mainWorld.exposeInMainWorld(MAIN_WORLD_DIAGNOSTIC_BRIDGE, {
-    report(kind, message) {
-      if (kind !== 'uncaught-error' && kind !== 'unhandled-rejection') return;
-      if (typeof message !== 'string' || message.length === 0) return;
-      ipc.send('papers:visual:renderer-diagnostic', { kind, message: message.slice(0, 4096) });
-    },
+    ...createProjectVisualDiagnosticBridge(ipc),
   });
   try {
     void Promise.resolve(mainWorld.executeInMainWorld({ func: () => {

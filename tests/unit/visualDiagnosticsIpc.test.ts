@@ -71,4 +71,32 @@ describe('visual diagnostics renderer IPC', () => {
       payload: { kind: 'uncaught-error', message: 'recorded after strict rejection' },
     }]);
   });
+
+  it('routes hydration success and failure through authenticated sender context', () => {
+    const buffer = createVisualDiagnosticBuffer();
+    const on = vi.fn();
+    registerVisualDiagnosticsIpc({
+      ipcMain: { on },
+      resolveTarget: (sender) => sender.id === 7 ? { windowId: 2, surfaceId: 'surface-a' } : null,
+      bufferForWindow: () => buffer,
+    });
+    const signal = on.mock.calls.find(([channel]) => channel === 'papers:visual:renderer-signal')?.[1] as
+      ((event: { sender: { id: number } }, payload: unknown) => void);
+    const diagnostic = on.mock.calls.find(([channel]) => channel === 'papers:visual:renderer-diagnostic')?.[1] as
+      ((event: { sender: { id: number } }, payload: unknown) => void);
+
+    signal({ sender: { id: 7 } }, {
+      kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-1', summary: { cards: 2 },
+      target: { windowId: 99, surfaceId: 'foreign' },
+    });
+    diagnostic({ sender: { id: 7 } }, {
+      kind: 'hydration-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope',
+    });
+    signal({ sender: { id: 8 } }, { kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-2' });
+
+    expect(buffer.snapshot()).toMatchObject([
+      { target: { windowId: 2, surfaceId: 'surface-a' }, payload: { phase: 'state-hydrated', revision: 'rev-1', summary: { cards: 2 } } },
+      { target: { windowId: 2, surfaceId: 'surface-a' }, payload: { kind: 'hydration-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope' } },
+    ]);
+  });
 });
