@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   exposeInMainWorld: vi.fn(),
   invoke: vi.fn(),
+  sendSync: vi.fn(() => false),
   on: vi.fn(),
   removeListener: vi.fn(),
   getPathForFile: vi.fn(),
@@ -12,6 +13,7 @@ vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: mocks.exposeInMainWorld },
   ipcRenderer: {
     invoke: mocks.invoke,
+    sendSync: mocks.sendSync,
     on: mocks.on,
     removeListener: mocks.removeListener,
   },

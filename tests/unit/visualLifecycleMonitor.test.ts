@@ -81,4 +81,5 @@ describe('visual lifecycle monitor', () => {
       kind: 'unhandled-rejection', message: 'x'.repeat(4097),
     })).toThrow();
   });
+
 });

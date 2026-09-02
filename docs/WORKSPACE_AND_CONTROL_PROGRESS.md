@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 foundation in progress; renderer capture not started
+Persistent status: C1.2 renderer-failure slice implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -484,12 +484,13 @@ renderer failure listeners are the current unreviewed slice; the next review
 must verify opt-in installation, strict payload shape, sender authority,
 redaction, and no-throw behavior.
 
-Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 8/8;
-`tests/unit/visualLifecycleMonitor.test.ts` passes 3/3;
-`tests/unit/visualResourceMonitor.test.ts` passes 4/4; the full host suite
+Implementation checkpoint: focused preload/host/IPC/lifecycle coverage passes
+12/12 and the real developer-control Electron suite passes 6/6, including
+main-world uncaught-error and unhandled-rejection capture, exact host-window
+authority, redaction, and no duplicate isolated observer. The full host suite
 passes 776/776 with 4 skipped across 70 passed files and 1 skipped file;
-typecheck and diff check pass. This is not C1.2 completion; event subscription
-and broader control exposure remain unchecked.
+typecheck, production build, and diff check pass. This is not C1.2 completion;
+the renderer-failure slice still requires exact-SHA reviewer sign-off.
 
 Reviewer checkpoint: **SIGNED OFF** for the lifecycle adapter at
 `efd24422296d9b64c974dcb3b97073d0629e25b0` and for the host-composition/control
@@ -511,9 +512,15 @@ is **SIGNED OFF** at `6ba945d137939afeab4460fcba7a21d9e5bd0bd4`; screenshot
 capture remains unchecked.
 
 The current renderer-failure diagnostic slice is intentionally awaiting review:
-both preloads install the two failure listeners only when
-`PAPERS_DEV_CONTROL=1`, and the main-process IPC boundary accepts only strict
-bounded `{kind,message}` payloads after sender-authoritative target resolution.
+the normal preloads contain no failure observer; `PAPERS_DEV_CONTROL=1` selects
+dedicated dev-control preload entries that expose one fixed reporting seam, and
+the host's actual main-world renderer code installs the two failure listeners.
+The main-process IPC boundary accepts only strict bounded `{kind,message}`
+payloads after sender-authoritative target resolution. No runtime capability
+query, shared sandbox preload chunk, arbitrary renderer execution, or polling
+loop is involved. The dev-only main-world test seam has no arguments and emits
+fixed path/credential-shaped messages solely to prove the end-to-end redaction
+and exact-target path.
 
 ## Architectural boundary / likely owner
 

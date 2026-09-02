@@ -70,13 +70,15 @@ export default defineConfig({
       rollupOptions: {
         input: {
           host: resolve(__dirname, 'src/preload/host.ts'),
+          hostDevControl: resolve(__dirname, 'src/preload/hostDevControl.ts'),
           backpackProject: resolve(__dirname, 'src/preload/backpackProject.ts'),
+          backpackProjectDevControl: resolve(__dirname, 'src/preload/backpackProjectDevControl.ts'),
           program: resolve(__dirname, 'src/preload/program.ts'),
           pickOverlay: resolve(__dirname, 'src/preload/pickOverlay.ts'),
           candidatePicker: resolve(__dirname, 'src/preload/candidatePicker.ts'),
         },
         // Sandboxed preloads cannot use ESM; emit CommonJS.
-        output: { format: 'cjs', entryFileNames: '[name].cjs' },
+        output: { format: 'cjs', entryFileNames: '[name].cjs', chunkFileNames: '[name].cjs' },
       },
     },
     resolve: {

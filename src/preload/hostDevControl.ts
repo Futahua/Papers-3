@@ -4,6 +4,22 @@
  */
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
+const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
+
+function installVisualDiagnosticListeners(
+  ipc: { send(channel: string, payload: unknown): void },
+  mainWorld: { exposeInMainWorld(apiKey: string, api: { report(kind: string, message: string): void }): void },
+): void {
+  mainWorld.exposeInMainWorld(MAIN_WORLD_DIAGNOSTIC_BRIDGE, {
+    report(kind, message) {
+      if (kind !== 'uncaught-error' && kind !== 'unhandled-rejection') return;
+      if (typeof message !== 'string' || message.length === 0) return;
+      ipc.send('papers:visual:renderer-diagnostic', { kind, message: message.slice(0, 4096) });
+    },
+  });
+}
+
+
 type Listener = (payload: unknown) => void;
 
 function subscribe(channel: string): (listener: Listener) => () => void {
@@ -163,4 +179,8 @@ const api = {
 
 contextBridge.exposeInMainWorld('papersHost', api);
 
+installVisualDiagnosticListeners(ipcRenderer, contextBridge);
+
 export type PapersHostBridge = typeof api;
+
+

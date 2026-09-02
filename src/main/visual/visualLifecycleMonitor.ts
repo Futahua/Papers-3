@@ -89,8 +89,8 @@ export function attachVisualLifecycleMonitor(
     record({ kind: 'navigation-failed', errorCode, message });
   });
   listen('console-message', (...args) => {
-    const level = consoleLevel(args[1]);
     const message = typeof args[2] === 'string' && args[2].length > 0 ? args[2] : 'console message unavailable';
+    const level = consoleLevel(args[1]);
     record({ kind: 'console', level, message });
   });
   listen('render-process-gone', (...args) => {

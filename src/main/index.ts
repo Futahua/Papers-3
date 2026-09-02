@@ -78,6 +78,7 @@ import {
   installProgramProtocolHandler,
   registerProgramSchemePrivileges,
 } from './security/programScheme';
+
 import {
   installBackpackProjectProtocol,
   registerBackpackProjectSchemePrivileges,
@@ -405,8 +406,8 @@ async function bootstrap(): Promise<void> {
       appIcon,
       transparent: papersSettings.transparentWindow,
       currentTransparent: () => papersSettings.transparentWindow,
-      hostPreloadPath: path.join(preloadDir, 'host.cjs'),
-      projectPreloadPath: path.join(preloadDir, 'backpackProject.cjs'),
+      hostPreloadPath: path.join(preloadDir, process.env['PAPERS_DEV_CONTROL'] === '1' ? 'hostDevControl.cjs' : 'host.cjs'),
+      projectPreloadPath: path.join(preloadDir, process.env['PAPERS_DEV_CONTROL'] === '1' ? 'backpackProjectDevControl.cjs' : 'backpackProject.cjs'),
       rendererUrl: process.env['ELECTRON_RENDERER_URL'],
       rendererFile: path.join(app.getAppPath(), 'out', 'renderer', 'index.html'),
       onProjectSurfaceClosed,

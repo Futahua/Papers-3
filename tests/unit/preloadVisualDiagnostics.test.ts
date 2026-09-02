@@ -5,22 +5,22 @@ import {
   VISUAL_RENDERER_DIAGNOSTIC_CHANNEL,
 } from '../../src/preload/visualDiagnostics';
 
-describe('opt-in preload visual failure listeners', () => {
-  it('does not install listeners unless visual diagnostics are enabled', () => {
-    const target = { addEventListener: vi.fn() };
-    installVisualDiagnosticListeners({ send: vi.fn() }, false, target);
-    expect(target.addEventListener).not.toHaveBeenCalled();
+describe('opt-in main-world visual failure listeners', () => {
+  it('exposes and installs the observer through the main-world bridge', () => {
+    const mainWorld = { exposeInMainWorld: vi.fn() };
+    installVisualDiagnosticListeners({ send: vi.fn() }, mainWorld);
+    expect(mainWorld.exposeInMainWorld).toHaveBeenCalledOnce();
   });
 
   it('forwards only bounded failure kind/message payloads', () => {
-    const target = { addEventListener: vi.fn() };
     const send = vi.fn();
-    installVisualDiagnosticListeners({ send }, true, target);
-    const errorListener = target.addEventListener.mock.calls.find(([type]) => type === 'error')?.[1];
-    const rejectionListener = target.addEventListener.mock.calls.find(([type]) => type === 'unhandledrejection')?.[1];
+    const mainWorld = { exposeInMainWorld: vi.fn() };
+    installVisualDiagnosticListeners({ send }, mainWorld);
+    const api = mainWorld.exposeInMainWorld.mock.calls[0]?.[1] as { report(kind: string, message: string): void };
 
-    errorListener?.({ message: 'view failed', error: new Error('ignored stack') });
-    rejectionListener?.({ reason: { message: 'promise failed' } });
+    api.report('uncaught-error', 'view failed');
+    api.report('unhandled-rejection', 'promise failed');
+    api.report('other', 'ignored');
 
     expect(send).toHaveBeenNthCalledWith(1, VISUAL_RENDERER_DIAGNOSTIC_CHANNEL, {
       kind: 'uncaught-error', message: 'view failed',

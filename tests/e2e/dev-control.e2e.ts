@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-import { launchPapers, waitFor, type LaunchedApp } from './helpers';
+import { evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
 // @ts-expect-error -- the shared control client is plain ESM shipped with the tools.
 import { connectPapersControl, readDescriptor } from '../../tools/papersControlClient.mjs';
 
@@ -21,11 +21,11 @@ const CONTROL_PROJECT = 'bp-11111111-1111-4111-8111-111111111111';
  * implementation rather than a second hand-written approximation that could
  * agree with a broken server.
  */
-async function call(method: string): Promise<unknown> {
+async function call(method: string, params: unknown = {}): Promise<unknown> {
   const descriptor = await readDescriptor(descriptorPath);
   const connection = await connectPapersControl(descriptor);
   try {
-    const response = await connection.call(method) as { ok: boolean; result?: unknown; error?: string };
+    const response = await connection.call(method, params) as { ok: boolean; result?: unknown; error?: string };
     if (!response.ok) throw new Error(response.error ?? 'control request failed');
     return response.result;
   } finally {
@@ -112,6 +112,33 @@ describe('developer control plane', () => {
       actor.close();
       cli.kill();
     }
+  });
+
+  it('captures main-world renderer failures once through the sandboxed host', async () => {
+    const windowId = await launched.app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0]!.id);
+    const before = await call('inspect.visual.diagnostics', { windowId }) as Array<{ sequence: number }>;
+    const beforeSequence = Math.max(0, ...before.map((record) => record.sequence));
+
+    // executeJavaScript runs in the page's main world. The observer is
+    // installed there by the opt-in dev-control preload; the sandboxed
+    // normal preload has no failure listeners of its own.
+    expect(await evalInHost<string>(launched.app, 'typeof window.papersHost')).toBe('object');
+    expect(await evalInHost<string>(launched.app, 'typeof window.papersVisualDiagnosticBridgeV1')).toBe('object');
+    await evalInHost(launched.app, 'window.__papersVisualDiagnosticTestV1(); true');
+
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId }) as Array<{ sequence: number; payload: { kind?: string; message?: string } }>;
+      return records.filter((record) => record.sequence > beforeSequence
+        && (record.payload.kind === 'uncaught-error' || record.payload.kind === 'unhandled-rejection')).length >= 2;
+    }, 10_000, 'main-world renderer failure diagnostics');
+    const records = await call('inspect.visual.diagnostics', { windowId }) as Array<{ sequence: number; target: { windowId: number; surfaceId?: string }; payload: { kind?: string; message?: string } }>;
+    const failures = records.filter((record) => record.sequence > beforeSequence
+      && (record.payload.kind === 'uncaught-error' || record.payload.kind === 'unhandled-rejection'));
+    expect(failures).toHaveLength(2);
+    expect(failures).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target: { windowId }, payload: { kind: 'uncaught-error', message: 'Uncaught Error: <path> token=<redacted>' } }),
+      expect.objectContaining({ target: { windowId }, payload: { kind: 'unhandled-rejection', message: '<path> password=<redacted>' } }),
+    ]));
   });
 
   it('requires exact named confirmation and performs real archive then removal through papersctl', async () => {
