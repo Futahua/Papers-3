@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { VisualDiagnosticRecord } from './visualDiagnostics';
 import type { VisualArtifactMetadata, VisualArtifactStore } from './visualArtifactStore';
 import type { VisualTimelineEntry } from './visualTimeline';
+import { awaitVisualOperation, revokeVisualArtifact, throwIfVisualOperationAborted } from './visualCancellation';
 
 export interface VisualReportRequest {
   windowId: number;
@@ -68,13 +69,13 @@ async function readArtifact(store: VisualArtifactStore, metadata: VisualArtifact
   let offset = 0;
   let done = false;
   while (!done) {
-    if (signal?.aborted) throw new Error('Visual report was cancelled.');
+    throwIfVisualOperationAborted(signal);
     const chunk = await store.read(metadata.artifactId, offset, 1024 * 1024);
     chunks.push(chunk.bytes);
     offset = chunk.nextOffset;
     done = chunk.done;
   }
-  if (signal?.aborted) throw new Error('Visual report was cancelled.');
+  throwIfVisualOperationAborted(signal);
   const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
   let cursor = 0;
   for (const chunk of chunks) {
@@ -148,9 +149,6 @@ export async function createVisualReport(deps: VisualReportDependencies, request
   const diagnostics = deps.diagnostics.filter(inWindow);
   const reportId = randomUUID();
   const signal = deps.signal;
-  const throwIfAborted = (): void => {
-    if (signal?.aborted) throw new Error('Visual report was cancelled.');
-  };
   const capturedArtifactIds = new Set<string>();
   let reportArtifactId: string | undefined;
   const readCapturedArtifact = async (metadata: VisualArtifactMetadata): Promise<Uint8Array> => {
@@ -160,7 +158,7 @@ export async function createVisualReport(deps: VisualReportDependencies, request
     return readArtifact(deps.artifacts, metadata, signal);
   };
   try {
-    throwIfAborted();
+    throwIfVisualOperationAborted(signal);
     const entries: ReportEntry[] = [
       { name: 'process.json', bytes: jsonBytes(deps.process) },
       { name: 'snapshot.json', bytes: jsonBytes(deps.snapshot) },
@@ -173,7 +171,8 @@ export async function createVisualReport(deps: VisualReportDependencies, request
     if (request.include.surfaceCapture) {
       if (!deps.captureSurface) throw new Error('Visual surface capture is unavailable.');
       const captured = await deps.captureSurface(signal);
-      throwIfAborted();
+      if (captured.png) capturedArtifactIds.add(captured.png.artifactId);
+      throwIfVisualOperationAborted(signal);
       entries.push({ name: 'surface-capture.json', bytes: jsonBytes(captured.result) });
       if (captured.png) entries.push({ name: 'surface.png', bytes: await readCapturedArtifact(captured.png) });
     }
@@ -184,7 +183,8 @@ export async function createVisualReport(deps: VisualReportDependencies, request
       }
       for (const elementKey of request.elementKeys) {
         const captured = await deps.captureElement(elementKey, signal);
-        throwIfAborted();
+        if (captured.png) capturedArtifactIds.add(captured.png.artifactId);
+        throwIfVisualOperationAborted(signal);
         entries.push({ name: `elements/${elementKey}.json`, bytes: jsonBytes(captured.result) });
         if (captured.png) entries.push({ name: `elements/${elementKey}.png`, bytes: await readCapturedArtifact(captured.png) });
       }
@@ -202,10 +202,14 @@ export async function createVisualReport(deps: VisualReportDependencies, request
     };
     const allEntries = [{ name: 'manifest.json', bytes: jsonBytes(manifest) }, ...entries];
     const archive = zipStored(allEntries);
-    throwIfAborted();
-    const artifact = await deps.artifacts.put(archive, 'application/zip');
-    throwIfAborted();
+    throwIfVisualOperationAborted(signal);
+    const artifact = await awaitVisualOperation(
+      deps.artifacts.put(archive, 'application/zip'),
+      signal,
+      revokeVisualArtifact(deps.artifacts.delete),
+    );
     reportArtifactId = artifact.artifactId;
+    throwIfVisualOperationAborted(signal);
     return {
       reportId,
       artifactId: artifact.artifactId,

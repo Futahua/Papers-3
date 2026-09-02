@@ -66,6 +66,21 @@ describe('composed visual window capture', () => {
     expect(result.png).toEqual(metadata);
   });
 
+  it('settles cancellation while native capture is held and never publishes pixels', async () => {
+    const deps = makeDeps();
+    const controller = new AbortController();
+    let releaseCapture!: (value: { bytes: Uint8Array; width: number; height: number; sourceId: string } | null) => void;
+    const held = new Promise<{ bytes: Uint8Array; width: number; height: number; sourceId: string } | null>((resolve) => { releaseCapture = resolve; });
+    deps.requestCapture = vi.fn(() => held);
+
+    const capture = captureVisualWindow(deps, { windowId: 7 }, undefined, controller.signal);
+    await vi.waitFor(() => expect(deps.requestCapture).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(capture).rejects.toThrow('Visual operation was cancelled.');
+    expect(deps.artifacts.put).not.toHaveBeenCalled();
+    releaseCapture(null);
+  });
+
   it('retries once after a member state change and returns bounded instability', async () => {
     let revision = 1;
     const deps = makeDeps((state) => {

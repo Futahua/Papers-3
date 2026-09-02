@@ -2102,7 +2102,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           ? (target, elementKey, paddingCssPx, signal) => captureProjectVisual(target, { elementKey, paddingCssPx }, signal)
           : undefined,
         captureWindow: visualArtifactStore && processInstanceIdentity && visualWindowNativeCapture
-          ? (target) => captureVisualWindow({
+          ? (target, signal) => captureVisualWindow({
             processIdentity: () => processInstanceIdentity,
             window: ({ windowId }) => {
               const context = papersWindows.get(windowId);
@@ -2138,7 +2138,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
               .filter((surface) => surface.observation !== null || papersWindows.get(windowId)?.owned.projectSurfaces.get(surface.surfaceId)?.isPresented === true),
             requestCapture: (window, requestId, size) => visualWindowNativeCapture.request(window.sourceId, size),
             artifacts: visualArtifactStore,
-          }, target)
+          }, target, undefined, signal)
           : undefined,
         surfaces: () => logicalSurfaces.project().map(projectSurfaceControlSnapshot),
         workspace: (windowId) => papersWindows.has(windowId) && workspaceTopologies.has(windowId)

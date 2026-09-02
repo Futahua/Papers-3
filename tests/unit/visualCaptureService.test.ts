@@ -98,11 +98,31 @@ describe('synchronized visual surface capture', () => {
 
     await vi.waitFor(() => expect(capturePage).toHaveBeenCalledOnce());
     controller.abort();
+    await expect(capture).rejects.toThrow('Visual operation was cancelled.');
     releaseCapture(new Uint8Array([1, 2, 3]));
-
-    await expect(capture).rejects.toThrow('Visual capture was cancelled.');
     expect(requestFence).toHaveBeenCalledOnce();
     expect((await readdir(root)).filter((name) => name.endsWith('.bin') || name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('revokes a PNG that finishes publication concurrently with cancellation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-capture-cancelled-publish-'));
+    const controller = new AbortController();
+    const artifacts = createVisualArtifactStore(root, {
+      onAfterMetadataInsert: () => controller.abort(),
+    });
+    const result = captureVisualSurface({
+      processIdentity: () => processIdentity,
+      topologyRevision: () => 4,
+      surface: () => ({ projectId: 'project-a', presentation: 'visible' as const }),
+      runtime: () => ({ senderId: 42, capturePage: async () => new Uint8Array([1, 2, 3]), requestFence: async () => true }),
+      observation: () => observation(),
+      artifacts,
+    }, target, undefined, controller.signal);
+
+    await expect(result).rejects.toThrow('Visual operation was cancelled.');
+    await vi.waitFor(async () => {
+      expect((await readdir(root)).filter((name) => name.endsWith('.bin') || name.endsWith('.tmp'))).toEqual([]);
+    });
   });
 
   it('captures one stable semantic element using device bounds and CSS padding', async () => {

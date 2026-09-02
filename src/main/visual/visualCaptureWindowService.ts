@@ -6,6 +6,7 @@ import type { ProcessInstanceIdentity } from './processIdentity';
 import type { VisualArtifactMetadata, VisualArtifactStore } from './visualArtifactStore';
 import type { VisualNativeWindowCapture } from './visualWindowNativeCapture';
 import type { VisualSurfaceObservationState } from './visualSurfaceObservationState';
+import { awaitVisualOperation, revokeVisualArtifact, throwIfVisualOperationAborted } from './visualCancellation';
 
 export interface VisualWindowCaptureTarget {
   windowId: number;
@@ -194,18 +195,24 @@ export async function captureVisualWindow(
   deps: VisualWindowCaptureDependencies,
   target: VisualWindowCaptureTarget,
   requestedSize: { width: number; height: number } = { width: 4096, height: 4096 },
+  signal?: AbortSignal,
 ): Promise<VisualWindowCaptureResult> {
+  throwIfVisualOperationAborted(signal);
   const captureId = randomUUID();
   const process = deps.processIdentity();
   const initial = snapshotFor(deps, target, process);
   if (!initial) throw new Error('That Papers window is unavailable or not visible.');
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    throwIfVisualOperationAborted(signal);
     const before = snapshotFor(deps, target, process);
     if (!before) {
       throw new Error('That Papers window became unavailable during capture.');
     }
-    const native = await deps.requestCapture(before.window, `${captureId}:native:${attempt}`, requestedSize);
+    const native = await awaitVisualOperation(
+      deps.requestCapture(before.window, `${captureId}:native:${attempt}`, requestedSize), signal,
+    );
+    throwIfVisualOperationAborted(signal);
     if (!native) throw new Error('The exact native Papers window could not be captured.');
     if (native.sourceId !== before.window.sourceId) {
       if (attempt === 1) throw new Error('The native capture source changed during capture.');
@@ -217,7 +224,12 @@ export async function captureVisualWindow(
     }
     const consistency = reasonForChange(before, after);
     if (consistency.status === 'stable') {
-      const artifact = await deps.artifacts.put(native.bytes, 'image/png');
+      const artifact = await awaitVisualOperation(
+        deps.artifacts.put(native.bytes, 'image/png'),
+        signal,
+        revokeVisualArtifact(deps.artifacts.delete),
+      );
+      throwIfVisualOperationAborted(signal);
       const artifactFence = snapshotFor(deps, target, process);
       const artifactConsistency = artifactFence ? reasonForChange(after, artifactFence) : { status: 'unstable', reason: 'topology-changed' } as const;
       if (artifactConsistency.status === 'stable') {

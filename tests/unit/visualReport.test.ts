@@ -160,4 +160,40 @@ describe('visual reports', () => {
     await expect(baseArtifacts.read(secondPng.artifactId, 0, 1024)).rejects.toThrow('artifact is unavailable');
     expect((await readdir(root)).filter((name) => name.endsWith('.bin') || name.endsWith('.tmp'))).toEqual([]);
   });
+
+  it('revokes a report ZIP that finishes publication concurrently with cancellation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-visual-report-cancelled-'));
+    const controller = new AbortController();
+    let putCount = 0;
+    let reportId: string | undefined;
+    const artifacts = createVisualArtifactStore(root, {
+      ttlMs: 60_000,
+      onAfterMetadataInsert: (metadata) => {
+        putCount += 1;
+        if (putCount === 2) {
+          reportId = metadata.artifactId;
+          controller.abort();
+        }
+      },
+    });
+    const source = await artifacts.put(new Uint8Array([9, 8, 7]), 'image/png');
+
+    await expect(createVisualReport({
+      process: {}, snapshot: {}, surface: {}, lifecycle: [], diagnostics: [], timeline: [], semanticElements: {},
+      captureSurface: async () => ({ result: { captureId: 'surface-a' }, png: source }),
+      artifacts,
+      signal: controller.signal,
+    }, {
+      windowId: 4, surfaceId: 'surface-a', beforeMs: 10_000, elementKeys: [],
+      include: {
+        surfaceCapture: true, elementCaptures: false, semanticElements: false,
+        recentLifecycle: false, recentDiagnostics: false, timeline: false,
+      },
+    })).rejects.toThrow('Visual operation was cancelled.');
+
+    expect(reportId).toBeDefined();
+    await expect(artifacts.read(reportId!, 0, 1024)).rejects.toThrow('artifact is unavailable');
+    await expect(artifacts.read(source.artifactId, 0, 1024)).rejects.toThrow('artifact is unavailable');
+    expect((await readdir(root)).filter((name) => name.endsWith('.bin') || name.endsWith('.tmp'))).toEqual([]);
+  });
 });

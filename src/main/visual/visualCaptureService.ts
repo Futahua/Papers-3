@@ -5,6 +5,7 @@ import { assessVisualConsistency, type VisualConsistency, type VisualObservation
 import type { ProcessInstanceIdentity } from './processIdentity';
 import type { VisualArtifactMetadata, VisualArtifactStore } from './visualArtifactStore';
 import type { VisualSurfaceObservationState } from './visualSurfaceObservationState';
+import { awaitVisualOperation, revokeVisualArtifact, throwIfVisualOperationAborted } from './visualCancellation';
 
 export interface VisualCaptureTarget {
   windowId: number;
@@ -72,10 +73,6 @@ export interface VisualCaptureDependencies {
   elementViewportCss?(target: VisualCaptureTarget): { width: number; height: number } | null;
   cropPng?(bytes: Uint8Array, request: VisualElementCropRequest): VisualElementCropResult | Promise<VisualElementCropResult>;
   artifacts: VisualArtifactStore;
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw new Error('Visual capture was cancelled.');
 }
 
 export interface VisualCaptureResult {
@@ -237,7 +234,7 @@ export async function captureVisualSurface(
   elementRequest?: VisualElementCaptureRequest,
   signal?: AbortSignal,
 ): Promise<VisualCaptureResult> {
-  throwIfAborted(signal);
+  throwIfVisualOperationAborted(signal);
   const captureId = randomUUID();
   const process = deps.processIdentity();
   const initial = deps.surface(target);
@@ -245,7 +242,7 @@ export async function captureVisualSurface(
   if (initial.presentation !== 'visible') throw new Error('That visual surface is not visibly presented.');
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    throwIfAborted(signal);
+    throwIfVisualOperationAborted(signal);
     const runtime = deps.runtime(target);
     if (!runtime) {
       const after = unstableSnapshot(deps, target, process, {
@@ -279,9 +276,11 @@ export async function captureVisualSurface(
     }
     const documentInstanceId = currentState.documentInstanceId;
     if (!documentInstanceId) throw new Error('That visual surface has no current document instance.');
-    throwIfAborted(signal);
-    const preFenceAnswered = await runtime.requestFence(`${captureId}:pre:${attempt}`, documentInstanceId);
-    throwIfAborted(signal);
+    throwIfVisualOperationAborted(signal);
+    const preFenceAnswered = await awaitVisualOperation(
+      runtime.requestFence(`${captureId}:pre:${attempt}`, documentInstanceId), signal,
+    );
+    throwIfVisualOperationAborted(signal);
     if (!preFenceAnswered) {
       if (!currentRendererChanged(deps, target, runtime, documentInstanceId)) {
         throw new Error('That visual surface renderer did not answer its fence.');
@@ -301,8 +300,8 @@ export async function captureVisualSurface(
     const before = snapshotFor(deps, target, runtime, process);
     let bytes: Uint8Array;
     try {
-      bytes = await runtime.capturePage();
-      throwIfAborted(signal);
+      bytes = await awaitVisualOperation(runtime.capturePage(), signal);
+      throwIfVisualOperationAborted(signal);
     } catch (error) {
       if (signal?.aborted) throw error;
       if (!currentRendererChanged(deps, target, runtime, documentInstanceId)) throw error;
@@ -318,8 +317,10 @@ export async function captureVisualSurface(
       }
       continue;
     }
-    const afterAlive = await runtime.requestFence(`${captureId}:post:${attempt}`, documentInstanceId);
-    throwIfAborted(signal);
+    const afterAlive = await awaitVisualOperation(
+      runtime.requestFence(`${captureId}:post:${attempt}`, documentInstanceId), signal,
+    );
+    throwIfVisualOperationAborted(signal);
     if (!afterAlive && !currentRendererChanged(deps, target, runtime, documentInstanceId)) {
       throw new Error('That visual surface renderer did not answer its post-capture fence.');
     }
@@ -339,16 +340,19 @@ export async function captureVisualSurface(
         const viewportCss = deps.elementViewportCss?.(target);
         if (!viewportCss || viewportCss.width <= 0 || viewportCss.height <= 0) throw new Error('That visual element has no accepted CSS viewport.');
         if (!deps.cropPng) throw new Error('Visual element cropping is unavailable.');
-        const cropped = await deps.cropPng(bytes, { boundsCss: element.boundsCss, paddingCssPx: elementRequest.paddingCssPx, viewportCss });
-        throwIfAborted(signal);
+        const cropped = await awaitVisualOperation(
+          Promise.resolve(deps.cropPng(bytes, { boundsCss: element.boundsCss, paddingCssPx: elementRequest.paddingCssPx, viewportCss })), signal,
+        );
+        throwIfVisualOperationAborted(signal);
         crop = cropped.bounds;
         artifactBytes = cropped.bytes;
       }
-      const artifact = await deps.artifacts.put(artifactBytes, 'image/png');
-      if (signal?.aborted) {
-        await deps.artifacts.delete(artifact.artifactId).catch(() => undefined);
-        throw new Error('Visual capture was cancelled.');
-      }
+      const artifact = await awaitVisualOperation(
+        deps.artifacts.put(artifactBytes, 'image/png'),
+        signal,
+        revokeVisualArtifact(deps.artifacts.delete),
+      );
+      throwIfVisualOperationAborted(signal);
       const artifactFence = snapshotFor(deps, target, runtime, process);
       const artifactConsistency = instabilityReason(after, artifactFence, initial.projectId);
       if (artifactConsistency.status !== 'stable') {
