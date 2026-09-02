@@ -47,6 +47,7 @@ import { attachVisualLifecycleMonitor, recordRendererVisualDiagnostic, visualCon
 import { createVisualDiagnosticBuffer, type VisualDiagnosticBuffer } from './visual/visualDiagnostics';
 import { createVisualSemanticKeyRegistry, type VisualSemanticKeyRegistry } from '@shared/visualSemanticKeys';
 import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visual/visualResourceMonitor';
+import { refreshCurrentVisualSemanticKeys } from './visual/visualSemanticObservationRefresh';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
@@ -934,7 +935,19 @@ async function bootstrap(): Promise<void> {
     retireLogicalSurface,
     moveLogicalSurface,
     refreshVisualSemanticKeys: (windowId, surfaceId) => {
-      papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.refreshVisualSemanticKeys();
+      refreshCurrentVisualSemanticKeys({
+        isLiveIn: (candidateSurfaceId, candidateWindowId) =>
+          papersWindows.has(candidateWindowId) && logicalSurfaces.isLiveIn(candidateSurfaceId, candidateWindowId),
+        runtimeForSurface: (candidateWindowId, candidateSurfaceId) =>
+          papersWindows.get(candidateWindowId)?.owned.projectSurfaces.get(candidateSurfaceId) ?? null,
+        contextForSender: (senderId) => {
+          const context = surfaceContexts.contextForSender(senderId);
+          return context?.surfaceId
+            ? { windowId: context.windowId, surfaceId: context.surfaceId }
+            : null;
+        },
+        bindSender: bindVisualSemanticKeySender,
+      }, windowId, surfaceId);
     },
     // Phase 1B: a real lookup, with no singleton fallback left. A host
     // renderer resolves through the window registry; a project, detached or
