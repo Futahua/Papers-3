@@ -335,15 +335,19 @@ describe('Papers developer control server', () => {
     const hostWrite = vi.fn((_payload: string) => true);
     const surfaceAWrite = vi.fn((_payload: string) => true);
     const blockedWrite = vi.fn((_payload: string) => false);
+    const legacyBlockedWrite = vi.fn((_payload: string) => false);
     const host = { destroyed: false, writableNeedDrain: false, write: hostWrite } as unknown as Socket;
     const surfaceA = { destroyed: false, writableNeedDrain: false, write: surfaceAWrite } as unknown as Socket;
     const blocked = { destroyed: false, writableNeedDrain: true, write: blockedWrite } as unknown as Socket;
+    const legacyBlocked = { destroyed: false, writableNeedDrain: true, write: legacyBlockedWrite } as unknown as Socket;
     eventHub.attach(host);
     eventHub.attach(surfaceA);
     eventHub.attach(blocked);
+    eventHub.attach(legacyBlocked);
     eventHub.subscribe(host, ['visual.lifecycle'], { windowId: 4 });
     eventHub.subscribe(surfaceA, ['visual.diagnostic'], { windowId: 4, surfaceId: 'surface-a' });
     eventHub.subscribe(blocked, ['visual.diagnostic'], { windowId: 4 });
+    eventHub.subscribe(legacyBlocked, ['window.created']);
 
     const lifecycle = {
       sequence: 1,
@@ -366,10 +370,12 @@ describe('Papers developer control server', () => {
     eventHub.publish('visual.lifecycle', lifecycle);
     eventHub.publish('visual.diagnostic', diagnostic);
     eventHub.publish('visual.diagnostic', otherSurface);
+    eventHub.publish('window.created', { windowId: 9 });
 
     expect(hostWrite).toHaveBeenCalledOnce();
     expect(surfaceAWrite).toHaveBeenCalledOnce();
     expect(blockedWrite).not.toHaveBeenCalled();
+    expect(legacyBlockedWrite).toHaveBeenCalledOnce();
     expect(String(surfaceAWrite.mock.calls[0]?.[0])).toContain('surface-a');
     expect(String(surfaceAWrite.mock.calls[0]?.[0])).not.toContain('surface-b');
   });

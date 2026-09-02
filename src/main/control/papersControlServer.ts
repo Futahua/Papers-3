@@ -134,7 +134,8 @@ export function createPapersControlEventHub(): PapersControlEventHub {
       for (const [socket, subscription] of subscriptions) {
         if (!subscription.events.has(event)) continue;
         if (isVisualEvent(event) && (!subscription.visualTarget || !matchesVisualTarget(payload, subscription.visualTarget))) continue;
-        sendEvent(socket, frame);
+        if (isVisualEvent(event)) sendEvent(socket, frame);
+        else send(socket, frame);
       }
     },
   };
