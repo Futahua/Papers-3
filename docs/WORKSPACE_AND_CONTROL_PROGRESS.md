@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.3 semantic-key identity/surface-local authority foundation in progress; exact-SHA reviewer gate pending
+Persistent status: C1.3 semantic-key identity/surface-local authority foundation signed off at `d440466b87d4234339b3fb5dd0ac6845b0be7fa8`; C1.1 capture backbone in progress
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -363,6 +363,33 @@ because one request completed:
 * [ ] expose the first read-only `capture.surface` command only after the
   synchronized service exists.
 
+### Current per-surface observation tracker (active C1.1 work)
+
+The diagnostic ring is historical evidence, not the current capture fence.
+The tracker must retain, per exact live project surface:
+
+```text
+windowId
+surfaceId
+currentSenderGeneration
+renderCycleId
+documentStateRevision | null
+domReady
+hydrated
+firstPaint
+layoutEpoch
+layoutStable
+renderFailed
+```
+
+* [ ] did-start-loading starts a new cycle and clears document/readiness state;
+* [ ] hydration, paint, and layout signals apply only to the current sender and
+  cycle;
+* [ ] a new layout epoch invalidates prior layout-stable state;
+* [ ] replacement/gone invalidates current state;
+* [ ] cross-window adoption and rollback re-establish the exact generation;
+* [ ] no capture infers current state by searching historical diagnostics.
+
 Implementation checkpoint: local focused tests
 `tests/unit/visualObservation.test.ts` (12/12) and
 `tests/unit/papersControlProtocol.test.ts` (21/21) pass, and `npm run typecheck`
@@ -375,6 +402,31 @@ remaining defect in this narrow slice after the `dev:0n` correction. Source was
 inspected from the pushed branch; validation reported 34/34 focused tests,
 typecheck, and `git diff --check`. Renderer capture/API remain intentionally
 unclaimed and are the next C1.1 work.
+
+Reviewer checkpoint: **SIGNED OFF** for the C1.3 semantic-key
+identity/surface-local-authority foundation at exact pushed head
+`d440466b87d4234339b3fb5dd0ac6845b0be7fa8`. The reviewer accepted bounded
+opaque keys, duplicate/invalid-payload atomicity, predefined attribute-only
+observation, exact sender-derived targeting, surface isolation, generation and
+navigation invalidation, exact-surface retirement, prepared-sender refusal,
+cross-window/rollback recovery, and diagnostic-refresh failure isolation.
+Validation for the accepted correction included `npm run typecheck`,
+`npm test` (78 files: 812 passed, 4 skipped), build, focused Electron E2E, and
+`git diff --check`. The user-owned
+`docs/evidence/worker-comparison.json` remained untouched and unstaged.
+
+The next active gate is C1.1 capture infrastructure. Its first implementation
+checklist is:
+
+* [ ] canonical current per-surface observation state, independent of the
+  historical diagnostic ring;
+* [ ] fixed bounded renderer fence request/response with capture correlation;
+* [ ] Papers-owned opaque artifact store with atomic finalize and bounded reads;
+* [ ] synchronized `capture.surface` and composed `capture.window` control
+  commands;
+* [ ] exact-target, retry, instability, no-mutation, artifact-integrity, and
+  packaged acceptance evidence;
+* [ ] exact-SHA reviewer sign-off before advancing to geometry/assertions.
 
 ### Required invariant
 
@@ -1490,6 +1542,12 @@ Reviewer asks:
 * structured assertion output;
 * redaction/schema proofs;
 * exact SHA/sign-off.
+
+Reviewer checkpoint: **SIGNED OFF** for the C1.3 semantic-key
+identity/surface-local-authority foundation at exact pushed head
+`d440466b87d4234339b3fb5dd0ac6845b0be7fa8`. Geometry, assertions, and
+`capture.element` remain unclaimed until the C1.1 synchronized capture and
+artifact foundation is complete.
 
 ## Rollback / failure behavior
 
