@@ -623,19 +623,23 @@ project/main-world paint producer for the existing sender-authoritative
 as paint.
 
 Current implementation checkpoint: the opt-in project dev-control preload
-installs a fixed main-world `PerformanceObserver` for the browser-provided
-`paint` entry named `first-paint`, with a buffered-entry check and one-shot
-disconnect. It emits the fixed sender-authoritative lifecycle signal only
+installs a Papers-owned `PerformanceObserver` for the browser-provided `paint`
+entry named `first-paint`, with a buffered-entry check and one-shot disconnect.
+The fixed first-paint emitter is no longer present on the page-visible bridge;
+project code can report hydration and failure facts, but cannot forge paint
+success. The preload emits the fixed sender-authoritative lifecycle signal only
 after that real Paint Timing entry exists; unsupported Paint Timing leaves the
 phase unknown and never infers it from load, DOM-ready, or hydration. Focused
-unit coverage proves the fixed bridge signal, and neutral-project E2E proves
-the actual producer reaches the exact window/surface diagnostic stream.
+unit coverage proves the private emitter/public bridge boundary, and
+neutral-project E2E proves the actual producer reaches the exact
+window/surface diagnostic stream while `reportFirstPaint` is unavailable to the
+project page.
 Validation: full Vitest 785 passed/4 skipped across 72 passed/1 skipped files;
 focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
 typecheck; build; diff check.
 
 The exact-SHA reviewer gate must confirm one-shot first-paint reporting,
-sender-authoritative routing, no synthesized paint success, and no polling or
+sender-authoritative routing, no page-forged paint success, and no polling or
 state mutation.
 
 ## Architectural boundary / likely owner

@@ -9,7 +9,6 @@ export interface ProjectVisualDiagnosticBridge {
   report(kind: string, message: string): void;
   reportStateHydrated(revision: string, summary?: unknown): void;
   reportHydrationFailed(revision: string | undefined, stage: string, code: string): void;
-  reportFirstPaint(): void;
 }
 
 const MAX_REVISION_LENGTH = 256;
@@ -42,6 +41,10 @@ function safeSummary(raw: unknown): Record<string, number> | undefined {
   return result;
 }
 
+export function reportProjectFirstPaint(ipc: ProjectVisualDiagnosticIpc): void {
+  ipc.send(VISUAL_RENDERER_SIGNAL_CHANNEL, { kind: 'lifecycle', phase: 'first-paint' });
+}
+
 export function createProjectVisualDiagnosticBridge(ipc: ProjectVisualDiagnosticIpc): ProjectVisualDiagnosticBridge {
   return {
     report(kind, message) {
@@ -70,9 +73,6 @@ export function createProjectVisualDiagnosticBridge(ipc: ProjectVisualDiagnostic
         stage,
         code,
       });
-    },
-    reportFirstPaint() {
-      ipc.send(VISUAL_RENDERER_SIGNAL_CHANNEL, { kind: 'lifecycle', phase: 'first-paint' });
     },
   };
 }

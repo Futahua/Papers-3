@@ -90,6 +90,8 @@ describe('project renderer visual diagnostics', () => {
       .some((surface) => surface.surfaceId === opened.surfaceId && surface.presentation === 'visible'),
     10_000, 'initial project presentation');
     expect(await evalInBackpackProject(launched.app, 'Boolean(window.__papersVisualDiagnosticObserverV1)')).toBe(true);
+    expect(await evalInBackpackProject(launched.app,
+      `typeof window.papersVisualDiagnosticBridgeV1?.reportFirstPaint`)).toBe('undefined');
     await evalInBackpackProject(launched.app,
       `window.papersVisualDiagnosticBridgeV1.reportStateHydrated('neutral-rev-1', { cards: 1, groups: 1 }); true`);
     await waitFor(async () => {

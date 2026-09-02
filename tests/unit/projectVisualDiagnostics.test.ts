@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   createProjectVisualDiagnosticBridge,
+  reportProjectFirstPaint,
   VISUAL_RENDERER_DIAGNOSTIC_CHANNEL,
   VISUAL_RENDERER_SIGNAL_CHANNEL,
 } from '../../src/preload/projectVisualDiagnostics';
@@ -45,11 +46,13 @@ describe('opt-in project hydration diagnostic bridge', () => {
     });
   });
 
-  it('emits first-paint only through the fixed lifecycle signal', () => {
+  it('keeps first-paint emission out of the page-visible bridge', () => {
     const send = vi.fn();
     const bridge = createProjectVisualDiagnosticBridge({ send });
-    bridge.reportFirstPaint();
+    expect('reportFirstPaint' in bridge).toBe(false);
+    expect(send).not.toHaveBeenCalled();
 
+    reportProjectFirstPaint({ send });
     expect(send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
       kind: 'lifecycle', phase: 'first-paint',
     });

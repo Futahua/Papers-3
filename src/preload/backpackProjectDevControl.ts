@@ -1,5 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import { createProjectVisualDiagnosticBridge, type ProjectVisualDiagnosticBridge } from './projectVisualDiagnostics';
+import {
+  createProjectVisualDiagnosticBridge,
+  reportProjectFirstPaint,
+  type ProjectVisualDiagnosticBridge,
+} from './projectVisualDiagnostics';
 
 const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
 
@@ -10,9 +14,28 @@ function installVisualDiagnosticListeners(
     executeInMainWorld(script: { func: () => void }): unknown;
   },
 ): void {
-  mainWorld.exposeInMainWorld(MAIN_WORLD_DIAGNOSTIC_BRIDGE, {
-    ...createProjectVisualDiagnosticBridge(ipc),
-  });
+  const diagnosticBridge = createProjectVisualDiagnosticBridge(ipc);
+  mainWorld.exposeInMainWorld(MAIN_WORLD_DIAGNOSTIC_BRIDGE, diagnosticBridge);
+  // Keep first-paint emission Papers-owned while observing the document's
+  // browser-provided Paint Timing entries in this preload world.
+  try {
+    let firstPaintReported = false;
+    const reportFirstPaint = (entryName: unknown): void => {
+      if (firstPaintReported || entryName !== 'first-paint') return;
+      firstPaintReported = true;
+      reportProjectFirstPaint(ipc);
+    };
+    const paintObserver = new PerformanceObserver((list) => {
+      list.getEntries().forEach((entry) => reportFirstPaint(entry.name));
+      if (firstPaintReported) paintObserver.disconnect();
+    });
+    paintObserver.observe({ type: 'paint', buffered: true });
+    performance.getEntriesByType('paint').forEach((entry) => reportFirstPaint(entry.name));
+    if (firstPaintReported) paintObserver.disconnect();
+  } catch {
+    // Paint Timing is a browser-provided optional signal. Absence of the
+    // API leaves first-paint unknown; it is never inferred from load or DOM readiness.
+  }
   try {
     void Promise.resolve(mainWorld.executeInMainWorld({ func: () => {
       const page = window as unknown as {
@@ -39,26 +62,6 @@ function installVisualDiagnosticListeners(
           reason !== null && typeof reason === 'object' && typeof reason.message === 'string' ? reason.message :
             typeof reason === 'string' ? reason : 'unhandled rejection');
       });
-      let firstPaintReported = false;
-      const reportFirstPaint = (entryName: unknown): void => {
-        if (firstPaintReported || entryName !== 'first-paint') return;
-        const bridge = page.papersVisualDiagnosticBridgeV1;
-        if (!bridge) return;
-        firstPaintReported = true;
-        bridge.reportFirstPaint();
-      };
-      try {
-        const paintObserver = new PerformanceObserver((list) => {
-          list.getEntries().forEach((entry) => reportFirstPaint(entry.name));
-          if (firstPaintReported) paintObserver.disconnect();
-        });
-        paintObserver.observe({ type: 'paint', buffered: true });
-        performance.getEntriesByType('paint').forEach((entry) => reportFirstPaint(entry.name));
-        if (firstPaintReported) paintObserver.disconnect();
-      } catch {
-        // Paint Timing is a browser-provided optional signal. Absence of the
-        // API leaves first-paint unknown; it is never inferred from load or DOM readiness.
-      }
     } })).catch(() => undefined);
   } catch {
     // A build without main-world execution leaves diagnostics inert.
