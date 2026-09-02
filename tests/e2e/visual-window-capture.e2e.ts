@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -86,7 +87,7 @@ describe('composed visual window capture', () => {
       nativeBounds: { width: number; height: number };
       pixelSize: { width: number; height: number };
       surfaces: Array<{ surfaceId: string; projectId: string; presentation: string }>;
-      png: { mimeType: string; size: number; artifactId: string };
+      png: { mimeType: string; size: number; artifactId: string; sha256: string };
     };
     expect(captured.target).toEqual({ windowId });
     expect(captured.consistency).toEqual({ status: 'stable' });
@@ -99,5 +100,21 @@ describe('composed visual window capture', () => {
     ]);
     expect(captured.surfaces.some((surface) => surface.surfaceId === secondOpened.surfaceId)).toBe(false);
     expect(captured.png).toEqual(expect.objectContaining({ mimeType: 'image/png', size: expect.any(Number) }));
+
+    const chunks: Uint8Array[] = [];
+    let offset = 0;
+    let done = false;
+    while (!done) {
+      const chunk = await call('visual.artifact.read', {
+        artifactId: captured.png.artifactId, offset, length: 1024,
+      }) as { nextOffset: number; done: boolean; bytesBase64: string };
+      chunks.push(new Uint8Array(Buffer.from(chunk.bytesBase64, 'base64')));
+      offset = chunk.nextOffset;
+      done = chunk.done;
+    }
+    const bytes = new Uint8Array(chunks.reduce((all, chunk) => [...all, ...chunk], [] as number[]));
+    expect(bytes.byteLength).toBe(captured.png.size);
+    expect(bytes[0]).toBe(137);
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(captured.png.sha256);
   }, 30_000);
 });

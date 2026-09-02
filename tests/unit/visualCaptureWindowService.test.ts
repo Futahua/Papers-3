@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { captureVisualWindow, type VisualWindowCaptureDependencies } from '../../src/main/visual/visualCaptureWindowService';
 import type { VisualArtifactMetadata, VisualArtifactStore } from '../../src/main/visual/visualArtifactStore';
+import type { VisualSurfaceObservationState } from '../../src/main/visual/visualSurfaceObservationState';
 
 const processIdentity = {
   pid: 10,
@@ -17,7 +18,7 @@ const metadata: VisualArtifactMetadata = {
   createdAt: '2026-09-02T00:00:00.000Z', expiresAt: '2026-09-02T01:00:00.000Z',
 };
 
-function makeDeps(mutateAfterCapture?: (state: { surfaces: Array<{ observation: { documentStateRevision: string | null } | null }> }) => void): VisualWindowCaptureDependencies {
+function makeDeps(mutateAfterCapture?: (state: { surfaces: Array<{ observation: VisualSurfaceObservationState | null }> }) => void): VisualWindowCaptureDependencies {
   const state = {
     topology: 4,
     window: { windowId: 7, sourceId: 'window:7:1', visible: true, nativeBounds: { x: 10, y: 20, width: 900, height: 600 }, hostContents: { id: 77, isDestroyed: () => false } as never },
@@ -73,6 +74,29 @@ describe('composed visual window capture', () => {
     });
     const result = await captureVisualWindow(deps, { windowId: 7 });
     expect(result.consistency).toEqual({ status: 'unstable', reason: 'state-changed' });
+    expect(deps.requestCapture).toHaveBeenCalledTimes(2);
+    expect(deps.artifacts.put).not.toHaveBeenCalled();
+  });
+
+  it('classifies same-renderer navigation as state change, not renderer replacement', async () => {
+    let navigation = 0;
+    const deps = makeDeps((state) => {
+      navigation += 1;
+      state.surfaces[0]!.observation!.documentInstanceId = `${navigation}3333333-3333-4333-8333-333333333333`;
+      state.surfaces[0]!.observation!.renderCycleId = `${navigation}4444444-4444-4444-8444-444444444444`;
+    });
+    const result = await captureVisualWindow(deps, { windowId: 7 });
+    expect(result.consistency).toEqual({ status: 'unstable', reason: 'state-changed' });
+    expect(deps.requestCapture).toHaveBeenCalledTimes(2);
+    expect(deps.artifacts.put).not.toHaveBeenCalled();
+  });
+
+  it('rejects a native image returned for a foreign source', async () => {
+    const deps = makeDeps();
+    deps.requestCapture = vi.fn(async () => ({
+      bytes: new Uint8Array([137, 80, 78, 71]), width: 1800, height: 1200, sourceId: 'window:foreign:1',
+    }));
+    await expect(captureVisualWindow(deps, { windowId: 7 })).rejects.toThrow('native capture source changed');
     expect(deps.requestCapture).toHaveBeenCalledTimes(2);
     expect(deps.artifacts.put).not.toHaveBeenCalled();
   });

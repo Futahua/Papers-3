@@ -111,13 +111,18 @@ function reasonForChange(before: WindowCaptureSnapshot, after: WindowCaptureSnap
   }
   if (before.surfaces.some((surface, index) => {
     const other = after.surfaces[index]!;
-    const left = surface.observation;
-    const right = other.observation;
-    return senderBinding(left) !== senderBinding(right)
-      || left?.documentInstanceId !== right?.documentInstanceId
-      || left?.renderCycleId !== right?.renderCycleId;
+    return senderBinding(surface.observation) !== senderBinding(other.observation);
   })) {
     return { status: 'unstable', reason: 'renderer-replaced' };
+  }
+  if (before.surfaces.some((surface, index) => {
+    const other = after.surfaces[index]!;
+    const left = surface.observation;
+    const right = other.observation;
+    return left?.documentInstanceId !== right?.documentInstanceId
+      || left?.renderCycleId !== right?.renderCycleId;
+  })) {
+    return { status: 'unstable', reason: 'state-changed' };
   }
   if (before.surfaces.some((surface, index) => {
     const other = after.surfaces[index]!;
@@ -202,6 +207,10 @@ export async function captureVisualWindow(
     }
     const native = await deps.requestCapture(before.window, `${captureId}:native:${attempt}`, requestedSize);
     if (!native) throw new Error('The exact native Papers window could not be captured.');
+    if (native.sourceId !== before.window.sourceId) {
+      if (attempt === 1) throw new Error('The native capture source changed during capture.');
+      continue;
+    }
     const after = snapshotFor(deps, target, process);
     if (!after) {
       return resultFor(target, captureId, process, before, native, { status: 'unstable', reason: 'topology-changed' });
