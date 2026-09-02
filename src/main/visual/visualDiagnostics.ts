@@ -43,6 +43,9 @@ const lifecyclePayloadSchema = z.object({
   if (payload.phase === 'render-failed' && ((payload.stage === undefined) !== (payload.code === undefined))) {
     context.addIssue({ code: 'custom', message: 'render-failed hydration metadata requires both stage and code' });
   }
+  if (payload.phase === 'render-failed' && payload.stage !== undefined && payload.code !== undefined && payload.detail !== undefined) {
+    context.addIssue({ code: 'custom', message: 'render-failed detail and hydration metadata are mutually exclusive' });
+  }
   if (payload.phase !== 'render-failed' && (payload.stage !== undefined || payload.code !== undefined)) {
     context.addIssue({ code: 'custom', message: 'hydration failure metadata is only valid for render-failed' });
   }

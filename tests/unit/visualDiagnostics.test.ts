@@ -23,6 +23,7 @@ describe('bounded visual diagnostic buffer', () => {
       { kind: 'lifecycle', phase: 'first-paint' },
       { kind: 'lifecycle', phase: 'layout-stable' },
       { kind: 'lifecycle', phase: 'render-failed' },
+      { kind: 'lifecycle', phase: 'render-failed', revision: 'rev-1', stage: 'parse', code: 'bad-state' },
       { kind: 'console', level: 'error', message: 'render failed' },
       { kind: 'uncaught-error', message: 'uncaught' },
       { kind: 'unhandled-rejection', message: 'rejected' },
@@ -49,6 +50,13 @@ describe('bounded visual diagnostic buffer', () => {
     })).toThrow();
     expect(() => buffer.append({ windowId: 1 }, {
       kind: 'hydration-failed', stage: 'parse', code: 'bad/code',
+    })).toThrow();
+    buffer.append({ windowId: 1 }, {
+      kind: 'lifecycle', phase: 'render-failed', revision: 'rev-1', stage: 'parse', code: 'invalid-envelope',
+    });
+    expect(() => buffer.append({ windowId: 1 }, {
+      kind: 'lifecycle', phase: 'render-failed', detail: 'layout-stability-timeout',
+      revision: 'rev-1', stage: 'parse', code: 'invalid-envelope',
     })).toThrow();
     expect(buffer.snapshot()[0]?.payload).toMatchObject({
       phase: 'state-hydrated', revision: 'rev-1', summary: { cards: 3 },

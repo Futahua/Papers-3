@@ -681,8 +681,9 @@ Current implementation checkpoint: the fixed page-facing
 metadata, emits the `hydration-failed` diagnostic, and emits a paired strict
 `render-failed` lifecycle payload carrying the same bounded revision/stage/code.
 The main process accepts that correlation shape only for `render-failed`, while
-ordinary render failures retain their separate bounded-detail shape; all
-records still use the authenticated sender-derived window/surface target.
+ordinary render failures retain their separate bounded-detail shape; the shared
+retained schema rejects mixed detail-plus-correlation payloads. All records
+still use the authenticated sender-derived window/surface target.
 Focused IPC, bridge, lifecycle-schema, and neutral-project E2E coverage proves
 the pair and rejects extra/foreign fields.
 Validation: full Vitest 792 passed/4 skipped across 73 passed/1 skipped files;
