@@ -62,7 +62,13 @@ function assertReadRange(offset: number, length: number): void {
 
 export function createVisualArtifactStore(
   rootDir: string,
-  options: { now?: () => Date; ttlMs?: number; maxBytes?: number } = {},
+  options: {
+    now?: () => Date;
+    ttlMs?: number;
+    maxBytes?: number;
+    /** Test-only fault injection after rename and metadata publication. */
+    onAfterMetadataInsert?: (metadata: VisualArtifactMetadata) => Promise<void> | void;
+  } = {},
 ): VisualArtifactStore {
   const now = options.now ?? (() => new Date());
   const ttlMs = options.ttlMs ?? VISUAL_ARTIFACT_TTL_MS;
@@ -139,6 +145,7 @@ export function createVisualArtifactStore(
         await writeFile(tempPath, bytes, { flag: 'wx' });
         await rename(tempPath, filePath);
         entries.set(artifactId, metadata);
+        await options.onAfterMetadataInsert?.(publicMetadata(metadata));
         const confirmed = await stat(filePath);
         if (confirmed.size !== bytes.byteLength) throw new Error('artifact finalize size mismatch');
         return publicMetadata(metadata);

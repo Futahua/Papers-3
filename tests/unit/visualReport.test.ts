@@ -123,13 +123,20 @@ describe('visual reports', () => {
 
   it('cleans captured inputs when final report storage is interrupted', async () => {
     const root = await mkdtemp(join(tmpdir(), 'papers-visual-report-interrupted-'));
-    const baseArtifacts = createVisualArtifactStore(root, { ttlMs: 60_000 });
+    let putCount = 0;
+    let interruptedReportId: string | undefined;
+    const baseArtifacts = createVisualArtifactStore(root, {
+      ttlMs: 60_000,
+      onAfterMetadataInsert: (metadata) => {
+        putCount += 1;
+        if (putCount === 3) {
+          interruptedReportId = metadata.artifactId;
+          throw new Error('report write interrupted after publication began');
+        }
+      },
+    });
     const firstPng = await baseArtifacts.put(new Uint8Array([1, 2, 3]), 'image/png');
     const secondPng = await baseArtifacts.put(new Uint8Array([4, 5, 6]), 'image/png');
-    const artifacts = {
-      ...baseArtifacts,
-      put: async () => { throw new Error('report write interrupted'); },
-    };
 
     await expect(createVisualReport({
       process: {}, snapshot: {}, surface: {}, lifecycle: [], diagnostics: [], timeline: [], semanticElements: {},
@@ -137,7 +144,7 @@ describe('visual reports', () => {
         result: { element: { key: elementKey } },
         png: elementKey === 'canvas.root' ? firstPng : secondPng,
       }),
-      artifacts,
+      artifacts: baseArtifacts,
     }, {
       windowId: 4, surfaceId: 'surface-a', beforeMs: 10_000,
       elementKeys: ['canvas.root', 'sidebar'],
@@ -145,8 +152,10 @@ describe('visual reports', () => {
         surfaceCapture: false, elementCaptures: true, semanticElements: false,
         recentLifecycle: false, recentDiagnostics: false, timeline: false,
       },
-    })).rejects.toThrow('report write interrupted');
+    })).rejects.toThrow('report write interrupted after publication began');
 
+    expect(interruptedReportId).toBeDefined();
+    await expect(baseArtifacts.read(interruptedReportId!, 0, 1024)).rejects.toThrow('artifact is unavailable');
     await expect(baseArtifacts.read(firstPng.artifactId, 0, 1024)).rejects.toThrow('artifact is unavailable');
     await expect(baseArtifacts.read(secondPng.artifactId, 0, 1024)).rejects.toThrow('artifact is unavailable');
     expect((await readdir(root)).filter((name) => name.endsWith('.bin') || name.endsWith('.tmp'))).toEqual([]);
