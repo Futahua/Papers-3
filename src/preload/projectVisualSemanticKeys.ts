@@ -20,6 +20,11 @@ interface SemanticKeyObserverEnvironment {
   stableLayoutEpoch?: () => number | null;
 }
 
+interface VisualViewportCss {
+  width: number;
+  height: number;
+}
+
 const PAPERS_SEMANTIC_KEY_ATTRIBUTE = 'data-papers-visual-key';
 
 function quantize(value: number): number { return Math.round(value * 100) / 100; }
@@ -140,7 +145,12 @@ export function installProjectVisualSemanticKeyObserver(
     }
     const layoutEpoch = environment.stableLayoutEpoch?.() ?? null;
     const observations = layoutEpoch === null ? [] : observeElements(document, elements, environment.devicePixelRatio ?? 1);
-    const payloadObject = observations.length > 0 ? { keys, observations, layoutEpoch } : { keys };
+    const viewportWidth = quantize(document.documentElement?.clientWidth ?? 0);
+    const viewportHeight = quantize(document.documentElement?.clientHeight ?? 0);
+    const viewportCss: VisualViewportCss | null = observations.length > 0 && viewportWidth > 0 && viewportHeight > 0
+      ? { width: viewportWidth, height: viewportHeight }
+      : null;
+    const payloadObject = observations.length > 0 ? { keys, observations, layoutEpoch, viewportCss } : { keys };
     const payload = JSON.stringify(payloadObject);
     if (!force && payload === lastPayload) return;
     lastPayload = payload;
@@ -148,6 +158,7 @@ export function installProjectVisualSemanticKeyObserver(
       keys,
       ...(observations.length > 0 ? { observations } : {}),
       ...(observations.length > 0 && layoutEpoch !== null ? { layoutEpoch } : {}),
+      ...(viewportCss ? { viewportCss } : {}),
       ...(documentInstanceId ? { documentInstanceId } : {}),
     });
   };

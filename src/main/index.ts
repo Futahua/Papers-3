@@ -50,7 +50,7 @@ import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visua
 import { refreshCurrentVisualSemanticKeys } from './visual/visualSemanticObservationRefresh';
 import { createVisualSurfaceObservationStore } from './visual/visualSurfaceObservationState';
 import { createVisualArtifactStore } from './visual/visualArtifactStore';
-import { captureVisualSurface } from './visual/visualCaptureService';
+import { captureVisualSurface, computeVisualElementCropBounds } from './visual/visualCaptureService';
 import { createVisualRendererFenceService } from './visual/visualRendererFence';
 import { createVisualWindowNativeCaptureService } from './visual/visualWindowNativeCapture';
 import { captureVisualWindow } from './visual/visualCaptureWindowService';
@@ -163,6 +163,7 @@ interface VisualSemanticKeySurfaceState {
   registry: VisualSemanticKeyRegistry;
   currentSenderId: number | null;
   observations: VisualElementObservation[];
+  viewportCss: { width: number; height: number } | null;
 }
 
 const visualSemanticKeysBySurface = new Map<string, VisualSemanticKeySurfaceState>();
@@ -177,7 +178,7 @@ function semanticKeyStateForSurface(windowId: number, surfaceId: string): Visual
   const key = visualSemanticKeyMapKey(windowId, surfaceId);
   let state = visualSemanticKeysBySurface.get(key);
   if (!state) {
-    state = { registry: createVisualSemanticKeyRegistry(), currentSenderId: null, observations: [] };
+    state = { registry: createVisualSemanticKeyRegistry(), currentSenderId: null, observations: [], viewportCss: null };
     visualSemanticKeysBySurface.set(key, state);
   }
   return state;
@@ -190,6 +191,7 @@ function bindVisualSemanticKeySender(windowId: number, surfaceId: string, sender
     state.currentSenderId = senderId;
     state.registry.clear();
     state.observations = [];
+    state.viewportCss = null;
   }
 }
 
@@ -200,6 +202,7 @@ function invalidateVisualSemanticKeySender(windowId: number, surfaceId: string, 
   state.currentSenderId = null;
   state.registry.clear();
   state.observations = [];
+  state.viewportCss = null;
 }
 
 function resetVisualSemanticKeyObservation(windowId: number, surfaceId: string, senderId: number): void {
@@ -207,6 +210,7 @@ function resetVisualSemanticKeyObservation(windowId: number, surfaceId: string, 
   if (!state || state.currentSenderId !== senderId) return;
   state.registry.clear();
   state.observations = [];
+  state.viewportCss = null;
 }
 
 function retireVisualSemanticKeySurface(surfaceId: string): void {
@@ -1836,15 +1840,17 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
       return state?.currentSenderId === senderId ? state.registry : null;
     },
-    onObserved: ({ windowId, surfaceId }, senderId, keys, observations, layoutEpoch) => {
+    onObserved: ({ windowId, surfaceId }, senderId, keys, observations, layoutEpoch, viewportCss) => {
       visualSurfaceObservationState.replaceSemanticKeys(windowId, surfaceId, senderId, keys);
       const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
       const current = visualSurfaceObservationState.snapshot(windowId, surfaceId);
       if (state?.currentSenderId === senderId && observations && current?.layoutStable
         && layoutEpoch === current.layoutEpoch) {
         state.observations = observations.map((observation) => ({ ...observation }));
+        state.viewportCss = viewportCss ? { ...viewportCss } : null;
       } else if (state?.currentSenderId === senderId) {
         state.observations = [];
+        state.viewportCss = null;
       }
     },
     isCurrentDocumentInstance: ({ windowId, surfaceId }, senderId, documentInstanceId) => {
@@ -1912,15 +1918,22 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             ? state.observations
             : [];
         },
-        cropPng: (bytes, bounds) => {
+        elementViewportCss: ({ windowId, surfaceId }) => {
+          const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
+          const currentSenderId = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.senderId;
+          const observationState = visualSurfaceObservationState.snapshot(windowId, surfaceId);
+          return state && state.currentSenderId === currentSenderId && observationState?.layoutStable
+            ? state.viewportCss
+            : null;
+        },
+        cropPng: (bytes, request) => {
           const image = nativeImage.createFromBuffer(Buffer.from(bytes));
           const size = image.getSize();
-          const x = Math.max(0, Math.min(size.width, bounds.x));
-          const y = Math.max(0, Math.min(size.height, bounds.y));
-          const right = Math.max(x, Math.min(size.width, bounds.x + bounds.width));
-          const bottom = Math.max(y, Math.min(size.height, bounds.y + bounds.height));
-          if (right <= x || bottom <= y) throw new Error('That visual element is outside the captured surface.');
-          return new Uint8Array(image.crop({ x, y, width: right - x, height: bottom - y }).toPNG());
+          const bounds = computeVisualElementCropBounds(size, request);
+          return {
+            bytes: new Uint8Array(image.crop(bounds).toPNG()),
+            bounds,
+          };
         },
         artifacts: visualArtifactStore,
       }, target, elementRequest)

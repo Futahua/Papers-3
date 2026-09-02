@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ProcessInstanceIdentity } from '../../src/main/visual/processIdentity';
 import { createVisualArtifactStore } from '../../src/main/visual/visualArtifactStore';
-import { captureVisualSurface } from '../../src/main/visual/visualCaptureService';
+import { captureVisualSurface, computeVisualElementCropBounds } from '../../src/main/visual/visualCaptureService';
 import type { VisualSurfaceObservationState } from '../../src/main/visual/visualSurfaceObservationState';
 import type { VisualCaptureRuntime } from '../../src/main/visual/visualCaptureService';
 
@@ -50,6 +50,18 @@ async function createDependencies(root: string, topologyRevision: () => number, 
 }
 
 describe('synchronized visual surface capture', () => {
+  it('maps CSS bounds into the actual artifact scale and reports the clamped crop', () => {
+    const request = {
+      boundsCss: { x: 100, y: 50, width: 200, height: 100 }, paddingCssPx: 4,
+      viewportCss: { width: 1000, height: 600 },
+    };
+    expect(computeVisualElementCropBounds({ width: 1500, height: 900 }, request))
+      .toEqual({ x: 144, y: 69, width: 312, height: 162 });
+    expect(computeVisualElementCropBounds({ width: 1500, height: 900 }, {
+      ...request, boundsCss: { x: -2, y: 10, width: 10, height: 20 },
+    })).toEqual({ x: 0, y: 9, width: 18, height: 42 });
+  });
+
   it('captures exact pixels and stores correlated artifact metadata', async () => {
     const root = await mkdtemp(join(tmpdir(), 'papers-capture-'));
     const capturePage = vi.fn(async () => new Uint8Array([137, 80, 78, 71]));
@@ -71,10 +83,10 @@ describe('synchronized visual surface capture', () => {
   it('captures one stable semantic element using device bounds and CSS padding', async () => {
     const root = await mkdtemp(join(tmpdir(), 'papers-capture-'));
     const capturePage = vi.fn(async () => new Uint8Array([1, 2, 3]));
-    const cropPng = vi.fn((bytes: Uint8Array, bounds: { x: number; y: number; width: number; height: number }) => {
+    const cropPng = vi.fn((bytes: Uint8Array, request: { boundsCss: { x: number; y: number; width: number; height: number }; paddingCssPx: number; viewportCss: { width: number; height: number } }) => {
       expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
-      expect(bounds).toEqual({ x: 8, y: 18, width: 104, height: 54 });
-      return new Uint8Array([4, 5]);
+      expect(request).toEqual({ boundsCss: { x: 10, y: 20, width: 100, height: 50 }, paddingCssPx: 2, viewportCss: { width: 1000, height: 700 } });
+      return { bytes: new Uint8Array([4, 5]), bounds: { x: 8, y: 18, width: 104, height: 54 } };
     });
     const element = {
       key: 'canvas.root', role: 'main', boundsCss: { x: 10, y: 20, width: 100, height: 50 },
@@ -84,6 +96,7 @@ describe('synchronized visual surface capture', () => {
     const result = await captureVisualSurface({
       ...await createDependencies(root, () => 4, capturePage),
       elementObservations: () => [element],
+      elementViewportCss: () => ({ width: 1000, height: 700 }),
       cropPng,
     }, target, { elementKey: 'canvas.root', paddingCssPx: 2 });
     expect(result.element).toEqual(element);

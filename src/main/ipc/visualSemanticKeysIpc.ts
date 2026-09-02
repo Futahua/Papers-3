@@ -13,6 +13,10 @@ const semanticKeysPayloadSchema = z.object({
   keys: visualSemanticKeyListSchema,
   observations: visualElementObservationListSchema.optional(),
   layoutEpoch: z.number().int().nonnegative().optional(),
+  viewportCss: z.object({
+    width: z.number().finite().positive().max(16384),
+    height: z.number().finite().positive().max(16384),
+  }).strict().optional(),
   documentInstanceId: z.string().uuid().optional(),
 }).strict();
 
@@ -20,7 +24,7 @@ export interface VisualSemanticKeysIpcDependencies {
   ipcMain: Pick<IpcMain, 'on'>;
   resolveTarget(sender: { id: number }): VisualDiagnosticTarget | null;
   registryForTarget(target: { windowId: number; surfaceId: string }, senderId: number): VisualSemanticKeyRegistry | null;
-  onObserved?(target: { windowId: number; surfaceId: string }, senderId: number, keys: string[], observations?: VisualElementObservation[], layoutEpoch?: number): void;
+  onObserved?(target: { windowId: number; surfaceId: string }, senderId: number, keys: string[], observations?: VisualElementObservation[], layoutEpoch?: number, viewportCss?: { width: number; height: number }): void;
   isCurrentDocumentInstance?(target: { windowId: number; surfaceId: string }, senderId: number, documentInstanceId: string): boolean;
 }
 
@@ -41,7 +45,7 @@ export function registerVisualSemanticKeysIpc(deps: VisualSemanticKeysIpcDepende
       const registry = deps.registryForTarget({ windowId: target.windowId, surfaceId }, event.sender.id);
       if (!registry) return;
       registry.replaceObserved(parsed.keys);
-      deps.onObserved?.({ windowId: target.windowId, surfaceId }, event.sender.id, parsed.keys, parsed.observations, parsed.layoutEpoch);
+      deps.onObserved?.({ windowId: target.windowId, surfaceId }, event.sender.id, parsed.keys, parsed.observations, parsed.layoutEpoch, parsed.viewportCss);
     } catch {
       // Invalid project observations are refused without disturbing the last
       // valid snapshot or the product renderer.

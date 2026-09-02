@@ -29,6 +29,39 @@ export interface VisualElementCropBounds {
   height: number;
 }
 
+export interface VisualElementCropRequest {
+  boundsCss: VisualElementObservation['boundsCss'];
+  paddingCssPx: number;
+  viewportCss: { width: number; height: number };
+}
+
+export interface VisualElementCropResult {
+  bytes: Uint8Array;
+  bounds: VisualElementCropBounds;
+}
+
+export function computeVisualElementCropBounds(
+  imageSize: { width: number; height: number },
+  request: VisualElementCropRequest,
+): VisualElementCropBounds {
+  if (!Number.isFinite(request.viewportCss.width) || !Number.isFinite(request.viewportCss.height)
+    || request.viewportCss.width <= 0 || request.viewportCss.height <= 0) {
+    throw new Error('That visual element has no accepted CSS viewport.');
+  }
+  const scaleX = imageSize.width / request.viewportCss.width;
+  const scaleY = imageSize.height / request.viewportCss.height;
+  const left = (request.boundsCss.x - request.paddingCssPx) * scaleX;
+  const top = (request.boundsCss.y - request.paddingCssPx) * scaleY;
+  const rightEdge = (request.boundsCss.x + request.boundsCss.width + request.paddingCssPx) * scaleX;
+  const bottomEdge = (request.boundsCss.y + request.boundsCss.height + request.paddingCssPx) * scaleY;
+  const x = Math.max(0, Math.min(imageSize.width, Math.floor(left)));
+  const y = Math.max(0, Math.min(imageSize.height, Math.floor(top)));
+  const right = Math.max(x, Math.min(imageSize.width, Math.ceil(rightEdge)));
+  const bottom = Math.max(y, Math.min(imageSize.height, Math.ceil(bottomEdge)));
+  if (right <= x || bottom <= y) throw new Error('That visual element is outside the captured surface.');
+  return { x, y, width: right - x, height: bottom - y };
+}
+
 export interface VisualCaptureDependencies {
   processIdentity(): ProcessInstanceIdentity;
   topologyRevision(windowId: number): number;
@@ -36,7 +69,8 @@ export interface VisualCaptureDependencies {
   runtime(target: VisualCaptureTarget): VisualCaptureRuntime | null;
   observation(target: VisualCaptureTarget): VisualSurfaceObservationState | null;
   elementObservations?(target: VisualCaptureTarget): readonly VisualElementObservation[];
-  cropPng?(bytes: Uint8Array, bounds: VisualElementCropBounds): Uint8Array | Promise<Uint8Array>;
+  elementViewportCss?(target: VisualCaptureTarget): { width: number; height: number } | null;
+  cropPng?(bytes: Uint8Array, request: VisualElementCropRequest): VisualElementCropResult | Promise<VisualElementCropResult>;
   artifacts: VisualArtifactStore;
 }
 
@@ -190,19 +224,6 @@ function resultFor(
   };
 }
 
-function cropBoundsFor(element: VisualElementObservation, paddingCssPx: number): VisualElementCropBounds {
-  const scaleX = element.boundsCss.width > 0 ? element.boundsDevice.width / element.boundsCss.width : 1;
-  const scaleY = element.boundsCss.height > 0 ? element.boundsDevice.height / element.boundsCss.height : 1;
-  const paddingX = paddingCssPx * scaleX;
-  const paddingY = paddingCssPx * scaleY;
-  const left = Math.floor(element.boundsDevice.x - paddingX);
-  const top = Math.floor(element.boundsDevice.y - paddingY);
-  const right = Math.ceil(element.boundsDevice.x + element.boundsDevice.width + paddingX);
-  const bottom = Math.ceil(element.boundsDevice.y + element.boundsDevice.height + paddingY);
-  if (right <= left || bottom <= top) throw new Error('That visual element has no area to capture.');
-  return { x: left, y: top, width: right - left, height: bottom - top };
-}
-
 /** Capture one exact project WebContents with a bounded consistency retry.
  * This service never reloads, reopens, mutates, or searches for a nearby
  * window; failure is returned as an explicit unstable result. */
@@ -303,9 +324,12 @@ export async function captureVisualSurface(
         if (!after.state?.layoutStable) throw new Error('That visual element has no stable geometry.');
         element = deps.elementObservations?.(target).find((candidate) => candidate.key === elementRequest.elementKey);
         if (!element) throw new Error('That visual element is unavailable.');
+        const viewportCss = deps.elementViewportCss?.(target);
+        if (!viewportCss || viewportCss.width <= 0 || viewportCss.height <= 0) throw new Error('That visual element has no accepted CSS viewport.');
         if (!deps.cropPng) throw new Error('Visual element cropping is unavailable.');
-        crop = cropBoundsFor(element, elementRequest.paddingCssPx);
-        artifactBytes = await deps.cropPng(bytes, crop);
+        const cropped = await deps.cropPng(bytes, { boundsCss: element.boundsCss, paddingCssPx: elementRequest.paddingCssPx, viewportCss });
+        crop = cropped.bounds;
+        artifactBytes = cropped.bytes;
       }
       const artifact = await deps.artifacts.put(artifactBytes, 'image/png');
       const artifactFence = snapshotFor(deps, target, runtime, process);
