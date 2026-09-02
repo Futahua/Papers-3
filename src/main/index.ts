@@ -48,6 +48,10 @@ import { createVisualDiagnosticBuffer, type VisualDiagnosticBuffer } from './vis
 import { createVisualSemanticKeyRegistry, type VisualSemanticKeyRegistry } from '@shared/visualSemanticKeys';
 import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visual/visualResourceMonitor';
 import { refreshCurrentVisualSemanticKeys } from './visual/visualSemanticObservationRefresh';
+import { createVisualSurfaceObservationStore } from './visual/visualSurfaceObservationState';
+import { createVisualArtifactStore } from './visual/visualArtifactStore';
+import { captureVisualSurface } from './visual/visualCaptureService';
+import { createVisualRendererFenceService } from './visual/visualRendererFence';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
@@ -158,6 +162,7 @@ interface VisualSemanticKeySurfaceState {
 }
 
 const visualSemanticKeysBySurface = new Map<string, VisualSemanticKeySurfaceState>();
+const visualSurfaceObservationState = createVisualSurfaceObservationStore();
 let visualResourceMonitor: VisualResourceMonitor | null = null;
 
 function visualSemanticKeyMapKey(windowId: number, surfaceId: string): string {
@@ -175,6 +180,7 @@ function semanticKeyStateForSurface(windowId: number, surfaceId: string): Visual
 }
 
 function bindVisualSemanticKeySender(windowId: number, surfaceId: string, senderId: number): void {
+  visualSurfaceObservationState.bindSender(windowId, surfaceId, senderId);
   const state = semanticKeyStateForSurface(windowId, surfaceId);
   if (state.currentSenderId !== senderId) {
     state.currentSenderId = senderId;
@@ -183,6 +189,7 @@ function bindVisualSemanticKeySender(windowId: number, surfaceId: string, sender
 }
 
 function invalidateVisualSemanticKeySender(windowId: number, surfaceId: string, senderId: number): void {
+  visualSurfaceObservationState.invalidateSender(windowId, surfaceId, senderId);
   const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
   if (!state || state.currentSenderId !== senderId) return;
   state.currentSenderId = null;
@@ -190,18 +197,21 @@ function invalidateVisualSemanticKeySender(windowId: number, surfaceId: string, 
 }
 
 function resetVisualSemanticKeyObservation(windowId: number, surfaceId: string, senderId: number): void {
+  visualSurfaceObservationState.resetForNavigation(windowId, surfaceId, senderId);
   const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
   if (!state || state.currentSenderId !== senderId) return;
   state.registry.clear();
 }
 
 function retireVisualSemanticKeySurface(surfaceId: string): void {
+  visualSurfaceObservationState.retireSurface(surfaceId);
   for (const key of visualSemanticKeysBySurface.keys()) {
     if (key.endsWith(`\0${surfaceId}`)) visualSemanticKeysBySurface.delete(key);
   }
 }
 
 function retireVisualSemanticKeySurfaceAt(windowId: number, surfaceId: string): void {
+  visualSurfaceObservationState.retireSurfaceAt(windowId, surfaceId);
   visualSemanticKeysBySurface.delete(visualSemanticKeyMapKey(windowId, surfaceId));
 }
 
@@ -395,6 +405,13 @@ async function bootstrap(): Promise<void> {
       ...currentProcessInstanceSeed(),
     })
     : null;
+  const visualArtifactStore = process.env['PAPERS_DEV_CONTROL'] === '1'
+    ? createVisualArtifactStore(path.join(paths.root, 'visual-artifacts'))
+    : null;
+  await visualArtifactStore?.cleanup();
+  const visualRendererFence = process.env['PAPERS_DEV_CONTROL'] === '1'
+    ? createVisualRendererFenceService(ipcMain)
+    : null;
   const settingsStore = new AtomicJsonStore(paths.settingsFile, { recoveryDir: paths.recoveryDir });
   const settingsReport = await settingsStore.load<PapersSettings>();
   let papersSettings: PapersSettings = {
@@ -516,6 +533,9 @@ async function bootstrap(): Promise<void> {
       if (!target || target.windowId !== windowId || target.surfaceId !== surfaceId) return;
       if (event === 'did-start-loading') {
         resetVisualSemanticKeyObservation(windowId, surfaceId, senderId);
+        visualSurfaceObservationState.startNavigation(windowId, surfaceId, senderId);
+      } else {
+        visualSurfaceObservationState.markDomReady(windowId, surfaceId, senderId);
       }
       const buffer = visualDiagnosticsByWindow.get(windowId);
       if (!buffer) return;
@@ -580,6 +600,7 @@ async function bootstrap(): Promise<void> {
         for (const key of visualSemanticKeysBySurface.keys()) {
           if (key.startsWith(`${windowId}\0`)) visualSemanticKeysBySurface.delete(key);
         }
+        visualSurfaceObservationState.retireWindow(windowId);
       });
     }
     return instance;
@@ -979,6 +1000,7 @@ async function bootstrap(): Promise<void> {
               windowId: owningWindowId,
               kind: 'project',
             });
+            bindVisualSemanticKeySender(owningWindowId, surfaceId, nextFrameSender);
           },
         });
       } catch (caught) {
@@ -1745,6 +1767,22 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     ipcMain,
     resolveTarget: resolveVisualTarget,
     bufferForWindow: (windowId) => visualDiagnosticsByWindow.get(windowId) ?? null,
+    onRendererSignal: (senderId, target, payload) => {
+      if (!target.surfaceId || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
+      const phase = (payload as { phase?: unknown }).phase;
+      if (phase === 'state-hydrated') {
+        const revision = (payload as { revision?: unknown }).revision;
+        if (typeof revision === 'string') {
+          visualSurfaceObservationState.markHydrated(target.windowId, target.surfaceId, senderId, revision);
+        }
+      } else if (phase === 'first-paint') {
+        visualSurfaceObservationState.markFirstPaint(target.windowId, target.surfaceId, senderId);
+      } else if (phase === 'layout-stable') {
+        visualSurfaceObservationState.markLayoutStable(target.windowId, target.surfaceId, senderId);
+      } else if (phase === 'render-failed') {
+        visualSurfaceObservationState.markRenderFailed(target.windowId, target.surfaceId, senderId);
+      }
+    },
   });
   registerVisualSemanticKeysIpc({
     ipcMain,
@@ -1753,6 +1791,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
       const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
       return state?.currentSenderId === senderId ? state.registry : null;
+    },
+    onObserved: ({ windowId, surfaceId }, senderId, keys) => {
+      visualSurfaceObservationState.replaceSemanticKeys(windowId, surfaceId, senderId, keys);
     },
   });
   if (process.env['PAPERS_DEV_CONTROL'] === '1') {
@@ -1815,6 +1856,40 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             elements: observed.map((key) => ({ key })),
           };
         },
+        visualArtifactRead: visualArtifactStore
+          ? (artifactId, offset, length) => visualArtifactStore.read(artifactId, offset, length)
+          : undefined,
+        captureSurface: visualArtifactStore && processInstanceIdentity
+          ? (target) => captureVisualSurface({
+            processIdentity: () => processInstanceIdentity,
+            topologyRevision: (windowId) => workspaceTopologyRevisions.get(windowId) ?? 0,
+            surface: ({ windowId, surfaceId }) => {
+              const found = logicalSurfaces.get(surfaceId);
+              if (!found || found.windowId !== windowId || found.kind !== 'project') return null;
+              const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId);
+              return {
+                projectId: found.projectId,
+                presentation: runtime?.isPresented ? 'visible' : runtime ? 'hidden' : 'not-created',
+              };
+            },
+            runtime: ({ windowId, surfaceId }) => {
+              const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId);
+              if (!runtime || runtime.senderId === null) return null;
+              return {
+                senderId: runtime.senderId,
+                capturePage: async () => new Uint8Array((await runtime.capturePage()).toPNG()),
+                requestFence: (requestId) => {
+                  const contents = runtime.webContents;
+                  return contents && visualRendererFence
+                    ? visualRendererFence.request(contents, requestId)
+                    : Promise.resolve(false);
+                },
+              };
+            },
+            observation: ({ windowId, surfaceId }) => visualSurfaceObservationState.snapshot(windowId, surfaceId),
+            artifacts: visualArtifactStore,
+          }, target)
+          : undefined,
         surfaces: () => logicalSurfaces.project().map(projectSurfaceControlSnapshot),
         workspace: (windowId) => papersWindows.has(windowId) && workspaceTopologies.has(windowId)
           ? { topology: workspaceTopologies.get(windowId), revision: workspaceTopologyRevisions.get(windowId) ?? 0 }

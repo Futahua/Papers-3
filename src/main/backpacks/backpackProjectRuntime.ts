@@ -1,4 +1,4 @@
-import { BaseWindow, WebContentsView, type WebContents } from 'electron';
+import { BaseWindow, WebContentsView, type NativeImage, type WebContents } from 'electron';
 
 import { BACKPACK_PROJECT_SCHEME } from './backpackProjectService';
 import { OPAQUE_SURFACE_COLOR, TRANSPARENT_CHILD_SURFACE_COLOR } from '../windowSurface';
@@ -53,6 +53,10 @@ export class BackpackProjectRuntime {
     return this.view ? this.view.webContents.id : null;
   }
 
+  get webContents(): WebContents | null {
+    return this.view?.webContents ?? null;
+  }
+
   /** The project this surface is currently showing. */
   get liveProjectId(): string | null {
     return this.projectId;
@@ -67,6 +71,11 @@ export class BackpackProjectRuntime {
   refreshVisualSemanticKeys(): void {
     if (!this.view || this.view.webContents.isDestroyed()) return;
     this.view.webContents.send(VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL);
+  }
+
+  async capturePage(): Promise<NativeImage> {
+    if (!this.view || this.view.webContents.isDestroyed()) throw new Error('project renderer is unavailable');
+    return this.view.webContents.capturePage();
   }
 
   isSender(sender: WebContents): boolean {

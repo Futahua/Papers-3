@@ -72,6 +72,41 @@ const visualElementsInspectionSchema = z.object({
   surfaceId: z.string().min(1).max(128),
   elements: z.array(visualElementIdentitySchema).max(256),
 }).strict();
+const visualArtifactIdSchema = z.string().regex(/^va-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+const visualArtifactMetadataSchema = z.object({
+  artifactId: visualArtifactIdSchema,
+  mimeType: z.string().min(1).max(128),
+  size: z.number().int().positive(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  createdAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+}).strict();
+const visualCaptureResultSchema = z.object({
+  captureId: z.string().uuid(),
+  target: z.object({ windowId: z.number().int(), surfaceId: z.string().min(1).max(128), projectId: z.string().min(1).max(128) }).strict(),
+  observedAt: z.string().datetime(),
+  consistency: z.union([
+    z.object({ status: z.literal('stable') }).strict(),
+    z.object({ status: z.literal('unstable'), reason: z.enum(['layout-changed', 'state-changed', 'topology-changed', 'renderer-replaced']) }).strict(),
+  ]),
+  process: processInstanceIdentitySchema,
+  revisions: z.object({
+    workspaceTopologyRevision: z.number().int().nonnegative(),
+    documentStateRevision: z.string().max(256).nullable(),
+    renderCycleId: z.string().uuid().nullable(),
+    layoutEpoch: z.number().int().nonnegative().nullable(),
+  }).strict(),
+  presentation: surfacePresentationSchema,
+  summary: z.object({
+    domReady: z.boolean(),
+    hydrated: z.boolean(),
+    firstPaint: z.boolean(),
+    layoutStable: z.boolean(),
+    renderFailed: z.boolean(),
+    semanticKeys: visualSemanticKeyListSchema,
+  }).strict(),
+  png: visualArtifactMetadataSchema.optional(),
+}).strict();
 const layoutTargetSchema = z.object({ windowId: z.number().int(), layoutId: z.string().uuid() }).strict();
 const namedLayoutSchema = z.object({
   layoutId: z.string().uuid(),
@@ -231,6 +266,28 @@ export const papersControlCommands = {
     scope: 'surface',
     effect: 'query',
   },
+  'visual.artifact.read': {
+    input: z.object({
+      artifactId: visualArtifactIdSchema,
+      offset: z.number().int().nonnegative(),
+      length: z.number().int().positive().max(1024 * 1024),
+    }).strict(),
+    output: z.object({
+      metadata: visualArtifactMetadataSchema,
+      offset: z.number().int().nonnegative(),
+      nextOffset: z.number().int().nonnegative(),
+      done: z.boolean(),
+      bytesBase64: z.string().max(1_500_000),
+    }).strict(),
+    scope: 'app',
+    effect: 'query',
+  },
+  'capture.surface': {
+    input: z.object({ windowId: z.number().int(), surfaceId: z.string().min(1).max(128) }).strict(),
+    output: visualCaptureResultSchema,
+    scope: 'surface',
+    effect: 'query',
+  },
   'inspect.windows': { input: emptyParamsSchema, output: z.array(controlWindowSchema), scope: 'app', effect: 'query' },
   'inspect.surfaces': {
     input: emptyParamsSchema,
@@ -379,6 +436,14 @@ export interface PapersControlDependencies {
   visualDiagnostics?(target: { windowId: number; surfaceId?: string }): unknown;
   /** Bounded opaque semantic identities observed by predefined project code. */
   visualElements?(target: { windowId: number; surfaceId: string }, keys?: string[]): unknown;
+  visualArtifactRead?(artifactId: string, offset: number, length: number): Promise<{
+    metadata: unknown;
+    offset: number;
+    nextOffset: number;
+    done: boolean;
+    bytes: Uint8Array;
+  }>;
+  captureSurface?(target: { windowId: number; surfaceId: string }): Promise<unknown>;
   windows(): unknown;
   createWindow(): Promise<unknown>;
   backpack?(projectId: string): unknown;
@@ -501,6 +566,25 @@ export async function dispatchPapersControl(
       const elements = dependencies.visualElements?.(target, params.keys);
       if (!elements) throw new Error('That Papers visual element target is unavailable.');
       return papersControlCommands[request.method].output.parse(elements);
+    }
+    case 'visual.artifact.read': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const chunk = await dependencies.visualArtifactRead?.(params.artifactId, params.offset, params.length);
+      if (!chunk) throw new Error('That visual artifact is unavailable.');
+      return papersControlCommands[request.method].output.parse({
+        metadata: chunk.metadata,
+        offset: chunk.offset,
+        nextOffset: chunk.nextOffset,
+        done: chunk.done,
+        bytesBase64: Buffer.from(chunk.bytes).toString('base64'),
+      });
+    }
+    case 'capture.surface': {
+      const target = papersControlCommands[request.method].input.parse(request.params ?? {});
+      if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
+      const captured = await dependencies.captureSurface?.(target);
+      if (!captured) throw new Error('Visual surface capture is unavailable.');
+      return papersControlCommands[request.method].output.parse(captured);
     }
     case 'inspect.surfaces': return papersControlCommands[request.method].output.parse(dependencies.surfaces());
     case 'inspect.surface': {

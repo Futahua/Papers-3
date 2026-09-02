@@ -13,6 +13,7 @@ export interface VisualSemanticKeysIpcDependencies {
   ipcMain: Pick<IpcMain, 'on'>;
   resolveTarget(sender: { id: number }): VisualDiagnosticTarget | null;
   registryForTarget(target: { windowId: number; surfaceId: string }, senderId: number): VisualSemanticKeyRegistry | null;
+  onObserved?(target: { windowId: number; surfaceId: string }, senderId: number, keys: string[]): void;
 }
 
 /** Accept only the predefined project observation payload. The sender owns
@@ -24,7 +25,10 @@ export function registerVisualSemanticKeysIpc(deps: VisualSemanticKeysIpcDepende
     if (!target || !surfaceId) return;
     try {
       const parsed = semanticKeysPayloadSchema.parse(payload);
-      deps.registryForTarget({ windowId: target.windowId, surfaceId }, event.sender.id)?.replaceObserved(parsed.keys);
+      const registry = deps.registryForTarget({ windowId: target.windowId, surfaceId }, event.sender.id);
+      if (!registry) return;
+      registry.replaceObserved(parsed.keys);
+      deps.onObserved?.({ windowId: target.windowId, surfaceId }, event.sender.id, parsed.keys);
     } catch {
       // Invalid project observations are refused without disturbing the last
       // valid snapshot or the product renderer.

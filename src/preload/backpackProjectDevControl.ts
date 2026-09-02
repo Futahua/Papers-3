@@ -6,6 +6,7 @@ import {
 } from './projectVisualDiagnostics';
 import { installProjectVisualLayoutObserver } from './projectVisualLayoutObserver';
 import { installProjectVisualSemanticKeyObserver } from './projectVisualSemanticKeys';
+import { VISUAL_FENCE_REQUEST_CHANNEL, VISUAL_FENCE_RESPONSE_CHANNEL } from '@shared/visualSemanticKeyConstants';
 
 const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
 
@@ -91,6 +92,13 @@ function installVisualDiagnosticListeners(
 
 
 installVisualDiagnosticListeners(ipcRenderer, contextBridge);
+
+ipcRenderer.on(VISUAL_FENCE_REQUEST_CHANNEL, (_event, payload) => {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
+  const requestId = (payload as { requestId?: unknown }).requestId;
+  if (typeof requestId !== 'string' || requestId.length < 1 || requestId.length > 128) return;
+  ipcRenderer.send(VISUAL_FENCE_RESPONSE_CHANNEL, { requestId, ready: true });
+});
 
 interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 

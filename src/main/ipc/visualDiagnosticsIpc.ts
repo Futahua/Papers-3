@@ -7,6 +7,7 @@ export interface VisualDiagnosticsIpcDependencies {
   ipcMain: Pick<IpcMain, 'on'>;
   resolveTarget(sender: { id: number }): VisualDiagnosticTarget | null;
   bufferForWindow(windowId: number): VisualDiagnosticBuffer | null;
+  onRendererSignal?(senderId: number, target: VisualDiagnosticTarget, payload: unknown): void;
 }
 
 export interface VisualDiagnosticSender {
@@ -51,6 +52,7 @@ export function registerVisualDiagnosticsIpc(deps: VisualDiagnosticsIpcDependenc
     if (!buffer) return;
     try {
       record(buffer, target, payload);
+      deps.onRendererSignal?.(sender.id, target, payload);
     } catch {
       // Renderer input is untrusted; malformed signals are ignored and never
       // become a main-process exception or a product-state mutation.

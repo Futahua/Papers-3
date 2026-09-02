@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -146,6 +147,30 @@ describe('project renderer visual diagnostics', () => {
     expect(successfulLifecyclePhases).toEqual(expect.arrayContaining([
       'state-hydrated', 'first-paint', 'layout-stable',
     ]));
+    const captured = await call('capture.surface', { windowId, surfaceId: opened.surfaceId }) as {
+      captureId: string;
+      target: { windowId: number; surfaceId: string; projectId: string };
+      consistency: { status: string };
+      png: { artifactId: string; mimeType: string; size: number; sha256: string };
+    };
+    expect(captured.target).toEqual({ windowId, surfaceId: opened.surfaceId, projectId: PROJECT });
+    expect(captured.consistency).toEqual({ status: 'stable' });
+    expect(captured.png.mimeType).toBe('image/png');
+    const chunks: Uint8Array[] = [];
+    let offset = 0;
+    let done = false;
+    while (!done) {
+      const chunk = await call('visual.artifact.read', {
+        artifactId: captured.png.artifactId, offset, length: 1024,
+      }) as { nextOffset: number; done: boolean; bytesBase64: string };
+      chunks.push(new Uint8Array(Buffer.from(chunk.bytesBase64, 'base64')));
+      offset = chunk.nextOffset;
+      done = chunk.done;
+    }
+    const bytes = new Uint8Array(chunks.reduce((all, chunk) => [...all, ...chunk], [] as number[]));
+    expect(bytes.byteLength).toBe(captured.png.size);
+    expect(bytes[0]).toBe(137);
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(captured.png.sha256);
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{ sequence: number; payload: { kind?: string } }>;
       return records.filter((record) => record.sequence > beforeSequence
