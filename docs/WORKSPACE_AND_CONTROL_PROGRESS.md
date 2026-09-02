@@ -1,1273 +1,1491 @@
-# Workspace composition and programmatic control — persistent progress
+# C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Working branch: `agent/surface-context-routing`  
-Canonical checkout used in this work: `D:\Letters\MatTroiSeConMoc\Products\Papers\Source`
+Persistent status: planning checklist; implementation not started
+Working branch: `agent/surface-context-routing`
 
-This is the durable multi-session handoff for the two creator goals active today.
-It records implementation progress, not approval to broaden Papers or release it.
-Read [`../HERMES.md`](../HERMES.md) before acting on this document.
+This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
 
-## Creator goals
+## Milestone purpose
 
-### Goal A — multiple workspaces inside one Papers window
+Papers is primarily a visual rendering and user-experience application. Logical correctness alone is therefore insufficient evidence of product correctness.
 
-The creator wants one native Papers window to contain multiple Backpack/workspace
-views:
+The Papers 1.3.11 incident demonstrated the gap clearly: persistent state could contain the expected document, Papers could prove logical surfaces and topology, and the application could still visibly render an empty document. Diagnosis required manual screenshots, Windows accessibility inspection, repeated restarts, process inspection, and temporary project instrumentation. A junction-launched stale Electron process further made apparent restarts unreliable until process identity was understood independently of path strings.
 
-- Chrome-like tabs;
-- multiple views visible simultaneously in split/tiled layouts;
-- saved/restored workspace topology;
-- later, tabs/panes movable between native Papers windows;
-- no loss of per-surface Backpack identity, sender routing, renderer state or
-  the one-global-Hermes ownership model.
+C1 makes the rendered result itself a first-class, semantically inspectable part of Papers' control plane.
 
-This must be a finished user workflow, not a generic docking-framework product.
+This plan authorizes **planning and later implementation of visual observability only**. It does not authorize release, installation, publication, unrelated UX features, arbitrary renderer execution, broad filesystem access, or mutation of creator data for diagnostics.
 
-### Goal B — Papers is programmatically usable and debuggable
+---
 
-Every creator-facing Papers action and authoritative observable state should
-eventually have a supported semantic programmatic path so future developers and
-agents do not require mouse/keyboard computer control for routine setup,
-debugging and verification.
+# 0. Non-negotiable invariants
 
-The programmatic path must preserve:
+These apply to every C1 phase.
 
-- native-window and logical-surface authority;
-- Backpack/project sender security;
-- permission and destructive-action confirmation boundaries;
-- secret and filesystem-path redaction;
-- real UI testing for visual, focus, keyboard, accessibility and crash behavior.
+* [ ] **Rendered evidence is independent evidence.** A valid logical topology, document file, or state revision must never be treated as proof that the corresponding UI rendered successfully.
+* [ ] **Diagnostics are read-only with respect to creator data.** Captures, timelines, visual reports, fixtures, and baselines must never rewrite Backpack/project documents or state files.
+* [ ] **No diagnostic recovery by mutation.** A failed capture must not reload, normalize, rewrite, migrate, reopen, restart, or otherwise alter the user's document merely to obtain evidence.
+* [ ] **No continuous polling.** Readiness and changes are event-driven through Electron lifecycle events, renderer observers, explicit project hydration signals, and bounded timeouts.
+* [ ] **No path-string restart inference.** Process freshness is established from PID + start/instance identity + build identity and canonical executable identity. Junction/symlink spelling is not process identity.
+* [ ] **Exact surface authority remains mandatory.** Visual operations name explicit `windowId`/`surfaceId` targets and resolve through existing Papers authority. No “active”, “current”, “first”, or “only surface” inference.
+* [ ] **No arbitrary JavaScript control operation.** Renderer observation uses predefined Papers-owned observation code and strict schemas only.
+* [ ] **No new broad filesystem API.** Generated visual artifacts live in a Papers-owned diagnostic artifact store and are addressed by opaque artifact IDs.
+* [ ] **No secret-bearing raw transport leakage.** Tokens, descriptor contents, sender/WebContents IDs, native handles, install roots, arbitrary URLs, query strings, project filesystem roots, and hidden form secrets stay outside control/MCP output.
+* [ ] **Observation must fail separately from product state.** If visual observation breaks, the user's existing runtime remains authoritative and untouched.
+* [ ] **Bound every operation.** Snapshot stabilization, timeline collection, report construction, artifact retention, DOM summaries, event buffers, console buffers, and retries all have explicit upper bounds.
+* [ ] **One reviewed gate at a time.** Each C1.x phase receives exact-SHA review and sign-off before the next phase begins.
 
-It is not permission for a public network API, remote access, arbitrary renderer
-JavaScript, release, installation or bypassing creator confirmation.
+---
 
-## Current product decisions/defaults
+# 1. Host-generic vs project-specific ownership
 
-- Renderer layout engine recommendation: **Dockview**, with Papers' own small,
-  versioned logical workspace model as authority. FlexLayout is the strongest
-  all-open-source fallback if Dockview's licensed advanced features become a
-  blocker.
-- Dockview must not own Backpack lifecycle or be the persisted product model.
-- Actual Backpack content remains in native `WebContentsView`s; the React layout
-  engine owns tabs, groups, splitters, drag/drop chrome and geometry only.
-- A logical `surfaceId` is durable identity. `webContents.id` is a replaceable
-  transport endpoint; native `windowId` is current ownership.
-- Automatic restoration of the last workspace comes before named Save/Load
-  Layout unless the creator later requires named layouts in the first milestone.
-- Cross-native-window movement guarantees recreate/rebind against the same
-  logical surface. Live `WebContentsView` reparenting may be a tested fast path,
-  never the only correctness path.
-- Developer control is dev/test-only by default, with explicit opt-in. It uses a
-  local named pipe/Unix socket, never TCP.
-- Destructive developer-control commands require a connection-bound, expiring,
-  single-use challenge that names the exact operation, Backpack ID and name;
-  there is no force or blanket-confirmation path.
+## Papers host-generic responsibilities
 
-## Completed implementation
+Papers owns all reusable visual-debug infrastructure:
 
-### Multi-window and global Hermes correctness — closed
+* native window/surface targeting;
+* synchronized screenshots;
+* process/build/start identity;
+* renderer lifecycle observation;
+* bounded console/error/resource diagnostics;
+* generic DOM/accessibility projection;
+* semantic element registration contract;
+* stable geometry calculations;
+* visual assertions;
+* diagnostic artifact storage;
+* visual timelines;
+* control protocol schemas;
+* MCP transport exposure;
+* deterministic fixture harness infrastructure;
+* baseline storage/update mechanics;
+* packaged Electron acceptance.
 
-Key commits, oldest to newest:
+Papers must not know that a particular project contains groups, shortcuts, graph nodes, canvases, or any As-you-Go-specific concepts.
 
-- `436238d` — serialize Hermes placement mutations.
-- `d299618` — reconcile dock ownership on native owner-window close.
-- `db62123` — require native placement acknowledgements.
-- `58ba5d5` — preserve failed placement state and report renderer failures.
-- `6cf96b9` — defer dock realignment during placement transitions.
-- `c51f27d` — serialize the independent native realignment side channel with
-  placement mutation; reviewer signed off with no remaining concrete issue.
+## Project responsibilities
 
-Invariant: one global Hermes placement, one deliberate dock owner, all native
-control state changes acknowledged, and no resize/reassert can overtake
-dock/detach/hide.
+A project may optionally contribute only generic observability signals:
 
-### B1/B1.1 developer-control foundation — implemented
+* opaque document/state revision;
+* `state-hydrated` success/failure signal;
+* stable semantic element keys;
+* safe project-defined summary counters;
+* deterministic project fixture data;
+* project-owned visual assertions and screenshot baselines.
 
-- `d7ec56f` — opt-in local developer command plane and first real Electron E2E.
-- `136fadd` — socket tracking, forced shutdown, transactional startup, atomic
-  descriptor publication, correct newline framing, shared client, safe build
-  projection, command metadata/output schemas and Claude pickup guide.
-- `4a920ae` — serialize client requests and drain in-flight commands before
-  shutdown.
-- `61c21cd` — redact Hermes error prose and raise shutdown admission barrier.
-- `e053c95` — repair the actual `papersctl` executable and exercise it in the
-  real Electron E2E.
-- `af4e26c` — replace the one-runtime-per-window assumption with a
-  `surfaceId`-keyed native runtime collection, fix exact hide/close routing,
-  retire dead-window logical surfaces before delayed Hermes reconciliation, and
-  expose safe native presentation state through control inspection.
+Those integrations live in the project repository.
 
-Current semantic control capabilities:
+## As you Go specifically
 
-- `inspect.snapshot`
-- `inspect.windows`
-- `inspect.surfaces`
-- `inspect.surface --window <id> --surface <id>`
-- `inspect.workspace --window <id>`
-- `layout.list`, `layout.save`, `layout.load`, `layout.restore`
-- `workspace.open`, `workspace.activate`, `workspace.close`
-- `layout.split`, `layout.moveSurface`, `layout.moveSurfaceToWindow`
-- `window.create`
+As you Go may use C1 once the generic Papers contract exists, but:
 
-Surface inspection also reports safe presentation state (`not-created`,
-`hidden`, or `visible`) without exposing sender ids, URLs or filesystem paths.
+* [ ] no `As you Go` ID, filename, schema, group model, shortcut model, or rendering behavior is embedded in Papers;
+* [ ] its existing state-envelope fix remains project-owned;
+* [ ] its regression fixture uses copied synthetic fixture state, never creator `state.json`;
+* [ ] Papers generic tests use a neutral diagnostic fixture project instead.
 
-Properties already enforced:
+---
 
-- explicit `PAPERS_DEV_CONTROL=1` opt-in;
-- random process-specific local endpoint and 256-bit token;
-- no TCP listener;
-- strict versioned Zod schemas and output validation;
-- request/frame size limits and correct stream framing;
-- no fabricated renderer sender identity;
-- no arbitrary renderer JavaScript command;
-- redacted coherent snapshots;
-- tracked clients, shutdown barrier, in-flight draining and forced close;
-- transactional startup rollback and descriptor cleanup.
+# 2. Phase order
 
-Usage and security contract: [`DEVELOPER_CONTROL.md`](DEVELOPER_CONTROL.md).  
-Claude pickup: [`../CLAUDE.md`](../CLAUDE.md).
+Priority is determined by diagnostic information gained per unit of implementation risk.
 
-### A0 logical surface authority — implemented through lifecycle closure
+1. **C1.1 — Atomic synchronized visual snapshot + canonical process identity**
+2. **C1.2 — Renderer lifecycle, hydration, console and failure observability**
+3. **C1.3 — Semantic elements, element capture and geometry assertions**
+4. **C1.4 — Deterministic visual fixtures and screenshot baselines**
+5. **C1.5 — Bounded visual timeline and self-contained debug report**
+6. **C1.6 — Full control/MCP agent workflow and packaged closure**
 
-- `9052d2f` — logical surface registry and durable `surfaceId`.
-- `d55a889` — host commands explicitly name their target surface.
-- `39ac317` — host renderer proves only native-window identity; it is no longer
-  treated as a project surface.
-- `edd1ffa` — developer control names exact surfaces and proves
-  `{windowId, surfaceId}` agreement.
-- `0df5991` — leaving a Backpack clears resumable selection correctly.
-- `e053c95` — native-window close retires its logical surfaces; archive/remove
-  tears down and notifies exact logical surfaces instead of the retired
-  host-surface model.
+C1.1 is deliberately first because a single synchronized surface capture would have answered the central 1.3.11 question immediately:
 
-Current authority model:
+> “The logical document says X; what exact process is running, what revision did this renderer hydrate, and what is visibly on screen right now?”
+
+---
+
+# C1.1 — Atomic synchronized visual snapshot + canonical process identity
+
+## User-visible capability
+
+An authenticated agent can request one bounded capture of a real Papers window or project surface and receive one correlated observation containing:
+
+* PNG screenshot;
+* exact `windowId` / `surfaceId`;
+* workspace topology revision;
+* opaque project/document state revision when reported;
+* render-cycle identity;
+* safe DOM/accessibility summary;
+* stable semantic element bounds already registered by the project;
+* current presentation state;
+* process/build/start identity;
+* capture consistency status.
+
+Initial commands:
 
 ```text
-host renderer sender -> native window only
-host workspace command -> explicit surfaceId -> must belong to that window
-
-project renderer sender
-  -> {surfaceId, projectId, windowId}
-  -> must still match the live logical-surface registry
-
-developer-control actor
-  -> authenticated control session
-  -> explicit {windowId, surfaceId}
-  -> must match current registries
+capture.window
+capture.surface
 ```
 
-## Validation evidence at `a03ff39`
-
-- `npm run typecheck` — passed.
-- `npm test` — 635 passed, 4 skipped; 55 files passed, 1 skipped.
-- `npm run build` — passed.
-- `npx vitest run --config vitest.e2e.config.ts tests/e2e/dev-control.e2e.ts`
-  — 2/2 passed, including the real `papersctl` executable controlling a running
-  Electron Papers process without DOM injection.
-- Focused A0.4 collection/finalization/routing tests — 47/47 passed.
-- `git diff --check` — passed before commit.
-- Branch was pushed to `origin/agent/surface-context-routing` at `a03ff39`.
-
-Do not claim the historical full product E2E suite is wholly green: unrelated
-fixture/restart failures were previously observed and remain separately scoped.
-
-## Current reviewer status
-
-The browser reviewer signed off A3.4, B2.1, the Electron 43.1.1 WCV
-compatibility gate, the A0.4 same-project multi-surface evidence gate and the
-renderer transport destroy/recreate gate. The creator subsequently authorized
-the previously excluded B2 destructive-confirmation, B3 MCP/stdio and eventual
-release/install agenda. B2 destructive confirmation is now the active review
-candidate recorded below.
-
-The prior A3 review history is retained below.
-
-Prior verdict on `e053c95`:
-
-- A0 identity/authority and archive/remove targeting are closed.
-- B1.1 remains closed with no new control-plane security or shutdown regression.
-- Work may begin on A0.4, the per-window `surfaceId`-keyed runtime collection.
-- Dockview must not begin yet.
-- `closeAttachedProjectSurface(windowId, surfaceId)` currently discards
-  `surfaceId` in the physical runtime implementation. This must be fixed by the
-  A0.4 collection, not by adding another one-runtime guard or workaround.
-- One smaller lifecycle-ordering correction remains: on native-window death,
-  unbind senders and retire logical surfaces before awaiting potentially delayed
-  Hermes reconciliation. Window authority may remain until reconciliation ends.
-
-The `af4e26c` review found two concrete gaps, now addressed in `962f3b8`:
-
-- ordinary semantic close removes its exact runtime collection entry, while
-  hide preserves the entry for renderer remount;
-- the window now tracks an explicit focused `activeSurfaceId`, and active
-  Backpack/list/run projections no longer clear when a non-focused surface is
-  closed.
-
-The follow-up acceptance harness in `a03ff39` composes two logical projects in
-one native-window collection and verifies focused-projection preservation.
-
-The completed follow-up review of `06df02e` found two remaining projection
-gaps, now addressed after `12d99b2`:
-
-- archive/remove now reconciles each affected window's `activeSurfaceId` after
-  project-wide retirement, selecting an unrelated surviving surface or
-  clearing the projection;
-- the cross-window "still active anywhere" decision now derives from the same
-  active logical-surface projection as list/runs/return-to-origin, rather than
-  treating legacy `enteredBackpackId` as workspace authority;
-- focused ordinary close also updates the legacy fallback to the selected
-  survivor, keeping the compatibility projection coherent.
-
-Current validation after those fixes: typecheck passed, production build
-passed, and the full Vitest suite passed with 636 tests and 4 skipped.
-
-The completed review of `d9a7d3c` confirmed those projection fixes and found
-one final owner-resolution seam. Detached workspace cleanup and delivery had
-resolved `projectId` first, so activity in window A could close or miss the
-same project's detached surface owned by window B. The follow-up implementation
-now:
-
-- carries the owning native `windowId` through the project-surface-close
-  callback;
-- closes a detached project only when both project and owner window match;
-- unregisters only the closing owner's workspace registration;
-- searches all same-project workspace registrations for the exact owner before
-  delivering detached lifecycle messages.
-
-Regressions cover owner-scoped detach close and exact workspace selection when
-the same project has registrations from two windows. Current validation after
-this seam: typecheck passed, production build passed, and the full Vitest suite
-passed with 638 tests and 4 skipped.
-
-The completed review of `07359f0` found the corresponding explicit IPC seam:
-workspace-originated focus/reattach/close still used project-only session
-methods, and a failed duplicate detach-open retained the newly created
-workspace registration. The follow-up now:
-
-- resolves the authenticated workspace sender's native window for focus,
-  reattach and close;
-- invokes owner-exact session methods and refuses a different owner's detached
-  surface;
-- rolls back only a registration created by a failed detach-open attempt.
-
-Current validation: typecheck passed, production build passed, full Vitest
-passed with 639 tests and 4 skipped, and dev-control Electron E2E passed 2/2.
-The broader legacy Electron suite remains non-green in this environment across
-unrelated fixture workflows (permission/startup timeouts and a missing
-`crypto.randomUUID` in the worker fixture); no failure implicated these detach
-paths.
-
-Implementation submitted through `a03ff39`:
-
-- Native project presentations now live in a per-window collection keyed by
-  durable `surfaceId`; no layout framework or DOM-hosted Backpack content was
-  added.
-- Host show/hide/close and frame sender lookup resolve the exact surface.
-- `inspect.surfaces` and `inspect.surface` report `presentation` as
-  `not-created`, `hidden`, or `visible`, without sender ids or paths.
-- Window-wide fit, transparency and close fan-out are covered by focused unit
-  tests.
-- Finalization retires sender bindings and logical surfaces before awaiting
-  Hermes reconciliation.
-- A focused-surface projection preserves the surviving surface when another
-  surface closes; legacy `enteredBackpackId` remains only as a no-surface/UI and
-  fixture fallback.
-
-Reviewer conversation:
-`https://chatgpt.com/c/6a963c1d-a728-83ec-b504-7d312e94fcc0`
-
-Future sessions must read only the latest **completed** reviewer response and
-verify any finding against exact current source before changing code.
-
-## Remaining implementation checklist
-
-### Gate A0.3 review closure
-
-- [x] Repair `papersctl` shared-client usage.
-- [x] Construct exact `inspect.surface` params from CLI flags.
-- [x] Invoke the actual CLI in Electron E2E.
-- [x] Retire logical surfaces on native-window finalization.
-- [x] Archive/remove by exact `{windowId, surfaceId}`.
-- [x] Preserve unrelated project surfaces.
-- [x] Receive reviewer sign-off on exact `e053c95` for identity/authority,
-  archive/remove targeting and B1.1.
-- [x] Reorder native-window finalization so dead-window logical surfaces are
-  retired before awaiting Hermes reconciliation.
-- [x] Add the delayed-finalization regression proving retirement occurs before
-  Hermes reconciliation completes.
-
-### Gate A0.4 — per-window surface runtime collection, no Dockview yet
-
-Purpose: remove the final one-runtime-per-native-window assumption before adding
-renderer tabs or splits.
-
-- [x] Replace `PapersWindowOwned.backpackProjectRuntime` with a
-  surfaceId-keyed per-window manager/collection.
-- [x] Make `papersWindowFactory.ts` construct the collection.
-- [x] Make `runtimeForSender()` resolve the exact surface runtime.
-- [x] Make `allRuntimes()` enumerate every attached surface runtime.
-- [x] Make host show/hide/open/close act on an explicit `surfaceId` runtime.
-- [x] Ensure `closeAttachedProjectSurface(windowId, surfaceId)` destroys/hides
-  only the named runtime; closing P must leave Q physically and logically live.
-- [x] Keep `enteredBackpackId` only as the documented active/focused/MRU
-  projection; target authority uses the logical surface registry.
-- [x] Replace list, runs, Canvas and return-to-origin active lookups with the
-  explicit active-surface projection, retaining `enteredBackpackId` only for
-  no-surface/UI and fixture fallback.
-- [x] Reconcile focused-surface state after archive/remove retires every surface
-  for one project; preserve a surviving surface from another project.
-- [x] Make cross-window "still active anywhere" checks follow active logical
-  surfaces rather than legacy `enteredBackpackId`.
-- [x] Make detached workspace cleanup and lifecycle delivery resolve exact
-  `{projectId, owningWindowId}` rather than the first project-wide match.
-- [x] Make workspace-originated detach focus/reattach/close owner-exact and
-  roll back registrations created by rejected duplicate opens.
-- [x] Prove collection-level A/B independence and exact close behavior in unit
-  tests.
-- [x] Prove one native window can hold A→project X and B→project Y in a live
-  Electron/control workflow (`workspace-tabs.e2e.ts`).
-- [x] Show/hide A without affecting B in a live Electron/control workflow.
-- [x] Prove two distinct surfaces can show the same project.
-- [x] Destroy/recreate a renderer transport while retaining logical `surfaceId`.
-- [x] Close handling fans out to every owned runtime, and finalization retires
-  every logical surface.
-- [x] Resize and transparency changes fan out to every runtime entry.
-- [x] Add semantic control inspection as each operation becomes real;
-  do not use DOM scripting as the primary verification path.
-- [x] Reviewer sign-off at `06edf24`; A0.4 is closed and Dockview A1 may begin.
-
-### Gate A1 — first usable tabs and splits in one native window
-
-- [x] Verify Dockview's current package: `dockview-react` 8.2.0, MIT, active
-  upstream; pin exactly 8.2.0. Enterprise features are not used.
-- [x] Build Papers' versioned workspace topology model:
-  surfaces, tab groups, active tab, split orientation/weights and focused group.
-- [x] Integrate layout renderer chrome without putting actual Backpack content
-  into the DOM.
-- [x] Open, activate and close tabs through exact logical `surfaceId` targets.
-- [x] Persist Dockview drag reorder into the Papers topology model.
-- [x] Split Right and Split Down through explicit workspace controls; live
-  Electron acceptance proves Split Right with two visible native panes.
-- [x] Drag tabs between existing same-window groups; unsupported edge-created
-  groups are rejected before Dockview mutates.
-- [x] Report the active pane rectangle to main and position/show/hide its exact
-  native WCV without covering Dockview tab chrome.
-- [x] Hide relevant WCVs synchronously before Dockview drop overlays, and
-  restore after drop, drag cancel or DOM drop.
-- [x] Retain inactive tab WCVs and renderer sender bindings; presentation hide
-  detaches without destruction, while semantic close/window teardown destroys.
-- [x] Make a project-originated close authoritative in main: close the exact
-  native runtime, retire the exact logical surface and select a survivor.
-- [x] Keep the surviving tab selected and visible when archive/remove or a
-  project-originated close retires the active surface.
-
-First A1 slice at the current branch head:
-
-- pinned `dockview-react` 8.2.0 (MIT; no Enterprise dependency);
-- added the Papers-owned schema-versioned topology and pure open/activate/move/
-  split/close transitions; Dockview serialization is not product state;
-- added semantic host activation and pane-bounds IPC, both authorized against
-  the exact logical surface;
-- tab visibility drives exact native WCV show/hide, and returning to the
-  Backpack picker preserves logical tabs rather than semantically closing them;
-- live Electron/control acceptance proves Alpha/Beta tabs in one native window
-  and presentation transitions `visible ↔ hidden` independently.
-
-Validation: typecheck passed, full Vitest 646 passed / 4 skipped, production
-build passed, dev-control Electron E2E 2/2 passed, workspace-tabs Electron E2E
-1/1 passed, and diff check passed.
-
-A1.1 lifecycle hardening after reviewer feedback:
-
-- inactive tabs now preserve the same live WebContents and sender identity;
-- concealment no longer emits surface-closed lifecycle callbacks, so tab
-  selection cannot tear down owner-scoped detached workspace state;
-- project-originated close is an authenticated semantic close in main rather
-  than a renderer-only tab removal;
-- the live workspace test proves A→B→A retains Alpha's sender, then closes
-  Alpha from its project frame with no logical/control orphan and Beta visible;
-- window teardown remains terminal and destroys every retained native view.
-- repeated conceal/show cycles retain one destroyed/unbind listener per
-  WebContents incarnation, preventing ordinary tab switching from accumulating
-  lifecycle listeners.
-
-Validation after A1.1: typecheck passed, full Vitest 649 passed / 4 skipped,
-production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
-Electron E2E 1/1 passed, and diff check passed.
-
-A1.2 canonical-topology work in progress:
-
-- [x] Retain the schema-v1 topology value in `App` and pass it into the layout
-  renderer instead of discarding the value and keeping only its setter.
-- [x] Translate Dockview's committed panel-move event into the Papers-owned
-  `moveWorkspaceSurface` transition for known same-window groups.
-- [x] Collapse the source group/tree node when its final surface moves away,
-  matching semantic close behavior and preventing empty product groups.
-- [x] Prove real tab reorder and same-window group DnD update Papers topology.
-- [x] Synchronize user-resized root split weights into normalized Papers
-  topology weights at the committed layout boundary.
-- [x] Validate Split Right/Down against Papers topology before mutating
-  Dockview, so a one-tab group cannot diverge the two models.
-- [x] Rebuild Dockview-to-Papers group mappings atomically after committed
-  mutations and restore native presentation at that same boundary.
-- [x] Reconcile Dockview from external Papers topology mutations for the
-  supported flat/single-split model, with API-origin/generation feedback
-  suppression and convergence checks before every Dockview mutation.
-- [x] Persist only validated/atomic schema-v1 Papers topology; do not persist
-  Dockview JSON, sender ids, WebContents ids or native window ids.
-- [x] Expose validated read-only topology through `inspect.workspace` and
-  `papersctl inspect.workspace --window`, without Dockview serialization.
-- [x] Decide restart identity mapping separately before consuming persisted
-  surface ids during automatic restoration; A1.2h/i use durable workspace ids
-  plus fresh runtime surface remapping.
-
-A1.2b validation: typecheck passed, full Vitest 652 passed / 4 skipped,
-production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
-Electron E2E 1/1 passed, and diff check passed. The live workspace workflow
-proves real reorder `[A,B] → [B,A]`, semantic `inspect.workspace`, sash-weight
-changes, existing-group DnD, final-source-group collapse, retained native
-renderer identity and authoritative project close.
-
-A1.2b reviewer hardening:
-
-- [x] Preserve existing Dockview-group ↔ Papers-group mappings across the
-  post-mutation React lag; remove only dead mappings and explicitly map new
-  supported groups. A focused race regression covers a moved tab whose source
-  group still contains other tabs.
-- [x] Disable floating Dockview groups until the Papers schema intentionally
-  models them.
-- [x] Require every renderer topology commit to exactly match the live
-  `{surfaceId, projectId}` project surfaces owned by that native window;
-  fabricated, retired, foreign-window and mismatched identities are refused.
-- [x] Delete a window's in-memory topology during finalization.
-- [x] Temporarily prohibit nested splitting in both UI eligibility and the
-  Papers transition path until recursive split-weight synchronization exists.
-
-Validation after hardening: typecheck passed, full Vitest 655 passed / 4
-skipped, production build passed, dev-control Electron E2E 2/2 passed,
-workspace-tabs Electron E2E 1/1 passed, and diff check passed.
-
-Reviewer follow-up at `15daa02` closed those four blockers and found one final
-cleanup-timing issue. Workspace topology is now cleared at the same pre-Hermes
-authority boundary as logical-surface retirement, rather than waiting behind
-delayed Hermes reconciliation and window-record removal. The delayed-Hermes
-regression proves sender unbind, logical retirement and topology cleanup all
-finish before the await begins. The original reviewer chat then reached its
-conversation-length limit; start a fresh reviewer conversation for subsequent
-reverse-reconciliation review.
-
-A1.2c reverse convergence:
-
-- [x] Add exact-window `layout.restore` semantic control, reusing the same
-  live-surface authority validation as renderer commits.
-- [x] Reconcile external Papers order, existing-group membership, active tabs,
-  one supported root split/collapse and normalized root weights into Dockview.
-- [x] Ignore API-origin structural mutations, suppress move/layout callbacks
-  during a reconciliation generation, and skip the renderer's echo commit for
-  externally restored topology.
-- [x] Add monotonic workspace revision to `inspect.workspace`; live acceptance
-  proves one external restore advances it exactly once, not again through
-  feedback.
-- [x] Extend `papersctl` with `layout.restore --window <id> --topology <file>`.
-- [x] Live Electron acceptance proves external order convergence, real sash
-  geometry, group collapse/recreation and retained native sender identity.
-
-A1.2c validation: typecheck passed, full Vitest 655 passed / 4 skipped,
-production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
-Electron E2E 1/1 passed, and diff check passed.
-
-A1.2d atomic persistence:
-
-- [x] Persist schema-v1 Papers topology through `AtomicJsonStore` using
-  runtime-independent identity rather than Electron/native window ids; A1.2h
-  upgrades that identity to durable schema-v2 workspace ids.
-- [x] Serialize and coalesce concurrent main-process commits; one writer drains
-  the newest topology snapshots without parallel file replacement races.
-- [x] Validate the complete persisted envelope and every nested topology on
-  load; quarantine invalid state rather than consuming or deleting it.
-- [x] Consume the selected v2 snapshot only through primary-window,
-  resolve-first startup hydration with fresh runtime surface remapping; later
-  windows remain fresh and no empty snapshot overwrites a failed/no-selection
-  startup.
-- [x] Live Electron acceptance proves the final one-surface topology reaches
-  disk and the persisted JSON contains no Dockview, WebContents, sender or
-  native-window identity.
-
-A1.2d validation: typecheck passed, full Vitest 657 passed / 4 skipped,
-production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
-Electron E2E 1/1 passed, and diff check passed.
-- [x] Keyboard tab selection and accessibility acceptance; see A1.2k.
-- [x] Automatic restore of last tab/split workspace.
-- [x] Archive/remove and crash/reload behavior across multiple live surfaces.
-- [x] Add control commands such as `workspace.open`, `workspace.activate`,
-  `workspace.close`, `layout.split`, `layout.moveSurface`, `layout.restore`.
-  Implemented and live-validated: `workspace.open`, `workspace.activate`,
-  `workspace.close`, `layout.split`, `layout.moveSurface`, `layout.restore`.
-
-A1.2e semantic control operations:
-
-- [x] Add exact-window/surface `workspace.activate`, `workspace.close`,
-  `layout.split` and `layout.moveSurface` commands over canonical topology.
-- [x] Reuse live surface lookup and topology authority validation; no command
-  infers a target from active/current UI state.
-- [x] Make control close terminally destroy the exact runtime, retire the
-  logical surface, unbind its sender and converge the surviving topology/UI.
-- [x] Extend `papersctl` with flags for each semantic command.
-- [x] Live Electron acceptance drives semantic activation, split, restore and
-  close while retaining the visual/DnD/sash assertions.
-
-A1.2e validation: typecheck passed, full Vitest 657 passed / 4 skipped,
-production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
-Electron E2E 1/1 passed, and diff check passed.
-
-A1.2f reviewer hardening (fresh review of `9a3c79f`):
-
-- [x] Apply cross-field topology invariants at control ingress, main authority
-  validation, persistence commit and persistence load; invalid state never
-  advances canonical revision or reaches durable state.
-- [x] Refuse topology outside the currently realizable flat one-/two-group
-  model. Refuse in-place split orientation/root-order changes until Dockview
-  can realize them exactly; external topology mutation is all-or-refuse.
-- [x] Converge the renderer shell's `surfaceId`, project URL and entered
-  Backpack from the canonical focused group's active surface.
-- [x] Remove renderer-side close successor selection/activation. Main topology
-  is the sole successor authority, including three-or-more-surface layouts.
-- [x] Route ordinary Dockview/user close, project-originated close,
-  archive/remove and developer-control close through the same main-owned
-  terminal surface transaction: validate
-  current topology before retirement, close/retire/unbind exactly, derive the
-  canonical successor, persist it, emit topology, then emit cleanup notice.
-- [x] Make every reconciliation generation schedule the suppression-latch
-  clear, including a no-op generation superseding a mutating generation.
-- [x] Allocate fresh split group ids when a derived id survives a prior
-  collapse/re-split history.
-- [x] Flush topology persistence during owned shutdown and make commit/flush
-  failures visible in main diagnostics instead of swallowing them.
-- [x] Add regressions for semantic-invalid restore with no mutation,
-  unsupported orientation restore, retained group-id history, semantic disk
-  validation, external host-tab activation, duplicate-restore unlatching, and
-  three-surface project-originated/archive close where canonical focus is not
-  the first logical-registry survivor.
-
-A1.2f validation: typecheck passed, full Vitest 661 passed / 4 skipped,
-production build passed, dev-control Electron E2E 2/2 passed, workspace-tabs
-Electron E2E 1/1 passed, and diff check passed. Reviewer signed off exact head
-`bccd746abc110d404ae262f77f4e27e099746946`.
-
-Creator authorization note (2026-09-01): the creator explicitly authorized
-continuing all scoped work with the reviewer. `workspace.close` is treated as
-closing an open runtime surface, not deleting Backpack/project data; it remains
-exact-target only. Any future data-deleting control operation still requires
-the two-phase confirmation design below.
-
-A1.2g main-authoritative `workspace.open`:
-
-- [x] Add `workspace.open {windowId, projectId}` with authenticated explicit
-  creation authority; no sender, entered/active inference or caller-provided
-  surface identity.
-- [x] Validate the exact live window's canonical topology before creation,
-  resolve an available registry Backpack and real project URL, and refuse
-  unavailable/empty projects without mutation.
-- [x] Allocate a fresh logical project surface in main, insert it into the
-  focused group, make it canonical active, and commit/revise/persist it.
-- [x] Deliver one atomic main→host event containing trusted project descriptor
-  plus resulting topology, so App has URL metadata before Dockview renders.
-- [x] Re-resolve live window topology and Backpack availability after the
-  project-lookup await, so concurrent layout/close/archive wins without stale
-  canonical rollback.
-- [x] Require fail-closed exact-host delivery before active/entered/revision/
-  persistence mutation. Delivery failure retires only the invocation-owned
-  fresh surface and leaves canonical state/revision untouched.
-- [x] Add `papersctl workspace.open --window <id> --project <id>`.
-- [x] Live A/B/C E2E opens Gamma through control, verifies the real host tab,
-  then continues actual Dockview close/archive and persistence acceptance.
-
-A1.2g deliberately does not read persisted snapshots, select restart workspace
-identity, reuse old surface ids, map old→fresh ids or automatically restore.
-Reviewer signed off exact head `6b66f13ab7921334db913f6303f5c4cb32fbec10`.
-
-A1.2h durable identity and pure remapping basis:
-
-- [x] Upgrade snapshot persistence to schema v2 with durable `workspaceId`,
-  `lastWorkspaceId`, validated topology and `updatedAt`; native `windowId`
-  remains only in the live in-memory `windowId → workspaceId` association.
-- [x] Reuse one durable ID across every revision committed by a live workspace.
-  Closing a native window drops only its live association, not its disk record.
-- [x] Explicitly migrate schema-v1 lifetime snapshot keys to newly minted
-  durable IDs rather than silently overstating their historical semantics.
-- [x] Validate envelope relationships: unique v1/v2 workspace identities and
-  non-null `lastWorkspaceId` referencing an existing record; quarantine
-  malformed relationships instead of collapsing them through a Map.
-- [x] Migrate one legacy snapshot as selected, but multiple legacy snapshots
-  with `lastWorkspaceId: null`; v1 array order never invents selection authority.
-- [x] Add pure `remapWorkspaceTopologySurfaceIds(topology, oldToFresh)` that
-  rewrites surfaces, group membership and active IDs while preserving project,
-  tab/group order, focus, split orientation/tree and weights.
-- [x] Require a complete exact mapping with unique non-empty fresh IDs; refuse
-  missing, extra or duplicate mappings and semantically validate the result.
-- [x] Prove duplicate tabs for one project remap independently.
-
-A1.2h still does not consume `lastWorkspaceId`, open projects, allocate startup
-surfaces, construct mappings, or restore layout automatically. Reviewer sign-off
-completed at exact head `100f2817fec005a33e04f2eacaa7c955b94bc6ca`.
-
-A1.2i all-or-nothing primary startup hydration:
-
-- [x] Add read-only selected snapshot access; it does not consume, reorder or
-  persist, and a null selector makes no automatic choice.
-- [x] Make main the sole startup restore authority and gate renderer initial
-  empty topology commit until hydration decision.
-- [x] Add a resolve-first all-or-nothing hydration core: resolve every
-  persisted surface project/URL before allocation; allocate fresh surfaces,
-  build old→fresh map, remap once, validate, deliver once, commit once, and
-  retire only invocation-owned surfaces on failure.
-- [x] Wire primary-window startup IPC and one combined descriptors+topology
-  hydration event; additional windows return fresh/no-hydration decisions.
-- [x] Gate initial empty topology commits until the hydration decision and
-  keep no-selection/failure from immediately persisting a replacement empty
-  snapshot.
-- [x] Recheck every persisted Backpack after all project-opening awaits and
-  before fresh surface allocation.
-- [x] Memoize the primary hydration promise in main so StrictMode/repeated IPC
-  calls cannot allocate or deliver a second restored workspace.
-- [x] Keep hydration persistence failures visible through main diagnostics.
-- [x] Complete live seeded-v2 restore acceptance; reviewer final sign-off is
-  recorded on the exact pushed head below.
-- [x] Live seeded-v2 primary restore; fresh IDs/order/focus/weights; durable ID
-  reuse after mutation; additional window remains fresh.
-- [x] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
-  assertions through the control plane.
-- [x] Reviewer sign-off on exact head `641460843d379862ec4bb50092847ffa618965bb`.
-
-Reviewer closed A1.2i with no concrete lifecycle, startup-authority,
-identity-mapping, renderer-convergence, persistence, or acceptance blocker.
-A1.2j archive/remove plus crash/reload durability is recorded immediately below;
-additional windows remain fresh and persistence-redaction assertions are
-preserved.
-
-A1.2j archive/remove and crash/reload durability:
-
-- [x] Archive a project through the real Backpack IPC path and retire only its
-  live logical/native surfaces across the workspace.
-- [x] Persist the canonical survivor topology under the same durable
-  `workspaceId`, with no archived project remaining in the snapshot.
-- [x] Relaunch from the same user-data state and automatically hydrate only
-  surviving projects with fresh runtime surface ids.
-- [x] Remove an already archived project and prove it is not resurrected.
-- [x] Abruptly terminate and relaunch the app after the removal commit; prove
-  atomic persistence restores only the surviving projects.
-- [x] Keep later windows fresh and retain persistence redaction assertions.
-- [x] Reviewer sign-off on exact head `63b84f43801254d03b01890a1b7e0cf836853256`.
-
-A1.2j validation: dedicated archive/reload Electron E2E passed 1/1;
-typecheck passed; full Vitest passed with 677 tests and 4 skipped; and the
-dedicated startup-hydration E2E remains 1/1. Reviewer signed off exact head
-`63b84f43801254d03b01890a1b7e0cf836853256` with no concrete lifecycle or
-persistence defect. The broader legacy Electron suite still has the
-previously documented unrelated fixture/restart failures.
-
-### A1.2k keyboard tab selection and accessibility acceptance
-
-- [x] Keyboard can reach and select every live workspace tab.
-- [x] Active tab exposes correct selected state and accessible name.
-- [x] Keyboard focus and activation preserve canonical Papers topology and
-  native presentation.
-- [x] Keyboard acceptance covers a multi-surface workspace without relying on
-  mouse-only Dockview gestures.
-- [x] Reviewer sign-off on exact head `a9184df50564c2dce0df2db2464a5b2bd58ed3c8`.
-
-A1.2k validation: dedicated keyboard-accessibility Electron E2E passed 1/1;
-it reaches the active tab through real Tab navigation, moves across the tab
-strip with ArrowLeft/ArrowRight, activates Alpha and Beta with Enter, verifies
-accessible names and selected state, and checks canonical active-surface plus
-native presentation convergence including the inactive tab becoming hidden.
-Reviewer signed off exact head `a9184df50564c2dce0df2db2464a5b2bd58ed3c8` with
-no concrete keyboard/accessibility defect.
-
-A1.2i validation: the dedicated seeded-v2 startup Electron E2E passed 1/1;
-typecheck passed; full Vitest passed with 677 tests and 4 skipped; production
-build passed; and `git diff --check` passed. The dedicated acceptance seeds a
-known v2 workspace, proves automatic primary hydration without UI assistance,
-fresh runtime surface ids, preserved tab/group/focus/split-weight semantics,
-single durable workspace identity after mutation, and a fresh secondary
-window. The complete legacy Electron suite remains non-green in this
-environment for unrelated fixture/restart failures (permission/startup
-timeouts and a worker fixture's missing `crypto.randomUUID`).
-
-### A1 workspace/tab/split milestone — closed
-
-A1 now has signed-off live coverage for one-window tabs, supported splits and
-weights, canonical external control, durable startup restore with fresh IDs,
-archive/remove and crash/reload durability, and keyboard tab accessibility.
-The complete legacy Electron suite still has the separately documented
-fixture/restart failures; the focused A1 acceptance tests are green.
-
-### A2.1a prospective-set validation and bulk replacement boundary
-
-- [x] Validate a prospective topology against an explicit `{surfaceId,
-  projectId}` set instead of requiring it to equal the currently live set.
-- [x] Add all-or-nothing bulk replacement cleanup that accepts the explicit
-  canonical old `{surfaceId, projectId}` set, closes native presentations,
-  retires those logical surfaces, and unbinds senders without intermediate
-  topology commits or per-surface close events; unrelated fresh replacement
-  surfaces may coexist and remain untouched.
-- [x] Add unit coverage for prospective validation, exact complete-set
-  enforcement, and no-mutation-on-invalid-cleanup.
-- [x] Reviewer sign-off on exact head `51c1df7e976cc73d75c660adbf51be8e6db94e44`.
-
-A2.1a validation: typecheck passed and focused host-facade unit tests passed
-27/27, including old+fresh coexistence and invalid-set no-mutation cases. The
-production seam is intentionally not used by ordinary close; it is ready for
-the named-layout replace-load transaction after reviewer review.
-
-### A2.1b app-level named-layout persistence
-
-- [x] Add separate `PapersData/workspace-layouts.json` persistence through
-  `AtomicJsonStore` and `PapersPaths.workspaceLayoutsFile`.
-- [x] Persist only validated named layouts with UUID `layoutId`, trimmed
-  bounded names, topology, and creation/update timestamps; exclude workspace,
-  window, URL, sender/WebContents, Dockview and native presentation identity.
-- [x] Provide serialized create-only `create(name, topology)`, read-only
-  `list()`/`get(layoutId)`, and `flush()` store operations.
-- [x] Reject duplicate normalized names, duplicate IDs, malformed topology and
-  invalid envelope state through validation/quarantine.
-- [x] Ensure durable create failure leaves no in-memory phantom layout.
-- [x] Reviewer sign-off on exact head `cf9faf696a89ca1b334cce55c6bc38bc75135bce`.
-
-A2.1b validation: typecheck passed and focused named-layout store tests passed
-5/5, covering atomic round-trip/cloning, concurrent create serialization,
-duplicate/invalid names, malformed-state quarantine, redaction, and failed-save
-no-phantom behavior. Reviewer found no concrete blocker and signed the exact
-pushed head. No control, UI, or load transaction was included in this slice.
-
-### A2.1c exact-window named-layout control transaction
-
-- [x] Add exact-window `layout.list`, `layout.save` and `layout.load` control
-  commands; neither save nor load may infer an active/current window.
-- [x] Make `layout.save` capture only the target window's validated canonical
-  topology and create one durable named layout without changing workspace
-  identity or revision.
-- [x] Make `layout.load` resolve every saved Backpack before allocating any
-  replacement surface, recheck availability after awaits, remap every saved
-  surface to a fresh runtime identity, and fail closed on any missing project.
-- [x] Deliver one combined `host:event:workspace-layout-loaded` payload and
-  replace the target only after complete validation/delivery; failures retire
-  only invocation-created surfaces and preserve the old topology, revision and
-  workspace identity.
-- [x] Add focused transaction and control-protocol regression coverage for
-  ordering, duplicate project tabs, rollback, exact cleanup, and one commit.
-- [x] Add `papersctl layout.list`, `layout.save --window … --name …`, and
-  `layout.load --window … --layout …`.
-- [x] Reviewer sign-off on exact head `e4a96f21dc154e3a875751504cba4c9e89782d24`.
-
-A2.1c implementation validation: typecheck passed, full Vitest passed 60/60
-files with 691 passed and 4 skipped tests, build passed, and `git diff --check`
-passed. Focused facade/control coverage includes resolve-first archive races,
-duplicate project tabs with independent fresh identities, delivery rollback,
-one combined event, exact old-set cleanup, one final topology commit, and a
-late native-close failure after event delivery. Replacement cleanup now treats
-known native teardown errors as non-throwing after the delivery boundary, so a
-queued successful layout cannot be contradicted by rollback of its fresh ids.
-The exact pushed head and the A2.1d acceptance are signed off below; UI remains
-minimal by design.
-
-### A2.1d minimal Layouts UI and live acceptance
-
-- [x] Add a title-bar Layouts popover with name entry, Save current layout,
-  named-layout list, Load actions, busy state and visible error feedback.
-- [x] Expose renderer operations through authenticated host IPC that derives the
-  target window from its sender; the renderer never supplies a native window ID.
-- [x] Consume the combined load event by replacing the descriptor set before
-  Dockview/native presentation convergence, with external-restore commit
-  suppression.
-- [x] Add a real Electron acceptance test for UI save, material mutation, UI
-  load, fresh IDs, persistence, a second-window independent load, and an
-  unavailable-project failure that preserves the target.
-- [x] Reviewer sign-off on the exact pushed head.
-
-A2.1d validation: typecheck passed, the focused real Electron acceptance passed
-1/1 after making secondary-window targeting use its explicit native `windowId`.
-Full unit suite passed 691/695 (4 skipped), build and diff checks passed, and
-the reviewer found no concrete UI, authority, convergence, lifecycle,
-persistence or acceptance defect. No overwrite, rename, delete, merge, startup
-selection, or management screen was added.
-
-### Later gates
-
-- [x] A2 — named Save Layout / Load Layout (A2.1a–d signed off at
-  `e4a96f21dc154e3a875751504cba4c9e89782d24`).
-- [x] A3.1 — define cross-native-window move transaction and authority
-  contract (signed off at
-  `adfd9796a7f9c3f21ca037681f86b08a92cb3ec2`).
-- [x] A3 — cross-native-window move transaction with recreate/rebind fallback,
-  forward canonicalization, and authenticated host-sender adapter (signed off
-  through A3.4; exact implementation heads are recorded below).
-- [x] Electron-version compatibility test for optional live WCV reparenting.
-- [x] B2 — richer `papersctl`, event subscriptions and authorized confirmation
-  challenges for destructive operations.
-- [x] B3 — thin stdio MCP adapter over the same local control protocol; no
-  duplicated business logic.
-
-### A3.1 cross-native-window move contract (design slice)
-
-- [x] Explicit source target `{sourceWindowId, surfaceId}` and destination
-  `{targetWindowId, targetGroupId, targetIndex}`; reject missing, foreign,
-  retired, non-project or non-live window identities. The source is proved by
-  the authenticated host sender; the destination is an explicit live Papers
-  window and is never the focused/primary window by inference.
-- [x] Validate both workspace topologies against exact live project sets before
-  mutation. Compute `sourceNext` with `closeWorkspaceSurface(sourceTopology,
-  surfaceId)`. Compute `targetNext` by inserting the moved descriptor into the
-  explicit target group, then applying the existing `moveWorkspaceSurface`
-  ordering semantics (or an equivalent pure `insertWorkspaceSurface` helper);
-  validate both prospective sets before touching native state. The destination
-  cannot call `moveWorkspaceSurface` against the pre-move target alone because
-  that helper requires the surface to already be present in that topology.
-- [x] Choose recreate/rebind as the first Electron `43.1.1` implementation.
-  `BackpackProjectRuntime` currently owns a fixed `BaseWindow` and exposes no
-  reparent operation, so A3 must prepare a destination presentation from the
-  project service's freshly resolved URL. A later optional live WCV reparent
-  path needs an Electron-version compatibility test; neither native
-  presentation nor `WebContents` identity is durable product state.
-- [x] Define one serialized move transaction per application. Its phases are:
-  capture and validate both windows/topologies; resolve and revalidate the
-  project; preflight both host destinations; prepare a lifecycle-silent staged
-  destination runtime and wait for its renderer to load; compute/validate
-  `sourceNext` and `targetNext`; atomically persist both durable workspace
-  records with one awaited store save; then perform the synchronous canonical
-  handoff with no further asynchronous failure boundary. The handoff moves the
-  logical `surfaceId` to the target, unbinds only old sender contexts for that
-  exact surface, binds only the newly prepared destination project sender to
-  `{surfaceId, projectId, targetWindowId, kind:'project'}`, updates both
-  in-memory topologies/revisions/projections, and delivers one complete
-  `{projects, topology}` projection to each affected host. The source projection
-  removes the descriptor; the destination projection adds the moved descriptor
-  with its resolved URL. Finally, perform best-effort source native teardown.
-  The staged duplicate is never canonical or exposed to control inspection.
-- [x] Use a dedicated `commitWorkspacePair`-style persistence primitive for the
-  shared `workspace-topologies.json`; two sequential `commit()` calls are not
-  crash-atomic. The primitive replaces both existing records in one
-  `AtomicJsonStore.save()` and preserves the pre-move `lastWorkspaceId` rather
-  than selecting whichever side was written second. An initially unassigned
-  target receives a new durable workspace ID inside this transaction; the
-  primitive also supports an atomic compensating restore that removes that
-  newly introduced record if the canonical handoff must be undone.
-- [x] Define rollback at every await and commit boundary. Before pair
-  persistence, discard only the staged destination presentation and leave
-  source topology, logical ownership, sender bindings and durable records
-  untouched. If canonical handoff or either post-commit renderer delivery
-  fails, restore the source/destination in-memory snapshots and exact sender
-  bindings, discard the staged/adopted destination presentation, and perform
-  one compensating atomic pair restore (including removal of a newly allocated
-  target workspace record). If one renderer was already notified, send it one
-  compensating complete `{projects, topology}` projection, not a topology-only
-  event, so its descriptor set and topology return together. Preserve the
-  logical `surfaceId` throughout; retire it only if the original native
-  presentation cannot be restored and the source is no longer safe to expose.
-- [x] Define renderer consumption for the move projection: replace the affected
-  host's complete `openProjects` descriptor set before setting topology, arm the
-  established externally-restored suppression latch, then derive active/entered
-  state from the focused group's descriptor-backed active surface. The same
-  complete-projection shape is required for compensation; a topology-only event
-  is insufficient because `App.tsx` stores descriptors separately from
-  `workspaceTopology`.
-- [x] Make staging lifecycle-silent: a prepared runtime must not be inserted
-  into the ordinary canonical project-surface collection before adoption,
-  because ordinary `close()` can invoke `onSurfaceClosed` and mutate detach /
-  widget ownership. It needs an explicit `prepareProjectSurface(...) ->
-  {senderId, adopt, discard}` seam; `discard` cannot fire canonical close
-  cleanup, while `adopt` installs the normal destination collection ownership
-  only at handoff.
-- [x] Make staging authority-safe: a staged destination WebContents must not
-  be a fully executing, unbound project page that receives rejected startup IPC
-  before adoption. The staging seam must either gate project application
-  execution until canonical adoption or queue/withhold project IPC behind a
-  staging barrier released only when the new sender is atomically bound to the
-  target `{surfaceId, projectId, targetWindowId}`. It must not bind the staged
-  sender early to either window, and it must never permit two simultaneously
-  authoritative renderers for one logical surface.
-- [x] Keep source and destination authority adapters separate. Host IPC derives
-  `sourceWindowId` from its authenticated sender and accepts only `surfaceId`
-  plus an explicit target; developer control authorizes explicit
-  `sourceWindowId`, `surfaceId` and target through its authenticated control
-  session. Both call the same core transaction. Never rebind a source
-  WebContents to the target window, and never project-wide rebind same-project,
-  widget, detached or unrelated tab senders.
-- [x] Keep native teardown best-effort after canonical commit, with no rollback
-  from a late destroyed-object error. Add the control command, sender-binding
-  tests, native recreate/rebind tests, durable two-workspace failure tests and
-  a focused two-window Electron acceptance only after this contract is reviewed.
-- [x] Reviewer sign-off on exact head
-  `adfd9796a7f9c3f21ca037681f86b08a92cb3ec2`.
-
-A3.1 is signed off and implementation is proceeding at the infrastructure
-boundary. A3 must not copy window IDs, sender IDs or native presentation state
-into durable layout/workspace files. The two workspace records remain
-independently represented but are committed through one atomic file save, with
-the move operation responsible for coordinating their in-memory canonical
-snapshots and compensating restore. The staged project renderer is not
-considered prepared until its authority barrier is also safe.
-
-### A3.2 cross-window move infrastructure
-
-- [x] Add pure `insertWorkspaceSurface(...)` semantics for a moved descriptor
-  that is absent from the destination topology; preserve explicit target group,
-  index, active surface and focus invariants.
-- [x] Add `WorkspaceTopologyStore.commitPair(...)` for one awaited durable save
-  of source and target records while preserving pre-move `lastWorkspaceId`.
-- [x] Add pair snapshots and compensating restore with explicit deletion of a
-  newly introduced target workspace record.
-- [x] Add a project authority barrier that queues staged project IPC until
-  adoption and rejects it on discard; integrate the gate before the normal
-  project sender guard.
-- [x] Add a native runtime presentation option for hidden preparation and a
-  lifecycle-silent collection `prepare(...)->{runtime,adopt,discard}` seam.
-- [x] Reviewer sign-off on the infrastructure exact head
-  `3da78e69a68d2b6885d65e494d1f1c5b6f57d596`.
-
-A3.2 implementation validation: typecheck passed; focused topology,
-workspace-store, authority-barrier and surface-collection tests passed; full
-Vitest passed 702/706 (4 skipped); build and diff checks passed. The reviewer
-signed off the infrastructure exact head above.
-
-### A3.3 application move transaction and control path
-
-- [x] Add one application-serialized `layout.moveSurfaceToWindow` transaction
-  using explicit source/target window and group/index identities.
-- [x] Resolve and validate source/target topology plus exact live logical
-  surface sets, prepare a hidden destination runtime, atomically commit the
-  durable workspace pair, then synchronously move logical ownership and exact
-  sender bindings.
-- [x] Deliver complete `{projects, topology}` projections to both affected
-  hosts, with complete compensating projections after post-commit delivery
-  failure; source native teardown is best-effort after commit.
-- [x] Expose the move through the authenticated developer control protocol
-  without sender IDs, URLs, or native identity in the command result.
-- [x] Add facade success/rollback tests, control dispatch coverage, and a live
-  two-window Electron acceptance covering native presentation convergence.
-- [x] A3.3r hardening: exclude ordinary topology commits and window finalization
-  from the pair boundary; retain forward canonical state if compensating durable
-  restore fails; and make source native collection removal unconditional before
-  best-effort teardown. Add race, restore-failure, and throwing-close tests.
-- [x] A3.3r2 hardening: archive/remove now acquire the same per-project window
-  authority before registry persistence; locked availability is rechecked before
-  pair commit; failed-restore forward fallback also tears down the source
-  collection; and composed adoption retries after a first presentation throw.
-  Add archive/remove, source-cleanup, and double-failure adoption coverage.
-- [x] A3.3r3 hardening: archive/remove and every live project-surface creation
-  path share a project-level ownership gate across awaited registry/project
-  work; the gate is held through availability cleanup, and native collection
-  adoption retries presentation after a first `present()` failure without
-  duplicating collection ownership. Add held-registry-save archive/remove and
-  real collection retry regressions.
-- [x] A3.3r4 hardening: direct host project open rechecks its window mutation
-  barrier after its final await; startup hydration acquires the same sorted
-  project ownership gates through resolve, allocation, delivery, and commit;
-  add held-pair host-open and held-registry hydration races.
-- [x] A3.3r5 hardening: startup hydration also checks the target window’s
-  workspace-mutation boundary after final availability validation and before
-  any allocation, delivery, or commit; add held-target move/hydration coverage.
-- [x] A3.3r6 hardening: when the target closes after pair persistence and
-  compensating persistence also fails, terminal forward handling discards the
-  staged destination, retires/unbinds the moved surface, tears down the source,
-  and advances the source projection without adopting into the dead target.
-  Add target-close plus restore-failure coverage.
-- [x] Reviewer sign-off on exact pushed head
-  `b8717bb840be56c0a422398f6e11f3fc24d63994` (reviewed at pushed tip
-  `a3b7f6fa90ab9c6a7db7ce7fad0c0328304f51e6`).
-
-A3.3 validation so far: typecheck passed; focused move/protocol/persistence/
-collection tests passed 81/81; full Vitest passed 719/723 (4 skipped); build
-and diff checks passed; live workspace-tabs and developer-control Electron
-acceptance passed 3/3. The A3.3 exact-head review is signed off.
-Reviewer signed off A3.3 forward canonicalization at the exact implementation
-head above with no remaining concrete defect. The next narrow slice is the
-authenticated host-sender `moveSurfaceToWindow` adapter: accept only
-`surfaceId` plus explicit target fields from the renderer, derive
-`sourceWindowId` from authenticated `event.sender.id`, and delegate to the
-same reviewed transaction.
-
-### A3.4 authenticated host-sender move adapter
-
-- [x] Add `host:workspace:move-surface-to-window` with a strict payload of only
-  `{surfaceId, targetWindowId, targetGroupId, targetIndex}`; reject any
-  renderer-supplied `sourceWindowId`.
-- [x] Derive `sourceWindowId` exclusively from the authenticated host sender
-  and delegate to the same `moveWorkspaceSurfaceAcrossWindows` transaction.
-- [x] Expose the operation through host preload/bridge and cover correct-source
-  routing, wrong-window rejection, payload spoofing, and strict schema tests.
-- [x] Reviewer sign-off on exact pushed head
-  `b7d4bcac93aedd1ee795aca5eeddc16651bf508d` (reviewed at pushed tip
-  `166632d1066e20e90e98e9eb0f2eb184aa15b702`).
-
-A3.4 validation so far: typecheck passed; full Vitest passed 723/727 (4
-skipped); focused move/protocol/persistence/collection/host-IPC tests passed
-85/85; production build and diff checks passed; live workspace-tabs and
-developer-control Electron acceptance passed 3/3. The A3.4 exact-head review
-is signed off with no correctness or security defect.
-
-### A3 closure
-
-- [x] Keep durable workspace state limited to validated topology/workspace
-  identity; native windows, WebContents, sender IDs, URLs and Dockview
-  internals remain live-only.
-- [x] Keep cross-window moves serialized through exact source/target topology
-  and logical-surface validation, hidden authority-gated preparation, one
-  atomic pair save, exact sender replacement, and complete host projections.
-- [x] Keep ordinary topology mutation, archive/remove availability changes,
-  project ownership creation, startup hydration, and window finalization
-  excluded from an in-flight move boundary.
-- [x] Preserve canonical recovery for delivery failure, durable restore
-  failure, native teardown failure, presentation retry, and close/dead-target
-  double failure.
-- [x] Expose the same reviewed move transaction through both authenticated
-  developer control and authenticated host IPC, with host source identity
-  derived from `event.sender.id`.
-- [x] A3 implementation and adapter gates are signed off at exact heads
-  `b8717bb840be56c0a422398f6e11f3fc24d63994` and
-  `b7d4bcac93aedd1ee795aca5eeddc16651bf508d`; the latest pushed documentation
-  tip is `a48a3b67ec6af48d5a1c5219626edbf383aa1517`.
-- [x] Final A3 evidence: typecheck passed; full Vitest passed 723/727 (4
-  skipped); focused validation passed 85/85; production build and diff checks
-  passed; live workspace-tabs and developer-control Electron acceptance passed
-  3/3.
-
-A3 is complete. No A3.5 or A4 scope is inferred here; the next milestone must
-be defined and reviewed separately.
-
-### B2.1 control-client parity and safe event subscriptions — signed off
-
-The reviewer’s next-milestone recommendation after A3.4 is this narrow
-programmatic-control slice:
-
-- [x] Keep `papersctl` and the shared `papersControlClient` at parity with all
-  already-authorized semantic commands, including explicit cross-window move
-  identities.
-- [x] Add authenticated connection-local subscriptions with explicit,
-  schema-validated event frames and response/event demultiplexing while a
-  request is outstanding.
-- [x] Permit only redacted semantic events; never emit URLs, filesystem roots,
-  sender/WebContents IDs, native handles, Dockview internals, or renderer/native
-  identity.
-- [x] Prove subscription isolation, malformed frame/refusal behavior, and
-  stable machine-readable `papersctl` event output in unit coverage.
-- [x] Add one live Electron acceptance where a subscribed client observes a
-  real semantic change while ordinary requests remain correct.
-
-The initial implementation uses `window.created` and `workspace.changed` as
-the deliberately small event vocabulary. Subscription is connection-local and
-the server validates every complete frame before fan-out. Destructive
-confirmation, MCP/stdio transport, optional Electron compatibility, release,
-installation and packaging remain out of scope.
-
-Implementation exact head `3bf0f6a0f161e3884c6d10a57522e3eceb2821eb` is
-pushed with event implementation base
-`d2c728c1d9a4a031d753b68554a49034fcf76e1a`; reviewer sign-off was recorded at
-exact pushed docs tip `dfd8ccb51bcc3464f8282ed0d7c35e1440989e75`. Validation:
-`npm run typecheck` passed; full Vitest passed 727/731 (4 skipped); production
-build passed; live developer-control Electron E2E passed 3/3; and
-`git diff --check` passed. The pre-existing user-owned modification to
-`docs/evidence/worker-comparison.json` was not staged or changed by this gate.
-
-The compatibility probe below records the completed narrow gate; recreate/rebind
-remains the correctness path, with no production behavior change.
-
-### B2.2 destructive confirmation challenges — signed off
-
-- [x] Add explicit `backpack.archive.prepare`, `backpack.remove.prepare` and
-  `confirmation.execute` protocol operations; there is no force flag or direct
-  destructive mutation command.
-- [x] Bind each challenge to one authenticated connection, exact action,
-  Backpack ID and current name.
-- [x] Expire challenges after five minutes, consume them on the first execution
-  attempt, and revoke them when their connection closes.
-- [x] Recheck exact target name and archive state immediately before mutation;
-  removal still requires the Backpack to be archived.
-- [x] Serialize rename and archive/restore/remove under the same per-project
-  ownership gate; confirmed control actions hold that gate continuously from
-  final exact-name/state validation through mutation.
-- [x] Keep `papersctl` on one connection for prepare→confirm→execute, with an
-  interactive exact-phrase prompt or explicit `--confirmation` text.
-- [x] Prove wrong-connection, wrong-phrase, expiry, replay, disconnect, stale
-  target and live archive/removal behavior.
-- [x] Reviewer sign-off on exact pushed head
-  `80270d57705f6a66f11d328e4cfc6314ee84fd64`.
-
-The initial exact-head review at `c4a67793f10b767e2024b15641c36fc00823b8d2`
-found one concrete rename race between protocol revalidation and entry into the
-facade's project-ownership gate. The correction gates rename and adds confirmed
-facade operations that revalidate and mutate while continuously holding that
-same gate. A focused regression consumes the challenge, deliberately pauses
-before facade entry, lets rename win, then proves the destructive mutation is
-refused and the challenge cannot be replayed.
-
-Validation at the corrected candidate worktree: typecheck passed; focused
-confirmation/protocol/server/client/facade tests passed 87/87; full Vitest
-passed 733/737 (4 skipped); production build passed; live developer-control
-Electron E2E passed 4/4 using the real `papersctl` executable; and
-`git diff --check` passed. The pre-existing user-owned modification to
-`docs/evidence/worker-comparison.json` remains untouched.
-
-### Electron 43.1.1 live-WebContentsView reparent compatibility — signed off
-
-The standalone acceptance probe creates two real `BaseWindow`s and one loaded
-`WebContentsView`, detaches it from the source, attaches it to the target, and
-verifies:
-
-- the source no longer owns the view and the target does;
-- the same `webContents.id`, loaded data URL and renderer probe survive;
-- a post-reparent renderer interaction returns the expected value;
-- source and target can be destroyed without a destroyed-object exception.
-
-Observed result: compatible for the live detach/attach operation on Electron
-43.1.1. A target-window destroy does not automatically destroy the WCV, so the
-probe explicitly closes the WCV and verifies its `destroyed` lifecycle. This
-is evidence only: Papers continues to use recreate/rebind as the correctness
-path, and no production behavior or A3 transaction selection changes.
-
-Implementation exact head `bbe07275df114ebfd5b97956a98fae38342a52c3` is pushed
-at review tip `18c9e564afab2703facac9c89ba41e5195b6cdb1`. Validation at this
-candidate:
-`npm run typecheck` passed; full Vitest passed 727/731 (4 skipped); production
-build passed; combined developer-control and compatibility Electron E2E passed
-4/4; and `git diff --check` passed. Reviewer found no concrete defect.
-
-The A0.4 residual evidence test below records the completed narrow gate.
-
-### A0.4 residual same-project surface evidence — signed off
-
-The standalone acceptance test uses existing authorized control semantics only.
-It creates two fresh surfaces for one project in one live window, proves
-distinct logical IDs and two native renderers, splits them into simultaneously
-visible panes, activates each exact surface by requiring the focused group to
-name that surface, and closes only the first while the second remains live,
-visible and natively presented. Renderer probes receive distinct markers (`1`
-and `2`) from the two independent project renderers.
-
-Implementation exact head `94238574f22f9fc8714d91febdf73c2bafb7a7a0` was reviewed
-at exact pushed docs tip `a8df036ce8ac1720d76b790f7f1ce7978c4f656d`. Focused
-same-project Electron E2E, typecheck, combined live E2E, full Vitest, build and
-diff checks pass. No production behavior, persistence, authority or control
-redaction changed.
-
-### Renderer transport destroy/recreate — signed off
-
-The standalone acceptance creates one live project surface, records its
-logical `surfaceId` and original renderer transport, destroys that transport,
-and verifies the logical surface and committed topology remain. It then uses
-the existing authorized host bridge to show the same surface again, proving a
-different live renderer, unchanged project/surface identity, unchanged active
-topology, post-recreation renderer interaction, and exact close cleanup. The
-dead transport is absent from live WebContents and the existing
-surface-context unit contract covers removal of its sender binding and binding
-of the replacement sender to the same surface.
-
-Observed behavior: recreate/rebind succeeds on Electron 43.1.1 without
-retiring the logical surface. Implementation exact head
-`43326f7ca172abd699bbdc00105cce984ee7e4c0` was reviewed at exact pushed docs
-tip `2cfb4176080a689f9d001f4ee08a92d5e9b56da4`. Focused renderer-recreation
-E2E, combined relevant E2E 6/6, typecheck, full Vitest 727/731 (4 skipped),
-build and diff checks pass. Reviewer found no concrete defect; no production
-behavior changed.
-
-The creator has now authorized the remaining agenda. B2.2 is signed off and B3
-MCP/stdio is the active review candidate. Release, packaging and installation
-follow implementation, validation and reviewer closure rather than running
-ahead of them.
-
-### B3 standalone stdio MCP adapter — signed off
-
-- [x] Pin the official `@modelcontextprotocol/sdk` at 1.30.0.
-- [x] Add one standalone stdio process with no new network listener and no code
-  inside Papers main.
-- [x] Expose one mechanical `{method, params}` tool over the shared
-  `papersControlClient`; do not duplicate the command catalog or business logic.
-- [x] Preserve exact explicit targets and return only existing control results
-  or existing refusal text.
-- [x] Preserve B2.2 prepare→challenge→execute on one underlying connection;
-  cancellation and shutdown close that connection and revoke challenges.
-- [x] Add unit coverage for exact mapping, target preservation, destructive
-  sequencing, refusal propagation and cancellation cleanup.
-- [x] Add real Electron acceptance using the actual stdio adapter for
-  `inspect.windows` and `window.create`, then prove state through control.
-- [x] Reviewer sign-off on exact pushed head
-  `c4f91cc30dc7953e9ab4e7b53f452e791908524d`.
-
-Events are deliberately omitted from this first adapter slice. The adapter has
-no renderer IPC, facade, registry, filesystem-project, TCP/HTTP or arbitrary-JS
-access. Release/install/package remains after B3 review closure.
-
-The initial exact-head review at `bd52e9e508a006e22612429d8371dd2e4e87ac58`
-found one cancellation race before control connection establishment completed.
-The correction installs the abort handler before descriptor/pipe awaits, checks
-already-aborted state on both sides, closes any eventual connection, and never
-dispatches the cancelled method. A delayed-connect regression proves a cancelled
-`window.create` cannot reach the control client.
-
-Validation at the corrected candidate worktree: typecheck passed; focused
-MCP/control tests passed 48/48; full Vitest passed 738/742 (4 skipped);
-production build
-passed; live developer-control Electron E2E passed 5/5, including the real
-stdio adapter performing a query and creating a native Papers window; and
-`git diff --check` passed. `npm audit --omit=dev` reports zero production
-vulnerabilities after compatible transitive lockfile updates. The remaining
-development-only audit findings predate/are outside the shipped adapter path.
-The pre-existing user-owned modification to
-`docs/evidence/worker-comparison.json` remains untouched.
-
-### Release-checklist closure
-
-The reviewed implementation agenda is release-ready. Final authority invariants:
-
-- main remains the sole native-window, logical-surface, topology and Backpack
-  lifecycle authority;
-- control and MCP actors use authenticated local transport plus exact explicit
-  identities and never manufacture renderer authority;
-- only schema-validated/redacted semantic results cross the control boundary;
-- destructive control requires B2.2's connection-bound, expiring, single-use,
-  exact action/ID/name confirmation, with final validation and mutation under
-  one per-project ownership gate;
-- MCP remains a standalone mechanical stdio adapter over that reviewed client
-  and protocol, with cancellation/shutdown revoking its connection state.
-
-Release configuration was inspected after B3 sign-off. The repository has the
-documented GitHub provider, NSIS installer, `latest.yml` update feed, preserved
-external `Data` sibling, updater-safe `deleteAppDataOnUninstall: false`, active
-GitHub authentication, and a clean pushed implementation head except for the
-explicitly user-owned `docs/evidence/worker-comparison.json` modification. No
-reviewed implementation blocker remains. The creator explicitly authorized the
-release/install agenda; version assignment, publication and installer execution
-remain separate release commits/actions under `UPDATING_PAPERS.md`.
-
-## Persistent pickup checklist for every new session
-
-1. Read `HERMES.md` completely and state scope/release boundaries.
-2. Read this document completely.
-3. Inspect `git status --short`, current branch, origin parity and recent log.
-4. Preserve creator/user changes; never reset or overwrite a dirty worktree.
-5. Read the latest completed reviewer message once; ignore stale responses that
-   name an older commit unless the finding still verifies in current source.
-6. Run typecheck and focused tests before changing the next seam.
-7. Implement one gate at a time; do not start Dockview before A0.4 sign-off.
-8. Add/extend semantic control for newly real user actions and state.
-9. Validate full unit suite, build, focused Electron E2E and `git diff --check`.
-10. Commit and push only `agent/surface-context-routing` unless the creator says
-    otherwise.
-11. Send the exact commit and evidence to the reviewer; wait for completion
-    before reading.
-12. Update this document after each completed/reviewed gate.
-
-## Explicit non-authorizations
-
-This work does **not** authorize:
-
-- release, package publication, installation or updater changes;
-- terminating/restarting an installed Papers instance without a separate request;
-- exposing developer control in normal production by default;
-- TCP/remote control;
-- arbitrary renderer code execution as a supported API;
-- destructive commands without confirmation design and creator scope;
-- turning one Backpack's behavior into a universal Backpack framework;
-- persisting Dockview internals, Electron ids or sender ids as product identity.
+`capture.element` is reserved for C1.3.
+
+## Architectural boundary / likely owner
+
+**Main-process owner:** new Papers-owned visual observation service, composed from `src/main/index.ts`.
+
+Likely separation:
+
+```text
+src/main/visual/
+  visualObservationService.ts
+  visualArtifactStore.ts
+  processIdentity.ts
+  visualSchemas.ts
+```
+
+Existing integration points:
+
+* Papers window registry for exact native ownership;
+* logical surface registry;
+* workspace topology + revision maps;
+* `BackpackProjectRuntime` / surface collection for exact WCV;
+* project preload for predefined renderer observation;
+* `papersControlProtocol.ts` for safe control exposure.
+
+The main process remains canonical. The renderer reports observation facts; it never decides which logical surface it represents.
+
+## Synchronization contract
+
+A capture must not casually combine evidence from different render states.
+
+For a surface capture:
+
+1. resolve exact live `{windowId,surfaceId}`;
+2. record topology revision and process instance identity;
+3. request renderer observation with fresh `captureId`;
+4. renderer waits only for bounded requested readiness;
+5. renderer returns:
+
+   * document revision;
+   * render cycle;
+   * layout epoch;
+   * DOM/accessibility projection;
+   * semantic bounds;
+6. main captures the exact WCV PNG;
+7. main obtains a cheap post-capture fence:
+
+   * document revision;
+   * layout epoch;
+   * render cycle;
+8. main rechecks topology revision and exact sender/surface binding;
+9. snapshot is accepted only if the pre/post identities agree.
+
+One bounded retry is permitted when state changes during capture. A second mismatch returns an explicit unstable result.
+
+No indefinite “wait until things stop changing”.
+
+## Proposed API schema
+
+```text
+capture.surface
+input:
+  windowId: integer
+  surfaceId: string
+  settle:
+    mode: "layout-stable" | "immediate"
+    timeoutMs: 0..5000
+  include:
+    domSummary: boolean
+    accessibilitySummary: boolean
+    semanticBounds: boolean
+
+output:
+  captureId: UUID
+  target:
+    windowId
+    surfaceId
+    projectId
+  observedAt: datetime
+  consistency:
+    status: "stable" | "unstable"
+    reason?: "layout-changed" | "state-changed" | "topology-changed" |
+             "renderer-replaced"
+  process:
+    pid
+    appInstanceId
+    startedAt
+    build:
+      version
+      commit
+      packaged
+    executableIdentity:
+      canonicalFileId
+  revisions:
+    workspaceTopologyRevision
+    documentStateRevision: string | null
+    renderCycleId: string | null
+    layoutEpoch: integer | null
+  presentation:
+    "visible" | "hidden" | "not-created"
+  summary:
+    documentTitle?
+    viewport
+    visibleNodeCount
+    semanticElements[]
+    accessibilityNodes[]
+  png:
+    artifactId
+    mimeType: "image/png"
+    size
+    sha256
+```
+
+`capture.window` follows the same envelope but reports the actual composed native window and the set of currently visible logical surfaces.
+
+## Canonical process identity
+
+Papers must introduce an identity that survives path aliases but distinguishes actual process instances.
+
+Internal identity should include:
+
+```text
+pid
+appInstanceId: random UUID generated once at process start
+startedAt
+build.version
+build.commit
+executableCanonicalFileId
+```
+
+On Windows, `executableCanonicalFileId` should derive from file/volume identity or equivalent canonical handle-based identity, not the input pathname.
+
+Raw canonical filesystem paths do not need to cross control.
+
+### Required invariant
+
+Two launches of the same executable through:
+
+```text
+real path
+junction alias
+symlink alias
+```
+
+may have the same executable file identity but are fresh only if their PID/start/app-instance identity differs.
+
+## Security / redaction / authority
+
+* exact existing window/surface authority only;
+* no sender IDs or WebContents IDs in output;
+* no filesystem paths;
+* no raw descriptor/token;
+* no arbitrary selector;
+* DOM/AX projection has hard node/count/size limits;
+* password/value-bearing inputs always redact value;
+* hidden form state is omitted;
+* script source URLs and project roots are omitted;
+* screenshot is an explicit local authenticated operation and may naturally contain whatever is visibly rendered;
+* screenshot capture never expands into hidden document content.
+
+## Deterministic tests
+
+* [ ] exact foreign/retired surface rejected;
+* [ ] two surfaces of same project remain distinguishable;
+* [ ] screenshot and semantic snapshot carry same capture ID;
+* [ ] topology revision change during capture produces unstable/retry, never false stable;
+* [ ] document revision change produces unstable/retry;
+* [ ] renderer replacement during capture is detected;
+* [ ] second instability returns bounded failure;
+* [ ] process instance ID changes on real restart;
+* [ ] canonical executable identity remains identical across a Windows junction alias;
+* [ ] no test uses executable path-string equality as restart proof;
+* [ ] capture causes zero writes to project/Backpack state.
+
+## Packaged live proof
+
+Using a packaged Electron build:
+
+* open deterministic neutral fixture;
+* verify screenshot contains its visible fixture;
+* verify logical surface and topology revision match the capture;
+* verify project-reported document revision matches capture;
+* launch packaged executable through a junction alias and prove reported canonical executable identity still matches the real image;
+* start a genuinely new process and prove PID/app-instance/start identity changes.
+
+No release or installation is part of this gate.
+
+## Reviewer gate
+
+Reviewer must explicitly answer:
+
+> Does this command prove one coherent visual observation of the exact logical surface, and can a stale process or alias-launched process be distinguished without relying on path spelling?
+
+## Completion evidence
+
+Record:
+
+* implementation SHA;
+* exact pushed review head;
+* unit/focused suite counts;
+* packaged Electron test result;
+* example redacted capture manifest;
+* proof no project state changed;
+* process-alias identity proof;
+* reviewer SIGNED OFF / blocker.
+
+## Rollback / failure behavior
+
+Observation failure:
+
+* never closes/reloads/reopens a project;
+* never retires a logical surface;
+* never mutates topology;
+* never changes project state;
+* deletes any incomplete diagnostic artifact;
+* returns explicit partial/unstable status;
+* leaves the renderer running exactly as before.
+
+---
+
+# C1.2 — Renderer lifecycle, hydration, console and failure observability
+
+## User-visible capability
+
+Agents can subscribe to the actual rendering lifecycle and know where rendering stopped.
+
+Required lifecycle events:
+
+```text
+navigation-started
+dom-ready
+state-hydrated
+first-paint
+layout-stable
+render-failed
+```
+
+Required diagnostic classes:
+
+```text
+console
+uncaught-error
+unhandled-rejection
+navigation-failed
+resource-failed
+renderer-gone
+hydration-failed
+```
+
+This phase eliminates restart-and-stare debugging.
+
+## Architectural boundary / likely owner
+
+Main-process visual observation service owns correlation and retention.
+
+Sources:
+
+**Electron/main**
+
+* navigation events;
+* DOM ready;
+* load failure;
+* render process gone;
+* resource/network failure;
+* first presentation state.
+
+**Project preload / generic visual bridge**
+
+* window error;
+* unhandled rejection;
+* project `state-hydrated`;
+* project `hydration-failed`;
+* stable-layout observer;
+* paint observer.
+
+Projects report hydration; Papers does not infer it from successful file reads.
+
+## Lifecycle schema
+
+One event stream:
+
+```text
+event: "visual.lifecycle"
+
+payload:
+  kind:
+    "navigation-started" |
+    "dom-ready" |
+    "state-hydrated" |
+    "first-paint" |
+    "layout-stable" |
+    "render-failed"
+  windowId
+  surfaceId
+  projectId
+  eventSeq
+  observedAt
+  renderCycleId
+  navigationId
+  revisions:
+    workspaceTopologyRevision
+    documentStateRevision?
+  detail:
+    stage?
+    stabilityWindowMs?
+    failureCode?
+```
+
+Diagnostics:
+
+```text
+event: "visual.diagnostic"
+
+payload:
+  kind:
+    "console" |
+    "uncaught-error" |
+    "unhandled-rejection" |
+    "navigation-failed" |
+    "resource-failed" |
+    "renderer-gone" |
+    "hydration-failed"
+  severity
+  windowId
+  surfaceId
+  eventSeq
+  renderCycleId?
+  message
+  source:
+    category
+    line?
+    column?
+  resource?:
+    type
+    scheme?
+    host?
+    status?
+    errorCode?
+```
+
+## Hydration contract
+
+Papers defines the generic signal only:
+
+```text
+reportStateHydrated({
+  revision: opaque string,
+  summary?: bounded string→integer map
+})
+```
+
+and:
+
+```text
+reportHydrationFailed({
+  revision?: string,
+  stage: bounded enum/string,
+  code: bounded string
+})
+```
+
+Sender context determines the surface/project. The project cannot claim another `surfaceId` or `projectId`.
+
+No state bytes cross this bridge.
+
+## Layout-stable definition
+
+Event-driven only:
+
+* observe semantic/layout root changes using `ResizeObserver` / `MutationObserver` where appropriate;
+* wait for fonts readiness when requested;
+* require a short bounded unchanged geometry window across animation frames;
+* emit one `layout-stable` for that render cycle;
+* new mutations may begin a new layout epoch.
+
+No perpetual interval.
+
+If stability is not achieved before the bound, emit structured failure/degraded readiness rather than waiting forever.
+
+## First-paint definition
+
+Use an actual renderer paint/performance signal where available.
+
+Do not define “first paint” as:
+
+```text
+DOM ready
+load finished
+state file loaded
+```
+
+Those are separate lifecycle facts.
+
+## Security / redaction / authority
+
+* console messages capped in length and count;
+* token-like values, URLs with paths/query, filesystem-looking strings and known credential patterns redacted before control exposure;
+* stack traces projected to safe function/line metadata rather than raw machine paths;
+* resource failures expose resource type + safe origin/error, not complete URL;
+* diagnostic buffers live only in memory unless an explicit report is requested;
+* exact surface authority retained.
+
+## Deterministic tests
+
+* [ ] lifecycle ordering for successful fixture;
+* [ ] navigation-started occurs before DOM-ready;
+* [ ] state-hydrated cannot be synthesized by Papers without a project signal;
+* [ ] first-paint independently observable;
+* [ ] layout-stable only after bounded geometric stability;
+* [ ] hydration failure produces `hydration-failed`/`render-failed`;
+* [ ] thrown renderer exception surfaces without killing control;
+* [ ] failed resource attributed to correct surface;
+* [ ] console of two same-project surfaces remains isolated;
+* [ ] renderer crash produces `renderer-gone`;
+* [ ] diagnostic buffers obey maximum length/count;
+* [ ] redaction tests reject secret/path leakage;
+* [ ] no timer-based continuous polling.
+
+## Packaged live proof
+
+Packaged neutral fixture has two modes:
+
+1. successful hydration and render;
+2. intentionally failed hydration/resource.
+
+Prove the real packaged event sequence and that an agent can identify the failed stage without screenshot interpretation or source instrumentation.
+
+## Reviewer gate
+
+Reviewer must explicitly determine:
+
+> Can an agent distinguish “document loaded”, “document hydrated”, “first pixels painted”, “layout settled”, and “render failed” as separate facts for one exact surface?
+
+## Completion evidence
+
+* exact event sequences from packaged success/failure fixtures;
+* redaction test evidence;
+* event buffer bounds;
+* exact SHA and reviewer sign-off.
+
+## Rollback / failure behavior
+
+Visual listeners are observational.
+
+If lifecycle instrumentation itself throws or becomes unavailable:
+
+* mark observer state degraded;
+* continue normal rendering;
+* never fail project startup solely because diagnostics failed.
+
+---
+
+# C1.3 — Semantic element observation, capture.element and visual assertions
+
+## User-visible capability
+
+Agents can ask:
+
+```text
+Where is the graph?
+Is it actually visible?
+Is it clipped?
+Is it underneath something?
+Are these elements overlapping?
+Is the foreground/background contrast acceptable?
+Capture just this semantic element.
+```
+
+without DOM selectors or arbitrary JS.
+
+## Architectural boundary / likely owner
+
+Papers defines a generic semantic-key contract.
+
+Projects opt elements into observation using stable semantic keys, for example conceptually:
+
+```text
+data-papers-visual-key="canvas.root"
+data-papers-visual-key="toolbar.primary"
+```
+
+The key describes project semantics only to the project and tests. Papers treats it as an opaque stable identifier.
+
+No Papers code knows what `canvas.root` means.
+
+## API schemas
+
+```text
+capture.element
+input:
+  windowId
+  surfaceId
+  elementKey
+  paddingCssPx?: 0..32
+
+output:
+  captureId
+  element:
+    key
+    boundsCss
+    boundsDevice
+    visible
+    visibilityReasons[]
+    clipping
+    overlapSummary
+    contrast?
+  png:
+    artifactId
+    size
+    sha256
+```
+
+Generic semantic inspection:
+
+```text
+visual.inspect.elements
+input:
+  windowId
+  surfaceId
+  keys?: bounded array
+
+output:
+  layoutEpoch
+  elements:
+    key
+    role?
+    accessibleName?
+    bounds
+    visible
+    clippedPercent
+    opacity
+    zEvidence?
+```
+
+Assertions are declarative:
+
+```text
+visual.assert
+input:
+  windowId
+  surfaceId
+  assertions:
+    - kind: "visible"
+      elementKey: ...
+    - kind: "not-clipped"
+      elementKey: ...
+      maxClippedPercent: ...
+    - kind: "inside"
+      elementKey: ...
+      containerKey: ...
+    - kind: "no-overlap"
+      a: ...
+      b: ...
+      maxIntersectionPercent: ...
+    - kind: "min-contrast"
+      elementKey: ...
+      ratio: ...
+```
+
+No arbitrary expression language.
+
+## Visibility model
+
+A semantic element may be reported non-visible because of:
+
+```text
+display-none
+visibility-hidden
+opacity-zero
+zero-area
+outside-viewport
+ancestor-clipped
+covered-at-sample-points
+detached
+surface-hidden
+```
+
+“Visible” must therefore mean more than “DOM node exists”.
+
+## Stable geometry
+
+Bounds:
+
+* measured only after a known layout epoch;
+* relative both to surface viewport and owning window;
+* include CSS-pixel and device-pixel representations;
+* quantized consistently for deterministic comparisons;
+* associated with the layout epoch that produced them.
+
+## Contrast
+
+Compute WCAG-style contrast only when foreground/background can be determined safely.
+
+For gradients, images, transparency chains, or uncertain composition:
+
+```text
+contrast.status = "unknown"
+```
+
+Never fabricate a passing contrast value.
+
+## Security / authority
+
+* semantic key only, no caller-provided CSS/XPath selector;
+* project DOM traversal remains predefined;
+* accessible names/text capped;
+* password/input values excluded;
+* exact surface target;
+* no arbitrary computed-style property access from control.
+
+## Deterministic tests
+
+* [ ] semantic key collision rejected within one surface;
+* [ ] same semantic key in two surfaces remains surface-local;
+* [ ] hidden/display/opacity/zero-area cases;
+* [ ] ancestor clipping;
+* [ ] viewport clipping;
+* [ ] overlap calculation;
+* [ ] element crop corresponds to reported device bounds;
+* [ ] contrast known/unknown behavior;
+* [ ] layout epoch change invalidates stale geometry;
+* [ ] caller cannot supply selector/script.
+
+## Packaged live proof
+
+Packaged fixture intentionally contains:
+
+* one visible element;
+* one clipped element;
+* one overlapping pair;
+* one poor-contrast pair.
+
+Agent captures and asserts each through control and receives the expected structured outcome.
+
+## Reviewer gate
+
+Reviewer asks:
+
+> Can a caller diagnose geometry and visibility using stable semantic identities without obtaining general-purpose DOM execution?
+
+## Completion evidence
+
+* fixture assertion matrix;
+* element PNGs;
+* structured assertion output;
+* redaction/schema proofs;
+* exact SHA/sign-off.
+
+## Rollback / failure behavior
+
+Unknown/missing semantic key is an observation failure only.
+
+No DOM mutation is performed to “make it observable”.
+
+---
+
+# C1.4 — Deterministic visual fixtures and screenshot baseline diffing
+
+## User-visible capability
+
+Visual regressions become reproducible, reviewable test failures instead of manual screenshot comparisons.
+
+## Architectural boundary / likely owner
+
+**Papers repository owns the fixture harness.**
+
+Projects own their own fixture contents and baselines.
+
+The generic harness controls:
+
+```text
+window dimensions
+content dimensions
+device scale factor
+theme
+transparency
+locale
+timezone where applicable
+animation/transitions
+font set
+fixture data
+startup route
+render readiness contract
+```
+
+## Deterministic rendering profile
+
+Define a versioned profile such as:
+
+```text
+visualProfileVersion: 1
+window: 1280x800
+deviceScaleFactor: 1
+theme: light
+transparency: false
+animations: disabled
+reducedMotion: true
+locale: en-US
+fixtureFont: pinned test font
+```
+
+Do not rely on whatever fonts/settings happen to be installed on the developer machine.
+
+CI pixel baselines may use a deterministic rendering mode.
+
+Real packaged acceptance remains separately required and should not pretend arbitrary user GPUs produce byte-identical pixels.
+
+## Baseline structure
+
+Each baseline is keyed by:
+
+```text
+fixtureId
+captureTarget
+visualProfileVersion
+platform
+electronMajor/minor as required
+```
+
+Manifest:
+
+```text
+baselineId
+pngSha256
+dimensions
+semanticSnapshotSha256
+createdFromCommit
+visualProfileVersion
+```
+
+## Diff result
+
+Produce at minimum:
+
+```text
+changedPixelCount
+changedPixelPercent
+maxBoundingDiffRect
+perceptualScore
+expectedDimensions
+actualDimensions
+diffPngArtifact
+```
+
+A semantic-layout failure and a pixel failure are reported separately.
+
+## Intentional update workflow
+
+No automatic baseline replacement.
+
+Explicit update operation only, e.g. test tooling equivalent of:
+
+```text
+UPDATE_VISUAL_BASELINES=1
+```
+
+An update must:
+
+1. preserve old baseline until new capture succeeds;
+2. generate old/new/diff evidence;
+3. record old/new hashes;
+4. update atomically;
+5. require normal code review.
+
+A failing test must never silently “bless” its new screenshot.
+
+## Security / data safeguards
+
+* baselines contain synthetic fixture data only;
+* no baseline is generated from creator user data;
+* fixture directories are isolated temp profiles;
+* diagnostic runs assert fixture source data hashes before/after.
+
+## Deterministic tests
+
+* [ ] identical fixture produces zero diff;
+* [ ] one known visual mutation produces deterministic diff;
+* [ ] dimension change separately detected;
+* [ ] semantic geometry failure detected even when pixel threshold might tolerate it;
+* [ ] update workflow requires explicit opt-in;
+* [ ] interrupted update leaves previous baseline intact;
+* [ ] baseline manifest hash matches PNG;
+* [ ] user profile/state directories are never baseline sources.
+
+## Packaged live proof
+
+Use packaged executable against the same synthetic fixture.
+
+Required proof is:
+
+* correct fixture reaches lifecycle readiness;
+* screenshot capture succeeds;
+* semantic assertions pass;
+* gross visual output matches expected dimensions/content.
+
+CI baseline exactness does not replace this packaged test.
+
+## Reviewer gate
+
+Reviewer confirms:
+
+> Are visual changes impossible to bless accidentally, and are baselines based only on deterministic synthetic data?
+
+## Completion evidence
+
+* baseline manifest;
+* zero-diff run;
+* intentional-diff run;
+* update workflow evidence;
+* packaged fixture result;
+* exact SHA/sign-off.
+
+## Rollback / failure behavior
+
+Baseline write uses temp + atomic replacement.
+
+Failure keeps the previous reviewed baseline.
+
+---
+
+# C1.5 — Bounded visual timeline + self-contained visual-debug report
+
+## User-visible capability
+
+An agent can request a compact record of:
+
+> what state/lifecycle/diagnostic changes happened immediately before and during this bad render?
+
+without recording the desktop continuously.
+
+## Architectural boundary / likely owner
+
+Visual observation service owns bounded per-surface ring buffers.
+
+Data is captured from events already emitted by C1.1/C1.2/C1.3.
+
+No polling loop and no continuous video recorder.
+
+## Timeline model
+
+Per exact surface maintain bounded recent history, for example:
+
+```text
+maxAge: 10 seconds
+maxEvents: 256
+maxDiagnostics: 128
+```
+
+Each item carries:
+
+```text
+eventSeq
+observedAt
+renderCycleId
+navigationId?
+workspaceTopologyRevision
+documentStateRevision?
+layoutEpoch?
+kind
+```
+
+Explicit timeline request may include:
+
+```text
+beforeMs: <= 10000
+until:
+  "layout-stable" |
+  "render-failed" |
+  bounded duration <= 5000
+frames:
+  "lifecycle-only"
+```
+
+Lifecycle-only frames may capture at significant edges:
+
+```text
+navigation-started
+state-hydrated
+first-paint
+layout-stable
+render-failed
+```
+
+No 30/60 FPS capture.
+
+## Report command
+
+```text
+visual.report.create
+input:
+  windowId
+  surfaceId?
+  include:
+    windowCapture
+    surfaceCapture
+    semanticElements
+    recentLifecycle
+    recentDiagnostics
+    timeline
+  beforeMs
+```
+
+Output:
+
+```text
+reportId
+artifactId
+size
+sha256
+createdAt
+manifestSummary
+```
+
+## Self-contained report format
+
+A single ZIP-like artifact:
+
+```text
+manifest.json
+process.json
+snapshot.json
+lifecycle.ndjson
+diagnostics.ndjson
+timeline.ndjson
+window.png
+surfaces/<surface-id>.png
+elements/<semantic-key>.png
+diff/...
+```
+
+Manifest includes hashes for every entry.
+
+It contains **observations only**, never copied creator state files.
+
+## Artifact store
+
+Papers-owned diagnostics area only.
+
+Rules:
+
+* opaque artifact IDs;
+* no arbitrary pathname reads;
+* temp-write + atomic finalize;
+* explicit TTL/cleanup;
+* maximum artifact size;
+* report generation never automatically uploads anything.
+
+## Artifact retrieval
+
+Control API:
+
+```text
+visual.artifact.read
+input:
+  artifactId
+  offset
+  maxBytes <= bounded chunk size
+
+output:
+  artifactId
+  offset
+  eof
+  base64Chunk
+  sha256
+```
+
+This works within the existing framed control transport without opening filesystem access.
+
+## Security / redaction
+
+* report creation is explicit;
+* screenshots may contain visible user content and manifest marks that classification clearly;
+* hidden document/state bytes excluded;
+* diagnostics redacted before entering report;
+* tokens/descriptor/install roots excluded;
+* artifact IDs unguessable;
+* artifact read limited strictly to artifacts generated by Papers.
+
+## Deterministic tests
+
+* [ ] ring buffer age/count enforcement;
+* [ ] event revisions remain correlated;
+* [ ] two surfaces do not mix timelines;
+* [ ] lifecycle-only screenshot count bounded;
+* [ ] no timer polling;
+* [ ] report manifest hashes verify;
+* [ ] interrupted report leaves no exposed partial artifact;
+* [ ] artifact reader cannot access arbitrary filesystem paths;
+* [ ] expired artifact refused;
+* [ ] no project state file included in report.
+
+## Packaged live proof
+
+Packaged fixture intentionally fails after hydration.
+
+Generate one report and prove it contains enough evidence to reconstruct:
+
+```text
+correct process/build
+correct state revision
+hydration success
+subsequent render failure
+bad screenshot
+relevant diagnostics
+exact surface identity
+```
+
+without adding temporary project UI instrumentation.
+
+## Reviewer gate
+
+Reviewer answers:
+
+> Is this report sufficient for another session or another agent to diagnose the visual incident without access to transient desktop state?
+
+## Completion evidence
+
+Store:
+
+* one synthetic successful report;
+* one synthetic failed-render report;
+* manifest verification;
+* bounded-size proof;
+* exact SHA/sign-off.
+
+## Rollback / failure behavior
+
+Report failure cannot affect active rendering.
+
+Delete incomplete artifacts and return a structured report-generation failure.
+
+---
+
+# C1.6 — Full agent/control/MCP workflow + packaged closure
+
+## User-visible capability
+
+An MCP-connected agent can perform the complete safe workflow:
+
+```text
+identify exact process
+subscribe to visual lifecycle
+wait for event-driven readiness
+capture exact surface
+inspect semantic geometry
+retrieve screenshot/report
+diagnose failures
+```
+
+without:
+
+```text
+arbitrary JavaScript
+Windows desktop clicking
+raw filesystem access
+temporary project instrumentation
+continuous polling
+path-string process guessing
+```
+
+## Architectural boundary / likely owner
+
+The existing reviewed local control protocol remains the semantic authority.
+
+The existing standalone MCP adapter remains transport-only.
+
+New visual commands are added to the control catalog; MCP continues forwarding exact `{method,params}`.
+
+Do not duplicate visual business logic inside MCP.
+
+## Control command surface
+
+Final expected visual command family:
+
+```text
+capture.window
+capture.surface
+capture.element
+
+visual.inspect.elements
+visual.assert
+
+visual.report.create
+visual.artifact.read
+```
+
+Event subscription extends the existing validated event mechanism with:
+
+```text
+visual.lifecycle
+visual.diagnostic
+```
+
+No independent MCP event bus.
+
+If MCP event subscription support is later needed, it consumes the same reviewed control event stream.
+
+## Agent readiness workflow
+
+Canonical workflow:
+
+```text
+inspect process identity
+→ resolve explicit window/surface
+→ subscribe
+→ observe navigation-started
+→ observe DOM-ready
+→ observe state-hydrated
+→ observe first-paint
+→ observe layout-stable
+→ capture.surface
+```
+
+If `render-failed` arrives at any point, the agent captures/report-generates immediately.
+
+No loop that repeatedly asks “are we ready yet?”
+
+## MCP/security rules
+
+* one authenticated local Papers connection;
+* strict existing control schemas;
+* no control descriptor/token in MCP output;
+* no arbitrary selector;
+* no JS;
+* no arbitrary file path;
+* artifact reads only by opaque generated artifact ID;
+* cancellation closes/revokes relevant control state as already established by B3;
+* observation commands are read-only and need no destructive confirmation;
+* future mutating visual-debug commands are out of C1.
+
+## Deterministic tests
+
+* [ ] MCP exact parameter pass-through for every visual command family;
+* [ ] invalid/foreign surface refusal preserved;
+* [ ] artifact chunk reconstruction yields expected SHA;
+* [ ] MCP cannot turn element key into selector/script;
+* [ ] lifecycle events remain correctly correlated with outstanding calls;
+* [ ] cancellation during capture leaves no partial artifact and no continued operation;
+* [ ] adapter contains no Papers visual business rules.
+
+## Real packaged Electron acceptance
+
+The final packaged acceptance must use the real packaged executable and real stdio MCP adapter.
+
+Minimum scenario:
+
+1. launch packaged Papers with isolated synthetic profile;
+2. inspect process identity;
+3. open deterministic fixture;
+4. subscribe to lifecycle;
+5. observe hydration + first paint + layout stable;
+6. capture surface;
+7. inspect/capture semantic element;
+8. make one semantic geometry assertion;
+9. create visual-debug report;
+10. retrieve report through control/MCP artifact API;
+11. verify report hashes;
+12. close normally.
+
+A second packaged fixture deliberately fails render and must produce an actionable failure report.
+
+## Reviewer gate
+
+Final reviewer question:
+
+> Can a remote agent, using only reviewed control/MCP semantics, establish what exact Papers process is running and what the user actually sees, identify where rendering failed, and preserve enough evidence for another session—without mutating the user's data or gaining arbitrary execution/filesystem authority?
+
+## Completion evidence
+
+Final C1 closure records:
+
+* all C1.x implementation and reviewed SHAs;
+* protocol version/schema state;
+* full unit suite;
+* all focused visual suites;
+* deterministic baseline suite;
+* packaged success/failure E2E;
+* MCP packaged E2E;
+* artifact integrity proof;
+* production audit;
+* `git diff --check`;
+* reviewer sign-off.
+
+No release follows automatically from C1 completion.
+
+## Rollback / failure behavior
+
+The complete visual subsystem must be removable/disableable without changing ordinary Papers behavior.
+
+If visual control is unavailable:
+
+* Papers still opens and renders normally;
+* no project is migrated/restarted;
+* control returns “visual observation unavailable”;
+* no creator data is touched.
+
+---
+
+# 3. As you Go companion track — project repository only
+
+These tasks begin only when the corresponding generic Papers phase exists.
+
+## AY-C1.1 — Generic hydration/revision integration
+
+* [ ] Preserve the versioned `{state,revision}` state envelope through the existing fixed path.
+* [ ] After successful decode/parse/normalization and model installation, report generic `state-hydrated` with the opaque revision.
+* [ ] Optionally provide safe summary counters such as model/entity totals through the generic bounded summary map.
+* [ ] On parse/decode/hydration failure, report structured `hydration-failed`.
+* [ ] Never send raw serialized state through the visual diagnostics channel.
+* [ ] Regression fixture proves non-empty source state cannot silently become an empty hydrated model without generating observable disagreement/failure.
+* [ ] Hash fixture source state before/after; prove no mutation.
+
+This specifically guards the class of defect fixed by `a247778`, but the implementation remains entirely project-owned.
+
+## AY-C1.3 — Stable project semantic keys
+
+Project chooses stable keys such as conceptual equivalents of:
+
+```text
+document.root
+empty-state
+primary-canvas
+group.<fixture-key>
+shortcut.<fixture-key>
+```
+
+Exact names are an As you Go decision.
+
+* [ ] keys are stable across styling/refactors;
+* [ ] they do not encode DOM selectors;
+* [ ] fixture assertions verify expected semantic elements are visible and correctly bounded;
+* [ ] Papers contains no knowledge of those keys.
+
+## AY-C1.4 — Deterministic project fixture
+
+Create synthetic fixed state representing a meaningful non-empty document.
+
+For the historical failure class, the fixture should ensure:
+
+```text
+persisted model clearly non-empty
+hydrated revision known
+rendered semantic summary non-empty
+visual graph visibly non-empty
+```
+
+The exact group/shortcut counts belong to the As you Go fixture, not Papers.
+
+* [ ] no creator `state.json` copied or modified;
+* [ ] deterministic theme/font/window profile;
+* [ ] screenshot baseline;
+* [ ] semantic geometry assertions;
+* [ ] intentional baseline-update workflow.
+
+## AY-C1.5 — Incident-style visual report regression
+
+Synthetic regression intentionally injects a hydration/model failure and proves the generic report exposes:
+
+```text
+source/document revision
+state-hydrated or hydration-failed
+model summary
+first-paint/layout state
+visible screenshot
+diagnostics
+```
+
+No temporary red box, visible counter, manual instrumentation, or Windows accessibility inspection should be required.
+
+---
+
+# 4. Incident-derived acceptance safeguards
+
+These are explicit reviewer checks, not informal lessons.
+
+## Process/restart safeguard
+
+* [ ] every packaged visual report records PID;
+* [ ] every report records process `appInstanceId`;
+* [ ] every report records process start time;
+* [ ] every report records build version/commit;
+* [ ] every report records canonical executable file identity;
+* [ ] junction/symlink alias spelling never establishes process sameness/freshness;
+* [ ] a “fresh restart” claim without changed process start identity is rejected as evidence.
+
+## Render-success safeguard
+
+* [ ] document file presence is not render success;
+* [ ] valid state JSON is not render success;
+* [ ] topology membership is not render success;
+* [ ] visible native surface is not render success;
+* [ ] DOM-ready is not hydration success;
+* [ ] hydration success is not first-paint;
+* [ ] first-paint is not layout-stable;
+* [ ] each fact has its own explicit evidence.
+
+## Creator-data safeguard
+
+Before and after any packaged diagnostic acceptance:
+
+* [ ] snapshot/hash source fixture data;
+* [ ] prove diagnostics did not modify it;
+* [ ] reports contain observation copies/summaries only;
+* [ ] no “fix by rewriting state” diagnostic path exists.
+
+## Event-driven safeguard
+
+* [ ] no background screenshot polling;
+* [ ] no “check every 500 ms until ready” production mechanism;
+* [ ] observers signal changes;
+* [ ] callers wait on events with bounded timeout;
+* [ ] timeline screenshots occur only on explicit lifecycle boundaries.
+
+---
+
+# 5. Persistent multi-session workflow
+
+For every C1 implementation session:
+
+1. [ ] Read `HERMES.md` and the current persistent progress/visual-observability plan.
+2. [ ] Inspect branch/head/origin parity and dirty worktree.
+3. [ ] Preserve all user-owned modifications.
+4. [ ] Identify the single active C1.x gate.
+5. [ ] Re-read the previous exact-SHA reviewer verdict.
+6. [ ] Do not implement later phases opportunistically.
+7. [ ] Run focused tests before changing the seam.
+8. [ ] Keep Papers-generic logic free of project identities.
+9. [ ] Keep project-specific fixtures/assertions in their own repositories.
+10. [ ] Add control schemas concurrently with each new semantic capability.
+11. [ ] Verify authority/redaction before adding MCP exposure.
+12. [ ] Run typecheck + focused tests + full suite + build + packaged E2E + diff check as appropriate.
+13. [ ] Record evidence using exact commit SHA.
+14. [ ] Obtain explicit reviewer SIGNED OFF or concrete blocker.
+15. [ ] Update the persistent checklist only after the reviewer verdict.
+16. [ ] Do not release/install/package beyond the packaged test artifact required for acceptance unless separately authorized.
+
+---
+
+# 6. Milestone completion definition
+
+C1 is complete only when all of the following are true:
+
+* [ ] an agent can capture the actual window/surface pixels;
+* [ ] capture is synchronized with topology/document/render revisions;
+* [ ] process identity distinguishes stale vs genuinely fresh instances across path aliases;
+* [ ] lifecycle exposes navigation → DOM → hydration → paint → stability/failure;
+* [ ] renderer console/errors/resource/hydration failures are safely observable;
+* [ ] stable semantic element bounds exist;
+* [ ] `capture.element` works without selectors/JS;
+* [ ] visibility/clipping/overlap/contrast assertions exist;
+* [ ] deterministic fixture rendering exists;
+* [ ] baseline screenshot diff/update workflow is review-safe;
+* [ ] bounded event-driven timelines exist;
+* [ ] self-contained diagnostic reports exist;
+* [ ] reports never contain creator state files or broad filesystem contents;
+* [ ] MCP can use the same reviewed control semantics without gaining extra authority;
+* [ ] successful and failing flows work in real packaged Electron acceptance;
+* [ ] As you Go can consume the generic contract without any As-you-Go-specific logic appearing in Papers;
+* [ ] diagnostics demonstrably do not mutate project data;
+* [ ] no reviewed blocker remains.
+
+**C1 completion means Papers can prove both what it believes the application state is and what the user actually sees.**
