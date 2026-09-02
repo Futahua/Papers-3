@@ -465,10 +465,10 @@ implemented but await reviewer sign-off. The next review must verify the real
 Electron `webRequest` listener shape, stale-WebContents rejection, URL
 non-retention, and shutdown detachment.
 
-Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 6/6;
+Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 7/7;
 `tests/unit/visualLifecycleMonitor.test.ts` passes 3/3;
-`tests/unit/visualResourceMonitor.test.ts` passes 3/3; the full host suite
-passes 767/767 with 4 skipped across 69 passed files and 1 skipped file;
+`tests/unit/visualResourceMonitor.test.ts` passes 4/4; the full host suite
+passes 768/768 with 4 skipped across 69 passed files and 1 skipped file;
 typecheck and diff check pass. This is not C1.2 completion; event subscription
 and broader control exposure remain unchecked.
 
