@@ -8,8 +8,10 @@ export interface VisualReportRequest {
   windowId: number;
   surfaceId: string;
   beforeMs: number;
+  elementKeys: string[];
   include: {
     surfaceCapture: boolean;
+    elementCaptures: boolean;
     semanticElements: boolean;
     recentLifecycle: boolean;
     recentDiagnostics: boolean;
@@ -26,6 +28,7 @@ export interface VisualReportDependencies {
   timeline: VisualTimelineEntry[];
   semanticElements: unknown;
   captureSurface?: () => Promise<{ result: unknown; png?: VisualArtifactMetadata }>;
+  captureElement?: (elementKey: string) => Promise<{ result: unknown; png?: VisualArtifactMetadata }>;
   artifacts: VisualArtifactStore;
   now?: () => Date;
 }
@@ -48,7 +51,8 @@ interface ReportEntry {
   bytes: Uint8Array;
 }
 
-const MAX_REPORT_ENTRIES = 16;
+const MAX_REPORT_ENTRIES = 32;
+const MAX_ELEMENT_CAPTURES = 8;
 
 function jsonBytes(value: unknown): Uint8Array {
   return new TextEncoder().encode(`${JSON.stringify(value)}\n`);
@@ -154,6 +158,17 @@ export async function createVisualReport(deps: VisualReportDependencies, request
     const captured = await deps.captureSurface();
     entries.push({ name: 'surface-capture.json', bytes: jsonBytes(captured.result) });
     if (captured.png) entries.push({ name: 'surface.png', bytes: await readArtifact(deps.artifacts, captured.png) });
+  }
+  if (request.include.elementCaptures) {
+    if (!deps.captureElement) throw new Error('Visual element capture is unavailable.');
+    if (request.elementKeys.length < 1 || request.elementKeys.length > MAX_ELEMENT_CAPTURES) {
+      throw new Error('visual element report capture count is invalid');
+    }
+    for (const elementKey of request.elementKeys) {
+      const captured = await deps.captureElement(elementKey);
+      entries.push({ name: `elements/${elementKey}.json`, bytes: jsonBytes(captured.result) });
+      if (captured.png) entries.push({ name: `elements/${elementKey}.png`, bytes: await readArtifact(deps.artifacts, captured.png) });
+    }
   }
   if (entries.length > MAX_REPORT_ENTRIES) throw new Error('visual report entry bound exceeded');
   const manifestEntries = entries.map((entry) => ({ name: entry.name, size: entry.bytes.byteLength, sha256: createHash('sha256').update(entry.bytes).digest('hex') }));

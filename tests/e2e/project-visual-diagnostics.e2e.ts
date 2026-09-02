@@ -211,9 +211,9 @@ describe('project renderer visual diagnostics', () => {
     expect(bytes[0]).toBe(137);
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(captured.png.sha256);
     const report = await call('visual.report.create', {
-      windowId, surfaceId: opened.surfaceId, beforeMs: 10_000,
+      windowId, surfaceId: opened.surfaceId, beforeMs: 10_000, elementKeys: ['canvas.root'],
       include: {
-        surfaceCapture: true, semanticElements: true, recentLifecycle: true,
+        surfaceCapture: true, elementCaptures: true, semanticElements: true, recentLifecycle: true,
         recentDiagnostics: true, timeline: true,
       },
     }) as {

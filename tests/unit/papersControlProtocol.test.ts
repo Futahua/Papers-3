@@ -221,7 +221,7 @@ describe('Papers developer control protocol', () => {
       manifestSummary: {
         entryCount: 4, byteSize: 128,
         includes: {
-          surfaceCapture: false, semanticElements: true, recentLifecycle: true,
+          surfaceCapture: false, elementCaptures: false, semanticElements: true, recentLifecycle: true,
           recentDiagnostics: true, timeline: true,
         },
       },
@@ -236,8 +236,9 @@ describe('Papers developer control protocol', () => {
     expect(visualReportCreate).toHaveBeenCalledWith({
       ...surface,
       beforeMs: 10_000,
+      elementKeys: [],
       include: {
-        surfaceCapture: false, semanticElements: true, recentLifecycle: true,
+        surfaceCapture: false, elementCaptures: false, semanticElements: true, recentLifecycle: true,
         recentDiagnostics: true, timeline: true,
       },
     });

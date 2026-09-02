@@ -163,6 +163,7 @@ const visualWindowCaptureResultSchema = z.object({
 }).strict();
 const visualReportIncludeSchema = z.object({
   surfaceCapture: z.boolean().default(false),
+  elementCaptures: z.boolean().default(false),
   semanticElements: z.boolean().default(true),
   recentLifecycle: z.boolean().default(true),
   recentDiagnostics: z.boolean().default(true),
@@ -175,7 +176,7 @@ const visualReportResultSchema = z.object({
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   createdAt: z.string().datetime(),
   manifestSummary: z.object({
-    entryCount: z.number().int().positive().max(16),
+    entryCount: z.number().int().positive().max(32),
     byteSize: z.number().int().positive(),
     includes: visualReportIncludeSchema,
   }).strict(),
@@ -350,8 +351,10 @@ export const papersControlCommands = {
   'visual.report.create': {
     input: surfaceTargetSchema.extend({
       beforeMs: z.number().int().nonnegative().max(10_000).default(10_000),
+      elementKeys: visualSemanticKeyListSchema.max(8).default([]),
       include: visualReportIncludeSchema.default({
         surfaceCapture: false,
+        elementCaptures: false,
         semanticElements: true,
         recentLifecycle: true,
         recentDiagnostics: true,

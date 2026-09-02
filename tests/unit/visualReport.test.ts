@@ -60,8 +60,9 @@ describe('visual reports', () => {
       windowId: 4,
       surfaceId: 'surface-a',
       beforeMs: 1_000,
+      elementKeys: [],
       include: {
-        surfaceCapture: true, semanticElements: true, recentLifecycle: true,
+        surfaceCapture: true, elementCaptures: false, semanticElements: true, recentLifecycle: true,
         recentDiagnostics: true, timeline: true,
       },
     });
@@ -93,5 +94,30 @@ describe('visual reports', () => {
     expect(new TextDecoder().decode(entries.get('diagnostics.ndjson'))).toContain('inside-window');
     expect(new TextDecoder().decode(entries.get('diagnostics.ndjson'))).not.toContain('outside-window');
     expect(await readFile(join(root, `${report.artifactId}.bin`))).toHaveLength(report.size);
+  });
+
+  it('adds only explicitly requested selector-free element PNG captures', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-visual-element-report-'));
+    const artifacts = createVisualArtifactStore(root, { ttlMs: 60_000 });
+    const png = await artifacts.put(new Uint8Array([1, 2, 3]), 'image/png');
+    const report = await createVisualReport({
+      process: {}, snapshot: {}, surface: {}, lifecycle: [], diagnostics: [], timeline: [], semanticElements: {},
+      captureElement: async (elementKey) => ({ result: { element: { key: elementKey } }, png }),
+      artifacts,
+      now: () => new Date('2026-09-02T00:00:01.000Z'),
+    }, {
+      windowId: 4, surfaceId: 'surface-a', beforeMs: 10_000, elementKeys: ['canvas.root'],
+      include: {
+        surfaceCapture: false, elementCaptures: true, semanticElements: false,
+        recentLifecycle: false, recentDiagnostics: false, timeline: false,
+      },
+    });
+    const bytes = (await artifacts.read(report.artifactId, 0, 1024 * 1024)).bytes;
+    const entries = storedZipEntries(bytes);
+    expect([...entries.keys()]).toEqual(expect.arrayContaining([
+      'manifest.json', 'process.json', 'snapshot.json', 'surface.json',
+      'elements/canvas.root.json', 'elements/canvas.root.png',
+    ]));
+    expect(entries.get('elements/canvas.root.png')).toEqual(new Uint8Array([1, 2, 3]));
   });
 });

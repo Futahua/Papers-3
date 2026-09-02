@@ -2038,6 +2038,16 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
               return png ? { result, png } : { result };
             }
             : undefined;
+          const elementCapture = captureProjectVisual
+            ? async (elementKey: string): Promise<{ result: unknown; png?: VisualArtifactMetadata }> => {
+              const result = await captureProjectVisual(
+                { windowId: request.windowId, surfaceId: request.surfaceId },
+                { elementKey, paddingCssPx: 0 },
+              );
+              const png = (result as { png?: VisualArtifactMetadata }).png;
+              return png ? { result, png } : { result };
+            }
+            : undefined;
           return createVisualReport({
             process: processInstanceIdentity,
             snapshot: {
@@ -2061,8 +2071,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
                 layoutEpoch: observationState?.layoutEpoch ?? null,
                 elements: semanticState.observations,
               }
-              : { windowId: request.windowId, surfaceId: request.surfaceId, elements: [] },
+            : { windowId: request.windowId, surfaceId: request.surfaceId, elements: [] },
             captureSurface: surfaceCapture,
+            captureElement: elementCapture,
             artifacts: visualArtifactStore,
           }, request);
         },
