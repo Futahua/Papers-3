@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry/assertion correction and C1.4 baseline integrity correction are at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, awaiting exact-SHA reviewer sign-off
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry is signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, while the explicit `visual.assert` availability guard and C1.4 baseline integrity/cleanup correction are at `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`, awaiting exact-SHA reviewer audit
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1553,6 +1553,9 @@ Never fabricate a passing contrast value.
 * [x] fixed declarative `visual.assert` evaluates visible, clipping,
   containment, overlap, and minimum-contrast predicates with bounded failure
   reasons.
+* [x] `visual.assert` returns explicit `geometry-unavailable` evidence during
+  navigation or before a stable observation instead of treating empty/stale
+  geometry as a missing element assertion.
 
 ## Packaged live proof
 
@@ -1581,8 +1584,10 @@ Reviewer asks:
 
 Reviewer checkpoint: **SIGNED OFF** for the C1.3 semantic-key
 identity/surface-local-authority foundation at exact pushed head
-`d440466b87d4234339b3fb5dd0ac6845b0be7fa8`. Geometry is implemented at
-`149128be5afc2376b7c3057e41a802b307fc2651` and awaits exact-SHA review;
+`d440466b87d4234339b3fb5dd0ac6845b0be7fa8` and for stable-epoch geometry at
+`0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`. The explicit unavailable-result
+guard and live assertion coverage are at
+`5f9e1b7a00001edd29a0c903d97869daa4f2ff5c` and await exact-SHA audit;
 same-surface `capture.element` cropping remains open.
 
 ## Rollback / failure behavior
@@ -1720,10 +1725,14 @@ A failing test must never silently “bless” its new screenshot.
 * [x] content-addressed PNG plus atomic manifest publication preserves the
   previous baseline until replacement is complete;
 * [x] baseline reads re-hash the referenced PNG;
+* [x] successful reads/replacements remove orphaned content-addressed PNGs and
+  temporary files without deleting the manifest-referenced baseline;
 * [ ] user profile/state directories are never baseline sources.
 
 Implementation checkpoint: deterministic baseline/diff core and its integrity
-corrections are prepared at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`.
+corrections are prepared at `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`.
+The core preserves the previous manifest on interrupted publication, validates
+PNG structure/dimensions, serializes updates, and cleans orphaned artifacts.
 Integration with a live capture command and a real fixture remains open until
 its own exact-SHA review.
 
