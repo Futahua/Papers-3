@@ -175,9 +175,10 @@ fixture/restart failures were previously observed and remain separately scoped.
 ## Current reviewer status
 
 The browser reviewer signed off A3.4, B2.1, the Electron 43.1.1 WCV
-compatibility gate and the A0.4 same-project multi-surface evidence gate. The
-next eligible recorded gate is renderer transport destroy/recreate while
-retaining logical `surfaceId`.
+compatibility gate, the A0.4 same-project multi-surface evidence gate and the
+renderer transport destroy/recreate gate. All currently eligible evidence gates
+are closed; the remaining unchecked items are explicitly excluded scope or
+future product work.
 
 The prior A3 review history is retained below.
 
@@ -327,7 +328,7 @@ renderer tabs or splits.
   Electron/control workflow (`workspace-tabs.e2e.ts`).
 - [x] Show/hide A without affecting B in a live Electron/control workflow.
 - [x] Prove two distinct surfaces can show the same project.
-- [ ] Destroy/recreate a renderer transport while retaining logical `surfaceId`.
+- [x] Destroy/recreate a renderer transport while retaining logical `surfaceId`.
 - [x] Close handling fans out to every owned runtime, and finalization retires
   every logical surface.
 - [x] Resize and transparency changes fan out to every runtime entry.
@@ -767,8 +768,8 @@ one combined event, exact old-set cleanup, one final topology commit, and a
 late native-close failure after event delivery. Replacement cleanup now treats
 known native teardown errors as non-throwing after the delivery boundary, so a
 queued successful layout cannot be contradicted by rollback of its fresh ids.
-Reviewer sign-off is still pending on the exact pushed head. UI remains deferred
-to A2.1d.
+The exact pushed head and the A2.1d acceptance are signed off below; UI remains
+minimal by design.
 
 ### A2.1d minimal Layouts UI and live acceptance
 
@@ -782,7 +783,7 @@ to A2.1d.
 - [x] Add a real Electron acceptance test for UI save, material mutation, UI
   load, fresh IDs, persistence, a second-window independent load, and an
   unavailable-project failure that preserves the target.
-- [ ] Reviewer sign-off on the exact pushed head.
+- [x] Reviewer sign-off on the exact pushed head.
 
 A2.1d validation: typecheck passed, the focused real Electron acceptance passed
 1/1 after making secondary-window targeting use its explicit native `windowId`.
@@ -1068,11 +1069,8 @@ build passed; live developer-control Electron E2E passed 3/3; and
 `git diff --check` passed. The pre-existing user-owned modification to
 `docs/evidence/worker-comparison.json` was not staged or changed by this gate.
 
-Next narrow gate: test only whether Electron 43.1.1 can live-reparent one
-already-loaded WebContentsView between two real BaseWindows, including a
-post-reparent interaction and source/target close behavior. Either result
-closes the compatibility gate; recreate/rebind remains the correctness path,
-with no production behavior change.
+The compatibility probe below records the completed narrow gate; recreate/rebind
+remains the correctness path, with no production behavior change.
 
 ### Electron 43.1.1 live-WebContentsView reparent compatibility — signed off
 
@@ -1098,9 +1096,7 @@ candidate:
 build passed; combined developer-control and compatibility Electron E2E passed
 4/4; and `git diff --check` passed. Reviewer found no concrete defect.
 
-Next narrow eligible gate: the A0.4 residual evidence test for two distinct
-same-project surfaces in one live window, with independent native presentation,
-exact-surface interaction/routing, and exact close-survivor inspection.
+The A0.4 residual evidence test below records the completed narrow gate.
 
 ### A0.4 residual same-project surface evidence — signed off
 
@@ -1118,13 +1114,7 @@ same-project Electron E2E, typecheck, combined live E2E, full Vitest, build and
 diff checks pass. No production behavior, persistence, authority or control
 redaction changed.
 
-Next narrow residual: destroy/recreate one project renderer transport while
-retaining its logical `surfaceId`, then prove the old sender is unauthorized,
-the new sender is authorized for the exact surface, topology and active state
-remain unchanged, post-recreation interaction works, and normal exact close
-cleans up the recreated runtime.
-
-### Renderer transport destroy/recreate — review pending
+### Renderer transport destroy/recreate — signed off
 
 The standalone acceptance creates one live project surface, records its
 logical `surfaceId` and original renderer transport, destroys that transport,
@@ -1137,10 +1127,16 @@ surface-context unit contract covers removal of its sender binding and binding
 of the replacement sender to the same surface.
 
 Observed behavior: recreate/rebind succeeds on Electron 43.1.1 without
-retiring the logical surface. Candidate exact pushed head `43326f7`; focused
-renderer-recreation E2E, combined relevant E2E 6/6, typecheck, full Vitest
-727/731 (4 skipped), build and diff checks pass. Reviewer sign-off is pending;
-no production behavior changed.
+retiring the logical surface. Implementation exact head
+`43326f7ca172abd699bbdc00105cce984ee7e4c0` was reviewed at exact pushed docs
+tip `2cfb4176080a689f9d001f4ee08a92d5e9b56da4`. Focused renderer-recreation
+E2E, combined relevant E2E 6/6, typecheck, full Vitest 727/731 (4 skipped),
+build and diff checks pass. Reviewer found no concrete defect; no production
+behavior changed.
+
+All currently eligible evidence gates are now closed. Remaining B2 destructive
+confirmation, B3 MCP/stdio, release, installation and packaging work remains
+explicitly excluded; no further product milestone is inferred.
 
 ## Persistent pickup checklist for every new session
 
