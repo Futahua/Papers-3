@@ -77,6 +77,14 @@ describe('process instance identity', () => {
     })).resolves.toMatchObject({ executableIdentity: { status: 'unavailable' } });
   });
 
+  it('does not treat an inode without a volume identity as canonical', async () => {
+    await expect(createProcessInstanceIdentity({
+      pid: 101, executablePath: 'C:\\Papers.exe', build,
+      realpath: async (path) => path,
+      stat: async () => ({ dev: 0n, ino: 99n }),
+    })).resolves.toMatchObject({ executableIdentity: { status: 'unavailable' } });
+  });
+
   it('survives realpath and stat failures without blocking diagnostics', async () => {
     await expect(createProcessInstanceIdentity({
       pid: 101, executablePath: 'C:\\Papers.exe', build,

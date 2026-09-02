@@ -68,7 +68,9 @@ export async function createProcessInstanceIdentity(
     const readStat = options.stat ?? (async (path: string) => stat(path, { bigint: true }));
     const canonicalPath = await resolvePath(options.executablePath);
     const file = await readStat(canonicalPath);
-    if (file.dev >= 0n && file.ino > 0n) {
+    // libuv reports a zero device when Windows volume identity is unavailable;
+    // inode/file-id alone is not globally unique across volumes.
+    if (file.dev > 0n && file.ino > 0n) {
       executableIdentity = {
         status: 'available',
         // Keep the Windows file id lossless; it must never pass through JS

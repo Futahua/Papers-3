@@ -278,6 +278,8 @@ because one request completed:
 * [x] aliases are tested against the file identity rather than pathname
   equality; realpath/stat failure reports `{ status: "unavailable" }` while
   preserving PID/app-instance/start evidence and never blocks control startup.
+  A zero Windows volume identity is also treated as unavailable; inode alone is
+  not enough to claim a globally canonical file identity.
 * [x] mismatch priority is process identity, exact target, sender binding,
   topology, document/render state, then layout, so renderer replacement cannot
   be misreported as ordinary layout churn.
