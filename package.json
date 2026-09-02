@@ -18,6 +18,7 @@
     "test:e2e:product": "electron-vite build && vitest run --config vitest.e2e.config.ts tests/e2e/product-shell.e2e.ts",
     "test:e2e:fixtures": "electron-vite build && vitest run --config vitest.e2e.config.ts tests/e2e/killtest.e2e.ts tests/e2e/repository-workflow.e2e.ts",
     "papersctl": "node tools/papersctl.mjs",
+    "papers:mcp": "node tools/papersMcp.mjs",
     "demo:seed": "node tools/seed-demo-backpack.mjs",
     "fixture:logseq": "node tools/logseq-fixture.mjs setup",
     "fixture:logseq:status": "node tools/logseq-fixture.mjs status",
@@ -39,6 +40,7 @@
     "vitest": "4.1.10"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "dockview-react": "8.2.0",
     "electron-updater": "6.8.9",
     "react": "19.2.7",

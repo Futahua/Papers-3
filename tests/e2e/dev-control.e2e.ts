@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { launchPapers, waitFor, type LaunchedApp } from './helpers';
 // @ts-expect-error -- the shared control client is plain ESM shipped with the tools.
@@ -136,5 +138,34 @@ describe('developer control plane', () => {
       const registry = JSON.parse(await readFile(join(launched.userDataDir, 'PapersData', 'registry.json'), 'utf8'));
       return registry.backpacks.length === 0;
     }, 10_000, 'confirmed Backpack removal');
+  });
+
+  it('uses the real stdio MCP adapter for a query and ordinary semantic mutation', async () => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [join(process.cwd(), 'tools', 'papersMcp.mjs'), '--descriptor', descriptorPath],
+      cwd: process.cwd(),
+      stderr: 'pipe',
+    });
+    const client = new Client({ name: 'papers-mcp-e2e', version: '1.0.0' });
+    await client.connect(transport);
+    try {
+      const before = await client.callTool({
+        name: 'papers_control',
+        arguments: { method: 'inspect.windows', params: {} },
+      });
+      const beforeContent = before.content as Array<{ type: string; text: string }>;
+      const beforeWindows = JSON.parse(beforeContent[0]!.text) as unknown[];
+      const created = await client.callTool({
+        name: 'papers_control',
+        arguments: { method: 'window.create', params: {} },
+      });
+      const createdContent = created.content as Array<{ type: string; text: string }>;
+      const createdWindow = JSON.parse(createdContent[0]!.text) as { windowId: number };
+      await waitFor(async () => (await call('inspect.windows') as unknown[]).length === beforeWindows.length + 1, 10_000, 'MCP-created Papers window');
+      expect(createdWindow.windowId).toEqual(expect.any(Number));
+    } finally {
+      await client.close();
+    }
   });
 });

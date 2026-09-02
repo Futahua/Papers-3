@@ -71,3 +71,32 @@ New commands must be added to the semantic
 catalog with explicit target authority, redaction and confirmation policy. UI
 geometry synchronization channels are not developer commands merely because
 they exist in renderer IPC.
+
+## MCP adapter
+
+Papers also ships a standalone stdio MCP adapter for developer/agent use:
+
+```powershell
+npm run papers:mcp -- --descriptor D:\temp\papers-control.json
+```
+
+The adapter exposes one tool, `papers_control`, with `{ method, params }`. It
+forwards those values unchanged through the shared `papersControlClient`; the
+existing local protocol remains the sole command catalog, schema validator,
+target authority, redaction boundary and business-logic layer. The adapter
+opens no TCP/HTTP listener, does not call Electron or the host facade directly,
+does not inspect project files, and never exposes the descriptor or bearer
+token in tool output.
+
+Explicit identities remain mandatory. For example,
+`layout.moveSurfaceToWindow` still requires `sourceWindowId`, `surfaceId`,
+`targetWindowId`, `targetGroupId` and `targetIndex`; MCP does not infer a
+current, focused or only target.
+
+Destructive flows use the same two calls on one underlying control connection:
+first `backpack.archive.prepare` or `backpack.remove.prepare`, then
+`confirmation.execute` with the exact returned phrase. The adapter does not
+auto-confirm or add a one-shot destructive tool. MCP cancellation or adapter
+shutdown closes the control connection, revoking any outstanding challenge.
+Events are not exposed in this first MCP slice; future event support must
+consume the existing `events.subscribe` stream rather than create another bus.

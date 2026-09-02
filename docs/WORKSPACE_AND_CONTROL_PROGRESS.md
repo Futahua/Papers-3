@@ -805,7 +805,7 @@ selection, or management screen was added.
   forward canonicalization, and authenticated host-sender adapter (signed off
   through A3.4; exact implementation heads are recorded below).
 - [x] Electron-version compatibility test for optional live WCV reparenting.
-- [ ] B2 — richer `papersctl`, event subscriptions and authorized confirmation
+- [x] B2 — richer `papersctl`, event subscriptions and authorized confirmation
   challenges for destructive operations.
 - [ ] B3 — thin stdio MCP adapter over the same local control protocol; no
   duplicated business logic.
@@ -1074,7 +1074,7 @@ build passed; live developer-control Electron E2E passed 3/3; and
 The compatibility probe below records the completed narrow gate; recreate/rebind
 remains the correctness path, with no production behavior change.
 
-### B2.2 destructive confirmation challenges — review pending
+### B2.2 destructive confirmation challenges — signed off
 
 - [x] Add explicit `backpack.archive.prepare`, `backpack.remove.prepare` and
   `confirmation.execute` protocol operations; there is no force flag or direct
@@ -1092,7 +1092,8 @@ remains the correctness path, with no production behavior change.
   interactive exact-phrase prompt or explicit `--confirmation` text.
 - [x] Prove wrong-connection, wrong-phrase, expiry, replay, disconnect, stale
   target and live archive/removal behavior.
-- [ ] Reviewer sign-off on the exact pushed head.
+- [x] Reviewer sign-off on exact pushed head
+  `80270d57705f6a66f11d328e4cfc6314ee84fd64`.
 
 The initial exact-head review at `c4a67793f10b767e2024b15641c36fc00823b8d2`
 found one concrete rename race between protocol revalidation and entry into the
@@ -1171,10 +1172,41 @@ E2E, combined relevant E2E 6/6, typecheck, full Vitest 727/731 (4 skipped),
 build and diff checks pass. Reviewer found no concrete defect; no production
 behavior changed.
 
-The creator has now authorized the remaining agenda. B2.2 is the active review
-candidate; B3 MCP/stdio follows only after B2.2 sign-off. Release, packaging and
-installation follow implementation, validation and reviewer closure rather than
-running ahead of them.
+The creator has now authorized the remaining agenda. B2.2 is signed off and B3
+MCP/stdio is the active review candidate. Release, packaging and installation
+follow implementation, validation and reviewer closure rather than running
+ahead of them.
+
+### B3 standalone stdio MCP adapter — review pending
+
+- [x] Pin the official `@modelcontextprotocol/sdk` at 1.30.0.
+- [x] Add one standalone stdio process with no new network listener and no code
+  inside Papers main.
+- [x] Expose one mechanical `{method, params}` tool over the shared
+  `papersControlClient`; do not duplicate the command catalog or business logic.
+- [x] Preserve exact explicit targets and return only existing control results
+  or existing refusal text.
+- [x] Preserve B2.2 prepare→challenge→execute on one underlying connection;
+  cancellation and shutdown close that connection and revoke challenges.
+- [x] Add unit coverage for exact mapping, target preservation, destructive
+  sequencing, refusal propagation and cancellation cleanup.
+- [x] Add real Electron acceptance using the actual stdio adapter for
+  `inspect.windows` and `window.create`, then prove state through control.
+- [ ] Reviewer sign-off on the exact pushed head.
+
+Events are deliberately omitted from this first adapter slice. The adapter has
+no renderer IPC, facade, registry, filesystem-project, TCP/HTTP or arbitrary-JS
+access. Release/install/package remains after B3 review closure.
+
+Validation at the candidate worktree: typecheck passed; focused MCP/control
+tests passed 47/47; full Vitest passed 737/741 (4 skipped); production build
+passed; live developer-control Electron E2E passed 5/5, including the real
+stdio adapter performing a query and creating a native Papers window; and
+`git diff --check` passed. `npm audit --omit=dev` reports zero production
+vulnerabilities after compatible transitive lockfile updates. The remaining
+development-only audit findings predate/are outside the shipped adapter path.
+The pre-existing user-owned modification to
+`docs/evidence/worker-comparison.json` remains untouched.
 
 ## Persistent pickup checklist for every new session
 
