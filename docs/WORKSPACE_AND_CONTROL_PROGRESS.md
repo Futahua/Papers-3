@@ -969,6 +969,24 @@ frame mechanisms and cleaning up observers/listeners.
 This is evidence-first. Change production code only if the targeted closure
 finds a concrete polling, recovery, teardown, or product-state side effect.
 
+Current implementation checkpoint: no production correction was needed. The
+source audit found the visual lifecycle and resource monitors event-listener
+driven, first-paint observation terminating after its browser signal, layout
+stability bounded to one animation-frame epoch, and lifecycle/resource
+listeners detached on close and before quit. The focused side-effect suite
+spies on `setInterval`/`setTimeout`, exercises lifecycle/resource failure and
+detach inertness, proves repeated layout mutations coalesce to one queued
+frame, and proves stable and timeout epochs end without queued frames. It also
+exposes recovery spies to prove observation never calls reload, loadURL, or
+restart. The neutral-project E2E captures `performance.timeOrigin` before the
+real overflow and mixed diagnostic events and confirms it is unchanged after
+them, alongside unchanged workspace state. Test-only `waitFor` timers remain
+outside the production observation contract.
+
+Validation and exact-SHA reviewer gate are pending for this slice. The
+user-owned `docs/evidence/worker-comparison.json` remains unstaged and
+untouched; no release, install, package, or policy action is in scope.
+
 ## Architectural boundary / likely owner
 
 Main-process visual observation service owns correlation and retention.
@@ -1136,7 +1154,7 @@ Those are separate lifecycle facts.
   monotonic sequences and continued publication;
 * [x] diagnostic buffers obey maximum length/count;
 * [x] redaction tests reject secret/path leakage;
-* [ ] no timer-based continuous polling.
+* [x] no timer-based continuous polling.
 
 ## Packaged live proof
 

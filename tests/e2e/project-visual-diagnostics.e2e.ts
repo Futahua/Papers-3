@@ -238,6 +238,9 @@ describe('project renderer visual diagnostics', () => {
     // surface, so exceeding the default cap proves eviction in the production
     // path rather than in an isolated helper.
     const workspaceBeforePostOverflowEvents = await call('inspect.workspace', { windowId: secondary.windowId });
+    const projectTimeOriginBeforePostOverflowEvents = await evalInProjectWindow<number>(
+      secondary.windowId, 'performance.timeOrigin',
+    );
     await evalInProjectWindow<boolean>(secondary.windowId, `(() => {
       for (let index = 0; index < 132; index += 1) console.log(\`buffer-bound-observation-\${index}\`);
       return true;
@@ -337,6 +340,8 @@ describe('project renderer visual diagnostics', () => {
     expect(serializedDiagnosticEvents).not.toContain('missing-bound-image.png');
     expect(serializedDiagnosticEvents).not.toContain('buffer-bound.js');
     expect(await call('inspect.workspace', { windowId: secondary.windowId })).toEqual(workspaceBeforePostOverflowEvents);
+    expect(await evalInProjectWindow<number>(secondary.windowId, 'performance.timeOrigin'))
+      .toBe(projectTimeOriginBeforePostOverflowEvents);
 
     await launched.app.evaluate(({ BaseWindow }, targetWindowId) => {
       const window = BaseWindow.getAllWindows().find((candidate) => candidate.id === targetWindowId);
