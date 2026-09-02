@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 renderer-failure slice implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 renderer-failure slice signed off; reverse Papers→Dockview reconciliation is the next reviewed slice
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -478,11 +478,11 @@ later lifecycle hooks will append to:
   stale/unbound senders and malformed or oversized failure payloads, and keeps
   redaction/retention and live event publication on the existing bounded path.
 
-The resource-attribution adapter and event-subscription adapter are implemented
-against the existing bounded path and have reviewer sign-off below. The
-renderer failure listeners are the current unreviewed slice; the next review
-must verify opt-in installation, strict payload shape, sender authority,
-redaction, and no-throw behavior.
+The resource-attribution adapter, event-subscription adapter, and renderer
+failure slice are implemented against the existing bounded path and have
+reviewer sign-off below. The renderer failure path is opt-in, strict,
+sender-authoritative, redacted, bounded, and best-effort; it does not make
+ordinary project startup depend on observation.
 
 Implementation checkpoint: focused preload/host/IPC/lifecycle coverage passes
 12/12 and the developer-control plus neutral-project Electron suite passes
@@ -491,8 +491,9 @@ exact host-window/surface authority, redaction, bootstrap isolation, staged
 sender refusal, current replacement acceptance, and no duplicate observer
 records. The full host suite passes 776/776 with 4 skipped across 70 passed
 files and 1 skipped file; typecheck, production build, and diff check pass.
-This is not C1.2 completion; the renderer-failure slice still requires
-exact-SHA reviewer sign-off.
+This closes the current C1.2 renderer-failure gate. C1.2 remains a broader
+phase whose later visual lifecycle work is tracked separately below and must
+still receive its own exact-SHA review.
 
 Reviewer checkpoint: **SIGNED OFF** for the lifecycle adapter at
 `efd24422296d9b64c974dcb3b97073d0629e25b0` and for the host-composition/control
@@ -545,6 +546,22 @@ throw/rejection, a prepared cross-window renderer, and a post-adoption
 replacement failure; it proves that staged records are refused, current
 replacement records are accepted, and `show()` still resolves while failures
 are captured.
+
+Reviewer checkpoint: **SIGNED OFF** for the complete forward renderer-failure
+slice at exact pushed head
+`178c874ea203c1e953b5942ed46c452f55ea24f6`. The reviewer found no remaining
+defect in the SHA-256-only transient matcher, its 64-candidate bound, consumed
+cross-source pair behavior, same-source repeat behavior, redaction-collision
+separation, or the existing sender-authority/startup-isolation regressions.
+
+Next narrow reviewed slice: **reverse Papers → Dockview reconciliation with
+feedback suppression**. When Papers/main applies canonical workspace topology
+to Dockview during restore/load/open/close/move reconciliation, suppress only
+the Dockview callbacks caused by that application so they cannot echo as a
+second topology mutation or commit. Genuine subsequent user Dockview actions
+must immediately resume forward reporting. Required regressions are exact
+identity/order/focus preservation, no echo commit, no reconciliation loop, and
+normal user-originated Dockview mutation immediately afterward.
 
 ## Architectural boundary / likely owner
 
