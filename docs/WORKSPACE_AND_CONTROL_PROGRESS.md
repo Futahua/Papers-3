@@ -1,10 +1,34 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 negative hydration ownership evidence reordered; exact-SHA reviewer gate pending
+Persistent status: C1.2 deterministic same-project console isolation is next
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
+
+## Multi-session reviewer continuation
+
+If the in-app reviewer reaches its message limit before issuing a verdict,
+open a fresh ChatGPT reviewer session and provide enough context to continue
+the same gate. Include:
+
+* the active agenda slice and the concrete question still awaiting review;
+* the repository/branch and exact pushed commit SHA;
+* a remote commit link, for example
+  `https://github.com/Futahua/Papers-3/commit/<sha>`, plus the branch link
+  `https://github.com/Futahua/Papers-3/tree/<branch>`;
+* the relevant validation results, user-owned dirty files that must remain
+  untouched, and the standing no-release/install/package boundary;
+* the prior reviewer’s concrete blocker or sign-off and the smallest requested
+  correction, if any.
+
+Do not treat a message-limit notice as a sign-off. Do not start the fresh
+session while the prior response is still generating. After sending the
+context, use one bounded internal completion watcher that requires
+`Stop answering` to appear and then disappear; read the response only after
+that watcher finishes. If the prior tab was released, reclaim the exact
+reviewer URL or use the newly created session, and keep the same exact-SHA
+review/validation loop.
 
 ## Milestone purpose
 
@@ -747,6 +771,18 @@ E2E only; no production code change was needed. The exact-SHA reviewer gate
 must reconfirm the reordered negative assertion, explicit-report positive
 assertion, exact sender authority, and no state mutation or polling.
 
+Reviewer checkpoint: **SIGNED OFF** for C1.2 deterministic negative hydration
+ownership at exact pushed head
+`8a196eccd094d5cdc8c138b5b220d3b4db9d334e`. The reviewer confirmed that the
+exact surface reaches navigation-started, dom-ready, first-paint, and
+layout-stable before the negative hydration check; explicit project-owned
+hydration is then the only source of the positive state-hydrated record.
+
+Next smallest reviewed slice: **C1.2 deterministic same-project console
+isolation** — prove two simultaneously live surfaces showing the same project
+retain console diagnostics only under their own exact `{windowId,surfaceId}`
+targets, with no cross-surface attribution.
+
 ## Architectural boundary / likely owner
 
 Main-process visual observation service owns correlation and retention.
@@ -900,11 +936,11 @@ Those are separate lifecycle facts.
 
 ## Deterministic tests
 
-* [ ] lifecycle ordering for successful fixture;
-* [ ] navigation-started occurs before DOM-ready;
-* [ ] state-hydrated cannot be synthesized by Papers without a project signal;
-* [ ] first-paint independently observable;
-* [ ] layout-stable only after bounded geometric stability;
+* [x] lifecycle ordering for successful fixture;
+* [x] navigation-started occurs before DOM-ready;
+* [x] state-hydrated cannot be synthesized by Papers without a project signal;
+* [x] first-paint independently observable;
+* [x] layout-stable only after bounded geometric stability;
 * [ ] hydration failure produces `hydration-failed`/`render-failed`;
 * [ ] thrown renderer exception surfaces without killing control;
 * [ ] failed resource attributed to correct surface;
