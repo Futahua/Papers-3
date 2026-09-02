@@ -233,6 +233,93 @@ describe('project renderer visual diagnostics', () => {
     expect(JSON.stringify(resourceFailures)).not.toContain('resource-secret');
     expect(JSON.stringify(resourceFailures)).not.toContain('missing-resource.js');
 
+    // Flood the real main-process buffer through renderer console events. The
+    // buffer already contains mixed lifecycle/failure records from this
+    // surface, so exceeding the default cap proves eviction in the production
+    // path rather than in an isolated helper.
+    await evalInProjectWindow<boolean>(secondary.windowId, `(() => {
+      for (let index = 0; index < 132; index += 1) console.log(\`buffer-bound-observation-\${index}\`);
+      return true;
+    })()`);
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId, surfaceId: second.surfaceId }) as Array<{
+        sequence: number; payload: { kind?: string; message?: string };
+      }>;
+      return records.some((record) => record.payload.kind === 'console'
+        && record.payload.message === 'buffer-bound-observation-131');
+    }, 10_000, 'real project diagnostic buffer overflow observations');
+    const workspaceBeforePostOverflowEvents = await call('inspect.workspace', { windowId: secondary.windowId });
+    const overflowRecords = await call('inspect.visual.diagnostics', {
+      windowId: secondary.windowId, surfaceId: second.surfaceId,
+    }) as Array<{ sequence: number; target: { windowId: number; surfaceId?: string }; payload: { kind?: string; message?: string } }>;
+    expect(overflowRecords).toHaveLength(128);
+    const overflowSequences = overflowRecords.map((record) => record.sequence);
+    expect(overflowSequences.every((sequence, index) => index === 0 || sequence > overflowSequences[index - 1]!)).toBe(true);
+    expect(overflowRecords.some((record) => record.payload.message === 'buffer-bound-observation-0')).toBe(false);
+    expect(overflowRecords.some((record) => record.payload.message === 'buffer-bound-observation-131')).toBe(true);
+
+    const diagnosticEvents: Array<{ event?: string; payload?: { sequence?: number; target?: { windowId?: number; surfaceId?: string }; payload?: { kind?: string; message?: string; resourceKind?: string } } }> = [];
+    const eventConnection = await connectPapersControl(await readDescriptor(descriptorPath));
+    const removeEventListener = eventConnection.onEvent((frame: {
+      event?: string;
+      payload?: {
+        sequence?: number;
+        target?: { windowId?: number; surfaceId?: string };
+        payload?: { kind?: string; message?: string; resourceKind?: string };
+      };
+    }) => { diagnosticEvents.push(frame); });
+    try {
+      await expect(eventConnection.call('events.subscribe', {
+        events: ['visual.diagnostic'], visualTarget: { windowId: secondary.windowId, surfaceId: second.surfaceId },
+      })).resolves.toMatchObject({ ok: true, result: { subscribed: ['visual.diagnostic'] } });
+      await evalInProjectWindow<boolean>(secondary.windowId, `(() => {
+        console.error('buffer-bound-live-console token=resource-secret');
+        Promise.reject(new Error('C:\\\\private\\\\buffer-bound.js password=secret'));
+        const image = document.createElement('img');
+        image.src = 'papers-backpack://bp-11111111-1111-4111-8111-111111111111/missing-bound-image.png?token=resource-secret';
+        document.body.appendChild(image);
+        return true;
+      })()`);
+      await waitFor(async () => {
+        const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId, surfaceId: second.surfaceId }) as Array<{
+          sequence: number; payload: { kind?: string; message?: string; resourceKind?: string };
+        }>;
+        return records.some((record) => record.payload.kind === 'console'
+          && record.payload.message === 'buffer-bound-live-console token=<redacted>')
+          && records.some((record) => record.payload.kind === 'unhandled-rejection')
+          && records.some((record) => record.payload.kind === 'resource-failed' && record.payload.resourceKind === 'image');
+      }, 10_000, 'post-overflow visual diagnostic publication');
+      await waitFor(async () => diagnosticEvents.length >= 3, 10_000, 'post-overflow visual diagnostic subscription');
+    } finally {
+      removeEventListener();
+      eventConnection.close();
+    }
+
+    const finalRecords = await call('inspect.visual.diagnostics', {
+      windowId: secondary.windowId, surfaceId: second.surfaceId,
+    }) as Array<{ sequence: number; target: { windowId: number; surfaceId?: string }; payload: { kind?: string; message?: string; resourceKind?: string } }>;
+    expect(finalRecords.length).toBeLessThanOrEqual(128);
+    const finalSequences = finalRecords.map((record) => record.sequence);
+    expect(finalSequences.every((sequence, index) => index === 0 || sequence > finalSequences[index - 1]!)).toBe(true);
+    expect(finalRecords.some((record) => record.target.windowId === secondary.windowId
+      && record.target.surfaceId === second.surfaceId
+      && record.payload.kind === 'console'
+      && record.payload.message === 'buffer-bound-live-console token=<redacted>')).toBe(true);
+    expect(finalRecords.some((record) => record.target.windowId === secondary.windowId
+      && record.target.surfaceId === second.surfaceId
+      && record.payload.kind === 'unhandled-rejection')).toBe(true);
+    expect(finalRecords.some((record) => record.target.windowId === secondary.windowId
+      && record.target.surfaceId === second.surfaceId
+      && record.payload.kind === 'resource-failed'
+      && record.payload.resourceKind === 'image')).toBe(true);
+    expect(diagnosticEvents.every((frame) => frame.event === 'visual.diagnostic'
+      && frame.payload?.target?.windowId === secondary.windowId
+      && frame.payload?.target?.surfaceId === second.surfaceId)).toBe(true);
+    expect(JSON.stringify(finalRecords)).not.toContain('resource-secret');
+    expect(JSON.stringify(finalRecords)).not.toContain('missing-bound-image.png');
+    expect(JSON.stringify(finalRecords)).not.toContain('buffer-bound.js');
+    expect(await call('inspect.workspace', { windowId: secondary.windowId })).toEqual(workspaceBeforePostOverflowEvents);
+
     await launched.app.evaluate(({ BaseWindow }, targetWindowId) => {
       const window = BaseWindow.getAllWindows().find((candidate) => candidate.id === targetWindowId);
       if (!window) throw new Error(`no window with id ${targetWindowId}`);

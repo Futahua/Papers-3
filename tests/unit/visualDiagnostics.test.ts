@@ -97,6 +97,27 @@ describe('bounded visual diagnostic buffer', () => {
     expect(onAppend).toHaveBeenCalledOnce();
   });
 
+  it('bounds mixed visual events while preserving monotonic sequence and publication', () => {
+    const published: number[] = [];
+    const buffer = createVisualDiagnosticBuffer({
+      capacity: 3,
+      onAppend(record) {
+        published.push(record.sequence);
+        if (record.sequence === 3) throw new Error('publication sink unavailable');
+      },
+    });
+    buffer.append({ windowId: 1, surfaceId: 'surface-a' }, { kind: 'lifecycle', phase: 'dom-ready' });
+    buffer.append({ windowId: 1, surfaceId: 'surface-a' }, { kind: 'console', level: 'warn', message: 'warning' });
+    buffer.append({ windowId: 1, surfaceId: 'surface-a' }, {
+      kind: 'resource-failed', resourceKind: 'script', message: 'missing',
+    });
+    buffer.append({ windowId: 1, surfaceId: 'surface-a' }, { kind: 'uncaught-error', message: 'uncaught' });
+    buffer.append({ windowId: 1, surfaceId: 'surface-a' }, { kind: 'renderer-gone', reason: 'crashed' });
+
+    expect(buffer.snapshot().map((record) => record.sequence)).toEqual([3, 4, 5]);
+    expect(published).toEqual([1, 2, 3, 4, 5]);
+  });
+
   it('bounds capacity configuration', () => {
     expect(() => createVisualDiagnosticBuffer({ capacity: 0 })).toThrow();
     expect(() => createVisualDiagnosticBuffer({ capacity: 513 })).toThrow();

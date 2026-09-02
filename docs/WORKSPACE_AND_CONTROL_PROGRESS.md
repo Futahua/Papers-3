@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 real failed-resource exact-surface attribution implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 deterministic diagnostic-buffer bound closure implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -890,6 +890,35 @@ The exact-SHA reviewer gate must confirm real failed-resource retention,
 current exact-sender/surface authority, stale/prepared refusal, bounded and
 redacted messages, and no URL leakage, recovery, or polling side effect.
 
+Reviewer checkpoint at exact pushed head
+`924c440189cce7294ca57d0adac6a0eb27ba8224`: **SIGNED OFF** for real
+failed-resource exact-surface attribution. The reviewer confirmed that both
+transport failures and HTTP 400+ completions share sender-authoritative target
+resolution, prepared/stale senders fail closed, only resource kind plus a
+bounded redacted message is retained, both listeners detach cleanly, and the
+neutral-project E2E proves a genuine missing script without URL/token leakage.
+
+Next smallest reviewed slice: **C1.2 deterministic diagnostic-buffer bound
+closure** — prove mixed real visual events cannot exceed the configured
+retained-record cap while sequence numbers remain monotonic and observation/
+event publication continues without affecting product state.
+
+Current implementation checkpoint: no production buffer change was needed.
+The narrow closure adds a mixed-event unit proof with a capacity-3 buffer,
+monotonic sequences, oldest-record eviction, and a deliberately failing
+publication callback whose later events still publish. The neutral-project
+Electron E2E drives 132 real console observations through the moved project,
+proves the real default 128-record window cap and monotonic retained
+sequences, subscribes only after overflow, then emits real console,
+unhandled-rejection, and failed-image events. It verifies exact-surface
+publication, bounded retention, redaction/no URL-token leakage, and unchanged
+workspace topology/state. The user-owned
+`docs/evidence/worker-comparison.json` remains unstaged and untouched.
+
+The exact-SHA reviewer gate must confirm mixed-event overflow, monotonic
+sequences, post-overflow publication, exact target filtering, redaction,
+unchanged product state, and no polling or recovery side effect.
+
 ## Architectural boundary / likely owner
 
 Main-process visual observation service owns correlation and retention.
@@ -1050,9 +1079,11 @@ Those are separate lifecycle facts.
 * [x] layout-stable only after bounded geometric stability;
 * [ ] hydration failure produces `hydration-failed`/`render-failed`;
 * [ ] thrown renderer exception surfaces without killing control;
-* [ ] failed resource attributed to correct surface;
+* [x] failed resource attributed to correct surface;
 * [x] console of two same-project surfaces remains isolated;
 * [x] renderer crash produces `renderer-gone`;
+* [x] mixed visual events remain within the diagnostic-record cap with
+  monotonic sequences and continued publication;
 * [ ] diagnostic buffers obey maximum length/count;
 * [ ] redaction tests reject secret/path leakage;
 * [ ] no timer-based continuous polling.
