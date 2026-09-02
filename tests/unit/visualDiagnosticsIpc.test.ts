@@ -32,4 +32,3 @@ describe('visual diagnostics renderer IPC', () => {
     expect(buffer.snapshot()).toEqual([]);
   });
 });
-
