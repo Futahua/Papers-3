@@ -455,9 +455,18 @@ later lifecycle hooks will append to:
 
 Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 6/6;
 `tests/unit/visualLifecycleMonitor.test.ts` passes 3/3;
-the full host suite passes 760/760 with 4 skipped across 68 files; typecheck and
+the full host suite passes 761/761 with 4 skipped across 68 files; typecheck and
 diff check pass. This is not C1.2 completion; project-frame routing, resource
 attribution, event subscription, and broader control exposure remain unchecked.
+
+Reviewer checkpoint: **SIGNED OFF** for the lifecycle adapter at
+`efd24422296d9b64c974dcb3b97073d0629e25b0` and for the host-composition/control
+slice at `730e3ab2659cc66ff910635dd8376f8b4a09da4c`. The final host review found
+no remaining defect after the exact `isMainFrame === true` correction. The
+reviewer specifically confirmed opt-in composition, close cleanup, exact target
+authority, schema revalidation, bounded/redacted records, and no polling or
+recovery side effects. Resource attribution and project-frame routing remain
+explicitly unclaimed.
 
 ## Architectural boundary / likely owner
 
