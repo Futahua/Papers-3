@@ -133,6 +133,14 @@ describe('project renderer visual diagnostics', () => {
     expect(availableAssertions.available).toBe(true);
     expect(availableAssertions.allPassed).toBe(true);
     expect(availableAssertions.assertions).toEqual([{ kind: 'visible', passed: true }]);
+    const elementCapture = await call('capture.element', {
+      windowId, surfaceId: opened.surfaceId, elementKey: 'canvas.root', paddingCssPx: 4,
+    }) as { consistency: { status: string }; element?: { key: string }; crop?: { width: number; height: number }; png?: { mimeType: string; size: number } };
+    expect(elementCapture.consistency).toEqual({ status: 'stable' });
+    expect(elementCapture.element?.key).toBe('canvas.root');
+    expect(elementCapture.crop?.width).toBeGreaterThan(0);
+    expect(elementCapture.crop?.height).toBeGreaterThan(0);
+    expect(elementCapture.png).toEqual(expect.objectContaining({ mimeType: 'image/png', size: expect.any(Number) }));
     const preHydrationLifecycle = (await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
       sequence: number; payload: { kind?: string; phase?: string };
     }>).filter((record) => record.sequence > beforeSequence && record.payload.kind === 'lifecycle');

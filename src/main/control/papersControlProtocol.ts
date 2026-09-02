@@ -126,6 +126,13 @@ const visualCaptureResultSchema = z.object({
   }).strict(),
   png: visualArtifactMetadataSchema.optional(),
 }).strict();
+const visualElementCaptureResultSchema = visualCaptureResultSchema.extend({
+  element: visualElementObservationSchema.optional(),
+  crop: z.object({
+    x: z.number().int(), y: z.number().int(),
+    width: z.number().int().positive(), height: z.number().int().positive(),
+  }).strict().optional(),
+});
 const visualWindowCaptureResultSchema = z.object({
   captureId: z.string().uuid(),
   target: z.object({ windowId: z.number().int() }).strict(),
@@ -341,6 +348,16 @@ export const papersControlCommands = {
     scope: 'surface',
     effect: 'query',
   },
+  'capture.element': {
+    input: z.object({
+      windowId: z.number().int(), surfaceId: z.string().min(1).max(128),
+      elementKey: visualSemanticKeySchema,
+      paddingCssPx: z.number().finite().min(0).max(32).default(0),
+    }).strict(),
+    output: visualElementCaptureResultSchema,
+    scope: 'surface',
+    effect: 'query',
+  },
   'capture.window': {
     input: windowTargetSchema,
     output: visualWindowCaptureResultSchema,
@@ -504,6 +521,7 @@ export interface PapersControlDependencies {
     bytes: Uint8Array;
   }>;
   captureSurface?(target: { windowId: number; surfaceId: string }): Promise<unknown>;
+  captureElement?(target: { windowId: number; surfaceId: string }, elementKey: string, paddingCssPx: number): Promise<unknown>;
   captureWindow?(target: { windowId: number }): Promise<unknown>;
   windows(): unknown;
   createWindow(): Promise<unknown>;
@@ -653,6 +671,14 @@ export async function dispatchPapersControl(
       if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
       const captured = await dependencies.captureSurface?.(target);
       if (!captured) throw new Error('Visual surface capture is unavailable.');
+      return papersControlCommands[request.method].output.parse(captured);
+    }
+    case 'capture.element': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const target = { windowId: params.windowId, surfaceId: params.surfaceId };
+      if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
+      const captured = await dependencies.captureElement?.(target, params.elementKey, params.paddingCssPx);
+      if (!captured) throw new Error('Visual element capture is unavailable.');
       return papersControlCommands[request.method].output.parse(captured);
     }
     case 'capture.window': {

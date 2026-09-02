@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import type { VisualElementObservation } from '@shared/visualSemanticKeys';
 import { assessVisualConsistency, type VisualConsistency, type VisualObservationFence } from './visualObservation';
 import type { ProcessInstanceIdentity } from './processIdentity';
 import type { VisualArtifactMetadata, VisualArtifactStore } from './visualArtifactStore';
@@ -16,12 +17,26 @@ export interface VisualCaptureRuntime {
   requestFence(requestId: string, documentInstanceId: string): Promise<boolean>;
 }
 
+export interface VisualElementCaptureRequest {
+  elementKey: string;
+  paddingCssPx: number;
+}
+
+export interface VisualElementCropBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface VisualCaptureDependencies {
   processIdentity(): ProcessInstanceIdentity;
   topologyRevision(windowId: number): number;
   surface(target: VisualCaptureTarget): { projectId: string; presentation: 'not-created' | 'hidden' | 'visible' } | null;
   runtime(target: VisualCaptureTarget): VisualCaptureRuntime | null;
   observation(target: VisualCaptureTarget): VisualSurfaceObservationState | null;
+  elementObservations?(target: VisualCaptureTarget): readonly VisualElementObservation[];
+  cropPng?(bytes: Uint8Array, bounds: VisualElementCropBounds): Uint8Array | Promise<Uint8Array>;
   artifacts: VisualArtifactStore;
 }
 
@@ -46,6 +61,8 @@ export interface VisualCaptureResult {
     renderFailed: boolean;
     semanticKeys: string[];
   };
+  element?: VisualElementObservation;
+  crop?: VisualElementCropBounds;
   png?: VisualArtifactMetadata;
 }
 
@@ -148,6 +165,8 @@ function resultFor(
   revisions: VisualCaptureResult['revisions'],
   state: VisualSurfaceObservationState | null,
   png?: VisualArtifactMetadata,
+  element?: VisualElementObservation,
+  crop?: VisualElementCropBounds,
 ): VisualCaptureResult {
   return {
     captureId,
@@ -165,8 +184,23 @@ function resultFor(
       renderFailed: state?.renderFailed ?? false,
       semanticKeys: state?.semanticKeys ?? [],
     },
+    ...(element ? { element } : {}),
+    ...(crop ? { crop } : {}),
     ...(png ? { png } : {}),
   };
+}
+
+function cropBoundsFor(element: VisualElementObservation, paddingCssPx: number): VisualElementCropBounds {
+  const scaleX = element.boundsCss.width > 0 ? element.boundsDevice.width / element.boundsCss.width : 1;
+  const scaleY = element.boundsCss.height > 0 ? element.boundsDevice.height / element.boundsCss.height : 1;
+  const paddingX = paddingCssPx * scaleX;
+  const paddingY = paddingCssPx * scaleY;
+  const left = Math.floor(element.boundsDevice.x - paddingX);
+  const top = Math.floor(element.boundsDevice.y - paddingY);
+  const right = Math.ceil(element.boundsDevice.x + element.boundsDevice.width + paddingX);
+  const bottom = Math.ceil(element.boundsDevice.y + element.boundsDevice.height + paddingY);
+  if (right <= left || bottom <= top) throw new Error('That visual element has no area to capture.');
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
 /** Capture one exact project WebContents with a bounded consistency retry.
@@ -175,6 +209,7 @@ function resultFor(
 export async function captureVisualSurface(
   deps: VisualCaptureDependencies,
   target: VisualCaptureTarget,
+  elementRequest?: VisualElementCaptureRequest,
 ): Promise<VisualCaptureResult> {
   const captureId = randomUUID();
   const process = deps.processIdentity();
@@ -261,7 +296,18 @@ export async function captureVisualSurface(
       ? instabilityReason(before, after, initial.projectId)
       : { status: 'unstable', reason: deps.surface(target) ? 'renderer-replaced' : 'topology-changed' } as const;
     if (consistency.status === 'stable') {
-      const artifact = await deps.artifacts.put(bytes, 'image/png');
+      let artifactBytes = bytes;
+      let element: VisualElementObservation | undefined;
+      let crop: VisualElementCropBounds | undefined;
+      if (elementRequest) {
+        if (!after.state?.layoutStable) throw new Error('That visual element has no stable geometry.');
+        element = deps.elementObservations?.(target).find((candidate) => candidate.key === elementRequest.elementKey);
+        if (!element) throw new Error('That visual element is unavailable.');
+        if (!deps.cropPng) throw new Error('Visual element cropping is unavailable.');
+        crop = cropBoundsFor(element, elementRequest.paddingCssPx);
+        artifactBytes = await deps.cropPng(bytes, crop);
+      }
+      const artifact = await deps.artifacts.put(artifactBytes, 'image/png');
       const artifactFence = snapshotFor(deps, target, runtime, process);
       const artifactConsistency = instabilityReason(after, artifactFence, initial.projectId);
       if (artifactConsistency.status !== 'stable') {
@@ -292,6 +338,8 @@ export async function captureVisualSurface(
         },
         after.state,
         artifact,
+        element,
+        crop,
       );
     }
     if (attempt === 1) {

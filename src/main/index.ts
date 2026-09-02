@@ -1,7 +1,7 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, ipcMain, screen, session, shell, webContents, type WebContents } from 'electron';
+import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, ipcMain, nativeImage, screen, session, shell, webContents, type WebContents } from 'electron';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -1876,6 +1876,55 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     }));
     const eventHub = createPapersControlEventHub();
     controlEventHub = eventHub;
+    const captureProjectVisual = visualArtifactStore && processInstanceIdentity
+      ? (target: { windowId: number; surfaceId: string }, elementRequest?: { elementKey: string; paddingCssPx: number }) => captureVisualSurface({
+        processIdentity: () => processInstanceIdentity,
+        topologyRevision: (windowId) => workspaceTopologyRevisions.get(windowId) ?? 0,
+        surface: ({ windowId, surfaceId }) => {
+          const found = logicalSurfaces.get(surfaceId);
+          if (!found || found.windowId !== windowId || found.kind !== 'project') return null;
+          const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId);
+          return {
+            projectId: found.projectId,
+            presentation: runtime?.isPresented ? 'visible' : runtime ? 'hidden' : 'not-created',
+          };
+        },
+        runtime: ({ windowId, surfaceId }) => {
+          const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId);
+          if (!runtime || runtime.senderId === null) return null;
+          return {
+            senderId: runtime.senderId,
+            capturePage: async () => new Uint8Array((await runtime.capturePage()).toPNG()),
+            requestFence: (requestId: string, documentInstanceId: string) => {
+              const contents = runtime.webContents;
+              return contents && visualRendererFence
+                ? visualRendererFence.request(contents, requestId, documentInstanceId)
+                : Promise.resolve(false);
+            },
+          };
+        },
+        observation: ({ windowId, surfaceId }) => visualSurfaceObservationState.snapshot(windowId, surfaceId),
+        elementObservations: ({ windowId, surfaceId }) => {
+          const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
+          const currentSenderId = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.senderId;
+          const observationState = visualSurfaceObservationState.snapshot(windowId, surfaceId);
+          return state && state.currentSenderId === currentSenderId && observationState?.layoutStable
+            ? state.observations
+            : [];
+        },
+        cropPng: (bytes, bounds) => {
+          const image = nativeImage.createFromBuffer(Buffer.from(bytes));
+          const size = image.getSize();
+          const x = Math.max(0, Math.min(size.width, bounds.x));
+          const y = Math.max(0, Math.min(size.height, bounds.y));
+          const right = Math.max(x, Math.min(size.width, bounds.x + bounds.width));
+          const bottom = Math.max(y, Math.min(size.height, bounds.y + bounds.height));
+          if (right <= x || bottom <= y) throw new Error('That visual element is outside the captured surface.');
+          return new Uint8Array(image.crop({ x, y, width: right - x, height: bottom - y }).toPNG());
+        },
+        artifacts: visualArtifactStore,
+      }, target, elementRequest)
+      : undefined;
     papersControlServer = await startPapersControlServer({
       descriptorPath,
       eventHub,
@@ -1941,37 +1990,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         visualArtifactRead: visualArtifactStore
           ? (artifactId, offset, length) => visualArtifactStore.read(artifactId, offset, length)
           : undefined,
-        captureSurface: visualArtifactStore && processInstanceIdentity
-          ? (target) => captureVisualSurface({
-            processIdentity: () => processInstanceIdentity,
-            topologyRevision: (windowId) => workspaceTopologyRevisions.get(windowId) ?? 0,
-            surface: ({ windowId, surfaceId }) => {
-              const found = logicalSurfaces.get(surfaceId);
-              if (!found || found.windowId !== windowId || found.kind !== 'project') return null;
-              const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId);
-              return {
-                projectId: found.projectId,
-                presentation: runtime?.isPresented ? 'visible' : runtime ? 'hidden' : 'not-created',
-              };
-            },
-            runtime: ({ windowId, surfaceId }) => {
-              const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId);
-              if (!runtime || runtime.senderId === null) return null;
-              return {
-                senderId: runtime.senderId,
-                capturePage: async () => new Uint8Array((await runtime.capturePage()).toPNG()),
-                requestFence: (requestId) => {
-                  const contents = runtime.webContents;
-                  const documentInstanceId = visualSurfaceObservationState.snapshot(windowId, surfaceId)?.documentInstanceId;
-                  return contents && visualRendererFence && documentInstanceId
-                    ? visualRendererFence.request(contents, requestId, documentInstanceId)
-                    : Promise.resolve(false);
-                },
-              };
-            },
-            observation: ({ windowId, surfaceId }) => visualSurfaceObservationState.snapshot(windowId, surfaceId),
-            artifacts: visualArtifactStore,
-          }, target)
+        captureSurface: captureProjectVisual ? (target) => captureProjectVisual(target) : undefined,
+        captureElement: captureProjectVisual
+          ? (target, elementKey, paddingCssPx) => captureProjectVisual(target, { elementKey, paddingCssPx })
           : undefined,
         captureWindow: visualArtifactStore && processInstanceIdentity && visualWindowNativeCapture
           ? (target) => captureVisualWindow({

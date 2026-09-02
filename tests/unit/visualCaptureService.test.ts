@@ -68,6 +68,30 @@ describe('synchronized visual surface capture', () => {
     expect(capturePage).toHaveBeenCalledTimes(1);
   });
 
+  it('captures one stable semantic element using device bounds and CSS padding', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-capture-'));
+    const capturePage = vi.fn(async () => new Uint8Array([1, 2, 3]));
+    const cropPng = vi.fn((bytes: Uint8Array, bounds: { x: number; y: number; width: number; height: number }) => {
+      expect(bytes).toEqual(new Uint8Array([1, 2, 3]));
+      expect(bounds).toEqual({ x: 8, y: 18, width: 104, height: 54 });
+      return new Uint8Array([4, 5]);
+    });
+    const element = {
+      key: 'canvas.root', role: 'main', boundsCss: { x: 10, y: 20, width: 100, height: 50 },
+      boundsDevice: { x: 10, y: 20, width: 100, height: 50 }, visible: true, visibilityReasons: [],
+      clippedPercent: 0, opacity: 1, overlapKeys: [], contrast: { status: 'unknown' as const },
+    };
+    const result = await captureVisualSurface({
+      ...await createDependencies(root, () => 4, capturePage),
+      elementObservations: () => [element],
+      cropPng,
+    }, target, { elementKey: 'canvas.root', paddingCssPx: 2 });
+    expect(result.element).toEqual(element);
+    expect(result.crop).toEqual({ x: 8, y: 18, width: 104, height: 54 });
+    expect(result.png).toMatchObject({ mimeType: 'image/png', size: 2 });
+    expect(cropPng).toHaveBeenCalledOnce();
+  });
+
   it('retries exactly once after a fence change and then accepts stability', async () => {
     const root = await mkdtemp(join(tmpdir(), 'papers-capture-'));
     let topology = 4;
