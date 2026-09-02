@@ -30,6 +30,55 @@ that watcher finishes. If the prior tab was released, reclaim the exact
 reviewer URL or use the newly created session, and keep the same exact-SHA
 review/validation loop.
 
+### One-shot watcher contract
+
+The watcher is one deferred operation attached to the still-live initiating
+turn. It owns the quiet sampling loop internally (about once per second),
+rather than returning unchanged browser state to the model or creating a
+recurring automation that sends messages. It must observe both transitions:
+
+1. `Stop answering` appears, proving generation actually started;
+2. `Stop answering` disappears, proving that generation finished.
+
+Use the following session-local shape, with a generous bounded timeout and no
+browser reads between samples:
+
+```js
+async function waitForReviewerCompletion(
+  tab,
+  { intervalMs = 1000, timeoutMs = 30 * 60 * 1000 } = {},
+) {
+  const startedAt = Date.now();
+  let sawGenerating = false;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const generating =
+      (await tab.playwright
+        .getByRole('button', { name: 'Stop answering' })
+        .count()) > 0;
+    sawGenerating ||= generating;
+
+    if (sawGenerating && !generating) {
+      return { status: 'finished', elapsedMs: Date.now() - startedAt };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return { status: 'timeout', elapsedMs: Date.now() - startedAt };
+}
+```
+
+The outer deferred operation must await this function and call the
+orchestration `notify(...)` channel exactly once with its result. Only after
+that wake-up may the task read the completed response, act on it, and start a
+new watcher after sending another reviewer message. Keep the same task turn
+alive while the watcher is pending: finalizing early can release the claimed
+in-app tab and leave the watcher with `Tab not found`. If that happens,
+reclaim the exact reviewer URL from `browser.user.openTabs()` before starting
+a replacement watcher. A timeout is a monitoring result, not a reviewer
+verdict; do not claim sign-off or send a duplicate message.
+
 ## Milestone purpose
 
 Papers is primarily a visual rendering and user-experience application. Logical correctness alone is therefore insufficient evidence of product correctness.
