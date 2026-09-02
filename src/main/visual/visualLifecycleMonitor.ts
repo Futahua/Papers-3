@@ -1,0 +1,86 @@
+import type { VisualDiagnosticBuffer, VisualDiagnosticPayload } from './visualDiagnostics';
+
+export interface VisualDiagnosticTarget {
+  windowId: number;
+  surfaceId?: string;
+}
+
+/** Small event surface shared by Electron WebContents and deterministic fakes.
+ * The adapter never receives or forwards source URLs, sender ids, or handles. */
+export interface VisualLifecycleSource {
+  on(event: string, listener: (...args: unknown[]) => void): void;
+  removeListener(event: string, listener: (...args: unknown[]) => void): void;
+}
+
+export interface VisualLifecycleMonitor {
+  recordRendererSignal(payload: unknown): void;
+  detach(): void;
+}
+
+function consoleLevel(level: unknown): 'debug' | 'info' | 'log' | 'warn' | 'error' {
+  if (level === 0) return 'debug';
+  if (level === 1) return 'info';
+  if (level === 2) return 'warn';
+  if (level === 3) return 'error';
+  return 'log';
+}
+
+/** Attach only the lifecycle signals owned by the main process. Renderer-owned
+ * phases arrive through recordRendererSignal and remain target-bound by this
+ * closure. No interval, timer, reload, or recovery action is introduced. */
+export function attachVisualLifecycleMonitor(
+  source: VisualLifecycleSource,
+  target: VisualDiagnosticTarget,
+  buffer: VisualDiagnosticBuffer,
+): VisualLifecycleMonitor {
+  const listeners: Array<[string, (...args: unknown[]) => void]> = [];
+  const listen = (event: string, listener: (...args: unknown[]) => void): void => {
+    source.on(event, listener);
+    listeners.push([event, listener]);
+  };
+  const record = (payload: VisualDiagnosticPayload): void => {
+    buffer.append(target, payload);
+  };
+
+  listen('did-start-loading', () => record({ kind: 'lifecycle', phase: 'navigation-started' }));
+  listen('dom-ready', () => record({ kind: 'lifecycle', phase: 'dom-ready' }));
+  listen('did-fail-load', (...args) => {
+    const errorCode = typeof args[1] === 'number' ? args[1] : -1;
+    const message = typeof args[2] === 'string' && args[2].length > 0 ? args[2] : 'navigation failed';
+    record({ kind: 'navigation-failed', errorCode, message });
+  });
+  listen('console-message', (...args) => {
+    const level = consoleLevel(args[1]);
+    const message = typeof args[2] === 'string' && args[2].length > 0 ? args[2] : 'console message unavailable';
+    record({ kind: 'console', level, message });
+  });
+  listen('render-process-gone', (...args) => {
+    const details = args[1];
+    const reason = details !== null && typeof details === 'object' && typeof (details as { reason?: unknown }).reason === 'string'
+      ? (details as { reason: string }).reason
+      : 'unknown';
+    record({ kind: 'renderer-gone', reason });
+  });
+  listen('resource-load-failed', (...args) => {
+    const details = args[1];
+    const errorCode = details !== null && typeof details === 'object' && typeof (details as { errorCode?: unknown }).errorCode === 'number'
+      ? (details as { errorCode: number }).errorCode
+      : undefined;
+    record({ kind: 'resource-failed', resourceKind: 'other', ...(errorCode === undefined ? {} : { errorCode }), message: 'resource load failed' });
+  });
+
+  return {
+    recordRendererSignal(payload) {
+      const parsed = payload as { kind?: unknown; phase?: unknown; detail?: unknown };
+      if (parsed.kind !== 'lifecycle' || !['state-hydrated', 'first-paint', 'layout-stable', 'render-failed'].includes(String(parsed.phase))) {
+        throw new Error('renderer lifecycle signal is not an allowed phase');
+      }
+      record({ kind: 'lifecycle', phase: parsed.phase as 'state-hydrated' | 'first-paint' | 'layout-stable' | 'render-failed', ...(typeof parsed.detail === 'string' ? { detail: parsed.detail } : {}) });
+    },
+    detach() {
+      for (const [event, listener] of listeners) source.removeListener(event, listener);
+      listeners.length = 0;
+    },
+  };
+}
+

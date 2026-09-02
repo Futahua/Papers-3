@@ -435,14 +435,22 @@ later lifecycle hooks will append to:
 * [x] local paths, URLs, and credential-like assignments in diagnostic text
   are redacted before storage; unknown payload fields and malformed targets are
   refused.
-* [ ] attach the contract to real host/project renderer lifecycle events.
+* [x] `src/main/visual/visualLifecycleMonitor.ts` maps real Electron
+  `did-start-loading`, `dom-ready`, `did-fail-load`, `console-message`,
+  `render-process-gone`, and resource-failure events into the bounded buffer;
+  renderer-owned hydration/paint/stability phases are accepted only through a
+  target-bound signal seam.
+* [x] the adapter detaches listeners cleanly and introduces no timers, polling,
+  reloads, or recovery side effects.
+* [ ] compose monitors for real host/project renderer surfaces.
 * [ ] expose event subscription and bounded diagnostic inspection through the
   authenticated control plane.
 
 Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 6/6;
+`tests/unit/visualLifecycleMonitor.test.ts` passes 3/3;
 the full host suite passes 757/757 with 4 skipped across 67 files; typecheck and
-diff check pass. This is not C1.2 completion; no renderer hooks or control
-exposure are claimed yet.
+diff check pass. This is not C1.2 completion; live window composition and
+control exposure are not claimed yet.
 
 ## Architectural boundary / likely owner
 
