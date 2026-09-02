@@ -1,4 +1,4 @@
-import { BaseWindow, type WebContents } from 'electron';
+import { BaseWindow, type WebContents, type WebContentsView } from 'electron';
 
 import { BackpackProjectRuntime } from './backpackProjectRuntime';
 
@@ -9,6 +9,7 @@ export interface PreparedProjectSurface {
 }
 
 type RuntimeFactory = (surfaceId: string, onSurfaceClosed?: (projectId: string) => void) => BackpackProjectRuntime;
+type ViewLoaded = (view: WebContentsView, surfaceId: string, projectId: string) => Promise<void> | void;
 
 /**
  * The native project presentations owned by one Papers window.
@@ -34,6 +35,7 @@ export class BackpackProjectSurfaceCollection {
     private transparent: boolean,
     private readonly onSurfaceClosed?: (surfaceId: string, projectId: string) => void,
     private readonly createRuntime?: RuntimeFactory,
+    private readonly onViewLoaded?: ViewLoaded,
   ) {}
 
   get(surfaceId: string): BackpackProjectRuntime | null {
@@ -48,6 +50,7 @@ export class BackpackProjectSurfaceCollection {
     const onSurfaceClosed = (projectId: string): void => this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
     const runtime = this.createRuntime?.(surfaceId, onSurfaceClosed) ?? new BackpackProjectRuntime(
       this.window, this.preloadPath, this.transparent, onSurfaceClosed,
+      this.onViewLoaded ? (view, projectId) => this.onViewLoaded!(view, surfaceId, projectId) : undefined,
     );
     this.runtimes.set(surfaceId, runtime);
     return runtime;
@@ -72,6 +75,7 @@ export class BackpackProjectSurfaceCollection {
       (projectId) => {
         if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
       },
+      this.onViewLoaded ? (view, projectId) => this.onViewLoaded!(view, surfaceId, projectId) : undefined,
     );
     let adopted = false;
     return {

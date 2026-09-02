@@ -52,6 +52,19 @@ beforeAll(async () => {
     schemaVersion: 1, backpacks: [backpack], lastActiveBackpackId: null,
   }));
   await writeFile(join(backpackDir, 'backpack.json'), JSON.stringify({ schemaVersion: 1, ...backpack }));
+  const projectRoot = join(dataDir, 'neutral-project');
+  await mkdir(join(projectRoot, 'public'), { recursive: true });
+  await writeFile(join(dataDir, 'backpack-projects.json'), JSON.stringify({
+    schemaVersion: 1, projects: { [CONTROL_PROJECT]: { root: projectRoot } },
+  }));
+  await writeFile(join(projectRoot, 'project.json'), JSON.stringify({
+    schemaVersion: 1, backpackId: CONTROL_PROJECT, entry: 'public/index.html',
+  }));
+  await writeFile(join(projectRoot, 'public', 'index.html'), '<!doctype html><script src="app.js"></script><h1>Neutral project</h1>');
+  await writeFile(join(projectRoot, 'public', 'app.js'), `window.__papersProjectVisualDiagnosticTestV1 = () => {
+    setTimeout(() => { throw new Error('C:\\\\private\\\\project.js token=secret'); }, 0);
+    setTimeout(() => { Promise.reject(new Error('C:\\\\private\\\\project-promise.js password=secret')); }, 0);
+  };`);
   launched = await launchPapers(userDataDir, {
     fixtures: false,
     devControlDescriptor: descriptorPath,

@@ -18,6 +18,7 @@ export class BackpackProjectRuntime {
     private readonly preloadPath: string,
     transparent: boolean,
     private readonly onSurfaceClosed?: (projectId: string) => void,
+    private readonly onViewLoaded?: (view: WebContentsView, projectId: string) => Promise<void> | void,
   ) {
     this.transparent = transparent;
   }
@@ -120,6 +121,7 @@ export class BackpackProjectRuntime {
     if (present) this.window.contentView.addChildView(view);
     this.fit();
     await view.webContents.loadURL(url);
+    await this.onViewLoaded?.(view, parsed.host);
     this.applySurface();
   }
 

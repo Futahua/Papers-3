@@ -42,7 +42,7 @@ import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
 import { controlBuildIdentity } from './buildIdentity';
 import { createProcessInstanceIdentity, currentProcessInstanceSeed, type ProcessInstanceIdentity } from './visual/processIdentity';
-import { attachVisualLifecycleMonitor, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
+import { attachVisualLifecycleMonitor, VISUAL_PROJECT_FAILURE_OBSERVER_SCRIPT, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
 import { createVisualDiagnosticBuffer, type VisualDiagnosticBuffer } from './visual/visualDiagnostics';
 import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visual/visualResourceMonitor';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
@@ -411,6 +411,9 @@ async function bootstrap(): Promise<void> {
       rendererUrl: process.env['ELECTRON_RENDERER_URL'],
       rendererFile: path.join(app.getAppPath(), 'out', 'renderer', 'index.html'),
       onProjectSurfaceClosed,
+      onProjectViewLoaded: process.env['PAPERS_DEV_CONTROL'] === '1'
+        ? async (view) => { await view.webContents.executeJavaScript(VISUAL_PROJECT_FAILURE_OBSERVER_SCRIPT, true); }
+        : undefined,
     });
     if (process.env['PAPERS_DEV_CONTROL'] === '1') {
       const windowId = instance.window.id;

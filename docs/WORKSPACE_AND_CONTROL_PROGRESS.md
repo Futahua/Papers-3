@@ -490,7 +490,9 @@ main-world uncaught-error and unhandled-rejection capture, exact host-window
 authority, redaction, and no duplicate isolated observer. The full host suite
 passes 776/776 with 4 skipped across 70 passed files and 1 skipped file;
 typecheck, production build, and diff check pass. This is not C1.2 completion;
-the renderer-failure slice still requires exact-SHA reviewer sign-off.
+the renderer-failure slice still requires exact-SHA reviewer sign-off. The
+separate project-surface Electron regression passes 1/1 with exact
+`{windowId,surfaceId}` authority and redaction.
 
 Reviewer checkpoint: **SIGNED OFF** for the lifecycle adapter at
 `efd24422296d9b64c974dcb3b97073d0629e25b0` and for the host-composition/control
@@ -514,13 +516,15 @@ capture remains unchecked.
 The current renderer-failure diagnostic slice is intentionally awaiting review:
 the normal preloads contain no failure observer; `PAPERS_DEV_CONTROL=1` selects
 dedicated dev-control preload entries that expose one fixed reporting seam, and
-the host's actual main-world renderer code installs the two failure listeners.
+the host's actual main-world renderer code installs the two failure listeners;
+Papers injects the same fixed observer into each loaded project page only in
+dev-control mode.
 The main-process IPC boundary accepts only strict bounded `{kind,message}`
 payloads after sender-authoritative target resolution. No runtime capability
 query, shared sandbox preload chunk, arbitrary renderer execution, or polling
-loop is involved. The dev-only main-world test seam has no arguments and emits
+loop is involved. The dev-only main-world test seams have no arguments and emit
 fixed path/credential-shaped messages solely to prove the end-to-end redaction
-and exact-target path.
+and exact-target paths.
 
 ## Architectural boundary / likely owner
 
