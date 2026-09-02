@@ -119,20 +119,19 @@ export interface VisualBaselineStore {
   }): Promise<{ previous: VisualBaselineManifest | null; current: VisualBaselineManifest }>;
 }
 
-const baselineOperationQueues = new Map<string, Promise<void>>();
+let baselineOperationQueue: Promise<void> = Promise.resolve();
 
-function enqueueBaselineOperation<T>(rootDir: string, operation: () => Promise<T>): Promise<T> {
-  const queueKey = path.resolve(rootDir);
-  const previousOperation = baselineOperationQueues.get(queueKey) ?? Promise.resolve();
+function enqueueBaselineOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const previousOperation = baselineOperationQueue;
   let release!: () => void;
   const nextOperation = new Promise<void>((resolve) => { release = resolve; });
-  baselineOperationQueues.set(queueKey, nextOperation);
+  baselineOperationQueue = nextOperation;
   return (async () => {
     await previousOperation;
     try { return await operation(); }
     finally {
       release();
-      if (baselineOperationQueues.get(queueKey) === nextOperation) baselineOperationQueues.delete(queueKey);
+      if (baselineOperationQueue === nextOperation) baselineOperationQueue = Promise.resolve();
     }
   })();
 }
@@ -185,9 +184,9 @@ export function createVisualBaselineStore(rootDir: string, options: { now?: () =
     return { manifest, png };
   };
   return {
-    read(input) { return enqueueBaselineOperation(canonicalRootDir, () => readUnsafe(input)); },
+    read(input) { return enqueueBaselineOperation(() => readUnsafe(input)); },
     update(input) {
-      return enqueueBaselineOperation(canonicalRootDir, async () => {
+      return enqueueBaselineOperation(async () => {
       if (input.allowUpdate !== true) throw new Error('visual baseline update requires explicit opt-in');
       const key = baselineKeySchema.parse(input.key);
       if (!(input.png instanceof Uint8Array) || input.png.byteLength < 1 || input.png.byteLength > 16 * 1024 * 1024) throw new Error('baseline PNG is outside the allowed bound');
