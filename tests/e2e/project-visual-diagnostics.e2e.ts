@@ -148,6 +148,16 @@ describe('project renderer visual diagnostics', () => {
     await waitFor(async () => (await call('inspect.surfaces') as Array<{ surfaceId: string; presentation: string }>)
       .some((surface) => surface.surfaceId === opened.surfaceId && surface.presentation === 'visible'),
     10_000, 'initial project presentation');
+    const healthyLifecycleEvents: Array<{
+      event?: string; payload?: { target?: { windowId?: number; surfaceId?: string }; payload?: { kind?: string; phase?: string } };
+    }> = [];
+    const healthyLifecycleConnection = await connectPapersControl(await readDescriptor(descriptorPath));
+    const removeHealthyLifecycleListener = healthyLifecycleConnection.onEvent((frame: {
+      event?: string; payload?: { target?: { windowId?: number; surfaceId?: string }; payload?: { kind?: string; phase?: string } };
+    }) => { healthyLifecycleEvents.push(frame); });
+    await expect(healthyLifecycleConnection.call('events.subscribe', {
+      events: ['visual.lifecycle'], visualTarget: { windowId, surfaceId: opened.surfaceId },
+    })).resolves.toMatchObject({ ok: true, result: { subscribed: ['visual.lifecycle'] } });
     const initialLifecycle = (await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
       sequence: number; payload: { kind?: string; phase?: string };
     }>).filter((record) => record.sequence > beforeSequence && record.payload.kind === 'lifecycle');
@@ -225,6 +235,19 @@ describe('project renderer visual diagnostics', () => {
     expect(successfulLifecyclePhases).toEqual(expect.arrayContaining([
       'state-hydrated', 'first-paint', 'layout-stable',
     ]));
+    for (const phase of ['state-hydrated', 'first-paint', 'layout-stable']) {
+      expect(healthyLifecycleEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          event: 'visual.lifecycle',
+          payload: expect.objectContaining({
+            target: { windowId, surfaceId: opened.surfaceId },
+            payload: expect.objectContaining({ kind: 'lifecycle', phase }),
+          }),
+        }),
+      ]));
+    }
+    removeHealthyLifecycleListener();
+    healthyLifecycleConnection.close();
     const captured = await call('capture.surface', { windowId, surfaceId: opened.surfaceId }) as {
       captureId: string;
       target: { windowId: number; surfaceId: string; projectId: string };
@@ -421,10 +444,11 @@ describe('project renderer visual diagnostics', () => {
         && record.payload.phase === 'state-hydrated'
         && record.payload.revision === 'neutral-rev-1');
     }, 10_000, 'failure target hydration success');
-    await evalInProjectWindow(secondary.windowId,
-      `window.location.href = ${JSON.stringify(`papers-backpack://${PROJECT}/public/empty.html`)}; true`);
-    await waitFor(async () => evalInProjectWindow<boolean>(secondary.windowId,
-      `document.title === 'Failing visual fixture'`), 10_000, 'failing visual fixture navigation');
+    await evalInProjectWindow(secondary.windowId, `(() => {
+      document.body.innerHTML = '<main><strong>RENDER FAILED</strong><span>synthetic packaged failure fixture</span></main>';
+      document.body.style.cssText = 'margin:0;background:#5b1010;color:#fff;font:32px sans-serif;padding:48px';
+      return true;
+    })()`);
     const failureLifecycleEvents: Array<{
       event?: string; payload?: { target?: { windowId?: number; surfaceId?: string }; payload?: { kind?: string; phase?: string; code?: string } };
     }> = [];
