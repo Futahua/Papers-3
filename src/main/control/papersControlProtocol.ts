@@ -11,6 +11,7 @@ import type {
   PapersControlDestructiveAction,
 } from './papersControlConfirmation';
 import { visualDiagnosticRecordSchema } from '../visual/visualDiagnostics';
+import { visualSemanticKeyListSchema, visualSemanticKeySchema } from '@shared/visualSemanticKeys';
 
 export const PAPERS_CONTROL_PROTOCOL_VERSION = 1;
 
@@ -65,6 +66,12 @@ export const visualEventTargetSchema = z.object({
   surfaceId: z.string().min(1).max(128).optional(),
 }).strict();
 export type VisualEventTarget = z.infer<typeof visualEventTargetSchema>;
+const visualElementIdentitySchema = z.object({ key: visualSemanticKeySchema }).strict();
+const visualElementsInspectionSchema = z.object({
+  windowId: z.number().int(),
+  surfaceId: z.string().min(1).max(128),
+  elements: z.array(visualElementIdentitySchema).max(256),
+}).strict();
 const layoutTargetSchema = z.object({ windowId: z.number().int(), layoutId: z.string().uuid() }).strict();
 const namedLayoutSchema = z.object({
   layoutId: z.string().uuid(),
@@ -214,6 +221,16 @@ export const papersControlCommands = {
     scope: 'window',
     effect: 'query',
   },
+  'inspect.visual.elements': {
+    input: z.object({
+      windowId: z.number().int(),
+      surfaceId: z.string().min(1).max(128),
+      keys: visualSemanticKeyListSchema.optional(),
+    }).strict(),
+    output: visualElementsInspectionSchema,
+    scope: 'surface',
+    effect: 'query',
+  },
   'inspect.windows': { input: emptyParamsSchema, output: z.array(controlWindowSchema), scope: 'app', effect: 'query' },
   'inspect.surfaces': {
     input: emptyParamsSchema,
@@ -360,6 +377,8 @@ export interface PapersControlDependencies {
   processIdentity?(): unknown;
   /** Bounded, redacted records for one exact live window/surface target. */
   visualDiagnostics?(target: { windowId: number; surfaceId?: string }): unknown;
+  /** Bounded opaque semantic identities observed by predefined project code. */
+  visualElements?(target: { windowId: number; surfaceId: string }, keys?: string[]): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
   backpack?(projectId: string): unknown;
@@ -474,6 +493,14 @@ export async function dispatchPapersControl(
       const records = dependencies.visualDiagnostics?.(target);
       if (!records) throw new Error('That Papers visual diagnostic target is unavailable.');
       return papersControlCommands[request.method].output.parse(records);
+    }
+    case 'inspect.visual.elements': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const target = { windowId: params.windowId, surfaceId: params.surfaceId };
+      if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
+      const elements = dependencies.visualElements?.(target, params.keys);
+      if (!elements) throw new Error('That Papers visual element target is unavailable.');
+      return papersControlCommands[request.method].output.parse(elements);
     }
     case 'inspect.surfaces': return papersControlCommands[request.method].output.parse(dependencies.surfaces());
     case 'inspect.surface': {

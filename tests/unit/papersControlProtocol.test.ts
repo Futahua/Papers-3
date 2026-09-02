@@ -135,6 +135,31 @@ describe('Papers developer control protocol', () => {
     expect(visualDiagnostics).toHaveBeenCalledWith({ windowId: 5 });
   });
 
+  it('inspects opaque semantic keys only through an exact live surface', async () => {
+    const surface = { windowId: 4, surfaceId: 'surface-a' };
+    const visualElements = vi.fn((target: typeof surface, keys?: string[]) => ({
+      windowId: target.windowId,
+      surfaceId: target.surfaceId,
+      elements: (keys ?? ['canvas.root']).map((key) => ({ key })),
+    }));
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [],
+      surface: vi.fn((target: typeof surface) => target.windowId === 4 && target.surfaceId === 'surface-a' ? surface : null),
+      createWindow: async () => ({ windowId: 3 }), visualElements,
+    };
+
+    await expect(dispatchPapersControl(dependencies, request('inspect.visual.elements', {
+      windowId: 4, surfaceId: 'surface-a', keys: ['canvas.root'],
+    }))).resolves.toEqual({ windowId: 4, surfaceId: 'surface-a', elements: [{ key: 'canvas.root' }] });
+    await expect(dispatchPapersControl(dependencies, request('inspect.visual.elements', {
+      windowId: 9, surfaceId: 'foreign', keys: ['canvas.root'],
+    }))).rejects.toThrow(/not open/);
+    await expect(dispatchPapersControl(dependencies, request('inspect.visual.elements', {
+      windowId: 4, surfaceId: 'surface-a', selector: '[data-papers-visual-key]',
+    } as unknown))).rejects.toThrow();
+    expect(visualElements).toHaveBeenCalledWith(surface, ['canvas.root']);
+  });
+
   it('validates subscriptions and emits only redacted semantic frames', async () => {
     const publishEvent = vi.fn();
     const dependencies = {

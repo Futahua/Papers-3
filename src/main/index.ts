@@ -37,6 +37,7 @@ import { registerWindowPickIpc } from './ipc/windowPickIpc';
 import { registerWindowDetachIpc } from './ipc/windowDetachIpc';
 import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
 import { registerVisualDiagnosticsIpc, resolveVisualDiagnosticTarget } from './ipc/visualDiagnosticsIpc';
+import { registerVisualSemanticKeysIpc } from './ipc/visualSemanticKeysIpc';
 import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
@@ -44,6 +45,7 @@ import { controlBuildIdentity } from './buildIdentity';
 import { createProcessInstanceIdentity, currentProcessInstanceSeed, type ProcessInstanceIdentity } from './visual/processIdentity';
 import { attachVisualLifecycleMonitor, recordRendererVisualDiagnostic, visualConsoleLevel, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
 import { createVisualDiagnosticBuffer, type VisualDiagnosticBuffer } from './visual/visualDiagnostics';
+import { createVisualSemanticKeyRegistry, type VisualSemanticKeyRegistry } from '@shared/visualSemanticKeys';
 import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visual/visualResourceMonitor';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
@@ -149,7 +151,22 @@ const workspaceIds = new Map<number, string>();
 const closingPapersWindows = new Set<number>();
 const visualDiagnosticsByWindow = new Map<number, VisualDiagnosticBuffer>();
 const visualLifecycleMonitors = new Map<number, VisualLifecycleMonitor>();
+const visualSemanticKeysBySurface = new Map<string, VisualSemanticKeyRegistry>();
 let visualResourceMonitor: VisualResourceMonitor | null = null;
+
+function visualSemanticKeyMapKey(windowId: number, surfaceId: string): string {
+  return `${windowId}\0${surfaceId}`;
+}
+
+function semanticKeyRegistryForSurface(windowId: number, surfaceId: string): VisualSemanticKeyRegistry {
+  const key = visualSemanticKeyMapKey(windowId, surfaceId);
+  let registry = visualSemanticKeysBySurface.get(key);
+  if (!registry) {
+    registry = createVisualSemanticKeyRegistry();
+    visualSemanticKeysBySurface.set(key, registry);
+  }
+  return registry;
+}
 
 /** The exact project runtime belonging to a bound project-frame sender. A host
  * sender is only a window actor and must use an explicit surface id. */
@@ -392,6 +409,7 @@ async function bootstrap(): Promise<void> {
     () => facade.emitHermesSurface(),
   );
   const onProjectSurfaceClosed = (windowId: number, _surfaceId: string, projectId: string): void => {
+    visualSemanticKeysBySurface.delete(visualSemanticKeyMapKey(windowId, _surfaceId));
     detachSession?.closeProjectForOwner(projectId, windowId).catch(() => undefined);
     const workspace = detachRegistry.surfaceForProject(
       projectId,
@@ -491,6 +509,9 @@ async function bootstrap(): Promise<void> {
         monitor.detach();
         visualLifecycleMonitors.delete(windowId);
         visualDiagnosticsByWindow.delete(windowId);
+        for (const key of visualSemanticKeysBySurface.keys()) {
+          if (key.startsWith(`${windowId}\0`)) visualSemanticKeysBySurface.delete(key);
+        }
       });
     }
     return instance;
@@ -1629,6 +1650,14 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     resolveTarget: resolveVisualTarget,
     bufferForWindow: (windowId) => visualDiagnosticsByWindow.get(windowId) ?? null,
   });
+  registerVisualSemanticKeysIpc({
+    ipcMain,
+    resolveTarget: resolveVisualTarget,
+    registryForTarget: ({ windowId, surfaceId }) => {
+      if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
+      return semanticKeyRegistryForSurface(windowId, surfaceId);
+    },
+  });
   if (process.env['PAPERS_DEV_CONTROL'] === '1') {
     visualResourceMonitor = attachVisualResourceMonitor(
       session.defaultSession.webRequest,
@@ -1675,6 +1704,16 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           const buffer = visualDiagnosticsByWindow.get(windowId);
           if (!buffer) return [];
           return buffer.snapshot().filter((record) => surfaceId === undefined || record.target.surfaceId === surfaceId);
+        },
+        visualElements: ({ windowId, surfaceId }, keys) => {
+          if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
+          const registry = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
+          const observed = registry?.snapshot(keys) ?? [];
+          return {
+            windowId,
+            surfaceId,
+            elements: observed.map((key) => ({ key })),
+          };
         },
         surfaces: () => logicalSurfaces.project().map(projectSurfaceControlSnapshot),
         workspace: (windowId) => papersWindows.has(windowId) && workspaceTopologies.has(windowId)

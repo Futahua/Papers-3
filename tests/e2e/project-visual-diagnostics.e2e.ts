@@ -49,7 +49,7 @@ beforeAll(async () => {
   await writeFile(join(backpackDir, 'backpack.json'), JSON.stringify({ schemaVersion: 1, ...backpack }));
   await writeFile(join(dataDir, 'backpack-projects.json'), JSON.stringify({ schemaVersion: 1, projects: { [PROJECT]: { root: projectRoot } } }));
   await writeFile(join(projectRoot, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: PROJECT, entry: 'public/index.html' }));
-  await writeFile(join(projectRoot, 'public', 'index.html'), '<!doctype html><script src="app.js"></script><h1>Neutral project</h1>');
+  await writeFile(join(projectRoot, 'public', 'index.html'), '<!doctype html><script src="app.js"></script><main data-papers-visual-key="canvas.root"><h1 data-papers-visual-key="title.main">Neutral project</h1></main>');
   await writeFile(join(projectRoot, 'public', 'app.js'), `window.__papersProjectVisualDiagnosticTestV1 = () => {
       setTimeout(() => { throw new Error('C:\\\\private\\\\project-late.js token=secret'); }, 0);
       setTimeout(() => { Promise.reject(new Error('C:\\\\private\\\\project-late-promise.js password=secret')); }, 0);
@@ -99,6 +99,16 @@ describe('project renderer visual diagnostics', () => {
     expect(await evalInBackpackProject(launched.app, 'Boolean(window.__papersVisualDiagnosticObserverV1)')).toBe(true);
     expect(await evalInBackpackProject(launched.app,
       `typeof window.papersVisualDiagnosticBridgeV1?.reportFirstPaint`)).toBe('undefined');
+    await waitFor(async () => {
+      const result = await call('inspect.visual.elements', {
+        windowId, surfaceId: opened.surfaceId,
+      }) as { elements: Array<{ key: string }> };
+      return result.elements.some(({ key }) => key === 'canvas.root')
+        && result.elements.some(({ key }) => key === 'title.main');
+    }, 10_000, 'initial semantic-key observation');
+    await expect(call('inspect.visual.elements', {
+      windowId, surfaceId: opened.surfaceId, selector: '[data-papers-visual-key="canvas.root"]',
+    })).rejects.toThrow();
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
         sequence: number; payload: { kind?: string; phase?: string };
@@ -155,6 +165,12 @@ describe('project renderer visual diagnostics', () => {
     const second = await call('workspace.open', { windowId, projectId: PROJECT }) as { surfaceId: string };
     await waitFor(async () => (await call('inspect.surfaces') as Array<{ surfaceId: string }>).length === 2,
       10_000, 'second project surface');
+    await waitFor(async () => {
+      const result = await call('inspect.visual.elements', {
+        windowId, surfaceId: second.surfaceId, keys: ['canvas.root'],
+      }) as { elements: Array<{ key: string }> };
+      return result.elements.length === 1 && result.elements[0]?.key === 'canvas.root';
+    }, 10_000, 'second same-project surface semantic-key observation');
     const secondary = await call('window.create') as { windowId: number };
     await waitFor(async () => (await call('inspect.windows') as Array<{ windowId: number }>)
       .some((candidate) => candidate.windowId === secondary.windowId), 10_000, 'project diagnostic move target');

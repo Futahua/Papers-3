@@ -5,6 +5,7 @@ import {
   type ProjectVisualDiagnosticBridge,
 } from './projectVisualDiagnostics';
 import { installProjectVisualLayoutObserver } from './projectVisualLayoutObserver';
+import { installProjectVisualSemanticKeyObserver } from './projectVisualSemanticKeys';
 
 const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
 
@@ -46,6 +47,14 @@ function installVisualDiagnosticListeners(
     });
   } catch {
     // Missing observer APIs leave layout stability unknown; no success is synthesized.
+  }
+  try {
+    installProjectVisualSemanticKeyObserver(ipc, {
+      document,
+      MutationObserver: typeof MutationObserver === 'undefined' ? undefined : MutationObserver,
+    });
+  } catch {
+    // Semantic observation is diagnostic-only and must never affect startup.
   }
   try {
     void Promise.resolve(mainWorld.executeInMainWorld({ func: () => {
