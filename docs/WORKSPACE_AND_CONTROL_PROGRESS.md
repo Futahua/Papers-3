@@ -596,13 +596,15 @@ Implementation checkpoint: the opt-in project dev-control bridge exposes fixed
 `reportHydrationFailed(revision?, stage, code)` methods. Revisions are bounded
 delimiter-free opaque tokens; success summaries are limited to 32 named
 nonnegative integer counters; failure stage/code are bounded metadata tokens.
-Main validates the same contract, resolves the exact target from the
-authenticated sender, refuses malformed/foreign signals, and records no raw
-state bytes. Unit and neutral-project E2E coverage proves success and failure
-delivery, spoofed-target refusal, bounded metadata, and exact window/surface
-authority. Validation: full Vitest 784 passed/4 skipped across 72 passed/1
-skipped files; focused developer-control, renderer-diagnostics, and workspace
-E2E 8/8; typecheck; build; diff check.
+Main strictly parses the hydration signal as exactly
+`{kind, phase, revision, summary?}`—no `detail`, state bytes, target, or
+unknown fields—then resolves the exact target from the authenticated sender.
+Malformed/foreign signals are refused and no raw state bytes are retained.
+Unit and neutral-project E2E coverage proves success and failure delivery,
+spoofed-target/extra-field refusal, bounded metadata, and exact
+window/surface authority. Validation: full Vitest 784 passed/4 skipped across
+72 passed/1 skipped files; focused developer-control, renderer-diagnostics,
+and workspace E2E 8/8; typecheck; build; diff check.
 
 The exact-SHA reviewer gate must confirm that hydration remains project-owned:
 Papers does not synthesize success from DOM-ready/file reads, and no state

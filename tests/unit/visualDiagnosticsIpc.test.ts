@@ -13,7 +13,7 @@ describe('visual diagnostics renderer IPC', () => {
       bufferForWindow: (windowId) => windowId === 2 ? buffer : null,
     });
     const listener = on.mock.calls[0]?.[1] as ((event: { sender: { id: number } }, payload: unknown) => void);
-    listener({ sender: { id: 7 } }, { kind: 'lifecycle', phase: 'first-paint', target: { windowId: 99, surfaceId: 'foreign' } });
+    listener({ sender: { id: 7 } }, { kind: 'lifecycle', phase: 'first-paint' });
     expect(buffer.snapshot()[0]).toMatchObject({ target: { windowId: 2, surfaceId: 'surface-a' }, payload: { phase: 'first-paint' } });
   });
 
@@ -87,8 +87,10 @@ describe('visual diagnostics renderer IPC', () => {
 
     signal({ sender: { id: 7 } }, {
       kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-1', summary: { cards: 2 },
-      target: { windowId: 99, surfaceId: 'foreign' },
     });
+    signal({ sender: { id: 7 } }, { kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-1', detail: 'state bytes' });
+    signal({ sender: { id: 7 } }, { kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-1', state: 'serialized state' });
+    signal({ sender: { id: 7 } }, { kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-1', target: { windowId: 99 } });
     diagnostic({ sender: { id: 7 } }, {
       kind: 'hydration-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope',
     });

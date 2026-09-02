@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import type { VisualDiagnosticBuffer, VisualDiagnosticPayload } from './visualDiagnostics';
+import {
+  visualHydrationRevisionSchema,
+  visualHydrationSummarySchema,
+  type VisualDiagnosticBuffer,
+  type VisualDiagnosticPayload,
+} from './visualDiagnostics';
 
 export interface VisualDiagnosticTarget {
   windowId: number;
@@ -20,7 +25,17 @@ export interface VisualLifecycleMonitor {
 
 export type RendererDiagnosticSource = 'observer' | 'bootstrap-console';
 
-const rendererOwnedPhases = ['state-hydrated', 'first-paint', 'layout-stable', 'render-failed'] as const;
+const rendererHydrationSignalSchema = z.object({
+  kind: z.literal('lifecycle'),
+  phase: z.literal('state-hydrated'),
+  revision: visualHydrationRevisionSchema,
+  summary: visualHydrationSummarySchema.optional(),
+}).strict();
+const rendererPresentationSignalSchema = z.object({
+  kind: z.literal('lifecycle'),
+  phase: z.enum(['first-paint', 'layout-stable', 'render-failed']),
+  detail: z.string().max(2048).optional(),
+}).strict();
 const rendererDiagnosticPayloadSchema = z.object({
   kind: z.enum(['uncaught-error', 'unhandled-rejection']),
   message: z.string().min(1).max(4096),
@@ -49,17 +64,14 @@ export function recordRendererVisualSignal(
   target: VisualDiagnosticTarget,
   payload: unknown,
 ): void {
-  const parsed = payload as { kind?: unknown; phase?: unknown; detail?: unknown; revision?: unknown; summary?: unknown };
-  if (parsed.kind !== 'lifecycle' || !rendererOwnedPhases.includes(parsed.phase as typeof rendererOwnedPhases[number])) {
-    throw new Error('renderer lifecycle signal is not an allowed phase');
+  const phase = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as { phase?: unknown }).phase
+    : undefined;
+  if (phase === 'state-hydrated') {
+    buffer.append(target, rendererHydrationSignalSchema.parse(payload));
+    return;
   }
-  buffer.append(target, {
-    kind: 'lifecycle',
-    phase: parsed.phase,
-    ...(typeof parsed.detail === 'string' ? { detail: parsed.detail } : {}),
-    ...(typeof parsed.revision === 'string' ? { revision: parsed.revision } : {}),
-    ...(parsed.summary !== undefined ? { summary: parsed.summary } : {}),
-  });
+  buffer.append(target, rendererPresentationSignalSchema.parse(payload));
 }
 
 /** Accept only the two renderer failure payloads. The target is supplied by
