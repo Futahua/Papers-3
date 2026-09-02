@@ -44,6 +44,10 @@ export function attachVisualLifecycleMonitor(
   listen('did-start-loading', () => record({ kind: 'lifecycle', phase: 'navigation-started' }));
   listen('dom-ready', () => record({ kind: 'lifecycle', phase: 'dom-ready' }));
   listen('did-fail-load', (...args) => {
+    // Electron reports this for subframes too. Only a main-frame failure is a
+    // failure of the monitored document; subframe/resource attribution has a
+    // separate, later session.webRequest design.
+    if (args[4] !== true) return;
     const errorCode = typeof args[1] === 'number' ? args[1] : -1;
     const message = typeof args[2] === 'string' && args[2].length > 0 ? args[2] : 'navigation failed';
     record({ kind: 'navigation-failed', errorCode, message });

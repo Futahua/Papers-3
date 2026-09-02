@@ -25,7 +25,8 @@ describe('visual lifecycle monitor', () => {
     const monitor = attachVisualLifecycleMonitor(source, { windowId: 3, surfaceId: 'surface-a' }, buffer);
     source.emit('did-start-loading');
     source.emit('dom-ready');
-    source.emit('did-fail-load', {}, -6, 'C:\\private\\main.js', false);
+    source.emit('did-fail-load', {}, -6, 'C:\\private\\main.js', 'https://papers.local', true);
+    source.emit('did-fail-load', {}, -105, 'C:\\private\\frame.js', 'https://papers.local/frame', false);
     source.emit('console-message', {}, 3, 'file:///C:/private/main.js', 1, 'C:\\private\\main.js');
     source.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
     expect(buffer.snapshot().map((record) => record.payload.kind)).toEqual([
