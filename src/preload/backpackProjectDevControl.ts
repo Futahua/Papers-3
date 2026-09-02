@@ -46,6 +46,7 @@ function installVisualDiagnosticListeners(
       requestAnimationFrame: window.requestAnimationFrame.bind(window),
       ResizeObserver: typeof ResizeObserver === 'undefined' ? undefined : ResizeObserver,
       MutationObserver: typeof MutationObserver === 'undefined' ? undefined : MutationObserver,
+      onLayoutEpoch: () => refreshSemanticKeys(),
     });
   } catch {
     // Missing observer APIs leave layout stability unknown; no success is synthesized.

@@ -27,12 +27,15 @@ function bounds(rect: DOMRect | DOMRectReadOnly): VisualElementObservation['boun
   return { x: quantize(rect.x), y: quantize(rect.y), width: quantize(Math.max(0, rect.width)), height: quantize(Math.max(0, rect.height)) };
 }
 
-function clippedPercent(rect: DOMRect, viewportWidth: number, viewportHeight: number): number {
-  const area = Math.max(0, rect.width) * Math.max(0, rect.height);
-  if (area === 0) return 0;
-  const visibleWidth = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
-  const visibleHeight = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
-  return quantize(Math.max(0, Math.min(100, 100 * (1 - (visibleWidth * visibleHeight) / area))));
+interface ClipRect { left: number; top: number; right: number; bottom: number; }
+
+function intersectionArea(rect: ClipRect, clips: ClipRect[]): number {
+  let left = rect.left; let top = rect.top; let right = rect.right; let bottom = rect.bottom;
+  for (const clip of clips) {
+    left = Math.max(left, clip.left); top = Math.max(top, clip.top);
+    right = Math.min(right, clip.right); bottom = Math.min(bottom, clip.bottom);
+  }
+  return Math.max(0, right - left) * Math.max(0, bottom - top);
 }
 
 function roleFor(element: Element): string | undefined {
@@ -52,7 +55,16 @@ function contrastFor(element: Element): VisualElementObservation['contrast'] {
   const style = getComputedStyle(element);
   const foreground = style.color.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
   const background = style.backgroundColor.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
-  if (!foreground || !background || style.backgroundImage !== 'none') return { status: 'unknown' };
+  if (!foreground || !background || style.backgroundImage !== 'none' || style.filter !== 'none'
+    || style.mixBlendMode !== 'normal' || Number.parseFloat(style.opacity) !== 1) return { status: 'unknown' };
+  let ancestor = element.parentElement;
+  while (ancestor) {
+    const ancestorStyle = getComputedStyle(ancestor);
+    if (Number.parseFloat(ancestorStyle.opacity) !== 1 || ancestorStyle.filter !== 'none' || ancestorStyle.mixBlendMode !== 'normal') {
+      return { status: 'unknown' };
+    }
+    ancestor = ancestor.parentElement;
+  }
   const lum = (match: RegExpMatchArray): number => match.slice(1).map(Number).map((value) => {
     const channel = value / 255;
     return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
@@ -79,18 +91,24 @@ function observeElements(document: Document, elements: Element[], devicePixelRat
     const safeOpacity = Number.isFinite(opacity) ? Math.max(0, Math.min(1, opacity)) : 1;
     if (safeOpacity === 0) reasons.push('opacity-zero');
     if (rect.width <= 0 || rect.height <= 0) reasons.push('zero-area');
-    const clipped = clippedPercent(rect, viewportWidth, viewportHeight);
-    if (clipped > 0) reasons.push('outside-viewport');
+    const sourceRect = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+    const viewportClip = { left: 0, top: 0, right: viewportWidth, bottom: viewportHeight };
+    const viewportArea = intersectionArea(sourceRect, [viewportClip]);
+    const clippingAncestors: ClipRect[] = [];
     let ancestor = element.parentElement;
     while (ancestor && ancestor !== document.documentElement) {
       const ancestorStyle = typeof getComputedStyle === 'undefined' ? null : getComputedStyle(ancestor);
       if (ancestorStyle && /(hidden|clip|scroll|auto)/.test(ancestorStyle.overflow + ancestorStyle.overflowX + ancestorStyle.overflowY)) {
         const clip = ancestor.getBoundingClientRect();
-        if (rect.left < clip.left || rect.right > clip.right || rect.top < clip.top || rect.bottom > clip.bottom) reasons.push('ancestor-clipped');
-        break;
+        clippingAncestors.push({ left: clip.left, top: clip.top, right: clip.right, bottom: clip.bottom });
       }
       ancestor = ancestor.parentElement;
     }
+    const visibleArea = intersectionArea(sourceRect, [viewportClip, ...clippingAncestors]);
+    const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+    const clipped = area === 0 ? 0 : quantize(Math.max(0, Math.min(100, 100 * (1 - visibleArea / area))));
+    if (viewportArea < area) reasons.push('outside-viewport');
+    if (visibleArea < viewportArea) reasons.push('ancestor-clipped');
     result.push({ key, role: roleFor(element), accessibleName: accessibleNameFor(element), boundsCss: bounds(rect),
       boundsDevice: { x: quantize(rect.x * devicePixelRatio), y: quantize(rect.y * devicePixelRatio), width: quantize(rect.width * devicePixelRatio), height: quantize(rect.height * devicePixelRatio) },
       visible: reasons.length === 0, visibilityReasons: reasons, clippedPercent: clipped, opacity: quantize(safeOpacity), overlapKeys: [], contrast: contrastFor(element) });

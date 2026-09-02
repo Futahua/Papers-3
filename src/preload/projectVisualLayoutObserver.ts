@@ -8,6 +8,7 @@ interface LayoutObserverEnvironment {
   requestAnimationFrame: (callback: FrameRequestCallback) => number;
   ResizeObserver?: typeof ResizeObserver;
   MutationObserver?: typeof MutationObserver;
+  onLayoutEpoch?: (epoch: number) => void;
 }
 
 function rounded(value: number): number {
@@ -81,6 +82,7 @@ export function installProjectVisualLayoutObserver(
   const beginEpoch = (): void => {
     layoutEpoch += 1;
     reportProjectLayoutEpoch(ipc, layoutEpoch);
+    environment.onLayoutEpoch?.(layoutEpoch);
     if (!geometrySnapshot(document)) {
       attemptActive = false;
       return;
