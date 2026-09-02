@@ -474,6 +474,14 @@ authority, schema revalidation, bounded/redacted records, and no polling or
 recovery side effects. Resource attribution and project-frame routing remain
 explicitly unclaimed.
 
+The renderer-signal routing extension is also **SIGNED OFF** at
+`dd70318f04a2da8539727286a4d129f26a46bb17`. The reviewer confirmed that
+`resolveVisualDiagnosticTarget` is the production authority seam, stale replaced
+project senders are refused even while logical bindings lag cleanup, renderer
+payload targets are ignored, and no preload claims paint or layout stability
+automatically. Resource attribution, event subscription, and screenshot capture
+remain unchecked.
+
 ## Architectural boundary / likely owner
 
 Main-process visual observation service owns correlation and retention.
