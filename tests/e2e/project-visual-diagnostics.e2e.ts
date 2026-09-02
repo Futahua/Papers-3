@@ -96,12 +96,9 @@ describe('project renderer visual diagnostics', () => {
     const domReadyIndex = initialLifecycle.findIndex((record) => record.payload.phase === 'dom-ready');
     expect(navigationStartedIndex).toBeGreaterThanOrEqual(0);
     expect(domReadyIndex).toBeGreaterThan(navigationStartedIndex);
-    expect(initialLifecycle.some((record) => record.payload.phase === 'state-hydrated')).toBe(false);
     expect(await evalInBackpackProject(launched.app, 'Boolean(window.__papersVisualDiagnosticObserverV1)')).toBe(true);
     expect(await evalInBackpackProject(launched.app,
       `typeof window.papersVisualDiagnosticBridgeV1?.reportFirstPaint`)).toBe('undefined');
-    await evalInBackpackProject(launched.app,
-      `window.papersVisualDiagnosticBridgeV1.reportStateHydrated('neutral-rev-1', { cards: 1, groups: 1 }); true`);
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
         sequence: number; payload: { kind?: string; phase?: string };
@@ -117,6 +114,12 @@ describe('project renderer visual diagnostics', () => {
         && record.payload.kind === 'lifecycle' && record.payload.phase === 'layout-stable'
         && record.payload.detail === undefined);
     }, 10_000, 'project event-driven layout-stable signal');
+    const preHydrationLifecycle = (await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
+      sequence: number; payload: { kind?: string; phase?: string };
+    }>).filter((record) => record.sequence > beforeSequence && record.payload.kind === 'lifecycle');
+    expect(preHydrationLifecycle.some((record) => record.payload.phase === 'state-hydrated')).toBe(false);
+    await evalInBackpackProject(launched.app,
+      `window.papersVisualDiagnosticBridgeV1.reportStateHydrated('neutral-rev-1', { cards: 1, groups: 1 }); true`);
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
         sequence: number; payload: { kind?: string; phase?: string; revision?: string; summary?: Record<string, number> };
