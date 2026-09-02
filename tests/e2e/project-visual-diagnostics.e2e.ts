@@ -98,7 +98,7 @@ beforeAll(async () => {
   await writeFile(join(dataDir, 'backpack-projects.json'), JSON.stringify({ schemaVersion: 1, projects: { [PROJECT]: { root: projectRoot } } }));
   await writeFile(join(projectRoot, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: PROJECT, entry: 'public/index.html' }));
   await writeFile(join(projectRoot, 'public', 'index.html'), '<!doctype html><script src="app.js"></script><main data-papers-visual-key="canvas.root"><h1 data-papers-visual-key="title.main">Neutral project</h1></main>');
-  await writeFile(join(projectRoot, 'public', 'empty.html'), '<!doctype html><title>Empty visual fixture</title><main>Empty</main>');
+  await writeFile(join(projectRoot, 'public', 'empty.html'), '<!doctype html><title>Failing visual fixture</title><style>html,body{margin:0;background:#5b1010;color:#fff;font:32px sans-serif}main{padding:48px}strong{display:block;font-size:56px}</style><main><strong>RENDER FAILED</strong><span>synthetic packaged failure fixture</span></main>');
   await writeFile(projectSourcePath, `window.__papersProjectVisualDiagnosticTestV1 = () => {
       setTimeout(() => { throw new Error('C:\\\\private\\\\project-late.js token=secret'); }, 0);
       setTimeout(() => { Promise.reject(new Error('C:\\\\private\\\\project-late-promise.js password=secret')); }, 0);
@@ -281,12 +281,21 @@ describe('project renderer visual diagnostics', () => {
     expect(report.size).toBeGreaterThan(0);
     expect(report.manifestSummary.entryCount).toBeGreaterThanOrEqual(9);
     expect(report.manifestSummary.includes.surfaceCapture).toBe(true);
-    const reportChunk = await call('visual.artifact.read', {
-      artifactId: report.artifactId, offset: 0, length: 1024,
-    }) as { bytesBase64: string; nextOffset: number; done: boolean };
-    const reportPrefix = new Uint8Array(Buffer.from(reportChunk.bytesBase64, 'base64'));
-    expect(reportPrefix[0]).toBe(0x50);
-    expect(reportPrefix[1]).toBe(0x4b);
+    const reportBytes = await readArtifactWith(report.artifactId);
+    expect(reportBytes.byteLength).toBe(report.size);
+    expect(createHash('sha256').update(reportBytes).digest('hex')).toBe(report.sha256);
+    const reportEntries = storedZipEntries(reportBytes);
+    const reportManifest = JSON.parse(new TextDecoder().decode(reportEntries.get('manifest.json')!)) as {
+      entries: Array<{ name: string; size: number; sha256: string }>;
+    };
+    for (const entry of reportManifest.entries) {
+      const entryBytes = reportEntries.get(entry.name);
+      expect(entryBytes, `missing healthy report entry ${entry.name}`).toBeDefined();
+      expect(entryBytes!.byteLength).toBe(entry.size);
+      expect(createHash('sha256').update(entryBytes!).digest('hex')).toBe(entry.sha256);
+    }
+    expect(reportEntries.get('surface.png')?.[0]).toBe(137);
+    expect(reportEntries.get('surface.png')?.[1]).toBe(80);
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{ sequence: number; payload: { kind?: string } }>;
       return records.filter((record) => record.sequence > beforeSequence
@@ -401,6 +410,21 @@ describe('project renderer visual diagnostics', () => {
     }, 10_000, 'current replacement project diagnostics');
     const hydrationPairBefore = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{ sequence: number }>;
     const hydrationPairBeforeSequence = Math.max(0, ...hydrationPairBefore.map((record) => record.sequence));
+    await evalInProjectWindow<boolean>(secondary.windowId,
+      `window.papersVisualDiagnosticBridgeV1.reportStateHydrated('neutral-rev-1', { cards: 1, groups: 1 }); true`);
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId, surfaceId: second.surfaceId }) as Array<{
+        sequence: number; payload: { kind?: string; phase?: string; revision?: string };
+      }>;
+      return records.some((record) => record.sequence > hydrationPairBeforeSequence
+        && record.payload.kind === 'lifecycle'
+        && record.payload.phase === 'state-hydrated'
+        && record.payload.revision === 'neutral-rev-1');
+    }, 10_000, 'failure target hydration success');
+    await evalInProjectWindow(secondary.windowId,
+      `window.location.href = ${JSON.stringify(`papers-backpack://${PROJECT}/public/empty.html`)}; true`);
+    await waitFor(async () => evalInProjectWindow<boolean>(secondary.windowId,
+      `document.title === 'Failing visual fixture'`), 10_000, 'failing visual fixture navigation');
     const failureLifecycleEvents: Array<{
       event?: string; payload?: { target?: { windowId?: number; surfaceId?: string }; payload?: { kind?: string; phase?: string; code?: string } };
     }> = [];
@@ -486,7 +510,7 @@ describe('project renderer visual diagnostics', () => {
       failureReport = await mcpCall('visual.report.create', {
         windowId: secondary.windowId, surfaceId: second.surfaceId, beforeMs: 10_000, elementKeys: [],
         include: {
-          surfaceCapture: false, elementCaptures: false, semanticElements: true, recentLifecycle: true,
+          surfaceCapture: true, elementCaptures: false, semanticElements: true, recentLifecycle: true,
           recentDiagnostics: true, timeline: true,
         },
       }) as typeof failureReport;
@@ -514,8 +538,17 @@ describe('project renderer visual diagnostics', () => {
     expect(failureDiagnostics).toContain('"stage":"parse"');
     expect(failureDiagnostics).toContain('"code":"fixture-failure"');
     expect(failureLifecycle).toContain('"phase":"render-failed"');
+    expect(failureLifecycle).toContain('"phase":"state-hydrated"');
     expect(failureLifecycle).toContain('"revision":"neutral-rev-1"');
+    expect(failureEntries.get('surface-capture.json')).toBeDefined();
+    expect(failureEntries.get('surface.png')?.[0]).toBe(137);
+    expect(failureEntries.get('surface.png')?.[1]).toBe(80);
     expect(createHash('sha256').update(await readFile(projectSourcePath)).digest('hex')).toBe(sourceHashBeforeFailureReport);
+    await evalInProjectWindow(secondary.windowId,
+      `window.location.href = ${JSON.stringify(opened.url)}; true`);
+    await waitFor(async () => evalInProjectWindow<boolean>(secondary.windowId,
+      `document.body?.textContent?.includes('Neutral project') === true`),
+    10_000, 'healthy visual fixture restoration');
 
     const rendererSurvivalTimeOrigin = await evalInProjectWindow<number>(secondary.windowId, 'performance.timeOrigin');
     const throwBefore = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{ sequence: number }>;
