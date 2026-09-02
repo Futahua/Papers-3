@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 project hydration reporting implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 project hydration reporting signed off; first-paint observability is next
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -609,6 +609,18 @@ and workspace E2E 8/8; typecheck; build; diff check.
 The exact-SHA reviewer gate must confirm that hydration remains project-owned:
 Papers does not synthesize success from DOM-ready/file reads, and no state
 bytes or renderer-supplied target cross the diagnostic boundary.
+
+Reviewer checkpoint: **SIGNED OFF** for generic project hydration reporting at
+exact pushed head `7488be957038cbba4e8e2d99bfb56452586ba5a5`. The reviewer
+confirmed the exact state-hydrated shape `{kind, phase, revision, summary?}`,
+shared bounded schemas, refusal of `detail`/state/target/unknown fields,
+sender-derived target authority, fixed bridge limits, and project-owned
+hydration semantics.
+
+Next smallest reviewed slice: **C1.2 first-paint observability** — add a real
+project/main-world paint producer for the existing sender-authoritative
+`first-paint` lifecycle signal, without treating DOM-ready, load, or hydration
+as paint.
 
 ## Architectural boundary / likely owner
 
