@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 bounded semantic geometry hardened at `29d6dfc0186d753e8ab895a196735fe7bf674779`, awaiting exact-SHA reviewer sign-off
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 bounded geometry/assertion implementation is at `149128be5afc2376b7c3057e41a802b307fc2651`, awaiting exact-SHA reviewer sign-off
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1549,7 +1549,10 @@ Never fabricate a passing contrast value.
   otherwise `unknown`;
 * [x] geometry is attached to the current layout epoch in the existing
   inspection response;
-* [ ] caller cannot supply selector/script.
+* [x] caller cannot supply selector/script;
+* [x] fixed declarative `visual.assert` evaluates visible, clipping,
+  containment, overlap, and minimum-contrast predicates with bounded failure
+  reasons.
 
 ## Packaged live proof
 
@@ -1579,9 +1582,8 @@ Reviewer asks:
 Reviewer checkpoint: **SIGNED OFF** for the C1.3 semantic-key
 identity/surface-local-authority foundation at exact pushed head
 `d440466b87d4234339b3fb5dd0ac6845b0be7fa8`. Geometry is implemented at
-`29d6dfc0186d753e8ab895a196735fe7bf674779` and awaits exact-SHA review;
-declarative assertions and same-surface `capture.element` cropping remain
-open.
+`149128be5afc2376b7c3057e41a802b307fc2651` and awaits exact-SHA review;
+same-surface `capture.element` cropping remains open.
 
 ## Rollback / failure behavior
 
