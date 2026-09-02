@@ -17,7 +17,7 @@ function rounded(value: number): number {
 function geometrySnapshot(document: Document): string | null {
   const body = document.body;
   const root = document.documentElement;
-  if (!body || body.childElementCount === 0) return null;
+  if (!body || !root) return null;
   const rootRect = root.getBoundingClientRect();
   const bodyRect = body.getBoundingClientRect();
   return [
@@ -49,8 +49,18 @@ export function installProjectVisualLayoutObserver(
     requestAnimationFrame(() => {
       frameScheduled = false;
       const geometry = geometrySnapshot(document);
-      if (!geometry) return;
       frameCount += 1;
+      if (!geometry) {
+        unchangedFrames = 0;
+        previousGeometry = null;
+        if (frameCount >= MAX_STABILITY_FRAMES) {
+          reportProjectLayoutSignal(ipc, 'render-failed', 'layout-stability-timeout');
+          attemptActive = false;
+          return;
+        }
+        scheduleFrame();
+        return;
+      }
       unchangedFrames = geometry === previousGeometry ? unchangedFrames + 1 : 1;
       previousGeometry = geometry;
       if (unchangedFrames >= REQUIRED_UNCHANGED_FRAMES) {

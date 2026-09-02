@@ -5,12 +5,14 @@ import { VISUAL_RENDERER_SIGNAL_CHANNEL } from '../../src/preload/projectVisualD
 
 function setupObserver() {
   let geometryWidth = 100;
+  let bodyAvailable = true;
+  let bodyChildElementCount = 1;
   const frames: FrameRequestCallback[] = [];
   let mutationCallback: (() => void) | undefined;
   const rect = () => ({ x: 0, y: 0, width: geometryWidth, height: 80 });
-  const body = { childElementCount: 1, getBoundingClientRect: rect, scrollWidth: 100, scrollHeight: 80 };
+  const body = { get childElementCount() { return bodyChildElementCount; }, getBoundingClientRect: rect, scrollWidth: 100, scrollHeight: 80 };
   const root = { getBoundingClientRect: rect, scrollWidth: 100, scrollHeight: 80 };
-  const document = { documentElement: root, body } as unknown as Document;
+  const document = { documentElement: root, get body() { return bodyAvailable ? body : null; } } as unknown as Document;
   class FakeResizeObserver {
     observe(): void {}
   }
@@ -28,6 +30,8 @@ function setupObserver() {
   return {
     send,
     setWidth: (width: number) => { geometryWidth = width; },
+    setBodyAvailable: (available: boolean) => { bodyAvailable = available; },
+    setBodyChildElementCount: (count: number) => { bodyChildElementCount = count; },
     mutate: () => mutationCallback?.(),
     flushFrame: () => frames.shift()?.(0),
   };
@@ -44,6 +48,42 @@ describe('project visual layout observer', () => {
     expect(observer.send).toHaveBeenCalledOnce();
     expect(observer.send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
       kind: 'lifecycle', phase: 'layout-stable',
+    });
+  });
+
+  it('treats an empty body as a measurable layout', () => {
+    const observer = setupObserver();
+
+    observer.setBodyChildElementCount(0);
+    observer.flushFrame();
+    observer.flushFrame();
+    observer.flushFrame();
+
+    expect(observer.send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
+      kind: 'lifecycle', phase: 'layout-stable',
+    });
+  });
+
+  it('treats a text-only body as a measurable layout', () => {
+    const observer = setupObserver();
+
+    observer.flushFrame();
+    observer.flushFrame();
+    observer.flushFrame();
+
+    expect(observer.send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
+      kind: 'lifecycle', phase: 'layout-stable',
+    });
+  });
+
+  it('bounds an epoch even when geometry becomes temporarily unavailable', () => {
+    const observer = setupObserver();
+    observer.flushFrame();
+    observer.setBodyAvailable(false);
+    for (let frame = 1; frame < 12; frame += 1) observer.flushFrame();
+
+    expect(observer.send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
+      kind: 'lifecycle', phase: 'render-failed', detail: 'layout-stability-timeout',
     });
   });
 

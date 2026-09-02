@@ -660,7 +660,7 @@ bridge; font readiness is an event-driven refresh, not a polling loop.
 Deterministic unit tests cover stable, renewed, and timed-out epochs, and
 neutral-project E2E proves the real event-driven `layout-stable` record reaches
 the exact window/surface diagnostic stream.
-Validation: full Vitest 789 passed/4 skipped across 73 passed/1 skipped files;
+Validation: full Vitest 792 passed/4 skipped across 73 passed/1 skipped files;
 focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
 typecheck; build; diff check.
 
