@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 deterministic diagnostic-buffer bound closure implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 deterministic redaction closure in progress; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -919,6 +919,22 @@ The exact-SHA reviewer gate must confirm mixed-event overflow, monotonic
 sequences, post-overflow publication, exact target filtering, redaction,
 unchanged product state, and no polling or recovery side effect.
 
+Reviewer checkpoint at exact pushed head
+`591cc12aff5040b32defa8d17c59fc7dad92d358`: **SIGNED OFF** for deterministic
+diagnostic-buffer bound closure. The reviewer confirmed the real default
+128-record cap, oldest-record eviction, strictly increasing retained
+sequences, the capacity-3 mixed-event unit proof, publication continuing after
+a throwing callback, exact-target live publication after overflow, redaction,
+and workspace immutability across the overflow burst and later events.
+
+Next smallest reviewed slice: **C1.2 deterministic redaction closure** — prove
+the existing redaction guarantees comprehensively at the control boundary,
+especially that retained diagnostics and live-published diagnostic frames
+cannot expose path, URL, query, token, or credential material across console,
+renderer-error, hydration, resource, navigation, and renderer-exit classes.
+Start as an evidence/test slice; change production redaction only if the
+targeted closure exposes a concrete leakage case.
+
 ## Architectural boundary / likely owner
 
 Main-process visual observation service owns correlation and retention.
@@ -1084,7 +1100,7 @@ Those are separate lifecycle facts.
 * [x] renderer crash produces `renderer-gone`;
 * [x] mixed visual events remain within the diagnostic-record cap with
   monotonic sequences and continued publication;
-* [ ] diagnostic buffers obey maximum length/count;
+* [x] diagnostic buffers obey maximum length/count;
 * [ ] redaction tests reject secret/path leakage;
 * [ ] no timer-based continuous polling.
 
