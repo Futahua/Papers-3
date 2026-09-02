@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry and `visual.assert` availability are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db` and `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`; C1.4 baseline read/update concurrency correction is at `5e850881da809f9d301040ee1acddabe73c5aa43`, awaiting exact-SHA reviewer audit
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry and `visual.assert` availability are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`, and C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; same-surface `capture.element` is implemented at `9ffc84a127a89c12b4155b4ff8ba2a6cdb93396a`, awaiting exact-SHA reviewer audit
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1544,7 +1544,8 @@ Never fabricate a passing contrast value.
   visibility reasons;
 * [x] ancestor and viewport clipping are represented with clipped percentage;
 * [x] overlap calculation remains surface-local and key-based;
-* [ ] element crop corresponds to reported device bounds;
+* [x] element crop corresponds to reported device bounds and bounded CSS
+  padding;
 * [x] conservative contrast is known only for opaque solid RGB pairs and is
   otherwise `unknown`;
 * [x] geometry is invalidated at layout-epoch start and accepted only when its
@@ -1587,8 +1588,9 @@ identity/surface-local-authority foundation at exact pushed head
 `d440466b87d4234339b3fb5dd0ac6845b0be7fa8` and for stable-epoch geometry at
 `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`. The explicit unavailable-result
 guard and live assertion coverage are at
-`5f9e1b7a00001edd29a0c903d97869daa4f2ff5c` and await exact-SHA audit;
-same-surface `capture.element` cropping remains open.
+`5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`. Same-surface
+`capture.element` cropping is implemented at
+`9ffc84a127a89c12b4155b4ff8ba2a6cdb93396a` and awaits exact-SHA audit.
 
 ## Rollback / failure behavior
 
@@ -1739,8 +1741,11 @@ Reads and updates across all store instances use one process-wide serialized
 queue, so filesystem aliases and differing path spellings cannot bypass the
 lock; a deterministic two-instance race test proves a reader cannot delete
 staged PNG or temporary manifest files.
-Integration with a live capture command and a real fixture remains open until
-its own exact-SHA review.
+Integration with a live capture command and a real fixture remains open; the
+baseline/diff core itself is signed off at exact code SHA
+`5e850881da809f9d301040ee1acddabe73c5aa43` with docs SHA
+`6e04a7805814dd83b74917c9dec3046eaf6856c5`. The dedicated
+`capture.element` slice has its own review gate.
 
 ## Packaged live proof
 
