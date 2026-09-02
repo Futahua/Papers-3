@@ -1198,8 +1198,16 @@ Events are deliberately omitted from this first adapter slice. The adapter has
 no renderer IPC, facade, registry, filesystem-project, TCP/HTTP or arbitrary-JS
 access. Release/install/package remains after B3 review closure.
 
-Validation at the candidate worktree: typecheck passed; focused MCP/control
-tests passed 47/47; full Vitest passed 737/741 (4 skipped); production build
+The initial exact-head review at `bd52e9e508a006e22612429d8371dd2e4e87ac58`
+found one cancellation race before control connection establishment completed.
+The correction installs the abort handler before descriptor/pipe awaits, checks
+already-aborted state on both sides, closes any eventual connection, and never
+dispatches the cancelled method. A delayed-connect regression proves a cancelled
+`window.create` cannot reach the control client.
+
+Validation at the corrected candidate worktree: typecheck passed; focused
+MCP/control tests passed 48/48; full Vitest passed 738/742 (4 skipped);
+production build
 passed; live developer-control Electron E2E passed 5/5, including the real
 stdio adapter performing a query and creating a native Papers window; and
 `git diff --check` passed. `npm audit --omit=dev` reports zero production

@@ -124,4 +124,41 @@ describe('Papers stdio MCP adapter', () => {
       await adapter.close();
     }
   });
+
+  it('never dispatches when cancellation occurs during control connection establishment', async () => {
+    let releaseConnect!: () => void;
+    const connectHeld = new Promise<void>((resolve) => { releaseConnect = resolve; });
+    const call = vi.fn(async () => ({ id: 1, ok: true, result: { windowId: 2 } }));
+    const close = vi.fn();
+    let reachedConnect = false;
+    const adapter = createPapersMcpServer({
+      descriptorPath: 'ignored.json',
+      readControlDescriptor: async () => ({}),
+      connectControl: async () => {
+        reachedConnect = true;
+        await connectHeld;
+        return { call, close };
+      },
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'papers-mcp-test', version: '1.0.0' });
+    await Promise.all([adapter.server.connect(serverTransport), client.connect(clientTransport)]);
+    const controller = new AbortController();
+    try {
+      const pending = client.callTool({
+        name: PAPERS_MCP_TOOL,
+        arguments: { method: 'window.create', params: {} },
+      }, undefined, { signal: controller.signal });
+      await vi.waitFor(() => expect(reachedConnect).toBe(true));
+      controller.abort();
+      await expect(pending).rejects.toThrow();
+      releaseConnect();
+      await vi.waitFor(() => expect(close).toHaveBeenCalled());
+      expect(call).not.toHaveBeenCalled();
+    } finally {
+      releaseConnect();
+      await client.close();
+      await adapter.close();
+    }
+  });
 });

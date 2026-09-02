@@ -50,7 +50,6 @@ export function createPapersMcpServer({
       params: z.record(z.string(), z.unknown()).default({}).describe('Exact method parameters; no current/focused target inference is performed.'),
     },
   }, async ({ method, params }, extra) => {
-    const active = await connection();
     let cancelled = false;
     const cancel = () => {
       cancelled = true;
@@ -60,6 +59,15 @@ export function createPapersMcpServer({
     };
     extra.signal.addEventListener('abort', cancel, { once: true });
     try {
+      if (extra.signal.aborted) cancel();
+      if (cancelled) throw new Error('Papers MCP request was cancelled.');
+      const active = await connection();
+      // An abort during descriptor read or named-pipe connection must close
+      // the eventual connection and must never dispatch the requested command.
+      if (cancelled || extra.signal.aborted) {
+        active.close();
+        throw new Error('Papers MCP request was cancelled.');
+      }
       const response = await active.call(method, params);
       if (cancelled) throw new Error('Papers MCP request was cancelled.');
       if (!response?.ok) {
