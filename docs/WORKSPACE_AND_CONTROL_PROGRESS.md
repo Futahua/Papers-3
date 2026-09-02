@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 hydration-failure correlation implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 deterministic lifecycle ordering implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -690,9 +690,33 @@ Validation: full Vitest 792 passed/4 skipped across 73 passed/1 skipped files;
 focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
 typecheck; build; diff check.
 
-The exact-SHA reviewer gate must confirm paired ordering/correlation,
-sender-authoritative routing, strict shape separation from ordinary
-render-failed and other lifecycle phases, and no state mutation or polling.
+Reviewer checkpoint: **SIGNED OFF** for C1.2 hydration-failure → render-failed
+correlation at exact pushed head `6871673e39988c9b7c21ac7a09e0f64e17b5be90`.
+The reviewer confirmed diagnostic-first then lifecycle pairing, identical
+bounded correlation metadata, strict mutual exclusion from ordinary
+render-failed detail, and sender-derived target authority.
+
+Next smallest reviewed slice: **C1.2 deterministic lifecycle ordering** — prove
+on one exact surface that `navigation-started` precedes `dom-ready`, and
+establish the successful fixture’s recorded lifecycle sequence without
+synthesizing or imposing false ordering between independent hydration,
+first-paint, and layout-stable facts.
+
+Current implementation checkpoint: the lifecycle monitor’s deterministic unit
+proof attaches to an exact `{windowId, surfaceId}` target, emits
+`navigation-started` then `dom-ready` in source-event order, and records
+navigation/load/layout/hydration/paint as distinct facts. The test asserts only
+the required navigation-to-DOM ordering; it does not impose an ordering among
+independent renderer-owned hydration, first-paint, and layout-stable signals.
+Neutral-project E2E continues to prove the successful renderer-owned sequence
+and exact surface targeting for the visual producers.
+Validation: full Vitest 792 passed/4 skipped across 73 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+The exact-SHA reviewer gate must confirm the exact-surface ordering proof,
+successful fixture sequence evidence, independent renderer-fact handling,
+sender-authoritative routing, and no state mutation or polling.
 
 ## Architectural boundary / likely owner
 

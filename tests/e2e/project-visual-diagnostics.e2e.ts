@@ -117,6 +117,13 @@ describe('project renderer visual diagnostics', () => {
         && record.payload.kind === 'lifecycle' && record.payload.phase === 'state-hydrated'
         && record.payload.revision === 'neutral-rev-1');
     }, 10_000, 'project hydration success signal');
+    const successfulLifecyclePhases = (await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
+      sequence: number; payload: { kind?: string; phase?: string };
+    }>).filter((record) => record.sequence > beforeSequence && record.payload.kind === 'lifecycle')
+      .map((record) => record.payload.phase);
+    expect(successfulLifecyclePhases).toEqual(expect.arrayContaining([
+      'state-hydrated', 'first-paint', 'layout-stable',
+    ]));
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{ sequence: number; payload: { kind?: string } }>;
       return records.filter((record) => record.sequence > beforeSequence

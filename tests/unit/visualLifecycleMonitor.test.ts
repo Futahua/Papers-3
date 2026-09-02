@@ -39,6 +39,10 @@ describe('visual lifecycle monitor', () => {
     ]);
     expect(buffer.snapshot()[2]?.payload).toMatchObject({ kind: 'navigation-failed', errorCode: -6, message: '<path>' });
     expect(buffer.snapshot()[3]?.payload).toMatchObject({ kind: 'console', message: '<url>' });
+    const lifecycleSequences = buffer.snapshot()
+      .filter((record): record is typeof record & { payload: { kind: 'lifecycle'; phase: string } } => record.payload.kind === 'lifecycle')
+      .map((record) => record.payload.phase);
+    expect(lifecycleSequences).toEqual(['navigation-started', 'dom-ready']);
     monitor.detach();
     source.emit('dom-ready');
     expect(buffer.snapshot()).toHaveLength(5);
