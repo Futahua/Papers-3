@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded per-surface timeline is signed off at `0996f5b227578acb0d450b3a8c074c250abc666a`; report generation, artifact storage, and packaged visual proof remain open and outside the current no-package boundary
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded per-surface timeline is signed off at `0996f5b227578acb0d450b3a8c074c250abc666a`; exact-surface ZIP report creation and lookback filtering are signed off at `abed691f67add77d3768ad532a797a37903b3ba8`; lifecycle-only screenshot policy, interrupted-report proof, and packaged visual proof remain open and outside the current no-package boundary
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1957,11 +1957,11 @@ This works within the existing framed control transport without opening filesyst
 * [ ] two surfaces do not mix timelines;
 * [ ] lifecycle-only screenshot count bounded;
 * [x] no timer polling;
-* [ ] report manifest hashes verify;
+* [x] report manifest hashes verify;
 * [ ] interrupted report leaves no exposed partial artifact;
-* [ ] artifact reader cannot access arbitrary filesystem paths;
-* [ ] expired artifact refused;
-* [ ] no project state file included in report.
+* [x] artifact reader cannot access arbitrary filesystem paths;
+* [x] expired artifact refused;
+* [x] no project state file included in report.
 
 Implementation checkpoint: the bounded per-surface timeline store and
 `inspect.visual.timeline` query are implemented at
@@ -1971,9 +1971,18 @@ with lifecycle transition correlation corrected at
 The append path consumes only already-emitted diagnostic events, enforces the
 256-event/10-second bounds, and carries render-cycle, document, layout, and
 workspace-topology revisions. The reviewer signed off the corrected slice at
-the exact code SHA above with no remaining concrete defect. Report generation,
-artifact storage, packaged proof, and the remaining isolation checks are still
-open.
+the exact code SHA above with no remaining concrete defect. Report element
+coverage, interrupted-report proof, packaged proof, and the remaining
+isolation checks are still open.
+
+Report checkpoint: `visual.report.create` and the bounded ZIP artifact builder
+are implemented at [`abed691f`](https://github.com/Futahua/Papers-3/commit/abed691f67add77d3768ad532a797a37903b3ba8).
+The exact-surface report includes safe process/snapshot/surface projections,
+lookback-filtered lifecycle/diagnostic/timeline evidence, semantic observations,
+and an optional verified surface PNG. The reviewer signed off this slice at the
+exact SHA with no remaining concrete defect. Remaining work is lifecycle-only
+screenshot policy, interrupted-report proof, the unimplemented element-PNG
+bundle, and packaged acceptance.
 
 ## Packaged live proof
 

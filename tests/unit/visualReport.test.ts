@@ -1,4 +1,5 @@
 import { mkdtemp, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -68,6 +69,7 @@ describe('visual reports', () => {
     expect(report.size).toBeGreaterThan(0);
     expect(report.manifestSummary.entryCount).toBe(10);
     const reportBytes = (await artifacts.read(report.artifactId, 0, 1024 * 1024)).bytes;
+    expect(createHash('sha256').update(reportBytes).digest('hex')).toBe(report.sha256);
     expect(reportBytes[0]).toBe(0x50);
     expect(reportBytes[1]).toBe(0x4b);
     const entries = storedZipEntries(reportBytes);
@@ -82,6 +84,9 @@ describe('visual reports', () => {
     };
     expect(manifest.entries).toHaveLength(9);
     expect(manifest.entries.find((entry) => entry.name === 'surface.png')?.size).toBe(4);
+    for (const entry of manifest.entries) {
+      expect(createHash('sha256').update(entries.get(entry.name)!).digest('hex')).toBe(entry.sha256);
+    }
     expect(new TextDecoder().decode(entries.get('lifecycle.ndjson'))).toContain('first-paint');
     expect(new TextDecoder().decode(entries.get('lifecycle.ndjson'))).not.toContain('dom-ready');
     expect(new TextDecoder().decode(entries.get('diagnostics.ndjson'))).toContain('inside-window');
