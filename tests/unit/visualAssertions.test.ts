@@ -30,6 +30,14 @@ describe('declarative visual assertions', () => {
     ] });
   });
 
+  it('uses actual intersection percentage rather than the descriptive overlap list', () => {
+    const first = element('first', { boundsCss: { x: 0, y: 0, width: 100, height: 100 }, boundsDevice: { x: 0, y: 0, width: 100, height: 100 }, overlapKeys: [] });
+    const second = element('second', { boundsCss: { x: 75, y: 0, width: 100, height: 100 }, boundsDevice: { x: 75, y: 0, width: 100, height: 100 }, overlapKeys: [] });
+    expect(evaluateVisualAssertions([first, second], [{ kind: 'no-overlap', a: 'first', b: 'second', maxIntersectionPercent: 24 }]).allPassed).toBe(false);
+    expect(evaluateVisualAssertions([first, second], [{ kind: 'no-overlap', a: 'first', b: 'second', maxIntersectionPercent: 25 }]).allPassed).toBe(true);
+    expect(evaluateVisualAssertions([first, second], [{ kind: 'no-overlap', a: 'first', b: 'second', maxIntersectionPercent: 100 }]).allPassed).toBe(true);
+  });
+
   it('fails closed for missing, clipped, and unknown contrast evidence', () => {
     const result = evaluateVisualAssertions([element('hidden', { visible: false, visibilityReasons: ['display-none'], clippedPercent: 80, contrast: { status: 'unknown' } })], [
       { kind: 'visible', elementKey: 'missing' },

@@ -55,7 +55,7 @@ describe('project semantic-key observation', () => {
     } as unknown as typeof globalThis.MutationObserver;
     const send = vi.fn();
 
-    installProjectVisualSemanticKeyObserver({ send }, { document, MutationObserver, devicePixelRatio: 2 });
+    installProjectVisualSemanticKeyObserver({ send }, { document, MutationObserver, devicePixelRatio: 2, stableLayoutEpoch: () => 1 });
 
     expect(send).toHaveBeenCalledWith(VISUAL_SEMANTIC_KEYS_CHANNEL, expect.objectContaining({
       keys: ['canvas.root'],

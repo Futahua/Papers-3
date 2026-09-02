@@ -17,6 +17,7 @@ interface SemanticKeyObserverEnvironment {
   MutationObserver?: typeof MutationObserver;
   documentInstanceId?: string;
   devicePixelRatio?: number;
+  stableLayoutEpoch?: () => number | null;
 }
 
 const PAPERS_SEMANTIC_KEY_ATTRIBUTE = 'data-papers-visual-key';
@@ -137,14 +138,16 @@ export function installProjectVisualSemanticKeyObserver(
       const key = element.getAttribute(PAPERS_SEMANTIC_KEY_ATTRIBUTE);
       if (key !== null) keys.push(key);
     }
-    const observations = observeElements(document, elements, environment.devicePixelRatio ?? 1);
-    const payloadObject = observations.length > 0 ? { keys, observations } : { keys };
+    const layoutEpoch = environment.stableLayoutEpoch?.() ?? null;
+    const observations = layoutEpoch === null ? [] : observeElements(document, elements, environment.devicePixelRatio ?? 1);
+    const payloadObject = observations.length > 0 ? { keys, observations, layoutEpoch } : { keys };
     const payload = JSON.stringify(payloadObject);
     if (!force && payload === lastPayload) return;
     lastPayload = payload;
     ipc.send(VISUAL_SEMANTIC_KEYS_CHANNEL, {
       keys,
       ...(observations.length > 0 ? { observations } : {}),
+      ...(observations.length > 0 && layoutEpoch !== null ? { layoutEpoch } : {}),
       ...(documentInstanceId ? { documentInstanceId } : {}),
     });
   };

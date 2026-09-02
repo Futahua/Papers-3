@@ -9,6 +9,7 @@ interface LayoutObserverEnvironment {
   ResizeObserver?: typeof ResizeObserver;
   MutationObserver?: typeof MutationObserver;
   onLayoutEpoch?: (epoch: number) => void;
+  onLayoutStable?: (epoch: number) => void;
 }
 
 function rounded(value: number): number {
@@ -21,10 +22,16 @@ function geometrySnapshot(document: Document): string | null {
   if (!body || !root) return null;
   const rootRect = root.getBoundingClientRect();
   const bodyRect = body.getBoundingClientRect();
+  const semantic = typeof document.querySelectorAll === 'function'
+    ? Array.from(document.querySelectorAll('[data-papers-visual-key]')).slice(0, 257).map((element) => {
+      const rect = element.getBoundingClientRect();
+      return [rect.x, rect.y, rect.width, rect.height].map(rounded).join(',');
+    }).join(';')
+    : '';
   return [
     rounded(rootRect.x), rounded(rootRect.y), rounded(rootRect.width), rounded(rootRect.height),
     rounded(bodyRect.x), rounded(bodyRect.y), rounded(bodyRect.width), rounded(bodyRect.height),
-    root.scrollWidth, root.scrollHeight, body.scrollWidth, body.scrollHeight,
+    root.scrollWidth, root.scrollHeight, body.scrollWidth, body.scrollHeight, semantic,
   ].join('|');
 }
 
@@ -67,6 +74,7 @@ export function installProjectVisualLayoutObserver(
       previousGeometry = geometry;
       if (unchangedFrames >= REQUIRED_UNCHANGED_FRAMES) {
         reportProjectLayoutSignal(ipc, 'layout-stable', undefined, layoutEpoch);
+        environment.onLayoutStable?.(layoutEpoch);
         attemptActive = false;
         return;
       }

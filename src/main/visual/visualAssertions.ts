@@ -21,6 +21,15 @@ function contains(container: VisualElementObservation, element: VisualElementObs
     && inner.y + inner.height <= outer.y + outer.height;
 }
 
+function intersectionPercent(first: VisualElementObservation, second: VisualElementObservation): number {
+  const a = first.boundsCss; const b = second.boundsCss;
+  const width = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const height = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  const intersection = width * height;
+  const denominator = Math.min(a.width * a.height, b.width * b.height);
+  return denominator <= 0 ? 0 : (intersection / denominator) * 100;
+}
+
 export function evaluateVisualAssertions(
   elements: readonly VisualElementObservation[],
   assertions: readonly VisualAssertion[],
@@ -51,9 +60,8 @@ export function evaluateVisualAssertions(
       const first = byKey.get(assertion.a);
       const second = byKey.get(assertion.b);
       if (!first || !second) return { kind: assertion.kind, passed: false, reason: 'missing-element' };
-      const overlap = first.overlapKeys.includes(second.key) || second.overlapKeys.includes(first.key);
-      return !overlap || assertion.maxIntersectionPercent >= 100
-        ? { kind: assertion.kind, passed: !overlap }
+      return intersectionPercent(first, second) <= assertion.maxIntersectionPercent
+        ? { kind: assertion.kind, passed: true }
         : { kind: assertion.kind, passed: false, reason: 'overlap' };
     }
     const element = byKey.get(assertion.elementKey);

@@ -1817,6 +1817,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         const epoch = (payload as { epoch?: unknown }).epoch;
         if (typeof epoch === 'number' && Number.isSafeInteger(epoch) && epoch >= 0) {
           visualSurfaceObservationState.markLayoutEpoch(target.windowId, target.surfaceId, senderId, epoch);
+          resetVisualSemanticKeyObservation(target.windowId, target.surfaceId, senderId);
         }
       } else if (phase === 'layout-stable') {
         const epoch = (payload as { epoch?: unknown }).epoch;
@@ -1835,10 +1836,16 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
       return state?.currentSenderId === senderId ? state.registry : null;
     },
-    onObserved: ({ windowId, surfaceId }, senderId, keys, observations) => {
+    onObserved: ({ windowId, surfaceId }, senderId, keys, observations, layoutEpoch) => {
       visualSurfaceObservationState.replaceSemanticKeys(windowId, surfaceId, senderId, keys);
       const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
-      if (state?.currentSenderId === senderId) state.observations = observations ? observations.map((observation) => ({ ...observation })) : [];
+      const current = visualSurfaceObservationState.snapshot(windowId, surfaceId);
+      if (state?.currentSenderId === senderId && observations && current?.layoutStable
+        && layoutEpoch === current.layoutEpoch) {
+        state.observations = observations.map((observation) => ({ ...observation }));
+      } else if (state?.currentSenderId === senderId) {
+        state.observations = [];
+      }
     },
     isCurrentDocumentInstance: ({ windowId, surfaceId }, senderId, documentInstanceId) => {
       const state = visualSurfaceObservationState.snapshot(windowId, surfaceId);

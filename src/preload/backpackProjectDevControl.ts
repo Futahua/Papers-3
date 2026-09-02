@@ -18,6 +18,7 @@ function installVisualDiagnosticListeners(
   },
 ): void {
   let refreshSemanticKeys = (): void => undefined;
+  let stableLayoutEpoch: number | null = null;
   const diagnosticBridge = createProjectVisualDiagnosticBridge(ipc, () => refreshSemanticKeys());
   mainWorld.exposeInMainWorld(MAIN_WORLD_DIAGNOSTIC_BRIDGE, diagnosticBridge);
   // Keep first-paint emission Papers-owned while observing the document's
@@ -46,7 +47,8 @@ function installVisualDiagnosticListeners(
       requestAnimationFrame: window.requestAnimationFrame.bind(window),
       ResizeObserver: typeof ResizeObserver === 'undefined' ? undefined : ResizeObserver,
       MutationObserver: typeof MutationObserver === 'undefined' ? undefined : MutationObserver,
-      onLayoutEpoch: () => refreshSemanticKeys(),
+      onLayoutEpoch: () => { stableLayoutEpoch = null; },
+      onLayoutStable: (epoch) => { stableLayoutEpoch = epoch; refreshSemanticKeys(); },
     });
   } catch {
     // Missing observer APIs leave layout stability unknown; no success is synthesized.
@@ -57,6 +59,7 @@ function installVisualDiagnosticListeners(
       MutationObserver: typeof MutationObserver === 'undefined' ? undefined : MutationObserver,
       documentInstanceId: documentInstanceId ?? undefined,
       devicePixelRatio: window.devicePixelRatio,
+      stableLayoutEpoch: () => stableLayoutEpoch,
     });
   } catch {
     // Semantic observation is diagnostic-only and must never affect startup.
