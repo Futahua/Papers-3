@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 thrown renderer-exception/control-survival closure in progress; exact-SHA reviewer gate pending
+Persistent status: C1.3 semantic-key identity/surface-local authority foundation in progress; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1040,48 +1040,56 @@ prove its exact-surface `uncaught-error` record, then immediately prove the
 developer-control plane remains responsive and the same renderer/document was
 not implicitly recovered or replaced.
 
-Current implementation checkpoint: the existing neutral-project E2E already
-continues control requests after genuine renderer throws/rejections. The
-narrow evidence correction will add a sequence-fenced deliberate throw,
-exact-target assertion, immediate control query, and unchanged
-`performance.timeOrigin`/document proof; no production change is expected.
+Implementation checkpoint: the neutral-project E2E adds a sequence-fenced
+deliberate throw, exact-target assertion, immediate control query, and
+unchanged `performance.timeOrigin`/document proof; no production change was
+needed.
 
 Reviewer checkpoint at exact pushed head
-`ee16454131193049823a8467e3e7aa5695c83964`: **SIGNED OFF** for deterministic
-visual diagnostic redaction closure. The reviewer confirmed the real buffer →
-real control event hub → serialized frame path across console, renderer error,
-rejection, navigation, resource, renderer exit, hydration, and render-failed
-classes. Windows paths, URLs/queries, credential assignments, and hostile
-hydration metadata do not enter retained snapshots or live frames; no
-production redaction change was needed.
+`25069086076fcbfc9930986375e2ac3ab3a20e50`: **SIGNED OFF** for C1.2 thrown
+renderer-exception/control-survival closure. The reviewer confirmed the
+sequence-fenced real throw, exact-surface redacted `uncaught-error`, immediate
+control response, unchanged renderer/document identity, and no implicit
+recovery.
 
 Next smallest reviewed slice: **C1.2 no timer-based continuous polling /
 recovery-side-effect closure** — prove that attaching, observing, failing, and
 detaching visual observation never creates recurring polling loops, reloads or
 restarts a renderer as diagnostic recovery, or mutates workspace/product
-state, while allowing only the intended bounded one-shot timing and animation-
-frame mechanisms and cleaning up observers/listeners.
+state, while allowing only intended bounded one-shot timing and animation-frame
+mechanisms and cleaning up observers/listeners.
 
-This is evidence-first. Change production code only if the targeted closure
-finds a concrete polling, recovery, teardown, or product-state side effect.
+Implementation checkpoint: no production correction was needed. The focused
+side-effect suite proves listener cleanup, inert post-detach behavior,
+coalesced layout frames, bounded stable/timeout epochs, and no recurring
+timer. Real navigation-failure and renderer-gone E2E evidence confirms the
+renderer and workspace remain unchanged.
 
-Current implementation checkpoint: no production correction was needed. The
-source audit found the visual lifecycle and resource monitors event-listener
-driven, first-paint observation terminating after its browser signal, layout
-stability bounded to one animation-frame epoch, and lifecycle/resource
-listeners detached on close and before quit. The focused side-effect suite
-spies on `setInterval`/`setTimeout`, exercises lifecycle/resource failure and
-detach inertness, proves repeated layout mutations coalesce to one queued
-frame, and proves stable and timeout epochs end without queued frames. It also
-exercises real main-frame navigation failure and renderer-gone events; the
-source audit proves observation has no reload, loadURL, or restart call path.
-The neutral-project E2E captures `performance.timeOrigin` before the
-real overflow and mixed diagnostic events and confirms it is unchanged after
-them, alongside unchanged workspace state. Test-only `waitFor` timers remain
-outside the production observation contract.
+Reviewer checkpoint at exact pushed head
+`7c6f2974af16566741495555c0c25e3c6c93a6a8`: **SIGNED OFF** for C1.2 no
+timer-based continuous polling/recovery-side-effect closure. The reviewer
+confirmed event-driven observation, bounded one-shot timing only, teardown
+inertness, and absence of reload/restart recovery behavior.
 
-Validation and exact-SHA reviewer gate are pending for this slice. The
-user-owned `docs/evidence/worker-comparison.json` remains unstaged and
+Next smallest reviewed slice: **C1.2 deterministic hydration-failure pairing
+closure** — prove one authenticated project `reportHydrationFailed(revision,
+stage,code)` produces exactly one correlated `hydration-failed` then
+`lifecycle/render-failed` pair under the same exact surface.
+
+Reviewer checkpoint at exact pushed head
+`d91608a841eddf824407a524ebb8ff3240d4c82e`: **SIGNED OFF** for deterministic
+hydration-failure pairing. The reviewer confirmed one ordered pair, strictly
+increasing sequence values, matching revision/stage/code metadata, and exact
+surface authority.
+
+Next smallest reviewed slice: **C1.3 semantic-key identity / surface-local
+authority foundation** — define a strict bounded opaque semantic-key contract,
+allow only predefined project-side registration/observation, reject duplicate
+keys within one surface, allow the same key independently in two surfaces,
+and expose only the smallest read-only inspection seam needed to inspect key
+identity. No caller-provided selector, XPath, or script is allowed.
+
+The user-owned `docs/evidence/worker-comparison.json` remains unstaged and
 untouched; no release, install, package, or policy action is in scope.
 
 ## Architectural boundary / likely owner
