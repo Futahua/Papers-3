@@ -60,14 +60,6 @@ export function attachVisualLifecycleMonitor(
       : 'unknown';
     record({ kind: 'renderer-gone', reason });
   });
-  listen('resource-load-failed', (...args) => {
-    const details = args[1];
-    const errorCode = details !== null && typeof details === 'object' && typeof (details as { errorCode?: unknown }).errorCode === 'number'
-      ? (details as { errorCode: number }).errorCode
-      : undefined;
-    record({ kind: 'resource-failed', resourceKind: 'other', ...(errorCode === undefined ? {} : { errorCode }), message: 'resource load failed' });
-  });
-
   return {
     recordRendererSignal(payload) {
       const parsed = payload as { kind?: unknown; phase?: unknown; detail?: unknown };

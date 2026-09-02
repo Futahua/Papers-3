@@ -28,15 +28,14 @@ describe('visual lifecycle monitor', () => {
     source.emit('did-fail-load', {}, -6, 'C:\\private\\main.js', false);
     source.emit('console-message', {}, 3, 'file:///C:/private/main.js', 1, 'C:\\private\\main.js');
     source.emit('render-process-gone', {}, { reason: 'crashed', exitCode: 1 });
-    source.emit('resource-load-failed', {}, { errorCode: -105, url: 'https://private.example' });
     expect(buffer.snapshot().map((record) => record.payload.kind)).toEqual([
-      'lifecycle', 'lifecycle', 'navigation-failed', 'console', 'renderer-gone', 'resource-failed',
+      'lifecycle', 'lifecycle', 'navigation-failed', 'console', 'renderer-gone',
     ]);
     expect(buffer.snapshot()[2]?.payload).toMatchObject({ kind: 'navigation-failed', errorCode: -6, message: '<path>' });
     expect(buffer.snapshot()[3]?.payload).toMatchObject({ kind: 'console', message: '<url>' });
     monitor.detach();
     source.emit('dom-ready');
-    expect(buffer.snapshot()).toHaveLength(6);
+    expect(buffer.snapshot()).toHaveLength(5);
   });
 
   it('accepts only the renderer-owned lifecycle phases and keeps target binding', () => {

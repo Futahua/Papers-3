@@ -436,12 +436,15 @@ later lifecycle hooks will append to:
   are redacted before storage; unknown payload fields and malformed targets are
   refused.
 * [x] `src/main/visual/visualLifecycleMonitor.ts` maps real Electron
-  `did-start-loading`, `dom-ready`, `did-fail-load`, `console-message`,
-  `render-process-gone`, and resource-failure events into the bounded buffer;
+  `did-start-loading`, `dom-ready`, `did-fail-load`, `console-message`, and
+  `render-process-gone` events into the bounded buffer;
   renderer-owned hydration/paint/stability phases are accepted only through a
   target-bound signal seam.
 * [x] the adapter detaches listeners cleanly and introduces no timers, polling,
   reloads, or recovery side effects.
+* [ ] attribute real resource failures through `session.webRequest` to an exact
+  monitored WebContents/surface; the adapter does not claim a nonexistent
+  WebContents event.
 * [ ] compose monitors for real host/project renderer surfaces.
 * [ ] expose event subscription and bounded diagnostic inspection through the
   authenticated control plane.
