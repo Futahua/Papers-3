@@ -144,52 +144,67 @@ export async function createVisualReport(deps: VisualReportDependencies, request
   const lifecycle = deps.lifecycle.filter(inWindow);
   const diagnostics = deps.diagnostics.filter(inWindow);
   const reportId = randomUUID();
-  const entries: ReportEntry[] = [
-    { name: 'process.json', bytes: jsonBytes(deps.process) },
-    { name: 'snapshot.json', bytes: jsonBytes(deps.snapshot) },
-    { name: 'surface.json', bytes: jsonBytes(deps.surface) },
-  ];
-  if (request.include.recentLifecycle) entries.push({ name: 'lifecycle.ndjson', bytes: ndjsonBytes(lifecycle) });
-  if (request.include.recentDiagnostics) entries.push({ name: 'diagnostics.ndjson', bytes: ndjsonBytes(diagnostics) });
-  if (request.include.timeline) entries.push({ name: 'timeline.ndjson', bytes: ndjsonBytes(deps.timeline) });
-  if (request.include.semanticElements) entries.push({ name: 'elements.json', bytes: jsonBytes(deps.semanticElements) });
-  if (request.include.surfaceCapture) {
-    if (!deps.captureSurface) throw new Error('Visual surface capture is unavailable.');
-    const captured = await deps.captureSurface();
-    entries.push({ name: 'surface-capture.json', bytes: jsonBytes(captured.result) });
-    if (captured.png) entries.push({ name: 'surface.png', bytes: await readArtifact(deps.artifacts, captured.png) });
-  }
-  if (request.include.elementCaptures) {
-    if (!deps.captureElement) throw new Error('Visual element capture is unavailable.');
-    if (request.elementKeys.length < 1 || request.elementKeys.length > MAX_ELEMENT_CAPTURES) {
-      throw new Error('visual element report capture count is invalid');
-    }
-    for (const elementKey of request.elementKeys) {
-      const captured = await deps.captureElement(elementKey);
-      entries.push({ name: `elements/${elementKey}.json`, bytes: jsonBytes(captured.result) });
-      if (captured.png) entries.push({ name: `elements/${elementKey}.png`, bytes: await readArtifact(deps.artifacts, captured.png) });
-    }
-  }
-  if (entries.length > MAX_REPORT_ENTRIES) throw new Error('visual report entry bound exceeded');
-  const manifestEntries = entries.map((entry) => ({ name: entry.name, size: entry.bytes.byteLength, sha256: createHash('sha256').update(entry.bytes).digest('hex') }));
-  const manifest = {
-    schemaVersion: 1,
-    reportId,
-    createdAt,
-    target: { windowId: request.windowId, surfaceId: request.surfaceId },
-    beforeMs: request.beforeMs,
-    entries: manifestEntries,
-    summary: { entryCount: manifestEntries.length + 1, includes: request.include },
+  const capturedArtifactIds = new Set<string>();
+  let reportArtifactId: string | undefined;
+  const readCapturedArtifact = async (metadata: VisualArtifactMetadata): Promise<Uint8Array> => {
+    // Capture artifacts are temporary inputs owned by this report operation.
+    // Keep their IDs so an interrupted build cannot leave unreferenced PNGs.
+    capturedArtifactIds.add(metadata.artifactId);
+    return readArtifact(deps.artifacts, metadata);
   };
-  const allEntries = [{ name: 'manifest.json', bytes: jsonBytes(manifest) }, ...entries];
-  const archive = zipStored(allEntries);
-  const artifact = await deps.artifacts.put(archive, 'application/zip');
-  return {
-    reportId,
-    artifactId: artifact.artifactId,
-    size: artifact.size,
-    sha256: artifact.sha256,
-    createdAt,
-    manifestSummary: { entryCount: allEntries.length, byteSize: archive.byteLength, includes: request.include },
-  };
+  try {
+    const entries: ReportEntry[] = [
+      { name: 'process.json', bytes: jsonBytes(deps.process) },
+      { name: 'snapshot.json', bytes: jsonBytes(deps.snapshot) },
+      { name: 'surface.json', bytes: jsonBytes(deps.surface) },
+    ];
+    if (request.include.recentLifecycle) entries.push({ name: 'lifecycle.ndjson', bytes: ndjsonBytes(lifecycle) });
+    if (request.include.recentDiagnostics) entries.push({ name: 'diagnostics.ndjson', bytes: ndjsonBytes(diagnostics) });
+    if (request.include.timeline) entries.push({ name: 'timeline.ndjson', bytes: ndjsonBytes(deps.timeline) });
+    if (request.include.semanticElements) entries.push({ name: 'elements.json', bytes: jsonBytes(deps.semanticElements) });
+    if (request.include.surfaceCapture) {
+      if (!deps.captureSurface) throw new Error('Visual surface capture is unavailable.');
+      const captured = await deps.captureSurface();
+      entries.push({ name: 'surface-capture.json', bytes: jsonBytes(captured.result) });
+      if (captured.png) entries.push({ name: 'surface.png', bytes: await readCapturedArtifact(captured.png) });
+    }
+    if (request.include.elementCaptures) {
+      if (!deps.captureElement) throw new Error('Visual element capture is unavailable.');
+      if (request.elementKeys.length < 1 || request.elementKeys.length > MAX_ELEMENT_CAPTURES) {
+        throw new Error('visual element report capture count is invalid');
+      }
+      for (const elementKey of request.elementKeys) {
+        const captured = await deps.captureElement(elementKey);
+        entries.push({ name: `elements/${elementKey}.json`, bytes: jsonBytes(captured.result) });
+        if (captured.png) entries.push({ name: `elements/${elementKey}.png`, bytes: await readCapturedArtifact(captured.png) });
+      }
+    }
+    if (entries.length > MAX_REPORT_ENTRIES) throw new Error('visual report entry bound exceeded');
+    const manifestEntries = entries.map((entry) => ({ name: entry.name, size: entry.bytes.byteLength, sha256: createHash('sha256').update(entry.bytes).digest('hex') }));
+    const manifest = {
+      schemaVersion: 1,
+      reportId,
+      createdAt,
+      target: { windowId: request.windowId, surfaceId: request.surfaceId },
+      beforeMs: request.beforeMs,
+      entries: manifestEntries,
+      summary: { entryCount: manifestEntries.length + 1, includes: request.include },
+    };
+    const allEntries = [{ name: 'manifest.json', bytes: jsonBytes(manifest) }, ...entries];
+    const archive = zipStored(allEntries);
+    const artifact = await deps.artifacts.put(archive, 'application/zip');
+    reportArtifactId = artifact.artifactId;
+    return {
+      reportId,
+      artifactId: artifact.artifactId,
+      size: artifact.size,
+      sha256: artifact.sha256,
+      createdAt,
+      manifestSummary: { entryCount: allEntries.length, byteSize: archive.byteLength, includes: request.include },
+    };
+  } finally {
+    await Promise.all([...capturedArtifactIds]
+      .filter((artifactId) => artifactId !== reportArtifactId)
+      .map((artifactId) => deps.artifacts.delete(artifactId).catch(() => false)));
+  }
 }

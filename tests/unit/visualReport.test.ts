@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -119,5 +119,36 @@ describe('visual reports', () => {
       'elements/canvas.root.json', 'elements/canvas.root.png',
     ]));
     expect(entries.get('elements/canvas.root.png')).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
+  it('cleans captured inputs when final report storage is interrupted', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-visual-report-interrupted-'));
+    const baseArtifacts = createVisualArtifactStore(root, { ttlMs: 60_000 });
+    const firstPng = await baseArtifacts.put(new Uint8Array([1, 2, 3]), 'image/png');
+    const secondPng = await baseArtifacts.put(new Uint8Array([4, 5, 6]), 'image/png');
+    const artifacts = {
+      ...baseArtifacts,
+      put: async () => { throw new Error('report write interrupted'); },
+    };
+
+    await expect(createVisualReport({
+      process: {}, snapshot: {}, surface: {}, lifecycle: [], diagnostics: [], timeline: [], semanticElements: {},
+      captureElement: async (elementKey) => ({
+        result: { element: { key: elementKey } },
+        png: elementKey === 'canvas.root' ? firstPng : secondPng,
+      }),
+      artifacts,
+    }, {
+      windowId: 4, surfaceId: 'surface-a', beforeMs: 10_000,
+      elementKeys: ['canvas.root', 'sidebar'],
+      include: {
+        surfaceCapture: false, elementCaptures: true, semanticElements: false,
+        recentLifecycle: false, recentDiagnostics: false, timeline: false,
+      },
+    })).rejects.toThrow('report write interrupted');
+
+    await expect(baseArtifacts.read(firstPng.artifactId, 0, 1024)).rejects.toThrow('artifact is unavailable');
+    await expect(baseArtifacts.read(secondPng.artifactId, 0, 1024)).rejects.toThrow('artifact is unavailable');
+    expect((await readdir(root)).filter((name) => name.endsWith('.bin') || name.endsWith('.tmp'))).toEqual([]);
   });
 });
