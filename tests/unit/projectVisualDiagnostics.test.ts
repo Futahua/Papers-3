@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createProjectVisualDiagnosticBridge,
   reportProjectFirstPaint,
+  reportProjectLayoutSignal,
   VISUAL_RENDERER_DIAGNOSTIC_CHANNEL,
   VISUAL_RENDERER_SIGNAL_CHANNEL,
 } from '../../src/preload/projectVisualDiagnostics';
@@ -55,6 +56,18 @@ describe('opt-in project hydration diagnostic bridge', () => {
     reportProjectFirstPaint({ send });
     expect(send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
       kind: 'lifecycle', phase: 'first-paint',
+    });
+  });
+
+  it('keeps layout-success emission out of the page-visible bridge', () => {
+    const send = vi.fn();
+    const bridge = createProjectVisualDiagnosticBridge({ send });
+
+    expect('reportLayoutStable' in bridge).toBe(false);
+    reportProjectLayoutSignal({ send }, 'layout-stable');
+
+    expect(send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
+      kind: 'lifecycle', phase: 'layout-stable',
     });
   });
 });

@@ -4,6 +4,7 @@ import {
   reportProjectFirstPaint,
   type ProjectVisualDiagnosticBridge,
 } from './projectVisualDiagnostics';
+import { installProjectVisualLayoutObserver } from './projectVisualLayoutObserver';
 
 const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
 
@@ -35,6 +36,16 @@ function installVisualDiagnosticListeners(
   } catch {
     // Paint Timing is a browser-provided optional signal. Absence of the
     // API leaves first-paint unknown; it is never inferred from load or DOM readiness.
+  }
+  try {
+    installProjectVisualLayoutObserver(ipc, {
+      document,
+      requestAnimationFrame: window.requestAnimationFrame.bind(window),
+      ResizeObserver: typeof ResizeObserver === 'undefined' ? undefined : ResizeObserver,
+      MutationObserver: typeof MutationObserver === 'undefined' ? undefined : MutationObserver,
+    });
+  } catch {
+    // Missing observer APIs leave layout stability unknown; no success is synthesized.
   }
   try {
     void Promise.resolve(mainWorld.executeInMainWorld({ func: () => {

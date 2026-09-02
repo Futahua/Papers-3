@@ -1,7 +1,7 @@
 export const VISUAL_RENDERER_SIGNAL_CHANNEL = 'papers:visual:renderer-signal';
 export const VISUAL_RENDERER_DIAGNOSTIC_CHANNEL = 'papers:visual:renderer-diagnostic';
 
-interface ProjectVisualDiagnosticIpc {
+export interface ProjectVisualDiagnosticIpc {
   send(channel: string, payload: unknown): void;
 }
 
@@ -43,6 +43,18 @@ function safeSummary(raw: unknown): Record<string, number> | undefined {
 
 export function reportProjectFirstPaint(ipc: ProjectVisualDiagnosticIpc): void {
   ipc.send(VISUAL_RENDERER_SIGNAL_CHANNEL, { kind: 'lifecycle', phase: 'first-paint' });
+}
+
+export function reportProjectLayoutSignal(
+  ipc: ProjectVisualDiagnosticIpc,
+  phase: 'layout-stable' | 'render-failed',
+  detail?: string,
+): void {
+  ipc.send(VISUAL_RENDERER_SIGNAL_CHANNEL, {
+    kind: 'lifecycle',
+    phase,
+    ...(detail ? { detail } : {}),
+  });
 }
 
 export function createProjectVisualDiagnosticBridge(ipc: ProjectVisualDiagnosticIpc): ProjectVisualDiagnosticBridge {

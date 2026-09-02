@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 first-paint observability implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 layout-stable observability implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -638,9 +638,36 @@ Validation: full Vitest 785 passed/4 skipped across 72 passed/1 skipped files;
 focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
 typecheck; build; diff check.
 
-The exact-SHA reviewer gate must confirm one-shot first-paint reporting,
-sender-authoritative routing, no page-forged paint success, and no polling or
-state mutation.
+Reviewer checkpoint: **SIGNED OFF** for C1.2 first-paint observability at exact
+pushed head `2731daca6f610de6a6ddaa70980cd9499bfa8e8b`. The reviewer confirmed
+the preload-owned Paint Timing observer, page capability separation, one-shot
+buffered observation, unsupported-API unknown behavior, and actual producer E2E.
+
+Next smallest reviewed slice: **C1.2 real layout-stable observability** — use
+event-driven `ResizeObserver` / `MutationObserver` geometry stabilization with
+a bounded unchanged window, no perpetual polling, and no inference from
+DOM-ready, paint, or hydration.
+
+Current implementation checkpoint: the opt-in project dev-control preload
+observes the document from document-start, anchoring `MutationObserver` to the
+`Document` until parser-created roots exist, then tracking document/body
+geometry through `ResizeObserver` where available. Three unchanged animation
+frames are required; repeated activity is bounded to 12 frames and emits
+structured `render-failed` with `layout-stability-timeout` instead of waiting
+forever. A later mutation starts a fresh bounded epoch. Layout-success and
+timeout emission remain preload-owned and are absent from the page-visible
+bridge; font readiness is an event-driven refresh, not a polling loop.
+Deterministic unit tests cover stable, renewed, and timed-out epochs, and
+neutral-project E2E proves the real event-driven `layout-stable` record reaches
+the exact window/surface diagnostic stream.
+Validation: full Vitest 789 passed/4 skipped across 73 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+The exact-SHA reviewer gate must confirm bounded unchanged-frame behavior,
+document-start root handling, event-driven observer ownership, structured
+timeout behavior, sender-authoritative routing, and no polling or state
+mutation.
 
 ## Architectural boundary / likely owner
 

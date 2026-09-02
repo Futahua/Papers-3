@@ -103,6 +103,14 @@ describe('project renderer visual diagnostics', () => {
     }, 10_000, 'project PerformancePaintTiming first-paint signal');
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
+        sequence: number; payload: { kind?: string; phase?: string; detail?: string };
+      }>;
+      return records.some((record) => record.sequence > beforeSequence
+        && record.payload.kind === 'lifecycle' && record.payload.phase === 'layout-stable'
+        && record.payload.detail === undefined);
+    }, 10_000, 'project event-driven layout-stable signal');
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
         sequence: number; payload: { kind?: string; phase?: string; revision?: string; summary?: Record<string, number> };
       }>;
       return records.some((record) => record.sequence > beforeSequence
