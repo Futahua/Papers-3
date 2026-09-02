@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry and `visual.assert` availability are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db` and `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`; C1.4 baseline read/update concurrency correction is at `e2cb40f4b3bc1c78f523f847709fa2f8ed902ef0`, awaiting exact-SHA reviewer audit
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry and `visual.assert` availability are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db` and `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`; C1.4 baseline read/update concurrency correction is at `d98981146ab361ac142b1cf664230825eae73086`, awaiting exact-SHA reviewer audit
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1732,11 +1732,12 @@ A failing test must never silently “bless” its new screenshot.
 * [ ] user profile/state directories are never baseline sources.
 
 Implementation checkpoint: deterministic baseline/diff core and its integrity
-corrections are prepared at `e2cb40f4b3bc1c78f523f847709fa2f8ed902ef0`.
+corrections are prepared at `d98981146ab361ac142b1cf664230825eae73086`.
 The core preserves the previous manifest on interrupted publication, validates
 PNG structure/dimensions, serializes updates, and cleans orphaned artifacts.
-Reads and updates use the same serialized queue, and a deterministic race test
-proves a reader cannot delete staged PNG or temporary manifest files.
+Reads and updates across all store instances use the same serialized queue keyed
+by the canonical root, and a deterministic two-instance race test proves a
+reader cannot delete staged PNG or temporary manifest files.
 Integration with a live capture command and a real fixture remains open until
 its own exact-SHA review.
 
