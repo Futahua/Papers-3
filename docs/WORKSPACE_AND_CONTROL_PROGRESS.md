@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.3 semantic-key identity/surface-local authority foundation signed off at `d440466b87d4234339b3fb5dd0ac6845b0be7fa8`; C1.1 capture correction tranche implemented at `dab800a4bf0b755bd411f4be171b24ff4caff797`, awaiting exact-SHA reviewer sign-off
+Persistent status: C1.3 semantic-key identity/surface-local authority foundation signed off at `d440466b87d4234339b3fb5dd0ac6845b0be7fa8`; C1.1 synchronized surface/composed-window capture implemented at `f6060f951ccb7c25d0f1b9a422a4d6a1c0496971`, awaiting exact-SHA reviewer sign-off
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -359,9 +359,9 @@ because one request completed:
 * [x] compose the identity once in the opt-in main-process control plane and
   expose only the redacted `inspect.process` query; ordinary Papers runs do
   not initialize the diagnostic identity.
-* [ ] implement the bounded renderer observation and native PNG capture.
-* [x] expose the first read-only `capture.surface` command only after the
-  synchronized service exists; composed `capture.window` remains open.
+* [x] implement the bounded renderer observation and native PNG capture.
+* [x] expose the read-only `capture.surface` and composed `capture.window`
+  commands only after their synchronized services exist.
 
 ### Current per-surface observation tracker (active C1.1 work)
 
@@ -389,24 +389,28 @@ renderFailed
 * [x] cross-window adoption and rollback re-establish the exact generation;
 * [x] no capture infers current state by searching historical diagnostics.
 
-Implementation checkpoint: pushed head [`dab800a`](https://github.com/Futahua/Papers-3/commit/dab800a4bf0b755bd411f4be171b24ff4caff797)
-adds a main-issued per-navigation document instance token delivered to the
-newly finished preload, buffered scoped observations until that token arrives,
-exact sender/document fence correlation, immediate monotonic layout-epoch invalidation, immutable
-pre/post capture snapshots, bounded renderer-replacement retry handling, and
-process-ephemeral artifact cleanup across restarts. Focused deterministic tests
-cover document identity, layout invalidation, renderer churn, state changes
-during artifact finalization, artifact integrity and restart cleanup. Validation:
-`npm run typecheck`, `npm test` (82 files: 830 passed, 4 skipped), build,
-focused `project-visual-diagnostics.e2e.ts`, and `git diff --check` all pass.
-The full E2E aggregate remains non-green only in the previously recorded
+Implementation checkpoint: pushed head [`f6060f9`](https://github.com/Futahua/Papers-3/commit/f6060f951ccb7c25d0f1b9a422a4d6a1c0496971)
+adds the main-issued per-navigation document token, buffered scoped
+observations, exact sender/document fences, layout-epoch invalidation,
+immutable pre/post surface snapshots, bounded renderer replacement retries,
+process-ephemeral artifact cleanup, and the composed native-window capture
+slice. `capture.window` obtains the exact `BaseWindow.getMediaSourceId()`,
+matches it against Electron's `desktopCapturer` window sources, records the
+thumbnail's actual pixel dimensions, snapshots the native bounds/topology and
+visible surface revisions, and retries once on any member/window change. The
+same opaque artifact store and post-write deletion fence are used for both
+surface and window captures. Focused deterministic tests cover exact source
+matching, timeout/bounds rejection, stable capture, state-change retry, and
+protocol dispatch. Validation: `npm run typecheck`, `npm test` (84 files:
+836 passed, 4 skipped), build, focused visual diagnostics E2E, focused composed
+window E2E with two same-title windows, and `git diff --check` all pass. The
+full E2E aggregate remains non-green only in the previously recorded
 permission/fixture-sensitive suites; no release/install/package action was run.
 
-The older pre-capture focused-test checkpoint above is retained only as
-history; the active implementation and validation checkpoint is the pushed
-`6dff84c` record immediately above. This is not C1.1 completion: composed
-window capture, packaged/alias proof, and the later geometry/assertion layers
-remain unchecked.
+The older pre-capture checkpoints above are retained as history. The active
+implementation checkpoint is `f6060f9`; packaged/alias proof and later
+geometry/assertion layers remain unchecked until the reviewer clears this
+capture gate.
 
 Reviewer checkpoint: **SIGNED OFF** for the process-identity/fence foundation
 at pushed head `58b27f6cb7ef4dca1a9ef2f99dbd06c7d1d0c468`. The reviewer found no
@@ -434,12 +438,20 @@ checklist is:
   historical diagnostic ring;
 * [x] fixed bounded renderer fence request/response with capture correlation;
 * [x] Papers-owned opaque artifact store with atomic finalize and bounded reads;
-* [ ] synchronized `capture.surface` and composed `capture.window` control
-  commands (`capture.surface` exists; composed `capture.window` remains open);
+* [x] synchronized `capture.surface` and composed `capture.window` control
+  commands, with exact native source matching and actual pixel dimensions;
 * [x] exact-target, retry, instability, no-mutation and artifact-integrity
   deterministic evidence;
 * [ ] packaged/alias/restart acceptance evidence;
 * [ ] exact-SHA reviewer sign-off before advancing to geometry/assertions.
+
+Reviewer checkpoint: **SIGNED OFF** for the synchronized `capture.surface`
+slice at exact pushed head `d25b5d643092b3a32e7e2836b7cea10d16c370d3`.
+The reviewer accepted the main-issued navigation token, exact renderer fence,
+layout epoch, immutable summaries, renderer-churn retry, and artifact cleanup.
+The composed `capture.window` implementation is now at
+`f6060f951ccb7c25d0f1b9a422a4d6a1c0496971` and is awaiting its own exact-SHA
+review; do not advance to geometry/assertions until that review is explicit.
 
 ### Required invariant
 
