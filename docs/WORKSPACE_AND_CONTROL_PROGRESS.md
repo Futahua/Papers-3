@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry is signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, while the explicit `visual.assert` availability guard and C1.4 baseline integrity/cleanup correction are at `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`, awaiting exact-SHA reviewer audit
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry and `visual.assert` availability are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db` and `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`; C1.4 baseline read/update concurrency correction is at `e2cb40f4b3bc1c78f523f847709fa2f8ed902ef0`, awaiting exact-SHA reviewer audit
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1727,12 +1727,16 @@ A failing test must never silently “bless” its new screenshot.
 * [x] baseline reads re-hash the referenced PNG;
 * [x] successful reads/replacements remove orphaned content-addressed PNGs and
   temporary files without deleting the manifest-referenced baseline;
+* [x] baseline reads and updates share one serialized operation queue, so
+  cleanup cannot delete staged files from an in-progress update;
 * [ ] user profile/state directories are never baseline sources.
 
 Implementation checkpoint: deterministic baseline/diff core and its integrity
-corrections are prepared at `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`.
+corrections are prepared at `e2cb40f4b3bc1c78f523f847709fa2f8ed902ef0`.
 The core preserves the previous manifest on interrupted publication, validates
 PNG structure/dimensions, serializes updates, and cleans orphaned artifacts.
+Reads and updates use the same serialized queue, and a deterministic race test
+proves a reader cannot delete staged PNG or temporary manifest files.
 Integration with a live capture command and a real fixture remains open until
 its own exact-SHA review.
 
