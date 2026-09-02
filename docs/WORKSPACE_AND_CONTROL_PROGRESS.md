@@ -442,9 +442,11 @@ later lifecycle hooks will append to:
   target-bound signal seam.
 * [x] the adapter detaches listeners cleanly and introduces no timers, polling,
   reloads, or recovery side effects.
-* [ ] attribute real resource failures through `session.webRequest` to an exact
-  monitored WebContents/surface; the adapter does not claim a nonexistent
-  WebContents event.
+* [x] `src/main/visual/visualResourceMonitor.ts` attributes real
+  `session.webRequest.onErrorOccurred` failures through the exact current
+  WebContents/surface authority. It records only bounded resource kind and
+  sanitized error text; source URLs and unknown/stale WebContents are ignored,
+  and the single listener detaches on shutdown.
 * [x] compose one monitor and bounded buffer per opt-in Papers host window,
   detach both on native-window close, and expose the read-only exact-target
   `inspect.visual.diagnostics` control query.
@@ -456,14 +458,19 @@ later lifecycle hooks will append to:
   remain explicit and project hydration remains project-owned.
 * [x] the authority resolver has a focused old-sender/current-runtime
   regression at the IPC composition boundary.
-* [ ] expose event subscription and resource attribution through the
-  authenticated control plane.
+* [ ] expose event subscription through the authenticated control plane.
+
+The resource-attribution adapter and its focused regression tests are
+implemented but await reviewer sign-off. The next review must verify the real
+Electron `webRequest` listener shape, stale-WebContents rejection, URL
+non-retention, and shutdown detachment.
 
 Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 6/6;
 `tests/unit/visualLifecycleMonitor.test.ts` passes 3/3;
-the full host suite passes 761/761 with 4 skipped across 68 files; typecheck and
-diff check pass. This is not C1.2 completion; project-frame routing, resource
-attribution, event subscription, and broader control exposure remain unchecked.
+`tests/unit/visualResourceMonitor.test.ts` passes 3/3; the full host suite
+passes 767/767 with 4 skipped across 69 passed files and 1 skipped file;
+typecheck and diff check pass. This is not C1.2 completion; event subscription
+and broader control exposure remain unchecked.
 
 Reviewer checkpoint: **SIGNED OFF** for the lifecycle adapter at
 `efd24422296d9b64c974dcb3b97073d0629e25b0` and for the host-composition/control
@@ -479,8 +486,9 @@ The renderer-signal routing extension is also **SIGNED OFF** at
 `resolveVisualDiagnosticTarget` is the production authority seam, stale replaced
 project senders are refused even while logical bindings lag cleanup, renderer
 payload targets are ignored, and no preload claims paint or layout stability
-automatically. Resource attribution, event subscription, and screenshot capture
-remain unchecked.
+automatically. The resource-attribution adapter was added after that gate and
+is intentionally awaiting fresh reviewer sign-off; event subscription and
+screenshot capture remain unchecked.
 
 ## Architectural boundary / likely owner
 

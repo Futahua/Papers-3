@@ -44,6 +44,7 @@ import { controlBuildIdentity } from './buildIdentity';
 import { createProcessInstanceIdentity, currentProcessInstanceSeed, type ProcessInstanceIdentity } from './visual/processIdentity';
 import { attachVisualLifecycleMonitor, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
 import { createVisualDiagnosticBuffer, type VisualDiagnosticBuffer } from './visual/visualDiagnostics';
+import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visual/visualResourceMonitor';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
@@ -147,6 +148,7 @@ const workspaceIds = new Map<number, string>();
 const closingPapersWindows = new Set<number>();
 const visualDiagnosticsByWindow = new Map<number, VisualDiagnosticBuffer>();
 const visualLifecycleMonitors = new Map<number, VisualLifecycleMonitor>();
+let visualResourceMonitor: VisualResourceMonitor | null = null;
 
 /** The exact project runtime belonging to a bound project-frame sender. A host
  * sender is only a window actor and must use an explicit surface id. */
@@ -1522,21 +1524,29 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     isHostSender: (sender) => facade.isHostSender(sender),
     createAdditionalWindow: async () => { await createAdditionalPapersWindow(); },
   });
+  const resolveVisualTarget = (sender: { id: number }) => resolveVisualDiagnosticTarget(sender, {
+    hostWindowForSender: (senderId) => papersWindows.windowForSender(senderId),
+    isCurrentHostSender: (candidate, windowId) => papersWindows.get(windowId)?.owned.hostView.webContents.id === candidate.id,
+    projectContextForSender: (senderId) => {
+      const context = surfaceContexts.contextForSender(senderId);
+      return context?.surfaceId ? { windowId: context.windowId, surfaceId: context.surfaceId } : null;
+    },
+    isLiveSurface: (surfaceId, windowId) => logicalSurfaces.isLiveIn(surfaceId, windowId),
+    isCurrentProjectSender: (candidate, windowId, surfaceId) =>
+      papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.isSender(candidate as WebContents) === true,
+  });
   registerVisualDiagnosticsIpc({
     ipcMain,
-    resolveTarget: (sender) => resolveVisualDiagnosticTarget(sender, {
-      hostWindowForSender: (senderId) => papersWindows.windowForSender(senderId),
-      isCurrentHostSender: (candidate, windowId) => papersWindows.get(windowId)?.owned.hostView.webContents.id === candidate.id,
-      projectContextForSender: (senderId) => {
-        const context = surfaceContexts.contextForSender(senderId);
-        return context?.surfaceId ? { windowId: context.windowId, surfaceId: context.surfaceId } : null;
-      },
-      isLiveSurface: (surfaceId, windowId) => logicalSurfaces.isLiveIn(surfaceId, windowId),
-      isCurrentProjectSender: (candidate, windowId, surfaceId) =>
-        papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.isSender(candidate as WebContents) === true,
-    }),
+    resolveTarget: resolveVisualTarget,
     bufferForWindow: (windowId) => visualDiagnosticsByWindow.get(windowId) ?? null,
   });
+  if (process.env['PAPERS_DEV_CONTROL'] === '1') {
+    visualResourceMonitor = attachVisualResourceMonitor(
+      session.defaultSession.webRequest,
+      resolveVisualTarget,
+      (windowId) => visualDiagnosticsByWindow.get(windowId) ?? null,
+    );
+  }
   let papersControlServer: PapersControlServer | null = null;
   if (process.env['PAPERS_DEV_CONTROL'] === '1') {
     const descriptorPath = process.env['PAPERS_DEV_CONTROL_DESCRIPTOR']
@@ -1619,6 +1629,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     if (capabilityQuitComplete) return;
     event.preventDefault();
     if (!capabilityQuitPromise) {
+      visualResourceMonitor?.detach();
+      visualResourceMonitor = null;
       windowPickSession.cancel().catch(() => undefined);
       // Control drains FIRST. A control mutation already in flight must not
       // overlap teardown of the services a newly created window depends on, so
