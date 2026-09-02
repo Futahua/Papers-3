@@ -56,4 +56,3 @@ describe('bounded visual diagnostic buffer', () => {
     expect(() => createVisualDiagnosticBuffer({ capacity: 513 })).toThrow();
   });
 });
-
