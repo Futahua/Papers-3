@@ -401,7 +401,7 @@ async function bootstrap(): Promise<void> {
     if (workspace) detachRegistry.unregister(workspace.id);
   };
   const onProjectConsoleMessage = process.env['PAPERS_DEV_CONTROL'] === '1'
-    ? (windowId: number, surfaceId: string, level: number, message: string): void => {
+    ? (windowId: number, surfaceId: string, senderId: number, level: number, message: string): void => {
       if (level !== 3 || message.length === 0) return;
       const isUnhandledRejection = message.startsWith('Uncaught (in promise)');
       const isUncaughtError = message.startsWith('Uncaught');
@@ -410,10 +410,12 @@ async function bootstrap(): Promise<void> {
       const detail = isUnhandledRejection
         ? (message.slice(prefix.length).trim().replace(/^Error:\s*/i, '') || 'unhandled rejection')
         : (message || 'uncaught error');
-      const buffer = visualDiagnosticsByWindow.get(windowId);
+      const target = resolveVisualTarget({ id: senderId });
+      if (!target || target.windowId !== windowId || target.surfaceId !== surfaceId) return;
+      const buffer = visualDiagnosticsByWindow.get(target.windowId);
       if (!buffer) return;
       try {
-        recordRendererVisualDiagnostic(buffer, { windowId, surfaceId }, {
+        recordRendererVisualDiagnostic(buffer, target, {
           kind: isUnhandledRejection ? 'unhandled-rejection' : 'uncaught-error',
           message: detail,
         });
@@ -811,7 +813,32 @@ async function bootstrap(): Promise<void> {
     showBackpackProjectSurface: async (senderId, surfaceId, url) => {
       const runtime = runtimeForHostSurface(senderId, surfaceId);
       if (!runtime) throw new Error('This surface has no Papers window.');
-      await runtime.show(url);
+      const owningWindowId = papersWindows.windowForSender(senderId)
+        ?? surfaceContexts.contextForSender(senderId)?.windowId
+        ?? null;
+      let stagedFrameSender: number | null = null;
+      try {
+        await runtime.show(url, {
+          beforeLoad: (nextFrameSender) => {
+            stagedFrameSender = nextFrameSender;
+            const projectId = runtime.liveProjectId;
+            if (!projectId || owningWindowId === null) return;
+            // Bind before navigation so a bootstrap diagnostic can be
+            // resolved through the same sender-authority path as a later IPC
+            // signal. A staged cross-window runtime has no logical binding yet
+            // and therefore remains fail-closed in that resolver.
+            surfaceContexts.bind(nextFrameSender, {
+              surfaceId,
+              projectId,
+              windowId: owningWindowId,
+              kind: 'project',
+            });
+          },
+        });
+      } catch (caught) {
+        if (stagedFrameSender !== null) surfaceContexts.unbind(stagedFrameSender);
+        throw caught;
+      }
       // Phase 1A: bind both senders that may act for this project — the host
       // view that opened it and the project frame it hosts. The project id is
       // the surface origin's host, so the binding is derived from the surface
@@ -820,9 +847,6 @@ async function bootstrap(): Promise<void> {
       // project frame it now hosts, in the same window.
       const projectId = runtime.liveProjectId;
       const frameSender = runtime.senderId;
-      const owningWindowId = papersWindows.windowForSender(senderId)
-        ?? surfaceContexts.contextForSender(senderId)?.windowId
-        ?? null;
       if (projectId && frameSender !== null && owningWindowId !== null) {
         // The surface already exists: the host created it when the project
         // was opened and named it in this call. Binding the frame is attaching

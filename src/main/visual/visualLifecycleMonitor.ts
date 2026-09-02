@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { VisualDiagnosticBuffer, VisualDiagnosticPayload } from './visualDiagnostics';
+import { redactDiagnosticText, type VisualDiagnosticBuffer, type VisualDiagnosticPayload } from './visualDiagnostics';
 
 export interface VisualDiagnosticTarget {
   windowId: number;
@@ -49,6 +49,21 @@ export function recordRendererVisualDiagnostic(
   payload: unknown,
 ): void {
   const parsed = rendererDiagnosticPayloadSchema.parse(payload);
+  // A bootstrap failure can arrive through both Electron's early console
+  // fallback and the fixed main-world observer a few milliseconds apart. Keep
+  // one evidence record for that same target/kind/message burst while still
+  // retaining later repeated failures.
+  const latest = buffer.snapshot().at(-1);
+  if (latest
+    && latest.target.windowId === target.windowId
+    && latest.target.surfaceId === target.surfaceId
+    && latest.payload.kind === parsed.kind
+    && 'message' in latest.payload
+    && latest.payload.message === redactDiagnosticText(parsed.message)) {
+    const observedAt = Date.parse(latest.observedAt);
+    const age = Date.now() - observedAt;
+    if (Number.isFinite(observedAt) && age >= 0 && age <= 1000) return;
+  }
   buffer.append(target, parsed);
 }
 

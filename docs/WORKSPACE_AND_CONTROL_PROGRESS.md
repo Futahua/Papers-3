@@ -485,14 +485,14 @@ must verify opt-in installation, strict payload shape, sender authority,
 redaction, and no-throw behavior.
 
 Implementation checkpoint: focused preload/host/IPC/lifecycle coverage passes
-12/12 and the real developer-control Electron suite passes 6/6, including
-main-world uncaught-error and unhandled-rejection capture, exact host-window
-authority, redaction, and no duplicate isolated observer. The full host suite
-passes 776/776 with 4 skipped across 70 passed files and 1 skipped file;
-typecheck, production build, and diff check pass. This is not C1.2 completion;
-the renderer-failure slice still requires exact-SHA reviewer sign-off. The
-separate project-surface Electron regression passes 1/1 with exact
-`{windowId,surfaceId}` authority and redaction.
+12/12 and the developer-control plus neutral-project Electron suite passes
+7/7, including main-world uncaught-error and unhandled-rejection capture,
+exact host-window/surface authority, redaction, bootstrap isolation, staged
+sender refusal, current replacement acceptance, and no duplicate observer
+records. The full host suite passes 776/776 with 4 skipped across 70 passed
+files and 1 skipped file; typecheck, production build, and diff check pass.
+This is not C1.2 completion; the renderer-failure slice still requires
+exact-SHA reviewer sign-off.
 
 Reviewer checkpoint: **SIGNED OFF** for the lifecycle adapter at
 `efd24422296d9b64c974dcb3b97073d0629e25b0` and for the host-composition/control
@@ -522,17 +522,24 @@ Electron's `contextBridge.executeInMainWorld` at document start. Electron 43 can
 emit a project's first synchronous throw/rejection as an error-level
 `console-message` before that experimental callback's listeners receive it, so
 the project runtime also has a bounded bootstrap-only console fallback. It is
-attached to the exact newly-created project WebContents, records only uncaught
-error/rejection forms, is disabled at `dom-ready` to prevent duplicate later
-events, and is best-effort. It is not awaited by `show()`, so observation cannot
-make ordinary project startup fail.
+attached to the exact newly-created project WebContents, carries that sender id
+through the callback, and reuses the sender-authoritative resolver immediately
+before recording. A prepared cross-window renderer therefore has no canonical
+surface and is refused; a replaced old renderer is refused even if its listener
+has not detached yet. The fallback records only uncaught error/rejection forms,
+is disabled at `dom-ready`, and the shared failure path suppresses the same
+target/kind/message burst when both sources report it. It is best-effort and is
+not awaited by `show()`, so observation cannot make ordinary project startup
+fail.
 The main-process IPC boundary accepts only strict bounded `{kind,message}`
 payloads after sender-authoritative target resolution. No runtime capability
 query, shared sandbox preload chunk, arbitrary renderer execution, or polling
 loop is involved. The dev-only main-world test seams have no arguments and emit
 fixed path/credential-shaped messages solely to prove the end-to-end redaction
 and exact-target paths. The neutral project regression uses immediate startup
-throw/rejection and proves that `show()` still resolves while those failures
+throw/rejection, a prepared cross-window renderer, and a post-adoption
+replacement failure; it proves that staged records are refused, current
+replacement records are accepted, and `show()` still resolves while failures
 are captured.
 
 ## Architectural boundary / likely owner

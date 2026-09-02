@@ -18,7 +18,7 @@ export interface PapersWindowFactoryOptions {
   hostPreloadPath: string;
   projectPreloadPath: string;
   onProjectSurfaceClosed?: (windowId: number, surfaceId: string, projectId: string) => void;
-  onProjectConsoleMessage?: (windowId: number, surfaceId: string, level: number, message: string) => void;
+  onProjectConsoleMessage?: (windowId: number, surfaceId: string, senderId: number, level: number, message: string) => void;
   rendererUrl?: string;
   rendererFile: string;
 }
@@ -62,7 +62,7 @@ export function createPapersWindow(options: PapersWindowFactoryOptions): PapersW
     options.transparent,
     (surfaceId, projectId) => options.onProjectSurfaceClosed?.(window.id, surfaceId, projectId),
     undefined,
-    (surfaceId, level, message) => options.onProjectConsoleMessage?.(window.id, surfaceId, level, message),
+    (surfaceId, senderId, level, message) => options.onProjectConsoleMessage?.(window.id, surfaceId, senderId, level, message),
   );
 
   const applyHostSurface = (): void => {

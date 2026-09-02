@@ -18,7 +18,7 @@ export class BackpackProjectRuntime {
     private readonly preloadPath: string,
     transparent: boolean,
     private readonly onSurfaceClosed?: (projectId: string) => void,
-    private readonly onConsoleMessage?: (level: number, message: string) => void,
+    private readonly onConsoleMessage?: (senderId: number, level: number, message: string) => void,
   ) {
     this.transparent = transparent;
   }
@@ -123,7 +123,7 @@ export class BackpackProjectRuntime {
       const level = args[1];
       const message = args[2];
       if (capturingBootstrapConsole && typeof level === 'number' && typeof message === 'string' && message.length > 0) {
-        this.onConsoleMessage?.(level, message);
+        this.onConsoleMessage?.(view.webContents.id, level, message);
       }
     });
     options.beforeLoad?.(view.webContents.id);

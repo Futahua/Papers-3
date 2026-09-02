@@ -66,11 +66,15 @@ describe('visual lifecycle monitor', () => {
     recordRendererVisualDiagnostic(buffer, { windowId: 8, surfaceId: 'surface-c' }, {
       kind: 'uncaught-error', message: 'C:\\private\\view.js token=secret',
     });
+    recordRendererVisualDiagnostic(buffer, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'C:\\private\\view.js token=secret',
+    });
 
     expect(buffer.snapshot()).toMatchObject([{
       target: { windowId: 8, surfaceId: 'surface-c' },
       payload: { kind: 'uncaught-error', message: '<path> token=<redacted>' },
     }]);
+    expect(buffer.snapshot()).toHaveLength(1);
     expect(() => recordRendererVisualDiagnostic(buffer, { windowId: 8 }, {
       kind: 'uncaught-error', message: 'not retained', stack: 'must be ignored',
     })).toThrow();

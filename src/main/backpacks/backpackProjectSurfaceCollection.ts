@@ -11,7 +11,7 @@ export interface PreparedProjectSurface {
 type RuntimeFactory = (
   surfaceId: string,
   onSurfaceClosed?: (projectId: string) => void,
-  onConsoleMessage?: (level: number, message: string) => void,
+  onConsoleMessage?: (senderId: number, level: number, message: string) => void,
 ) => BackpackProjectRuntime;
 
 /**
@@ -38,7 +38,7 @@ export class BackpackProjectSurfaceCollection {
     private transparent: boolean,
     private readonly onSurfaceClosed?: (surfaceId: string, projectId: string) => void,
     private readonly createRuntime?: RuntimeFactory,
-    private readonly onProjectConsoleMessage?: (surfaceId: string, level: number, message: string) => void,
+    private readonly onProjectConsoleMessage?: (surfaceId: string, senderId: number, level: number, message: string) => void,
   ) {}
 
   get(surfaceId: string): BackpackProjectRuntime | null {
@@ -51,7 +51,7 @@ export class BackpackProjectSurfaceCollection {
     if (existing) return existing;
 
     const onSurfaceClosed = (projectId: string): void => this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
-    const onConsoleMessage = (level: number, message: string): void => this.onProjectConsoleMessage?.(surfaceId, level, message);
+    const onConsoleMessage = (senderId: number, level: number, message: string): void => this.onProjectConsoleMessage?.(surfaceId, senderId, level, message);
     const runtime = this.createRuntime?.(surfaceId, onSurfaceClosed, onConsoleMessage) ?? new BackpackProjectRuntime(
       this.window, this.preloadPath, this.transparent, onSurfaceClosed,
       onConsoleMessage,
@@ -70,7 +70,7 @@ export class BackpackProjectSurfaceCollection {
   prepare(surfaceId: string): PreparedProjectSurface {
     if (this.runtimes.has(surfaceId)) throw new Error('project surface is already present in this window');
     let lifecycleActive = false;
-    const onConsoleMessage = (level: number, message: string): void => this.onProjectConsoleMessage?.(surfaceId, level, message);
+    const onConsoleMessage = (senderId: number, level: number, message: string): void => this.onProjectConsoleMessage?.(surfaceId, senderId, level, message);
     const runtime = this.createRuntime?.(surfaceId, (projectId) => {
       if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
     }, onConsoleMessage) ?? new BackpackProjectRuntime(
