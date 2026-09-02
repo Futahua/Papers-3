@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { evalInBackpackProject, evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
 // @ts-expect-error -- the shared control client is plain ESM shipped with the tools.
@@ -11,6 +13,50 @@ import { connectPapersControl, readDescriptor } from '../../tools/papersControlC
 const PROJECT = 'bp-11111111-1111-4111-8111-111111111111';
 let launched: LaunchedApp;
 let descriptorPath: string;
+let projectSourcePath: string;
+
+function storedZipEntries(bytes: Uint8Array): Map<string, Uint8Array> {
+  const entries = new Map<string, Uint8Array>();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const decoder = new TextDecoder();
+  let offset = 0;
+  while (offset + 30 <= bytes.byteLength && view.getUint32(offset, true) === 0x04034b50) {
+    const nameLength = view.getUint16(offset + 26, true);
+    const extraLength = view.getUint16(offset + 28, true);
+    const size = view.getUint32(offset + 22, true);
+    const nameStart = offset + 30;
+    const dataStart = nameStart + nameLength + extraLength;
+    entries.set(decoder.decode(bytes.subarray(nameStart, nameStart + nameLength)), bytes.slice(dataStart, dataStart + size));
+    offset = dataStart + size;
+  }
+  return entries;
+}
+
+async function readArtifactWith(
+  artifactId: string,
+  artifactCall: (params: { artifactId: string; offset: number; length: number }) => Promise<unknown> =
+    (params) => call('visual.artifact.read', params),
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  let offset = 0;
+  let done = false;
+  while (!done) {
+    const chunk = await artifactCall({ artifactId, offset, length: 1024 }) as {
+      nextOffset: number; done: boolean; bytesBase64: string;
+    };
+    chunks.push(new Uint8Array(Buffer.from(chunk.bytesBase64, 'base64')));
+    offset = chunk.nextOffset;
+    done = chunk.done;
+  }
+  const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+  const result = new Uint8Array(size);
+  let cursor = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, cursor);
+    cursor += chunk.byteLength;
+  }
+  return result;
+}
 
 async function call(method: string, params: unknown = {}): Promise<unknown> {
   const connection = await connectPapersControl(await readDescriptor(descriptorPath));
@@ -39,6 +85,7 @@ beforeAll(async () => {
   descriptorPath = join(userDataDir, 'dev-control.json');
   const dataDir = join(userDataDir, 'PapersData');
   const projectRoot = join(dataDir, 'neutral-project');
+  projectSourcePath = join(projectRoot, 'public', 'app.js');
   const backpackDir = join(dataDir, 'backpacks', PROJECT);
   const backpack = {
     id: PROJECT, name: 'Neutral project', type: 'environment',
@@ -52,7 +99,7 @@ beforeAll(async () => {
   await writeFile(join(projectRoot, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: PROJECT, entry: 'public/index.html' }));
   await writeFile(join(projectRoot, 'public', 'index.html'), '<!doctype html><script src="app.js"></script><main data-papers-visual-key="canvas.root"><h1 data-papers-visual-key="title.main">Neutral project</h1></main>');
   await writeFile(join(projectRoot, 'public', 'empty.html'), '<!doctype html><title>Empty visual fixture</title><main>Empty</main>');
-  await writeFile(join(projectRoot, 'public', 'app.js'), `window.__papersProjectVisualDiagnosticTestV1 = () => {
+  await writeFile(projectSourcePath, `window.__papersProjectVisualDiagnosticTestV1 = () => {
       setTimeout(() => { throw new Error('C:\\\\private\\\\project-late.js token=secret'); }, 0);
       setTimeout(() => { Promise.reject(new Error('C:\\\\private\\\\project-late-promise.js password=secret')); }, 0);
     };
@@ -71,6 +118,16 @@ afterAll(async () => {
 describe('project renderer visual diagnostics', () => {
   it('captures main-world failures through the exact window and surface target', async () => {
     const windowId = await launched.app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows()[0]!.id);
+    const processIdentity = await call('inspect.process') as {
+      pid: number; appInstanceId: string; startedAt: string;
+      build: { version: string; commit: string; packaged: boolean };
+      executableIdentity: { status: string; canonicalFileId?: string };
+    };
+    expect(processIdentity).toMatchObject({
+      pid: expect.any(Number), appInstanceId: expect.any(String), startedAt: expect.any(String),
+      build: { version: expect.any(String), commit: expect.any(String), packaged: Boolean(process.env['PAPERS_E2E_EXE']) },
+      executableIdentity: { status: expect.stringMatching(/^(available|unavailable)$/) },
+    });
     const before = await call('inspect.visual.diagnostics', { windowId }) as Array<{ sequence: number }>;
     const beforeSequence = Math.max(0, ...before.map((record) => record.sequence));
     const opened = await evalInHost<{ url: string; surfaceId: string }>(
@@ -389,6 +446,57 @@ describe('project renderer visual diagnostics', () => {
     expect(renderFailedRecord.payload).toMatchObject({
       kind: 'lifecycle', phase: 'render-failed', revision: 'neutral-rev-1', stage: 'parse', code: 'fixture-failure',
     });
+
+    const sourceHashBeforeFailureReport = createHash('sha256').update(await readFile(projectSourcePath)).digest('hex');
+    const mcpTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [join(process.cwd(), 'tools', 'papersMcp.mjs'), '--descriptor', descriptorPath],
+      cwd: process.cwd(), stderr: 'pipe',
+    });
+    const mcpClient = new Client({ name: 'papers-visual-report-e2e', version: '1.0.0' });
+    await mcpClient.connect(mcpTransport);
+    const mcpCall = async (method: string, params: unknown): Promise<unknown> => {
+      const response = await mcpClient.callTool({ name: 'papers_control', arguments: { method, params } });
+      if (response.isError) throw new Error('MCP visual operation failed');
+      const content = response.content as Array<{ type: string; text: string }>;
+      return JSON.parse(content[0]!.text);
+    };
+    let failureReport: { artifactId: string; size: number; sha256: string };
+    let failureReportBytes: Uint8Array;
+    try {
+      failureReport = await mcpCall('visual.report.create', {
+        windowId: secondary.windowId, surfaceId: second.surfaceId, beforeMs: 10_000, elementKeys: [],
+        include: {
+          surfaceCapture: false, elementCaptures: false, semanticElements: true, recentLifecycle: true,
+          recentDiagnostics: true, timeline: true,
+        },
+      }) as typeof failureReport;
+      failureReportBytes = await readArtifactWith(failureReport.artifactId,
+        (params) => mcpCall('visual.artifact.read', params));
+    } finally {
+      await mcpClient.close();
+    }
+    expect(failureReportBytes.byteLength).toBe(failureReport.size);
+    expect(createHash('sha256').update(failureReportBytes).digest('hex')).toBe(failureReport.sha256);
+    const failureEntries = storedZipEntries(failureReportBytes);
+    const failureManifest = JSON.parse(new TextDecoder().decode(failureEntries.get('manifest.json')!)) as {
+      entries: Array<{ name: string; size: number; sha256: string }>;
+    };
+    for (const entry of failureManifest.entries) {
+      const bytes = failureEntries.get(entry.name);
+      expect(bytes, `missing failure report entry ${entry.name}`).toBeDefined();
+      expect(bytes!.byteLength).toBe(entry.size);
+      expect(createHash('sha256').update(bytes!).digest('hex')).toBe(entry.sha256);
+    }
+    const failureDiagnostics = new TextDecoder().decode(failureEntries.get('diagnostics.ndjson'));
+    const failureLifecycle = new TextDecoder().decode(failureEntries.get('lifecycle.ndjson'));
+    expect(JSON.parse(new TextDecoder().decode(failureEntries.get('process.json')))).toEqual(processIdentity);
+    expect(failureDiagnostics).toContain('"kind":"hydration-failed"');
+    expect(failureDiagnostics).toContain('"stage":"parse"');
+    expect(failureDiagnostics).toContain('"code":"fixture-failure"');
+    expect(failureLifecycle).toContain('"phase":"render-failed"');
+    expect(failureLifecycle).toContain('"revision":"neutral-rev-1"');
+    expect(createHash('sha256').update(await readFile(projectSourcePath)).digest('hex')).toBe(sourceHashBeforeFailureReport);
 
     const rendererSurvivalTimeOrigin = await evalInProjectWindow<number>(secondary.windowId, 'performance.timeOrigin');
     const throwBefore = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{ sequence: number }>;
