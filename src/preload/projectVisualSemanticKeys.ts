@@ -45,10 +45,10 @@ export function installProjectVisualSemanticKeyObserver(
   // Document-start can precede parser-created semantic nodes. These browser
   // lifecycle events provide a deterministic resend after the project sender
   // has been bound, without introducing a polling timer.
-  document.addEventListener('DOMContentLoaded', publish, { once: true });
-  document.addEventListener('load', publish, { once: true });
-  const observer = new MutationObserver(publish);
-  ipc.on?.(VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL, publish);
+  document.addEventListener('DOMContentLoaded', () => publish(), { once: true });
+  document.addEventListener('load', () => publish(), { once: true });
+  const observer = new MutationObserver(() => publish());
+  ipc.on?.(VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL, () => publish(true));
   observer.observe(document, {
     attributes: true,
     attributeFilter: [PAPERS_SEMANTIC_KEY_ATTRIBUTE],

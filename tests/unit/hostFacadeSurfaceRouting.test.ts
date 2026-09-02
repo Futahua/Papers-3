@@ -58,6 +58,7 @@ function createFacade() {
     adopt: vi.fn(),
     discard: vi.fn(),
   }));
+  const refreshVisualSemanticKeys = vi.fn();
   const markLeft = vi.fn(async () => {});
   const markEntered = vi.fn(async () => {});
   const workspaceLayouts = {
@@ -76,6 +77,7 @@ function createFacade() {
   const facade = new PapersHostFacade({
     surfaces,
     logicalSurfaces,
+    refreshVisualSemanticKeys,
     windowIdForSender: () => 1,
     // Realistic: only the host renderer of window 1 resolves. An unknown
     // sender is not a Papers window.
@@ -151,7 +153,7 @@ function createFacade() {
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
     setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, archivedProjects, markLeft,
     removedProjects, setArchived, remove, markEntered, workspaceLayouts, workspaceIds, workspaceRevisions, closingWindows,
-    commitPair, restorePair, prepareProjectSurface, rename, projectNames,
+    commitPair, restorePair, prepareProjectSurface, refreshVisualSemanticKeys, rename, projectNames,
   };
 }
 
@@ -667,7 +669,7 @@ describe('surface routing in the host facade', () => {
   it('restores the pair, logical owner, bindings, and notified hosts when target delivery fails', async () => {
     const {
       facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
-      sendToWindow, restorePair, prepareProjectSurface,
+      sendToWindow, restorePair, prepareProjectSurface, refreshVisualSemanticKeys,
     } = createFacade();
     const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     const sourceTopology = openWorkspaceSurface(createWorkspaceTopology(), {
@@ -698,6 +700,7 @@ describe('surface routing in the host facade', () => {
       surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
     });
     expect(surfaces.contextForSender(99)).toBeNull();
+    expect(refreshVisualSemanticKeys).toHaveBeenCalledWith(1, moved.surfaceId);
     expect(workspaceTopologies.get(1)).toEqual(sourceTopology);
     expect(workspaceTopologies.has(2)).toBe(false);
     expect(prepareProjectSurface.mock.results[0]?.value).toBeDefined();
@@ -710,7 +713,7 @@ describe('surface routing in the host facade', () => {
   it('retains forward canonical state when compensating persistence fails', async () => {
     const {
       facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
-      sendToWindow, restorePair, closeAttachedProjectSurface,
+      sendToWindow, restorePair, closeAttachedProjectSurface, refreshVisualSemanticKeys,
     } = createFacade();
     const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
     workspaceTopologies.set(1, openWorkspaceSurface(createWorkspaceTopology(), {
@@ -741,6 +744,7 @@ describe('surface routing in the host facade', () => {
       surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 2, kind: 'project',
     });
     expect(surfaces.contextForSender(FRAME)).toBeNull();
+    expect(refreshVisualSemanticKeys).toHaveBeenCalledWith(2, moved.surfaceId);
     expect(workspaceTopologies.get(1)?.surfaces).toEqual([]);
     expect(workspaceTopologies.get(2)?.surfaces.map(({ surfaceId }) => surfaceId)).toEqual([moved.surfaceId]);
     expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, moved.surfaceId);

@@ -50,6 +50,7 @@ beforeAll(async () => {
   await writeFile(join(dataDir, 'backpack-projects.json'), JSON.stringify({ schemaVersion: 1, projects: { [PROJECT]: { root: projectRoot } } }));
   await writeFile(join(projectRoot, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: PROJECT, entry: 'public/index.html' }));
   await writeFile(join(projectRoot, 'public', 'index.html'), '<!doctype html><script src="app.js"></script><main data-papers-visual-key="canvas.root"><h1 data-papers-visual-key="title.main">Neutral project</h1></main>');
+  await writeFile(join(projectRoot, 'public', 'empty.html'), '<!doctype html><title>Empty visual fixture</title><main>Empty</main>');
   await writeFile(join(projectRoot, 'public', 'app.js'), `window.__papersProjectVisualDiagnosticTestV1 = () => {
       setTimeout(() => { throw new Error('C:\\\\private\\\\project-late.js token=secret'); }, 0);
       setTimeout(() => { Promise.reject(new Error('C:\\\\private\\\\project-late-promise.js password=secret')); }, 0);
@@ -99,8 +100,6 @@ describe('project renderer visual diagnostics', () => {
     expect(await evalInBackpackProject(launched.app, 'Boolean(window.__papersVisualDiagnosticObserverV1)')).toBe(true);
     expect(await evalInBackpackProject(launched.app,
       `typeof window.papersVisualDiagnosticBridgeV1?.reportFirstPaint`)).toBe('undefined');
-    await evalInBackpackProject(launched.app,
-      'window.papersVisualDiagnosticBridgeV1.reportSemanticKeys(); true');
     await waitFor(async () => {
       const result = await call('inspect.visual.elements', {
         windowId, surfaceId: opened.surfaceId,
@@ -212,6 +211,23 @@ describe('project renderer visual diagnostics', () => {
       && record.target.surfaceId === second.surfaceId
       && (record.payload.kind === 'uncaught-error' || record.payload.kind === 'unhandled-rejection'));
     expect(stagedFailures).toHaveLength(0);
+    await evalInProjectWindow(secondary.windowId,
+      `window.location.href = ${JSON.stringify(`papers-backpack://${PROJECT}/public/empty.html`)}; true`);
+    await waitFor(async () => {
+      const result = await call('inspect.visual.elements', {
+        windowId: secondary.windowId, surfaceId: second.surfaceId,
+      }) as { elements: Array<{ key: string }> };
+      return result.elements.length === 0;
+    }, 10_000, 'same-renderer navigation clears semantic generation');
+    await evalInProjectWindow(secondary.windowId,
+      `window.location.href = ${JSON.stringify(opened.url)}; true`);
+    await waitFor(async () => {
+      const result = await call('inspect.visual.elements', {
+        windowId: secondary.windowId, surfaceId: second.surfaceId,
+      }) as { elements: Array<{ key: string }> };
+      return result.elements.some(({ key }) => key === 'canvas.root')
+        && result.elements.some(({ key }) => key === 'title.main');
+    }, 10_000, 'same-renderer navigation replaces semantic generation');
     await evalInProjectWindow<boolean>(secondary.windowId, 'window.__papersProjectVisualDiagnosticTestV1(); true');
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{

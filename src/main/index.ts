@@ -188,6 +188,12 @@ function invalidateVisualSemanticKeySender(windowId: number, surfaceId: string, 
   state.registry.clear();
 }
 
+function resetVisualSemanticKeyObservation(windowId: number, surfaceId: string, senderId: number): void {
+  const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
+  if (!state || state.currentSenderId !== senderId) return;
+  state.registry.clear();
+}
+
 function retireVisualSemanticKeySurface(surfaceId: string): void {
   for (const key of visualSemanticKeysBySurface.keys()) {
     if (key.endsWith(`\0${surfaceId}`)) visualSemanticKeysBySurface.delete(key);
@@ -507,6 +513,9 @@ async function bootstrap(): Promise<void> {
     ? (windowId: number, surfaceId: string, senderId: number, event: 'did-start-loading' | 'dom-ready'): void => {
       const target = resolveVisualTarget({ id: senderId });
       if (!target || target.windowId !== windowId || target.surfaceId !== surfaceId) return;
+      if (event === 'did-start-loading') {
+        resetVisualSemanticKeyObservation(windowId, surfaceId, senderId);
+      }
       const buffer = visualDiagnosticsByWindow.get(windowId);
       if (!buffer) return;
       try {
@@ -924,6 +933,9 @@ async function bootstrap(): Promise<void> {
     logicalSurfaces,
     retireLogicalSurface,
     moveLogicalSurface,
+    refreshVisualSemanticKeys: (windowId, surfaceId) => {
+      papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.refreshVisualSemanticKeys();
+    },
     // Phase 1B: a real lookup, with no singleton fallback left. A host
     // renderer resolves through the window registry; a project, detached or
     // widget sender resolves through the surface binding it already carries.

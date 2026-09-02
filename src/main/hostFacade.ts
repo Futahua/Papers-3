@@ -125,6 +125,8 @@ export interface FacadeDeps {
   retireLogicalSurface?: (surfaceId: string) => boolean;
   /** Move logical identity while retiring its old-window visual state. */
   moveLogicalSurface?: (surfaceId: string, targetWindowId: number) => boolean;
+  /** Refresh the fixed semantic observation after a canonical sender is bound. */
+  refreshVisualSemanticKeys?: (windowId: number, surfaceId: string) => void;
   /**
    * The Papers window a sender belongs to, or null when the host cannot say.
    *
@@ -245,6 +247,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private moveLogicalSurface(surfaceId: string, targetWindowId: number): boolean {
     return this.deps.moveLogicalSurface?.(surfaceId, targetWindowId)
       ?? this.deps.logicalSurfaces.moveToWindow(surfaceId, targetWindowId);
+  }
+
+  private refreshVisualSemanticKeys(windowId: number, surfaceId: string): void {
+    this.deps.refreshVisualSemanticKeys?.(windowId, surfaceId);
   }
 
   /** Hermes has one physical/global placement. Serialize every mutation from
@@ -1456,16 +1462,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
               for (const senderId of this.deps.surfaces.sendersForSurface(request.surfaceId)) {
                 this.deps.surfaces.unbind(senderId);
               }
-              if (!preparedAdopted) {
-                prepared.adopt();
-                preparedAdopted = true;
-              }
               this.deps.surfaces.bind(prepared.senderId, {
                 surfaceId: request.surfaceId,
                 projectId: sourceSurface.projectId,
                 windowId: request.targetWindowId,
                 kind: 'project',
               });
+              if (!preparedAdopted) {
+                prepared.adopt();
+                preparedAdopted = true;
+              }
+              this.refreshVisualSemanticKeys(request.targetWindowId, request.surfaceId);
               move.setWorkspaceState(
                 request.sourceWindowId,
                 stateForTopology(initialSourceState, sourceNext),
@@ -1503,6 +1510,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
             this.moveLogicalSurface(request.surfaceId, request.sourceWindowId);
             this.deps.surfaces.unbind(prepared.senderId);
             for (const { senderId, context } of oldContexts) this.deps.surfaces.bind(senderId, context);
+            this.refreshVisualSemanticKeys(request.sourceWindowId, request.surfaceId);
             move.setWorkspaceState(request.sourceWindowId, initialSourceState);
             move.setWorkspaceState(request.targetWindowId, initialTargetState);
           }
