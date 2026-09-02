@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { redactDiagnosticText, type VisualDiagnosticBuffer, type VisualDiagnosticPayload } from './visualDiagnostics';
+import type { VisualDiagnosticBuffer, VisualDiagnosticPayload } from './visualDiagnostics';
 
 export interface VisualDiagnosticTarget {
   windowId: number;
@@ -17,11 +17,23 @@ export interface VisualLifecycleMonitor {
   detach(): void;
 }
 
+export type RendererDiagnosticSource = 'observer' | 'bootstrap-console';
+
 const rendererOwnedPhases = ['state-hydrated', 'first-paint', 'layout-stable', 'render-failed'] as const;
 const rendererDiagnosticPayloadSchema = z.object({
   kind: z.enum(['uncaught-error', 'unhandled-rejection']),
   message: z.string().min(1).max(4096),
 }).strict();
+
+interface RecentRendererDiagnostic {
+  source: RendererDiagnosticSource;
+  target: VisualDiagnosticTarget;
+  kind: 'uncaught-error' | 'unhandled-rejection';
+  rawMessage: string;
+  observedAt: number;
+}
+
+const recentRendererDiagnostics = new WeakMap<VisualDiagnosticBuffer, RecentRendererDiagnostic[]>();
 
 /** Validate a renderer signal at the main-process boundary. The caller owns
  * the target resolution; a renderer only supplies the predefined phase. */
@@ -47,23 +59,24 @@ export function recordRendererVisualDiagnostic(
   buffer: VisualDiagnosticBuffer,
   target: VisualDiagnosticTarget,
   payload: unknown,
+  source: RendererDiagnosticSource = 'observer',
 ): void {
   const parsed = rendererDiagnosticPayloadSchema.parse(payload);
-  // A bootstrap failure can arrive through both Electron's early console
-  // fallback and the fixed main-world observer a few milliseconds apart. Keep
-  // one evidence record for that same target/kind/message burst while still
-  // retaining later repeated failures.
-  const latest = buffer.snapshot().at(-1);
-  if (latest
-    && latest.target.windowId === target.windowId
-    && latest.target.surfaceId === target.surfaceId
-    && latest.payload.kind === parsed.kind
-    && 'message' in latest.payload
-    && latest.payload.message === redactDiagnosticText(parsed.message)) {
-    const observedAt = Date.parse(latest.observedAt);
-    const age = Date.now() - observedAt;
-    if (Number.isFinite(observedAt) && age >= 0 && age <= 1000) return;
+  const observedAt = Date.now();
+  const recent = recentRendererDiagnostics.get(buffer) ?? [];
+  for (let index = recent.length - 1; index >= 0; index -= 1) {
+    if (observedAt - recent[index]!.observedAt > 1000) recent.splice(index, 1);
   }
+  const duplicate = recent.some((candidate) => candidate.source !== source
+    && candidate.target.windowId === target.windowId
+    && candidate.target.surfaceId === target.surfaceId
+    && candidate.kind === parsed.kind
+    // Compare the pre-redaction message so two different private paths or
+    // credential values cannot collide after they become <path>/<redacted>.
+    && candidate.rawMessage === parsed.message);
+  recent.push({ source, target: { ...target }, kind: parsed.kind, rawMessage: parsed.message, observedAt });
+  recentRendererDiagnostics.set(buffer, recent);
+  if (duplicate) return;
   buffer.append(target, parsed);
 }
 

@@ -65,7 +65,7 @@ describe('visual lifecycle monitor', () => {
     const buffer = createVisualDiagnosticBuffer();
     recordRendererVisualDiagnostic(buffer, { windowId: 8, surfaceId: 'surface-c' }, {
       kind: 'uncaught-error', message: 'C:\\private\\view.js token=secret',
-    });
+    }, 'bootstrap-console');
     recordRendererVisualDiagnostic(buffer, { windowId: 8, surfaceId: 'surface-c' }, {
       kind: 'uncaught-error', message: 'C:\\private\\view.js token=secret',
     });
@@ -75,6 +75,22 @@ describe('visual lifecycle monitor', () => {
       payload: { kind: 'uncaught-error', message: '<path> token=<redacted>' },
     }]);
     expect(buffer.snapshot()).toHaveLength(1);
+    const sameSource = createVisualDiagnosticBuffer();
+    recordRendererVisualDiagnostic(sameSource, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'same failure',
+    });
+    recordRendererVisualDiagnostic(sameSource, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'same failure',
+    });
+    expect(sameSource.snapshot()).toHaveLength(2);
+    const redactionCollision = createVisualDiagnosticBuffer();
+    recordRendererVisualDiagnostic(redactionCollision, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'C:\\private\\a.js token=one',
+    }, 'bootstrap-console');
+    recordRendererVisualDiagnostic(redactionCollision, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'D:\\private\\b.js token=two',
+    });
+    expect(redactionCollision.snapshot()).toHaveLength(2);
     expect(() => recordRendererVisualDiagnostic(buffer, { windowId: 8 }, {
       kind: 'uncaught-error', message: 'not retained', stack: 'must be ignored',
     })).toThrow();

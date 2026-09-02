@@ -418,7 +418,7 @@ async function bootstrap(): Promise<void> {
         recordRendererVisualDiagnostic(buffer, target, {
           kind: isUnhandledRejection ? 'unhandled-rejection' : 'uncaught-error',
           message: detail,
-        });
+        }, 'bootstrap-console');
       } catch {
         // Diagnostic collection is best effort and must never affect the
         // project renderer or normal Papers startup.
