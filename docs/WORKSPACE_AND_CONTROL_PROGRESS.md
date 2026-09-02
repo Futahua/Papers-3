@@ -296,6 +296,13 @@ Implementation checkpoint: local focused tests
 passes. This is not C1.1 completion; the remaining unchecked items are the
 user-visible capture and packaged proof.
 
+Reviewer checkpoint: **SIGNED OFF** for the process-identity/fence foundation
+at pushed head `58b27f6cb7ef4dca1a9ef2f99dbd06c7d1d0c468`. The reviewer found no
+remaining defect in this narrow slice after the `dev:0n` correction. Source was
+inspected from the pushed branch; validation reported 34/34 focused tests,
+typecheck, and `git diff --check`. Renderer capture/API remain intentionally
+unclaimed and are the next C1.1 work.
+
 ### Required invariant
 
 Two launches of the same executable through:
@@ -412,6 +419,30 @@ hydration-failed
 ```
 
 This phase eliminates restart-and-stare debugging.
+
+## Current implementation slice
+
+The first C1.2 slice defines the bounded, path-redacted evidence buffer that
+later lifecycle hooks will append to:
+
+* [x] `src/main/visual/visualDiagnostics.ts` defines strict lifecycle and
+  diagnostic payloads for navigation, DOM readiness, hydration, paint,
+  stability, render failure, console, uncaught errors, rejected promises,
+  navigation/resource failures, and renderer exit.
+* [x] the in-memory ring buffer has a bounded capacity, monotonic sequence,
+  exact target, timestamp, and copy-out snapshot; it never writes project
+  state and never starts a polling loop.
+* [x] local paths, URLs, and credential-like assignments in diagnostic text
+  are redacted before storage; unknown payload fields and malformed targets are
+  refused.
+* [ ] attach the contract to real host/project renderer lifecycle events.
+* [ ] expose event subscription and bounded diagnostic inspection through the
+  authenticated control plane.
+
+Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 6/6;
+the full host suite passes 757/757 with 4 skipped across 67 files; typecheck and
+diff check pass. This is not C1.2 completion; no renderer hooks or control
+exposure are claimed yet.
 
 ## Architectural boundary / likely owner
 
