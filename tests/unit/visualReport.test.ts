@@ -79,6 +79,7 @@ describe('visual reports', () => {
       'surface-capture.json', 'surface.png',
     ]));
     expect(entries.get('surface.png')).toEqual(new Uint8Array([137, 80, 78, 71]));
+    expect([...entries.keys()].filter((name) => name.endsWith('.png'))).toHaveLength(1);
     const manifest = JSON.parse(new TextDecoder().decode(entries.get('manifest.json')!)) as {
       entries: Array<{ name: string; size: number; sha256: string }>;
     };

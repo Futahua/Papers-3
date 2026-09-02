@@ -283,6 +283,16 @@ describe('project renderer visual diagnostics', () => {
     await expect(call('inspect.visual.elements', {
       windowId, surfaceId: second.surfaceId,
     })).rejects.toThrow(/not open/);
+    const primaryTimeline = await call('inspect.visual.timeline', {
+      windowId, surfaceId: opened.surfaceId, beforeMs: 10_000,
+    }) as Array<{ target: { windowId: number; surfaceId: string } }>;
+    const movedTimeline = await call('inspect.visual.timeline', {
+      windowId: secondary.windowId, surfaceId: second.surfaceId, beforeMs: 10_000,
+    }) as Array<{ target: { windowId: number; surfaceId: string } }>;
+    expect(primaryTimeline.length).toBeGreaterThan(0);
+    expect(movedTimeline.length).toBeGreaterThan(0);
+    expect(primaryTimeline.every((entry) => entry.target.windowId === windowId && entry.target.surfaceId === opened.surfaceId)).toBe(true);
+    expect(movedTimeline.every((entry) => entry.target.windowId === secondary.windowId && entry.target.surfaceId === second.surfaceId)).toBe(true);
     const finalElements = await call('inspect.visual.elements', {
       windowId, surfaceId: opened.surfaceId,
     }) as { windowId: number; surfaceId: string; layoutEpoch?: number | null; elements: Array<{ key: string; boundsCss?: { width: number; height: number }; visible?: boolean; contrast?: { status: string } }> };

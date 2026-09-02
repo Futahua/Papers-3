@@ -1954,8 +1954,8 @@ This works within the existing framed control transport without opening filesyst
 
 * [x] ring buffer age/count enforcement;
 * [x] event revisions remain correlated;
-* [ ] two surfaces do not mix timelines;
-* [ ] lifecycle-only screenshot count bounded;
+* [x] two surfaces do not mix timelines;
+* [x] lifecycle-only screenshot count bounded;
 * [x] no timer polling;
 * [x] report manifest hashes verify;
 * [ ] interrupted report leaves no exposed partial artifact;
@@ -1980,9 +1980,14 @@ are implemented at [`abed691f`](https://github.com/Futahua/Papers-3/commit/abed6
 The exact-surface report includes safe process/snapshot/surface projections,
 lookback-filtered lifecycle/diagnostic/timeline evidence, semantic observations,
 and an optional verified surface PNG. The reviewer signed off this slice at the
-exact SHA with no remaining concrete defect. Remaining work is lifecycle-only
-screenshot policy, interrupted-report proof, the unimplemented element-PNG
-bundle, and packaged acceptance.
+exact SHA with no remaining concrete defect. Remaining work is interrupted-
+report proof, the unimplemented element-PNG bundle, and packaged acceptance.
+
+Additional proof checkpoint: the production visual E2E now queries two same-
+project surfaces after one moves across windows and proves each timeline stays
+exactly target-local. The report unit proof also verifies that the current
+surface-report mode emits only one PNG entry; no continuous or per-frame
+screenshot capture is present.
 
 ## Packaged live proof
 
