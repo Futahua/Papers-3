@@ -401,6 +401,16 @@ describe('project renderer visual diagnostics', () => {
     }, 10_000, 'current replacement project diagnostics');
     const hydrationPairBefore = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{ sequence: number }>;
     const hydrationPairBeforeSequence = Math.max(0, ...hydrationPairBefore.map((record) => record.sequence));
+    const failureLifecycleEvents: Array<{
+      event?: string; payload?: { target?: { windowId?: number; surfaceId?: string }; payload?: { kind?: string; phase?: string; code?: string } };
+    }> = [];
+    const failureLifecycleConnection = await connectPapersControl(await readDescriptor(descriptorPath));
+    const removeFailureLifecycleListener = failureLifecycleConnection.onEvent((frame: {
+      event?: string; payload?: { target?: { windowId?: number; surfaceId?: string }; payload?: { kind?: string; phase?: string; code?: string } };
+    }) => { failureLifecycleEvents.push(frame); });
+    await expect(failureLifecycleConnection.call('events.subscribe', {
+      events: ['visual.lifecycle'], visualTarget: { windowId: secondary.windowId, surfaceId: second.surfaceId },
+    })).resolves.toMatchObject({ ok: true, result: { subscribed: ['visual.lifecycle'] } });
     await evalInProjectWindow<boolean>(secondary.windowId,
       `window.papersVisualDiagnosticBridgeV1.reportHydrationFailed('neutral-rev-1', 'parse', 'fixture-failure'); true`);
     await waitFor(async () => {
@@ -446,6 +456,15 @@ describe('project renderer visual diagnostics', () => {
     expect(renderFailedRecord.payload).toMatchObject({
       kind: 'lifecycle', phase: 'render-failed', revision: 'neutral-rev-1', stage: 'parse', code: 'fixture-failure',
     });
+    await waitFor(async () => failureLifecycleEvents.some((frame) => frame.event === 'visual.lifecycle'
+      && frame.payload?.target?.windowId === secondary.windowId
+      && frame.payload?.target?.surfaceId === second.surfaceId
+      && frame.payload.payload?.kind === 'lifecycle'
+      && frame.payload.payload.phase === 'render-failed'
+      && frame.payload.payload.code === 'fixture-failure'),
+    10_000, 'packaged visual lifecycle subscription');
+    removeFailureLifecycleListener();
+    failureLifecycleConnection.close();
 
     const sourceHashBeforeFailureReport = createHash('sha256').update(await readFile(projectSourcePath)).digest('hex');
     const mcpTransport = new StdioClientTransport({
