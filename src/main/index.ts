@@ -444,6 +444,19 @@ async function bootstrap(): Promise<void> {
       }
     }
     : undefined;
+  const onProjectRendererGone = process.env['PAPERS_DEV_CONTROL'] === '1'
+    ? (windowId: number, surfaceId: string, senderId: number, reason: string): void => {
+      const target = resolveVisualTarget({ id: senderId });
+      if (!target || target.windowId !== windowId || target.surfaceId !== surfaceId) return;
+      const buffer = visualDiagnosticsByWindow.get(windowId);
+      if (!buffer) return;
+      try {
+        buffer.append(target, { kind: 'renderer-gone', reason: reason.slice(0, 256) || 'unknown' });
+      } catch {
+        // Renderer exit collection is best effort and must never affect teardown.
+      }
+    }
+    : undefined;
   const makePapersWindow = (bounds?: WindowBounds) => {
     const instance = createPapersWindow({
       bounds,
@@ -457,6 +470,7 @@ async function bootstrap(): Promise<void> {
       onProjectSurfaceClosed,
       onProjectConsoleMessage,
       onProjectLifecycleEvent,
+      onProjectRendererGone,
     });
     if (process.env['PAPERS_DEV_CONTROL'] === '1') {
       const windowId = instance.window.id;

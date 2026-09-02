@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 same-project console isolation ownership proof completed; exact-SHA reviewer gate pending
+Persistent status: C1.2 exact project renderer-gone observability implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -836,6 +836,33 @@ and checks all exact surface streams for the post-DOM error-shaped message’s
 absence of uncaught-error/unhandled-rejection records. No production change
 was needed for this blocker.
 
+Reviewer checkpoint: **SIGNED OFF** for C1.2 deterministic same-project console
+isolation at exact pushed head
+`34558f731080151d41a276149e7486d4c13cdfe8`. The reviewer confirmed distinct
+same-project sender messages retain under distinct exact surfaces, post-DOM
+error-shaped console text cannot create failure diagnostics, and the existing
+authority, redaction, bounds, stale/prepared refusal, and no-polling behavior
+remain intact.
+
+Next smallest reviewed slice: **C1.2 exact project renderer-gone
+observability** — retain a real project `WebContents` `render-process-gone`
+event under its authenticated current `{windowId,surfaceId}`, refuse
+staged/stale senders, and prove it in Electron E2E without recovery/reload
+behavior.
+
+Current implementation checkpoint: project runtimes forward
+`render-process-gone` with its bounded reason through the surface-aware
+callback chain. Main re-resolves the current sender and exact surface before
+retaining `renderer-gone`; a prepared or replaced sender therefore fails
+closed. The neutral-project E2E force-crashes the exact moved project renderer
+and verifies the retained diagnostic without any reload or recovery action.
+Validation: typecheck; runtime/surface unit tests 22/22; project visual E2E
+1/1; build; diff check.
+
+The exact-SHA reviewer gate must confirm real project renderer exit retention,
+current exact-sender authority, staged/stale refusal, bounded reason handling,
+and no recovery or polling side effect.
+
 ## Architectural boundary / likely owner
 
 Main-process visual observation service owns correlation and retention.
@@ -998,7 +1025,7 @@ Those are separate lifecycle facts.
 * [ ] thrown renderer exception surfaces without killing control;
 * [ ] failed resource attributed to correct surface;
 * [x] console of two same-project surfaces remains isolated;
-* [ ] renderer crash produces `renderer-gone`;
+* [x] renderer crash produces `renderer-gone`;
 * [ ] diagnostic buffers obey maximum length/count;
 * [ ] redaction tests reject secret/path leakage;
 * [ ] no timer-based continuous polling.

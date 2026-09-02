@@ -127,6 +127,20 @@ describe('BackpackProjectRuntime.hide', () => {
     expect(consoleMessage).toHaveBeenNthCalledWith(2, view.webContents.id, 1, 'surface-a ready', false);
   });
 
+  it('forwards renderer exit reasons from the live sender', async () => {
+    const rendererGone = vi.fn();
+    const runtime = new BackpackProjectRuntime(
+      new BaseWindow(), '/tmp/preload.cjs', false, undefined, undefined, undefined, rendererGone,
+    );
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    const goneListener = view.webContents.on.mock.calls.find(([event]) => event === 'render-process-gone')?.[1] as
+      ((event: unknown, details: { reason: string }) => void) | undefined;
+    expect(goneListener).toBeTypeOf('function');
+    goneListener?.({}, { reason: 'crashed' });
+    expect(rendererGone).toHaveBeenCalledWith(view.webContents.id, 'crashed');
+  });
+
   it('conceals and restores the same live renderer without closing it', async () => {
     const runtime = await shownRuntime();
     const view = soleView();

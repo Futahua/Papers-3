@@ -210,5 +210,21 @@ describe('project renderer visual diagnostics', () => {
         && record.payload.revision === 'neutral-rev-1'
         && record.payload.stage === 'parse' && record.payload.code === 'fixture-failure');
     }, 10_000, 'current replacement hydration render-failed lifecycle');
+
+    await launched.app.evaluate(({ BaseWindow }, targetWindowId) => {
+      const window = BaseWindow.getAllWindows().find((candidate) => candidate.id === targetWindowId);
+      if (!window) throw new Error(`no window with id ${targetWindowId}`);
+      const project = (window.contentView.children as Electron.WebContentsView[])
+        .find((view) => view.webContents.getURL().startsWith('papers-backpack://'));
+      if (!project) throw new Error('no project view to crash');
+      project.webContents.forcefullyCrashRenderer();
+    }, secondary.windowId);
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
+        sequence: number; target: { windowId: number; surfaceId?: string }; payload: { kind?: string; reason?: string };
+      }>;
+      return records.some((record) => record.target.surfaceId === second.surfaceId
+        && record.payload.kind === 'renderer-gone');
+    }, 10_000, 'current project renderer-gone diagnostic');
   });
 });

@@ -20,6 +20,7 @@ export class BackpackProjectRuntime {
     private readonly onSurfaceClosed?: (projectId: string) => void,
     private readonly onConsoleMessage?: (senderId: number, level: number, message: string, isBootstrap: boolean) => void,
     private readonly onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready') => void,
+    private readonly onRendererGone?: (senderId: number, reason: string) => void,
   ) {
     this.transparent = transparent;
   }
@@ -130,6 +131,13 @@ export class BackpackProjectRuntime {
       if (typeof level === 'number' && typeof message === 'string' && message.length > 0) {
         this.onConsoleMessage?.(view.webContents.id, level, message, capturingBootstrapConsole);
       }
+    });
+    view.webContents.on('render-process-gone', (...args: unknown[]) => {
+      const details = args[1];
+      const reason = details !== null && typeof details === 'object' && typeof (details as { reason?: unknown }).reason === 'string'
+        ? (details as { reason: string }).reason
+        : 'unknown';
+      this.onRendererGone?.(view.webContents.id, reason);
     });
     options.beforeLoad?.(view.webContents.id);
     if (present) this.window.contentView.addChildView(view);
