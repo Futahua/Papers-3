@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 same-project console isolation bootstrap classification corrected; exact-SHA reviewer gate pending
+Persistent status: C1.2 same-project console isolation ownership proof completed; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -803,7 +803,9 @@ fixture emits one distinct message through each native project sender and
 confirms that each exact surface query owns only its corresponding message.
 Its post-DOM error-shaped message regression proves that ordinary console
 output is retained without creating a failure record; the existing project
-visual E2E continues to prove the pre-DOM fallback path.
+visual E2E continues to prove the pre-DOM fallback path. The E2E now also
+requires the two message owners to be the two different logical surfaces and
+checks both exact streams for the absence of a false failure record.
 Unit coverage for runtime forwarding and lifecycle mapping is 18/18; full
 Vitest is 794 passed/4 skipped; focused developer-control,
 renderer-diagnostics, same-project, and workspace E2E is 9/9; typecheck,
@@ -824,6 +826,15 @@ pre-DOM events. Unit coverage proves both metadata values, and the real
 same-project E2E proves post-DOM `console.error('Uncaught ...')` is console-only.
 This exact-SHA gate must review the corrected callback propagation and confirm
 the prior pre-DOM failure behavior remains intact.
+
+Reviewer feedback at exact pushed head
+`7aa06ca808314d607a1851e32e54d587e634fea4` found that the prior E2E proved
+each injected message had one owner but did not prove the two owners were
+different; both messages could have been routed to one surface. The narrow
+correction requires the collected owner set to equal both logical surface IDs
+and checks all exact surface streams for the post-DOM error-shaped message’s
+absence of uncaught-error/unhandled-rejection records. No production change
+was needed for this blocker.
 
 ## Architectural boundary / likely owner
 

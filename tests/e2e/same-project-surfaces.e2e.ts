@@ -92,6 +92,7 @@ describe('A0.4 same-project surface identity', () => {
     const surfaceIds = [first.surfaceId, second.surfaceId];
     const senderIds = await projectSenderIds();
     expect(senderIds).toHaveLength(2);
+    const messageOwners: string[] = [];
     for (const [index, senderId] of senderIds.entries()) {
       const message = index === 0 ? 'same-project-console-log' : 'Uncaught simulated failure';
       const level = index === 0 ? 'info' : 'error';
@@ -121,6 +122,7 @@ describe('A0.4 same-project surface identity', () => {
       })))).filter(({ records }) => records.some((record) => record.payload.kind === 'console'
         && record.payload.level === level && record.payload.message === message));
       expect(ownership).toHaveLength(1);
+      messageOwners.push(ownership[0]!.surfaceId);
       expect(ownership[0]?.records).toEqual(expect.arrayContaining([
         expect.objectContaining({
           target: { windowId, surfaceId: ownership[0]!.surfaceId },
@@ -128,13 +130,21 @@ describe('A0.4 same-project surface identity', () => {
         }),
       ]));
       if (index === 1) {
-        expect(ownership[0]?.records).not.toEqual(expect.arrayContaining([
+        const allRecords = (await Promise.all(surfaceIds.map((surfaceId) =>
+          call('inspect.visual.diagnostics', { windowId, surfaceId }) as Promise<Array<{
+            payload: { kind?: string; message?: string };
+          }>>))).flat();
+        expect(allRecords).not.toEqual(expect.arrayContaining([
           expect.objectContaining({
-            payload: expect.objectContaining({ kind: expect.stringMatching(/uncaught-error|unhandled-rejection/) }),
+            payload: expect.objectContaining({
+              kind: expect.stringMatching(/uncaught-error|unhandled-rejection/),
+              message,
+            }),
           }),
         ]));
       }
     }
+    expect(new Set(messageOwners)).toEqual(new Set(surfaceIds));
 
     await call('layout.split', { windowId, surfaceId: first.surfaceId, direction: 'right' });
     await waitFor(async () => {
