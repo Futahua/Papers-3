@@ -94,6 +94,13 @@ describe('project renderer visual diagnostics', () => {
       `window.papersVisualDiagnosticBridgeV1.reportStateHydrated('neutral-rev-1', { cards: 1, groups: 1 }); true`);
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
+        sequence: number; payload: { kind?: string; phase?: string };
+      }>;
+      return records.some((record) => record.sequence > beforeSequence
+        && record.payload.kind === 'lifecycle' && record.payload.phase === 'first-paint');
+    }, 10_000, 'project PerformancePaintTiming first-paint signal');
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
         sequence: number; payload: { kind?: string; phase?: string; revision?: string; summary?: Record<string, number> };
       }>;
       return records.some((record) => record.sequence > beforeSequence

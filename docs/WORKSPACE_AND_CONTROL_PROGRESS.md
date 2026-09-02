@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 project hydration reporting signed off; first-paint observability is next
+Persistent status: C1.2 first-paint observability implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -621,6 +621,22 @@ Next smallest reviewed slice: **C1.2 first-paint observability** — add a real
 project/main-world paint producer for the existing sender-authoritative
 `first-paint` lifecycle signal, without treating DOM-ready, load, or hydration
 as paint.
+
+Current implementation checkpoint: the opt-in project dev-control preload
+installs a fixed main-world `PerformanceObserver` for the browser-provided
+`paint` entry named `first-paint`, with a buffered-entry check and one-shot
+disconnect. It emits the fixed sender-authoritative lifecycle signal only
+after that real Paint Timing entry exists; unsupported Paint Timing leaves the
+phase unknown and never infers it from load, DOM-ready, or hydration. Focused
+unit coverage proves the fixed bridge signal, and neutral-project E2E proves
+the actual producer reaches the exact window/surface diagnostic stream.
+Validation: full Vitest 785 passed/4 skipped across 72 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+The exact-SHA reviewer gate must confirm one-shot first-paint reporting,
+sender-authoritative routing, no synthesized paint success, and no polling or
+state mutation.
 
 ## Architectural boundary / likely owner
 

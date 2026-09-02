@@ -44,4 +44,14 @@ describe('opt-in project hydration diagnostic bridge', () => {
       kind: 'uncaught-error', message: 'view failed',
     });
   });
+
+  it('emits first-paint only through the fixed lifecycle signal', () => {
+    const send = vi.fn();
+    const bridge = createProjectVisualDiagnosticBridge({ send });
+    bridge.reportFirstPaint();
+
+    expect(send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
+      kind: 'lifecycle', phase: 'first-paint',
+    });
+  });
 });
