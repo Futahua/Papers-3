@@ -11,6 +11,7 @@ import 'dockview-react/dist/styles/dockview.css';
 import { BackpackProjectFrame } from './BackpackProjectFrame';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { rebuildWorkspaceGroupMap } from './workspaceGroupMapping';
+import { createWorkspaceReconciliationFeedbackGate } from './workspaceReconciliationFeedback';
 
 export interface OpenWorkspaceProject {
   surfaceId: string;
@@ -65,8 +66,7 @@ export function WorkspaceDock(props: {
   const disposing = useRef(false);
   const groupIds = useRef(new Map<string, string>());
   const apiSubscriptions = useRef<Array<{ dispose(): void }>>([]);
-  const reconciling = useRef(false);
-  const reconciliationGeneration = useRef(0);
+  const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const [nativeSuspended, setNativeSuspended] = useState(false);
   projectsRef.current = projects;
   topologyRef.current = topology;
@@ -119,12 +119,8 @@ export function WorkspaceDock(props: {
       ? splitRoot.children[0].groupId
       : null;
 
-    const generation = ++reconciliationGeneration.current;
-    let mutated = false;
     const mutate = (operation: () => void): void => {
-      reconciling.current = true;
-      mutated = true;
-      operation();
+      reconciliationFeedback.current.apply(operation);
     };
     const dockGroupFor = (papersGroupId: string) => {
       const dockviewId = [...groupIds.current].find(([, id]) => id === papersGroupId)?.[0];
@@ -179,9 +175,6 @@ export function WorkspaceDock(props: {
       }
     }
 
-    window.setTimeout(() => {
-      if (reconciliationGeneration.current === generation) reconciling.current = false;
-    }, 0);
   }, [refreshGroupIds]);
 
   useEffect(() => {
@@ -216,7 +209,7 @@ export function WorkspaceDock(props: {
     addMissingPanels(event.api);
     refreshGroupIds(event.api);
     apiSubscriptions.current.push(event.api.onDidActivePanelChange(({ panel, origin }) => {
-      if (panel && !reconciling.current && origin !== 'api') onActivate(panel.id);
+      if (panel && !reconciliationFeedback.current.isSuppressed() && origin !== 'api') onActivate(panel.id);
     }));
     apiSubscriptions.current.push(event.api.onDidRemovePanel((panel) => {
       if (disposing.current) return;
@@ -224,19 +217,19 @@ export function WorkspaceDock(props: {
       onClose(panel.id);
     }));
     apiSubscriptions.current.push(event.api.onDidMovePanel(({ panel, to }) => {
-      if (reconciling.current) return;
+      if (reconciliationFeedback.current.isSuppressed()) return;
       const targetGroupId = groupIds.current.get(to.id);
       if (!targetGroupId) return;
       const targetIndex = to.panels.findIndex((candidate) => candidate.id === panel.id);
       if (targetIndex >= 0) onMove(panel.id, targetGroupId, targetIndex);
     }));
     apiSubscriptions.current.push(event.api.onDidMutateLayout(({ origin }) => {
-      if (reconciling.current || origin === 'api') return;
+      if (reconciliationFeedback.current.isSuppressed() || origin === 'api') return;
       commitLayout(event.api);
       setNativeSuspended(false);
     }));
     apiSubscriptions.current.push(event.api.onDidLayoutChange(() => {
-      if (!reconciling.current) commitLayout(event.api);
+      if (!reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
     }));
     apiSubscriptions.current.push(event.api.onWillShowOverlay((overlay) => {
       if ((overlay.kind === 'content' || overlay.kind === 'edge') && overlay.position !== 'center') {

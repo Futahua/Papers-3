@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 renderer-failure slice signed off; reverse Papers→Dockview reconciliation is the next reviewed slice
+Persistent status: reverse Papers→Dockview reconciliation implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -554,14 +554,28 @@ defect in the SHA-256-only transient matcher, its 64-candidate bound, consumed
 cross-source pair behavior, same-source repeat behavior, redaction-collision
 separation, or the existing sender-authority/startup-isolation regressions.
 
-Next narrow reviewed slice: **reverse Papers → Dockview reconciliation with
+Current narrow reviewed slice: **reverse Papers → Dockview reconciliation with
 feedback suppression**. When Papers/main applies canonical workspace topology
 to Dockview during restore/load/open/close/move reconciliation, suppress only
 the Dockview callbacks caused by that application so they cannot echo as a
 second topology mutation or commit. Genuine subsequent user Dockview actions
-must immediately resume forward reporting. Required regressions are exact
-identity/order/focus preservation, no echo commit, no reconciliation loop, and
-normal user-originated Dockview mutation immediately afterward.
+must immediately resume forward reporting.
+
+Implementation checkpoint: `WorkspaceDock` now uses a synchronous,
+nestable reconciliation-feedback gate around each Papers-applied Dockview
+operation. The gate has no timer or polling window: structural, active-panel,
+and layout callbacks emitted during the API operation are ignored, then user
+callbacks are eligible immediately after it returns. Focused unit coverage
+proves scoped suppression, immediate resumption, and nested operations. The
+workspace E2E proves canonical identity/order/focus convergence, no delayed
+echo commit after restore, and a genuine post-restore tab move producing the
+next canonical update. Validation: full Vitest 778 passed/4 skipped across
+71 passed/1 skipped files; focused developer-control, renderer-diagnostics,
+and workspace E2E 8/8; typecheck; build; diff check.
+
+Required reviewer regressions remain exact identity/order/focus preservation,
+no echo commit, no reconciliation loop, and normal user-originated Dockview
+mutation immediately afterward.
 
 ## Architectural boundary / likely owner
 

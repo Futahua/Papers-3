@@ -162,6 +162,26 @@ describe('A1 workspace tabs', () => {
     10_000, 'Papers topology forces Dockview tab order');
     expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
       .toBe(reorderedWorkspace.revision + 1);
+    const restoredRevision = (await call('inspect.workspace', { windowId }) as { revision: number }).revision;
+    await hostPage.waitForTimeout(100);
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBe(restoredRevision);
+
+    const restoredAlphaTab = hostPage.getByRole('tab', { name: 'Alpha' });
+    const restoredBetaTab = hostPage.getByRole('tab', { name: 'Beta' });
+    const restoredAlphaBox = await restoredAlphaTab.boundingBox();
+    await restoredBetaTab.dragTo(restoredAlphaTab, {
+      targetPosition: { x: 2, y: Math.max(2, Math.round((restoredAlphaBox?.height ?? 20) / 2)) },
+    });
+    await waitFor(async () => {
+      const workspace = await call('inspect.workspace', { windowId }) as {
+        topology: { groups: Array<{ surfaceIds: string[] }> };
+      };
+      return workspace.topology.groups[0]?.surfaceIds.join(',') === `${surfaceByProject.get(B)},${surfaceByProject.get(A)}`;
+    }, 10_000, 'user Dockview mutation resumes after reverse reconciliation');
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBeGreaterThan(restoredRevision);
+
     await call('layout.restore', { windowId, topology: reverseOrder });
     await hostPage.waitForTimeout(50);
     expect(await projectSenderId(A)).toBe(alphaSenderId);
