@@ -51,6 +51,7 @@ import { refreshCurrentVisualSemanticKeys } from './visual/visualSemanticObserva
 import { createVisualSurfaceObservationStore } from './visual/visualSurfaceObservationState';
 import { createVisualArtifactStore } from './visual/visualArtifactStore';
 import { captureVisualSurface, computeVisualElementCropBounds } from './visual/visualCaptureService';
+import { createVisualTimeline, type VisualTimeline } from './visual/visualTimeline';
 import { createVisualRendererFenceService } from './visual/visualRendererFence';
 import { createVisualWindowNativeCaptureService } from './visual/visualWindowNativeCapture';
 import { captureVisualWindow } from './visual/visualCaptureWindowService';
@@ -159,6 +160,7 @@ const workspaceIds = new Map<number, string>();
 const closingPapersWindows = new Set<number>();
 const visualDiagnosticsByWindow = new Map<number, VisualDiagnosticBuffer>();
 const visualLifecycleMonitors = new Map<number, VisualLifecycleMonitor>();
+const visualTimelinesBySurface = new Map<string, VisualTimeline>();
 interface VisualSemanticKeySurfaceState {
   registry: VisualSemanticKeyRegistry;
   currentSenderId: number | null;
@@ -172,6 +174,16 @@ let visualResourceMonitor: VisualResourceMonitor | null = null;
 
 function visualSemanticKeyMapKey(windowId: number, surfaceId: string): string {
   return `${windowId}\0${surfaceId}`;
+}
+
+function visualTimelineForSurface(windowId: number, surfaceId: string): VisualTimeline {
+  const key = visualSemanticKeyMapKey(windowId, surfaceId);
+  let timeline = visualTimelinesBySurface.get(key);
+  if (!timeline) {
+    timeline = createVisualTimeline();
+    visualTimelinesBySurface.set(key, timeline);
+  }
+  return timeline;
 }
 
 function semanticKeyStateForSurface(windowId: number, surfaceId: string): VisualSemanticKeySurfaceState {
@@ -218,11 +230,15 @@ function retireVisualSemanticKeySurface(surfaceId: string): void {
   for (const key of visualSemanticKeysBySurface.keys()) {
     if (key.endsWith(`\0${surfaceId}`)) visualSemanticKeysBySurface.delete(key);
   }
+  for (const key of visualTimelinesBySurface.keys()) {
+    if (key.endsWith(`\0${surfaceId}`)) visualTimelinesBySurface.delete(key);
+  }
 }
 
 function retireVisualSemanticKeySurfaceAt(windowId: number, surfaceId: string): void {
   visualSurfaceObservationState.retireSurfaceAt(windowId, surfaceId);
   visualSemanticKeysBySurface.delete(visualSemanticKeyMapKey(windowId, surfaceId));
+  visualTimelinesBySurface.delete(visualSemanticKeyMapKey(windowId, surfaceId));
 }
 
 function retireLogicalSurface(surfaceId: string): boolean {
@@ -504,6 +520,7 @@ async function bootstrap(): Promise<void> {
   );
   const onProjectSurfaceClosed = (windowId: number, _surfaceId: string, projectId: string): void => {
     visualSemanticKeysBySurface.delete(visualSemanticKeyMapKey(windowId, _surfaceId));
+    visualTimelinesBySurface.delete(visualSemanticKeyMapKey(windowId, _surfaceId));
     detachSession?.closeProjectForOwner(projectId, windowId).catch(() => undefined);
     const workspace = detachRegistry.surfaceForProject(
       projectId,
@@ -609,6 +626,15 @@ async function bootstrap(): Promise<void> {
       const windowId = instance.window.id;
       const buffer = createVisualDiagnosticBuffer({
         onAppend: (record) => {
+          if (record.target.surfaceId) {
+            const state = visualSurfaceObservationState.snapshot(windowId, record.target.surfaceId);
+            visualTimelineForSurface(windowId, record.target.surfaceId).append(record, {
+              renderCycleId: state?.renderCycleId ?? null,
+              documentStateRevision: state?.documentStateRevision ?? null,
+              layoutEpoch: state?.layoutEpoch ?? null,
+              workspaceTopologyRevision: workspaceTopologyRevisions.get(windowId) ?? 0,
+            });
+          }
           const event = record.payload.kind === 'lifecycle' ? 'visual.lifecycle' : 'visual.diagnostic';
           controlEventHub?.publish(event, record);
         },
@@ -626,6 +652,9 @@ async function bootstrap(): Promise<void> {
         visualDiagnosticsByWindow.delete(windowId);
         for (const key of visualSemanticKeysBySurface.keys()) {
           if (key.startsWith(`${windowId}\0`)) visualSemanticKeysBySurface.delete(key);
+        }
+        for (const key of visualTimelinesBySurface.keys()) {
+          if (key.startsWith(`${windowId}\0`)) visualTimelinesBySurface.delete(key);
         }
         visualSurfaceObservationState.retireWindow(windowId);
       });
@@ -1984,6 +2013,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             ...(layoutEpoch !== null ? { layoutEpoch } : {}),
             elements: elements.length > 0 ? elements : observed.map((key) => ({ key })),
           };
+        },
+        visualTimeline: ({ windowId, surfaceId }, beforeMs) => {
+          if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
+          return visualTimelinesBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId))?.snapshot(beforeMs) ?? [];
         },
         visualAssert: ({ windowId, surfaceId }, assertions) => {
           if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;

@@ -133,6 +133,12 @@ describe('project renderer visual diagnostics', () => {
     expect(availableAssertions.available).toBe(true);
     expect(availableAssertions.allPassed).toBe(true);
     expect(availableAssertions.assertions).toEqual([{ kind: 'visible', passed: true }]);
+    const timeline = await call('inspect.visual.timeline', {
+      windowId, surfaceId: opened.surfaceId, beforeMs: 10_000,
+    }) as Array<{ target: { windowId: number; surfaceId: string }; payload: { kind?: string } }>;
+    expect(timeline.length).toBeGreaterThan(0);
+    expect(timeline.every((entry) => entry.target.windowId === windowId && entry.target.surfaceId === opened.surfaceId)).toBe(true);
+    expect(timeline.some((entry) => entry.payload.kind === 'lifecycle')).toBe(true);
     const elementCapture = await call('capture.element', {
       windowId, surfaceId: opened.surfaceId, elementKey: 'canvas.root', paddingCssPx: 4,
     }) as { consistency: { status: string }; element?: { key: string }; crop?: { width: number; height: number }; png?: { mimeType: string; size: number } };

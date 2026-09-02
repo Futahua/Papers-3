@@ -11,6 +11,7 @@ import type {
   PapersControlDestructiveAction,
 } from './papersControlConfirmation';
 import { visualDiagnosticRecordSchema } from '../visual/visualDiagnostics';
+import { visualTimelineEntrySchema } from '../visual/visualTimeline';
 import { visualElementObservationSchema, visualSemanticKeyListSchema, visualSemanticKeySchema } from '@shared/visualSemanticKeys';
 
 export const PAPERS_CONTROL_PROTOCOL_VERSION = 1;
@@ -318,6 +319,14 @@ export const papersControlCommands = {
     scope: 'surface',
     effect: 'query',
   },
+  'inspect.visual.timeline': {
+    input: z.object({
+      windowId: z.number().int(), surfaceId: z.string().min(1).max(128),
+      beforeMs: z.number().int().nonnegative().max(10_000).default(10_000),
+    }).strict(),
+    output: z.array(visualTimelineEntrySchema).max(256),
+    scope: 'surface', effect: 'query',
+  },
   'visual.assert': {
     input: z.object({
       windowId: z.number().int(), surfaceId: z.string().min(1).max(128),
@@ -512,6 +521,7 @@ export interface PapersControlDependencies {
   visualDiagnostics?(target: { windowId: number; surfaceId?: string }): unknown;
   /** Bounded opaque semantic identities observed by predefined project code. */
   visualElements?(target: { windowId: number; surfaceId: string }, keys?: string[]): unknown;
+  visualTimeline?(target: { windowId: number; surfaceId: string }, beforeMs: number): unknown;
   visualAssert?(target: { windowId: number; surfaceId: string }, assertions: unknown[]): unknown;
   visualArtifactRead?(artifactId: string, offset: number, length: number): Promise<{
     metadata: unknown;
@@ -645,6 +655,14 @@ export async function dispatchPapersControl(
       const elements = dependencies.visualElements?.(target, params.keys);
       if (!elements) throw new Error('That Papers visual element target is unavailable.');
       return papersControlCommands[request.method].output.parse(elements);
+    }
+    case 'inspect.visual.timeline': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const target = { windowId: params.windowId, surfaceId: params.surfaceId };
+      if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
+      const timeline = dependencies.visualTimeline?.(target, params.beforeMs);
+      if (!timeline) throw new Error('That Papers visual timeline target is unavailable.');
+      return papersControlCommands[request.method].output.parse(timeline);
     }
     case 'visual.assert': {
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});
