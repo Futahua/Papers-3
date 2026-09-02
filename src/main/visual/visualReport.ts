@@ -70,7 +70,9 @@ async function readArtifact(store: VisualArtifactStore, metadata: VisualArtifact
   let done = false;
   while (!done) {
     throwIfVisualOperationAborted(signal);
-    const chunk = await store.read(metadata.artifactId, offset, 1024 * 1024);
+    const chunk = await awaitVisualOperation(
+      store.read(metadata.artifactId, offset, 1024 * 1024), signal,
+    );
     chunks.push(chunk.bytes);
     offset = chunk.nextOffset;
     done = chunk.done;
@@ -88,16 +90,21 @@ async function readArtifact(store: VisualArtifactStore, metadata: VisualArtifact
   return bytes;
 }
 
-function crc32(bytes: Uint8Array): number {
+async function crc32(bytes: Uint8Array, signal?: AbortSignal): Promise<number> {
   let crc = 0xffffffff;
-  for (const byte of bytes) {
+  for (let index = 0; index < bytes.length; index += 1) {
+    if ((index & 0xffff) === 0) {
+      throwIfVisualOperationAborted(signal);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    const byte = bytes[index]!;
     crc ^= byte;
     for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
   }
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function zipStored(entries: ReportEntry[]): Uint8Array {
+async function zipStored(entries: ReportEntry[], signal?: AbortSignal): Promise<Uint8Array> {
   const encoder = new TextEncoder();
   const localParts: Uint8Array[] = [];
   const centralParts: Uint8Array[] = [];
@@ -105,8 +112,9 @@ function zipStored(entries: ReportEntry[]): Uint8Array {
   const write16 = (view: DataView, position: number, value: number): void => view.setUint16(position, value, true);
   const write32 = (view: DataView, position: number, value: number): void => view.setUint32(position, value >>> 0, true);
   for (const entry of entries) {
+    throwIfVisualOperationAborted(signal);
     const name = encoder.encode(entry.name);
-    const checksum = crc32(entry.bytes);
+    const checksum = await crc32(entry.bytes, signal);
     const local = new Uint8Array(30 + name.byteLength + entry.bytes.byteLength);
     const localView = new DataView(local.buffer);
     write32(localView, 0, 0x04034b50);
@@ -126,6 +134,7 @@ function zipStored(entries: ReportEntry[]): Uint8Array {
     write16(centralView, 34, 0); write16(centralView, 36, 0); write32(centralView, 38, 0); write32(centralView, 42, offset);
     central.set(name, 46); centralParts.push(central);
     offset += local.byteLength;
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
   const centralOffset = offset;
   const centralSize = centralParts.reduce((total, part) => total + part.byteLength, 0);
@@ -135,7 +144,11 @@ function zipStored(entries: ReportEntry[]): Uint8Array {
   write32(endView, 12, centralSize); write32(endView, 16, centralOffset); write16(endView, 20, 0);
   const result = new Uint8Array(offset + centralSize + end.byteLength);
   let cursor = 0;
-  for (const part of [...localParts, ...centralParts, end]) { result.set(part, cursor); cursor += part.byteLength; }
+  for (const part of [...localParts, ...centralParts, end]) {
+    throwIfVisualOperationAborted(signal);
+    result.set(part, cursor); cursor += part.byteLength;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
   return result;
 }
 
@@ -201,7 +214,7 @@ export async function createVisualReport(deps: VisualReportDependencies, request
       summary: { entryCount: manifestEntries.length + 1, includes: request.include },
     };
     const allEntries = [{ name: 'manifest.json', bytes: jsonBytes(manifest) }, ...entries];
-    const archive = zipStored(allEntries);
+    const archive = await zipStored(allEntries, signal);
     throwIfVisualOperationAborted(signal);
     const artifact = await awaitVisualOperation(
       deps.artifacts.put(archive, 'application/zip'),
@@ -221,6 +234,6 @@ export async function createVisualReport(deps: VisualReportDependencies, request
   } finally {
     await Promise.all([...capturedArtifactIds]
       .filter((artifactId) => artifactId !== reportArtifactId)
-      .map((artifactId) => deps.artifacts.delete(artifactId).catch(() => false)));
+      .map((artifactId) => awaitVisualOperation(deps.artifacts.delete(artifactId), signal).catch(() => false)));
   }
 }

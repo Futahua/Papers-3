@@ -2,9 +2,9 @@ import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { createVisualArtifactStore } from '../../src/main/visual/visualArtifactStore';
+import { createVisualArtifactStore, type VisualArtifactMetadata } from '../../src/main/visual/visualArtifactStore';
 import { createVisualReport } from '../../src/main/visual/visualReport';
 
 function storedZipEntries(bytes: Uint8Array): Map<string, Uint8Array> {
@@ -192,8 +192,47 @@ describe('visual reports', () => {
     })).rejects.toThrow('Visual operation was cancelled.');
 
     expect(reportId).toBeDefined();
+    await vi.waitFor(async () => {
+      expect((await readdir(root)).filter((name) => name.endsWith('.bin') || name.endsWith('.tmp'))).toEqual([]);
+    });
     await expect(artifacts.read(reportId!, 0, 1024)).rejects.toThrow('artifact is unavailable');
     await expect(artifacts.read(source.artifactId, 0, 1024)).rejects.toThrow('artifact is unavailable');
     expect((await readdir(root)).filter((name) => name.endsWith('.bin') || name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('settles cancellation while a serialized source-artifact read is held', async () => {
+    const controller = new AbortController();
+    let releaseRead!: (chunk: { metadata: VisualArtifactMetadata; offset: number; nextOffset: number; done: boolean; bytes: Uint8Array }) => void;
+    const heldRead = new Promise<{ metadata: VisualArtifactMetadata; offset: number; nextOffset: number; done: boolean; bytes: Uint8Array }>((resolve) => { releaseRead = resolve; });
+    const source: VisualArtifactMetadata = {
+      artifactId: 'va-11111111-1111-4111-8111-111111111111',
+      mimeType: 'image/png', size: 1, sha256: createHash('sha256').update(new Uint8Array([1])).digest('hex'),
+      createdAt: '2026-09-02T00:00:00.000Z', expiresAt: '2026-09-02T01:00:00.000Z',
+    };
+    const artifacts = {
+      put: vi.fn(),
+      read: vi.fn(async () => heldRead),
+      delete: vi.fn(async () => true),
+      cleanup: vi.fn(async () => undefined),
+    };
+    const report = createVisualReport({
+      process: {}, snapshot: {}, surface: {}, lifecycle: [], diagnostics: [], timeline: [], semanticElements: {},
+      captureSurface: async () => ({ result: {}, png: source }),
+      artifacts,
+      signal: controller.signal,
+    }, {
+      windowId: 4, surfaceId: 'surface-a', beforeMs: 10_000, elementKeys: [],
+      include: {
+        surfaceCapture: true, elementCaptures: false, semanticElements: false,
+        recentLifecycle: false, recentDiagnostics: false, timeline: false,
+      },
+    });
+
+    await vi.waitFor(() => expect(artifacts.read).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(report).rejects.toThrow('Visual operation was cancelled.');
+    releaseRead({ metadata: source, offset: 0, nextOffset: 1, done: true, bytes: new Uint8Array([1]) });
+    expect(artifacts.put).not.toHaveBeenCalled();
+    expect(artifacts.delete).toHaveBeenCalledWith(source.artifactId);
   });
 });
