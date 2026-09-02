@@ -1124,6 +1124,24 @@ the new sender is authorized for the exact surface, topology and active state
 remain unchanged, post-recreation interaction works, and normal exact close
 cleans up the recreated runtime.
 
+### Renderer transport destroy/recreate — review pending
+
+The standalone acceptance creates one live project surface, records its
+logical `surfaceId` and original renderer transport, destroys that transport,
+and verifies the logical surface and committed topology remain. It then uses
+the existing authorized host bridge to show the same surface again, proving a
+different live renderer, unchanged project/surface identity, unchanged active
+topology, post-recreation renderer interaction, and exact close cleanup. The
+dead transport is absent from live WebContents and the existing
+surface-context unit contract covers removal of its sender binding and binding
+of the replacement sender to the same surface.
+
+Observed behavior: recreate/rebind succeeds on Electron 43.1.1 without
+retiring the logical surface. Candidate exact pushed head `43326f7`; focused
+renderer-recreation E2E, combined relevant E2E 6/6, typecheck, full Vitest
+727/731 (4 skipped), build and diff checks pass. Reviewer sign-off is pending;
+no production behavior changed.
+
 ## Persistent pickup checklist for every new session
 
 1. Read `HERMES.md` completely and state scope/release boundaries.
