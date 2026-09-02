@@ -93,12 +93,14 @@ describe('A0.4 same-project surface identity', () => {
     const senderIds = await projectSenderIds();
     expect(senderIds).toHaveLength(2);
     for (const [index, senderId] of senderIds.entries()) {
-      const message = `same-project-console-${index + 1}`;
+      const message = index === 0 ? 'same-project-console-log' : 'Uncaught simulated failure';
+      const level = index === 0 ? 'info' : 'error';
       await launched.app.evaluate(async ({ webContents }, args) => {
         const project = webContents.getAllWebContents().find((contents) => contents.id === args.senderId);
         if (!project) throw new Error(`no project sender ${args.senderId}`);
-        await project.executeJavaScript(`console.log(${JSON.stringify(args.message)})`, true);
-      }, { senderId, message });
+        const expression = args.level === 'error' ? 'console.error' : 'console.log';
+        await project.executeJavaScript(`${expression}(${JSON.stringify(args.message)})`, true);
+      }, { senderId, message, level });
       await waitFor(async () => {
         const diagnostics = await Promise.all(surfaceIds.map(async (surfaceId) => ({
           surfaceId,
@@ -108,7 +110,7 @@ describe('A0.4 same-project surface identity', () => {
           }>,
         })));
         return diagnostics.filter(({ records }) => records.some((record) => record.payload.kind === 'console'
-          && record.payload.level === 'info' && record.payload.message === message)).length === 1;
+          && record.payload.level === level && record.payload.message === message)).length === 1;
       }, 10_000, `console isolation for ${message}`);
       const ownership = (await Promise.all(surfaceIds.map(async (surfaceId) => ({
         surfaceId,
@@ -117,14 +119,21 @@ describe('A0.4 same-project surface identity', () => {
           payload: { kind?: string; level?: string; message?: string };
         }>,
       })))).filter(({ records }) => records.some((record) => record.payload.kind === 'console'
-        && record.payload.level === 'info' && record.payload.message === message));
+        && record.payload.level === level && record.payload.message === message));
       expect(ownership).toHaveLength(1);
       expect(ownership[0]?.records).toEqual(expect.arrayContaining([
         expect.objectContaining({
           target: { windowId, surfaceId: ownership[0]!.surfaceId },
-          payload: { kind: 'console', level: 'info', message },
+          payload: { kind: 'console', level, message },
         }),
       ]));
+      if (index === 1) {
+        expect(ownership[0]?.records).not.toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            payload: expect.objectContaining({ kind: expect.stringMatching(/uncaught-error|unhandled-rejection/) }),
+          }),
+        ]));
+      }
     }
 
     await call('layout.split', { windowId, surfaceId: first.surfaceId, direction: 'right' });

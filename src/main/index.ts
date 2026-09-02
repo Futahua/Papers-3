@@ -401,7 +401,7 @@ async function bootstrap(): Promise<void> {
     if (workspace) detachRegistry.unregister(workspace.id);
   };
   const onProjectConsoleMessage = process.env['PAPERS_DEV_CONTROL'] === '1'
-    ? (windowId: number, surfaceId: string, senderId: number, level: number, message: string): void => {
+    ? (windowId: number, surfaceId: string, senderId: number, level: number, message: string, isBootstrap: boolean): void => {
       if (message.length === 0) return;
       const target = resolveVisualTarget({ id: senderId });
       if (!target || target.windowId !== windowId || target.surfaceId !== surfaceId) return;
@@ -410,7 +410,7 @@ async function bootstrap(): Promise<void> {
       try {
         const boundedMessage = message.slice(0, 4096);
         buffer.append(target, { kind: 'console', level: visualConsoleLevel(level), message: boundedMessage });
-        if (level !== 3) return;
+        if (!isBootstrap || level !== 3) return;
         const isUnhandledRejection = message.startsWith('Uncaught (in promise)');
         const isUncaughtError = message.startsWith('Uncaught');
         if (!isUnhandledRejection && !isUncaughtError) return;

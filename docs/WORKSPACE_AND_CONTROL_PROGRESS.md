@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 deterministic same-project console isolation implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 same-project console isolation bootstrap classification corrected; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -555,9 +555,11 @@ console message after DOM-ready; main retains it as a bounded `console`
 diagnostic and uses the sender-authoritative resolver immediately before
 recording. A prepared cross-window renderer therefore has no canonical surface
 and is refused; a replaced old renderer is refused even if its listener has not
-detached yet. The failure path suppresses only a matching cross-source pair
-(bootstrap-console plus observer) for the same exact pre-redaction message,
-target, and short burst. The transient matcher
+detached yet. The failure parser runs only when the runtime marks the console
+event as pre-DOM bootstrap; post-DOM console text cannot become an
+uncaught-error or unhandled-rejection candidate. The failure path suppresses
+only a matching cross-source pair (bootstrap-console plus observer) for the
+same exact pre-redaction message, target, and short burst. The transient matcher
 stores only a SHA-256 fingerprint of that raw message and at most 64 unmatched
 candidates; a suppressed pair is consumed so it cannot hide a later same-source
 failure. Same-source repeats and different raw messages that redact alike remain
@@ -799,6 +801,9 @@ schema and resolves the target from the authenticated sender plus the named
 surface; the renderer cannot provide or redirect that target. The two-surface
 fixture emits one distinct message through each native project sender and
 confirms that each exact surface query owns only its corresponding message.
+Its post-DOM error-shaped message regression proves that ordinary console
+output is retained without creating a failure record; the existing project
+visual E2E continues to prove the pre-DOM fallback path.
 Unit coverage for runtime forwarding and lifecycle mapping is 18/18; full
 Vitest is 794 passed/4 skipped; focused developer-control,
 renderer-diagnostics, same-project, and workspace E2E is 9/9; typecheck,
@@ -808,6 +813,17 @@ The exact-SHA reviewer gate must confirm both same-project messages remain
 isolated, ordinary post-DOM console output is retained, stale/prepared senders
 cannot attribute records, and the existing redaction/bounded/no-polling rules
 remain intact.
+
+Reviewer feedback at exact pushed head
+`3e84ec2045d383b1c8516e3b65eb324fcfadd7ec` identified a concrete regression:
+making the console callback permanent also made post-DOM text beginning with
+`Uncaught` enter the bootstrap failure classifier. The correction carries an
+explicit bootstrap boolean through the runtime/collection/factory callback;
+all console events are retained, but failure classification is gated to
+pre-DOM events. Unit coverage proves both metadata values, and the real
+same-project E2E proves post-DOM `console.error('Uncaught ...')` is console-only.
+This exact-SHA gate must review the corrected callback propagation and confirm
+the prior pre-DOM failure behavior remains intact.
 
 ## Architectural boundary / likely owner
 

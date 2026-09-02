@@ -18,7 +18,7 @@ export class BackpackProjectRuntime {
     private readonly preloadPath: string,
     transparent: boolean,
     private readonly onSurfaceClosed?: (projectId: string) => void,
-    private readonly onConsoleMessage?: (senderId: number, level: number, message: string) => void,
+    private readonly onConsoleMessage?: (senderId: number, level: number, message: string, isBootstrap: boolean) => void,
     private readonly onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready') => void,
   ) {
     this.transparent = transparent;
@@ -118,15 +118,17 @@ export class BackpackProjectRuntime {
         event.preventDefault();
       }
     });
+    let capturingBootstrapConsole = true;
     view.webContents.on('did-start-loading', () => this.onLifecycleEvent?.(view.webContents.id, 'did-start-loading'));
     view.webContents.on('dom-ready', () => {
+      capturingBootstrapConsole = false;
       this.onLifecycleEvent?.(view.webContents.id, 'dom-ready');
     });
     view.webContents.on('console-message', (...args: unknown[]) => {
       const level = args[1];
       const message = args[2];
       if (typeof level === 'number' && typeof message === 'string' && message.length > 0) {
-        this.onConsoleMessage?.(view.webContents.id, level, message);
+        this.onConsoleMessage?.(view.webContents.id, level, message, capturingBootstrapConsole);
       }
     });
     options.beforeLoad?.(view.webContents.id);

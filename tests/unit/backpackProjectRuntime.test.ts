@@ -111,7 +111,7 @@ describe('BackpackProjectRuntime.hide', () => {
     expect(lifecycle).toHaveBeenNthCalledWith(2, view.webContents.id, 'dom-ready');
   });
 
-  it('forwards console messages after DOM-ready from the live sender', async () => {
+  it('forwards console messages with bootstrap eligibility from the live sender', async () => {
     const consoleMessage = vi.fn();
     const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false, undefined, consoleMessage);
     await runtime.show(PROJECT_URL);
@@ -120,9 +120,11 @@ describe('BackpackProjectRuntime.hide', () => {
       ((event: unknown, level: number, message: string) => void) | undefined;
     const domReady = view.webContents.on.mock.calls.find(([event]) => event === 'dom-ready')?.[1] as (() => void) | undefined;
     expect(consoleListener).toBeTypeOf('function');
+    consoleListener?.({}, 3, 'Uncaught bootstrap failure');
+    expect(consoleMessage).toHaveBeenNthCalledWith(1, view.webContents.id, 3, 'Uncaught bootstrap failure', true);
     domReady?.();
     consoleListener?.({}, 1, 'surface-a ready');
-    expect(consoleMessage).toHaveBeenCalledWith(view.webContents.id, 1, 'surface-a ready');
+    expect(consoleMessage).toHaveBeenNthCalledWith(2, view.webContents.id, 1, 'surface-a ready', false);
   });
 
   it('conceals and restores the same live renderer without closing it', async () => {
