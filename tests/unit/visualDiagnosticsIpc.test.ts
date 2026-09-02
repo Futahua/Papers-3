@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { registerVisualDiagnosticsIpc, resolveVisualDiagnosticTarget, VISUAL_RENDERER_DIAGNOSTIC_CHANNEL } from '../../src/main/ipc/visualDiagnosticsIpc';
 import { createVisualDiagnosticBuffer } from '../../src/main/visual/visualDiagnostics';
+import { createVisualTimeline, visualTimelineContextForRecord } from '../../src/main/visual/visualTimeline';
 
 describe('visual diagnostics renderer IPC', () => {
   it('resolves the target from the authenticated sender, not renderer payload', () => {
@@ -106,6 +107,59 @@ describe('visual diagnostics renderer IPC', () => {
       { target: { windowId: 2, surfaceId: 'surface-a' }, payload: { phase: 'state-hydrated', revision: 'rev-1', summary: { cards: 2 } } },
       { target: { windowId: 2, surfaceId: 'surface-a' }, payload: { kind: 'hydration-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope' } },
       { target: { windowId: 2, surfaceId: 'surface-a' }, payload: { phase: 'render-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope' } },
+    ]);
+  });
+
+  it('correlates timeline transition fields despite buffer publication preceding tracker mutation', () => {
+    const timestamp = new Date('2026-09-02T00:00:00.000Z');
+    const timeline = createVisualTimeline({ now: () => timestamp });
+    let context: {
+      renderCycleId: string;
+      documentStateRevision: string | null;
+      layoutEpoch: number | null;
+      workspaceTopologyRevision: number;
+    } = {
+      renderCycleId: '11111111-1111-4111-8111-111111111111',
+      documentStateRevision: null,
+      layoutEpoch: null,
+      workspaceTopologyRevision: 3,
+    };
+    const buffer = createVisualDiagnosticBuffer({
+      now: () => timestamp,
+      onAppend: (record) => timeline.append(record, visualTimelineContextForRecord(record, context)),
+    });
+    const on = vi.fn();
+    registerVisualDiagnosticsIpc({
+      ipcMain: { on },
+      resolveTarget: (sender) => sender.id === 7 ? { windowId: 2, surfaceId: 'surface-a' } : null,
+      bufferForWindow: () => buffer,
+      onRendererSignal: (_senderId, _target, payload) => {
+        if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+          && (payload as { phase?: unknown }).phase === 'state-hydrated') {
+          context = { ...context, documentStateRevision: (payload as { revision: string }).revision };
+        } else if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+          && (payload as { phase?: unknown }).phase === 'layout-epoch') {
+          context = { ...context, layoutEpoch: (payload as { epoch: number }).epoch };
+        }
+      },
+    });
+    const signal = on.mock.calls.find(([channel]) => channel === 'papers:visual:renderer-signal')?.[1] as
+      ((event: { sender: { id: number } }, payload: unknown) => void);
+
+    signal({ sender: { id: 7 } }, {
+      kind: 'lifecycle', phase: 'state-hydrated', revision: 'revision-4',
+    });
+    signal({ sender: { id: 7 } }, {
+      kind: 'lifecycle', phase: 'layout-epoch', epoch: 4,
+    });
+
+    expect(timeline.snapshot().map((entry) => ({
+      phase: entry.payload.kind === 'lifecycle' ? entry.payload.phase : null,
+      documentStateRevision: entry.documentStateRevision,
+      layoutEpoch: entry.layoutEpoch,
+    }))).toEqual([
+      { phase: 'state-hydrated', documentStateRevision: 'revision-4', layoutEpoch: null },
+      { phase: 'layout-epoch', documentStateRevision: 'revision-4', layoutEpoch: 4 },
     ]);
   });
 

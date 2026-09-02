@@ -26,6 +26,25 @@ export const visualTimelineEntrySchema = z.object({
 export type VisualTimelineContext = z.infer<typeof timelineContextSchema>;
 export type VisualTimelineEntry = z.infer<typeof visualTimelineEntrySchema>;
 
+/** Stamp lifecycle transitions with the exact value accepted by that event.
+ * Diagnostic-buffer publication happens before the observation tracker is
+ * mutated, so reading the tracker alone would attach the previous revision or
+ * epoch to state-hydrated/layout-epoch entries. */
+export function visualTimelineContextForRecord(
+  record: VisualDiagnosticRecord,
+  context: VisualTimelineContext,
+): VisualTimelineContext {
+  const payload = record.payload;
+  if (payload.kind !== 'lifecycle') return context;
+  if (payload.phase === 'state-hydrated') {
+    return { ...context, documentStateRevision: payload.revision ?? null };
+  }
+  if (payload.phase === 'layout-epoch') {
+    return { ...context, layoutEpoch: payload.epoch ?? null };
+  }
+  return context;
+}
+
 export interface VisualTimeline {
   append(record: VisualDiagnosticRecord, context: VisualTimelineContext): void;
   snapshot(beforeMs?: number): VisualTimelineEntry[];

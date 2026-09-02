@@ -51,7 +51,7 @@ import { refreshCurrentVisualSemanticKeys } from './visual/visualSemanticObserva
 import { createVisualSurfaceObservationStore } from './visual/visualSurfaceObservationState';
 import { createVisualArtifactStore } from './visual/visualArtifactStore';
 import { captureVisualSurface, computeVisualElementCropBounds } from './visual/visualCaptureService';
-import { createVisualTimeline, type VisualTimeline } from './visual/visualTimeline';
+import { createVisualTimeline, visualTimelineContextForRecord, type VisualTimeline } from './visual/visualTimeline';
 import { createVisualRendererFenceService } from './visual/visualRendererFence';
 import { createVisualWindowNativeCaptureService } from './visual/visualWindowNativeCapture';
 import { captureVisualWindow } from './visual/visualCaptureWindowService';
@@ -628,12 +628,12 @@ async function bootstrap(): Promise<void> {
         onAppend: (record) => {
           if (record.target.surfaceId) {
             const state = visualSurfaceObservationState.snapshot(windowId, record.target.surfaceId);
-            visualTimelineForSurface(windowId, record.target.surfaceId).append(record, {
+            visualTimelineForSurface(windowId, record.target.surfaceId).append(record, visualTimelineContextForRecord(record, {
               renderCycleId: state?.renderCycleId ?? null,
               documentStateRevision: state?.documentStateRevision ?? null,
               layoutEpoch: state?.layoutEpoch ?? null,
               workspaceTopologyRevision: workspaceTopologyRevisions.get(windowId) ?? 0,
-            });
+            }));
           }
           const event = record.payload.kind === 'lifecycle' ? 'visual.lifecycle' : 'visual.diagnostic';
           controlEventHub?.publish(event, record);
