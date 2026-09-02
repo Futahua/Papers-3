@@ -332,6 +332,10 @@ describe('project renderer visual diagnostics', () => {
     expect(JSON.stringify(finalRecords)).not.toContain('resource-secret');
     expect(JSON.stringify(finalRecords)).not.toContain('missing-bound-image.png');
     expect(JSON.stringify(finalRecords)).not.toContain('buffer-bound.js');
+    const serializedDiagnosticEvents = JSON.stringify(diagnosticEvents);
+    expect(serializedDiagnosticEvents).not.toContain('resource-secret');
+    expect(serializedDiagnosticEvents).not.toContain('missing-bound-image.png');
+    expect(serializedDiagnosticEvents).not.toContain('buffer-bound.js');
     expect(await call('inspect.workspace', { windowId: secondary.windowId })).toEqual(workspaceBeforePostOverflowEvents);
 
     await launched.app.evaluate(({ BaseWindow }, targetWindowId) => {

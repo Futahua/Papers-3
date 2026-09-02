@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createFrameReader, createPapersControlEventHub, startPapersControlServer } from '../../src/main/control/papersControlServer';
+import { createVisualDiagnosticBuffer } from '../../src/main/visual/visualDiagnostics';
 
 /**
  * Reads a complete newline-terminated frame rather than assuming one `data`
@@ -378,6 +379,61 @@ describe('Papers developer control server', () => {
     expect(legacyBlockedWrite).toHaveBeenCalledOnce();
     expect(String(surfaceAWrite.mock.calls[0]?.[0])).toContain('surface-a');
     expect(String(surfaceAWrite.mock.calls[0]?.[0])).not.toContain('surface-b');
+  });
+
+  it('redacts mixed retained diagnostics and live control frames at the boundary', () => {
+    const eventHub = createPapersControlEventHub();
+    const write = vi.fn((_payload: string) => true);
+    const socket = { destroyed: false, writableNeedDrain: false, write } as unknown as Socket;
+    const target = { windowId: 4, surfaceId: 'surface-a' };
+    eventHub.attach(socket);
+    eventHub.subscribe(socket, ['visual.lifecycle', 'visual.diagnostic'], target);
+    const buffer = createVisualDiagnosticBuffer({
+      onAppend(record) {
+        eventHub.publish(record.payload.kind === 'lifecycle' ? 'visual.lifecycle' : 'visual.diagnostic', record);
+      },
+    });
+
+    buffer.append(target, {
+      kind: 'console', level: 'error',
+      message: 'C:\\Users\\Alice\\main.js https://private.example/app.js?token=secret&next=1 token=secret password=secret secret=secret-value apiKey=api-value',
+    });
+    buffer.append(target, { kind: 'uncaught-error', message: 'Uncaught C:\\private\\renderer.js https://private.example/error?query=secret token=secret' });
+    buffer.append(target, { kind: 'unhandled-rejection', message: 'C:\\private\\promise.js password=secret' });
+    buffer.append(target, { kind: 'navigation-failed', errorCode: -2, message: 'https://private.example/nav?token=secret' });
+    buffer.append(target, { kind: 'resource-failed', resourceKind: 'script', message: 'https://private.example/missing.js?token=secret' });
+    buffer.append(target, { kind: 'renderer-gone', reason: 'C:\\private\\crash.js https://private.example/crash?secret=1 token=secret' });
+    buffer.append(target, { kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-1', summary: { cards: 1 } });
+    buffer.append(target, { kind: 'hydration-failed', revision: 'rev-1', stage: 'parse', code: 'invalid-envelope' });
+    buffer.append(target, { kind: 'lifecycle', phase: 'render-failed', detail: 'C:\\private\\render.js https://private.example/render?token=secret' });
+
+    const serializedSnapshot = JSON.stringify(buffer.snapshot());
+    const serializedFrames = JSON.stringify(write.mock.calls.map(([payload]) => JSON.parse(payload)));
+    for (const leakedValue of [
+      'C:\\Users\\Alice', 'C:\\private', 'private.example', 'missing.js',
+      'token=secret', 'password=secret', 'secret-value', 'api-value', '?query=secret',
+    ]) {
+      expect(serializedSnapshot).not.toContain(leakedValue);
+      expect(serializedFrames).not.toContain(leakedValue);
+    }
+    expect(write).toHaveBeenCalledTimes(9);
+    expect(JSON.parse(write.mock.calls[0]![0])).toMatchObject({
+      event: 'visual.diagnostic', payload: {
+        target, payload: { kind: 'console', message: '<path><url><redacted> token=<redacted> password=<redacted> secret=<redacted> apiKey=<redacted>' },
+      },
+    });
+
+    expect(() => buffer.append(target, {
+      kind: 'lifecycle', phase: 'state-hydrated', revision: 'https://private.example/state?token=secret',
+    })).toThrow();
+    expect(() => buffer.append(target, {
+      kind: 'hydration-failed', revision: 'C:\\private\\state.json', stage: 'parse', code: 'token=secret',
+    })).toThrow();
+    expect(() => buffer.append(target, {
+      kind: 'lifecycle', phase: 'render-failed', stage: 'C:\\private\\stage', code: 'token=secret',
+    })).toThrow();
+    expect(buffer.snapshot()).toHaveLength(9);
+    expect(write).toHaveBeenCalledTimes(9);
   });
 
 /**

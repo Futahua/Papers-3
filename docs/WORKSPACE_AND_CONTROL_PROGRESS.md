@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 deterministic redaction closure in progress; exact-SHA reviewer gate pending
+Persistent status: C1.2 deterministic redaction closure implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -935,6 +935,21 @@ renderer-error, hydration, resource, navigation, and renderer-exit classes.
 Start as an evidence/test slice; change production redaction only if the
 targeted closure exposes a concrete leakage case.
 
+Current implementation checkpoint: no production redaction change was needed.
+The real control event hub is now composed with the real bounded diagnostic
+buffer in unit coverage across console, uncaught-error, unhandled-rejection,
+navigation-failed, resource-failed, renderer-gone, hydration-failed,
+state-hydrated, and render-failed records. The test injects Windows paths,
+URLs/queries, tokens, passwords, secrets, and API-key values, verifies neither
+retained snapshots nor serialized live frames expose them, and confirms
+hostile hydration metadata is rejected by existing schemas. The neutral-project
+E2E also checks the serialized live frames themselves after the post-overflow
+console/rejection/failed-image publication.
+
+Validation and exact-SHA reviewer gate are pending for this slice. The
+user-owned `docs/evidence/worker-comparison.json` remains unstaged and
+untouched; no release, install, package, or policy action is in scope.
+
 ## Architectural boundary / likely owner
 
 Main-process visual observation service owns correlation and retention.
@@ -1101,7 +1116,7 @@ Those are separate lifecycle facts.
 * [x] mixed visual events remain within the diagnostic-record cap with
   monotonic sequences and continued publication;
 * [x] diagnostic buffers obey maximum length/count;
-* [ ] redaction tests reject secret/path leakage;
+* [x] redaction tests reject secret/path leakage;
 * [ ] no timer-based continuous polling.
 
 ## Packaged live proof
