@@ -1712,14 +1712,19 @@ A failing test must never silently “bless” its new screenshot.
 
 ## Deterministic tests
 
-* [ ] identical fixture produces zero diff;
-* [ ] one known visual mutation produces deterministic diff;
-* [ ] dimension change separately detected;
-* [ ] semantic geometry failure detected even when pixel threshold might tolerate it;
-* [ ] update workflow requires explicit opt-in;
-* [ ] interrupted update leaves previous baseline intact;
-* [ ] baseline manifest hash matches PNG;
+* [x] baseline core produces zero-diff evidence for identical RGBA images;
+* [x] one known pixel mutation produces a deterministic diff rectangle;
+* [x] dimension changes are reported separately from pixel comparison;
+* [x] semantic snapshot changes remain separate even when pixels are identical;
+* [x] update workflow requires explicit opt-in;
+* [x] content-addressed PNG plus atomic manifest publication preserves the
+  previous baseline until replacement is complete;
+* [x] baseline reads re-hash the referenced PNG;
 * [ ] user profile/state directories are never baseline sources.
+
+Implementation checkpoint: the deterministic baseline/diff core is prepared in
+the current local tranche, but integration with a live capture command and a
+real fixture remains open until its own exact-SHA review.
 
 ## Packaged live proof
 
