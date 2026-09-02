@@ -235,6 +235,38 @@ describe('project renderer visual diagnostics', () => {
       kind: 'lifecycle', phase: 'render-failed', revision: 'neutral-rev-1', stage: 'parse', code: 'fixture-failure',
     });
 
+    const rendererSurvivalTimeOrigin = await evalInProjectWindow<number>(secondary.windowId, 'performance.timeOrigin');
+    const throwBefore = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{ sequence: number }>;
+    const throwBeforeSequence = Math.max(0, ...throwBefore.map((record) => record.sequence));
+    await evalInProjectWindow<boolean>(secondary.windowId, `(() => {
+      setTimeout(() => { throw new Error('C:\\\\private\\\\control-survival.js token=secret'); }, 0);
+      return true;
+    })()`);
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
+        sequence: number; target: { windowId: number; surfaceId?: string }; payload: { kind?: string; message?: string };
+      }>;
+      return records.some((record) => record.sequence > throwBeforeSequence
+        && record.target.windowId === secondary.windowId
+        && record.target.surfaceId === second.surfaceId
+        && record.payload.kind === 'uncaught-error'
+        && record.payload.message === 'Uncaught Error: <path> token=<redacted>');
+    }, 10_000, 'current replacement thrown renderer exception');
+    const thrownRecords = (await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
+      sequence: number; target: { windowId: number; surfaceId?: string }; payload: { kind?: string; message?: string };
+    }>).filter((record) => record.sequence > throwBeforeSequence
+      && record.target.windowId === secondary.windowId
+      && record.target.surfaceId === second.surfaceId
+      && record.payload.kind === 'uncaught-error');
+    expect(thrownRecords).toHaveLength(1);
+    expect(await call('inspect.workspace', { windowId: secondary.windowId })).toEqual(expect.objectContaining({
+      windowId: secondary.windowId,
+    }));
+    expect(await evalInProjectWindow<boolean>(secondary.windowId,
+      'document.body?.textContent?.includes("Neutral project") === true')).toBe(true);
+    expect(await evalInProjectWindow<number>(secondary.windowId, 'performance.timeOrigin'))
+      .toBe(rendererSurvivalTimeOrigin);
+
     await evalInProjectWindow<boolean>(secondary.windowId, `(() => {
       const script = document.createElement('script');
       script.src = 'papers-backpack://bp-11111111-1111-4111-8111-111111111111/missing-resource.js?token=resource-secret';

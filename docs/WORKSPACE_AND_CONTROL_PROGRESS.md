@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 deterministic hydration-failure pairing closure implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 thrown renderer-exception/control-survival closure in progress; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -979,6 +979,25 @@ report and requires exactly one ordered `hydration-failed` then
 revision/stage/code metadata. No production change was needed.
 
 Reviewer checkpoint at exact pushed head
+`d91608a841eddf824407a524ebb8ff3240d4c82e`: **SIGNED OFF** for deterministic
+hydration-failure pairing. The reviewer confirmed one authenticated report
+produces exactly one ordered `hydration-failed` then `lifecycle/render-failed`
+pair under the same exact surface, with strictly increasing sequence values
+and matching revision/stage/code metadata.
+
+Next smallest reviewed slice: **C1.2 thrown renderer-exception/control-
+survival closure** — fence one deliberate real main-world renderer exception,
+prove its exact-surface `uncaught-error` record, then immediately prove the
+developer-control plane remains responsive and the same renderer/document was
+not implicitly recovered or replaced.
+
+Current implementation checkpoint: the existing neutral-project E2E already
+continues control requests after genuine renderer throws/rejections. The
+narrow evidence correction will add a sequence-fenced deliberate throw,
+exact-target assertion, immediate control query, and unchanged
+`performance.timeOrigin`/document proof; no production change is expected.
+
+Reviewer checkpoint at exact pushed head
 `ee16454131193049823a8467e3e7aa5695c83964`: **SIGNED OFF** for deterministic
 visual diagnostic redaction closure. The reviewer confirmed the real buffer →
 real control event hub → serialized frame path across console, renderer error,
@@ -1175,7 +1194,7 @@ Those are separate lifecycle facts.
 * [x] first-paint independently observable;
 * [x] layout-stable only after bounded geometric stability;
 * [x] hydration failure produces `hydration-failed`/`render-failed`;
-* [ ] thrown renderer exception surfaces without killing control;
+* [x] thrown renderer exception surfaces without killing control;
 * [x] failed resource attributed to correct surface;
 * [x] console of two same-project surfaces remains isolated;
 * [x] renderer crash produces `renderer-gone`;
