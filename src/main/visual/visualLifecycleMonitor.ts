@@ -4,7 +4,6 @@ export interface VisualDiagnosticTarget {
   windowId: number;
   surfaceId?: string;
 }
-
 /** Small event surface shared by Electron WebContents and deterministic fakes.
  * The adapter never receives or forwards source URLs, sender ids, or handles. */
 export interface VisualLifecycleSource {
@@ -83,4 +82,3 @@ export function attachVisualLifecycleMonitor(
     },
   };
 }
-

@@ -61,4 +61,3 @@ describe('visual lifecycle monitor', () => {
     spy.mockRestore();
   });
 });
-

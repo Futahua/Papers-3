@@ -448,7 +448,7 @@ later lifecycle hooks will append to:
 
 Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 6/6;
 `tests/unit/visualLifecycleMonitor.test.ts` passes 3/3;
-the full host suite passes 757/757 with 4 skipped across 67 files; typecheck and
+the full host suite passes 760/760 with 4 skipped across 68 files; typecheck and
 diff check pass. This is not C1.2 completion; live window composition and
 control exposure are not claimed yet.
 
