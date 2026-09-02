@@ -807,7 +807,7 @@ selection, or management screen was added.
 - [x] Electron-version compatibility test for optional live WCV reparenting.
 - [x] B2 — richer `papersctl`, event subscriptions and authorized confirmation
   challenges for destructive operations.
-- [ ] B3 — thin stdio MCP adapter over the same local control protocol; no
+- [x] B3 — thin stdio MCP adapter over the same local control protocol; no
   duplicated business logic.
 
 ### A3.1 cross-native-window move contract (design slice)
@@ -1177,7 +1177,7 @@ MCP/stdio is the active review candidate. Release, packaging and installation
 follow implementation, validation and reviewer closure rather than running
 ahead of them.
 
-### B3 standalone stdio MCP adapter — review pending
+### B3 standalone stdio MCP adapter — signed off
 
 - [x] Pin the official `@modelcontextprotocol/sdk` at 1.30.0.
 - [x] Add one standalone stdio process with no new network listener and no code
@@ -1192,7 +1192,8 @@ ahead of them.
   sequencing, refusal propagation and cancellation cleanup.
 - [x] Add real Electron acceptance using the actual stdio adapter for
   `inspect.windows` and `window.create`, then prove state through control.
-- [ ] Reviewer sign-off on the exact pushed head.
+- [x] Reviewer sign-off on exact pushed head
+  `c4f91cc30dc7953e9ab4e7b53f452e791908524d`.
 
 Events are deliberately omitted from this first adapter slice. The adapter has
 no renderer IPC, facade, registry, filesystem-project, TCP/HTTP or arbitrary-JS
@@ -1215,6 +1216,30 @@ vulnerabilities after compatible transitive lockfile updates. The remaining
 development-only audit findings predate/are outside the shipped adapter path.
 The pre-existing user-owned modification to
 `docs/evidence/worker-comparison.json` remains untouched.
+
+### Release-checklist closure
+
+The reviewed implementation agenda is release-ready. Final authority invariants:
+
+- main remains the sole native-window, logical-surface, topology and Backpack
+  lifecycle authority;
+- control and MCP actors use authenticated local transport plus exact explicit
+  identities and never manufacture renderer authority;
+- only schema-validated/redacted semantic results cross the control boundary;
+- destructive control requires B2.2's connection-bound, expiring, single-use,
+  exact action/ID/name confirmation, with final validation and mutation under
+  one per-project ownership gate;
+- MCP remains a standalone mechanical stdio adapter over that reviewed client
+  and protocol, with cancellation/shutdown revoking its connection state.
+
+Release configuration was inspected after B3 sign-off. The repository has the
+documented GitHub provider, NSIS installer, `latest.yml` update feed, preserved
+external `Data` sibling, updater-safe `deleteAppDataOnUninstall: false`, active
+GitHub authentication, and a clean pushed implementation head except for the
+explicitly user-owned `docs/evidence/worker-comparison.json` modification. No
+reviewed implementation blocker remains. The creator explicitly authorized the
+release/install agenda; version assignment, publication and installer execution
+remain separate release commits/actions under `UPDATING_PAPERS.md`.
 
 ## Persistent pickup checklist for every new session
 
