@@ -977,8 +977,9 @@ listeners detached on close and before quit. The focused side-effect suite
 spies on `setInterval`/`setTimeout`, exercises lifecycle/resource failure and
 detach inertness, proves repeated layout mutations coalesce to one queued
 frame, and proves stable and timeout epochs end without queued frames. It also
-exposes recovery spies to prove observation never calls reload, loadURL, or
-restart. The neutral-project E2E captures `performance.timeOrigin` before the
+exercises real main-frame navigation failure and renderer-gone events; the
+source audit proves observation has no reload, loadURL, or restart call path.
+The neutral-project E2E captures `performance.timeOrigin` before the
 real overflow and mixed diagnostic events and confirms it is unchanged after
 them, alongside unchanged workspace state. Test-only `waitFor` timers remain
 outside the production observation contract.

@@ -87,7 +87,6 @@ describe('visual observation side effects', () => {
     const lifecycleSource = new FakeLifecycleSource();
     const resourceSource = new FakeResourceSource();
     const buffer = createVisualDiagnosticBuffer();
-    const recovery = { reload: vi.fn(), loadURL: vi.fn(), restart: vi.fn() };
     const setInterval = vi.spyOn(globalThis, 'setInterval');
     const setTimeout = vi.spyOn(globalThis, 'setTimeout');
     const lifecycle = attachVisualLifecycleMonitor(lifecycleSource, { windowId: 7, surfaceId: 'surface-a' }, buffer);
@@ -99,14 +98,13 @@ describe('visual observation side effects', () => {
 
     lifecycleSource.emit('did-start-loading');
     lifecycleSource.emit('console-message', {}, 3, 'visual signal');
+    lifecycleSource.emit('did-fail-load', {}, -6, 'navigation failed', 'papers-backpack://project', true);
+    lifecycleSource.emit('render-process-gone', {}, { reason: 'crashed' });
     resourceSource.emitError({ webContentsId: 12, resourceType: 'image', error: 'network failed' });
     resourceSource.emitCompleted({ webContentsId: 12, resourceType: 'script', statusCode: 404 });
-    expect(buffer.snapshot()).toHaveLength(4);
+    expect(buffer.snapshot()).toHaveLength(6);
     expect(setInterval).not.toHaveBeenCalled();
     expect(setTimeout).not.toHaveBeenCalled();
-    expect(recovery.reload).not.toHaveBeenCalled();
-    expect(recovery.loadURL).not.toHaveBeenCalled();
-    expect(recovery.restart).not.toHaveBeenCalled();
 
     lifecycle.detach();
     resource.detach();
@@ -116,7 +114,7 @@ describe('visual observation side effects', () => {
     lifecycleSource.emit('dom-ready');
     resourceSource.emitError({ webContentsId: 12, resourceType: 'font', error: 'late failure' });
     resourceSource.emitCompleted({ webContentsId: 12, resourceType: 'stylesheet', statusCode: 503 });
-    expect(buffer.snapshot()).toHaveLength(4);
+    expect(buffer.snapshot()).toHaveLength(6);
 
     setInterval.mockRestore();
     setTimeout.mockRestore();
