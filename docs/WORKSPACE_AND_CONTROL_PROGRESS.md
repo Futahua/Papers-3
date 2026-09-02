@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded per-surface timeline is signed off at `0996f5b227578acb0d450b3a8c074c250abc666a`; exact-surface ZIP report creation and lookback filtering are signed off at `abed691f67add77d3768ad532a797a37903b3ba8`; lifecycle-only screenshot policy, interrupted-report proof, and packaged visual proof remain open and outside the current no-package boundary
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; interrupted-report proof, element-PNG bundle, and packaged visual proof remain open and outside the current no-package boundary
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1989,6 +1989,12 @@ exactly target-local. The report unit proof also verifies that the current
 surface-report mode emits only one PNG entry; no continuous or per-frame
 screenshot capture is present.
 
+Final C1.5 checkpoint: the reviewer signed off the complete implemented scope
+at [`f5a67bfc`](https://github.com/Futahua/Papers-3/commit/f5a67bfc40f690a5c7e551492ef533a308579e3b).
+The deferred items are intentionally not represented as complete: interrupted
+report fault injection, element-PNG entries, and packaged success/failure
+acceptance require their own later evidence.
+
 ## Packaged live proof
 
 Packaged fixture intentionally fails after hydration.
@@ -2130,13 +2136,19 @@ No loop that repeatedly asks “are we ready yet?”
 
 ## Deterministic tests
 
-* [ ] MCP exact parameter pass-through for every visual command family;
+* [x] MCP exact parameter pass-through for every visual command family;
 * [ ] invalid/foreign surface refusal preserved;
 * [ ] artifact chunk reconstruction yields expected SHA;
 * [ ] MCP cannot turn element key into selector/script;
 * [ ] lifecycle events remain correctly correlated with outstanding calls;
 * [ ] cancellation during capture leaves no partial artifact and no continued operation;
-* [ ] adapter contains no Papers visual business rules.
+* [x] adapter contains no Papers visual business rules.
+
+Implementation checkpoint: the standalone MCP adapter remains a mechanical
+`method`/`params` forwarder. Unit coverage now exercises the complete current
+visual command family, including report creation and opaque artifact reads,
+with exact argument preservation. Control-side validation and authority remain
+in Papers' reviewed protocol; no visual logic was duplicated in MCP.
 
 ## Real packaged Electron acceptance
 

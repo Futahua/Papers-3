@@ -71,6 +71,31 @@ describe('Papers stdio MCP adapter', () => {
     }
   });
 
+  it('forwards every visual command family with exact method and params', async () => {
+    const { adapter, client, call } = await harness();
+    const visualCalls = [
+      ['inspect.process', {}],
+      ['inspect.visual.diagnostics', { windowId: 4, surfaceId: 'surface-a' }],
+      ['inspect.visual.elements', { windowId: 4, surfaceId: 'surface-a' }],
+      ['inspect.visual.timeline', { windowId: 4, surfaceId: 'surface-a', beforeMs: 1000 }],
+      ['visual.assert', { windowId: 4, surfaceId: 'surface-a', assertions: [{ kind: 'visible', elementKey: 'canvas.root' }] }],
+      ['visual.report.create', { windowId: 4, surfaceId: 'surface-a', beforeMs: 1000 }],
+      ['visual.artifact.read', { artifactId: 'va-11111111-1111-4111-8111-111111111111', offset: 0, length: 1 }],
+      ['capture.surface', { windowId: 4, surfaceId: 'surface-a' }],
+      ['capture.element', { windowId: 4, surfaceId: 'surface-a', elementKey: 'canvas.root', paddingCssPx: 0 }],
+      ['capture.window', { windowId: 4 }],
+    ] as const;
+    try {
+      for (const [method, params] of visualCalls) {
+        await client.callTool({ name: PAPERS_MCP_TOOL, arguments: { method, params } });
+      }
+      expect(call.mock.calls).toEqual(visualCalls);
+    } finally {
+      await client.close();
+      await adapter.close();
+    }
+  });
+
   it('returns control refusals as MCP tool errors without widening them', async () => {
     const call = vi.fn(async () => ({ id: 1, ok: false, error: 'That surface is not open in that Papers window.' }));
     const adapter = createPapersMcpServer({
