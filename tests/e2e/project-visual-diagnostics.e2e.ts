@@ -237,6 +237,7 @@ describe('project renderer visual diagnostics', () => {
     // buffer already contains mixed lifecycle/failure records from this
     // surface, so exceeding the default cap proves eviction in the production
     // path rather than in an isolated helper.
+    const workspaceBeforePostOverflowEvents = await call('inspect.workspace', { windowId: secondary.windowId });
     await evalInProjectWindow<boolean>(secondary.windowId, `(() => {
       for (let index = 0; index < 132; index += 1) console.log(\`buffer-bound-observation-\${index}\`);
       return true;
@@ -248,7 +249,6 @@ describe('project renderer visual diagnostics', () => {
       return records.some((record) => record.payload.kind === 'console'
         && record.payload.message === 'buffer-bound-observation-131');
     }, 10_000, 'real project diagnostic buffer overflow observations');
-    const workspaceBeforePostOverflowEvents = await call('inspect.workspace', { windowId: secondary.windowId });
     const overflowRecords = await call('inspect.visual.diagnostics', {
       windowId: secondary.windowId, surfaceId: second.surfaceId,
     }) as Array<{ sequence: number; target: { windowId: number; surfaceId?: string }; payload: { kind?: string; message?: string } }>;
@@ -289,7 +289,21 @@ describe('project renderer visual diagnostics', () => {
           && records.some((record) => record.payload.kind === 'unhandled-rejection')
           && records.some((record) => record.payload.kind === 'resource-failed' && record.payload.resourceKind === 'image');
       }, 10_000, 'post-overflow visual diagnostic publication');
-      await waitFor(async () => diagnosticEvents.length >= 3, 10_000, 'post-overflow visual diagnostic subscription');
+      await waitFor(async () => diagnosticEvents.some((frame) => frame.event === 'visual.diagnostic'
+        && frame.payload?.target?.windowId === secondary.windowId
+        && frame.payload?.target?.surfaceId === second.surfaceId
+        && frame.payload.payload?.kind === 'console'
+        && frame.payload.payload.message === 'buffer-bound-live-console token=<redacted>')
+        && diagnosticEvents.some((frame) => frame.event === 'visual.diagnostic'
+          && frame.payload?.target?.windowId === secondary.windowId
+          && frame.payload?.target?.surfaceId === second.surfaceId
+          && frame.payload.payload?.kind === 'unhandled-rejection')
+        && diagnosticEvents.some((frame) => frame.event === 'visual.diagnostic'
+          && frame.payload?.target?.windowId === secondary.windowId
+          && frame.payload?.target?.surfaceId === second.surfaceId
+          && frame.payload.payload?.kind === 'resource-failed'
+          && frame.payload.payload.resourceKind === 'image'),
+      10_000, 'post-overflow visual diagnostic subscription');
     } finally {
       removeEventListener();
       eventConnection.close();
