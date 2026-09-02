@@ -7,6 +7,7 @@ import {
   papersControlEventFrameSchema,
   type PapersControlMethod,
 } from '../../src/main/control/papersControlProtocol';
+import { createPapersControlConfirmationBroker } from '../../src/main/control/papersControlConfirmation';
 import { createWorkspaceTopology, openWorkspaceSurface, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
 
 function request(method: PapersControlMethod, params: unknown = {}) {
@@ -20,6 +21,61 @@ function request(method: PapersControlMethod, params: unknown = {}) {
 }
 
 describe('Papers developer control protocol', () => {
+  it('requires an exact one-time confirmation before archive or deletion', async () => {
+    const backpack = { id: 'bp-a', name: 'Alpha', archived: false };
+    const archiveBackpack = vi.fn(async () => { backpack.archived = true; });
+    const removeBackpack = vi.fn(async () => undefined);
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+      createWindow: async () => ({ windowId: 1 }), backpack: () => ({ ...backpack }),
+      archiveBackpack, removeBackpack,
+    };
+    const confirmations = createPapersControlConfirmationBroker({
+      now: () => 1_000,
+      createId: () => backpack.archived
+        ? '22222222-2222-4222-8222-222222222222'
+        : '11111111-1111-4111-8111-111111111111',
+    });
+    const context = { connectionId: 'connection-a', confirmations };
+
+    const archive = await dispatchPapersControl(
+      dependencies,
+      request('backpack.archive.prepare', { projectId: backpack.id }),
+      context,
+    ) as { challengeId: string; confirmationText: string };
+    await expect(dispatchPapersControl(dependencies, request('confirmation.execute', {
+      challengeId: archive.challengeId, confirmationText: archive.confirmationText,
+    }), context)).resolves.toEqual({ action: 'backpack.archive', projectId: 'bp-a', name: 'Alpha' });
+    expect(archiveBackpack).toHaveBeenCalledWith('bp-a');
+
+    const removal = await dispatchPapersControl(
+      dependencies,
+      request('backpack.remove.prepare', { projectId: backpack.id }),
+      context,
+    ) as { challengeId: string; confirmationText: string };
+    backpack.name = 'Renamed';
+    await expect(dispatchPapersControl(dependencies, request('confirmation.execute', {
+      challengeId: removal.challengeId, confirmationText: removal.confirmationText,
+    }), context)).rejects.toThrow(/changed/);
+    expect(removeBackpack).not.toHaveBeenCalled();
+    await expect(dispatchPapersControl(dependencies, request('confirmation.execute', {
+      challengeId: removal.challengeId, confirmationText: removal.confirmationText,
+    }), context)).rejects.toThrow(/missing or expired/);
+  });
+
+  it('refuses destructive preparation without live state and connection context', async () => {
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+      createWindow: async () => ({ windowId: 1 }), backpack: () => null,
+    };
+    await expect(dispatchPapersControl(dependencies, request('backpack.archive.prepare', { projectId: 'bp-a' })))
+      .rejects.toThrow(/authenticated control connection/);
+
+    const context = { connectionId: 'connection-a', confirmations: createPapersControlConfirmationBroker() };
+    await expect(dispatchPapersControl(dependencies, request('backpack.archive.prepare', { projectId: 'bp-a' }), context))
+      .rejects.toThrow(/not available/);
+  });
+
   it('dispatches only the small semantic command catalog', async () => {
     // Results must satisfy the catalog's declared output shape: the boundary
     // validates what it is about to disclose rather than trusting whatever a

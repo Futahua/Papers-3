@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -12,6 +12,7 @@ import { connectPapersControl, readDescriptor } from '../../tools/papersControlC
 let launched: LaunchedApp;
 let descriptorPath: string;
 const execFileAsync = promisify(execFile);
+const CONTROL_PROJECT = 'bp-11111111-1111-4111-8111-111111111111';
 
 /**
  * Uses the SHARED control client, so this proves the real framing
@@ -33,6 +34,22 @@ async function call(method: string): Promise<unknown> {
 beforeAll(async () => {
   const userDataDir = await mkdtemp(join(tmpdir(), 'papers3-control-e2e-'));
   descriptorPath = join(userDataDir, 'dev-control.json');
+  const dataDir = join(userDataDir, 'PapersData');
+  const backpackDir = join(dataDir, 'backpacks', CONTROL_PROJECT);
+  const backpack = {
+    id: CONTROL_PROJECT,
+    name: 'Control Target',
+    type: 'environment',
+    createdAt: '2026-09-02T00:00:00.000Z',
+    lastEnteredAt: null,
+    archived: false,
+    workspacePath: null,
+  };
+  await mkdir(backpackDir, { recursive: true });
+  await writeFile(join(dataDir, 'registry.json'), JSON.stringify({
+    schemaVersion: 1, backpacks: [backpack], lastActiveBackpackId: null,
+  }));
+  await writeFile(join(backpackDir, 'backpack.json'), JSON.stringify({ schemaVersion: 1, ...backpack }));
   launched = await launchPapers(userDataDir, {
     fixtures: false,
     devControlDescriptor: descriptorPath,
@@ -93,5 +110,31 @@ describe('developer control plane', () => {
       actor.close();
       cli.kill();
     }
+  });
+
+  it('requires exact named confirmation and performs real archive then removal through papersctl', async () => {
+    const archive = await execFileAsync(process.execPath, [
+      join(process.cwd(), 'tools', 'papersctl.mjs'),
+      'backpack.archive', '--project', CONTROL_PROJECT,
+      '--confirmation', 'ARCHIVE BACKPACK "Control Target"',
+      '--descriptor', descriptorPath,
+    ]);
+    expect(JSON.parse(archive.stdout)).toEqual({
+      action: 'backpack.archive', projectId: CONTROL_PROJECT, name: 'Control Target',
+    });
+
+    const remove = await execFileAsync(process.execPath, [
+      join(process.cwd(), 'tools', 'papersctl.mjs'),
+      'backpack.remove', '--project', CONTROL_PROJECT,
+      '--confirmation', 'DELETE BACKPACK "Control Target"',
+      '--descriptor', descriptorPath,
+    ]);
+    expect(JSON.parse(remove.stdout)).toEqual({
+      action: 'backpack.remove', projectId: CONTROL_PROJECT, name: 'Control Target',
+    });
+    await waitFor(async () => {
+      const registry = JSON.parse(await readFile(join(launched.userDataDir, 'PapersData', 'registry.json'), 'utf8'));
+      return registry.backpacks.length === 0;
+    }, 10_000, 'confirmed Backpack removal');
   });
 });

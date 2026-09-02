@@ -1545,6 +1545,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           return found ? projectSurfaceControlSnapshot(found) : null;
         },
         createWindow: async () => ({ windowId: await createAdditionalPapersWindow() }),
+        backpack: (projectId) => registry.find(projectId),
+        archiveBackpack: (projectId) => facade.setBackpackArchived(projectId, true),
+        removeBackpack: (projectId) => facade.removeBackpack(projectId),
         publishEvent: (event, payload) => controlEventHub.publish(event, payload),
       },
     });

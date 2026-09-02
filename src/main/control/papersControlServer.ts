@@ -14,6 +14,10 @@ import {
   type PapersControlDependencies,
   type PapersControlEventName,
 } from './papersControlProtocol';
+import {
+  createPapersControlConfirmationBroker,
+  type PapersControlConfirmationBroker,
+} from './papersControlConfirmation';
 
 /**
  * Per-FRAME limit, not a limit on everything the socket has ever delivered.
@@ -139,6 +143,7 @@ export async function startPapersControlServer({
   processId = process.pid,
   publishDescriptor,
   eventHub = createPapersControlEventHub(),
+  confirmations = createPapersControlConfirmationBroker(),
 }: {
   descriptorPath: string;
   dependencies: PapersControlDependencies;
@@ -147,6 +152,7 @@ export async function startPapersControlServer({
    * `listen` must leave nothing listening and nothing on disk. */
   publishDescriptor?: (temporaryPath: string, finalPath: string) => Promise<void>;
   eventHub?: PapersControlEventHub;
+  confirmations?: PapersControlConfirmationBroker;
 }): Promise<PapersControlServer> {
   const token = randomBytes(32).toString('hex');
   const nonce = randomBytes(12).toString('hex');
@@ -182,6 +188,7 @@ export async function startPapersControlServer({
       return;
     }
     sockets.add(socket);
+    const connectionId = randomBytes(16).toString('hex');
     eventHub.attach(socket);
     socket.setEncoding('utf8');
     // A peer vanishing mid-write must not raise an unhandled error.
@@ -189,6 +196,7 @@ export async function startPapersControlServer({
     socket.on('close', () => {
       sockets.delete(socket);
       eventHub.detach(socket);
+      confirmations.revokeConnection(connectionId);
     });
 
     const frames = createFrameReader({
@@ -213,7 +221,7 @@ export async function startPapersControlServer({
               const subscription = papersControlCommands['events.subscribe'].input.parse(request.params ?? {});
               eventHub.subscribe(socket, subscription.events);
             }
-            const result = await dispatchPapersControl(dependencies, request);
+            const result = await dispatchPapersControl(dependencies, request, { connectionId, confirmations });
             send(socket, { id: request.id, ok: true, result });
           } catch (error) {
             send(socket, { id: requestId, ok: false, error: errorText(error) });

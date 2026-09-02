@@ -6,6 +6,10 @@ import {
   validatedWorkspaceTopologySchema,
   workspaceTopologySchema,
 } from '@shared/workspaceTopology';
+import type {
+  PapersControlConfirmationBroker,
+  PapersControlDestructiveAction,
+} from './papersControlConfirmation';
 
 export const PAPERS_CONTROL_PROTOCOL_VERSION = 1;
 
@@ -53,6 +57,19 @@ const movedWorkspaceSchema = z.object({
   targetWindowId: z.number().int(),
   sourceTopology: workspaceTopologySchema,
   targetTopology: workspaceTopologySchema,
+}).strict();
+const destructiveActionSchema = z.enum(['backpack.archive', 'backpack.remove']);
+const confirmationChallengeSchema = z.object({
+  challengeId: z.string().uuid(),
+  action: destructiveActionSchema,
+  target: z.object({ projectId: z.string().min(1), name: z.string().min(1) }).strict(),
+  confirmationText: z.string().min(1).max(512),
+  expiresAt: z.string().datetime(),
+}).strict();
+const destructiveActionResultSchema = z.object({
+  action: destructiveActionSchema,
+  projectId: z.string().min(1),
+  name: z.string().min(1),
 }).strict();
 
 export const papersControlEventNames = ['window.created', 'workspace.changed'] as const;
@@ -216,6 +233,24 @@ export const papersControlCommands = {
     output: z.object({ subscribed: z.array(controlEventNameSchema) }).strict(),
     scope: 'app', effect: 'query',
   },
+  'backpack.archive.prepare': {
+    input: z.object({ projectId: z.string().min(1).max(128) }).strict(),
+    output: confirmationChallengeSchema,
+    scope: 'app', effect: 'query',
+  },
+  'backpack.remove.prepare': {
+    input: z.object({ projectId: z.string().min(1).max(128) }).strict(),
+    output: confirmationChallengeSchema,
+    scope: 'app', effect: 'query',
+  },
+  'confirmation.execute': {
+    input: z.object({
+      challengeId: z.string().uuid(),
+      confirmationText: z.string().min(1).max(512),
+    }).strict(),
+    output: destructiveActionResultSchema,
+    scope: 'app', effect: 'mutate',
+  },
   'layout.split': {
     input: surfaceTargetSchema.extend({ direction: z.enum(['right', 'down']) }).strict(),
     output: z.object({ windowId: z.number().int(), topology: workspaceTopologySchema }).strict(),
@@ -261,9 +296,17 @@ export interface PapersControlDependencies {
   snapshot(): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
+  backpack?(projectId: string): unknown;
+  archiveBackpack?(projectId: string): Promise<void>;
+  removeBackpack?(projectId: string): Promise<void>;
   /** Publish only schema-validated, redacted semantic events to subscribed
    * control connections. The transport owns connection-local fan-out. */
   publishEvent?(event: PapersControlEventName, payload: unknown): void;
+}
+
+export interface PapersControlDispatchContext {
+  connectionId?: string;
+  confirmations?: PapersControlConfirmationBroker;
 }
 
 const methodNames = Object.keys(papersControlCommands) as [PapersControlMethod, ...PapersControlMethod[]];
@@ -290,10 +333,61 @@ export type PapersControlRequest = z.infer<typeof controlRequestSchema>;
 export async function dispatchPapersControl(
   dependencies: PapersControlDependencies,
   request: PapersControlRequest,
+  context: PapersControlDispatchContext = {},
 ): Promise<unknown> {
   const definition = papersControlCommands[request.method];
   definition.input.parse(request.params ?? {});
   switch (request.method) {
+    case 'backpack.archive.prepare':
+    case 'backpack.remove.prepare': {
+      if (!context.connectionId || !context.confirmations) {
+        throw new Error('Destructive confirmation is unavailable outside an authenticated control connection.');
+      }
+      const { projectId } = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const backpack = dependencies.backpack?.(projectId) as { id?: unknown; name?: unknown; archived?: unknown } | null | undefined;
+      if (!backpack || backpack.id !== projectId || typeof backpack.name !== 'string' || typeof backpack.archived !== 'boolean') {
+        throw new Error('That Backpack is not available.');
+      }
+      const action: PapersControlDestructiveAction = request.method === 'backpack.archive.prepare'
+        ? 'backpack.archive'
+        : 'backpack.remove';
+      if (action === 'backpack.archive' && backpack.archived) throw new Error('That Backpack is already archived.');
+      if (action === 'backpack.remove' && !backpack.archived) throw new Error('Archive the Backpack before deleting it.');
+      return papersControlCommands[request.method].output.parse(context.confirmations.issue(
+        context.connectionId,
+        action,
+        { projectId, name: backpack.name },
+      ));
+    }
+    case 'confirmation.execute': {
+      if (!context.connectionId || !context.confirmations) {
+        throw new Error('Destructive confirmation is unavailable outside an authenticated control connection.');
+      }
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const challenge = context.confirmations.consume(
+        context.connectionId,
+        params.challengeId,
+        params.confirmationText,
+      );
+      const backpack = dependencies.backpack?.(challenge.target.projectId) as { id?: unknown; name?: unknown; archived?: unknown } | null | undefined;
+      if (!backpack || backpack.id !== challenge.target.projectId || backpack.name !== challenge.target.name || typeof backpack.archived !== 'boolean') {
+        throw new Error('The confirmed Backpack changed or is no longer available.');
+      }
+      if (challenge.action === 'backpack.archive') {
+        if (backpack.archived) throw new Error('The confirmed Backpack is already archived.');
+        if (!dependencies.archiveBackpack) throw new Error('Backpack archiving is unavailable.');
+        await dependencies.archiveBackpack(challenge.target.projectId);
+      } else {
+        if (!backpack.archived) throw new Error('The confirmed Backpack is no longer archived.');
+        if (!dependencies.removeBackpack) throw new Error('Backpack deletion is unavailable.');
+        await dependencies.removeBackpack(challenge.target.projectId);
+      }
+      return papersControlCommands[request.method].output.parse({
+        action: challenge.action,
+        projectId: challenge.target.projectId,
+        name: challenge.target.name,
+      });
+    }
     case 'events.subscribe': {
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});
       return papersControlCommands[request.method].output.parse({ subscribed: params.events });

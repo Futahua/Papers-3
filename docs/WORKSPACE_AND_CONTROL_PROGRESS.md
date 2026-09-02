@@ -60,8 +60,9 @@ JavaScript, release, installation or bypassing creator confirmation.
   never the only correctness path.
 - Developer control is dev/test-only by default, with explicit opt-in. It uses a
   local named pipe/Unix socket, never TCP.
-- No destructive developer-control commands until a two-phase confirmation
-  challenge is designed and explicitly authorized.
+- Destructive developer-control commands require a connection-bound, expiring,
+  single-use challenge that names the exact operation, Backpack ID and name;
+  there is no force or blanket-confirmation path.
 
 ## Completed implementation
 
@@ -176,9 +177,10 @@ fixture/restart failures were previously observed and remain separately scoped.
 
 The browser reviewer signed off A3.4, B2.1, the Electron 43.1.1 WCV
 compatibility gate, the A0.4 same-project multi-surface evidence gate and the
-renderer transport destroy/recreate gate. All currently eligible evidence gates
-are closed; the remaining unchecked items are explicitly excluded scope or
-future product work.
+renderer transport destroy/recreate gate. The creator subsequently authorized
+the previously excluded B2 destructive-confirmation, B3 MCP/stdio and eventual
+release/install agenda. B2 destructive confirmation is now the active review
+candidate recorded below.
 
 The prior A3 review history is retained below.
 
@@ -1072,6 +1074,30 @@ build passed; live developer-control Electron E2E passed 3/3; and
 The compatibility probe below records the completed narrow gate; recreate/rebind
 remains the correctness path, with no production behavior change.
 
+### B2.2 destructive confirmation challenges — review pending
+
+- [x] Add explicit `backpack.archive.prepare`, `backpack.remove.prepare` and
+  `confirmation.execute` protocol operations; there is no force flag or direct
+  destructive mutation command.
+- [x] Bind each challenge to one authenticated connection, exact action,
+  Backpack ID and current name.
+- [x] Expire challenges after five minutes, consume them on the first execution
+  attempt, and revoke them when their connection closes.
+- [x] Recheck exact target name and archive state immediately before mutation;
+  removal still requires the Backpack to be archived.
+- [x] Keep `papersctl` on one connection for prepare→confirm→execute, with an
+  interactive exact-phrase prompt or explicit `--confirmation` text.
+- [x] Prove wrong-connection, wrong-phrase, expiry, replay, disconnect, stale
+  target and live archive/removal behavior.
+- [ ] Reviewer sign-off on the exact pushed head.
+
+Validation at the candidate worktree: typecheck passed; focused confirmation,
+protocol, server and client tests passed 43/43; full Vitest passed 732/736 (4
+skipped); production build passed; live developer-control Electron E2E passed
+4/4 using the real `papersctl` executable; and `git diff --check` passed. The
+pre-existing user-owned modification to
+`docs/evidence/worker-comparison.json` remains untouched.
+
 ### Electron 43.1.1 live-WebContentsView reparent compatibility — signed off
 
 The standalone acceptance probe creates two real `BaseWindow`s and one loaded
@@ -1134,9 +1160,10 @@ E2E, combined relevant E2E 6/6, typecheck, full Vitest 727/731 (4 skipped),
 build and diff checks pass. Reviewer found no concrete defect; no production
 behavior changed.
 
-All currently eligible evidence gates are now closed. Remaining B2 destructive
-confirmation, B3 MCP/stdio, release, installation and packaging work remains
-explicitly excluded; no further product milestone is inferred.
+The creator has now authorized the remaining agenda. B2.2 is the active review
+candidate; B3 MCP/stdio follows only after B2.2 sign-off. Release, packaging and
+installation follow implementation, validation and reviewer closure rather than
+running ahead of them.
 
 ## Persistent pickup checklist for every new session
 

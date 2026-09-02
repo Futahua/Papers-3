@@ -28,6 +28,9 @@ npm run papersctl -- window.create --descriptor D:\temp\papers-control.json
 npm run papersctl -- events.subscribe --events window.created,workspace.changed --descriptor D:\temp\papers-control.json
 # Cross-window movement names both windows explicitly.
 npm run papersctl -- layout.moveSurfaceToWindow --source-window 1 --target-window 2 --surface sf-1 --group group-main --index 0 --descriptor D:\temp\papers-control.json
+# Destructive actions require an exact, operation-bound confirmation phrase.
+npm run papersctl -- backpack.archive --project bp-… --confirmation 'ARCHIVE BACKPACK "Exact name"' --descriptor D:\temp\papers-control.json
+npm run papersctl -- backpack.remove --project bp-… --confirmation 'DELETE BACKPACK "Exact name"' --descriptor D:\temp\papers-control.json
 ```
 
 `inspect.snapshot` is a coherent, versioned, redacted view of current Papers
@@ -46,7 +49,24 @@ while a command is still pending. Payloads contain only logical IDs and the
 validated workspace topology; URLs, roots, sender/WebContents IDs, native
 handles and Dockview internals are not part of the event schema.
 
-This is the first narrow milestone. New commands must be added to the semantic
+`backpack.archive` and `backpack.remove` are the only destructive control
+workflows. Each keeps one authenticated connection open while Papers issues a
+single-use challenge and then executes it. The challenge is bound to that
+connection, exact action, Backpack ID and current name; it expires after five
+minutes, is consumed by the first execution attempt, and is revoked when the
+connection closes. Papers rechecks the Backpack's name and archived state
+immediately before mutation. A different connection, stale name/state, wrong
+phrase, expired challenge or replay is refused. `backpack.remove` also retains
+the product rule that only an already archived Backpack may be removed; its
+internal record remains recoverable and external files/applications are not
+touched.
+
+When attached to a terminal, `papersctl` prompts for the exact phrase. Automated
+callers may pass `--confirmation`, but must supply the complete phrase naming
+the exact Backpack. There is no `--yes`, force flag, durable approval, or way to
+separate prepare and execute across connections.
+
+New commands must be added to the semantic
 catalog with explicit target authority, redaction and confirmation policy. UI
 geometry synchronization channels are not developer commands merely because
 they exist in renderer IPC.
