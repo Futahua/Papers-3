@@ -14,6 +14,7 @@ const PROJECT = 'bp-11111111-1111-4111-8111-111111111111';
 let launched: LaunchedApp;
 let descriptorPath: string;
 let projectSourcePath: string;
+let failureFixturePath: string;
 
 function storedZipEntries(bytes: Uint8Array): Map<string, Uint8Array> {
   const entries = new Map<string, Uint8Array>();
@@ -86,6 +87,7 @@ beforeAll(async () => {
   const dataDir = join(userDataDir, 'PapersData');
   const projectRoot = join(dataDir, 'neutral-project');
   projectSourcePath = join(projectRoot, 'public', 'app.js');
+  failureFixturePath = join(projectRoot, 'public', 'failure.html');
   const backpackDir = join(dataDir, 'backpacks', PROJECT);
   const backpack = {
     id: PROJECT, name: 'Neutral project', type: 'environment',
@@ -99,6 +101,9 @@ beforeAll(async () => {
   await writeFile(join(projectRoot, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: PROJECT, entry: 'public/index.html' }));
   await writeFile(join(projectRoot, 'public', 'index.html'), '<!doctype html><script src="app.js"></script><main data-papers-visual-key="canvas.root"><h1 data-papers-visual-key="title.main">Neutral project</h1></main>');
   await writeFile(join(projectRoot, 'public', 'empty.html'), '<!doctype html><title>Failing visual fixture</title><style>html,body{margin:0;background:#5b1010;color:#fff;font:32px sans-serif}main{padding:48px}strong{display:block;font-size:56px}</style><main><strong>RENDER FAILED</strong><span>synthetic packaged failure fixture</span></main>');
+  await writeFile(failureFixturePath, `<!doctype html><title>Failing visual fixture</title>
+    <style>html,body{margin:0;background:#5b1010;color:#fff;font:32px sans-serif}main{padding:48px}strong{display:block;font-size:56px}</style>
+    <main><strong>RENDER FAILED</strong><span>synthetic packaged failure fixture</span></main>`);
   await writeFile(projectSourcePath, `window.__papersProjectVisualDiagnosticTestV1 = () => {
       setTimeout(() => { throw new Error('C:\\\\private\\\\project-late.js token=secret'); }, 0);
       setTimeout(() => { Promise.reject(new Error('C:\\\\private\\\\project-late-promise.js password=secret')); }, 0);
@@ -433,22 +438,7 @@ describe('project renderer visual diagnostics', () => {
     }, 10_000, 'current replacement project diagnostics');
     const hydrationPairBefore = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{ sequence: number }>;
     const hydrationPairBeforeSequence = Math.max(0, ...hydrationPairBefore.map((record) => record.sequence));
-    await evalInProjectWindow<boolean>(secondary.windowId,
-      `window.papersVisualDiagnosticBridgeV1.reportStateHydrated('neutral-rev-1', { cards: 1, groups: 1 }); true`);
-    await waitFor(async () => {
-      const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId, surfaceId: second.surfaceId }) as Array<{
-        sequence: number; payload: { kind?: string; phase?: string; revision?: string };
-      }>;
-      return records.some((record) => record.sequence > hydrationPairBeforeSequence
-        && record.payload.kind === 'lifecycle'
-        && record.payload.phase === 'state-hydrated'
-        && record.payload.revision === 'neutral-rev-1');
-    }, 10_000, 'failure target hydration success');
-    await evalInProjectWindow(secondary.windowId, `(() => {
-      document.body.innerHTML = '<main><strong>RENDER FAILED</strong><span>synthetic packaged failure fixture</span></main>';
-      document.body.style.cssText = 'margin:0;background:#5b1010;color:#fff;font:32px sans-serif;padding:48px';
-      return true;
-    })()`);
+    const failureFixtureUrl = `papers-backpack://${PROJECT}/public/failure.html`;
     const failureLifecycleEvents: Array<{
       event?: string; payload?: { target?: { windowId?: number; surfaceId?: string }; payload?: { kind?: string; phase?: string; code?: string } };
     }> = [];
@@ -459,8 +449,17 @@ describe('project renderer visual diagnostics', () => {
     await expect(failureLifecycleConnection.call('events.subscribe', {
       events: ['visual.lifecycle'], visualTarget: { windowId: secondary.windowId, surfaceId: second.surfaceId },
     })).resolves.toMatchObject({ ok: true, result: { subscribed: ['visual.lifecycle'] } });
+    await evalInProjectWindow(secondary.windowId,
+      `window.location.href = ${JSON.stringify(failureFixtureUrl)}; true`);
+    await waitFor(async () => evalInProjectWindow<boolean>(secondary.windowId,
+      `document.title === 'Failing visual fixture'`), 10_000, 'failing visual fixture navigation');
+    await waitFor(async () => evalInProjectWindow<boolean>(secondary.windowId,
+      `typeof window.papersVisualDiagnosticBridgeV1?.reportStateHydrated === 'function'`),
+    10_000, 'failure fixture diagnostic bridge');
     await evalInProjectWindow<boolean>(secondary.windowId,
-      `window.papersVisualDiagnosticBridgeV1.reportHydrationFailed('neutral-rev-1', 'parse', 'fixture-failure'); true`);
+      `window.papersVisualDiagnosticBridgeV1.reportStateHydrated('failure-rev-1', { cards: 1, groups: 1 }); true`);
+    await evalInProjectWindow<boolean>(secondary.windowId,
+      `window.papersVisualDiagnosticBridgeV1.reportHydrationFailed('failure-rev-1', 'render', 'fixture-render-failure'); true`);
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
         sequence: number; target: { surfaceId?: string }; payload: { kind?: string; revision?: string; stage?: string; code?: string };
@@ -468,8 +467,8 @@ describe('project renderer visual diagnostics', () => {
       return records.some((record) => record.sequence > beforeTargetSequence
         && record.target.surfaceId === second.surfaceId
         && record.payload.kind === 'hydration-failed'
-        && record.payload.revision === 'neutral-rev-1'
-        && record.payload.stage === 'parse' && record.payload.code === 'fixture-failure');
+        && record.payload.revision === 'failure-rev-1'
+        && record.payload.stage === 'render' && record.payload.code === 'fixture-render-failure');
     }, 10_000, 'current replacement hydration failure diagnostic');
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
@@ -479,8 +478,8 @@ describe('project renderer visual diagnostics', () => {
         && record.target.surfaceId === second.surfaceId
         && record.payload.kind === 'lifecycle'
         && record.payload.phase === 'render-failed'
-        && record.payload.revision === 'neutral-rev-1'
-        && record.payload.stage === 'parse' && record.payload.code === 'fixture-failure');
+        && record.payload.revision === 'failure-rev-1'
+        && record.payload.stage === 'render' && record.payload.code === 'fixture-render-failure');
     }, 10_000, 'current replacement hydration render-failed lifecycle');
     const hydrationPairRecords = (await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
       sequence: number; target: { windowId: number; surfaceId?: string }; payload: {
@@ -499,22 +498,22 @@ describe('project renderer visual diagnostics', () => {
     expect(hydrationFailureRecord.target).toEqual({ windowId: secondary.windowId, surfaceId: second.surfaceId });
     expect(renderFailedRecord.target).toEqual({ windowId: secondary.windowId, surfaceId: second.surfaceId });
     expect(hydrationFailureRecord.payload).toMatchObject({
-      kind: 'hydration-failed', revision: 'neutral-rev-1', stage: 'parse', code: 'fixture-failure',
+      kind: 'hydration-failed', revision: 'failure-rev-1', stage: 'render', code: 'fixture-render-failure',
     });
     expect(renderFailedRecord.payload).toMatchObject({
-      kind: 'lifecycle', phase: 'render-failed', revision: 'neutral-rev-1', stage: 'parse', code: 'fixture-failure',
+      kind: 'lifecycle', phase: 'render-failed', revision: 'failure-rev-1', stage: 'render', code: 'fixture-render-failure',
     });
     await waitFor(async () => failureLifecycleEvents.some((frame) => frame.event === 'visual.lifecycle'
       && frame.payload?.target?.windowId === secondary.windowId
       && frame.payload?.target?.surfaceId === second.surfaceId
       && frame.payload.payload?.kind === 'lifecycle'
       && frame.payload.payload.phase === 'render-failed'
-      && frame.payload.payload.code === 'fixture-failure'),
+      && frame.payload.payload.code === 'fixture-render-failure'),
     10_000, 'packaged visual lifecycle subscription');
     removeFailureLifecycleListener();
     failureLifecycleConnection.close();
 
-    const sourceHashBeforeFailureReport = createHash('sha256').update(await readFile(projectSourcePath)).digest('hex');
+    const sourceHashBeforeFailureReport = createHash('sha256').update(await readFile(failureFixturePath)).digest('hex');
     const mcpTransport = new StdioClientTransport({
       command: process.execPath,
       args: [join(process.cwd(), 'tools', 'papersMcp.mjs'), '--descriptor', descriptorPath],
@@ -559,15 +558,15 @@ describe('project renderer visual diagnostics', () => {
     const failureLifecycle = new TextDecoder().decode(failureEntries.get('lifecycle.ndjson'));
     expect(JSON.parse(new TextDecoder().decode(failureEntries.get('process.json')))).toEqual(processIdentity);
     expect(failureDiagnostics).toContain('"kind":"hydration-failed"');
-    expect(failureDiagnostics).toContain('"stage":"parse"');
-    expect(failureDiagnostics).toContain('"code":"fixture-failure"');
+    expect(failureDiagnostics).toContain('"stage":"render"');
+    expect(failureDiagnostics).toContain('"code":"fixture-render-failure"');
     expect(failureLifecycle).toContain('"phase":"render-failed"');
     expect(failureLifecycle).toContain('"phase":"state-hydrated"');
-    expect(failureLifecycle).toContain('"revision":"neutral-rev-1"');
+    expect(failureLifecycle).toContain('"revision":"failure-rev-1"');
     expect(failureEntries.get('surface-capture.json')).toBeDefined();
     expect(failureEntries.get('surface.png')?.[0]).toBe(137);
     expect(failureEntries.get('surface.png')?.[1]).toBe(80);
-    expect(createHash('sha256').update(await readFile(projectSourcePath)).digest('hex')).toBe(sourceHashBeforeFailureReport);
+    expect(createHash('sha256').update(await readFile(failureFixturePath)).digest('hex')).toBe(sourceHashBeforeFailureReport);
     await evalInProjectWindow(secondary.windowId,
       `window.location.href = ${JSON.stringify(opened.url)}; true`);
     await waitFor(async () => evalInProjectWindow<boolean>(secondary.windowId,
