@@ -250,7 +250,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   private refreshVisualSemanticKeys(windowId: number, surfaceId: string): void {
-    this.deps.refreshVisualSemanticKeys?.(windowId, surfaceId);
+    try {
+      this.deps.refreshVisualSemanticKeys?.(windowId, surfaceId);
+    } catch {
+      // Visual observation is best effort and must never alter a workspace
+      // transaction's canonical state or compensation outcome.
+    }
   }
 
   /** Hermes has one physical/global placement. Serialize every mutation from

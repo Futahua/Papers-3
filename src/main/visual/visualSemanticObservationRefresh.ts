@@ -25,7 +25,11 @@ export function refreshCurrentVisualSemanticKeys(
   if (!runtime || runtime.senderId === null) return false;
   const context = deps.contextForSender(runtime.senderId);
   if (!context || context.windowId !== windowId || context.surfaceId !== surfaceId) return false;
-  deps.bindSender(windowId, surfaceId, runtime.senderId);
-  runtime.refreshVisualSemanticKeys();
-  return true;
+  try {
+    deps.bindSender(windowId, surfaceId, runtime.senderId);
+    runtime.refreshVisualSemanticKeys();
+    return true;
+  } catch {
+    return false;
+  }
 }

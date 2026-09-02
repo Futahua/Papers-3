@@ -37,4 +37,17 @@ describe('current visual semantic observation refresh', () => {
     expect(retired.bindSender).not.toHaveBeenCalled();
     expect(retired.refreshVisualSemanticKeys).not.toHaveBeenCalled();
   });
+
+  it('swallows a renderer refresh failure after preserving the authority checks', () => {
+    const failed = createDeps({
+      runtimeForSurface: () => ({
+        senderId: 42,
+        refreshVisualSemanticKeys: () => { throw new Error('renderer unavailable'); },
+      }),
+    });
+
+    expect(() => refreshCurrentVisualSemanticKeys(failed.deps, 7, 'surface-a')).not.toThrow();
+    expect(refreshCurrentVisualSemanticKeys(failed.deps, 7, 'surface-a')).toBe(false);
+    expect(failed.bindSender).toHaveBeenCalledWith(7, 'surface-a', 42);
+  });
 });

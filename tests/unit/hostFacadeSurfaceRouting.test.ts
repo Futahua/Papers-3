@@ -710,6 +710,39 @@ describe('surface routing in the host facade', () => {
     expect(movedEvents[3]?.[2]).toEqual(expect.objectContaining({ compensating: true }));
   });
 
+  it('keeps rollback canonical state intact when semantic refresh throws', async () => {
+    const {
+      facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
+      sendToWindow, restorePair, prepareProjectSurface, refreshVisualSemanticKeys,
+    } = createFacade();
+    const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const sourceTopology = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: moved.surfaceId, projectId: PROJECT, title: 'Alpha',
+    });
+    workspaceTopologies.set(1, sourceTopology);
+    workspaceIds.set(1, 'ws-source');
+    surfaces.bind(FRAME, {
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
+    });
+    refreshVisualSemanticKeys.mockImplementation(() => { throw new Error('visual refresh failed'); });
+    sendToWindow.mockImplementation((windowId, channel) => {
+      if (channel === 'host:event:workspace-surface-moved' && windowId === 2) throw new Error('target unavailable');
+    });
+
+    await expect(facade.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: 1, surfaceId: moved.surfaceId, targetWindowId: 2,
+      targetGroupId: 'group-main', targetIndex: 0,
+    })).rejects.toThrow(/target unavailable/);
+
+    expect(logicalSurfaces.isLiveIn(moved.surfaceId, 1)).toBe(true);
+    expect(surfaces.contextForSender(FRAME)).toEqual({
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
+    });
+    expect(workspaceTopologies.get(1)).toEqual(sourceTopology);
+    expect(workspaceTopologies.has(2)).toBe(false);
+    expect(restorePair).toHaveBeenCalledTimes(1);
+  });
+
   it('retains forward canonical state when compensating persistence fails', async () => {
     const {
       facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
@@ -752,6 +785,39 @@ describe('surface routing in the host facade', () => {
       .toEqual(expect.arrayContaining([
         [1, 'host:event:workspace-surface-moved', expect.objectContaining({ topology: expect.any(Object) })],
       ]));
+  });
+
+  it('keeps forward canonical state intact when semantic refresh throws', async () => {
+    const {
+      facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
+      sendToWindow, restorePair, closeAttachedProjectSurface, refreshVisualSemanticKeys,
+    } = createFacade();
+    const moved = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    workspaceTopologies.set(1, openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: moved.surfaceId, projectId: PROJECT, title: 'Alpha',
+    }));
+    workspaceIds.set(1, 'ws-source');
+    surfaces.bind(FRAME, {
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project',
+    });
+    refreshVisualSemanticKeys.mockImplementation(() => { throw new Error('visual refresh failed'); });
+    restorePair.mockRejectedValueOnce(new Error('durable restore unavailable'));
+    sendToWindow.mockImplementation((windowId, channel) => {
+      if (channel === 'host:event:workspace-surface-moved' && windowId === 2) throw new Error('target unavailable');
+    });
+
+    await expect(facade.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: 1, surfaceId: moved.surfaceId, targetWindowId: 2,
+      targetGroupId: 'group-main', targetIndex: 0,
+    })).rejects.toThrow(/durable forward state retained/);
+
+    expect(logicalSurfaces.isLiveIn(moved.surfaceId, 2)).toBe(true);
+    expect(surfaces.contextForSender(99)).toEqual({
+      surfaceId: moved.surfaceId, projectId: PROJECT, windowId: 2, kind: 'project',
+    });
+    expect(workspaceTopologies.get(1)?.surfaces).toEqual([]);
+    expect(workspaceTopologies.get(2)?.surfaces.map(({ surfaceId }) => surfaceId)).toEqual([moved.surfaceId]);
+    expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, moved.surfaceId);
   });
 
   it('retries composed adoption when first presentation throws and restore also fails', async () => {
