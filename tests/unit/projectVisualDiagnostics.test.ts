@@ -30,9 +30,12 @@ describe('opt-in project hydration diagnostic bridge', () => {
     bridge.reportStateHydrated('rev-42', { state: 'serialized bytes' });
     bridge.reportStateHydrated('rev-42', Object.fromEntries(Array.from({ length: 33 }, (_, index) => [`k${index}`, 1])));
 
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledTimes(2);
     expect(send).toHaveBeenCalledWith(VISUAL_RENDERER_DIAGNOSTIC_CHANNEL, {
       kind: 'hydration-failed', revision: 'rev-42', stage: 'parse', code: 'invalid-envelope',
+    });
+    expect(send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
+      kind: 'lifecycle', phase: 'render-failed', revision: 'rev-42', stage: 'parse', code: 'invalid-envelope',
     });
   });
 

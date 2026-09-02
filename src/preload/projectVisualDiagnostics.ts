@@ -85,6 +85,13 @@ export function createProjectVisualDiagnosticBridge(ipc: ProjectVisualDiagnostic
         stage,
         code,
       });
+      ipc.send(VISUAL_RENDERER_SIGNAL_CHANNEL, {
+        kind: 'lifecycle',
+        phase: 'render-failed',
+        ...(revision !== undefined ? { revision } : {}),
+        stage,
+        code,
+      });
     },
   };
 }

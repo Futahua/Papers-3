@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 layout-stable observability implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 hydration-failure correlation implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -664,10 +664,34 @@ Validation: full Vitest 792 passed/4 skipped across 73 passed/1 skipped files;
 focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
 typecheck; build; diff check.
 
-The exact-SHA reviewer gate must confirm bounded unchanged-frame behavior,
-document-start root handling, event-driven observer ownership, structured
-timeout behavior, sender-authoritative routing, and no polling or state
-mutation.
+Reviewer checkpoint: **SIGNED OFF** for C1.2 real layout-stable observability
+at exact pushed head `256e4f402c8e01488a7bcc3ac1c118de8ade9db3`. The reviewer
+confirmed empty/text-only geometry handling, null-geometry frame consumption,
+bounded mutation epochs, document-start ownership, structured timeout behavior,
+and actual producer E2E.
+
+Next smallest reviewed slice: **C1.2 hydration-failure → render-failed
+lifecycle correlation** — an exact sender-authoritative hydration failure must
+produce both the structured `hydration-failed` diagnostic and the corresponding
+`render-failed` lifecycle fact, without conflating it with navigation/load/layout
+failures.
+
+Current implementation checkpoint: the fixed page-facing
+`reportHydrationFailed(revision?, stage, code)` bridge validates bounded
+metadata, emits the `hydration-failed` diagnostic, and emits a paired strict
+`render-failed` lifecycle payload carrying the same bounded revision/stage/code.
+The main process accepts that correlation shape only for `render-failed`, while
+ordinary render failures retain their separate bounded-detail shape; all
+records still use the authenticated sender-derived window/surface target.
+Focused IPC, bridge, lifecycle-schema, and neutral-project E2E coverage proves
+the pair and rejects extra/foreign fields.
+Validation: full Vitest 792 passed/4 skipped across 73 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+The exact-SHA reviewer gate must confirm paired ordering/correlation,
+sender-authoritative routing, strict shape separation from ordinary
+render-failed and other lifecycle phases, and no state mutation or polling.
 
 ## Architectural boundary / likely owner
 

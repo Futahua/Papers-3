@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   visualHydrationRevisionSchema,
+  visualHydrationFailureCodeSchema,
+  visualHydrationFailureStageSchema,
   visualHydrationSummarySchema,
   type VisualDiagnosticBuffer,
   type VisualDiagnosticPayload,
@@ -36,6 +38,13 @@ const rendererPresentationSignalSchema = z.object({
   phase: z.enum(['first-paint', 'layout-stable', 'render-failed']),
   detail: z.string().max(2048).optional(),
 }).strict();
+const rendererHydrationFailureSignalSchema = z.object({
+  kind: z.literal('lifecycle'),
+  phase: z.literal('render-failed'),
+  revision: visualHydrationRevisionSchema.optional(),
+  stage: visualHydrationFailureStageSchema,
+  code: visualHydrationFailureCodeSchema,
+}).strict();
 const rendererDiagnosticPayloadSchema = z.object({
   kind: z.enum(['uncaught-error', 'unhandled-rejection']),
   message: z.string().min(1).max(4096),
@@ -69,6 +78,11 @@ export function recordRendererVisualSignal(
     : undefined;
   if (phase === 'state-hydrated') {
     buffer.append(target, rendererHydrationSignalSchema.parse(payload));
+    return;
+  }
+  if (phase === 'render-failed' && payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+    && ('stage' in payload || 'code' in payload || 'revision' in payload)) {
+    buffer.append(target, rendererHydrationFailureSignalSchema.parse(payload));
     return;
   }
   buffer.append(target, rendererPresentationSignalSchema.parse(payload));

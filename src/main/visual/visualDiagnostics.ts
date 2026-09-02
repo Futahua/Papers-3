@@ -11,6 +11,8 @@ export const visualLifecyclePhases = [
 export type VisualLifecyclePhase = (typeof visualLifecyclePhases)[number];
 
 const hydrationRevisionSchema = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/);
+const hydrationFailureStageSchema = z.string().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/);
+const hydrationFailureCodeSchema = z.string().min(1).max(128).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/);
 const hydrationSummarySchema = z.record(
   z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/),
   z.number().int().nonnegative().max(1_000_000),
@@ -26,12 +28,26 @@ const lifecyclePayloadSchema = z.object({
   detail: z.string().max(2048).optional(),
   revision: hydrationRevisionSchema.optional(),
   summary: hydrationSummarySchema.optional(),
+  stage: hydrationFailureStageSchema.optional(),
+  code: hydrationFailureCodeSchema.optional(),
 }).strict().superRefine((payload, context) => {
   if (payload.phase === 'state-hydrated' && !payload.revision) {
     context.addIssue({ code: 'custom', path: ['revision'], message: 'state-hydrated requires an opaque revision' });
   }
-  if (payload.phase !== 'state-hydrated' && (payload.revision !== undefined || payload.summary !== undefined)) {
-    context.addIssue({ code: 'custom', message: 'hydration metadata is only valid for state-hydrated' });
+  if (payload.phase !== 'state-hydrated' && payload.summary !== undefined) {
+    context.addIssue({ code: 'custom', message: 'hydration summary is only valid for state-hydrated' });
+  }
+  if (payload.phase !== 'state-hydrated' && payload.phase !== 'render-failed' && payload.revision !== undefined) {
+    context.addIssue({ code: 'custom', message: 'hydration revision is only valid for state-hydrated or correlated render-failed' });
+  }
+  if (payload.phase === 'render-failed' && ((payload.stage === undefined) !== (payload.code === undefined))) {
+    context.addIssue({ code: 'custom', message: 'render-failed hydration metadata requires both stage and code' });
+  }
+  if (payload.phase !== 'render-failed' && (payload.stage !== undefined || payload.code !== undefined)) {
+    context.addIssue({ code: 'custom', message: 'hydration failure metadata is only valid for render-failed' });
+  }
+  if (payload.phase === 'render-failed' && payload.stage === undefined && payload.code === undefined && payload.revision !== undefined) {
+    context.addIssue({ code: 'custom', message: 'render-failed revision requires hydration failure metadata' });
   }
 });
 
@@ -95,6 +111,8 @@ export interface VisualDiagnosticBuffer {
 
 export const visualHydrationSummarySchema = hydrationSummarySchema;
 export const visualHydrationRevisionSchema = hydrationRevisionSchema;
+export const visualHydrationFailureStageSchema = hydrationFailureStageSchema;
+export const visualHydrationFailureCodeSchema = hydrationFailureCodeSchema;
 
 const DEFAULT_CAPACITY = 128;
 const MAX_CAPACITY = 512;

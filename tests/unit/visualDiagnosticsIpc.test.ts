@@ -94,11 +94,18 @@ describe('visual diagnostics renderer IPC', () => {
     diagnostic({ sender: { id: 7 } }, {
       kind: 'hydration-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope',
     });
+    signal({ sender: { id: 7 } }, {
+      kind: 'lifecycle', phase: 'render-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope',
+    });
+    signal({ sender: { id: 7 } }, {
+      kind: 'lifecycle', phase: 'render-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope', target: { windowId: 99 },
+    });
     signal({ sender: { id: 8 } }, { kind: 'lifecycle', phase: 'state-hydrated', revision: 'rev-2' });
 
     expect(buffer.snapshot()).toMatchObject([
       { target: { windowId: 2, surfaceId: 'surface-a' }, payload: { phase: 'state-hydrated', revision: 'rev-1', summary: { cards: 2 } } },
       { target: { windowId: 2, surfaceId: 'surface-a' }, payload: { kind: 'hydration-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope' } },
+      { target: { windowId: 2, surfaceId: 'surface-a' }, payload: { phase: 'render-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope' } },
     ]);
   });
 });

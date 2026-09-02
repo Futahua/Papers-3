@@ -181,5 +181,16 @@ describe('project renderer visual diagnostics', () => {
         && record.payload.revision === 'neutral-rev-1'
         && record.payload.stage === 'parse' && record.payload.code === 'fixture-failure');
     }, 10_000, 'current replacement hydration failure diagnostic');
+    await waitFor(async () => {
+      const records = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
+        sequence: number; target: { surfaceId?: string }; payload: { kind?: string; phase?: string; revision?: string; stage?: string; code?: string };
+      }>;
+      return records.some((record) => record.sequence > beforeTargetSequence
+        && record.target.surfaceId === second.surfaceId
+        && record.payload.kind === 'lifecycle'
+        && record.payload.phase === 'render-failed'
+        && record.payload.revision === 'neutral-rev-1'
+        && record.payload.stage === 'parse' && record.payload.code === 'fixture-failure');
+    }, 10_000, 'current replacement hydration render-failed lifecycle');
   });
 });
