@@ -151,21 +151,78 @@ const workspaceIds = new Map<number, string>();
 const closingPapersWindows = new Set<number>();
 const visualDiagnosticsByWindow = new Map<number, VisualDiagnosticBuffer>();
 const visualLifecycleMonitors = new Map<number, VisualLifecycleMonitor>();
-const visualSemanticKeysBySurface = new Map<string, VisualSemanticKeyRegistry>();
+interface VisualSemanticKeySurfaceState {
+  registry: VisualSemanticKeyRegistry;
+  currentSenderId: number | null;
+}
+
+const visualSemanticKeysBySurface = new Map<string, VisualSemanticKeySurfaceState>();
 let visualResourceMonitor: VisualResourceMonitor | null = null;
 
 function visualSemanticKeyMapKey(windowId: number, surfaceId: string): string {
   return `${windowId}\0${surfaceId}`;
 }
 
-function semanticKeyRegistryForSurface(windowId: number, surfaceId: string): VisualSemanticKeyRegistry {
+function semanticKeyStateForSurface(windowId: number, surfaceId: string): VisualSemanticKeySurfaceState {
   const key = visualSemanticKeyMapKey(windowId, surfaceId);
-  let registry = visualSemanticKeysBySurface.get(key);
-  if (!registry) {
-    registry = createVisualSemanticKeyRegistry();
-    visualSemanticKeysBySurface.set(key, registry);
+  let state = visualSemanticKeysBySurface.get(key);
+  if (!state) {
+    state = { registry: createVisualSemanticKeyRegistry(), currentSenderId: null };
+    visualSemanticKeysBySurface.set(key, state);
   }
-  return registry;
+  return state;
+}
+
+function bindVisualSemanticKeySender(windowId: number, surfaceId: string, senderId: number): void {
+  const state = semanticKeyStateForSurface(windowId, surfaceId);
+  if (state.currentSenderId !== senderId) {
+    state.currentSenderId = senderId;
+    state.registry.clear();
+  }
+}
+
+function invalidateVisualSemanticKeySender(windowId: number, surfaceId: string, senderId: number): void {
+  const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
+  if (!state || state.currentSenderId !== senderId) return;
+  state.currentSenderId = null;
+  state.registry.clear();
+}
+
+function retireVisualSemanticKeySurface(surfaceId: string): void {
+  for (const key of visualSemanticKeysBySurface.keys()) {
+    if (key.endsWith(`\0${surfaceId}`)) visualSemanticKeysBySurface.delete(key);
+  }
+}
+
+function retireVisualSemanticKeySurfaceAt(windowId: number, surfaceId: string): void {
+  visualSemanticKeysBySurface.delete(visualSemanticKeyMapKey(windowId, surfaceId));
+}
+
+function retireLogicalSurface(surfaceId: string): boolean {
+  const retired = logicalSurfaces.retire(surfaceId);
+  if (retired) retireVisualSemanticKeySurface(surfaceId);
+  return retired;
+}
+
+function moveLogicalSurface(surfaceId: string, targetWindowId: number): boolean {
+  const current = logicalSurfaces.get(surfaceId);
+  const moved = logicalSurfaces.moveToWindow(surfaceId, targetWindowId);
+  if (moved && current && current.windowId !== targetWindowId) {
+    retireVisualSemanticKeySurfaceAt(current.windowId, surfaceId);
+  }
+  return moved;
+}
+
+function retireLogicalSurfacesInWindow(windowId: number): string[] {
+  const retired = logicalSurfaces.retireWindow(windowId);
+  for (const surfaceId of retired) retireVisualSemanticKeySurface(surfaceId);
+  return retired;
+}
+
+function retireLogicalProjectSurfaces(projectId: string): string[] {
+  const retired = logicalSurfaces.retireProject(projectId);
+  for (const surfaceId of retired) retireVisualSemanticKeySurface(surfaceId);
+  return retired;
 }
 
 /** The exact project runtime belonging to a bound project-frame sender. A host
@@ -466,6 +523,7 @@ async function bootstrap(): Promise<void> {
     ? (windowId: number, surfaceId: string, senderId: number, reason: string): void => {
       const target = resolveVisualTarget({ id: senderId });
       if (!target || target.windowId !== windowId || target.surfaceId !== surfaceId) return;
+      invalidateVisualSemanticKeySender(windowId, surfaceId, senderId);
       const buffer = visualDiagnosticsByWindow.get(windowId);
       if (!buffer) return;
       try {
@@ -550,7 +608,7 @@ async function bootstrap(): Promise<void> {
           closeOwnedWidgets: async (id) => { await widgetSession?.closeOwnedByWindow(id); },
           reconcileHermes: reconcileHermesForClosingWindow,
           unbindSurfaceSenders: (id) => surfaceContexts.unbindWindow(id),
-          retireLogicalSurfaces: (id) => { logicalSurfaces.retireWindow(id); },
+          retireLogicalSurfaces: (id) => { retireLogicalSurfacesInWindow(id); },
           clearWorkspaceTopology: (id) => {
             workspaceTopologies.delete(id);
             workspaceTopologyRevisions.delete(id);
@@ -714,7 +772,7 @@ async function bootstrap(): Promise<void> {
         },
         openProject: (projectId) => backpackProjects.open(projectId),
         createSurface: ({ windowId: targetWindowId, projectId }) => logicalSurfaces.create({ windowId: targetWindowId, projectId, kind: 'project' }),
-        retireSurface: (surfaceId) => logicalSurfaces.retire(surfaceId),
+        retireSurface: (surfaceId) => retireLogicalSurface(surfaceId),
         validate: (topology) => facade.validateWorkspaceTopologyForStartup(windowId, topology),
         deliver: (projects, topology) => {
           const contents = papersWindows.get(windowId)?.owned.hostView.webContents;
@@ -802,6 +860,12 @@ async function bootstrap(): Promise<void> {
             adopt: () => {
               prepared.adopt();
               authority?.adopt();
+              bindVisualSemanticKeySender(windowId, surfaceId, senderId!);
+              prepared.runtime.onFrameDestroyed(senderId!, () => {
+                invalidateVisualSemanticKeySender(windowId, surfaceId, senderId!);
+                surfaceContexts.unbind(senderId!);
+              });
+              prepared.runtime.refreshVisualSemanticKeys();
               projectSurfaceAuthority.forget(senderId!);
             },
             discard: () => {
@@ -823,7 +887,7 @@ async function bootstrap(): Promise<void> {
     clearEnteredBackpackEverywhere: (backpackId) => papersWindows.clearEnteredBackpackEverywhere(backpackId),
     // Archiving or removing a Backpack retires every surface showing it, in
     // any window: the thing itself became unavailable.
-    retireProjectSurfaces: (projectId) => { logicalSurfaces.retireProject(projectId); },
+    retireProjectSurfaces: (projectId) => { retireLogicalProjectSurfaces(projectId); },
     listLogicalSurfaces: () => logicalSurfaces.project(),
     retireBackpackProjectSurfaces: async (backpackId) => {
       await Promise.all([
@@ -858,6 +922,8 @@ async function bootstrap(): Promise<void> {
     surfaces: surfaceContexts,
     waitForBackpackProjectAuthority: (senderId) => projectSurfaceAuthority.wait(senderId),
     logicalSurfaces,
+    retireLogicalSurface,
+    moveLogicalSurface,
     // Phase 1B: a real lookup, with no singleton fallback left. A host
     // renderer resolves through the window registry; a project, detached or
     // widget sender resolves through the surface binding it already carries.
@@ -913,9 +979,14 @@ async function bootstrap(): Promise<void> {
           windowId: owningWindowId,
           kind: 'project',
         });
+        bindVisualSemanticKeySender(owningWindowId, surfaceId, frameSender);
         // show() replaces a live surface by hiding the old one first, so
         // without this a dead frame's id would stay bound.
-        runtime.onFrameDestroyed(frameSender, () => surfaceContexts.unbind(frameSender));
+        runtime.onFrameDestroyed(frameSender, () => {
+          invalidateVisualSemanticKeySender(owningWindowId, surfaceId, frameSender);
+          surfaceContexts.unbind(frameSender);
+        });
+        runtime.refreshVisualSemanticKeys();
       }
     },
     hideBackpackProjectSurface: (senderId, surfaceId) => {
@@ -1653,9 +1724,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   registerVisualSemanticKeysIpc({
     ipcMain,
     resolveTarget: resolveVisualTarget,
-    registryForTarget: ({ windowId, surfaceId }) => {
+    registryForTarget: ({ windowId, surfaceId }, senderId) => {
       if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
-      return semanticKeyRegistryForSurface(windowId, surfaceId);
+      const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
+      return state?.currentSenderId === senderId ? state.registry : null;
     },
   });
   if (process.env['PAPERS_DEV_CONTROL'] === '1') {
@@ -1707,8 +1779,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         },
         visualElements: ({ windowId, surfaceId }, keys) => {
           if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
-          const registry = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
-          const observed = registry?.snapshot(keys) ?? [];
+          const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
+          const currentSenderId = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.senderId;
+          const observed = state && state.currentSenderId === currentSenderId
+            ? state.registry.snapshot(keys)
+            : [];
           return {
             windowId,
             surfaceId,

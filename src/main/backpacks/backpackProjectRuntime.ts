@@ -2,6 +2,7 @@ import { BaseWindow, WebContentsView, type WebContents } from 'electron';
 
 import { BACKPACK_PROJECT_SCHEME } from './backpackProjectService';
 import { OPAQUE_SURFACE_COLOR, TRANSPARENT_CHILD_SURFACE_COLOR } from '../windowSurface';
+import { VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL } from '@shared/visualSemanticKeyConstants';
 
 export class BackpackProjectRuntime {
   private view: WebContentsView | null = null;
@@ -59,6 +60,13 @@ export class BackpackProjectRuntime {
 
   get isPresented(): boolean {
     return this.presented;
+  }
+
+  /** Ask the already-installed predefined project observer to resend its
+   * current fixed semantic-key set after a renderer becomes canonical. */
+  refreshVisualSemanticKeys(): void {
+    if (!this.view || this.view.webContents.isDestroyed()) return;
+    this.view.webContents.send(VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL);
   }
 
   isSender(sender: WebContents): boolean {

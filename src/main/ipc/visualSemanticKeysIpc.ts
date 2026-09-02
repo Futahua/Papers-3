@@ -12,7 +12,7 @@ const semanticKeysPayloadSchema = z.object({ keys: visualSemanticKeyListSchema }
 export interface VisualSemanticKeysIpcDependencies {
   ipcMain: Pick<IpcMain, 'on'>;
   resolveTarget(sender: { id: number }): VisualDiagnosticTarget | null;
-  registryForTarget(target: { windowId: number; surfaceId: string }): VisualSemanticKeyRegistry | null;
+  registryForTarget(target: { windowId: number; surfaceId: string }, senderId: number): VisualSemanticKeyRegistry | null;
 }
 
 /** Accept only the predefined project observation payload. The sender owns
@@ -24,7 +24,7 @@ export function registerVisualSemanticKeysIpc(deps: VisualSemanticKeysIpcDepende
     if (!target || !surfaceId) return;
     try {
       const parsed = semanticKeysPayloadSchema.parse(payload);
-      deps.registryForTarget({ windowId: target.windowId, surfaceId })?.replaceObserved(parsed.keys);
+      deps.registryForTarget({ windowId: target.windowId, surfaceId }, event.sender.id)?.replaceObserved(parsed.keys);
     } catch {
       // Invalid project observations are refused without disturbing the last
       // valid snapshot or the product renderer.

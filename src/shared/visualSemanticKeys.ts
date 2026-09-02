@@ -3,12 +3,14 @@ import {
   VISUAL_SEMANTIC_KEY_MAX_COUNT,
   VISUAL_SEMANTIC_KEY_MAX_LENGTH,
   VISUAL_SEMANTIC_KEYS_CHANNEL,
+  VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL,
 } from './visualSemanticKeyConstants';
 
 export {
   VISUAL_SEMANTIC_KEY_MAX_COUNT,
   VISUAL_SEMANTIC_KEY_MAX_LENGTH,
   VISUAL_SEMANTIC_KEYS_CHANNEL,
+  VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL,
 } from './visualSemanticKeyConstants';
 
 /** Semantic keys are opaque project identifiers, not DOM selectors. */

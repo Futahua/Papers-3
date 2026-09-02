@@ -19,7 +19,7 @@ describe('visual semantic-key IPC authority', () => {
     registerVisualSemanticKeysIpc({
       ipcMain,
       resolveTarget,
-      registryForTarget: (target) => target.windowId === 4 && target.surfaceId === 'surface-a' ? registry : null,
+      registryForTarget: (target, senderId) => target.windowId === 4 && target.surfaceId === 'surface-a' && senderId === 7 ? registry : null,
     });
     const receive = listeners.get(VISUAL_SEMANTIC_KEYS_CHANNEL)!;
     receive({ sender: { id: 7 } }, { keys: ['canvas.root'] });

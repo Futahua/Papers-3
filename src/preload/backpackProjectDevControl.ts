@@ -16,7 +16,8 @@ function installVisualDiagnosticListeners(
     executeInMainWorld(script: { func: () => void }): unknown;
   },
 ): void {
-  const diagnosticBridge = createProjectVisualDiagnosticBridge(ipc);
+  let refreshSemanticKeys = (): void => undefined;
+  const diagnosticBridge = createProjectVisualDiagnosticBridge(ipc, () => refreshSemanticKeys());
   mainWorld.exposeInMainWorld(MAIN_WORLD_DIAGNOSTIC_BRIDGE, diagnosticBridge);
   // Keep first-paint emission Papers-owned while observing the document's
   // browser-provided Paint Timing entries in this preload world.
@@ -49,7 +50,7 @@ function installVisualDiagnosticListeners(
     // Missing observer APIs leave layout stability unknown; no success is synthesized.
   }
   try {
-    installProjectVisualSemanticKeyObserver(ipc, {
+    refreshSemanticKeys = installProjectVisualSemanticKeyObserver(ipc, {
       document,
       MutationObserver: typeof MutationObserver === 'undefined' ? undefined : MutationObserver,
     });

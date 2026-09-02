@@ -2,9 +2,11 @@ import {
   VISUAL_SEMANTIC_KEYS_CHANNEL,
   VISUAL_SEMANTIC_KEY_MAX_COUNT,
 } from '@shared/visualSemanticKeyConstants';
+import { VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL } from '@shared/visualSemanticKeyConstants';
 
 export interface ProjectVisualSemanticKeyIpc {
   send(channel: string, payload: unknown): void;
+  on?(channel: string, listener: () => void): void;
 }
 
 export type RefreshProjectVisualSemanticKeys = () => void;
@@ -26,7 +28,7 @@ export function installProjectVisualSemanticKeyObserver(
   if (!MutationObserver) return () => undefined;
 
   let lastPayload = '';
-  const publish = (): void => {
+  const publish = (force = false): void => {
     const keys: string[] = [];
     const elements = document.querySelectorAll(`[${PAPERS_SEMANTIC_KEY_ATTRIBUTE}]`);
     for (const element of Array.from(elements).slice(0, VISUAL_SEMANTIC_KEY_MAX_COUNT + 1)) {
@@ -34,7 +36,7 @@ export function installProjectVisualSemanticKeyObserver(
       if (key !== null) keys.push(key);
     }
     const payload = JSON.stringify(keys);
-    if (payload === lastPayload) return;
+    if (!force && payload === lastPayload) return;
     lastPayload = payload;
     ipc.send(VISUAL_SEMANTIC_KEYS_CHANNEL, { keys });
   };
@@ -46,11 +48,12 @@ export function installProjectVisualSemanticKeyObserver(
   document.addEventListener('DOMContentLoaded', publish, { once: true });
   document.addEventListener('load', publish, { once: true });
   const observer = new MutationObserver(publish);
+  ipc.on?.(VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL, publish);
   observer.observe(document, {
     attributes: true,
     attributeFilter: [PAPERS_SEMANTIC_KEY_ATTRIBUTE],
     childList: true,
     subtree: true,
   });
-  return publish;
+  return () => publish(true);
 }

@@ -99,6 +99,8 @@ describe('project renderer visual diagnostics', () => {
     expect(await evalInBackpackProject(launched.app, 'Boolean(window.__papersVisualDiagnosticObserverV1)')).toBe(true);
     expect(await evalInBackpackProject(launched.app,
       `typeof window.papersVisualDiagnosticBridgeV1?.reportFirstPaint`)).toBe('undefined');
+    await evalInBackpackProject(launched.app,
+      'window.papersVisualDiagnosticBridgeV1.reportSemanticKeys(); true');
     await waitFor(async () => {
       const result = await call('inspect.visual.elements', {
         windowId, surfaceId: opened.surfaceId,
@@ -188,6 +190,22 @@ describe('project renderer visual diagnostics', () => {
       return surfaces.some((surface) => surface.surfaceId === second.surfaceId
         && surface.windowId === secondary.windowId && surface.presentation === 'visible');
     }, 15_000, 'project diagnostic move adoption');
+    await waitFor(async () => {
+      const result = await call('inspect.visual.elements', {
+        windowId: secondary.windowId, surfaceId: second.surfaceId,
+      }) as { elements: Array<{ key: string }> };
+      return result.elements.some(({ key }) => key === 'canvas.root')
+        && result.elements.some(({ key }) => key === 'title.main');
+    }, 10_000, 'post-adoption semantic-key refresh');
+    await expect(call('inspect.visual.elements', {
+      windowId, surfaceId: second.surfaceId,
+    })).rejects.toThrow(/not open/);
+    await expect(call('inspect.visual.elements', {
+      windowId, surfaceId: opened.surfaceId,
+    })).resolves.toEqual({
+      windowId, surfaceId: opened.surfaceId,
+      elements: [{ key: 'canvas.root' }, { key: 'title.main' }],
+    });
     const stagedFailures = (await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
       sequence: number; target: { surfaceId?: string }; payload: { kind?: string };
     }>).filter((record) => record.sequence > beforeTargetSequence
@@ -430,5 +448,8 @@ describe('project renderer visual diagnostics', () => {
       return records.some((record) => record.target.surfaceId === second.surfaceId
         && record.payload.kind === 'renderer-gone');
     }, 10_000, 'current project renderer-gone diagnostic');
+    await expect(call('inspect.visual.elements', {
+      windowId: secondary.windowId, surfaceId: second.surfaceId,
+    })).resolves.toEqual({ windowId: secondary.windowId, surfaceId: second.surfaceId, elements: [] });
   });
 });

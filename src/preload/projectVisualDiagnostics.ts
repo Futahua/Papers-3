@@ -9,6 +9,7 @@ export interface ProjectVisualDiagnosticBridge {
   report(kind: string, message: string): void;
   reportStateHydrated(revision: string, summary?: unknown): void;
   reportHydrationFailed(revision: string | undefined, stage: string, code: string): void;
+  reportSemanticKeys(): void;
 }
 
 const MAX_REVISION_LENGTH = 256;
@@ -57,7 +58,10 @@ export function reportProjectLayoutSignal(
   });
 }
 
-export function createProjectVisualDiagnosticBridge(ipc: ProjectVisualDiagnosticIpc): ProjectVisualDiagnosticBridge {
+export function createProjectVisualDiagnosticBridge(
+  ipc: ProjectVisualDiagnosticIpc,
+  refreshSemanticKeys: () => void = () => undefined,
+): ProjectVisualDiagnosticBridge {
   return {
     report(kind, message) {
       if (kind !== 'uncaught-error' && kind !== 'unhandled-rejection') return;
@@ -92,6 +96,9 @@ export function createProjectVisualDiagnosticBridge(ipc: ProjectVisualDiagnostic
         stage,
         code,
       });
+    },
+    reportSemanticKeys() {
+      refreshSemanticKeys();
     },
   };
 }

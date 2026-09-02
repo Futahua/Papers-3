@@ -121,6 +121,10 @@ export interface FacadeDeps {
   waitForBackpackProjectAuthority?: (senderId: number) => Promise<void>;
   /** A0.1: the authority for which surfaces exist. */
   logicalSurfaces: LogicalSurfaceRegistry;
+  /** Optional lifecycle hook for per-surface diagnostic state cleanup. */
+  retireLogicalSurface?: (surfaceId: string) => boolean;
+  /** Move logical identity while retiring its old-window visual state. */
+  moveLogicalSurface?: (surfaceId: string, targetWindowId: number) => boolean;
   /**
    * The Papers window a sender belongs to, or null when the host cannot say.
    *
@@ -232,6 +236,16 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private readonly projectOwnershipTails = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: FacadeDeps) {}
+
+  private retireLogicalSurface(surfaceId: string): boolean {
+    return this.deps.retireLogicalSurface?.(surfaceId)
+      ?? this.deps.logicalSurfaces.retire(surfaceId);
+  }
+
+  private moveLogicalSurface(surfaceId: string, targetWindowId: number): boolean {
+    return this.deps.moveLogicalSurface?.(surfaceId, targetWindowId)
+      ?? this.deps.logicalSurfaces.moveToWindow(surfaceId, targetWindowId);
+  }
 
   /** Hermes has one physical/global placement. Serialize every mutation from
    * request authorization through ownership commit/rollback and projection so
@@ -1140,7 +1154,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       this.deps.setWorkspaceTopology(windowId, topology);
       return { windowId, layoutId: layout.layoutId, topology };
     } catch (caught) {
-      for (const surfaceId of allocated) this.deps.logicalSurfaces.retire(surfaceId);
+      for (const surfaceId of allocated) this.retireLogicalSurface(surfaceId);
       throw caught;
     }
   }
@@ -1367,7 +1381,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           // case. The concrete registries are synchronous, but this boundary
           // is deliberately defensive.
           canonicalTouched = true;
-          if (!this.deps.logicalSurfaces.moveToWindow(request.surfaceId, request.targetWindowId)) {
+          if (!this.moveLogicalSurface(request.surfaceId, request.targetWindowId)) {
             throw new Error('The logical surface could not be moved to the target window.');
           }
           for (const { senderId } of oldContexts) this.deps.surfaces.unbind(senderId);
@@ -1418,7 +1432,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
               for (const senderId of this.deps.surfaces.sendersForSurface(request.surfaceId)) {
                 this.deps.surfaces.unbind(senderId);
               }
-              this.deps.logicalSurfaces.retire(request.surfaceId);
+              this.retireLogicalSurface(request.surfaceId);
               closeSourceBestEffort();
               move.setWorkspaceState(
                 request.sourceWindowId,
@@ -1435,7 +1449,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
             retainForwardState = true;
             try {
               if (!this.deps.logicalSurfaces.isLiveIn(request.surfaceId, request.targetWindowId)) {
-                if (!this.deps.logicalSurfaces.moveToWindow(request.surfaceId, request.targetWindowId)) {
+                if (!this.moveLogicalSurface(request.surfaceId, request.targetWindowId)) {
                   throw new Error('The logical surface could not be retained in the durable target state.');
                 }
               }
@@ -1486,7 +1500,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           // canonical state before notifying any host that already saw the
           // forward projection.
           if (canonicalTouched) {
-            this.deps.logicalSurfaces.moveToWindow(request.surfaceId, request.sourceWindowId);
+            this.moveLogicalSurface(request.surfaceId, request.sourceWindowId);
             this.deps.surfaces.unbind(prepared.senderId);
             for (const { senderId, context } of oldContexts) this.deps.surfaces.bind(senderId, context);
             move.setWorkspaceState(request.sourceWindowId, initialSourceState);
@@ -1608,7 +1622,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       this.deps.setWorkspaceTopology(windowId, next);
       return { windowId, surfaceId: surface.surfaceId, projectId, topology: next };
     } catch (caught) {
-      this.deps.logicalSurfaces.retire(surface.surfaceId);
+      this.retireLogicalSurface(surface.surfaceId);
       throw caught;
     }
   }
@@ -1632,7 +1646,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (!mutationAlreadyHeld) this.assertWorkspaceMutationAvailable(windowId);
     this.validateWorkspaceTopology(windowId, topology);
     this.deps.closeAttachedProjectSurface(windowId, surfaceId);
-    this.deps.logicalSurfaces.retire(surfaceId);
+    this.retireLogicalSurface(surfaceId);
     for (const senderId of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(senderId);
     const next = closeWorkspaceSurface(topology, surfaceId);
     this.restoreWorkspaceTopology(windowId, next, mutationAlreadyHeld);
@@ -1704,7 +1718,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       }
     }
     for (const target of targets) {
-      this.deps.logicalSurfaces.retire(target.surfaceId);
+      this.retireLogicalSurface(target.surfaceId);
       for (const senderId of this.deps.surfaces.sendersForSurface(target.surfaceId)) this.deps.surfaces.unbind(senderId);
     }
   }
