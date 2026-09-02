@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 no-polling/recovery-side-effect closure in progress; exact-SHA reviewer gate pending
+Persistent status: C1.2 deterministic hydration-failure pairing closure implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -951,6 +951,34 @@ user-owned `docs/evidence/worker-comparison.json` remains unstaged and
 untouched; no release, install, package, or policy action is in scope.
 
 Reviewer checkpoint at exact pushed head
+`7c6f2974af16566741495555c0c25e3c6c93a6a8`: **SIGNED OFF** for no timer-based
+continuous polling and recovery-side-effect closure. The reviewer confirmed
+event-driven lifecycle/resource observation, bounded layout epochs, listener
+cleanup and post-detach inertness, absence of reload/loadURL/restart and
+polling call paths, unchanged workspace state, and unchanged renderer
+`performance.timeOrigin` across real diagnostic activity. The focused test
+drives real navigation-failure and renderer-gone events; only intended
+bounded `requestAnimationFrame` and browser paint observation remain.
+
+Next smallest reviewed slice: **C1.2 deterministic hydration-failure pairing
+closure** — prove one authenticated project `reportHydrationFailed(revision,
+stage,code)` produces exactly one correlated `hydration-failed` →
+`lifecycle/render-failed` pair under the same exact `{windowId,surfaceId}`,
+with matching metadata, no duplicate/synthesized record, and deterministic
+ordering.
+
+Current implementation checkpoint: the production pair already exists and the
+neutral-project E2E observes both records. The narrow evidence correction
+will assert exact counts, ordering, target identity, and revision/stage/code
+matching around one report; no production change is expected.
+
+The implementation checkpoint is now complete: the neutral-project E2E captures
+the sequence immediately before one authenticated project hydration-failure
+report and requires exactly one ordered `hydration-failed` then
+`lifecycle/render-failed` pair under the same exact surface, with matching
+revision/stage/code metadata. No production change was needed.
+
+Reviewer checkpoint at exact pushed head
 `ee16454131193049823a8467e3e7aa5695c83964`: **SIGNED OFF** for deterministic
 visual diagnostic redaction closure. The reviewer confirmed the real buffer →
 real control event hub → serialized frame path across console, renderer error,
@@ -1146,7 +1174,7 @@ Those are separate lifecycle facts.
 * [x] state-hydrated cannot be synthesized by Papers without a project signal;
 * [x] first-paint independently observable;
 * [x] layout-stable only after bounded geometric stability;
-* [ ] hydration failure produces `hydration-failed`/`render-failed`;
+* [x] hydration failure produces `hydration-failed`/`render-failed`;
 * [ ] thrown renderer exception surfaces without killing control;
 * [x] failed resource attributed to correct surface;
 * [x] console of two same-project surfaces remains isolated;

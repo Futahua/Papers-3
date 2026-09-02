@@ -187,6 +187,8 @@ describe('project renderer visual diagnostics', () => {
         && record.target.surfaceId === second.surfaceId
         && (record.payload.kind === 'uncaught-error' || record.payload.kind === 'unhandled-rejection')).length >= 2;
     }, 10_000, 'current replacement project diagnostics');
+    const hydrationPairBefore = await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{ sequence: number }>;
+    const hydrationPairBeforeSequence = Math.max(0, ...hydrationPairBefore.map((record) => record.sequence));
     await evalInProjectWindow<boolean>(secondary.windowId,
       `window.papersVisualDiagnosticBridgeV1.reportHydrationFailed('neutral-rev-1', 'parse', 'fixture-failure'); true`);
     await waitFor(async () => {
@@ -210,6 +212,28 @@ describe('project renderer visual diagnostics', () => {
         && record.payload.revision === 'neutral-rev-1'
         && record.payload.stage === 'parse' && record.payload.code === 'fixture-failure');
     }, 10_000, 'current replacement hydration render-failed lifecycle');
+    const hydrationPairRecords = (await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
+      sequence: number; target: { windowId: number; surfaceId?: string }; payload: {
+        kind?: string; phase?: string; revision?: string; stage?: string; code?: string;
+      };
+    }>).filter((record) => record.sequence > hydrationPairBeforeSequence
+      && record.target.windowId === secondary.windowId
+      && record.target.surfaceId === second.surfaceId
+      && (record.payload.kind === 'hydration-failed'
+        || (record.payload.kind === 'lifecycle' && record.payload.phase === 'render-failed')));
+    expect(hydrationPairRecords).toHaveLength(2);
+    expect(hydrationPairRecords.map((record) => record.payload.kind)).toEqual(['hydration-failed', 'lifecycle']);
+    const hydrationFailureRecord = hydrationPairRecords[0]!;
+    const renderFailedRecord = hydrationPairRecords[1]!;
+    expect(hydrationFailureRecord.sequence).toBeLessThan(renderFailedRecord.sequence);
+    expect(hydrationFailureRecord.target).toEqual({ windowId: secondary.windowId, surfaceId: second.surfaceId });
+    expect(renderFailedRecord.target).toEqual({ windowId: secondary.windowId, surfaceId: second.surfaceId });
+    expect(hydrationFailureRecord.payload).toMatchObject({
+      kind: 'hydration-failed', revision: 'neutral-rev-1', stage: 'parse', code: 'fixture-failure',
+    });
+    expect(renderFailedRecord.payload).toMatchObject({
+      kind: 'lifecycle', phase: 'render-failed', revision: 'neutral-rev-1', stage: 'parse', code: 'fixture-failure',
+    });
 
     await evalInProjectWindow<boolean>(secondary.windowId, `(() => {
       const script = document.createElement('script');
