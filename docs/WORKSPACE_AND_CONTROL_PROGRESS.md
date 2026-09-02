@@ -448,8 +448,11 @@ later lifecycle hooks will append to:
 * [x] compose one monitor and bounded buffer per opt-in Papers host window,
   detach both on native-window close, and expose the read-only exact-target
   `inspect.visual.diagnostics` control query.
-* [ ] route project-frame renderer signals through the authenticated sender →
-  `{windowId,surfaceId}` mapping.
+* [x] route host/project renderer paint and stability signals through the
+  authenticated sender → `{windowId,surfaceId}` mapping; renderer-supplied
+  targets are ignored, and unbound senders/main-owned phases are refused.
+  Host/project preloads emit only one-shot paint → stability signals; project
+  hydration remains an explicit project-owned contribution.
 * [ ] expose event subscription and resource attribution through the
   authenticated control plane.
 

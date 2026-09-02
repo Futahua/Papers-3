@@ -163,4 +163,15 @@ const api = {
 
 contextBridge.exposeInMainWorld('papersHost', api);
 
+// These are one-shot renderer-owned readiness signals, not a polling loop.
+// Main-owned navigation/DOM signals are collected from WebContents directly.
+if (process.env['PAPERS_DEV_CONTROL'] === '1') {
+  requestAnimationFrame(() => {
+    ipcRenderer.send('papers:visual:renderer-signal', { kind: 'lifecycle', phase: 'first-paint' });
+    requestAnimationFrame(() => {
+      ipcRenderer.send('papers:visual:renderer-signal', { kind: 'lifecycle', phase: 'layout-stable' });
+    });
+  });
+}
+
 export type PapersHostBridge = typeof api;

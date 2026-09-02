@@ -36,6 +36,7 @@ import { registerWindowCapabilityIpc } from './ipc/windowCapabilityIpc';
 import { registerWindowPickIpc } from './ipc/windowPickIpc';
 import { registerWindowDetachIpc } from './ipc/windowDetachIpc';
 import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
+import { registerVisualDiagnosticsIpc } from './ipc/visualDiagnosticsIpc';
 import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
@@ -1520,6 +1521,17 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     ipcMain,
     isHostSender: (sender) => facade.isHostSender(sender),
     createAdditionalWindow: async () => { await createAdditionalPapersWindow(); },
+  });
+  registerVisualDiagnosticsIpc({
+    ipcMain,
+    resolveTarget: (senderId) => {
+      const hostWindowId = papersWindows.windowForSender(senderId);
+      if (hostWindowId !== null) return { windowId: hostWindowId };
+      const context = surfaceContexts.contextForSender(senderId);
+      if (!context?.surfaceId || !logicalSurfaces.isLiveIn(context.surfaceId, context.windowId)) return null;
+      return { windowId: context.windowId, surfaceId: context.surfaceId };
+    },
+    bufferForWindow: (windowId) => visualDiagnosticsByWindow.get(windowId) ?? null,
   });
   let papersControlServer: PapersControlServer | null = null;
   if (process.env['PAPERS_DEV_CONTROL'] === '1') {

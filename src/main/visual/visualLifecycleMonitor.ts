@@ -16,6 +16,26 @@ export interface VisualLifecycleMonitor {
   detach(): void;
 }
 
+const rendererOwnedPhases = ['state-hydrated', 'first-paint', 'layout-stable', 'render-failed'] as const;
+
+/** Validate a renderer signal at the main-process boundary. The caller owns
+ * the target resolution; a renderer only supplies the predefined phase. */
+export function recordRendererVisualSignal(
+  buffer: VisualDiagnosticBuffer,
+  target: VisualDiagnosticTarget,
+  payload: unknown,
+): void {
+  const parsed = payload as { kind?: unknown; phase?: unknown; detail?: unknown };
+  if (parsed.kind !== 'lifecycle' || !rendererOwnedPhases.includes(parsed.phase as typeof rendererOwnedPhases[number])) {
+    throw new Error('renderer lifecycle signal is not an allowed phase');
+  }
+  buffer.append(target, {
+    kind: 'lifecycle',
+    phase: parsed.phase,
+    ...(typeof parsed.detail === 'string' ? { detail: parsed.detail } : {}),
+  });
+}
+
 function consoleLevel(level: unknown): 'debug' | 'info' | 'log' | 'warn' | 'error' {
   if (level === 0) return 'debug';
   if (level === 1) return 'info';
@@ -66,11 +86,7 @@ export function attachVisualLifecycleMonitor(
   });
   return {
     recordRendererSignal(payload) {
-      const parsed = payload as { kind?: unknown; phase?: unknown; detail?: unknown };
-      if (parsed.kind !== 'lifecycle' || !['state-hydrated', 'first-paint', 'layout-stable', 'render-failed'].includes(String(parsed.phase))) {
-        throw new Error('renderer lifecycle signal is not an allowed phase');
-      }
-      record({ kind: 'lifecycle', phase: parsed.phase as 'state-hydrated' | 'first-paint' | 'layout-stable' | 'render-failed', ...(typeof parsed.detail === 'string' ? { detail: parsed.detail } : {}) });
+      recordRendererVisualSignal(buffer, target, payload);
     },
     detach() {
       for (const [event, listener] of listeners) source.removeListener(event, listener);
