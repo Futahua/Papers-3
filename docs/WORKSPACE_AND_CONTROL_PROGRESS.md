@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 deterministic same-project console isolation is next
+Persistent status: C1.2 deterministic same-project console isolation implemented; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -501,6 +501,9 @@ later lifecycle hooks will append to:
 * [x] the main IPC boundary resolves the sender-authoritative target, refuses
   stale/unbound senders and malformed or oversized failure payloads, and keeps
   redaction/retention and live event publication on the existing bounded path.
+* [x] dev-control project runtimes forward non-empty console messages from
+  their live renderer through the exact sender/surface callback; main maps the
+  bounded message and level into the existing redacted diagnostic buffer.
 
 The resource-attribution adapter, event-subscription adapter, and renderer
 failure slice are implemented against the existing bounded path and have
@@ -546,15 +549,15 @@ The project dev-control preload requests the same fixed observer through
 Electron's `contextBridge.executeInMainWorld` at document start. Electron 43 can
 emit a project's first synchronous throw/rejection as an error-level
 `console-message` before that experimental callback's listeners receive it, so
-the project runtime also has a bounded bootstrap-only console fallback. It is
-attached to the exact newly-created project WebContents, carries that sender id
-through the callback, and reuses the sender-authoritative resolver immediately
-before recording. A prepared cross-window renderer therefore has no canonical
-surface and is refused; a replaced old renderer is refused even if its listener
-has not detached yet. The fallback records only uncaught error/rejection forms,
-is disabled at `dom-ready`, and the shared failure path suppresses only a
-matching cross-source pair (bootstrap-console plus observer) for the same
-exact pre-redaction message, target, and short burst. The transient matcher
+the project runtime keeps an early-error fallback on the exact newly-created
+project WebContents. The same callback now also forwards every non-empty
+console message after DOM-ready; main retains it as a bounded `console`
+diagnostic and uses the sender-authoritative resolver immediately before
+recording. A prepared cross-window renderer therefore has no canonical surface
+and is refused; a replaced old renderer is refused even if its listener has not
+detached yet. The failure path suppresses only a matching cross-source pair
+(bootstrap-console plus observer) for the same exact pre-redaction message,
+target, and short burst. The transient matcher
 stores only a SHA-256 fingerprint of that raw message and at most 64 unmatched
 candidates; a suppressed pair is consumed so it cannot hide a later same-source
 failure. Same-source repeats and different raw messages that redact alike remain
@@ -570,6 +573,12 @@ throw/rejection, a prepared cross-window renderer, and a post-adoption
 replacement failure; it proves that staged records are refused, current
 replacement records are accepted, and `show()` still resolves while failures
 are captured.
+
+The same-project console-isolation slice is now implemented against that
+existing path. The real two-surface Electron fixture emits a distinct console
+message through each live project sender, queries each exact surface stream,
+and proves each message appears on exactly one `{windowId,surfaceId}` target.
+No project identity or target is supplied by the renderer message itself.
 
 Reviewer checkpoint: **SIGNED OFF** for the complete forward renderer-failure
 slice at exact pushed head
@@ -783,6 +792,23 @@ isolation** — prove two simultaneously live surfaces showing the same project
 retain console diagnostics only under their own exact `{windowId,surfaceId}`
 targets, with no cross-surface attribution.
 
+Current implementation checkpoint: dev-control project runtimes forward every
+non-empty `console-message` from the live renderer, including messages emitted
+after DOM-ready. Main maps Electron levels through the shared bounded console
+schema and resolves the target from the authenticated sender plus the named
+surface; the renderer cannot provide or redirect that target. The two-surface
+fixture emits one distinct message through each native project sender and
+confirms that each exact surface query owns only its corresponding message.
+Unit coverage for runtime forwarding and lifecycle mapping is 18/18; full
+Vitest is 794 passed/4 skipped; focused developer-control,
+renderer-diagnostics, same-project, and workspace E2E is 9/9; typecheck,
+build, and diff check pass.
+
+The exact-SHA reviewer gate must confirm both same-project messages remain
+isolated, ordinary post-DOM console output is retained, stale/prepared senders
+cannot attribute records, and the existing redaction/bounded/no-polling rules
+remain intact.
+
 ## Architectural boundary / likely owner
 
 Main-process visual observation service owns correlation and retention.
@@ -944,7 +970,7 @@ Those are separate lifecycle facts.
 * [ ] hydration failure produces `hydration-failed`/`render-failed`;
 * [ ] thrown renderer exception surfaces without killing control;
 * [ ] failed resource attributed to correct surface;
-* [ ] console of two same-project surfaces remains isolated;
+* [x] console of two same-project surfaces remains isolated;
 * [ ] renderer crash produces `renderer-gone`;
 * [ ] diagnostic buffers obey maximum length/count;
 * [ ] redaction tests reject secret/path leakage;

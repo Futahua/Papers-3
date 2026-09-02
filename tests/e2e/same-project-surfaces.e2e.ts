@@ -89,6 +89,44 @@ describe('A0.4 same-project surface identity', () => {
       expect.objectContaining({ surfaceId: second.surfaceId, projectId: PROJECT }),
     ]));
 
+    const surfaceIds = [first.surfaceId, second.surfaceId];
+    const senderIds = await projectSenderIds();
+    expect(senderIds).toHaveLength(2);
+    for (const [index, senderId] of senderIds.entries()) {
+      const message = `same-project-console-${index + 1}`;
+      await launched.app.evaluate(async ({ webContents }, args) => {
+        const project = webContents.getAllWebContents().find((contents) => contents.id === args.senderId);
+        if (!project) throw new Error(`no project sender ${args.senderId}`);
+        await project.executeJavaScript(`console.log(${JSON.stringify(args.message)})`, true);
+      }, { senderId, message });
+      await waitFor(async () => {
+        const diagnostics = await Promise.all(surfaceIds.map(async (surfaceId) => ({
+          surfaceId,
+          records: await call('inspect.visual.diagnostics', { windowId, surfaceId }) as Array<{
+            target: { windowId: number; surfaceId?: string };
+            payload: { kind?: string; level?: string; message?: string };
+          }>,
+        })));
+        return diagnostics.filter(({ records }) => records.some((record) => record.payload.kind === 'console'
+          && record.payload.level === 'info' && record.payload.message === message)).length === 1;
+      }, 10_000, `console isolation for ${message}`);
+      const ownership = (await Promise.all(surfaceIds.map(async (surfaceId) => ({
+        surfaceId,
+        records: await call('inspect.visual.diagnostics', { windowId, surfaceId }) as Array<{
+          target: { windowId: number; surfaceId?: string };
+          payload: { kind?: string; level?: string; message?: string };
+        }>,
+      })))).filter(({ records }) => records.some((record) => record.payload.kind === 'console'
+        && record.payload.level === 'info' && record.payload.message === message));
+      expect(ownership).toHaveLength(1);
+      expect(ownership[0]?.records).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          target: { windowId, surfaceId: ownership[0]!.surfaceId },
+          payload: { kind: 'console', level: 'info', message },
+        }),
+      ]));
+    }
+
     await call('layout.split', { windowId, surfaceId: first.surfaceId, direction: 'right' });
     await waitFor(async () => {
       const surfaces = await call('inspect.surfaces') as Array<{ surfaceId: string; presentation: string }>;

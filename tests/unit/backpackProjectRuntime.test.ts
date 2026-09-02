@@ -111,6 +111,20 @@ describe('BackpackProjectRuntime.hide', () => {
     expect(lifecycle).toHaveBeenNthCalledWith(2, view.webContents.id, 'dom-ready');
   });
 
+  it('forwards console messages after DOM-ready from the live sender', async () => {
+    const consoleMessage = vi.fn();
+    const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false, undefined, consoleMessage);
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    const consoleListener = view.webContents.on.mock.calls.find(([event]) => event === 'console-message')?.[1] as
+      ((event: unknown, level: number, message: string) => void) | undefined;
+    const domReady = view.webContents.on.mock.calls.find(([event]) => event === 'dom-ready')?.[1] as (() => void) | undefined;
+    expect(consoleListener).toBeTypeOf('function');
+    domReady?.();
+    consoleListener?.({}, 1, 'surface-a ready');
+    expect(consoleMessage).toHaveBeenCalledWith(view.webContents.id, 1, 'surface-a ready');
+  });
+
   it('conceals and restores the same live renderer without closing it', async () => {
     const runtime = await shownRuntime();
     const view = soleView();

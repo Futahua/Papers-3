@@ -42,7 +42,7 @@ import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
 import { controlBuildIdentity } from './buildIdentity';
 import { createProcessInstanceIdentity, currentProcessInstanceSeed, type ProcessInstanceIdentity } from './visual/processIdentity';
-import { attachVisualLifecycleMonitor, recordRendererVisualDiagnostic, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
+import { attachVisualLifecycleMonitor, recordRendererVisualDiagnostic, visualConsoleLevel, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
 import { createVisualDiagnosticBuffer, type VisualDiagnosticBuffer } from './visual/visualDiagnostics';
 import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visual/visualResourceMonitor';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
@@ -402,19 +402,22 @@ async function bootstrap(): Promise<void> {
   };
   const onProjectConsoleMessage = process.env['PAPERS_DEV_CONTROL'] === '1'
     ? (windowId: number, surfaceId: string, senderId: number, level: number, message: string): void => {
-      if (level !== 3 || message.length === 0) return;
-      const isUnhandledRejection = message.startsWith('Uncaught (in promise)');
-      const isUncaughtError = message.startsWith('Uncaught');
-      if (!isUnhandledRejection && !isUncaughtError) return;
-      const prefix = isUnhandledRejection ? 'Uncaught (in promise)' : 'Uncaught';
-      const detail = isUnhandledRejection
-        ? (message.slice(prefix.length).trim().replace(/^Error:\s*/i, '') || 'unhandled rejection')
-        : (message || 'uncaught error');
+      if (message.length === 0) return;
       const target = resolveVisualTarget({ id: senderId });
       if (!target || target.windowId !== windowId || target.surfaceId !== surfaceId) return;
       const buffer = visualDiagnosticsByWindow.get(target.windowId);
       if (!buffer) return;
       try {
+        const boundedMessage = message.slice(0, 4096);
+        buffer.append(target, { kind: 'console', level: visualConsoleLevel(level), message: boundedMessage });
+        if (level !== 3) return;
+        const isUnhandledRejection = message.startsWith('Uncaught (in promise)');
+        const isUncaughtError = message.startsWith('Uncaught');
+        if (!isUnhandledRejection && !isUncaughtError) return;
+        const prefix = isUnhandledRejection ? 'Uncaught (in promise)' : 'Uncaught';
+        const detail = isUnhandledRejection
+          ? (boundedMessage.slice(prefix.length).trim().replace(/^Error:\s*/i, '') || 'unhandled rejection')
+          : (boundedMessage || 'uncaught error');
         recordRendererVisualDiagnostic(buffer, target, {
           kind: isUnhandledRejection ? 'unhandled-rejection' : 'uncaught-error',
           message: detail,

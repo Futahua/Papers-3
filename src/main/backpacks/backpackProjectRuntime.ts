@@ -118,16 +118,14 @@ export class BackpackProjectRuntime {
         event.preventDefault();
       }
     });
-    let capturingBootstrapConsole = true;
     view.webContents.on('did-start-loading', () => this.onLifecycleEvent?.(view.webContents.id, 'did-start-loading'));
     view.webContents.on('dom-ready', () => {
-      capturingBootstrapConsole = false;
       this.onLifecycleEvent?.(view.webContents.id, 'dom-ready');
     });
     view.webContents.on('console-message', (...args: unknown[]) => {
       const level = args[1];
       const message = args[2];
-      if (capturingBootstrapConsole && typeof level === 'number' && typeof message === 'string' && message.length > 0) {
+      if (typeof level === 'number' && typeof message === 'string' && message.length > 0) {
         this.onConsoleMessage?.(view.webContents.id, level, message);
       }
     });

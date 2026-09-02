@@ -150,7 +150,7 @@ export function recentRendererDiagnosticMatcherSnapshotForTest(buffer: VisualDia
   }));
 }
 
-function consoleLevel(level: unknown): 'debug' | 'info' | 'log' | 'warn' | 'error' {
+export function visualConsoleLevel(level: unknown): 'debug' | 'info' | 'log' | 'warn' | 'error' {
   if (level === 0) return 'debug';
   if (level === 1) return 'info';
   if (level === 2) return 'warn';
@@ -188,7 +188,7 @@ export function attachVisualLifecycleMonitor(
   });
   listen('console-message', (...args) => {
     const message = typeof args[2] === 'string' && args[2].length > 0 ? args[2] : 'console message unavailable';
-    const level = consoleLevel(args[1]);
+    const level = visualConsoleLevel(args[1]);
     record({ kind: 'console', level, message });
   });
   listen('render-process-gone', (...args) => {
