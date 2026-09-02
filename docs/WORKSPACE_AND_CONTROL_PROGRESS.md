@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, and cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`; the reviewed non-packaged core is complete, while packaged visual/MCP acceptance and older live-fixture integration checklists remain outside the current no-package boundary
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`, and packaged visual success/failure plus stdio MCP acceptance signed off at `d977a2974beddd1ea94aade311c65ab9e29fec74`; the reviewed C1 core is complete, while only older live-fixture integration checklists remain outside this acceptance record
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1973,8 +1973,9 @@ The append path consumes only already-emitted diagnostic events, enforces the
 256-event/10-second bounds, and carries render-cycle, document, layout, and
 workspace-topology revisions. The reviewer signed off the corrected slice at
 the exact code SHA above with no remaining concrete defect. Report element
-coverage and interrupted-report cleanup are now implemented and reviewed;
-packaged proof is still open.
+coverage and interrupted-report cleanup are now implemented and reviewed.
+The real packaged visual success/failure and stdio-MCP artifact proof is signed
+off at [`d977a297`](https://github.com/Futahua/Papers-3/commit/d977a2974beddd1ea94aade311c65ab9e29fec74).
 
 Report checkpoint: `visual.report.create` and the bounded ZIP artifact builder
 are implemented at [`abed691f`](https://github.com/Futahua/Papers-3/commit/abed691f67add77d3768ad532a797a37903b3ba8).
@@ -1987,8 +1988,8 @@ Interrupted-report cleanup was added and signed off at
 [`0114d5b6`](https://github.com/Futahua/Papers-3/commit/0114d5b6154db045d8814679dd5bc7ef52a5db1f).
 Cancellation-aware capture/report cleanup was completed and signed off at
 [`e05286d5`](https://github.com/Futahua/Papers-3/commit/e05286d5cb77a7e8adc6a737652e862ff41cb9c1).
-Remaining work for this report/cancellation slice is packaged acceptance;
-baseline live-capture integration is tracked in the earlier C1.4 sub-gate.
+The packaged acceptance slice is closed at the exact SHA above; baseline
+live-capture integration is tracked in the earlier C1.4 sub-gate.
 
 Additional proof checkpoint: the production visual E2E now queries two same-
 project surfaces after one moves across windows and proves each timeline stays
@@ -1999,8 +2000,10 @@ screenshot capture is present.
 Final C1.5 checkpoint: the reviewer signed off the complete implemented scope
 at [`f5a67bfc`](https://github.com/Futahua/Papers-3/commit/f5a67bfc40f690a5c7e551492ef533a308579e3b).
 The later report element, interruption, and cancellation evidence is recorded
-in the C1.6 checkpoints above; packaged success/failure acceptance remains
-intentionally separate.
+in the C1.6 checkpoints above. Packaged success/failure acceptance is closed at
+[`d977a297`](https://github.com/Futahua/Papers-3/commit/d977a2974beddd1ea94aade311c65ab9e29fec74),
+with same-target hydration-to-failure evidence, real failure pixels, full
+report hash verification, and stdio-MCP retrieval.
 
 ## Packaged live proof
 
@@ -2162,7 +2165,8 @@ SHA [`03d2ef7e`](https://github.com/Futahua/Papers-3/commit/03d2ef7e4174d1620f83
 The reviewer found no concrete defect. Packaged MCP acceptance and
 cancellation-during-capture were subsequently closed in the reviewed local
 scope at [`e05286d5`](https://github.com/Futahua/Papers-3/commit/e05286d5cb77a7e8adc6a737652e862ff41cb9c1), with no remaining concrete
-reviewer defect. Packaged MCP acceptance remains intentionally open.
+reviewer defect. The final packaged visual/MCP acceptance is signed off at
+[`d977a297`](https://github.com/Futahua/Papers-3/commit/d977a2974beddd1ea94aade311c65ab9e29fec74).
 
 ## Real packaged Electron acceptance
 
@@ -2200,9 +2204,9 @@ Final C1 closure records:
 * full unit suite;
 * all focused visual suites;
 * deterministic baseline suite;
-* packaged success/failure E2E;
-* MCP packaged E2E;
-* artifact integrity proof;
+* packaged success/failure E2E at `d977a297`;
+* MCP packaged E2E at `d977a297`;
+* artifact integrity proof at `d977a297`;
 * production audit;
 * `git diff --check`;
 * reviewer sign-off.
@@ -2380,7 +2384,7 @@ C1 is complete only when all of the following are true:
 * [x] self-contained diagnostic reports exist;
 * [x] reports never contain creator state files or broad filesystem contents;
 * [x] MCP can use the same reviewed control semantics without gaining extra authority;
-* [ ] successful and failing flows work in real packaged Electron acceptance;
+* [x] successful and failing flows work in real packaged Electron acceptance;
 * [ ] As you Go can consume the generic contract without any As-you-Go-specific logic appearing in Papers;
 * [x] diagnostics demonstrably do not mutate project data;
 * [x] no reviewed blocker remains in the non-packaged scope.
