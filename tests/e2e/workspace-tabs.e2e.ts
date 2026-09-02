@@ -272,11 +272,32 @@ describe('A1 workspace tabs', () => {
         && await hostPage.locator('.dv-groupview').count() === 1;
     }, 10_000, 'moving final tab collapses Papers and Dockview source group');
 
-    const openedGamma = await call('workspace.open', { windowId, projectId: C }) as { surfaceId: string; projectId: string };
+    const beforeCanonicalGammaOpen = (await call('inspect.workspace', { windowId }) as { revision: number }).revision;
+    let openedGamma = await call('workspace.open', { windowId, projectId: C }) as { surfaceId: string; projectId: string };
     expect(openedGamma.projectId).toBe(C);
     await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string }>).some((surface) => surface.projectId === C)
       && await hostPage.getByRole('tab', { name: 'Gamma' }).count() === 1,
     10_000, 'programmatic Gamma workspace surface and host metadata');
+    const afterCanonicalGammaOpen = (await call('inspect.workspace', { windowId }) as { revision: number }).revision;
+    expect(afterCanonicalGammaOpen).toBe(beforeCanonicalGammaOpen + 1);
+    await hostPage.waitForTimeout(100);
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBe(afterCanonicalGammaOpen);
+
+    await call('workspace.close', { windowId, surfaceId: openedGamma.surfaceId });
+    await waitFor(async () => !(await call('inspect.surfaces') as Array<{ projectId: string }>).some((surface) => surface.projectId === C)
+      && await hostPage.getByRole('tab', { name: 'Gamma' }).count() === 0,
+    10_000, 'programmatic Gamma workspace close and host metadata');
+    const afterCanonicalGammaClose = (await call('inspect.workspace', { windowId }) as { revision: number }).revision;
+    expect(afterCanonicalGammaClose).toBe(afterCanonicalGammaOpen + 1);
+    await hostPage.waitForTimeout(100);
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBe(afterCanonicalGammaClose);
+
+    openedGamma = await call('workspace.open', { windowId, projectId: C }) as { surfaceId: string; projectId: string };
+    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string }>).some((surface) => surface.projectId === C)
+      && await hostPage.getByRole('tab', { name: 'Gamma' }).count() === 1,
+    10_000, 'reopen Gamma after canonical close');
     const threeWorkspace = await call('inspect.workspace', { windowId }) as {
       topology: { surfaces: Array<{ surfaceId: string; projectId: string }> };
     };

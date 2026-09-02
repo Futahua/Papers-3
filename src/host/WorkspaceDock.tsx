@@ -247,16 +247,18 @@ export function WorkspaceDock(props: {
   useEffect(() => {
     const api = apiRef.current;
     if (!api) return;
-    addMissingPanels(api);
-    const desired = new Set(projects.map((project) => project.surfaceId));
-    for (const panel of [...api.panels]) {
-      if (desired.has(panel.id)) continue;
-      synchronizingRemovals.current.add(panel.id);
-      api.removePanel(panel);
-    }
-    const active = activeSurfaceId ? api.getPanel(activeSurfaceId) : undefined;
-    if (active && api.activePanel?.id !== active.id) active.api.setActive();
-    reconcileFromTopology(api);
+    reconciliationFeedback.current.apply(() => {
+      addMissingPanels(api);
+      const desired = new Set(projects.map((project) => project.surfaceId));
+      for (const panel of [...api.panels]) {
+        if (desired.has(panel.id)) continue;
+        synchronizingRemovals.current.add(panel.id);
+        api.removePanel(panel);
+      }
+      const active = activeSurfaceId ? api.getPanel(activeSurfaceId) : undefined;
+      if (active && api.activePanel?.id !== active.id) active.api.setActive();
+      reconcileFromTopology(api);
+    });
   }, [activeSurfaceId, addMissingPanels, projects, reconcileFromTopology, topology]);
 
   const splitActive = useCallback((direction: 'right' | 'down'): void => {

@@ -562,19 +562,22 @@ second topology mutation or commit. Genuine subsequent user Dockview actions
 must immediately resume forward reporting.
 
 Implementation checkpoint: `WorkspaceDock` now uses a synchronous,
-nestable reconciliation-feedback gate around each Papers-applied Dockview
-operation. The gate has no timer or polling window: structural, active-panel,
-and layout callbacks emitted during the API operation are ignored, then user
-callbacks are eligible immediately after it returns. Focused unit coverage
-proves scoped suppression, immediate resumption, and nested operations. The
-workspace E2E proves canonical identity/order/focus convergence, no delayed
-echo commit after restore, and a genuine post-restore tab move producing the
-next canonical update. Validation: full Vitest 778 passed/4 skipped across
-71 passed/1 skipped files; focused developer-control, renderer-diagnostics,
-and workspace E2E 8/8; typecheck; build; diff check.
+nestable reconciliation-feedback gate around the complete Papers-applied
+Dockview projection effect: panel add, canonical removal, active-panel
+application, and topology reconciliation. The gate has no timer or polling
+window: structural, active-panel, and layout callbacks emitted during the API
+operation are ignored, then user callbacks are eligible immediately after it
+returns. `synchronizingRemovals` remains in place so canonical removal cannot
+become a semantic user-close callback. Focused unit coverage proves scoped
+suppression, immediate resumption, and nested operations. The workspace E2E
+proves canonical identity/order/focus convergence, no delayed echo commit
+after restore/open/close, and genuine post-reconciliation tab movement
+producing the next canonical update. Validation: full Vitest 778 passed/4
+skipped across 71 passed/1 skipped files; focused developer-control,
+renderer-diagnostics, and workspace E2E 8/8; typecheck; build; diff check.
 
-Required reviewer regressions remain exact identity/order/focus preservation,
-no echo commit, no reconciliation loop, and normal user-originated Dockview
+The exact-SHA reviewer gate must confirm identity/order/focus preservation, no
+echo commit, no reconciliation loop, and normal user-originated Dockview
 mutation immediately afterward.
 
 ## Architectural boundary / likely owner
