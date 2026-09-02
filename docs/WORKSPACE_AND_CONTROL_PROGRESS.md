@@ -632,7 +632,7 @@ A1.2i all-or-nothing primary startup hydration:
   calls cannot allocate or deliver a second restored workspace.
 - [x] Keep hydration persistence failures visible through main diagnostics.
 - [x] Complete live seeded-v2 restore acceptance; reviewer final sign-off is
-  pending.
+  recorded on the exact pushed head below.
 - [x] Live seeded-v2 primary restore; fresh IDs/order/focus/weights; durable ID
   reuse after mutation; additional window remains fresh.
 - [x] Real UI E2E only for visual/keyboard/focus behavior; semantic setup and
@@ -641,9 +641,9 @@ A1.2i all-or-nothing primary startup hydration:
 
 Reviewer closed A1.2i with no concrete lifecycle, startup-authority,
 identity-mapping, renderer-convergence, persistence, or acceptance blocker.
-The next narrow slice is A1.2j: archive/remove plus crash/reload durability
-across a multi-surface workspace. Keep additional windows fresh and preserve
-the persistence-redaction assertions.
+A1.2j archive/remove plus crash/reload durability is recorded immediately below;
+additional windows remain fresh and persistence-redaction assertions are
+preserved.
 
 A1.2j archive/remove and crash/reload durability:
 
