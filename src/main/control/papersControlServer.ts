@@ -13,6 +13,7 @@ import {
   papersControlCommands,
   type PapersControlDependencies,
   type PapersControlEventName,
+  type VisualEventTarget,
 } from './papersControlProtocol';
 import {
   createPapersControlConfirmationBroker,
@@ -89,31 +90,51 @@ export interface PapersControlServer {
 export interface PapersControlEventHub {
   attach(socket: Socket): void;
   detach(socket: Socket): void;
-  subscribe(socket: Socket, events: readonly PapersControlEventName[]): void;
+  subscribe(socket: Socket, events: readonly PapersControlEventName[], visualTarget?: VisualEventTarget): void;
   publish(event: PapersControlEventName, payload: unknown): void;
+}
+
+interface EventSubscription {
+  events: Set<PapersControlEventName>;
+  visualTarget?: VisualEventTarget;
+}
+
+function isVisualEvent(event: PapersControlEventName): boolean {
+  return event === 'visual.lifecycle' || event === 'visual.diagnostic';
+}
+
+function matchesVisualTarget(payload: unknown, target: VisualEventTarget): boolean {
+  if (payload === null || typeof payload !== 'object') return false;
+  const record = payload as { target?: { windowId?: unknown; surfaceId?: unknown } };
+  if (record.target?.windowId !== target.windowId) return false;
+  return target.surfaceId === undefined || record.target.surfaceId === target.surfaceId;
 }
 
 /** Connection-local semantic event fan-out. The hub validates the complete
  * frame before sending it, so an accidental internal payload cannot widen the
  * authenticated boundary into URLs, roots, sender ids or native handles. */
 export function createPapersControlEventHub(): PapersControlEventHub {
-  const subscriptions = new Map<Socket, Set<PapersControlEventName>>();
+  const subscriptions = new Map<Socket, EventSubscription>();
   return {
     attach(socket) {
-      subscriptions.set(socket, new Set());
+      subscriptions.set(socket, { events: new Set() });
     },
     detach(socket) {
       subscriptions.delete(socket);
     },
-    subscribe(socket, events) {
+    subscribe(socket, events, visualTarget) {
       const current = subscriptions.get(socket);
       if (!current) return;
-      for (const event of events) current.add(controlEventNameSchema.parse(event));
+      if (events.some(isVisualEvent) && !visualTarget) return;
+      for (const event of events) current.events.add(controlEventNameSchema.parse(event));
+      if (events.some(isVisualEvent)) current.visualTarget = visualTarget;
     },
     publish(event, payload) {
       const frame = papersControlEventFrameSchema.parse({ type: 'event', event, payload });
-      for (const [socket, events] of subscriptions) {
-        if (events.has(event)) send(socket, frame);
+      for (const [socket, subscription] of subscriptions) {
+        if (!subscription.events.has(event)) continue;
+        if (isVisualEvent(event) && (!subscription.visualTarget || !matchesVisualTarget(payload, subscription.visualTarget))) continue;
+        sendEvent(socket, frame);
       }
     },
   };
@@ -127,6 +148,14 @@ function sameSecret(actual: string, expected: string): boolean {
 
 function send(socket: Socket, payload: unknown): void {
   if (socket.destroyed) return;
+  socket.write(`${JSON.stringify(payload)}\n`);
+}
+
+/** Live diagnostic events are intentionally drop-on-backpressure. The record's
+ * sequence remains in the historical snapshot, so a client can detect a gap
+ * and recover without an unbounded connection-local queue. */
+function sendEvent(socket: Socket, payload: unknown): void {
+  if (socket.destroyed || socket.writableNeedDrain) return;
   socket.write(`${JSON.stringify(payload)}\n`);
 }
 
@@ -217,11 +246,13 @@ export async function startPapersControlServer({
             if (!sameSecret(request.token, token)) throw new Error('unauthorized');
             // Nothing may mutate after the shutdown barrier.
             if (closing) throw new Error('control server is shutting down');
+            const result = await dispatchPapersControl(dependencies, request, { connectionId, confirmations });
             if (request.method === 'events.subscribe') {
               const subscription = papersControlCommands['events.subscribe'].input.parse(request.params ?? {});
-              eventHub.subscribe(socket, subscription.events);
+              // Dispatch performs exact target validation first; only a
+              // successful request may activate or replace this subscription.
+              eventHub.subscribe(socket, subscription.events, subscription.visualTarget);
             }
-            const result = await dispatchPapersControl(dependencies, request, { connectionId, confirmations });
             send(socket, { id: request.id, ok: true, result });
           } catch (error) {
             send(socket, { id: requestId, ok: false, error: errorText(error) });

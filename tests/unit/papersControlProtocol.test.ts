@@ -157,6 +157,45 @@ describe('Papers developer control protocol', () => {
     }))).rejects.toThrow(/duplicates/);
   });
 
+  it('requires and validates an exact live target for visual subscriptions', async () => {
+    const validateVisualEventTarget = vi.fn((target: { windowId: number; surfaceId?: string }) =>
+      target.windowId === 4 && target.surfaceId === 'surface-a');
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+      createWindow: async () => ({ windowId: 3 }), validateVisualEventTarget,
+    };
+
+    await expect(dispatchPapersControl(dependencies, request('events.subscribe', {
+      events: ['visual.lifecycle'],
+    }))).rejects.toThrow(/visualTarget/);
+    await expect(dispatchPapersControl(dependencies, request('events.subscribe', {
+      events: ['window.created'], visualTarget: { windowId: 4, surfaceId: 'surface-a' },
+    }))).rejects.toThrow(/visualTarget/);
+    await expect(dispatchPapersControl(dependencies, request('events.subscribe', {
+      events: ['visual.diagnostic'], visualTarget: { windowId: 9, surfaceId: 'foreign' },
+    }))).rejects.toThrow(/unavailable/);
+    await expect(dispatchPapersControl(dependencies, request('events.subscribe', {
+      events: ['visual.lifecycle', 'visual.diagnostic'], visualTarget: { windowId: 4, surfaceId: 'surface-a' },
+    }))).resolves.toEqual({ subscribed: ['visual.lifecycle', 'visual.diagnostic'] });
+    expect(validateVisualEventTarget).toHaveBeenCalledWith({ windowId: 4, surfaceId: 'surface-a' });
+  });
+
+  it('classifies only validated diagnostic records into visual event frames', () => {
+    const record = {
+      sequence: 1,
+      observedAt: '2026-09-02T00:00:00.000Z',
+      target: { windowId: 4, surfaceId: 'surface-a' },
+      payload: { kind: 'lifecycle' as const, phase: 'first-paint' as const },
+    };
+    expect(papersControlEventFrameSchema.parse({ type: 'event', event: 'visual.lifecycle', payload: record })).toEqual({
+      type: 'event', event: 'visual.lifecycle', payload: record,
+    });
+    expect(() => papersControlEventFrameSchema.parse({ type: 'event', event: 'visual.diagnostic', payload: record })).toThrow();
+    expect(() => papersControlEventFrameSchema.parse({ type: 'event', event: 'visual.lifecycle', payload: {
+      ...record, payload: { kind: 'console', level: 'error', message: 'not lifecycle' },
+    } })).toThrow();
+  });
+
   it('dispatches named-layout list/save/load with explicit window targets', async () => {
     const layout = {
       layoutId: '3f0f8c9c-4d3c-4c3c-8c3c-3f0f8c9c4d3c',

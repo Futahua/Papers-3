@@ -458,17 +458,29 @@ later lifecycle hooks will append to:
   remain explicit and project hydration remains project-owned.
 * [x] the authority resolver has a focused old-sender/current-runtime
   regression at the IPC composition boundary.
-* [ ] expose event subscription through the authenticated control plane.
+* [x] extend the existing authenticated control event hub with
+  `visual.lifecycle` and `visual.diagnostic`; subscriptions require an exact
+  live `{windowId,surfaceId?}` target whenever either visual event is named,
+  and reject a target when no visual event is requested.
+* [x] publish only after a diagnostic record is successfully appended and
+  schema-validated; window targets receive host plus project records in that
+  window, surface targets receive only that surface, and no URL/path/sender or
+  raw renderer detail crosses the frame boundary.
+* [x] validate the visual target before activating the socket subscription and
+  drop visual frames when the socket is under backpressure rather than growing
+  an unbounded queue; historical sequence numbers remain available through
+  `inspect.visual.diagnostics`.
 
 The resource-attribution adapter and its focused regression tests are
-implemented but await reviewer sign-off. The next review must verify the real
-Electron `webRequest` listener shape, stale-WebContents rejection, URL
-non-retention, and shutdown detachment.
+implemented but await reviewer sign-off. The event-subscription adapter is now
+implemented against the same hub and awaits the same fresh gate. The review
+must verify exact-target validation/order, post-append publication,
+classification, backpressure, and disconnect cleanup.
 
-Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 7/7;
+Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 8/8;
 `tests/unit/visualLifecycleMonitor.test.ts` passes 3/3;
 `tests/unit/visualResourceMonitor.test.ts` passes 4/4; the full host suite
-passes 768/768 with 4 skipped across 69 passed files and 1 skipped file;
+passes 772/772 with 4 skipped across 69 passed files and 1 skipped file;
 typecheck and diff check pass. This is not C1.2 completion; event subscription
 and broader control exposure remain unchecked.
 

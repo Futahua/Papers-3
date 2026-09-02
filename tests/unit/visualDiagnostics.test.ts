@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createVisualDiagnosticBuffer, redactDiagnosticText } from '../../src/main/visual/visualDiagnostics';
 
@@ -53,6 +53,18 @@ describe('bounded visual diagnostic buffer', () => {
     buffer.append({ windowId: 1 }, { kind: 'console', level: 'warn', message: 'warning' });
     buffer.clear();
     expect(buffer.snapshot()).toEqual([]);
+  });
+
+  it('publishes only after a schema-valid record is retained', () => {
+    const onAppend = vi.fn();
+    const buffer = createVisualDiagnosticBuffer({ onAppend });
+
+    const record = buffer.append({ windowId: 1 }, { kind: 'console', level: 'warn', message: 'warning' });
+
+    expect(onAppend).toHaveBeenCalledWith(record);
+    expect(onAppend).toHaveBeenCalledOnce();
+    expect(() => buffer.append({ windowId: 1 }, { kind: 'console', level: 'error', message: 'x', extra: true })).toThrow();
+    expect(onAppend).toHaveBeenCalledOnce();
   });
 
   it('bounds capacity configuration', () => {

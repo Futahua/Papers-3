@@ -60,6 +60,11 @@ const surfaceTargetSchema = z.object({
   surfaceId: z.string().min(1).max(128),
 }).strict();
 const windowTargetSchema = z.object({ windowId: z.number().int() }).strict();
+export const visualEventTargetSchema = z.object({
+  windowId: z.number().int(),
+  surfaceId: z.string().min(1).max(128).optional(),
+}).strict();
+export type VisualEventTarget = z.infer<typeof visualEventTargetSchema>;
 const layoutTargetSchema = z.object({ windowId: z.number().int(), layoutId: z.string().uuid() }).strict();
 const namedLayoutSchema = z.object({
   layoutId: z.string().uuid(),
@@ -89,7 +94,12 @@ const destructiveActionResultSchema = z.object({
   name: z.string().min(1),
 }).strict();
 
-export const papersControlEventNames = ['window.created', 'workspace.changed'] as const;
+export const papersControlEventNames = [
+  'window.created',
+  'workspace.changed',
+  'visual.lifecycle',
+  'visual.diagnostic',
+] as const;
 export const controlEventNameSchema = z.enum(papersControlEventNames);
 export type PapersControlEventName = z.infer<typeof controlEventNameSchema>;
 
@@ -122,6 +132,15 @@ const workspaceChangedEventPayloadSchema = z.discriminatedUnion('kind', [
   }).strict(),
 ]);
 
+const visualLifecycleEventPayloadSchema = visualDiagnosticRecordSchema.refine(
+  (record) => record.payload.kind === 'lifecycle',
+  { message: 'visual.lifecycle payload must be a lifecycle record' },
+);
+const visualDiagnosticEventPayloadSchema = visualDiagnosticRecordSchema.refine(
+  (record) => record.payload.kind !== 'lifecycle',
+  { message: 'visual.diagnostic payload must be a non-lifecycle record' },
+);
+
 export const papersControlEventFrameSchema = z.discriminatedUnion('event', [
   z.object({
     type: z.literal('event'),
@@ -133,14 +152,33 @@ export const papersControlEventFrameSchema = z.discriminatedUnion('event', [
     event: z.literal('workspace.changed'),
     payload: workspaceChangedEventPayloadSchema,
   }).strict(),
+  z.object({
+    type: z.literal('event'),
+    event: z.literal('visual.lifecycle'),
+    payload: visualLifecycleEventPayloadSchema,
+  }).strict(),
+  z.object({
+    type: z.literal('event'),
+    event: z.literal('visual.diagnostic'),
+    payload: visualDiagnosticEventPayloadSchema,
+  }).strict(),
 ]);
 
 export type PapersControlEventFrame = z.infer<typeof papersControlEventFrameSchema>;
 const eventSubscriptionSchema = z.object({
   events: z.array(controlEventNameSchema).min(1).max(papersControlEventNames.length),
+  visualTarget: visualEventTargetSchema.optional(),
 }).strict().superRefine((value, context) => {
   if (new Set(value.events).size !== value.events.length) {
     context.addIssue({ code: 'custom', message: 'events must not contain duplicates', path: ['events'] });
+  }
+  const visualRequested = value.events.some((event) => event === 'visual.lifecycle' || event === 'visual.diagnostic');
+  if (visualRequested !== (value.visualTarget !== undefined)) {
+    context.addIssue({
+      code: 'custom',
+      message: visualRequested ? 'visualTarget is required for visual events' : 'visualTarget is only valid for visual events',
+      path: ['visualTarget'],
+    });
   }
 });
 
@@ -330,6 +368,8 @@ export interface PapersControlDependencies {
   /** Publish only schema-validated, redacted semantic events to subscribed
    * control connections. The transport owns connection-local fan-out. */
   publishEvent?(event: PapersControlEventName, payload: unknown): void;
+  /** Validate a live exact target before a visual event subscription activates. */
+  validateVisualEventTarget?(target: VisualEventTarget): boolean;
 }
 
 export interface PapersControlDispatchContext {
@@ -418,6 +458,10 @@ export async function dispatchPapersControl(
     }
   case 'events.subscribe': {
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const visualRequested = params.events.some((event) => event === 'visual.lifecycle' || event === 'visual.diagnostic');
+      if (visualRequested && (!params.visualTarget || !dependencies.validateVisualEventTarget?.(params.visualTarget))) {
+        throw new Error('That Papers visual event target is unavailable.');
+      }
       return papersControlCommands[request.method].output.parse({ subscribed: params.events });
     }
     case 'inspect.process': {

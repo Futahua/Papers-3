@@ -80,6 +80,7 @@ const MAX_CAPACITY = 512;
 export function createVisualDiagnosticBuffer(options: {
   capacity?: number;
   now?: () => Date;
+  onAppend?: (record: VisualDiagnosticRecord) => void;
 } = {}): VisualDiagnosticBuffer {
   const capacity = options.capacity ?? DEFAULT_CAPACITY;
   if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > MAX_CAPACITY) {
@@ -104,6 +105,12 @@ export function createVisualDiagnosticBuffer(options: {
       });
       records.push(record);
       if (records.length > capacity) records.shift();
+      try {
+        options.onAppend?.(cloneRecord(record));
+      } catch {
+        // Diagnostic publication is best effort and must not break the
+        // producer that successfully appended the historical record.
+      }
       return cloneRecord(record);
     },
     snapshot() {

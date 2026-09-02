@@ -330,6 +330,50 @@ describe('Papers developer control server', () => {
     }
   });
 
+  it('routes visual records by exact target and drops under backpressure', () => {
+    const eventHub = createPapersControlEventHub();
+    const hostWrite = vi.fn((_payload: string) => true);
+    const surfaceAWrite = vi.fn((_payload: string) => true);
+    const blockedWrite = vi.fn((_payload: string) => false);
+    const host = { destroyed: false, writableNeedDrain: false, write: hostWrite } as unknown as Socket;
+    const surfaceA = { destroyed: false, writableNeedDrain: false, write: surfaceAWrite } as unknown as Socket;
+    const blocked = { destroyed: false, writableNeedDrain: true, write: blockedWrite } as unknown as Socket;
+    eventHub.attach(host);
+    eventHub.attach(surfaceA);
+    eventHub.attach(blocked);
+    eventHub.subscribe(host, ['visual.lifecycle'], { windowId: 4 });
+    eventHub.subscribe(surfaceA, ['visual.diagnostic'], { windowId: 4, surfaceId: 'surface-a' });
+    eventHub.subscribe(blocked, ['visual.diagnostic'], { windowId: 4 });
+
+    const lifecycle = {
+      sequence: 1,
+      observedAt: '2026-09-02T00:00:00.000Z',
+      target: { windowId: 4 },
+      payload: { kind: 'lifecycle' as const, phase: 'dom-ready' as const },
+    };
+    const diagnostic = {
+      sequence: 2,
+      observedAt: '2026-09-02T00:00:01.000Z',
+      target: { windowId: 4, surfaceId: 'surface-a' },
+      payload: { kind: 'console' as const, level: 'error' as const, message: 'render failed' },
+    };
+    const otherSurface = {
+      ...diagnostic,
+      sequence: 3,
+      target: { windowId: 4, surfaceId: 'surface-b' },
+    };
+
+    eventHub.publish('visual.lifecycle', lifecycle);
+    eventHub.publish('visual.diagnostic', diagnostic);
+    eventHub.publish('visual.diagnostic', otherSurface);
+
+    expect(hostWrite).toHaveBeenCalledOnce();
+    expect(surfaceAWrite).toHaveBeenCalledOnce();
+    expect(blockedWrite).not.toHaveBeenCalled();
+    expect(String(surfaceAWrite.mock.calls[0]?.[0])).toContain('surface-a');
+    expect(String(surfaceAWrite.mock.calls[0]?.[0])).not.toContain('surface-b');
+  });
+
 /**
  * Framing, tested with exact chunk sequences. A real socket chooses its own
  * delivery boundaries, so a socket-level test cannot reliably deliver two

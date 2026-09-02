@@ -26,7 +26,7 @@ import { registerResourceExecutors } from './resources/resourceExecutors';
 import { AgentRunService } from './agents/runService';
 import { PapersHostFacade } from './hostFacade';
 import { PapersUpdater } from './papersUpdater';
-import { createPapersControlEventHub, startPapersControlServer, type PapersControlServer } from './control/papersControlServer';
+import { createPapersControlEventHub, startPapersControlServer, type PapersControlEventHub, type PapersControlServer } from './control/papersControlServer';
 import { papersDataDirArgument } from './papersDataDir';
 import { randomUUID } from 'node:crypto';
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
@@ -380,6 +380,7 @@ async function bootstrap(): Promise<void> {
   let reconcileHermesForClosingWindow: (windowId: number) => Promise<void> = async () => undefined;
   let primaryWindowIdForHydration: number | null = null;
   let primaryHydrationPromise: Promise<{ hydrated: boolean }> | null = null;
+  let controlEventHub: PapersControlEventHub | null = null;
   // One Hermes backend is shared by all Papers windows. The callback is late
   // bound because the facade is composed after the first window is prepared.
   const hermesSurface = new HermesSurface(
@@ -412,7 +413,12 @@ async function bootstrap(): Promise<void> {
     });
     if (process.env['PAPERS_DEV_CONTROL'] === '1') {
       const windowId = instance.window.id;
-      const buffer = createVisualDiagnosticBuffer();
+      const buffer = createVisualDiagnosticBuffer({
+        onAppend: (record) => {
+          const event = record.payload.kind === 'lifecycle' ? 'visual.lifecycle' : 'visual.diagnostic';
+          controlEventHub?.publish(event, record);
+        },
+      });
       const monitor = attachVisualLifecycleMonitor(
         instance.hostView.webContents as unknown as Parameters<typeof attachVisualLifecycleMonitor>[0],
         { windowId },
@@ -1557,10 +1563,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       nativeWindowAlive: !context.owned.window.isDestroyed(),
       enteredBackpackId: context.enteredBackpackId,
     }));
-    const controlEventHub = createPapersControlEventHub();
+    const eventHub = createPapersControlEventHub();
+    controlEventHub = eventHub;
     papersControlServer = await startPapersControlServer({
       descriptorPath,
-      eventHub: controlEventHub,
+      eventHub,
       dependencies: {
         windows: windowsSnapshot,
         snapshot: () => ({
@@ -1616,7 +1623,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         backpack: (projectId) => registry.find(projectId),
         archiveBackpack: (projectId, confirmedName) => facade.archiveBackpackFromControl(projectId, confirmedName),
         removeBackpack: (projectId, confirmedName) => facade.removeBackpackFromControl(projectId, confirmedName),
-        publishEvent: (event, payload) => controlEventHub.publish(event, payload),
+        publishEvent: (event, payload) => eventHub.publish(event, payload),
+        validateVisualEventTarget: ({ windowId, surfaceId }) =>
+          papersWindows.has(windowId) && (surfaceId === undefined || logicalSurfaces.isLiveIn(surfaceId, windowId)),
       },
     });
   }
