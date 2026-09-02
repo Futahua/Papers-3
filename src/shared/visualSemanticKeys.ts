@@ -58,7 +58,17 @@ export const visualElementObservationSchema = z.object({
   ]),
 }).strict();
 
-export const visualElementObservationListSchema = z.array(visualElementObservationSchema).max(VISUAL_SEMANTIC_KEY_MAX_COUNT);
+export const visualElementObservationListSchema = z.array(visualElementObservationSchema)
+  .max(VISUAL_SEMANTIC_KEY_MAX_COUNT)
+  .superRefine((observations, context) => {
+    const seen = new Set<string>();
+    observations.forEach((observation, index) => {
+      if (seen.has(observation.key)) {
+        context.addIssue({ code: 'custom', path: [index, 'key'], message: 'semantic key is duplicated within one surface' });
+      }
+      seen.add(observation.key);
+    });
+  });
 export type VisualElementObservation = z.infer<typeof visualElementObservationSchema>;
 
 export interface VisualSemanticKeyRegistry {

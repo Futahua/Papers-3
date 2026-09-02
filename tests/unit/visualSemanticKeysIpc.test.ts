@@ -26,9 +26,24 @@ describe('visual semantic-key IPC authority', () => {
     expect(registry.snapshot()).toEqual(['canvas.root']);
     receive({ sender: { id: 7 } }, { keys: ['canvas.root', 'canvas.root'] });
     expect(registry.snapshot()).toEqual(['canvas.root']);
+    const observed = {
+      key: 'canvas.root', boundsCss: { x: 0, y: 0, width: 10, height: 10 },
+      boundsDevice: { x: 0, y: 0, width: 10, height: 10 }, visible: true, visibilityReasons: [],
+      clippedPercent: 0, opacity: 1, overlapKeys: [], contrast: { status: 'unknown' },
+    };
+    const onObserved = vi.fn();
+    registerVisualSemanticKeysIpc({
+      ipcMain,
+      resolveTarget,
+      registryForTarget: (target, senderId) => target.windowId === 4 && target.surfaceId === 'surface-a' && senderId === 7 ? registry : null,
+      onObserved,
+    });
+    const receiveWithObservation = listeners.get(VISUAL_SEMANTIC_KEYS_CHANNEL)!;
+    receiveWithObservation({ sender: { id: 7 } }, { keys: ['canvas.root'], observations: [observed, observed] });
+    expect(onObserved).not.toHaveBeenCalled();
     receive({ sender: { id: 8 } }, { keys: ['foreign'] });
     receive({ sender: { id: 99 } }, { keys: ['ignored'] });
     expect(registry.snapshot()).toEqual(['canvas.root']);
-    expect(resolveTarget).toHaveBeenCalledTimes(4);
+    expect(resolveTarget).toHaveBeenCalledTimes(5);
   });
 });
