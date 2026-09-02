@@ -36,7 +36,7 @@ import { registerWindowCapabilityIpc } from './ipc/windowCapabilityIpc';
 import { registerWindowPickIpc } from './ipc/windowPickIpc';
 import { registerWindowDetachIpc } from './ipc/windowDetachIpc';
 import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
-import { registerVisualDiagnosticsIpc } from './ipc/visualDiagnosticsIpc';
+import { registerVisualDiagnosticsIpc, resolveVisualDiagnosticTarget } from './ipc/visualDiagnosticsIpc';
 import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
@@ -1524,20 +1524,17 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   });
   registerVisualDiagnosticsIpc({
     ipcMain,
-    resolveTarget: (sender) => {
-      const hostWindowId = papersWindows.windowForSender(sender.id);
-      if (hostWindowId !== null) {
-        const host = papersWindows.get(hostWindowId)?.owned.hostView.webContents;
-        return host?.id === sender.id ? { windowId: hostWindowId } : null;
-      }
-      const context = surfaceContexts.contextForSender(sender.id);
-      if (!context?.surfaceId || !logicalSurfaces.isLiveIn(context.surfaceId, context.windowId)) return null;
-      const runtime = papersWindows.get(context.windowId)?.owned.projectSurfaces.get(context.surfaceId);
-      // A binding can briefly outlive a replaced WebContents. Require the
-      // sender to be the current native presentation before accepting input.
-      if (!runtime || !runtime.isSender(sender as WebContents)) return null;
-      return { windowId: context.windowId, surfaceId: context.surfaceId };
-    },
+    resolveTarget: (sender) => resolveVisualDiagnosticTarget(sender, {
+      hostWindowForSender: (senderId) => papersWindows.windowForSender(senderId),
+      isCurrentHostSender: (candidate, windowId) => papersWindows.get(windowId)?.owned.hostView.webContents.id === candidate.id,
+      projectContextForSender: (senderId) => {
+        const context = surfaceContexts.contextForSender(senderId);
+        return context?.surfaceId ? { windowId: context.windowId, surfaceId: context.surfaceId } : null;
+      },
+      isLiveSurface: (surfaceId, windowId) => logicalSurfaces.isLiveIn(surfaceId, windowId),
+      isCurrentProjectSender: (candidate, windowId, surfaceId) =>
+        papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.isSender(candidate as WebContents) === true,
+    }),
     bufferForWindow: (windowId) => visualDiagnosticsByWindow.get(windowId) ?? null,
   });
   let papersControlServer: PapersControlServer | null = null;

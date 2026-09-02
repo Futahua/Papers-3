@@ -454,6 +454,8 @@ later lifecycle hooks will append to:
   current runtime WebContents is rechecked to reject stale replaced senders.
   No preload claims paint or layout stability automatically; real producers
   remain explicit and project hydration remains project-owned.
+* [x] the authority resolver has a focused old-sender/current-runtime
+  regression at the IPC composition boundary.
 * [ ] expose event subscription and resource attribution through the
   authenticated control plane.
 
