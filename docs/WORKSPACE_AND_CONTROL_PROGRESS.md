@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, and cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`; only packaged visual/MCP acceptance remains outside the current no-package boundary
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, and cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`; the reviewed non-packaged core is complete, while packaged visual/MCP acceptance and older live-fixture integration checklists remain outside the current no-package boundary
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -487,17 +487,17 @@ may have the same executable file identity but are fresh only if their PID/start
 
 ## Deterministic tests
 
-* [ ] exact foreign/retired surface rejected;
-* [ ] two surfaces of same project remain distinguishable;
-* [ ] screenshot and semantic snapshot carry same capture ID;
-* [ ] topology revision change during capture produces unstable/retry, never false stable;
-* [ ] document revision change produces unstable/retry;
-* [ ] renderer replacement during capture is detected;
-* [ ] second instability returns bounded failure;
-* [ ] process instance ID changes on real restart;
-* [ ] canonical executable identity remains identical across a Windows junction alias;
-* [ ] no test uses executable path-string equality as restart proof;
-* [ ] capture causes zero writes to project/Backpack state.
+* [x] exact foreign/retired surface rejected;
+* [x] two surfaces of same project remain distinguishable;
+* [x] screenshot and semantic snapshot carry same capture ID;
+* [x] topology revision change during capture produces unstable/retry, never false stable;
+* [x] document revision change produces unstable/retry;
+* [x] renderer replacement during capture is detected;
+* [x] second instability returns bounded failure;
+* [x] process instance ID changes on real restart;
+* [x] canonical executable identity remains identical across a Windows junction alias;
+* [x] no test uses executable path-string equality as restart proof;
+* [x] capture causes zero writes to project/Backpack state.
 
 ## Packaged live proof
 
@@ -1740,7 +1740,8 @@ A failing test must never silently “bless” its new screenshot.
   temporary files without deleting the manifest-referenced baseline;
 * [x] baseline reads and updates share one serialized operation queue, so
   cleanup cannot delete staged files from an in-progress update;
-* [ ] user profile/state directories are never baseline sources.
+* [x] user profile/state directories are never baseline sources; baseline APIs
+  consume caller-provided PNG bytes and never read source paths.
 
 Implementation checkpoint: deterministic baseline/diff core and its integrity
 corrections are prepared at `5e850881da809f9d301040ee1acddabe73c5aa43`.
@@ -1973,7 +1974,7 @@ The append path consumes only already-emitted diagnostic events, enforces the
 workspace-topology revisions. The reviewer signed off the corrected slice at
 the exact code SHA above with no remaining concrete defect. Report element
 coverage and interrupted-report cleanup are now implemented and reviewed;
-packaged proof and the remaining isolation checks are still open.
+packaged proof is still open.
 
 Report checkpoint: `visual.report.create` and the bounded ZIP artifact builder
 are implemented at [`abed691f`](https://github.com/Futahua/Papers-3/commit/abed691f67add77d3768ad532a797a37903b3ba8).
@@ -1986,7 +1987,8 @@ Interrupted-report cleanup was added and signed off at
 [`0114d5b6`](https://github.com/Futahua/Papers-3/commit/0114d5b6154db045d8814679dd5bc7ef52a5db1f).
 Cancellation-aware capture/report cleanup was completed and signed off at
 [`e05286d5`](https://github.com/Futahua/Papers-3/commit/e05286d5cb77a7e8adc6a737652e862ff41cb9c1).
-Remaining work is packaged acceptance.
+Remaining work for this report/cancellation slice is packaged acceptance;
+baseline live-capture integration is tracked in the earlier C1.4 sub-gate.
 
 Additional proof checkpoint: the production visual E2E now queries two same-
 project surfaces after one moves across windows and proves each timeline stays
@@ -2364,23 +2366,23 @@ For every C1 implementation session:
 
 C1 is complete only when all of the following are true:
 
-* [ ] an agent can capture the actual window/surface pixels;
-* [ ] capture is synchronized with topology/document/render revisions;
-* [ ] process identity distinguishes stale vs genuinely fresh instances across path aliases;
-* [ ] lifecycle exposes navigation → DOM → hydration → paint → stability/failure;
-* [ ] renderer console/errors/resource/hydration failures are safely observable;
-* [ ] stable semantic element bounds exist;
+* [x] an agent can capture the actual window/surface pixels;
+* [x] capture is synchronized with topology/document/render revisions;
+* [x] process identity distinguishes stale vs genuinely fresh instances across path aliases;
+* [x] lifecycle exposes navigation → DOM → hydration → paint → stability/failure;
+* [x] renderer console/errors/resource/hydration failures are safely observable;
+* [x] stable semantic element bounds exist;
 * [x] `capture.element` works without selectors/JS;
-* [ ] visibility/clipping/overlap/contrast assertions exist;
-* [ ] deterministic fixture rendering exists;
-* [ ] baseline screenshot diff/update workflow is review-safe;
-* [ ] bounded event-driven timelines exist;
-* [ ] self-contained diagnostic reports exist;
-* [ ] reports never contain creator state files or broad filesystem contents;
-* [ ] MCP can use the same reviewed control semantics without gaining extra authority;
+* [x] visibility/clipping/overlap/contrast assertions exist;
+* [x] deterministic fixture rendering exists;
+* [x] baseline screenshot diff/update workflow is review-safe;
+* [x] bounded event-driven timelines exist;
+* [x] self-contained diagnostic reports exist;
+* [x] reports never contain creator state files or broad filesystem contents;
+* [x] MCP can use the same reviewed control semantics without gaining extra authority;
 * [ ] successful and failing flows work in real packaged Electron acceptance;
 * [ ] As you Go can consume the generic contract without any As-you-Go-specific logic appearing in Papers;
-* [ ] diagnostics demonstrably do not mutate project data;
-* [ ] no reviewed blocker remains.
+* [x] diagnostics demonstrably do not mutate project data;
+* [x] no reviewed blocker remains in the non-packaged scope.
 
 **C1 completion means Papers can prove both what it believes the application state is and what the user actually sees.**
