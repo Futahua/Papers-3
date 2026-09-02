@@ -119,6 +119,24 @@ export interface VisualBaselineStore {
   }): Promise<{ previous: VisualBaselineManifest | null; current: VisualBaselineManifest }>;
 }
 
+const baselineOperationQueues = new Map<string, Promise<void>>();
+
+function enqueueBaselineOperation<T>(rootDir: string, operation: () => Promise<T>): Promise<T> {
+  const queueKey = path.resolve(rootDir);
+  const previousOperation = baselineOperationQueues.get(queueKey) ?? Promise.resolve();
+  let release!: () => void;
+  const nextOperation = new Promise<void>((resolve) => { release = resolve; });
+  baselineOperationQueues.set(queueKey, nextOperation);
+  return (async () => {
+    await previousOperation;
+    try { return await operation(); }
+    finally {
+      release();
+      if (baselineOperationQueues.get(queueKey) === nextOperation) baselineOperationQueues.delete(queueKey);
+    }
+  })();
+}
+
 function pngDimensions(bytes: Uint8Array): { width: number; height: number } {
   const signature = [137, 80, 78, 71, 13, 10, 26, 10];
   if (bytes.byteLength < 24 || !signature.every((value, index) => bytes[index] === value)) throw new Error('baseline bytes are not a PNG');
@@ -141,22 +159,12 @@ function pngDimensions(bytes: Uint8Array): { width: number; height: number } {
 }
 
 export function createVisualBaselineStore(rootDir: string, options: { now?: () => Date; publishManifest?: (temporary: string, finalPath: string) => Promise<void> } = {}): VisualBaselineStore {
+  const canonicalRootDir = path.resolve(rootDir);
   const now = options.now ?? (() => new Date());
-  const manifestPath = (id: string) => path.join(rootDir, `${id}.manifest.json`);
-  const pngPath = (id: string, sha256: string) => path.join(rootDir, `${id}-${sha256}.png`);
-  let operationQueue: Promise<void> = Promise.resolve();
-  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
-    const previousOperation = operationQueue;
-    let release!: () => void;
-    operationQueue = new Promise<void>((resolve) => { release = resolve; });
-    return (async () => {
-      await previousOperation;
-      try { return await operation(); }
-      finally { release(); }
-    })();
-  };
+  const manifestPath = (id: string) => path.join(canonicalRootDir, `${id}.manifest.json`);
+  const pngPath = (id: string, sha256: string) => path.join(canonicalRootDir, `${id}-${sha256}.png`);
   const cleanupFiles = async (id: string, keepSha256: string | null): Promise<void> => {
-    const names = await readdir(rootDir).catch(() => [] as string[]);
+    const names = await readdir(canonicalRootDir).catch(() => [] as string[]);
     await Promise.all(names.filter((name) => {
       const isPng = name.startsWith(`${id}-`) && name.endsWith('.png') && (keepSha256 === null || !name.endsWith(`-${keepSha256}.png`));
       const isTemp = name.startsWith(`${id}-`) && name.endsWith('.tmp') || name.startsWith(`${id}.manifest.json.`) && name.endsWith('.tmp');
@@ -177,9 +185,9 @@ export function createVisualBaselineStore(rootDir: string, options: { now?: () =
     return { manifest, png };
   };
   return {
-    read(input) { return enqueue(() => readUnsafe(input)); },
+    read(input) { return enqueueBaselineOperation(canonicalRootDir, () => readUnsafe(input)); },
     update(input) {
-      return enqueue(async () => {
+      return enqueueBaselineOperation(canonicalRootDir, async () => {
       if (input.allowUpdate !== true) throw new Error('visual baseline update requires explicit opt-in');
       const key = baselineKeySchema.parse(input.key);
       if (!(input.png instanceof Uint8Array) || input.png.byteLength < 1 || input.png.byteLength > 16 * 1024 * 1024) throw new Error('baseline PNG is outside the allowed bound');
@@ -192,7 +200,7 @@ export function createVisualBaselineStore(rootDir: string, options: { now?: () =
       const current = baselineManifestSchema.parse({ schemaVersion: 1, baselineId: id, key, pngSha256,
         dimensions: { width: input.width, height: input.height }, semanticSnapshotSha256: hashSemanticSnapshot(input.semanticSnapshot),
         createdFromCommit: input.createdFromCommit, createdAt: now().toISOString() });
-      await mkdir(rootDir, { recursive: true });
+      await mkdir(canonicalRootDir, { recursive: true });
       const finalPng = pngPath(id, pngSha256); const tempPng = `${finalPng}.${randomUUID()}.tmp`;
       try { await writeFile(tempPng, input.png, { flag: 'wx' }); await rename(tempPng, finalPng); }
       catch (error) {

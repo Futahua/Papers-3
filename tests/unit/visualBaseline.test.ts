@@ -46,17 +46,18 @@ describe('deterministic visual baselines', () => {
     let releasePublish!: () => void;
     const publishing = new Promise<void>((resolve) => { publishStarted = resolve; });
     const publishGate = new Promise<void>((resolve) => { releasePublish = resolve; });
-    const store = createVisualBaselineStore(root, {
+    const writer = createVisualBaselineStore(root, {
       publishManifest: async (temporary, finalPath) => {
         publishStarted();
         await publishGate;
         await rename(temporary, finalPath);
       },
     });
-    const updatePromise = store.update({ key, png: png2, width: 1, height: 1, semanticSnapshot: { a: 2 }, createdFromCommit: 'def', allowUpdate: true });
+    const reader = createVisualBaselineStore(root);
+    const updatePromise = writer.update({ key, png: png2, width: 1, height: 1, semanticSnapshot: { a: 2 }, createdFromCommit: 'def', allowUpdate: true });
     await publishing;
     let readFinished = false;
-    const readPromise = store.read(key).then((result) => { readFinished = true; return result; });
+    const readPromise = reader.read(key).then((result) => { readFinished = true; return result; });
     await Promise.resolve();
     expect(readFinished).toBe(false);
     releasePublish();
