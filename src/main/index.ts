@@ -49,9 +49,10 @@ import { createVisualSemanticKeyRegistry, type VisualElementObservation, type Vi
 import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visual/visualResourceMonitor';
 import { refreshCurrentVisualSemanticKeys } from './visual/visualSemanticObservationRefresh';
 import { createVisualSurfaceObservationStore } from './visual/visualSurfaceObservationState';
-import { createVisualArtifactStore } from './visual/visualArtifactStore';
+import { createVisualArtifactStore, type VisualArtifactMetadata } from './visual/visualArtifactStore';
 import { captureVisualSurface, computeVisualElementCropBounds } from './visual/visualCaptureService';
 import { createVisualTimeline, visualTimelineContextForRecord, type VisualTimeline } from './visual/visualTimeline';
+import { createVisualReport } from './visual/visualReport';
 import { createVisualRendererFenceService } from './visual/visualRendererFence';
 import { createVisualWindowNativeCaptureService } from './visual/visualWindowNativeCapture';
 import { captureVisualWindow } from './visual/visualCaptureWindowService';
@@ -2017,6 +2018,53 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         visualTimeline: ({ windowId, surfaceId }, beforeMs) => {
           if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
           return visualTimelinesBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId))?.snapshot(beforeMs) ?? [];
+        },
+        visualReportCreate: async (request) => {
+          if (!visualArtifactStore || !processInstanceIdentity
+            || !papersWindows.has(request.windowId)
+            || !logicalSurfaces.isLiveIn(request.surfaceId, request.windowId)) return null;
+          const surface = logicalSurfaces.project().find((candidate) =>
+            candidate.windowId === request.windowId && candidate.surfaceId === request.surfaceId);
+          const buffer = visualDiagnosticsByWindow.get(request.windowId);
+          const records = buffer?.snapshot().filter((record) =>
+            record.target.windowId === request.windowId && record.target.surfaceId === request.surfaceId) ?? [];
+          const semanticState = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(request.windowId, request.surfaceId));
+          const currentSenderId = papersWindows.get(request.windowId)?.owned.projectSurfaces.get(request.surfaceId)?.senderId;
+          const observationState = visualSurfaceObservationState.snapshot(request.windowId, request.surfaceId);
+          const surfaceCapture = captureProjectVisual
+            ? async (): Promise<{ result: unknown; png?: VisualArtifactMetadata }> => {
+              const result = await captureProjectVisual({ windowId: request.windowId, surfaceId: request.surfaceId });
+              const png = (result as { png?: VisualArtifactMetadata }).png;
+              return png ? { result, png } : { result };
+            }
+            : undefined;
+          return createVisualReport({
+            process: processInstanceIdentity,
+            snapshot: {
+              schemaVersion: 1,
+              build: controlBuildIdentity(),
+              windows: windowsSnapshot(),
+              hermes: {
+                placement: hermesSurface.state.placement,
+                status: hermesSurface.state.status,
+                ownerWindowId: papersWindows.hermesDockOwner(),
+              },
+            },
+            surface: surface ? projectSurfaceControlSnapshot(surface) : null,
+            lifecycle: records.filter((record) => record.payload.kind === 'lifecycle'),
+            diagnostics: records.filter((record) => record.payload.kind !== 'lifecycle'),
+            timeline: visualTimelinesBySurface.get(visualSemanticKeyMapKey(request.windowId, request.surfaceId))?.snapshot(request.beforeMs) ?? [],
+            semanticElements: semanticState && semanticState.currentSenderId === currentSenderId
+              ? {
+                windowId: request.windowId,
+                surfaceId: request.surfaceId,
+                layoutEpoch: observationState?.layoutEpoch ?? null,
+                elements: semanticState.observations,
+              }
+              : { windowId: request.windowId, surfaceId: request.surfaceId, elements: [] },
+            captureSurface: surfaceCapture,
+            artifacts: visualArtifactStore,
+          }, request);
         },
         visualAssert: ({ windowId, surfaceId }, assertions) => {
           if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;

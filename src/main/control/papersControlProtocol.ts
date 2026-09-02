@@ -12,6 +12,7 @@ import type {
 } from './papersControlConfirmation';
 import { visualDiagnosticRecordSchema } from '../visual/visualDiagnostics';
 import { visualTimelineEntrySchema } from '../visual/visualTimeline';
+import { type VisualReportRequest } from '../visual/visualReport';
 import { visualElementObservationSchema, visualSemanticKeyListSchema, visualSemanticKeySchema } from '@shared/visualSemanticKeys';
 
 export const PAPERS_CONTROL_PROTOCOL_VERSION = 1;
@@ -159,6 +160,25 @@ const visualWindowCaptureResultSchema = z.object({
     }).strict(),
   }).strict()).max(256),
   png: visualArtifactMetadataSchema.optional(),
+}).strict();
+const visualReportIncludeSchema = z.object({
+  surfaceCapture: z.boolean().default(false),
+  semanticElements: z.boolean().default(true),
+  recentLifecycle: z.boolean().default(true),
+  recentDiagnostics: z.boolean().default(true),
+  timeline: z.boolean().default(true),
+}).strict();
+const visualReportResultSchema = z.object({
+  reportId: z.string().uuid(),
+  artifactId: visualArtifactIdSchema,
+  size: z.number().int().positive(),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  createdAt: z.string().datetime(),
+  manifestSummary: z.object({
+    entryCount: z.number().int().positive().max(16),
+    byteSize: z.number().int().positive(),
+    includes: visualReportIncludeSchema,
+  }).strict(),
 }).strict();
 const layoutTargetSchema = z.object({ windowId: z.number().int(), layoutId: z.string().uuid() }).strict();
 const namedLayoutSchema = z.object({
@@ -325,6 +345,20 @@ export const papersControlCommands = {
       beforeMs: z.number().int().nonnegative().max(10_000).default(10_000),
     }).strict(),
     output: z.array(visualTimelineEntrySchema).max(256),
+    scope: 'surface', effect: 'query',
+  },
+  'visual.report.create': {
+    input: surfaceTargetSchema.extend({
+      beforeMs: z.number().int().nonnegative().max(10_000).default(10_000),
+      include: visualReportIncludeSchema.default({
+        surfaceCapture: false,
+        semanticElements: true,
+        recentLifecycle: true,
+        recentDiagnostics: true,
+        timeline: true,
+      }),
+    }).strict(),
+    output: visualReportResultSchema,
     scope: 'surface', effect: 'query',
   },
   'visual.assert': {
@@ -522,6 +556,7 @@ export interface PapersControlDependencies {
   /** Bounded opaque semantic identities observed by predefined project code. */
   visualElements?(target: { windowId: number; surfaceId: string }, keys?: string[]): unknown;
   visualTimeline?(target: { windowId: number; surfaceId: string }, beforeMs: number): unknown;
+  visualReportCreate?(request: VisualReportRequest): Promise<unknown>;
   visualAssert?(target: { windowId: number; surfaceId: string }, assertions: unknown[]): unknown;
   visualArtifactRead?(artifactId: string, offset: number, length: number): Promise<{
     metadata: unknown;
@@ -663,6 +698,14 @@ export async function dispatchPapersControl(
       const timeline = dependencies.visualTimeline?.(target, params.beforeMs);
       if (!timeline) throw new Error('That Papers visual timeline target is unavailable.');
       return papersControlCommands[request.method].output.parse(timeline);
+    }
+    case 'visual.report.create': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const target = { windowId: params.windowId, surfaceId: params.surfaceId };
+      if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
+      const report = await dependencies.visualReportCreate?.(params);
+      if (!report) throw new Error('Visual report generation is unavailable.');
+      return papersControlCommands[request.method].output.parse(report);
     }
     case 'visual.assert': {
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});

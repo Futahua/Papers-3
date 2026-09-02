@@ -210,6 +210,26 @@ describe('project renderer visual diagnostics', () => {
     expect(bytes.byteLength).toBe(captured.png.size);
     expect(bytes[0]).toBe(137);
     expect(createHash('sha256').update(bytes).digest('hex')).toBe(captured.png.sha256);
+    const report = await call('visual.report.create', {
+      windowId, surfaceId: opened.surfaceId, beforeMs: 10_000,
+      include: {
+        surfaceCapture: true, semanticElements: true, recentLifecycle: true,
+        recentDiagnostics: true, timeline: true,
+      },
+    }) as {
+      reportId: string; artifactId: string; size: number; sha256: string;
+      manifestSummary: { entryCount: number; byteSize: number; includes: { surfaceCapture: boolean } };
+    };
+    expect(report.reportId).toEqual(expect.any(String));
+    expect(report.size).toBeGreaterThan(0);
+    expect(report.manifestSummary.entryCount).toBeGreaterThanOrEqual(9);
+    expect(report.manifestSummary.includes.surfaceCapture).toBe(true);
+    const reportChunk = await call('visual.artifact.read', {
+      artifactId: report.artifactId, offset: 0, length: 1024,
+    }) as { bytesBase64: string; nextOffset: number; done: boolean };
+    const reportPrefix = new Uint8Array(Buffer.from(reportChunk.bytesBase64, 'base64'));
+    expect(reportPrefix[0]).toBe(0x50);
+    expect(reportPrefix[1]).toBe(0x4b);
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{ sequence: number; payload: { kind?: string } }>;
       return records.filter((record) => record.sequence > beforeSequence

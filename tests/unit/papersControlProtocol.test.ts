@@ -210,6 +210,42 @@ describe('Papers developer control protocol', () => {
     expect(visualAssert).toHaveBeenCalledWith(surface, [{ kind: 'visible', elementKey: 'canvas.root' }]);
   });
 
+  it('creates a visual report only for an exact live surface', async () => {
+    const surface = { windowId: 4, surfaceId: 'surface-a' };
+    const report = {
+      reportId: '11111111-1111-4111-8111-111111111111',
+      artifactId: 'va-11111111-1111-4111-8111-111111111111',
+      size: 128,
+      sha256: 'a'.repeat(64),
+      createdAt: '2026-09-02T00:00:00.000Z',
+      manifestSummary: {
+        entryCount: 4, byteSize: 128,
+        includes: {
+          surfaceCapture: false, semanticElements: true, recentLifecycle: true,
+          recentDiagnostics: true, timeline: true,
+        },
+      },
+    };
+    const visualReportCreate = vi.fn(async () => report);
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [],
+      surface: vi.fn((target: typeof surface) => target.windowId === 4 && target.surfaceId === 'surface-a' ? surface : null),
+      createWindow: async () => ({ windowId: 3 }), visualReportCreate,
+    };
+    await expect(dispatchPapersControl(dependencies, request('visual.report.create', surface))).resolves.toEqual(report);
+    expect(visualReportCreate).toHaveBeenCalledWith({
+      ...surface,
+      beforeMs: 10_000,
+      include: {
+        surfaceCapture: false, semanticElements: true, recentLifecycle: true,
+        recentDiagnostics: true, timeline: true,
+      },
+    });
+    await expect(dispatchPapersControl(dependencies, request('visual.report.create', {
+      windowId: 9, surfaceId: 'foreign',
+    }))).rejects.toThrow(/not open/);
+  });
+
   it('validates subscriptions and emits only redacted semantic frames', async () => {
     const publishEvent = vi.fn();
     const dependencies = {
