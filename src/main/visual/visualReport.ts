@@ -64,6 +64,21 @@ function ndjsonBytes(records: unknown[]): Uint8Array {
   return new TextEncoder().encode(records.map((record) => JSON.stringify(record)).join('\n') + (records.length > 0 ? '\n' : ''));
 }
 
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function sha256Hex(bytes: Uint8Array, signal?: AbortSignal): Promise<string> {
+  const hash = createHash('sha256');
+  for (let offset = 0; offset < bytes.byteLength; offset += 64 * 1024) {
+    throwIfVisualOperationAborted(signal);
+    hash.update(bytes.subarray(offset, Math.min(bytes.byteLength, offset + 64 * 1024)));
+    await yieldToEventLoop();
+  }
+  throwIfVisualOperationAborted(signal);
+  return hash.digest('hex');
+}
+
 async function readArtifact(store: VisualArtifactStore, metadata: VisualArtifactMetadata, signal?: AbortSignal): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let offset = 0;
@@ -84,7 +99,7 @@ async function readArtifact(store: VisualArtifactStore, metadata: VisualArtifact
     bytes.set(chunk, cursor);
     cursor += chunk.byteLength;
   }
-  if (bytes.byteLength !== metadata.size || createHash('sha256').update(bytes).digest('hex') !== metadata.sha256) {
+  if (bytes.byteLength !== metadata.size || await sha256Hex(bytes, signal) !== metadata.sha256) {
     throw new Error('source visual artifact integrity check failed');
   }
   return bytes;
@@ -95,7 +110,7 @@ async function crc32(bytes: Uint8Array, signal?: AbortSignal): Promise<number> {
   for (let index = 0; index < bytes.length; index += 1) {
     if ((index & 0xffff) === 0) {
       throwIfVisualOperationAborted(signal);
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      await yieldToEventLoop();
     }
     const byte = bytes[index]!;
     crc ^= byte;
@@ -134,7 +149,7 @@ async function zipStored(entries: ReportEntry[], signal?: AbortSignal): Promise<
     write16(centralView, 34, 0); write16(centralView, 36, 0); write32(centralView, 38, 0); write32(centralView, 42, offset);
     central.set(name, 46); centralParts.push(central);
     offset += local.byteLength;
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await yieldToEventLoop();
   }
   const centralOffset = offset;
   const centralSize = centralParts.reduce((total, part) => total + part.byteLength, 0);
@@ -147,7 +162,7 @@ async function zipStored(entries: ReportEntry[], signal?: AbortSignal): Promise<
   for (const part of [...localParts, ...centralParts, end]) {
     throwIfVisualOperationAborted(signal);
     result.set(part, cursor); cursor += part.byteLength;
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await yieldToEventLoop();
   }
   return result;
 }
@@ -203,7 +218,15 @@ export async function createVisualReport(deps: VisualReportDependencies, request
       }
     }
     if (entries.length > MAX_REPORT_ENTRIES) throw new Error('visual report entry bound exceeded');
-    const manifestEntries = entries.map((entry) => ({ name: entry.name, size: entry.bytes.byteLength, sha256: createHash('sha256').update(entry.bytes).digest('hex') }));
+    const manifestEntries: Array<{ name: string; size: number; sha256: string }> = [];
+    for (const entry of entries) {
+      throwIfVisualOperationAborted(signal);
+      manifestEntries.push({
+        name: entry.name,
+        size: entry.bytes.byteLength,
+        sha256: await sha256Hex(entry.bytes, signal),
+      });
+    }
     const manifest = {
       schemaVersion: 1,
       reportId,

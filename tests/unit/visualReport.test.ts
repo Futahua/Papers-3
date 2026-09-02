@@ -235,4 +235,31 @@ describe('visual reports', () => {
     expect(artifacts.put).not.toHaveBeenCalled();
     expect(artifacts.delete).toHaveBeenCalledWith(source.artifactId);
   });
+
+  it('settles cancellation during cooperative manifest hashing before ZIP publication', async () => {
+    const controller = new AbortController();
+    const artifacts = {
+      put: vi.fn(),
+      read: vi.fn(),
+      delete: vi.fn(async () => true),
+      cleanup: vi.fn(async () => undefined),
+    };
+    setImmediate(() => controller.abort());
+
+    const report = createVisualReport({
+      process: { largeDiagnosticPayload: 'x'.repeat(4 * 1024 * 1024) },
+      snapshot: {}, surface: {}, lifecycle: [], diagnostics: [], timeline: [], semanticElements: {},
+      artifacts,
+      signal: controller.signal,
+    }, {
+      windowId: 4, surfaceId: 'surface-a', beforeMs: 10_000, elementKeys: [],
+      include: {
+        surfaceCapture: false, elementCaptures: false, semanticElements: false,
+        recentLifecycle: false, recentDiagnostics: false, timeline: false,
+      },
+    });
+
+    await expect(report).rejects.toThrow('Visual operation was cancelled.');
+    expect(artifacts.put).not.toHaveBeenCalled();
+  });
 });
