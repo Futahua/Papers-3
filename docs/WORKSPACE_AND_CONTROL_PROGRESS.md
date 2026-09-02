@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.3 semantic-key identity/surface-local authority foundation signed off at `d440466b87d4234339b3fb5dd0ac6845b0be7fa8`; C1.1 synchronized surface/composed-window capture implemented at `f6060f951ccb7c25d0f1b9a422a4d6a1c0496971`, awaiting exact-SHA reviewer sign-off
+Persistent status: C1.3 semantic-key identity/surface-local authority foundation signed off at `d440466b87d4234339b3fb5dd0ac6845b0be7fa8`; C1.1 synchronized surface/composed-window capture hardened at `b5a1fb6`, awaiting exact-SHA reviewer sign-off
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -389,7 +389,7 @@ renderFailed
 * [x] cross-window adoption and rollback re-establish the exact generation;
 * [x] no capture infers current state by searching historical diagnostics.
 
-Implementation checkpoint: pushed head [`f6060f9`](https://github.com/Futahua/Papers-3/commit/f6060f951ccb7c25d0f1b9a422a4d6a1c0496971)
+Implementation checkpoint: pushed head [`b5a1fb6`](https://github.com/Futahua/Papers-3/commit/b5a1fb6a46812d05b7aea25597123644ae23f7df)
 adds the main-issued per-navigation document token, buffered scoped
 observations, exact sender/document fences, layout-epoch invalidation,
 immutable pre/post surface snapshots, bounded renderer replacement retries,
@@ -408,7 +408,7 @@ full E2E aggregate remains non-green only in the previously recorded
 permission/fixture-sensitive suites; no release/install/package action was run.
 
 The older pre-capture checkpoints above are retained as history. The active
-implementation checkpoint is `f6060f9`; packaged/alias proof and later
+implementation checkpoint is `b5a1fb6`; packaged/alias proof and later
 geometry/assertion layers remain unchecked until the reviewer clears this
 capture gate.
 
@@ -442,6 +442,12 @@ checklist is:
   commands, with exact native source matching and actual pixel dimensions;
 * [x] exact-target, retry, instability, no-mutation and artifact-integrity
   deterministic evidence;
+* [x] service-level rejection of a native image whose source ID is foreign to
+  the exact requested Papers window;
+* [x] same-renderer document/render identity changes classified as
+  `state-changed`, distinct from sender-generation replacement;
+* [x] focused Electron proof reconstructs `capture.window` through bounded
+  `visual.artifact.read` chunks and verifies size plus SHA-256;
 * [ ] packaged/alias/restart acceptance evidence;
 * [ ] exact-SHA reviewer sign-off before advancing to geometry/assertions.
 
@@ -449,9 +455,9 @@ Reviewer checkpoint: **SIGNED OFF** for the synchronized `capture.surface`
 slice at exact pushed head `d25b5d643092b3a32e7e2836b7cea10d16c370d3`.
 The reviewer accepted the main-issued navigation token, exact renderer fence,
 layout epoch, immutable summaries, renderer-churn retry, and artifact cleanup.
-The composed `capture.window` implementation is now at
-`f6060f951ccb7c25d0f1b9a422a4d6a1c0496971` and is awaiting its own exact-SHA
-review; do not advance to geometry/assertions until that review is explicit.
+The composed `capture.window` implementation and this hardening tranche are
+now at `b5a1fb6a46812d05b7aea25597123644ae23f7df` and are awaiting their own exact-SHA review; do not advance
+to geometry/assertions until that review is explicit.
 
 ### Required invariant
 
