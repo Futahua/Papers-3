@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry and `visual.assert` availability are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db` and `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; same-surface `capture.element` crop-coordinate correction is implemented at `26963baad5e0457bb24de4e39a80445ade1afa49`, awaiting exact-SHA reviewer audit
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry, `visual.assert` availability, and `capture.element` are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`, and `26963baad5e0457bb24de4e39a80445ade1afa49`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; duplicate semantic-key rejection is implemented at `30f3f31c0b3d188beb51640c2a0de351b7f3ed9c`, awaiting exact-SHA reviewer audit
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1538,7 +1538,7 @@ Never fabricate a passing contrast value.
 
 ## Deterministic tests
 
-* [ ] semantic key collision rejected within one surface;
+* [x] semantic key collision rejected within one surface;
 * [ ] same semantic key in two surfaces remains surface-local;
 * [x] hidden/display/opacity/zero-area cases are represented by bounded
   visibility reasons;
@@ -1592,7 +1592,10 @@ guard and live assertion coverage are at
 `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`. Same-surface
 `capture.element` cropping and its artifact-coordinate correction are
 implemented at
-`26963baad5e0457bb24de4e39a80445ade1afa49` and await exact-SHA audit.
+`26963baad5e0457bb24de4e39a80445ade1afa49` with docs SHA
+`b2fa135adfd6c0e7cca8eed5716c578aff7f2ab3`. No remaining capture-element
+blocker was found. Duplicate observations are now rejected atomically at
+`30f3f31c0b3d188beb51640c2a0de351b7f3ed9c` and await exact-SHA audit.
 
 ## Rollback / failure behavior
 
@@ -2313,7 +2316,7 @@ C1 is complete only when all of the following are true:
 * [ ] lifecycle exposes navigation → DOM → hydration → paint → stability/failure;
 * [ ] renderer console/errors/resource/hydration failures are safely observable;
 * [ ] stable semantic element bounds exist;
-* [ ] `capture.element` works without selectors/JS;
+* [x] `capture.element` works without selectors/JS;
 * [ ] visibility/clipping/overlap/contrast assertions exist;
 * [ ] deterministic fixture rendering exists;
 * [ ] baseline screenshot diff/update workflow is review-safe;
