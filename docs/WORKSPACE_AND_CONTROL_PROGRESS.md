@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 bounded geometry/assertion implementation is at `149128be5afc2376b7c3057e41a802b307fc2651`, awaiting exact-SHA reviewer sign-off
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry/assertion correction and C1.4 baseline integrity correction are at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, awaiting exact-SHA reviewer sign-off
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1547,8 +1547,8 @@ Never fabricate a passing contrast value.
 * [ ] element crop corresponds to reported device bounds;
 * [x] conservative contrast is known only for opaque solid RGB pairs and is
   otherwise `unknown`;
-* [x] geometry is attached to the current layout epoch in the existing
-  inspection response;
+* [x] geometry is invalidated at layout-epoch start and accepted only when its
+  payload epoch matches the current stable epoch;
 * [x] caller cannot supply selector/script;
 * [x] fixed declarative `visual.assert` evaluates visible, clipping,
   containment, overlap, and minimum-contrast predicates with bounded failure
@@ -1722,9 +1722,10 @@ A failing test must never silently “bless” its new screenshot.
 * [x] baseline reads re-hash the referenced PNG;
 * [ ] user profile/state directories are never baseline sources.
 
-Implementation checkpoint: the deterministic baseline/diff core is prepared in
-the current local tranche, but integration with a live capture command and a
-real fixture remains open until its own exact-SHA review.
+Implementation checkpoint: deterministic baseline/diff core and its integrity
+corrections are prepared at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`.
+Integration with a live capture command and a real fixture remains open until
+its own exact-SHA review.
 
 ## Packaged live proof
 
