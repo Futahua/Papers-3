@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry, `visual.assert` availability, `capture.element`, and duplicate-key rejection are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`, `26963baad5e0457bb24de4e39a80445ade1afa49`, and `30f3f31c0b3d188beb51640c2a0de351b7f3ed9c`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; same-key surface locality is evidenced at `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`, awaiting exact-SHA reviewer audit
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry, `visual.assert` availability, `capture.element`, duplicate-key rejection, and same-key surface locality are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`, `26963baad5e0457bb24de4e39a80445ade1afa49`, `30f3f31c0b3d188beb51640c2a0de351b7f3ed9c`, and `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; the next open gate is packaged visual proof
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1598,7 +1598,8 @@ blocker was found. Duplicate observations are now rejected atomically at
 `30f3f31c0b3d188beb51640c2a0de351b7f3ed9c` with docs SHA
 `08fce721b29b18429f792a018e751f55104cd81f`. No remaining defect was found in
 this slice. A dedicated exact-surface two-registry proof for same-key locality
-is at `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af` and awaits audit.
+is signed off at exact code/test SHA `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`
+with docs SHA `2d4bf9a3b093e4ee757d82729ee380fc736ae0ed`.
 
 ## Rollback / failure behavior
 
