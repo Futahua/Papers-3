@@ -702,15 +702,17 @@ establish the successful fixture’s recorded lifecycle sequence without
 synthesizing or imposing false ordering between independent hydration,
 first-paint, and layout-stable facts.
 
-Current implementation checkpoint: the lifecycle monitor’s deterministic unit
-proof attaches to an exact `{windowId, surfaceId}` target, emits
-`navigation-started` then `dom-ready` in source-event order, and records
-navigation/load/layout/hydration/paint as distinct facts. The test asserts only
-the required navigation-to-DOM ordering; it does not impose an ordering among
+Current implementation checkpoint: project runtime lifecycle callbacks are
+composed before `loadURL()`, so the canonical project WebContents records
+`did-start-loading` as `navigation-started` and `dom-ready` through the same
+authenticated exact-surface target path. Prepared cross-window renderers still
+remain unrecorded until canonical adoption. The deterministic unit proof
+attaches to an exact `{windowId, surfaceId}` target and verifies source-event
+order; the production neutral-project E2E verifies
+`navigation-started.sequence < dom-ready.sequence`. The tests assert only the
+required navigation-to-DOM ordering; they do not impose an ordering among
 independent renderer-owned hydration, first-paint, and layout-stable signals.
-Neutral-project E2E continues to prove the successful renderer-owned sequence
-and exact surface targeting for the visual producers.
-Validation: full Vitest 792 passed/4 skipped across 73 passed/1 skipped files;
+Validation: full Vitest 793 passed/4 skipped across 73 passed/1 skipped files;
 focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
 typecheck; build; diff check.
 

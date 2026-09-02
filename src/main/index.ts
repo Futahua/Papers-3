@@ -425,6 +425,22 @@ async function bootstrap(): Promise<void> {
       }
     }
     : undefined;
+  const onProjectLifecycleEvent = process.env['PAPERS_DEV_CONTROL'] === '1'
+    ? (windowId: number, surfaceId: string, senderId: number, event: 'did-start-loading' | 'dom-ready'): void => {
+      const target = resolveVisualTarget({ id: senderId });
+      if (!target || target.windowId !== windowId || target.surfaceId !== surfaceId) return;
+      const buffer = visualDiagnosticsByWindow.get(windowId);
+      if (!buffer) return;
+      try {
+        buffer.append(target, {
+          kind: 'lifecycle',
+          phase: event === 'did-start-loading' ? 'navigation-started' : 'dom-ready',
+        });
+      } catch {
+        // Lifecycle collection is best effort and must never affect startup.
+      }
+    }
+    : undefined;
   const makePapersWindow = (bounds?: WindowBounds) => {
     const instance = createPapersWindow({
       bounds,
@@ -437,6 +453,7 @@ async function bootstrap(): Promise<void> {
       rendererFile: path.join(app.getAppPath(), 'out', 'renderer', 'index.html'),
       onProjectSurfaceClosed,
       onProjectConsoleMessage,
+      onProjectLifecycleEvent,
     });
     if (process.env['PAPERS_DEV_CONTROL'] === '1') {
       const windowId = instance.window.id;

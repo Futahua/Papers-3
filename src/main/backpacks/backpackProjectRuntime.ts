@@ -19,6 +19,7 @@ export class BackpackProjectRuntime {
     transparent: boolean,
     private readonly onSurfaceClosed?: (projectId: string) => void,
     private readonly onConsoleMessage?: (senderId: number, level: number, message: string) => void,
+    private readonly onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready') => void,
   ) {
     this.transparent = transparent;
   }
@@ -118,7 +119,11 @@ export class BackpackProjectRuntime {
       }
     });
     let capturingBootstrapConsole = true;
-    view.webContents.on('dom-ready', () => { capturingBootstrapConsole = false; });
+    view.webContents.on('did-start-loading', () => this.onLifecycleEvent?.(view.webContents.id, 'did-start-loading'));
+    view.webContents.on('dom-ready', () => {
+      capturingBootstrapConsole = false;
+      this.onLifecycleEvent?.(view.webContents.id, 'dom-ready');
+    });
     view.webContents.on('console-message', (...args: unknown[]) => {
       const level = args[1];
       const message = args[2];

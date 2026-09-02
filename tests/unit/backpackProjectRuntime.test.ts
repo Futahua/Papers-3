@@ -98,6 +98,19 @@ function soleView(): FakeView {
 }
 
 describe('BackpackProjectRuntime.hide', () => {
+  it('forwards project loading lifecycle events from the live sender', async () => {
+    const lifecycle = vi.fn();
+    const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false, undefined, undefined, lifecycle);
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    const loading = view.webContents.on.mock.calls.find(([event]) => event === 'did-start-loading')?.[1] as (() => void) | undefined;
+    const domReady = view.webContents.on.mock.calls.find(([event]) => event === 'dom-ready')?.[1] as (() => void) | undefined;
+    loading?.();
+    domReady?.();
+    expect(lifecycle).toHaveBeenNthCalledWith(1, view.webContents.id, 'did-start-loading');
+    expect(lifecycle).toHaveBeenNthCalledWith(2, view.webContents.id, 'dom-ready');
+  });
+
   it('conceals and restores the same live renderer without closing it', async () => {
     const runtime = await shownRuntime();
     const view = soleView();

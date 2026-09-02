@@ -89,6 +89,13 @@ describe('project renderer visual diagnostics', () => {
     await waitFor(async () => (await call('inspect.surfaces') as Array<{ surfaceId: string; presentation: string }>)
       .some((surface) => surface.surfaceId === opened.surfaceId && surface.presentation === 'visible'),
     10_000, 'initial project presentation');
+    const initialLifecycle = (await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
+      sequence: number; payload: { kind?: string; phase?: string };
+    }>).filter((record) => record.sequence > beforeSequence && record.payload.kind === 'lifecycle');
+    const navigationStartedIndex = initialLifecycle.findIndex((record) => record.payload.phase === 'navigation-started');
+    const domReadyIndex = initialLifecycle.findIndex((record) => record.payload.phase === 'dom-ready');
+    expect(navigationStartedIndex).toBeGreaterThanOrEqual(0);
+    expect(domReadyIndex).toBeGreaterThan(navigationStartedIndex);
     expect(await evalInBackpackProject(launched.app, 'Boolean(window.__papersVisualDiagnosticObserverV1)')).toBe(true);
     expect(await evalInBackpackProject(launched.app,
       `typeof window.papersVisualDiagnosticBridgeV1?.reportFirstPaint`)).toBe('undefined');
