@@ -36,8 +36,20 @@ describe('visual reports', () => {
         sequence: 1, observedAt: '2026-09-02T00:00:00.000Z',
         target: { windowId: 4, surfaceId: 'surface-a' },
         payload: { kind: 'lifecycle', phase: 'first-paint' },
+      }, {
+        sequence: 2, observedAt: '2026-09-01T23:59:58.000Z',
+        target: { windowId: 4, surfaceId: 'surface-a' },
+        payload: { kind: 'lifecycle', phase: 'dom-ready' },
       }],
-      diagnostics: [],
+      diagnostics: [{
+        sequence: 3, observedAt: '2026-09-02T00:00:00.500Z',
+        target: { windowId: 4, surfaceId: 'surface-a' },
+        payload: { kind: 'uncaught-error', message: 'inside-window' },
+      }, {
+        sequence: 4, observedAt: '2026-09-01T23:59:58.500Z',
+        target: { windowId: 4, surfaceId: 'surface-a' },
+        payload: { kind: 'uncaught-error', message: 'outside-window' },
+      }],
       timeline: [],
       semanticElements: { elements: [{ key: 'canvas.root' }] },
       captureSurface: async () => ({ result: { captureId: 'capture-a', png }, png }),
@@ -46,7 +58,7 @@ describe('visual reports', () => {
     }, {
       windowId: 4,
       surfaceId: 'surface-a',
-      beforeMs: 10_000,
+      beforeMs: 1_000,
       include: {
         surfaceCapture: true, semanticElements: true, recentLifecycle: true,
         recentDiagnostics: true, timeline: true,
@@ -70,6 +82,10 @@ describe('visual reports', () => {
     };
     expect(manifest.entries).toHaveLength(9);
     expect(manifest.entries.find((entry) => entry.name === 'surface.png')?.size).toBe(4);
+    expect(new TextDecoder().decode(entries.get('lifecycle.ndjson'))).toContain('first-paint');
+    expect(new TextDecoder().decode(entries.get('lifecycle.ndjson'))).not.toContain('dom-ready');
+    expect(new TextDecoder().decode(entries.get('diagnostics.ndjson'))).toContain('inside-window');
+    expect(new TextDecoder().decode(entries.get('diagnostics.ndjson'))).not.toContain('outside-window');
     expect(await readFile(join(root, `${report.artifactId}.bin`))).toHaveLength(report.size);
   });
 });

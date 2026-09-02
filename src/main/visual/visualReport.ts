@@ -133,15 +133,20 @@ function zipStored(entries: ReportEntry[]): Uint8Array {
 
 export async function createVisualReport(deps: VisualReportDependencies, request: VisualReportRequest): Promise<VisualReportResult> {
   const now = deps.now ?? (() => new Date());
-  const createdAt = now().toISOString();
+  const createdAtDate = now();
+  const createdAt = createdAtDate.toISOString();
+  const cutoff = createdAtDate.getTime() - request.beforeMs;
+  const inWindow = (record: VisualDiagnosticRecord): boolean => Date.parse(record.observedAt) >= cutoff;
+  const lifecycle = deps.lifecycle.filter(inWindow);
+  const diagnostics = deps.diagnostics.filter(inWindow);
   const reportId = randomUUID();
   const entries: ReportEntry[] = [
     { name: 'process.json', bytes: jsonBytes(deps.process) },
     { name: 'snapshot.json', bytes: jsonBytes(deps.snapshot) },
     { name: 'surface.json', bytes: jsonBytes(deps.surface) },
   ];
-  if (request.include.recentLifecycle) entries.push({ name: 'lifecycle.ndjson', bytes: ndjsonBytes(deps.lifecycle) });
-  if (request.include.recentDiagnostics) entries.push({ name: 'diagnostics.ndjson', bytes: ndjsonBytes(deps.diagnostics) });
+  if (request.include.recentLifecycle) entries.push({ name: 'lifecycle.ndjson', bytes: ndjsonBytes(lifecycle) });
+  if (request.include.recentDiagnostics) entries.push({ name: 'diagnostics.ndjson', bytes: ndjsonBytes(diagnostics) });
   if (request.include.timeline) entries.push({ name: 'timeline.ndjson', bytes: ndjsonBytes(deps.timeline) });
   if (request.include.semanticElements) entries.push({ name: 'elements.json', bytes: jsonBytes(deps.semanticElements) });
   if (request.include.surfaceCapture) {
