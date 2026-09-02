@@ -27,10 +27,11 @@ export interface VisualReportDependencies {
   diagnostics: VisualDiagnosticRecord[];
   timeline: VisualTimelineEntry[];
   semanticElements: unknown;
-  captureSurface?: () => Promise<{ result: unknown; png?: VisualArtifactMetadata }>;
-  captureElement?: (elementKey: string) => Promise<{ result: unknown; png?: VisualArtifactMetadata }>;
+  captureSurface?: (signal?: AbortSignal) => Promise<{ result: unknown; png?: VisualArtifactMetadata }>;
+  captureElement?: (elementKey: string, signal?: AbortSignal) => Promise<{ result: unknown; png?: VisualArtifactMetadata }>;
   artifacts: VisualArtifactStore;
   now?: () => Date;
+  signal?: AbortSignal;
 }
 
 export interface VisualReportResult {
@@ -62,16 +63,18 @@ function ndjsonBytes(records: unknown[]): Uint8Array {
   return new TextEncoder().encode(records.map((record) => JSON.stringify(record)).join('\n') + (records.length > 0 ? '\n' : ''));
 }
 
-async function readArtifact(store: VisualArtifactStore, metadata: VisualArtifactMetadata): Promise<Uint8Array> {
+async function readArtifact(store: VisualArtifactStore, metadata: VisualArtifactMetadata, signal?: AbortSignal): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let offset = 0;
   let done = false;
   while (!done) {
+    if (signal?.aborted) throw new Error('Visual report was cancelled.');
     const chunk = await store.read(metadata.artifactId, offset, 1024 * 1024);
     chunks.push(chunk.bytes);
     offset = chunk.nextOffset;
     done = chunk.done;
   }
+  if (signal?.aborted) throw new Error('Visual report was cancelled.');
   const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
   let cursor = 0;
   for (const chunk of chunks) {
@@ -144,15 +147,20 @@ export async function createVisualReport(deps: VisualReportDependencies, request
   const lifecycle = deps.lifecycle.filter(inWindow);
   const diagnostics = deps.diagnostics.filter(inWindow);
   const reportId = randomUUID();
+  const signal = deps.signal;
+  const throwIfAborted = (): void => {
+    if (signal?.aborted) throw new Error('Visual report was cancelled.');
+  };
   const capturedArtifactIds = new Set<string>();
   let reportArtifactId: string | undefined;
   const readCapturedArtifact = async (metadata: VisualArtifactMetadata): Promise<Uint8Array> => {
     // Capture artifacts are temporary inputs owned by this report operation.
     // Keep their IDs so an interrupted build cannot leave unreferenced PNGs.
     capturedArtifactIds.add(metadata.artifactId);
-    return readArtifact(deps.artifacts, metadata);
+    return readArtifact(deps.artifacts, metadata, signal);
   };
   try {
+    throwIfAborted();
     const entries: ReportEntry[] = [
       { name: 'process.json', bytes: jsonBytes(deps.process) },
       { name: 'snapshot.json', bytes: jsonBytes(deps.snapshot) },
@@ -164,7 +172,8 @@ export async function createVisualReport(deps: VisualReportDependencies, request
     if (request.include.semanticElements) entries.push({ name: 'elements.json', bytes: jsonBytes(deps.semanticElements) });
     if (request.include.surfaceCapture) {
       if (!deps.captureSurface) throw new Error('Visual surface capture is unavailable.');
-      const captured = await deps.captureSurface();
+      const captured = await deps.captureSurface(signal);
+      throwIfAborted();
       entries.push({ name: 'surface-capture.json', bytes: jsonBytes(captured.result) });
       if (captured.png) entries.push({ name: 'surface.png', bytes: await readCapturedArtifact(captured.png) });
     }
@@ -174,7 +183,8 @@ export async function createVisualReport(deps: VisualReportDependencies, request
         throw new Error('visual element report capture count is invalid');
       }
       for (const elementKey of request.elementKeys) {
-        const captured = await deps.captureElement(elementKey);
+        const captured = await deps.captureElement(elementKey, signal);
+        throwIfAborted();
         entries.push({ name: `elements/${elementKey}.json`, bytes: jsonBytes(captured.result) });
         if (captured.png) entries.push({ name: `elements/${elementKey}.png`, bytes: await readCapturedArtifact(captured.png) });
       }
@@ -192,7 +202,9 @@ export async function createVisualReport(deps: VisualReportDependencies, request
     };
     const allEntries = [{ name: 'manifest.json', bytes: jsonBytes(manifest) }, ...entries];
     const archive = zipStored(allEntries);
+    throwIfAborted();
     const artifact = await deps.artifacts.put(archive, 'application/zip');
+    throwIfAborted();
     reportArtifactId = artifact.artifactId;
     return {
       reportId,

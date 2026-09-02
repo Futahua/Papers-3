@@ -1913,7 +1913,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     const eventHub = createPapersControlEventHub();
     controlEventHub = eventHub;
     const captureProjectVisual = visualArtifactStore && processInstanceIdentity
-      ? (target: { windowId: number; surfaceId: string }, elementRequest?: { elementKey: string; paddingCssPx: number }) => captureVisualSurface({
+      ? (target: { windowId: number; surfaceId: string }, elementRequest?: { elementKey: string; paddingCssPx: number }, signal?: AbortSignal) => captureVisualSurface({
         processIdentity: () => processInstanceIdentity,
         topologyRevision: (windowId) => workspaceTopologyRevisions.get(windowId) ?? 0,
         surface: ({ windowId, surfaceId }) => {
@@ -1966,7 +1966,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           };
         },
         artifacts: visualArtifactStore,
-      }, target, elementRequest)
+      }, target, elementRequest, signal)
       : undefined;
     papersControlServer = await startPapersControlServer({
       descriptorPath,
@@ -2019,7 +2019,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
           return visualTimelinesBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId))?.snapshot(beforeMs) ?? [];
         },
-        visualReportCreate: async (request) => {
+        visualReportCreate: async (request, signal) => {
           if (!visualArtifactStore || !processInstanceIdentity
             || !papersWindows.has(request.windowId)
             || !logicalSurfaces.isLiveIn(request.surfaceId, request.windowId)) return null;
@@ -2032,17 +2032,18 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           const currentSenderId = papersWindows.get(request.windowId)?.owned.projectSurfaces.get(request.surfaceId)?.senderId;
           const observationState = visualSurfaceObservationState.snapshot(request.windowId, request.surfaceId);
           const surfaceCapture = captureProjectVisual
-            ? async (): Promise<{ result: unknown; png?: VisualArtifactMetadata }> => {
-              const result = await captureProjectVisual({ windowId: request.windowId, surfaceId: request.surfaceId });
+            ? async (captureSignal?: AbortSignal): Promise<{ result: unknown; png?: VisualArtifactMetadata }> => {
+              const result = await captureProjectVisual({ windowId: request.windowId, surfaceId: request.surfaceId }, undefined, captureSignal);
               const png = (result as { png?: VisualArtifactMetadata }).png;
               return png ? { result, png } : { result };
             }
             : undefined;
           const elementCapture = captureProjectVisual
-            ? async (elementKey: string): Promise<{ result: unknown; png?: VisualArtifactMetadata }> => {
+            ? async (elementKey: string, captureSignal?: AbortSignal): Promise<{ result: unknown; png?: VisualArtifactMetadata }> => {
               const result = await captureProjectVisual(
                 { windowId: request.windowId, surfaceId: request.surfaceId },
                 { elementKey, paddingCssPx: 0 },
+                captureSignal,
               );
               const png = (result as { png?: VisualArtifactMetadata }).png;
               return png ? { result, png } : { result };
@@ -2075,6 +2076,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             captureSurface: surfaceCapture,
             captureElement: elementCapture,
             artifacts: visualArtifactStore,
+            signal,
           }, request);
         },
         visualAssert: ({ windowId, surfaceId }, assertions) => {
@@ -2095,9 +2097,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         visualArtifactRead: visualArtifactStore
           ? (artifactId, offset, length) => visualArtifactStore.read(artifactId, offset, length)
           : undefined,
-        captureSurface: captureProjectVisual ? (target) => captureProjectVisual(target) : undefined,
+        captureSurface: captureProjectVisual ? (target, signal) => captureProjectVisual(target, undefined, signal) : undefined,
         captureElement: captureProjectVisual
-          ? (target, elementKey, paddingCssPx) => captureProjectVisual(target, { elementKey, paddingCssPx })
+          ? (target, elementKey, paddingCssPx, signal) => captureProjectVisual(target, { elementKey, paddingCssPx }, signal)
           : undefined,
         captureWindow: visualArtifactStore && processInstanceIdentity && visualWindowNativeCapture
           ? (target) => captureVisualWindow({

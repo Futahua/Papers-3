@@ -219,11 +219,14 @@ export async function startPapersControlServer({
     }
     sockets.add(socket);
     const connectionId = randomBytes(16).toString('hex');
+    const requestControllers = new Set<AbortController>();
     eventHub.attach(socket);
     socket.setEncoding('utf8');
     // A peer vanishing mid-write must not raise an unhandled error.
     socket.on('error', () => undefined);
     socket.on('close', () => {
+      for (const controller of requestControllers) controller.abort();
+      requestControllers.clear();
       sockets.delete(socket);
       eventHub.detach(socket);
       confirmations.revokeConnection(connectionId);
@@ -238,6 +241,8 @@ export async function startPapersControlServer({
         onFrame: (line) => {
         const dispatched = (async () => {
           let requestId: string | number | null = null;
+          const controller = new AbortController();
+          requestControllers.add(controller);
           try {
             const raw = JSON.parse(line) as { id?: unknown };
             const rawId = controlRequestIdSchema.safeParse(raw.id);
@@ -247,7 +252,9 @@ export async function startPapersControlServer({
             if (!sameSecret(request.token, token)) throw new Error('unauthorized');
             // Nothing may mutate after the shutdown barrier.
             if (closing) throw new Error('control server is shutting down');
-            const result = await dispatchPapersControl(dependencies, request, { connectionId, confirmations });
+            const result = await dispatchPapersControl(dependencies, request, {
+              connectionId, confirmations, signal: controller.signal,
+            });
             if (request.method === 'events.subscribe') {
               const subscription = papersControlCommands['events.subscribe'].input.parse(request.params ?? {});
               // Dispatch performs exact target validation first; only a
@@ -257,6 +264,8 @@ export async function startPapersControlServer({
             send(socket, { id: request.id, ok: true, result });
           } catch (error) {
             send(socket, { id: requestId, ok: false, error: errorText(error) });
+          } finally {
+            requestControllers.delete(controller);
           }
         })();
         inFlight.add(dispatched);

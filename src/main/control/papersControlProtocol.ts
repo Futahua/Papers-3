@@ -559,7 +559,7 @@ export interface PapersControlDependencies {
   /** Bounded opaque semantic identities observed by predefined project code. */
   visualElements?(target: { windowId: number; surfaceId: string }, keys?: string[]): unknown;
   visualTimeline?(target: { windowId: number; surfaceId: string }, beforeMs: number): unknown;
-  visualReportCreate?(request: VisualReportRequest): Promise<unknown>;
+  visualReportCreate?(request: VisualReportRequest, signal?: AbortSignal): Promise<unknown>;
   visualAssert?(target: { windowId: number; surfaceId: string }, assertions: unknown[]): unknown;
   visualArtifactRead?(artifactId: string, offset: number, length: number): Promise<{
     metadata: unknown;
@@ -568,9 +568,9 @@ export interface PapersControlDependencies {
     done: boolean;
     bytes: Uint8Array;
   }>;
-  captureSurface?(target: { windowId: number; surfaceId: string }): Promise<unknown>;
-  captureElement?(target: { windowId: number; surfaceId: string }, elementKey: string, paddingCssPx: number): Promise<unknown>;
-  captureWindow?(target: { windowId: number }): Promise<unknown>;
+  captureSurface?(target: { windowId: number; surfaceId: string }, signal?: AbortSignal): Promise<unknown>;
+  captureElement?(target: { windowId: number; surfaceId: string }, elementKey: string, paddingCssPx: number, signal?: AbortSignal): Promise<unknown>;
+  captureWindow?(target: { windowId: number }, signal?: AbortSignal): Promise<unknown>;
   windows(): unknown;
   createWindow(): Promise<unknown>;
   backpack?(projectId: string): unknown;
@@ -586,6 +586,7 @@ export interface PapersControlDependencies {
 export interface PapersControlDispatchContext {
   connectionId?: string;
   confirmations?: PapersControlConfirmationBroker;
+  signal?: AbortSignal;
 }
 
 const methodNames = Object.keys(papersControlCommands) as [PapersControlMethod, ...PapersControlMethod[]];
@@ -706,7 +707,9 @@ export async function dispatchPapersControl(
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});
       const target = { windowId: params.windowId, surfaceId: params.surfaceId };
       if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
-      const report = await dependencies.visualReportCreate?.(params);
+      const report = await (context.signal
+        ? dependencies.visualReportCreate?.(params, context.signal)
+        : dependencies.visualReportCreate?.(params));
       if (!report) throw new Error('Visual report generation is unavailable.');
       return papersControlCommands[request.method].output.parse(report);
     }
@@ -733,7 +736,9 @@ export async function dispatchPapersControl(
     case 'capture.surface': {
       const target = papersControlCommands[request.method].input.parse(request.params ?? {});
       if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
-      const captured = await dependencies.captureSurface?.(target);
+      const captured = await (context.signal
+        ? dependencies.captureSurface?.(target, context.signal)
+        : dependencies.captureSurface?.(target));
       if (!captured) throw new Error('Visual surface capture is unavailable.');
       return papersControlCommands[request.method].output.parse(captured);
     }
@@ -741,13 +746,17 @@ export async function dispatchPapersControl(
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});
       const target = { windowId: params.windowId, surfaceId: params.surfaceId };
       if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
-      const captured = await dependencies.captureElement?.(target, params.elementKey, params.paddingCssPx);
+      const captured = await (context.signal
+        ? dependencies.captureElement?.(target, params.elementKey, params.paddingCssPx, context.signal)
+        : dependencies.captureElement?.(target, params.elementKey, params.paddingCssPx));
       if (!captured) throw new Error('Visual element capture is unavailable.');
       return papersControlCommands[request.method].output.parse(captured);
     }
     case 'capture.window': {
       const target = papersControlCommands[request.method].input.parse(request.params ?? {});
-      const captured = await dependencies.captureWindow?.(target);
+      const captured = await (context.signal
+        ? dependencies.captureWindow?.(target, context.signal)
+        : dependencies.captureWindow?.(target));
       if (!captured) throw new Error('Visual window capture is unavailable.');
       return papersControlCommands[request.method].output.parse(captured);
     }

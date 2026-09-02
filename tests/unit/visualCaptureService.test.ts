@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -78,6 +78,31 @@ describe('synchronized visual surface capture', () => {
     });
     expect(result.summary.semanticKeys).toEqual(['canvas.root']);
     expect(capturePage).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels during pixel capture before post-fence or artifact publication', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-capture-cancelled-'));
+    const controller = new AbortController();
+    let releaseCapture!: (bytes: Uint8Array) => void;
+    const captureHeld = new Promise<Uint8Array>((resolve) => { releaseCapture = resolve; });
+    const capturePage = vi.fn(() => captureHeld);
+    const requestFence = vi.fn(async () => true);
+    const capture = captureVisualSurface({
+      processIdentity: () => processIdentity,
+      topologyRevision: () => 4,
+      surface: () => ({ projectId: 'project-a', presentation: 'visible' as const }),
+      runtime: () => ({ senderId: 42, capturePage, requestFence }),
+      observation: () => observation(),
+      artifacts: createVisualArtifactStore(root),
+    }, target, undefined, controller.signal);
+
+    await vi.waitFor(() => expect(capturePage).toHaveBeenCalledOnce());
+    controller.abort();
+    releaseCapture(new Uint8Array([1, 2, 3]));
+
+    await expect(capture).rejects.toThrow('Visual capture was cancelled.');
+    expect(requestFence).toHaveBeenCalledOnce();
+    expect((await readdir(root)).filter((name) => name.endsWith('.bin') || name.endsWith('.tmp'))).toEqual([]);
   });
 
   it('captures one stable semantic element using device bounds and CSS padding', async () => {

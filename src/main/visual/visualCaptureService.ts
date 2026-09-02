@@ -74,6 +74,10 @@ export interface VisualCaptureDependencies {
   artifacts: VisualArtifactStore;
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error('Visual capture was cancelled.');
+}
+
 export interface VisualCaptureResult {
   captureId: string;
   target: VisualCaptureTarget & { projectId: string };
@@ -231,7 +235,9 @@ export async function captureVisualSurface(
   deps: VisualCaptureDependencies,
   target: VisualCaptureTarget,
   elementRequest?: VisualElementCaptureRequest,
+  signal?: AbortSignal,
 ): Promise<VisualCaptureResult> {
+  throwIfAborted(signal);
   const captureId = randomUUID();
   const process = deps.processIdentity();
   const initial = deps.surface(target);
@@ -239,6 +245,7 @@ export async function captureVisualSurface(
   if (initial.presentation !== 'visible') throw new Error('That visual surface is not visibly presented.');
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    throwIfAborted(signal);
     const runtime = deps.runtime(target);
     if (!runtime) {
       const after = unstableSnapshot(deps, target, process, {
@@ -272,7 +279,9 @@ export async function captureVisualSurface(
     }
     const documentInstanceId = currentState.documentInstanceId;
     if (!documentInstanceId) throw new Error('That visual surface has no current document instance.');
+    throwIfAborted(signal);
     const preFenceAnswered = await runtime.requestFence(`${captureId}:pre:${attempt}`, documentInstanceId);
+    throwIfAborted(signal);
     if (!preFenceAnswered) {
       if (!currentRendererChanged(deps, target, runtime, documentInstanceId)) {
         throw new Error('That visual surface renderer did not answer its fence.');
@@ -293,7 +302,9 @@ export async function captureVisualSurface(
     let bytes: Uint8Array;
     try {
       bytes = await runtime.capturePage();
+      throwIfAborted(signal);
     } catch (error) {
+      if (signal?.aborted) throw error;
       if (!currentRendererChanged(deps, target, runtime, documentInstanceId)) throw error;
       const after = unstableSnapshot(deps, target, process, before);
       if (attempt === 1) {
@@ -308,6 +319,7 @@ export async function captureVisualSurface(
       continue;
     }
     const afterAlive = await runtime.requestFence(`${captureId}:post:${attempt}`, documentInstanceId);
+    throwIfAborted(signal);
     if (!afterAlive && !currentRendererChanged(deps, target, runtime, documentInstanceId)) {
       throw new Error('That visual surface renderer did not answer its post-capture fence.');
     }
@@ -328,10 +340,15 @@ export async function captureVisualSurface(
         if (!viewportCss || viewportCss.width <= 0 || viewportCss.height <= 0) throw new Error('That visual element has no accepted CSS viewport.');
         if (!deps.cropPng) throw new Error('Visual element cropping is unavailable.');
         const cropped = await deps.cropPng(bytes, { boundsCss: element.boundsCss, paddingCssPx: elementRequest.paddingCssPx, viewportCss });
+        throwIfAborted(signal);
         crop = cropped.bounds;
         artifactBytes = cropped.bytes;
       }
       const artifact = await deps.artifacts.put(artifactBytes, 'image/png');
+      if (signal?.aborted) {
+        await deps.artifacts.delete(artifact.artifactId).catch(() => undefined);
+        throw new Error('Visual capture was cancelled.');
+      }
       const artifactFence = snapshotFor(deps, target, runtime, process);
       const artifactConsistency = instabilityReason(after, artifactFence, initial.projectId);
       if (artifactConsistency.status !== 'stable') {
