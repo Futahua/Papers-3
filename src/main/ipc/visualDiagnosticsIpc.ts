@@ -5,7 +5,7 @@ import type { VisualDiagnosticBuffer } from '../visual/visualDiagnostics';
 
 export interface VisualDiagnosticsIpcDependencies {
   ipcMain: Pick<IpcMain, 'on'>;
-  resolveTarget(senderId: number): VisualDiagnosticTarget | null;
+  resolveTarget(sender: { id: number }): VisualDiagnosticTarget | null;
   bufferForWindow(windowId: number): VisualDiagnosticBuffer | null;
 }
 
@@ -15,7 +15,7 @@ export const VISUAL_RENDERER_SIGNAL_CHANNEL = 'papers:visual:renderer-signal';
  * sender, not the renderer payload, determines the window/surface target. */
 export function registerVisualDiagnosticsIpc(deps: VisualDiagnosticsIpcDependencies): void {
   deps.ipcMain.on(VISUAL_RENDERER_SIGNAL_CHANNEL, (event, payload) => {
-    const target = deps.resolveTarget(event.sender.id);
+    const target = deps.resolveTarget(event.sender);
     if (!target) return;
     const buffer = deps.bufferForWindow(target.windowId);
     if (!buffer) return;

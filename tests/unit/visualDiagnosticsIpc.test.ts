@@ -9,7 +9,7 @@ describe('visual diagnostics renderer IPC', () => {
     const on = vi.fn();
     registerVisualDiagnosticsIpc({
       ipcMain: { on },
-      resolveTarget: (senderId) => senderId === 7 ? { windowId: 2, surfaceId: 'surface-a' } : null,
+      resolveTarget: (sender) => sender.id === 7 ? { windowId: 2, surfaceId: 'surface-a' } : null,
       bufferForWindow: (windowId) => windowId === 2 ? buffer : null,
     });
     const listener = on.mock.calls[0]?.[1] as ((event: { sender: { id: number } }, payload: unknown) => void);
@@ -22,7 +22,7 @@ describe('visual diagnostics renderer IPC', () => {
     const on = vi.fn();
     registerVisualDiagnosticsIpc({
       ipcMain: { on },
-      resolveTarget: (senderId) => senderId === 7 ? { windowId: 2 } : null,
+      resolveTarget: (sender) => sender.id === 7 ? { windowId: 2 } : null,
       bufferForWindow: () => buffer,
     });
     const listener = on.mock.calls[0]?.[1] as ((event: { sender: { id: number } }, payload: unknown) => void);

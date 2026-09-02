@@ -450,9 +450,10 @@ later lifecycle hooks will append to:
   `inspect.visual.diagnostics` control query.
 * [x] route host/project renderer paint and stability signals through the
   authenticated sender → `{windowId,surfaceId}` mapping; renderer-supplied
-  targets are ignored, and unbound senders/main-owned phases are refused.
-  Host/project preloads emit only one-shot paint → stability signals; project
-  hydration remains an explicit project-owned contribution.
+  targets are ignored, unbound senders/main-owned phases are refused, and the
+  current runtime WebContents is rechecked to reject stale replaced senders.
+  No preload claims paint or layout stability automatically; real producers
+  remain explicit and project hydration remains project-owned.
 * [ ] expose event subscription and resource attribution through the
   authenticated control plane.
 

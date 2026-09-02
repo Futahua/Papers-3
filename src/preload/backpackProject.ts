@@ -463,16 +463,6 @@ window.addEventListener('message', (event) => {
     .catch((caught) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: false, error: String(caught instanceof Error ? caught.message : caught) }, event.origin));
 });
 
-// One-shot renderer-owned paint/stability signals. Project hydration remains
-// project-specific and must explicitly use the same target-bound channel.
-if (process.env['PAPERS_DEV_CONTROL'] === '1') {
-  requestAnimationFrame(() => {
-    ipcRenderer.send('papers:visual:renderer-signal', { kind: 'lifecycle', phase: 'first-paint' });
-    requestAnimationFrame(() => {
-      ipcRenderer.send('papers:visual:renderer-signal', { kind: 'lifecycle', phase: 'layout-stable' });
-    });
-  });
-}
 
 // The direct-pick session pushes its typed result to the project frame.
 ipcRenderer.on('papers:window-pick:result', (_event, result) => {

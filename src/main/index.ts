@@ -1524,11 +1524,18 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   });
   registerVisualDiagnosticsIpc({
     ipcMain,
-    resolveTarget: (senderId) => {
-      const hostWindowId = papersWindows.windowForSender(senderId);
-      if (hostWindowId !== null) return { windowId: hostWindowId };
-      const context = surfaceContexts.contextForSender(senderId);
+    resolveTarget: (sender) => {
+      const hostWindowId = papersWindows.windowForSender(sender.id);
+      if (hostWindowId !== null) {
+        const host = papersWindows.get(hostWindowId)?.owned.hostView.webContents;
+        return host?.id === sender.id ? { windowId: hostWindowId } : null;
+      }
+      const context = surfaceContexts.contextForSender(sender.id);
       if (!context?.surfaceId || !logicalSurfaces.isLiveIn(context.surfaceId, context.windowId)) return null;
+      const runtime = papersWindows.get(context.windowId)?.owned.projectSurfaces.get(context.surfaceId);
+      // A binding can briefly outlive a replaced WebContents. Require the
+      // sender to be the current native presentation before accepting input.
+      if (!runtime || !runtime.isSender(sender as WebContents)) return null;
       return { windowId: context.windowId, surfaceId: context.surfaceId };
     },
     bufferForWindow: (windowId) => visualDiagnosticsByWindow.get(windowId) ?? null,
