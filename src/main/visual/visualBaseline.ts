@@ -144,7 +144,17 @@ export function createVisualBaselineStore(rootDir: string, options: { now?: () =
   const now = options.now ?? (() => new Date());
   const manifestPath = (id: string) => path.join(rootDir, `${id}.manifest.json`);
   const pngPath = (id: string, sha256: string) => path.join(rootDir, `${id}-${sha256}.png`);
-  let updateQueue: Promise<void> = Promise.resolve();
+  let operationQueue: Promise<void> = Promise.resolve();
+  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
+    const previousOperation = operationQueue;
+    let release!: () => void;
+    operationQueue = new Promise<void>((resolve) => { release = resolve; });
+    return (async () => {
+      await previousOperation;
+      try { return await operation(); }
+      finally { release(); }
+    })();
+  };
   const cleanupFiles = async (id: string, keepSha256: string | null): Promise<void> => {
     const names = await readdir(rootDir).catch(() => [] as string[]);
     await Promise.all(names.filter((name) => {
@@ -153,7 +163,7 @@ export function createVisualBaselineStore(rootDir: string, options: { now?: () =
       return isPng || isTemp;
     }).map((name) => rm(path.join(rootDir, name), { force: true })));
   };
-  const read = async (input: VisualBaselineKey) => {
+  const readUnsafe = async (input: VisualBaselineKey) => {
     const key = baselineKeySchema.parse(input);
     const id = baselineId(key);
     let manifest: VisualBaselineManifest;
@@ -167,21 +177,16 @@ export function createVisualBaselineStore(rootDir: string, options: { now?: () =
     return { manifest, png };
   };
   return {
-    read,
+    read(input) { return enqueue(() => readUnsafe(input)); },
     update(input) {
-      const previousUpdate = updateQueue;
-      let release!: () => void;
-      updateQueue = new Promise<void>((resolve) => { release = resolve; });
-      return (async () => {
-       await previousUpdate;
-       try {
+      return enqueue(async () => {
       if (input.allowUpdate !== true) throw new Error('visual baseline update requires explicit opt-in');
       const key = baselineKeySchema.parse(input.key);
       if (!(input.png instanceof Uint8Array) || input.png.byteLength < 1 || input.png.byteLength > 16 * 1024 * 1024) throw new Error('baseline PNG is outside the allowed bound');
       const actualDimensions = pngDimensions(input.png);
       if (!Number.isSafeInteger(input.width) || !Number.isSafeInteger(input.height) || input.width < 1 || input.height < 1 || input.width > 16384 || input.height > 16384
         || input.width !== actualDimensions.width || input.height !== actualDimensions.height) throw new Error('baseline dimensions do not match PNG');
-      const previous = await read(key);
+      const previous = await readUnsafe(key);
       const id = baselineId(key);
       const pngSha256 = hashBytes(input.png);
       const current = baselineManifestSchema.parse({ schemaVersion: 1, baselineId: id, key, pngSha256,
@@ -204,10 +209,7 @@ export function createVisualBaselineStore(rootDir: string, options: { now?: () =
       } catch (error) { await rm(tempManifest, { force: true }); await cleanupFiles(id, previous?.manifest.pngSha256 ?? null); throw error; }
       await cleanupFiles(id, current.pngSha256);
       return { previous: previous?.manifest ?? null, current };
-       } finally {
-         release();
-       }
-      })();
+      });
     },
   };
 }

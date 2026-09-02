@@ -1,4 +1,4 @@
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { mkdtemp, readdir, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -36,5 +36,33 @@ describe('deterministic visual baselines', () => {
     await store.update({ key, png: png2, width: 1, height: 1, semanticSnapshot: { a: 2 }, createdFromCommit: 'def', allowUpdate: true });
     expect((await readdir(root)).filter((name) => name.endsWith('.png'))).toHaveLength(1);
     await expect(store.update({ key, png: new Uint8Array([2]), width: 1, height: 1, semanticSnapshot: { a: 3 }, createdFromCommit: 'ghi', allowUpdate: true })).rejects.toThrow(/not a PNG/);
+  });
+
+  it('serializes read cleanup behind an in-progress update', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-baseline-race-'));
+    const seed = createVisualBaselineStore(root);
+    await seed.update({ key, png, width: 1, height: 1, semanticSnapshot: { a: 1 }, createdFromCommit: 'abc', allowUpdate: true });
+    let publishStarted!: () => void;
+    let releasePublish!: () => void;
+    const publishing = new Promise<void>((resolve) => { publishStarted = resolve; });
+    const publishGate = new Promise<void>((resolve) => { releasePublish = resolve; });
+    const store = createVisualBaselineStore(root, {
+      publishManifest: async (temporary, finalPath) => {
+        publishStarted();
+        await publishGate;
+        await rename(temporary, finalPath);
+      },
+    });
+    const updatePromise = store.update({ key, png: png2, width: 1, height: 1, semanticSnapshot: { a: 2 }, createdFromCommit: 'def', allowUpdate: true });
+    await publishing;
+    let readFinished = false;
+    const readPromise = store.read(key).then((result) => { readFinished = true; return result; });
+    await Promise.resolve();
+    expect(readFinished).toBe(false);
+    releasePublish();
+    await updatePromise;
+    expect((await readPromise)?.png).toEqual(png2);
+    expect((await readdir(root)).filter((name) => name.endsWith('.png'))).toHaveLength(1);
+    expect((await readdir(root)).filter((name) => name.endsWith('.tmp'))).toHaveLength(0);
   });
 });
