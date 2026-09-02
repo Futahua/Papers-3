@@ -54,6 +54,7 @@ import { captureVisualSurface } from './visual/visualCaptureService';
 import { createVisualRendererFenceService } from './visual/visualRendererFence';
 import { createVisualWindowNativeCaptureService } from './visual/visualWindowNativeCapture';
 import { captureVisualWindow } from './visual/visualCaptureWindowService';
+import { evaluateVisualAssertions, type VisualAssertion } from './visual/visualAssertions';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
@@ -1913,6 +1914,17 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             surfaceId,
             ...(layoutEpoch !== null ? { layoutEpoch } : {}),
             elements: elements.length > 0 ? elements : observed.map((key) => ({ key })),
+          };
+        },
+        visualAssert: ({ windowId, surfaceId }, assertions) => {
+          if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
+          const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
+          const currentSenderId = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.senderId;
+          const elements = state && state.currentSenderId === currentSenderId ? state.observations : [];
+          const layoutEpoch = visualSurfaceObservationState.snapshot(windowId, surfaceId)?.layoutEpoch ?? null;
+          return {
+            windowId, surfaceId, layoutEpoch,
+            ...evaluateVisualAssertions(elements, assertions as VisualAssertion[]),
           };
         },
         visualArtifactRead: visualArtifactStore

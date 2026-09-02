@@ -73,6 +73,23 @@ const visualElementsInspectionSchema = z.object({
   layoutEpoch: z.number().int().nonnegative().nullable().optional(),
   elements: z.array(z.union([visualElementIdentitySchema, visualElementObservationSchema])).max(256),
 }).strict();
+const visualAssertionSchema = z.union([
+  z.object({ kind: z.literal('visible'), elementKey: visualSemanticKeySchema }).strict(),
+  z.object({ kind: z.literal('not-clipped'), elementKey: visualSemanticKeySchema, maxClippedPercent: z.number().finite().min(0).max(100) }).strict(),
+  z.object({ kind: z.literal('inside'), elementKey: visualSemanticKeySchema, containerKey: visualSemanticKeySchema }).strict(),
+  z.object({ kind: z.literal('no-overlap'), a: visualSemanticKeySchema, b: visualSemanticKeySchema, maxIntersectionPercent: z.number().finite().min(0).max(100) }).strict(),
+  z.object({ kind: z.literal('min-contrast'), elementKey: visualSemanticKeySchema, ratio: z.number().finite().min(1).max(21) }).strict(),
+]);
+const visualAssertResultSchema = z.object({
+  kind: z.enum(['visible', 'not-clipped', 'inside', 'no-overlap', 'min-contrast']),
+  passed: z.boolean(),
+  reason: z.enum(['missing-element', 'not-visible', 'clipped', 'outside-container', 'overlap', 'unknown-contrast', 'contrast-too-low']).optional(),
+}).strict();
+const visualAssertOutputSchema = z.object({
+  windowId: z.number().int(), surfaceId: z.string().min(1).max(128),
+  layoutEpoch: z.number().int().nonnegative().nullable(), allPassed: z.boolean(),
+  assertions: z.array(visualAssertResultSchema).max(64),
+}).strict();
 const visualArtifactIdSchema = z.string().regex(/^va-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const visualArtifactMetadataSchema = z.object({
   artifactId: visualArtifactIdSchema,
@@ -293,6 +310,14 @@ export const papersControlCommands = {
     scope: 'surface',
     effect: 'query',
   },
+  'visual.assert': {
+    input: z.object({
+      windowId: z.number().int(), surfaceId: z.string().min(1).max(128),
+      assertions: z.array(visualAssertionSchema).min(1).max(64),
+    }).strict(),
+    output: visualAssertOutputSchema,
+    scope: 'surface', effect: 'query',
+  },
   'visual.artifact.read': {
     input: z.object({
       artifactId: visualArtifactIdSchema,
@@ -469,6 +494,7 @@ export interface PapersControlDependencies {
   visualDiagnostics?(target: { windowId: number; surfaceId?: string }): unknown;
   /** Bounded opaque semantic identities observed by predefined project code. */
   visualElements?(target: { windowId: number; surfaceId: string }, keys?: string[]): unknown;
+  visualAssert?(target: { windowId: number; surfaceId: string }, assertions: unknown[]): unknown;
   visualArtifactRead?(artifactId: string, offset: number, length: number): Promise<{
     metadata: unknown;
     offset: number;
@@ -600,6 +626,14 @@ export async function dispatchPapersControl(
       const elements = dependencies.visualElements?.(target, params.keys);
       if (!elements) throw new Error('That Papers visual element target is unavailable.');
       return papersControlCommands[request.method].output.parse(elements);
+    }
+    case 'visual.assert': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const target = { windowId: params.windowId, surfaceId: params.surfaceId };
+      if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
+      const result = dependencies.visualAssert?.(target, params.assertions);
+      if (!result) throw new Error('Visual assertions are unavailable.');
+      return papersControlCommands[request.method].output.parse(result);
     }
     case 'visual.artifact.read': {
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});

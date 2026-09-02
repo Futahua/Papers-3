@@ -187,6 +187,29 @@ describe('Papers developer control protocol', () => {
     expect(visualElements).toHaveBeenCalledWith(surface, ['canvas.root']);
   });
 
+  it('evaluates only fixed declarative visual assertions', async () => {
+    const surface = { windowId: 4, surfaceId: 'surface-a' };
+    const visualAssert = vi.fn((target: typeof surface, assertions: unknown[]) => ({
+      windowId: target.windowId, surfaceId: target.surfaceId, layoutEpoch: 3, allPassed: true,
+      assertions: assertions.map((assertion) => ({ kind: (assertion as { kind: string }).kind, passed: true })),
+    }));
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [],
+      surface: vi.fn((target: typeof surface) => target.windowId === 4 && target.surfaceId === 'surface-a' ? surface : null),
+      createWindow: async () => ({ windowId: 3 }), visualAssert,
+    };
+    await expect(dispatchPapersControl(dependencies, request('visual.assert', {
+      windowId: 4, surfaceId: 'surface-a', assertions: [{ kind: 'visible', elementKey: 'canvas.root' }],
+    }))).resolves.toEqual({
+      windowId: 4, surfaceId: 'surface-a', layoutEpoch: 3, allPassed: true,
+      assertions: [{ kind: 'visible', passed: true }],
+    });
+    await expect(dispatchPapersControl(dependencies, request('visual.assert', {
+      windowId: 4, surfaceId: 'surface-a', assertions: [{ kind: 'visible', elementKey: 'canvas.root', selector: 'x' }],
+    } as unknown))).rejects.toThrow();
+    expect(visualAssert).toHaveBeenCalledWith(surface, [{ kind: 'visible', elementKey: 'canvas.root' }]);
+  });
+
   it('validates subscriptions and emits only redacted semantic frames', async () => {
     const publishEvent = vi.fn();
     const dependencies = {
