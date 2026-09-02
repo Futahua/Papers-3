@@ -52,6 +52,8 @@ import { createVisualSurfaceObservationStore } from './visual/visualSurfaceObser
 import { createVisualArtifactStore } from './visual/visualArtifactStore';
 import { captureVisualSurface } from './visual/visualCaptureService';
 import { createVisualRendererFenceService } from './visual/visualRendererFence';
+import { createVisualWindowNativeCaptureService } from './visual/visualWindowNativeCapture';
+import { captureVisualWindow } from './visual/visualCaptureWindowService';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
@@ -411,6 +413,9 @@ async function bootstrap(): Promise<void> {
   const visualRendererFence = process.env['PAPERS_DEV_CONTROL'] === '1'
     ? createVisualRendererFenceService(ipcMain)
     : null;
+  const visualWindowNativeCapture = process.env['PAPERS_DEV_CONTROL'] === '1'
+    ? createVisualWindowNativeCaptureService()
+    : null;
   const settingsStore = new AtomicJsonStore(paths.settingsFile, { recoveryDir: paths.recoveryDir });
   const settingsReport = await settingsStore.load<PapersSettings>();
   let papersSettings: PapersSettings = {
@@ -535,6 +540,10 @@ async function bootstrap(): Promise<void> {
         // reuses this already-current sender generation.
         visualSurfaceObservationState.bindSender(windowId, surfaceId, senderId);
         visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
+        // The main-issued document token and the renderer's queued initial
+        // observation are separate IPC messages. Ask for one deterministic
+        // resend after the token is installed, covering either delivery order.
+        papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.refreshVisualSemanticKeys();
         return;
       }
       const target = resolveVisualTarget({ id: senderId });
@@ -1926,6 +1935,45 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
               };
             },
             observation: ({ windowId, surfaceId }) => visualSurfaceObservationState.snapshot(windowId, surfaceId),
+            artifacts: visualArtifactStore,
+          }, target)
+          : undefined,
+        captureWindow: visualArtifactStore && processInstanceIdentity && visualWindowNativeCapture
+          ? (target) => captureVisualWindow({
+            processIdentity: () => processInstanceIdentity,
+            window: ({ windowId }) => {
+              const context = papersWindows.get(windowId);
+              const window = context?.owned.window;
+              const hostContents = context?.owned.hostView.webContents;
+              if (!window || !hostContents || window.isDestroyed() || !window.isVisible() || hostContents.isDestroyed()) return null;
+              try {
+                return {
+                  windowId,
+                  sourceId: window.getMediaSourceId(),
+                  visible: window.isVisible(),
+                  nativeBounds: window.getBounds(),
+                  hostContents,
+                };
+              } catch {
+                return null;
+              }
+            },
+            topologyRevision: (windowId) => workspaceTopologyRevisions.get(windowId) ?? 0,
+            visibleSurfaces: (windowId) => logicalSurfaces.project()
+              .filter((surface) => surface.windowId === windowId && surface.kind === 'project')
+              .map((surface) => {
+                const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surface.surfaceId);
+                return {
+                  surfaceId: surface.surfaceId,
+                  projectId: surface.projectId,
+                  presentation: 'visible' as const,
+                  observation: runtime?.isPresented
+                    ? visualSurfaceObservationState.snapshot(windowId, surface.surfaceId)
+                    : null,
+                };
+              })
+              .filter((surface) => surface.observation !== null || papersWindows.get(windowId)?.owned.projectSurfaces.get(surface.surfaceId)?.isPresented === true),
+            requestCapture: (window, requestId, size) => visualWindowNativeCapture.request(window.sourceId, size),
             artifacts: visualArtifactStore,
           }, target)
           : undefined,

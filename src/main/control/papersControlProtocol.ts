@@ -107,6 +107,32 @@ const visualCaptureResultSchema = z.object({
   }).strict(),
   png: visualArtifactMetadataSchema.optional(),
 }).strict();
+const visualWindowCaptureResultSchema = z.object({
+  captureId: z.string().uuid(),
+  target: z.object({ windowId: z.number().int() }).strict(),
+  observedAt: z.string().datetime(),
+  consistency: z.union([
+    z.object({ status: z.literal('stable') }).strict(),
+    z.object({ status: z.literal('unstable'), reason: z.enum(['layout-changed', 'state-changed', 'topology-changed', 'renderer-replaced']) }).strict(),
+  ]),
+  process: processInstanceIdentitySchema,
+  revisions: z.object({ workspaceTopologyRevision: z.number().int().nonnegative() }).strict(),
+  nativeBounds: z.object({
+    x: z.number().int(), y: z.number().int(), width: z.number().int().positive(), height: z.number().int().positive(),
+  }).strict(),
+  pixelSize: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).strict(),
+  surfaces: z.array(z.object({
+    surfaceId: z.string().min(1).max(128),
+    projectId: z.string().min(1).max(128),
+    presentation: z.literal('visible'),
+    revisions: z.object({
+      documentStateRevision: z.string().max(256).nullable(),
+      renderCycleId: z.string().uuid().nullable(),
+      layoutEpoch: z.number().int().nonnegative().nullable(),
+    }).strict(),
+  }).strict()).max(256),
+  png: visualArtifactMetadataSchema.optional(),
+}).strict();
 const layoutTargetSchema = z.object({ windowId: z.number().int(), layoutId: z.string().uuid() }).strict();
 const namedLayoutSchema = z.object({
   layoutId: z.string().uuid(),
@@ -288,6 +314,12 @@ export const papersControlCommands = {
     scope: 'surface',
     effect: 'query',
   },
+  'capture.window': {
+    input: windowTargetSchema,
+    output: visualWindowCaptureResultSchema,
+    scope: 'window',
+    effect: 'query',
+  },
   'inspect.windows': { input: emptyParamsSchema, output: z.array(controlWindowSchema), scope: 'app', effect: 'query' },
   'inspect.surfaces': {
     input: emptyParamsSchema,
@@ -444,6 +476,7 @@ export interface PapersControlDependencies {
     bytes: Uint8Array;
   }>;
   captureSurface?(target: { windowId: number; surfaceId: string }): Promise<unknown>;
+  captureWindow?(target: { windowId: number }): Promise<unknown>;
   windows(): unknown;
   createWindow(): Promise<unknown>;
   backpack?(projectId: string): unknown;
@@ -584,6 +617,12 @@ export async function dispatchPapersControl(
       if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
       const captured = await dependencies.captureSurface?.(target);
       if (!captured) throw new Error('Visual surface capture is unavailable.');
+      return papersControlCommands[request.method].output.parse(captured);
+    }
+    case 'capture.window': {
+      const target = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const captured = await dependencies.captureWindow?.(target);
+      if (!captured) throw new Error('Visual window capture is unavailable.');
       return papersControlCommands[request.method].output.parse(captured);
     }
     case 'inspect.surfaces': return papersControlCommands[request.method].output.parse(dependencies.surfaces());

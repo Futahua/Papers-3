@@ -156,6 +156,24 @@ describe('project renderer visual diagnostics', () => {
     expect(captured.target).toEqual({ windowId, surfaceId: opened.surfaceId, projectId: PROJECT });
     expect(captured.consistency).toEqual({ status: 'stable' });
     expect(captured.png.mimeType).toBe('image/png');
+    const composed = await call('capture.window', { windowId }) as {
+      target: { windowId: number };
+      consistency: { status: string };
+      nativeBounds: { width: number; height: number };
+      pixelSize: { width: number; height: number };
+      surfaces: Array<{ surfaceId: string; projectId: string; presentation: string }>;
+      png: { artifactId: string; mimeType: string; size: number };
+    };
+    expect(composed.target).toEqual({ windowId });
+    expect(composed.consistency).toEqual({ status: 'stable' });
+    expect(composed.nativeBounds.width).toBeGreaterThan(0);
+    expect(composed.nativeBounds.height).toBeGreaterThan(0);
+    expect(composed.pixelSize.width).toBeGreaterThan(0);
+    expect(composed.pixelSize.height).toBeGreaterThan(0);
+    expect(composed.surfaces).toEqual([
+      expect.objectContaining({ surfaceId: opened.surfaceId, projectId: PROJECT, presentation: 'visible' }),
+    ]);
+    expect(composed.png.mimeType).toBe('image/png');
     const chunks: Uint8Array[] = [];
     let offset = 0;
     let done = false;

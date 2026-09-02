@@ -135,6 +135,33 @@ describe('Papers developer control protocol', () => {
     expect(visualDiagnostics).toHaveBeenCalledWith({ windowId: 5 });
   });
 
+  it('dispatches an exact composed window capture result', async () => {
+    const processIdentity = {
+      pid: 321,
+      appInstanceId: 'instance-a',
+      startedAt: '2026-09-02T00:00:00.000Z',
+      build: { version: '1.3.11', commit: 'abc1234', packaged: false },
+      executableIdentity: { status: 'available' as const, canonicalFileId: 'dev:7:ino:99' },
+    };
+    const result = {
+      captureId: '11111111-1111-4111-8111-111111111111',
+      target: { windowId: 4 }, observedAt: '2026-09-02T00:00:00.000Z', consistency: { status: 'stable' as const },
+      process: processIdentity, revisions: { workspaceTopologyRevision: 3 },
+      nativeBounds: { x: 10, y: 20, width: 900, height: 600 }, pixelSize: { width: 1800, height: 1200 },
+      surfaces: [{ surfaceId: 'surface-a', projectId: 'project-a', presentation: 'visible' as const,
+        revisions: { documentStateRevision: 'rev-1', renderCycleId: null, layoutEpoch: 2 } }],
+    };
+    const captureWindow = vi.fn(async (target: { windowId: number }) => ({ ...result, target }));
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+      createWindow: async () => ({ windowId: 3 }), captureWindow, processIdentity: () => processIdentity,
+    };
+    await expect(dispatchPapersControl(dependencies, request('capture.window', { windowId: 4 }))).resolves.toEqual(result);
+    expect(captureWindow).toHaveBeenCalledWith({ windowId: 4 });
+    await expect(dispatchPapersControl(dependencies, request('capture.window', { windowId: 4, surfaceId: 'leak' } as unknown)))
+      .rejects.toThrow();
+  });
+
   it('inspects opaque semantic keys only through an exact live surface', async () => {
     const surface = { windowId: 4, surfaceId: 'surface-a' };
     const visualElements = vi.fn((target: typeof surface, keys?: string[]) => ({
