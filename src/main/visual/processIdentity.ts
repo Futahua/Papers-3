@@ -14,7 +14,10 @@ export interface ProcessInstanceIdentity {
   startedAt: string;
   build: Pick<ControlBuildIdentity, 'version' | 'commit' | 'packaged'>;
   executableIdentity: {
+    status: 'available';
     canonicalFileId: string;
+  } | {
+    status: 'unavailable';
   };
 }
 export interface ProcessIdentityOptions {
@@ -23,9 +26,24 @@ export interface ProcessIdentityOptions {
   build: Pick<ControlBuildIdentity, 'version' | 'commit' | 'packaged'>;
   appInstanceId?: string;
   startedAt?: string;
-  now?: () => Date;
   realpath?: (path: string) => Promise<string>;
-  stat?: (path: string) => Promise<{ dev: number; ino: number }>;
+  stat?: (path: string) => Promise<{ dev: bigint; ino: bigint }>;
+}
+
+const processAppInstanceId = randomUUID();
+const processStartedAt = processStartTime();
+
+export function processStartTime(
+  now: () => Date = () => new Date(),
+  uptime: () => number = () => process.uptime(),
+): string {
+  return new Date(now().getTime() - Math.max(0, uptime()) * 1000).toISOString();
+}
+
+/** The stable process-lifetime values used when diagnostics are initialized
+ * after startup. This is intentionally not the time of the first query. */
+export function currentProcessInstanceSeed(): { appInstanceId: string; startedAt: string } {
+  return { appInstanceId: processAppInstanceId, startedAt: processStartedAt };
 }
 
 /**
@@ -39,19 +57,30 @@ export async function createProcessInstanceIdentity(
   if (!Number.isSafeInteger(options.pid) || options.pid <= 0) {
     throw new Error('Process identity requires a positive pid.');
   }
-  const resolvePath = options.realpath ?? realpath;
-  const readStat = options.stat ?? (async (path: string) => stat(path));
-  const canonicalPath = await resolvePath(options.executablePath);
-  const file = await readStat(canonicalPath);
-  if (!Number.isSafeInteger(file.dev) || !Number.isSafeInteger(file.ino)
-    || file.dev < 0 || file.ino <= 0) {
-    throw new Error('Executable file identity is unavailable.');
-  }
-
-  const now = options.now ?? (() => new Date());
-  const startedAt = options.startedAt ?? now().toISOString();
-  const appInstanceId = options.appInstanceId ?? randomUUID();
+  const seed = currentProcessInstanceSeed();
+  const startedAt = options.startedAt ?? seed.startedAt;
+  const appInstanceId = options.appInstanceId ?? seed.appInstanceId;
   if (!appInstanceId || !startedAt) throw new Error('Process instance identity is incomplete.');
+
+  let executableIdentity: ProcessInstanceIdentity['executableIdentity'] = { status: 'unavailable' };
+  try {
+    const resolvePath = options.realpath ?? realpath;
+    const readStat = options.stat ?? (async (path: string) => stat(path, { bigint: true }));
+    const canonicalPath = await resolvePath(options.executablePath);
+    const file = await readStat(canonicalPath);
+    if (file.dev >= 0n && file.ino > 0n) {
+      executableIdentity = {
+        status: 'available',
+        // Keep the Windows file id lossless; it must never pass through JS
+        // Number (which would corrupt values above 2^53).
+        canonicalFileId: `dev:${file.dev}:ino:${file.ino}`,
+      };
+    }
+  } catch {
+    // PID + app-instance + process-start identity remain valid when a
+    // filesystem cannot provide a stable file identity. Never use a path as
+    // a fallback and never prevent the opt-in control plane from starting.
+  }
 
   return {
     pid: options.pid,
@@ -62,10 +91,6 @@ export async function createProcessInstanceIdentity(
       commit: options.build.commit,
       packaged: options.build.packaged,
     },
-    executableIdentity: {
-      // Do not return canonicalPath: it is useful to the resolver but is not
-      // safe diagnostic output and is not restart evidence.
-      canonicalFileId: `dev:${file.dev}:ino:${file.ino}`,
-    },
+    executableIdentity,
   };
 }

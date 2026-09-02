@@ -268,13 +268,19 @@ establishes the identity and comparison primitives that a later observation
 service must use, without pretending that a screenshot is coherent merely
 because one request completed:
 
-* [x] `src/main/visual/processIdentity.ts` records PID, random app-instance ID,
-  start time, safe build identity, and a volume/file identity from `stat`.
+* [x] `src/main/visual/processIdentity.ts` records PID, process-lifetime
+  app-instance ID, process start time derived from `process.uptime()`, safe
+  build identity, and a lossless BigInt-backed stat dev/ino executable identity
+  after `realpath`.
 * [x] `src/main/visual/visualObservation.ts` compares the pre/post capture
   fences and returns an explicit unstable reason on any identity, topology,
   document, render-cycle, or layout change.
 * [x] aliases are tested against the file identity rather than pathname
-  equality, and unavailable file identity fails closed.
+  equality; realpath/stat failure reports `{ status: "unavailable" }` while
+  preserving PID/app-instance/start evidence and never blocks control startup.
+* [x] mismatch priority is process identity, exact target, sender binding,
+  topology, document/render state, then layout, so renderer replacement cannot
+  be misreported as ordinary layout churn.
 * [x] compose the identity once in the opt-in main-process control plane and
   expose only the redacted `inspect.process` query; ordinary Papers runs do
   not initialize the diagnostic identity.
@@ -283,7 +289,7 @@ because one request completed:
   synchronized service exists.
 
 Implementation checkpoint: local focused tests
-`tests/unit/visualObservation.test.ts` (9/9) and
+`tests/unit/visualObservation.test.ts` (12/12) and
 `tests/unit/papersControlProtocol.test.ts` (21/21) pass, and `npm run typecheck`
 passes. This is not C1.1 completion; the remaining unchecked items are the
 user-visible capture and packaged proof.

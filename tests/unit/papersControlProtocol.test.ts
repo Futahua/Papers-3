@@ -92,7 +92,7 @@ describe('Papers developer control protocol', () => {
       appInstanceId: 'instance-a',
       startedAt: '2026-09-02T00:00:00.000Z',
       build: { version: '1.3.11', commit: 'abc1234', packaged: true },
-      executableIdentity: { canonicalFileId: 'dev:7:ino:99' },
+      executableIdentity: { status: 'available', canonicalFileId: 'dev:7:ino:99' },
     };
     const dependencies = {
       snapshot: vi.fn(() => snapshot),

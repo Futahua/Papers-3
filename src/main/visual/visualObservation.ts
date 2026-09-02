@@ -31,13 +31,20 @@ export function assessVisualConsistency(
   if (before.process.pid !== after.process.pid
     || before.process.appInstanceId !== after.process.appInstanceId
     || before.process.startedAt !== after.process.startedAt
-    || before.process.executableIdentity.canonicalFileId !== after.process.executableIdentity.canonicalFileId
-    || before.senderBinding !== after.senderBinding) {
+    || (before.process.executableIdentity.status !== after.process.executableIdentity.status)
+    || (before.process.executableIdentity.status === 'available'
+      && after.process.executableIdentity.status === 'available'
+      && before.process.executableIdentity.canonicalFileId !== after.process.executableIdentity.canonicalFileId)) {
     return { status: 'unstable', reason: 'renderer-replaced' };
   }
   if (before.target.windowId !== after.target.windowId
-    || before.target.surfaceId !== after.target.surfaceId
-    || before.topologyRevision !== after.topologyRevision) {
+    || before.target.surfaceId !== after.target.surfaceId) {
+    return { status: 'unstable', reason: 'topology-changed' };
+  }
+  if (before.senderBinding !== after.senderBinding) {
+    return { status: 'unstable', reason: 'renderer-replaced' };
+  }
+  if (before.topologyRevision !== after.topologyRevision) {
     return { status: 'unstable', reason: 'topology-changed' };
   }
   if (before.documentStateRevision !== after.documentStateRevision

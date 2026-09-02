@@ -40,7 +40,7 @@ import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
 import { controlBuildIdentity } from './buildIdentity';
-import { createProcessInstanceIdentity, type ProcessInstanceIdentity } from './visual/processIdentity';
+import { createProcessInstanceIdentity, currentProcessInstanceSeed, type ProcessInstanceIdentity } from './visual/processIdentity';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
@@ -303,6 +303,7 @@ async function bootstrap(): Promise<void> {
       pid: process.pid,
       executablePath: process.execPath,
       build: controlBuildIdentity(),
+      ...currentProcessInstanceSeed(),
     })
     : null;
   const settingsStore = new AtomicJsonStore(paths.settingsFile, { recoveryDir: paths.recoveryDir });

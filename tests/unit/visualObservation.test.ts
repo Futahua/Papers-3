@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createProcessInstanceIdentity } from '../../src/main/visual/processIdentity';
+import { createProcessInstanceIdentity, currentProcessInstanceSeed, processStartTime } from '../../src/main/visual/processIdentity';
 import { assessVisualConsistency, type VisualObservationFence } from '../../src/main/visual/visualObservation';
 
 const build = { version: '1.3.11', commit: 'abc1234', packaged: true } as const;
@@ -13,7 +13,7 @@ function fence(overrides: Partial<VisualObservationFence> = {}): VisualObservati
       appInstanceId: 'instance-a',
       startedAt: '2026-09-02T00:00:00.000Z',
       build,
-      executableIdentity: { canonicalFileId: 'dev:7:ino:99' },
+      executableIdentity: { status: 'available', canonicalFileId: 'dev:7:ino:99' },
     },
     topologyRevision: 8,
     documentStateRevision: 'doc-4',
@@ -53,13 +53,13 @@ describe('process instance identity', () => {
         pid: 101, executablePath: 'C:\\alias\\Papers.exe', build,
         appInstanceId: 'instance-a', startedAt: '2026-09-02T00:00:00.000Z',
         realpath: async () => 'C:\\real\\Papers.exe',
-        stat: async () => ({ dev: 7, ino: 99 }),
+        stat: async () => ({ dev: 7n, ino: 99n }),
       }),
       createProcessInstanceIdentity({
         pid: 102, executablePath: 'C:\\real\\Papers.exe', build,
         appInstanceId: 'instance-b', startedAt: '2026-09-02T00:01:00.000Z',
         realpath: async () => 'C:\\real\\Papers.exe',
-        stat: async () => ({ dev: 7, ino: 99 }),
+        stat: async () => ({ dev: 7n, ino: 99n }),
       }),
     ]);
 
@@ -69,11 +69,42 @@ describe('process instance identity', () => {
     expect(identities[0]!.startedAt).not.toBe(identities[1]!.startedAt);
   });
 
-  it('refuses an unavailable file identity rather than falling back to a path string', async () => {
+  it('reports unavailable file identity rather than falling back to a path string', async () => {
     await expect(createProcessInstanceIdentity({
       pid: 101, executablePath: 'C:\\Papers.exe', build,
       realpath: async (path) => path,
-      stat: async () => ({ dev: 0, ino: 0 }),
-    })).rejects.toThrow(/file identity is unavailable/);
+      stat: async () => ({ dev: 0n, ino: 0n }),
+    })).resolves.toMatchObject({ executableIdentity: { status: 'unavailable' } });
+  });
+
+  it('survives realpath and stat failures without blocking diagnostics', async () => {
+    await expect(createProcessInstanceIdentity({
+      pid: 101, executablePath: 'C:\\Papers.exe', build,
+      realpath: async () => { throw new Error('junction unavailable'); },
+    })).resolves.toMatchObject({ executableIdentity: { status: 'unavailable' } });
+    await expect(createProcessInstanceIdentity({
+      pid: 101, executablePath: 'C:\\Papers.exe', build,
+      realpath: async (path) => path,
+      stat: async () => { throw new Error('stat unavailable'); },
+    })).resolves.toMatchObject({ executableIdentity: { status: 'unavailable' } });
+  });
+
+  it('serializes a file id above 2^53 without Number precision loss', async () => {
+    await expect(createProcessInstanceIdentity({
+      pid: 101, executablePath: 'C:\\Papers.exe', build,
+      realpath: async (path) => path,
+      stat: async () => ({ dev: 17n, ino: 9007199254740993n }),
+    })).resolves.toMatchObject({
+      executableIdentity: { status: 'available', canonicalFileId: 'dev:17:ino:9007199254740993' },
+    });
+  });
+
+  it('keeps process start identity stable when diagnostics initialize later', () => {
+    const seed = currentProcessInstanceSeed();
+    expect(seed).toEqual(currentProcessInstanceSeed());
+    expect(processStartTime(
+      () => new Date('2026-09-02T01:00:00.000Z'),
+      () => 120,
+    )).toBe('2026-09-02T00:58:00.000Z');
   });
 });

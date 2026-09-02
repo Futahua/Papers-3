@@ -34,8 +34,9 @@ const processInstanceIdentitySchema = z.object({
   }).strict(),
   executableIdentity: z.object({
     // This is an opaque volume/file identity, never a canonical path.
+    status: z.literal('available'),
     canonicalFileId: z.string().min(1).max(256),
-  }).strict(),
+  }).strict().or(z.object({ status: z.literal('unavailable') }).strict()),
 }).strict();
 
 const surfaceKindSchema = z.enum(['host', 'project', 'detached', 'widget']);
