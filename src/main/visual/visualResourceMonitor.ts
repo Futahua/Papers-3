@@ -1,4 +1,4 @@
-import type { VisualDiagnosticBuffer } from './visualDiagnostics';
+import { redactDiagnosticText, type VisualDiagnosticBuffer } from './visualDiagnostics';
 import type { VisualDiagnosticTarget } from './visualLifecycleMonitor';
 import type { VisualDiagnosticSender } from '../ipc/visualDiagnosticsIpc';
 
@@ -47,11 +47,20 @@ export function attachVisualResourceMonitor(
     const message = typeof details.error === 'string' && details.error.trim().length > 0
       ? details.error
       : 'resource load failed';
-    buffer.append(target, {
-      kind: 'resource-failed',
-      resourceKind: resourceKind(details.resourceType),
-      message,
-    });
+    // `error` has no documented maximum. Redact before applying the
+    // resource-failed schema's stricter 2048-character bound, then guard the
+    // observer boundary so malformed external detail cannot escape as a main
+    // process exception.
+    const boundedMessage = redactDiagnosticText(message).slice(0, 2048);
+    try {
+      buffer.append(target, {
+        kind: 'resource-failed',
+        resourceKind: resourceKind(details.resourceType),
+        message: boundedMessage,
+      });
+    } catch {
+      // Observation must never become a product failure.
+    }
   };
 
   source.onErrorOccurred(listener);

@@ -141,7 +141,7 @@ export function redactDiagnosticText(text: string): string {
     .replace(/\b(token|password|secret|api[_-]?key)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1=<redacted>')
     // Keep the contract scheme-agnostic; diagnostic messages may contain
     // custom app/resource URLs as well as http/file URLs.
-    .replace(/\b(?![A-Za-z]:[\\/])[a-z][a-z0-9+.-]*:(?!:ERR_[A-Z0-9_]+\b)[^\s"'<>]+/gi, '<url>')
+    .replace(/\b(?![A-Za-z]:[\\/])(?!net::ERR_[A-Z0-9_]+\b)[a-z][a-z0-9+.-]*:[^\s"'<>]+/gi, '<url>')
     // Quoted drive/UNC paths may contain spaces. The quote is part of the
     // diagnostic syntax, not evidence that the path should be retained.
     .replace(/(^|[\s("'\[])(["'])(?:[A-Za-z]:[\\/]|\\\\)[^"'\r\n]*\2/g, '$1<path>')

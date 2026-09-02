@@ -47,6 +47,19 @@ describe('visual resource monitor', () => {
     }]);
   });
 
+  it('bounds an overlong Electron error and never lets observation throw', () => {
+    const source = new FakeResourceSource();
+    const buffer = createVisualDiagnosticBuffer();
+    attachVisualResourceMonitor(source, () => ({ windowId: 5 }), (windowId) => windowId === 5 ? buffer : null);
+
+    expect(() => source.emit({ webContentsId: 13, resourceType: 'script', error: 'x'.repeat(4096) })).not.toThrow();
+
+    const records = buffer.snapshot();
+    expect(records).toHaveLength(1);
+    expect(records[0]?.payload).toMatchObject({ kind: 'resource-failed', resourceKind: 'script' });
+    expect((records[0]?.payload as { message: string }).message).toHaveLength(2048);
+  });
+
   it('detaches the single webRequest listener', () => {
     const source = new FakeResourceSource();
     const monitor = attachVisualResourceMonitor(source, () => null, () => null);

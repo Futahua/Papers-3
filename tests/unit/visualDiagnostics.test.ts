@@ -44,6 +44,7 @@ describe('bounded visual diagnostic buffer', () => {
     expect(redactDiagnosticText('C:\\Program Files\\Papers\\out\\main.js')).toBe('<path>');
     expect(redactDiagnosticText('C:/Users/name/private/file.js \\\\server\\share\\private\\file.js token = abc123 password: secret-value apiKey="secret"')).toBe('<path> <path> token=<redacted> password=<redacted> apiKey=<redacted>');
     expect(redactDiagnosticText('data:text/plain,private-payload mailto:user@example.com custom-scheme:opaque-value')).toBe('<url> <url> <url>');
+    expect(redactDiagnosticText('net::ERR_FAILED https://secret custom::ERR_PRIVATE papers-backpack::ERR_SECRET')).toBe('net::ERR_FAILED <url> <url> <url>');
   });
 
   it('does not record by itself and clear removes only diagnostic evidence', () => {
