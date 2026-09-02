@@ -12,7 +12,7 @@ type RuntimeFactory = (
   surfaceId: string,
   onSurfaceClosed?: (projectId: string) => void,
   onConsoleMessage?: (senderId: number, level: number, message: string, isBootstrap: boolean) => void,
-  onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready') => void,
+  onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void,
   onRendererGone?: (senderId: number, reason: string) => void,
 ) => BackpackProjectRuntime;
 
@@ -41,7 +41,7 @@ export class BackpackProjectSurfaceCollection {
     private readonly onSurfaceClosed?: (surfaceId: string, projectId: string) => void,
     private readonly createRuntime?: RuntimeFactory,
     private readonly onProjectConsoleMessage?: (surfaceId: string, senderId: number, level: number, message: string, isBootstrap: boolean) => void,
-    private readonly onProjectLifecycleEvent?: (surfaceId: string, senderId: number, event: 'did-start-loading' | 'dom-ready') => void,
+    private readonly onProjectLifecycleEvent?: (surfaceId: string, senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void,
     private readonly onProjectRendererGone?: (surfaceId: string, senderId: number, reason: string) => void,
   ) {}
 
@@ -56,7 +56,7 @@ export class BackpackProjectSurfaceCollection {
 
     const onSurfaceClosed = (projectId: string): void => this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
     const onConsoleMessage = (senderId: number, level: number, message: string, isBootstrap: boolean): void => this.onProjectConsoleMessage?.(surfaceId, senderId, level, message, isBootstrap);
-    const onLifecycleEvent = (senderId: number, event: 'did-start-loading' | 'dom-ready'): void => this.onProjectLifecycleEvent?.(surfaceId, senderId, event);
+    const onLifecycleEvent = (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string): void => this.onProjectLifecycleEvent?.(surfaceId, senderId, event, documentInstanceId);
     const onRendererGone = (senderId: number, reason: string): void => this.onProjectRendererGone?.(surfaceId, senderId, reason);
     const runtime = this.createRuntime?.(surfaceId, onSurfaceClosed, onConsoleMessage, onLifecycleEvent, onRendererGone) ?? new BackpackProjectRuntime(
       this.window, this.preloadPath, this.transparent, onSurfaceClosed,
@@ -77,7 +77,7 @@ export class BackpackProjectSurfaceCollection {
     if (this.runtimes.has(surfaceId)) throw new Error('project surface is already present in this window');
     let lifecycleActive = false;
     const onConsoleMessage = (senderId: number, level: number, message: string, isBootstrap: boolean): void => this.onProjectConsoleMessage?.(surfaceId, senderId, level, message, isBootstrap);
-    const onLifecycleEvent = (senderId: number, event: 'did-start-loading' | 'dom-ready'): void => this.onProjectLifecycleEvent?.(surfaceId, senderId, event);
+    const onLifecycleEvent = (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string): void => this.onProjectLifecycleEvent?.(surfaceId, senderId, event, documentInstanceId);
     const onRendererGone = (senderId: number, reason: string): void => this.onProjectRendererGone?.(surfaceId, senderId, reason);
     const runtime = this.createRuntime?.(surfaceId, (projectId) => {
       if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);

@@ -10,17 +10,6 @@ import { VISUAL_DOCUMENT_INSTANCE_CHANNEL, VISUAL_FENCE_REQUEST_CHANNEL, VISUAL_
 
 const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
 
-function createDocumentInstanceId(): string {
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-const documentInstanceId = createDocumentInstanceId();
-
 function installVisualDiagnosticListeners(
   ipc: { send(channel: string, payload: unknown): void },
   mainWorld: {
@@ -65,7 +54,7 @@ function installVisualDiagnosticListeners(
     refreshSemanticKeys = installProjectVisualSemanticKeyObserver(ipc, {
       document,
       MutationObserver: typeof MutationObserver === 'undefined' ? undefined : MutationObserver,
-      documentInstanceId,
+      documentInstanceId: documentInstanceId ?? undefined,
     });
   } catch {
     // Semantic observation is diagnostic-only and must never affect startup.
@@ -102,18 +91,32 @@ function installVisualDiagnosticListeners(
   }
 }
 
-
+let documentInstanceId: string | null = null;
+const pendingDocumentScopedMessages: Array<{ channel: string; payload: unknown }> = [];
 const documentScopedIpc = {
   send(channel: string, payload: unknown): void {
-    if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)) {
-      ipcRenderer.send(channel, { ...(payload as Record<string, unknown>), documentInstanceId });
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
+    if (documentInstanceId === null) {
+      if (pendingDocumentScopedMessages.length < 128) pendingDocumentScopedMessages.push({ channel, payload });
+      return;
     }
+    ipcRenderer.send(channel, { ...(payload as Record<string, unknown>), documentInstanceId });
   },
   on(channel: string, listener: (...args: unknown[]) => void): void {
     ipcRenderer.on(channel, listener as never);
   },
 };
-ipcRenderer.send(VISUAL_DOCUMENT_INSTANCE_CHANNEL, { documentInstanceId });
+ipcRenderer.on(VISUAL_DOCUMENT_INSTANCE_CHANNEL, (_event, payload) => {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
+  const next = (payload as { documentInstanceId?: unknown }).documentInstanceId;
+  if (typeof next !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(next)) return;
+  documentInstanceId = next;
+  for (const message of pendingDocumentScopedMessages.splice(0)) {
+    if (message.payload !== null && typeof message.payload === 'object' && !Array.isArray(message.payload)) {
+      ipcRenderer.send(message.channel, { ...(message.payload as Record<string, unknown>), documentInstanceId });
+    }
+  }
+});
 installVisualDiagnosticListeners(documentScopedIpc, contextBridge);
 
 ipcRenderer.on(VISUAL_FENCE_REQUEST_CHANNEL, (_event, payload) => {
@@ -121,7 +124,7 @@ ipcRenderer.on(VISUAL_FENCE_REQUEST_CHANNEL, (_event, payload) => {
   const requestId = (payload as { requestId?: unknown }).requestId;
   const requestedDocumentInstanceId = (payload as { documentInstanceId?: unknown }).documentInstanceId;
   if (typeof requestId !== 'string' || requestId.length < 1 || requestId.length > 128
-    || requestedDocumentInstanceId !== documentInstanceId) return;
+    || documentInstanceId === null || requestedDocumentInstanceId !== documentInstanceId) return;
   ipcRenderer.send(VISUAL_FENCE_RESPONSE_CHANNEL, { requestId, documentInstanceId, ready: true });
 });
 

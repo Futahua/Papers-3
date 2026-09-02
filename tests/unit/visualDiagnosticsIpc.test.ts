@@ -108,4 +108,28 @@ describe('visual diagnostics renderer IPC', () => {
       { target: { windowId: 2, surfaceId: 'surface-a' }, payload: { phase: 'render-failed', revision: 'rev-1', stage: 'parse', code: 'bad-envelope' } },
     ]);
   });
+
+  it('rejects a late document-A signal after main has accepted document-B', () => {
+    const buffer = createVisualDiagnosticBuffer();
+    const on = vi.fn();
+    const accepted = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    registerVisualDiagnosticsIpc({
+      ipcMain: { on },
+      resolveTarget: (sender) => sender.id === 7 ? { windowId: 2, surfaceId: 'surface-a' } : null,
+      bufferForWindow: () => buffer,
+      isCurrentDocumentInstance: (_senderId, _target, documentInstanceId) => documentInstanceId === accepted,
+    });
+    const signal = on.mock.calls.find(([channel]) => channel === 'papers:visual:renderer-signal')?.[1] as
+      ((event: { sender: { id: number } }, payload: unknown) => void);
+    signal({ sender: { id: 7 } }, {
+      kind: 'lifecycle', phase: 'state-hydrated', revision: 'old-revision',
+      documentInstanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
+    signal({ sender: { id: 7 } }, {
+      kind: 'lifecycle', phase: 'state-hydrated', revision: 'new-revision',
+      documentInstanceId: accepted,
+    });
+    expect(buffer.snapshot()).toHaveLength(1);
+    expect(buffer.snapshot()[0]?.payload).toMatchObject({ phase: 'state-hydrated', revision: 'new-revision' });
+  });
 });

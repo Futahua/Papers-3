@@ -67,9 +67,6 @@ describe('current per-surface visual observation state', () => {
     store.bindSender(7, 'surface-a', 42);
     store.bindDocumentInstance(7, 'surface-a', 42, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     store.startNavigation(7, 'surface-a', 42);
-    expect(store.snapshot(7, 'surface-a')?.documentInstanceId)
-      .toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
-    store.startNavigation(7, 'surface-a', 42);
     store.bindDocumentInstance(7, 'surface-a', 42, 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
     store.bindDocumentInstance(7, 'surface-a', 42, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     expect(store.snapshot(7, 'surface-a')?.documentInstanceId)

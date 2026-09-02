@@ -119,12 +119,7 @@ export function createVisualSurfaceObservationStore(): VisualSurfaceObservationS
       // WebContents did-start-loading callback for the initial load. Preserve
       // that first hello, while every later navigation still clears the
       // accepted document identity before B's hello arrives.
-      const initialHello = state.documentInstanceId !== null
-        && state.navigationCount === 0
-        && !state.domReady && !state.hydrated && !state.firstPaint;
-      const documentInstanceId = initialHello ? state.documentInstanceId : null;
       clearDocumentState(state);
-      state.documentInstanceId = documentInstanceId;
       state.navigationCount += 1;
     },
     markDomReady(windowId, surfaceId, senderId) {

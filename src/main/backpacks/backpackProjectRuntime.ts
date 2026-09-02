@@ -3,6 +3,8 @@ import { BaseWindow, WebContentsView, type NativeImage, type WebContents } from 
 import { BACKPACK_PROJECT_SCHEME } from './backpackProjectService';
 import { OPAQUE_SURFACE_COLOR, TRANSPARENT_CHILD_SURFACE_COLOR } from '../windowSurface';
 import { VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL } from '@shared/visualSemanticKeyConstants';
+import { VISUAL_DOCUMENT_INSTANCE_CHANNEL } from '@shared/visualSemanticKeyConstants';
+import { randomUUID } from 'node:crypto';
 
 export class BackpackProjectRuntime {
   private view: WebContentsView | null = null;
@@ -20,7 +22,7 @@ export class BackpackProjectRuntime {
     transparent: boolean,
     private readonly onSurfaceClosed?: (projectId: string) => void,
     private readonly onConsoleMessage?: (senderId: number, level: number, message: string, isBootstrap: boolean) => void,
-    private readonly onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready') => void,
+    private readonly onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void,
     private readonly onRendererGone?: (senderId: number, reason: string) => void,
   ) {
     this.transparent = transparent;
@@ -141,6 +143,11 @@ export class BackpackProjectRuntime {
     view.webContents.on('dom-ready', () => {
       capturingBootstrapConsole = false;
       this.onLifecycleEvent?.(view.webContents.id, 'dom-ready');
+    });
+    view.webContents.on('did-finish-load', () => {
+      const documentInstanceId = randomUUID();
+      view.webContents.send(VISUAL_DOCUMENT_INSTANCE_CHANNEL, { documentInstanceId });
+      this.onLifecycleEvent?.(view.webContents.id, 'did-finish-load', documentInstanceId);
     });
     view.webContents.on('console-message', (...args: unknown[]) => {
       const level = args[1];

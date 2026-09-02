@@ -1,6 +1,4 @@
 import type { IpcMain } from 'electron';
-import { VISUAL_DOCUMENT_INSTANCE_CHANNEL } from '@shared/visualSemanticKeyConstants';
-
 import { recordRendererVisualDiagnostic, recordRendererVisualSignal, type VisualDiagnosticTarget } from '../visual/visualLifecycleMonitor';
 import type { VisualDiagnosticBuffer } from '../visual/visualDiagnostics';
 
@@ -72,13 +70,5 @@ export function registerVisualDiagnosticsIpc(deps: VisualDiagnosticsIpcDependenc
   });
   deps.ipcMain.on(VISUAL_RENDERER_DIAGNOSTIC_CHANNEL, (event, payload) => {
     recordFromSender(event.sender, payload, recordRendererVisualDiagnostic);
-  });
-  deps.ipcMain.on(VISUAL_DOCUMENT_INSTANCE_CHANNEL, (event, payload) => {
-    const target = deps.resolveTarget(event.sender);
-    if (!target?.surfaceId || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
-    const value = payload as Record<string, unknown>;
-    if (Object.keys(value).length !== 1 || typeof value['documentInstanceId'] !== 'string'
-      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value['documentInstanceId'])) return;
-    deps.onDocumentInstance?.(event.sender.id, target, value['documentInstanceId']);
   });
 }

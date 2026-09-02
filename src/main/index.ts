@@ -527,15 +527,25 @@ async function bootstrap(): Promise<void> {
     }
     : undefined;
   const onProjectLifecycleEvent = process.env['PAPERS_DEV_CONTROL'] === '1'
-    ? (windowId: number, surfaceId: string, senderId: number, event: 'did-start-loading' | 'dom-ready'): void => {
+    ? (windowId: number, surfaceId: string, senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string): void => {
+      if (event === 'did-finish-load' && documentInstanceId) {
+        // Prepared cross-window renderers finish before adoption, when the
+        // ordinary sender-to-live-surface resolver must still fail closed.
+        // Bind only the exact callback-provided identity; adoption later
+        // reuses this already-current sender generation.
+        visualSurfaceObservationState.bindSender(windowId, surfaceId, senderId);
+        visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
+        return;
+      }
       const target = resolveVisualTarget({ id: senderId });
       if (!target || target.windowId !== windowId || target.surfaceId !== surfaceId) return;
       if (event === 'did-start-loading') {
         resetVisualSemanticKeyObservation(windowId, surfaceId, senderId);
         visualSurfaceObservationState.startNavigation(windowId, surfaceId, senderId);
-      } else {
+      } else if (event === 'dom-ready') {
         visualSurfaceObservationState.markDomReady(windowId, surfaceId, senderId);
       }
+      if (event === 'did-finish-load') return;
       const buffer = visualDiagnosticsByWindow.get(windowId);
       if (!buffer) return;
       try {
@@ -1773,30 +1783,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       if (!target.surfaceId) return false;
       const state = visualSurfaceObservationState.snapshot(target.windowId, target.surfaceId);
       if (!state) {
-        visualSurfaceObservationState.bindSender(target.windowId, target.surfaceId, senderId);
-        visualSurfaceObservationState.bindDocumentInstance(target.windowId, target.surfaceId, senderId, documentInstanceId);
-        return true;
+        return false;
       }
       if (state.senderId !== senderId) return false;
       if (state.documentInstanceId === documentInstanceId) return true;
-      // The document-start hello and the first semantic publication are
-      // separate IPC messages. If Chromium delivers the scoped publication
-      // first, establish identity from that same preload. Later navigation
-      // clears it before accepting the incoming document's facts.
-      if (state.documentInstanceId === null) {
-        visualSurfaceObservationState.bindDocumentInstance(target.windowId, target.surfaceId, senderId, documentInstanceId);
-        return true;
-      }
-      if (state.navigationCount <= 1 && !state.domReady && !state.hydrated && !state.firstPaint) {
-        visualSurfaceObservationState.startNavigation(target.windowId, target.surfaceId, senderId);
-        visualSurfaceObservationState.bindDocumentInstance(target.windowId, target.surfaceId, senderId, documentInstanceId);
-        return true;
-      }
-      if (!state.hydrated && state.documentStateRevision === null) {
-        visualSurfaceObservationState.startNavigation(target.windowId, target.surfaceId, senderId);
-        visualSurfaceObservationState.bindDocumentInstance(target.windowId, target.surfaceId, senderId, documentInstanceId);
-        return true;
-      }
       return false;
     },
     onRendererSignal: (senderId, target, payload) => {
@@ -1837,27 +1827,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     isCurrentDocumentInstance: ({ windowId, surfaceId }, senderId, documentInstanceId) => {
       const state = visualSurfaceObservationState.snapshot(windowId, surfaceId);
       if (!state) {
-        visualSurfaceObservationState.bindSender(windowId, surfaceId, senderId);
-        visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
-        return true;
+        return false;
       }
       if (state.senderId !== senderId) return false;
       if (state.documentInstanceId === documentInstanceId) return true;
-      if (state.documentInstanceId === null) {
-        visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
-        return true;
-      }
-      if (state.navigationCount <= 1 && !state.domReady && !state.hydrated && !state.firstPaint) {
-        visualSurfaceObservationState.startNavigation(windowId, surfaceId, senderId);
-        visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
-        return true;
-      }
-      if (!state.hydrated && state.documentStateRevision === null) {
-        visualSurfaceObservationState.startNavigation(windowId, surfaceId, senderId);
-        visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
-        return true;
-      }
-      return false;
+      return state.documentInstanceId === documentInstanceId;
     },
   });
   if (process.env['PAPERS_DEV_CONTROL'] === '1') {
