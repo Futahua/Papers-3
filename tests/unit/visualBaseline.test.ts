@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -7,6 +7,7 @@ import { compareVisualImages, createVisualBaselineStore, hashSemanticSnapshot } 
 
 const key = { fixtureId: 'neutral.visual.fixture', captureTarget: 'surface:primary', visualProfileVersion: 1, platform: 'win32', electronVersion: '43.1' } as const;
 const png = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'));
+const png2 = new Uint8Array(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
 
 describe('deterministic visual baselines', () => {
   it('separates identical pixels from changed semantic geometry', () => {
@@ -30,8 +31,10 @@ describe('deterministic visual baselines', () => {
     await expect(store.update({ key, png: new Uint8Array([1]), width: 1, height: 1, semanticSnapshot: { a: 1 }, createdFromCommit: 'abc', allowUpdate: false })).rejects.toThrow(/explicit opt-in/);
     const first = await store.update({ key, png, width: 1, height: 1, semanticSnapshot: { a: 1 }, createdFromCommit: 'abc', allowUpdate: true });
     const broken = createVisualBaselineStore(root, { publishManifest: async () => { throw new Error('interrupted'); } });
-    await expect(broken.update({ key, png, width: 1, height: 1, semanticSnapshot: { a: 2 }, createdFromCommit: 'def', allowUpdate: true })).rejects.toThrow(/interrupted/);
+    await expect(broken.update({ key, png: png2, width: 1, height: 1, semanticSnapshot: { a: 2 }, createdFromCommit: 'def', allowUpdate: true })).rejects.toThrow(/interrupted/);
     expect((await store.read(key))?.manifest.semanticSnapshotSha256).toBe(first.current.semanticSnapshotSha256);
+    await store.update({ key, png: png2, width: 1, height: 1, semanticSnapshot: { a: 2 }, createdFromCommit: 'def', allowUpdate: true });
+    expect((await readdir(root)).filter((name) => name.endsWith('.png'))).toHaveLength(1);
     await expect(store.update({ key, png: new Uint8Array([2]), width: 1, height: 1, semanticSnapshot: { a: 3 }, createdFromCommit: 'ghi', allowUpdate: true })).rejects.toThrow(/not a PNG/);
   });
 });

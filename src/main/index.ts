@@ -1928,9 +1928,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
           const currentSenderId = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.senderId;
           const elements = state && state.currentSenderId === currentSenderId ? state.observations : [];
-          const layoutEpoch = visualSurfaceObservationState.snapshot(windowId, surfaceId)?.layoutEpoch ?? null;
+          const observationState = visualSurfaceObservationState.snapshot(windowId, surfaceId);
+          const layoutEpoch = observationState?.layoutEpoch ?? null;
+          if (!state || state.currentSenderId !== currentSenderId || !observationState?.layoutStable || elements.length === 0) {
+            return { windowId, surfaceId, layoutEpoch, available: false, reason: 'geometry-unavailable', allPassed: false, assertions: [] };
+          }
           return {
-            windowId, surfaceId, layoutEpoch,
+            windowId, surfaceId, layoutEpoch, available: true,
             ...evaluateVisualAssertions(elements, assertions as VisualAssertion[]),
           };
         },

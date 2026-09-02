@@ -87,7 +87,8 @@ const visualAssertResultSchema = z.object({
 }).strict();
 const visualAssertOutputSchema = z.object({
   windowId: z.number().int(), surfaceId: z.string().min(1).max(128),
-  layoutEpoch: z.number().int().nonnegative().nullable(), allPassed: z.boolean(),
+  layoutEpoch: z.number().int().nonnegative().nullable(), available: z.boolean().optional(),
+  reason: z.literal('geometry-unavailable').optional(), allPassed: z.boolean(),
   assertions: z.array(visualAssertResultSchema).max(64),
 }).strict();
 const visualArtifactIdSchema = z.string().regex(/^va-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 import { z } from 'zod';
 
@@ -126,6 +126,17 @@ function pngDimensions(bytes: Uint8Array): { width: number; height: number } {
   if (view.getUint32(8) !== 13 || String.fromCharCode(...bytes.slice(12, 16)) !== 'IHDR') throw new Error('baseline PNG header is invalid');
   const width = view.getUint32(16); const height = view.getUint32(20);
   if (width < 1 || height < 1 || width > 16384 || height > 16384) throw new Error('baseline PNG dimensions are invalid');
+  let offset = 8; let hasIdat = false; let hasIend = false;
+  while (offset + 12 <= bytes.byteLength) {
+    const length = view.getUint32(offset);
+    const end = offset + 12 + length;
+    if (end > bytes.byteLength) throw new Error('baseline PNG chunk is truncated');
+    const type = String.fromCharCode(...bytes.slice(offset + 4, offset + 8));
+    if (type === 'IDAT') hasIdat = true;
+    if (type === 'IEND') { hasIend = true; break; }
+    offset = end;
+  }
+  if (!hasIdat || !hasIend) throw new Error('baseline PNG data is incomplete');
   return { width, height };
 }
 
@@ -134,16 +145,25 @@ export function createVisualBaselineStore(rootDir: string, options: { now?: () =
   const manifestPath = (id: string) => path.join(rootDir, `${id}.manifest.json`);
   const pngPath = (id: string, sha256: string) => path.join(rootDir, `${id}-${sha256}.png`);
   let updateQueue: Promise<void> = Promise.resolve();
+  const cleanupFiles = async (id: string, keepSha256: string | null): Promise<void> => {
+    const names = await readdir(rootDir).catch(() => [] as string[]);
+    await Promise.all(names.filter((name) => {
+      const isPng = name.startsWith(`${id}-`) && name.endsWith('.png') && (keepSha256 === null || !name.endsWith(`-${keepSha256}.png`));
+      const isTemp = name.startsWith(`${id}-`) && name.endsWith('.tmp') || name.startsWith(`${id}.manifest.json.`) && name.endsWith('.tmp');
+      return isPng || isTemp;
+    }).map((name) => rm(path.join(rootDir, name), { force: true })));
+  };
   const read = async (input: VisualBaselineKey) => {
     const key = baselineKeySchema.parse(input);
     const id = baselineId(key);
     let manifest: VisualBaselineManifest;
     try { manifest = baselineManifestSchema.parse(JSON.parse(await readFile(manifestPath(id), 'utf8'))); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { await cleanupFiles(id, null); return null; } throw error; }
     if (canonicalJson(manifest.key) !== canonicalJson(key)) throw new Error('baseline manifest key mismatch');
     const png = new Uint8Array(await readFile(pngPath(id, manifest.pngSha256)));
     if (hashBytes(png) !== manifest.pngSha256) throw new Error('baseline PNG hash mismatch');
     if (JSON.stringify(pngDimensions(png)) !== JSON.stringify(manifest.dimensions)) throw new Error('baseline PNG dimensions mismatch');
+    await cleanupFiles(id, manifest.pngSha256);
     return { manifest, png };
   };
   return {
@@ -181,7 +201,8 @@ export function createVisualBaselineStore(rootDir: string, options: { now?: () =
         await writeFile(tempManifest, JSON.stringify(current), { encoding: 'utf8', flag: 'wx' });
         if (options.publishManifest) await options.publishManifest(tempManifest, finalManifest);
         else await rename(tempManifest, finalManifest);
-      } catch (error) { await rm(tempManifest, { force: true }); throw error; }
+      } catch (error) { await rm(tempManifest, { force: true }); await cleanupFiles(id, previous?.manifest.pngSha256 ?? null); throw error; }
+      await cleanupFiles(id, current.pngSha256);
       return { previous: previous?.manifest ?? null, current };
        } finally {
          release();

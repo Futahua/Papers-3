@@ -126,6 +126,13 @@ describe('project renderer visual diagnostics', () => {
         && record.payload.kind === 'lifecycle' && record.payload.phase === 'layout-stable'
         && record.payload.detail === undefined);
     }, 10_000, 'project event-driven layout-stable signal');
+    const availableAssertions = await call('visual.assert', {
+      windowId, surfaceId: opened.surfaceId,
+      assertions: [{ kind: 'visible', elementKey: 'canvas.root' }],
+    }) as { available?: boolean; allPassed: boolean; assertions: Array<{ kind: string; passed: boolean }> };
+    expect(availableAssertions.available).toBe(true);
+    expect(availableAssertions.allPassed).toBe(true);
+    expect(availableAssertions.assertions).toEqual([{ kind: 'visible', passed: true }]);
     const preHydrationLifecycle = (await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{
       sequence: number; payload: { kind?: string; phase?: string };
     }>).filter((record) => record.sequence > beforeSequence && record.payload.kind === 'lifecycle');
@@ -266,6 +273,13 @@ describe('project renderer visual diagnostics', () => {
       }) as { elements: Array<{ key: string }> };
       return result.elements.length === 0;
     }, 10_000, 'same-renderer navigation clears semantic generation');
+    const unavailableAssertions = await call('visual.assert', {
+      windowId: secondary.windowId, surfaceId: second.surfaceId,
+      assertions: [{ kind: 'visible', elementKey: 'canvas.root' }],
+    }) as { available?: boolean; reason?: string; allPassed: boolean; assertions: unknown[] };
+    expect(unavailableAssertions).toMatchObject({
+      available: false, reason: 'geometry-unavailable', allPassed: false, assertions: [],
+    });
     await evalInProjectWindow(secondary.windowId,
       `window.location.href = ${JSON.stringify(opened.url)}; true`);
     await waitFor(async () => {
