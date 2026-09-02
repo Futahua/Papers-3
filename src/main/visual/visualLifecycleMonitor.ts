@@ -67,16 +67,22 @@ export function recordRendererVisualDiagnostic(
   for (let index = recent.length - 1; index >= 0; index -= 1) {
     if (observedAt - recent[index]!.observedAt > 1000) recent.splice(index, 1);
   }
-  const duplicate = recent.some((candidate) => candidate.source !== source
+  const duplicateIndex = recent.findIndex((candidate) => candidate.source !== source
     && candidate.target.windowId === target.windowId
     && candidate.target.surfaceId === target.surfaceId
     && candidate.kind === parsed.kind
     // Compare the pre-redaction message so two different private paths or
     // credential values cannot collide after they become <path>/<redacted>.
     && candidate.rawMessage === parsed.message);
+  if (duplicateIndex >= 0) {
+    // Consume the pair. Keeping the first source candidate around would make
+    // a later genuine same-source repeat look like another duplicate.
+    recent.splice(duplicateIndex, 1);
+    recentRendererDiagnostics.set(buffer, recent);
+    return;
+  }
   recent.push({ source, target: { ...target }, kind: parsed.kind, rawMessage: parsed.message, observedAt });
   recentRendererDiagnostics.set(buffer, recent);
-  if (duplicate) return;
   buffer.append(target, parsed);
 }
 

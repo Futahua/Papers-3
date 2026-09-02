@@ -69,12 +69,26 @@ describe('visual lifecycle monitor', () => {
     recordRendererVisualDiagnostic(buffer, { windowId: 8, surfaceId: 'surface-c' }, {
       kind: 'uncaught-error', message: 'C:\\private\\view.js token=secret',
     });
+    recordRendererVisualDiagnostic(buffer, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'C:\\private\\view.js token=secret',
+    });
 
-    expect(buffer.snapshot()).toMatchObject([{
+    expect(buffer.snapshot()[0]).toMatchObject({
       target: { windowId: 8, surfaceId: 'surface-c' },
       payload: { kind: 'uncaught-error', message: '<path> token=<redacted>' },
-    }]);
-    expect(buffer.snapshot()).toHaveLength(1);
+    });
+    expect(buffer.snapshot()).toHaveLength(2);
+    const symmetric = createVisualDiagnosticBuffer();
+    recordRendererVisualDiagnostic(symmetric, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'symmetric failure',
+    });
+    recordRendererVisualDiagnostic(symmetric, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'symmetric failure',
+    }, 'bootstrap-console');
+    recordRendererVisualDiagnostic(symmetric, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'symmetric failure',
+    }, 'bootstrap-console');
+    expect(symmetric.snapshot()).toHaveLength(2);
     const sameSource = createVisualDiagnosticBuffer();
     recordRendererVisualDiagnostic(sameSource, { windowId: 8, surfaceId: 'surface-c' }, {
       kind: 'uncaught-error', message: 'same failure',
