@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 bounded semantic geometry implemented at `d2512d57164e5e4cd6c2e694bb3a2b086148dc5f`, awaiting exact-SHA reviewer sign-off
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 bounded semantic geometry hardened at `29d6dfc0186d753e8ab895a196735fe7bf674779`, awaiting exact-SHA reviewer sign-off
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1579,7 +1579,7 @@ Reviewer asks:
 Reviewer checkpoint: **SIGNED OFF** for the C1.3 semantic-key
 identity/surface-local-authority foundation at exact pushed head
 `d440466b87d4234339b3fb5dd0ac6845b0be7fa8`. Geometry is implemented at
-`d2512d57164e5e4cd6c2e694bb3a2b086148dc5f` and awaits exact-SHA review;
+`29d6dfc0186d753e8ab895a196735fe7bf674779` and awaits exact-SHA review;
 declarative assertions and same-surface `capture.element` cropping remain
 open.
 
