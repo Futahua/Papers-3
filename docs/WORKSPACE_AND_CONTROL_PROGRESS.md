@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry, `visual.assert` availability, and `capture.element` are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`, and `26963baad5e0457bb24de4e39a80445ade1afa49`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; duplicate semantic-key rejection is implemented at `30f3f31c0b3d188beb51640c2a0de351b7f3ed9c`, awaiting exact-SHA reviewer audit
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 stable-epoch geometry, `visual.assert` availability, `capture.element`, and duplicate-key rejection are signed off at `0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`, `5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`, `26963baad5e0457bb24de4e39a80445ade1afa49`, and `30f3f31c0b3d188beb51640c2a0de351b7f3ed9c`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; same-key surface locality is evidenced at `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`, awaiting exact-SHA reviewer audit
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1539,7 +1539,7 @@ Never fabricate a passing contrast value.
 ## Deterministic tests
 
 * [x] semantic key collision rejected within one surface;
-* [ ] same semantic key in two surfaces remains surface-local;
+* [x] same semantic key in two surfaces remains surface-local;
 * [x] hidden/display/opacity/zero-area cases are represented by bounded
   visibility reasons;
 * [x] ancestor and viewport clipping are represented with clipped percentage;
@@ -1595,7 +1595,10 @@ implemented at
 `26963baad5e0457bb24de4e39a80445ade1afa49` with docs SHA
 `b2fa135adfd6c0e7cca8eed5716c578aff7f2ab3`. No remaining capture-element
 blocker was found. Duplicate observations are now rejected atomically at
-`30f3f31c0b3d188beb51640c2a0de351b7f3ed9c` and await exact-SHA audit.
+`30f3f31c0b3d188beb51640c2a0de351b7f3ed9c` with docs SHA
+`08fce721b29b18429f792a018e751f55104cd81f`. No remaining defect was found in
+this slice. A dedicated exact-surface two-registry proof for same-key locality
+is at `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af` and awaits audit.
 
 ## Rollback / failure behavior
 
