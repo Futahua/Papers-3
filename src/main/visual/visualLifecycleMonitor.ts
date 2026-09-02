@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { VisualDiagnosticBuffer, VisualDiagnosticPayload } from './visualDiagnostics';
 
 export interface VisualDiagnosticTarget {
@@ -17,6 +18,10 @@ export interface VisualLifecycleMonitor {
 }
 
 const rendererOwnedPhases = ['state-hydrated', 'first-paint', 'layout-stable', 'render-failed'] as const;
+const rendererDiagnosticPayloadSchema = z.object({
+  kind: z.enum(['uncaught-error', 'unhandled-rejection']),
+  message: z.string().min(1).max(4096),
+}).strict();
 
 /** Validate a renderer signal at the main-process boundary. The caller owns
  * the target resolution; a renderer only supplies the predefined phase. */
@@ -34,6 +39,17 @@ export function recordRendererVisualSignal(
     phase: parsed.phase,
     ...(typeof parsed.detail === 'string' ? { detail: parsed.detail } : {}),
   });
+}
+
+/** Accept only the two renderer failure payloads. The target is supplied by
+ * authenticated main-process sender resolution, never by this payload. */
+export function recordRendererVisualDiagnostic(
+  buffer: VisualDiagnosticBuffer,
+  target: VisualDiagnosticTarget,
+  payload: unknown,
+): void {
+  const parsed = rendererDiagnosticPayloadSchema.parse(payload);
+  buffer.append(target, parsed);
 }
 
 function consoleLevel(level: unknown): 'debug' | 'info' | 'log' | 'warn' | 'error' {

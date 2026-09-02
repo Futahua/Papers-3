@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { registerVisualDiagnosticsIpc, resolveVisualDiagnosticTarget } from '../../src/main/ipc/visualDiagnosticsIpc';
+import { registerVisualDiagnosticsIpc, resolveVisualDiagnosticTarget, VISUAL_RENDERER_DIAGNOSTIC_CHANNEL } from '../../src/main/ipc/visualDiagnosticsIpc';
 import { createVisualDiagnosticBuffer } from '../../src/main/visual/visualDiagnostics';
 
 describe('visual diagnostics renderer IPC', () => {
@@ -45,5 +45,30 @@ describe('visual diagnostics renderer IPC', () => {
     };
     expect(resolveVisualDiagnosticTarget(oldSender, authority)).toBeNull();
     expect(resolveVisualDiagnosticTarget(newSender, authority)).toEqual({ windowId: 2, surfaceId: 'surface-a' });
+  });
+
+  it('routes strict renderer failure diagnostics through the same sender authority', () => {
+    const buffer = createVisualDiagnosticBuffer();
+    const on = vi.fn();
+    registerVisualDiagnosticsIpc({
+      ipcMain: { on },
+      resolveTarget: (sender) => sender.id === 7 ? { windowId: 2, surfaceId: 'surface-a' } : null,
+      bufferForWindow: () => buffer,
+    });
+    const listener = on.mock.calls.find(([channel]) => channel === VISUAL_RENDERER_DIAGNOSTIC_CHANNEL)?.[1] as
+      ((event: { sender: { id: number } }, payload: unknown) => void);
+
+    listener({ sender: { id: 7 } }, { kind: 'unhandled-rejection', message: 'C:\\private\\view.js' });
+    listener({ sender: { id: 7 } }, { kind: 'unhandled-rejection', message: 'spoofed target', target: { windowId: 99 } });
+    listener({ sender: { id: 8 } }, { kind: 'uncaught-error', message: 'ignored sender' });
+    listener({ sender: { id: 7 } }, { kind: 'uncaught-error', message: 'recorded after strict rejection' });
+
+    expect(buffer.snapshot()).toMatchObject([{
+      target: { windowId: 2, surfaceId: 'surface-a' },
+      payload: { kind: 'unhandled-rejection', message: '<path>' },
+    }, {
+      target: { windowId: 2, surfaceId: 'surface-a' },
+      payload: { kind: 'uncaught-error', message: 'recorded after strict rejection' },
+    }]);
   });
 });

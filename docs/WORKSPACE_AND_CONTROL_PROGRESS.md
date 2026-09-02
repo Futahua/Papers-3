@@ -470,17 +470,24 @@ later lifecycle hooks will append to:
   drop visual frames when the socket is under backpressure rather than growing
   an unbounded queue; historical sequence numbers remain available through
   `inspect.visual.diagnostics`.
+* [x] opt-in host and project preloads forward only strict bounded
+  `uncaught-error` and `unhandled-rejection` `{kind,message}` signals through
+  the authenticated renderer IPC channel; stacks, filenames, event objects,
+  and payload-supplied targets are not forwarded.
+* [x] the main IPC boundary resolves the sender-authoritative target, refuses
+  stale/unbound senders and malformed or oversized failure payloads, and keeps
+  redaction/retention and live event publication on the existing bounded path.
 
-The resource-attribution adapter and its focused regression tests are
-implemented but await reviewer sign-off. The event-subscription adapter is now
-implemented against the same hub and awaits the same fresh gate. The review
-must verify exact-target validation/order, post-append publication,
-classification, backpressure, and disconnect cleanup.
+The resource-attribution adapter and event-subscription adapter are implemented
+against the existing bounded path and have reviewer sign-off below. The
+renderer failure listeners are the current unreviewed slice; the next review
+must verify opt-in installation, strict payload shape, sender authority,
+redaction, and no-throw behavior.
 
 Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 8/8;
 `tests/unit/visualLifecycleMonitor.test.ts` passes 3/3;
 `tests/unit/visualResourceMonitor.test.ts` passes 4/4; the full host suite
-passes 772/772 with 4 skipped across 69 passed files and 1 skipped file;
+passes 776/776 with 4 skipped across 70 passed files and 1 skipped file;
 typecheck and diff check pass. This is not C1.2 completion; event subscription
 and broader control exposure remain unchecked.
 
@@ -490,17 +497,23 @@ slice at `730e3ab2659cc66ff910635dd8376f8b4a09da4c`. The final host review found
 no remaining defect after the exact `isMainFrame === true` correction. The
 reviewer specifically confirmed opt-in composition, close cleanup, exact target
 authority, schema revalidation, bounded/redacted records, and no polling or
-recovery side effects. Resource attribution and project-frame routing remain
-explicitly unclaimed.
+recovery side effects. Resource attribution and project-frame routing were
+subsequently completed and signed off below.
 
 The renderer-signal routing extension is also **SIGNED OFF** at
 `dd70318f04a2da8539727286a4d129f26a46bb17`. The reviewer confirmed that
 `resolveVisualDiagnosticTarget` is the production authority seam, stale replaced
 project senders are refused even while logical bindings lag cleanup, renderer
 payload targets are ignored, and no preload claims paint or layout stability
-automatically. The resource-attribution adapter was added after that gate and
-is intentionally awaiting fresh reviewer sign-off; event subscription and
-screenshot capture remain unchecked.
+automatically. The resource-attribution slice is **SIGNED OFF** at
+`ddfdd2e7f7bf3383179961f482a90d584b205fb6`, and exact-target event subscription
+is **SIGNED OFF** at `6ba945d137939afeab4460fcba7a21d9e5bd0bd4`; screenshot
+capture remains unchecked.
+
+The current renderer-failure diagnostic slice is intentionally awaiting review:
+both preloads install the two failure listeners only when
+`PAPERS_DEV_CONTROL=1`, and the main-process IPC boundary accepts only strict
+bounded `{kind,message}` payloads after sender-authoritative target resolution.
 
 ## Architectural boundary / likely owner
 

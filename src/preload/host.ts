@@ -3,6 +3,9 @@
  * Wider than the program API but still explicit methods only.
  */
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { installVisualDiagnosticListeners } from './visualDiagnostics';
+
+installVisualDiagnosticListeners(ipcRenderer, process.env['PAPERS_DEV_CONTROL'] === '1', globalThis);
 
 type Listener = (payload: unknown) => void;
 

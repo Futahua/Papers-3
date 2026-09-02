@@ -1,4 +1,7 @@
 import { ipcRenderer, webUtils } from 'electron';
+import { installVisualDiagnosticListeners } from './visualDiagnostics';
+
+installVisualDiagnosticListeners(ipcRenderer, process.env['PAPERS_DEV_CONTROL'] === '1', globalThis);
 
 interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 

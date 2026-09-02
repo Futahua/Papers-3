@@ -1,6 +1,6 @@
 import type { IpcMain } from 'electron';
 
-import { recordRendererVisualSignal, type VisualDiagnosticTarget } from '../visual/visualLifecycleMonitor';
+import { recordRendererVisualDiagnostic, recordRendererVisualSignal, type VisualDiagnosticTarget } from '../visual/visualLifecycleMonitor';
 import type { VisualDiagnosticBuffer } from '../visual/visualDiagnostics';
 
 export interface VisualDiagnosticsIpcDependencies {
@@ -39,20 +39,27 @@ export function resolveVisualDiagnosticTarget(
 }
 
 export const VISUAL_RENDERER_SIGNAL_CHANNEL = 'papers:visual:renderer-signal';
+export const VISUAL_RENDERER_DIAGNOSTIC_CHANNEL = 'papers:visual:renderer-diagnostic';
 
 /** Main-process-only receiver for predefined renderer lifecycle signals. The
  * sender, not the renderer payload, determines the window/surface target. */
 export function registerVisualDiagnosticsIpc(deps: VisualDiagnosticsIpcDependencies): void {
-  deps.ipcMain.on(VISUAL_RENDERER_SIGNAL_CHANNEL, (event, payload) => {
-    const target = deps.resolveTarget(event.sender);
+  const recordFromSender = (sender: { id: number }, payload: unknown, record: (buffer: VisualDiagnosticBuffer, target: VisualDiagnosticTarget, payload: unknown) => void): void => {
+    const target = deps.resolveTarget(sender);
     if (!target) return;
     const buffer = deps.bufferForWindow(target.windowId);
     if (!buffer) return;
     try {
-      recordRendererVisualSignal(buffer, target, payload);
+      record(buffer, target, payload);
     } catch {
       // Renderer input is untrusted; malformed signals are ignored and never
       // become a main-process exception or a product-state mutation.
     }
+  };
+  deps.ipcMain.on(VISUAL_RENDERER_SIGNAL_CHANNEL, (event, payload) => {
+    recordFromSender(event.sender, payload, recordRendererVisualSignal);
+  });
+  deps.ipcMain.on(VISUAL_RENDERER_DIAGNOSTIC_CHANNEL, (event, payload) => {
+    recordFromSender(event.sender, payload, recordRendererVisualDiagnostic);
   });
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { attachVisualLifecycleMonitor, type VisualLifecycleSource } from '../../src/main/visual/visualLifecycleMonitor';
+import { attachVisualLifecycleMonitor, recordRendererVisualDiagnostic, type VisualLifecycleSource } from '../../src/main/visual/visualLifecycleMonitor';
 import { createVisualDiagnosticBuffer } from '../../src/main/visual/visualDiagnostics';
 
 class FakeSource implements VisualLifecycleSource {
@@ -59,5 +59,26 @@ describe('visual lifecycle monitor', () => {
     expect(spy).not.toHaveBeenCalled();
     monitor.detach();
     spy.mockRestore();
+  });
+
+  it('accepts only strict bounded renderer failure payloads and redacts before retention', () => {
+    const buffer = createVisualDiagnosticBuffer();
+    recordRendererVisualDiagnostic(buffer, { windowId: 8, surfaceId: 'surface-c' }, {
+      kind: 'uncaught-error', message: 'C:\\private\\view.js token=secret',
+    });
+
+    expect(buffer.snapshot()).toMatchObject([{
+      target: { windowId: 8, surfaceId: 'surface-c' },
+      payload: { kind: 'uncaught-error', message: '<path> token=<redacted>' },
+    }]);
+    expect(() => recordRendererVisualDiagnostic(buffer, { windowId: 8 }, {
+      kind: 'uncaught-error', message: 'not retained', stack: 'must be ignored',
+    })).toThrow();
+    expect(() => recordRendererVisualDiagnostic(buffer, { windowId: 8 }, {
+      kind: 'console', message: 'wrong kind',
+    })).toThrow();
+    expect(() => recordRendererVisualDiagnostic(buffer, { windowId: 8 }, {
+      kind: 'unhandled-rejection', message: 'x'.repeat(4097),
+    })).toThrow();
   });
 });
