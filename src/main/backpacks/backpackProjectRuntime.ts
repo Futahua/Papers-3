@@ -18,7 +18,7 @@ export class BackpackProjectRuntime {
     private readonly preloadPath: string,
     transparent: boolean,
     private readonly onSurfaceClosed?: (projectId: string) => void,
-    private readonly onViewLoaded?: (view: WebContentsView, projectId: string) => Promise<void> | void,
+    private readonly onConsoleMessage?: (level: number, message: string) => void,
   ) {
     this.transparent = transparent;
   }
@@ -117,11 +117,19 @@ export class BackpackProjectRuntime {
         event.preventDefault();
       }
     });
+    let capturingBootstrapConsole = true;
+    view.webContents.on('dom-ready', () => { capturingBootstrapConsole = false; });
+    view.webContents.on('console-message', (...args: unknown[]) => {
+      const level = args[1];
+      const message = args[2];
+      if (capturingBootstrapConsole && typeof level === 'number' && typeof message === 'string' && message.length > 0) {
+        this.onConsoleMessage?.(level, message);
+      }
+    });
     options.beforeLoad?.(view.webContents.id);
     if (present) this.window.contentView.addChildView(view);
     this.fit();
     await view.webContents.loadURL(url);
-    await this.onViewLoaded?.(view, parsed.host);
     this.applySurface();
   }
 

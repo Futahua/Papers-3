@@ -516,15 +516,24 @@ capture remains unchecked.
 The current renderer-failure diagnostic slice is intentionally awaiting review:
 the normal preloads contain no failure observer; `PAPERS_DEV_CONTROL=1` selects
 dedicated dev-control preload entries that expose one fixed reporting seam, and
-the host's actual main-world renderer code installs the two failure listeners;
-Papers injects the same fixed observer into each loaded project page only in
-dev-control mode.
+the host's actual main-world renderer code installs the two failure listeners.
+The project dev-control preload requests the same fixed observer through
+Electron's `contextBridge.executeInMainWorld` at document start. Electron 43 can
+emit a project's first synchronous throw/rejection as an error-level
+`console-message` before that experimental callback's listeners receive it, so
+the project runtime also has a bounded bootstrap-only console fallback. It is
+attached to the exact newly-created project WebContents, records only uncaught
+error/rejection forms, is disabled at `dom-ready` to prevent duplicate later
+events, and is best-effort. It is not awaited by `show()`, so observation cannot
+make ordinary project startup fail.
 The main-process IPC boundary accepts only strict bounded `{kind,message}`
 payloads after sender-authoritative target resolution. No runtime capability
 query, shared sandbox preload chunk, arbitrary renderer execution, or polling
 loop is involved. The dev-only main-world test seams have no arguments and emit
 fixed path/credential-shaped messages solely to prove the end-to-end redaction
-and exact-target paths.
+and exact-target paths. The neutral project regression uses immediate startup
+throw/rejection and proves that `show()` still resolves while those failures
+are captured.
 
 ## Architectural boundary / likely owner
 

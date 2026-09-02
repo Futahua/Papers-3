@@ -1,4 +1,4 @@
-import { BaseWindow, type WebContents, type WebContentsView } from 'electron';
+import { BaseWindow, type WebContents } from 'electron';
 
 import { BackpackProjectRuntime } from './backpackProjectRuntime';
 
@@ -8,8 +8,11 @@ export interface PreparedProjectSurface {
   discard(): void;
 }
 
-type RuntimeFactory = (surfaceId: string, onSurfaceClosed?: (projectId: string) => void) => BackpackProjectRuntime;
-type ViewLoaded = (view: WebContentsView, surfaceId: string, projectId: string) => Promise<void> | void;
+type RuntimeFactory = (
+  surfaceId: string,
+  onSurfaceClosed?: (projectId: string) => void,
+  onConsoleMessage?: (level: number, message: string) => void,
+) => BackpackProjectRuntime;
 
 /**
  * The native project presentations owned by one Papers window.
@@ -35,7 +38,7 @@ export class BackpackProjectSurfaceCollection {
     private transparent: boolean,
     private readonly onSurfaceClosed?: (surfaceId: string, projectId: string) => void,
     private readonly createRuntime?: RuntimeFactory,
-    private readonly onViewLoaded?: ViewLoaded,
+    private readonly onProjectConsoleMessage?: (surfaceId: string, level: number, message: string) => void,
   ) {}
 
   get(surfaceId: string): BackpackProjectRuntime | null {
@@ -48,9 +51,10 @@ export class BackpackProjectSurfaceCollection {
     if (existing) return existing;
 
     const onSurfaceClosed = (projectId: string): void => this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
-    const runtime = this.createRuntime?.(surfaceId, onSurfaceClosed) ?? new BackpackProjectRuntime(
+    const onConsoleMessage = (level: number, message: string): void => this.onProjectConsoleMessage?.(surfaceId, level, message);
+    const runtime = this.createRuntime?.(surfaceId, onSurfaceClosed, onConsoleMessage) ?? new BackpackProjectRuntime(
       this.window, this.preloadPath, this.transparent, onSurfaceClosed,
-      this.onViewLoaded ? (view, projectId) => this.onViewLoaded!(view, surfaceId, projectId) : undefined,
+      onConsoleMessage,
     );
     this.runtimes.set(surfaceId, runtime);
     return runtime;
@@ -66,16 +70,17 @@ export class BackpackProjectSurfaceCollection {
   prepare(surfaceId: string): PreparedProjectSurface {
     if (this.runtimes.has(surfaceId)) throw new Error('project surface is already present in this window');
     let lifecycleActive = false;
+    const onConsoleMessage = (level: number, message: string): void => this.onProjectConsoleMessage?.(surfaceId, level, message);
     const runtime = this.createRuntime?.(surfaceId, (projectId) => {
       if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
-    }) ?? new BackpackProjectRuntime(
+    }, onConsoleMessage) ?? new BackpackProjectRuntime(
       this.window,
       this.preloadPath,
       this.transparent,
       (projectId) => {
         if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
       },
-      this.onViewLoaded ? (view, projectId) => this.onViewLoaded!(view, surfaceId, projectId) : undefined,
+      onConsoleMessage,
     );
     let adopted = false;
     return {

@@ -4,7 +4,10 @@ const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
 
 function installVisualDiagnosticListeners(
   ipc: { send(channel: string, payload: unknown): void },
-  mainWorld: { exposeInMainWorld(apiKey: string, api: { report(kind: string, message: string): void }): void },
+  mainWorld: {
+    exposeInMainWorld(apiKey: string, api: { report(kind: string, message: string): void }): void;
+    executeInMainWorld(script: { func: () => void }): unknown;
+  },
 ): void {
   mainWorld.exposeInMainWorld(MAIN_WORLD_DIAGNOSTIC_BRIDGE, {
     report(kind, message) {
@@ -13,6 +16,36 @@ function installVisualDiagnosticListeners(
       ipc.send('papers:visual:renderer-diagnostic', { kind, message: message.slice(0, 4096) });
     },
   });
+  try {
+    void Promise.resolve(mainWorld.executeInMainWorld({ func: () => {
+      const page = window as unknown as {
+        papersVisualDiagnosticBridgeV1?: { report(kind: string, message: string): void };
+        __papersVisualDiagnosticObserverV1?: boolean;
+      };
+      // The isolated-world bridge can become visible to the page a moment
+      // after this document-start callback runs. Install the listeners
+      // unconditionally and resolve the bridge when an event is delivered;
+      // otherwise an early bridge lookup would silently miss bootstrap
+      // failures from the project's first script.
+      if (page.__papersVisualDiagnosticObserverV1) return;
+      Object.defineProperty(page, '__papersVisualDiagnosticObserverV1', { value: true, configurable: false, enumerable: false });
+      const report = (kind: 'uncaught-error' | 'unhandled-rejection', message: unknown) => {
+        const bridge = page.papersVisualDiagnosticBridgeV1;
+        if (!bridge) return;
+        bridge.report(kind, typeof message === 'string' && message.length > 0 ? message.slice(0, 4096) :
+          (kind === 'uncaught-error' ? 'uncaught error' : 'unhandled rejection'));
+      };
+      window.addEventListener('error', (event) => report('uncaught-error', event.message));
+      window.addEventListener('unhandledrejection', (event) => {
+        const reason = event.reason;
+        report('unhandled-rejection', reason instanceof Error ? reason.message :
+          reason !== null && typeof reason === 'object' && typeof reason.message === 'string' ? reason.message :
+            typeof reason === 'string' ? reason : 'unhandled rejection');
+      });
+    } })).catch(() => undefined);
+  } catch {
+    // A build without main-world execution leaves diagnostics inert.
+  }
 }
 
 
@@ -547,5 +580,3 @@ window.addEventListener('message', (event) => {
     immediateHostResult(request.requestId, event.origin);
   }
 });
-
-

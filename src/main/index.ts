@@ -42,7 +42,7 @@ import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
 import { controlBuildIdentity } from './buildIdentity';
 import { createProcessInstanceIdentity, currentProcessInstanceSeed, type ProcessInstanceIdentity } from './visual/processIdentity';
-import { attachVisualLifecycleMonitor, VISUAL_PROJECT_FAILURE_OBSERVER_SCRIPT, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
+import { attachVisualLifecycleMonitor, recordRendererVisualDiagnostic, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
 import { createVisualDiagnosticBuffer, type VisualDiagnosticBuffer } from './visual/visualDiagnostics';
 import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visual/visualResourceMonitor';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
@@ -400,6 +400,29 @@ async function bootstrap(): Promise<void> {
     );
     if (workspace) detachRegistry.unregister(workspace.id);
   };
+  const onProjectConsoleMessage = process.env['PAPERS_DEV_CONTROL'] === '1'
+    ? (windowId: number, surfaceId: string, level: number, message: string): void => {
+      if (level !== 3 || message.length === 0) return;
+      const isUnhandledRejection = message.startsWith('Uncaught (in promise)');
+      const isUncaughtError = message.startsWith('Uncaught');
+      if (!isUnhandledRejection && !isUncaughtError) return;
+      const prefix = isUnhandledRejection ? 'Uncaught (in promise)' : 'Uncaught';
+      const detail = isUnhandledRejection
+        ? (message.slice(prefix.length).trim().replace(/^Error:\s*/i, '') || 'unhandled rejection')
+        : (message || 'uncaught error');
+      const buffer = visualDiagnosticsByWindow.get(windowId);
+      if (!buffer) return;
+      try {
+        recordRendererVisualDiagnostic(buffer, { windowId, surfaceId }, {
+          kind: isUnhandledRejection ? 'unhandled-rejection' : 'uncaught-error',
+          message: detail,
+        });
+      } catch {
+        // Diagnostic collection is best effort and must never affect the
+        // project renderer or normal Papers startup.
+      }
+    }
+    : undefined;
   const makePapersWindow = (bounds?: WindowBounds) => {
     const instance = createPapersWindow({
       bounds,
@@ -411,9 +434,7 @@ async function bootstrap(): Promise<void> {
       rendererUrl: process.env['ELECTRON_RENDERER_URL'],
       rendererFile: path.join(app.getAppPath(), 'out', 'renderer', 'index.html'),
       onProjectSurfaceClosed,
-      onProjectViewLoaded: process.env['PAPERS_DEV_CONTROL'] === '1'
-        ? async (view) => { await view.webContents.executeJavaScript(VISUAL_PROJECT_FAILURE_OBSERVER_SCRIPT, true); }
-        : undefined,
+      onProjectConsoleMessage,
     });
     if (process.env['PAPERS_DEV_CONTROL'] === '1') {
       const windowId = instance.window.id;

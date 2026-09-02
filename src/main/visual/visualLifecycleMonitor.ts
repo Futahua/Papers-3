@@ -17,26 +17,6 @@ export interface VisualLifecycleMonitor {
   detach(): void;
 }
 
-/** Fixed main-world observer used for independently maintained project pages.
- * The page only sees the already-exposed, fixed diagnostic seam; it receives
- * no IPC object, target, stack, URL, or arbitrary code from control callers. */
-export const VISUAL_PROJECT_FAILURE_OBSERVER_SCRIPT = `(() => {
-  const installedKey = '__papersVisualDiagnosticObserverV1';
-  if (window[installedKey]) return;
-  const bridge = window.papersVisualDiagnosticBridgeV1;
-  if (!bridge) return;
-  Object.defineProperty(window, installedKey, { value: true, configurable: false, enumerable: false });
-  const report = (kind, message) => bridge.report(kind, typeof message === 'string' && message.length > 0 ? message.slice(0, 4096) :
-    (kind === 'uncaught-error' ? 'uncaught error' : 'unhandled rejection'));
-  window.addEventListener('error', (event) => report('uncaught-error', event.message));
-  window.addEventListener('unhandledrejection', (event) => {
-    const reason = event.reason;
-    report('unhandled-rejection', reason instanceof Error ? reason.message :
-      reason !== null && typeof reason === 'object' && typeof reason.message === 'string' ? reason.message :
-        typeof reason === 'string' ? reason : 'unhandled rejection');
-  });
-})()`;
-
 const rendererOwnedPhases = ['state-hydrated', 'first-paint', 'layout-stable', 'render-failed'] as const;
 const rendererDiagnosticPayloadSchema = z.object({
   kind: z.enum(['uncaught-error', 'unhandled-rejection']),

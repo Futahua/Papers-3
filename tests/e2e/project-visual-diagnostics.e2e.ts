@@ -39,10 +39,8 @@ beforeAll(async () => {
   await writeFile(join(dataDir, 'backpack-projects.json'), JSON.stringify({ schemaVersion: 1, projects: { [PROJECT]: { root: projectRoot } } }));
   await writeFile(join(projectRoot, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: PROJECT, entry: 'public/index.html' }));
   await writeFile(join(projectRoot, 'public', 'index.html'), '<!doctype html><script src="app.js"></script><h1>Neutral project</h1>');
-  await writeFile(join(projectRoot, 'public', 'app.js'), `window.__papersProjectVisualDiagnosticTestV1 = () => {
-    setTimeout(() => { throw new Error('C:\\\\private\\\\project.js token=secret'); }, 0);
-    setTimeout(() => { Promise.reject(new Error('C:\\\\private\\\\project-promise.js password=secret')); }, 0);
-  };`);
+  await writeFile(join(projectRoot, 'public', 'app.js'), `Promise.reject(new Error('C:\\\\private\\\\project-promise.js password=secret'));
+    throw new Error('C:\\\\private\\\\project.js token=secret');`);
   launched = await launchPapers(userDataDir, { fixtures: false, devControlDescriptor: descriptorPath });
   await waitFor(async () => {
     try { await readFile(descriptorPath, 'utf8'); return true; } catch { return false; }
@@ -60,14 +58,13 @@ describe('project renderer visual diagnostics', () => {
       launched.app,
       `window.papersHost.backpackProject.open(${JSON.stringify(PROJECT)})`,
     );
+    const before = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{ sequence: number }>;
+    const beforeSequence = Math.max(0, ...before.map((record) => record.sequence));
     await evalInHost(
       launched.app,
       `window.papersHost.backpackProject.showSurface(${JSON.stringify(opened.surfaceId)}, ${JSON.stringify(opened.url)}).then(() => true)`,
     );
-    await waitFor(async () => (await evalInBackpackProject<string>(launched.app, 'typeof window.__papersProjectVisualDiagnosticTestV1')) === 'function', 10_000, 'neutral project renderer');
-    const before = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{ sequence: number }>;
-    const beforeSequence = Math.max(0, ...before.map((record) => record.sequence));
-    await evalInBackpackProject(launched.app, 'window.__papersProjectVisualDiagnosticTestV1(); true');
+    expect(await evalInBackpackProject(launched.app, 'Boolean(window.__papersVisualDiagnosticObserverV1)')).toBe(true);
     await waitFor(async () => {
       const records = await call('inspect.visual.diagnostics', { windowId, surfaceId: opened.surfaceId }) as Array<{ sequence: number; payload: { kind?: string } }>;
       return records.filter((record) => record.sequence > beforeSequence
