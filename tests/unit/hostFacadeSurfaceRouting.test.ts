@@ -5,6 +5,8 @@ import { createLogicalSurfaceRegistry } from '../../src/main/windows/logicalSurf
 import { createSurfaceContextRegistry } from '../../src/main/windows/surfaceContextRegistry';
 import { createWorkspaceTopology, openWorkspaceSurface, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
 import type { NamedWorkspaceLayout } from '../../src/main/persistence/workspaceLayoutStore';
+import { controlRequestSchema, dispatchPapersControl, PAPERS_CONTROL_PROTOCOL_VERSION } from '../../src/main/control/papersControlProtocol';
+import { createPapersControlConfirmationBroker } from '../../src/main/control/papersControlConfirmation';
 
 const PROJECT = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 const OTHER = 'bp-a5d07080-7210-45e6-b3f1-93978873a2fe';
@@ -25,6 +27,7 @@ function createFacade() {
   const openProject = vi.fn(async (id: string) => id === PROJECT || id === OTHER ? { url: `papers-backpack://${id}/open` } : null);
   const archivedProjects = new Set<string>();
   const removedProjects = new Set<string>();
+  const projectNames = new Map([[PROJECT, 'Alpha'], [OTHER, 'Beta']]);
   const sendToWindow = vi.fn();
   const focusedSurfaces = new Map<number, string | null>();
   const enteredBackpacks = new Map<number, string | null>();
@@ -69,6 +72,7 @@ function createFacade() {
     if (archived) archivedProjects.add(id); else archivedProjects.delete(id);
   });
   const remove = vi.fn(async (id: string) => { removedProjects.add(id); });
+  const rename = vi.fn(async (id: string, name: string) => { projectNames.set(id, name); });
   const facade = new PapersHostFacade({
     surfaces,
     logicalSurfaces,
@@ -126,9 +130,10 @@ function createFacade() {
     closeBackpackProjectSurface,
     registry: {
       find: (id: string) => (id === PROJECT || id === OTHER) && !removedProjects.has(id) ? {
-        id, name: id === PROJECT ? 'Alpha' : 'Beta', archived: archivedProjects.has(id),
+        id, name: projectNames.get(id)!, archived: archivedProjects.has(id),
       } : null,
       list: () => [],
+      rename,
       setArchived,
       remove,
       markLeft,
@@ -146,7 +151,7 @@ function createFacade() {
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
     setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, archivedProjects, markLeft,
     removedProjects, setArchived, remove, markEntered, workspaceLayouts, workspaceIds, workspaceRevisions, closingWindows,
-    commitPair, restorePair, prepareProjectSurface,
+    commitPair, restorePair, prepareProjectSurface, rename, projectNames,
   };
 }
 
@@ -527,6 +532,57 @@ describe('surface routing in the host facade', () => {
     await changingAvailability;
     await expect(opening).rejects.toThrow(/not available/);
     expect(logicalSurfaces.project()).toEqual([]);
+  });
+
+  it('refuses a confirmed archive when rename wins after challenge consumption but before the facade gate', async () => {
+    const { facade, archivedProjects, projectNames } = createFacade();
+    const confirmations = createPapersControlConfirmationBroker({
+      now: () => 1_000,
+      createId: () => '11111111-1111-4111-8111-111111111111',
+    });
+    const context = { connectionId: 'connection-a', confirmations };
+    const base = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+      createWindow: async () => ({ windowId: 1 }),
+      backpack: (projectId: string) => projectId === PROJECT ? {
+        id: PROJECT, name: projectNames.get(PROJECT), archived: archivedProjects.has(PROJECT),
+      } : null,
+    };
+    const prepare = controlRequestSchema.parse({
+      id: 1, token: 'secret', protocolVersion: PAPERS_CONTROL_PROTOCOL_VERSION,
+      method: 'backpack.archive.prepare', params: { projectId: PROJECT },
+    });
+    const challenge = await dispatchPapersControl(base, prepare, context) as {
+      challengeId: string; confirmationText: string;
+    };
+
+    let releaseBeforeFacade!: () => void;
+    const beforeFacade = new Promise<void>((resolve) => { releaseBeforeFacade = resolve; });
+    let reachedDependency = false;
+    const execute = controlRequestSchema.parse({
+      id: 2, token: 'secret', protocolVersion: PAPERS_CONTROL_PROTOCOL_VERSION,
+      method: 'confirmation.execute', params: {
+        challengeId: challenge.challengeId, confirmationText: challenge.confirmationText,
+      },
+    });
+    const executing = dispatchPapersControl({
+      ...base,
+      archiveBackpack: async (projectId: string, confirmedName: string) => {
+        reachedDependency = true;
+        await beforeFacade;
+        await facade.archiveBackpackFromControl(projectId, confirmedName);
+      },
+    }, execute, context);
+    await vi.waitFor(() => expect(reachedDependency).toBe(true));
+
+    await facade.renameBackpack(PROJECT, 'Beta');
+    releaseBeforeFacade();
+    await expect(executing).rejects.toThrow(/confirmed Backpack changed/);
+    expect(archivedProjects.has(PROJECT)).toBe(false);
+    await expect(dispatchPapersControl({
+      ...base,
+      archiveBackpack: (projectId: string, confirmedName: string) => facade.archiveBackpackFromControl(projectId, confirmedName),
+    }, execute, context)).rejects.toThrow(/missing or expired/);
   });
 
   it('aborts a pair when either window starts finalization before handoff', async () => {

@@ -46,7 +46,7 @@ describe('Papers developer control protocol', () => {
     await expect(dispatchPapersControl(dependencies, request('confirmation.execute', {
       challengeId: archive.challengeId, confirmationText: archive.confirmationText,
     }), context)).resolves.toEqual({ action: 'backpack.archive', projectId: 'bp-a', name: 'Alpha' });
-    expect(archiveBackpack).toHaveBeenCalledWith('bp-a');
+    expect(archiveBackpack).toHaveBeenCalledWith('bp-a', 'Alpha');
 
     const removal = await dispatchPapersControl(
       dependencies,

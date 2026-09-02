@@ -423,49 +423,82 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async renameBackpack(id: string, name: string): Promise<void> {
-    await this.deps.registry.rename(id, name);
+    await this.runProjectOwnership(id, () => this.deps.registry.rename(id, name));
     this.emitBackpacksChanged();
   }
 
-  async setBackpackArchived(id: string, archived: boolean): Promise<void> {
-    if (archived) {
-      await this.runProjectOwnership(id, async () => {
-        const releaseMutation = this.acquireWorkspaceMutationForProject(id);
-        try {
-          // Persist first. If persistence fails, live windows must keep their
-          // current project and identity because the Backpack is still available.
-          await this.deps.registry.setArchived(id, archived);
-          // The Backpack itself became unavailable, so EVERY window that entered
-          // it must leave. This is one of the few operations that legitimately
-          // reaches across windows; an ordinary leave touches only its own.
-          this.closeAndRetireLogicalProjectSurfaces(id, true);
-          await this.deps.retireBackpackProjectSurfaces(id);
-          this.deps.clearEnteredBackpackEverywhere(id);
-          this.deps.surfaces.unbindProject(id);
-        } finally {
-          releaseMutation();
-        }
-      });
-    } else {
-      await this.deps.registry.setArchived(id, archived);
+  private assertConfirmedBackpack(id: string, confirmedName: string, action: 'archive' | 'remove'): void {
+    const backpack = this.deps.registry.find(id);
+    if (!backpack || backpack.name !== confirmedName) {
+      throw new Error('The confirmed Backpack changed or is no longer available.');
     }
-    this.emitBackpacksChanged();
+    if (action === 'archive' && backpack.archived) {
+      throw new Error('The confirmed Backpack is already archived.');
+    }
+    if (action === 'remove' && !backpack.archived) {
+      throw new Error('The confirmed Backpack is no longer archived.');
+    }
   }
 
-  async removeBackpack(id: string): Promise<void> {
-    await this.runProjectOwnership(id, async () => {
+  private async setBackpackArchivedWithOwnershipHeld(id: string, archived: boolean): Promise<void> {
+    if (archived) {
       const releaseMutation = this.acquireWorkspaceMutationForProject(id);
       try {
-        await this.deps.registry.remove(id);
+        // Persist first. If persistence fails, live windows must keep their
+        // current project and identity because the Backpack is still available.
+        await this.deps.registry.setArchived(id, archived);
+        // The Backpack itself became unavailable, so EVERY window that entered
+        // it must leave. This is one of the few operations that legitimately
+        // reaches across windows; an ordinary leave touches only its own.
         this.closeAndRetireLogicalProjectSurfaces(id, true);
         await this.deps.retireBackpackProjectSurfaces(id);
         this.deps.clearEnteredBackpackEverywhere(id);
         this.deps.surfaces.unbindProject(id);
-        this.emitBackpacksChanged();
       } finally {
         releaseMutation();
       }
+    } else {
+      await this.deps.registry.setArchived(id, archived);
+    }
+  }
+
+  async setBackpackArchived(id: string, archived: boolean): Promise<void> {
+    await this.runProjectOwnership(id, () => this.setBackpackArchivedWithOwnershipHeld(id, archived));
+    this.emitBackpacksChanged();
+  }
+
+  async archiveBackpackFromControl(id: string, confirmedName: string): Promise<void> {
+    await this.runProjectOwnership(id, async () => {
+      this.assertConfirmedBackpack(id, confirmedName, 'archive');
+      await this.setBackpackArchivedWithOwnershipHeld(id, true);
     });
+    this.emitBackpacksChanged();
+  }
+
+  private async removeBackpackWithOwnershipHeld(id: string): Promise<void> {
+    const releaseMutation = this.acquireWorkspaceMutationForProject(id);
+    try {
+      await this.deps.registry.remove(id);
+      this.closeAndRetireLogicalProjectSurfaces(id, true);
+      await this.deps.retireBackpackProjectSurfaces(id);
+      this.deps.clearEnteredBackpackEverywhere(id);
+      this.deps.surfaces.unbindProject(id);
+    } finally {
+      releaseMutation();
+    }
+  }
+
+  async removeBackpack(id: string): Promise<void> {
+    await this.runProjectOwnership(id, () => this.removeBackpackWithOwnershipHeld(id));
+    this.emitBackpacksChanged();
+  }
+
+  async removeBackpackFromControl(id: string, confirmedName: string): Promise<void> {
+    await this.runProjectOwnership(id, async () => {
+      this.assertConfirmedBackpack(id, confirmedName, 'remove');
+      await this.removeBackpackWithOwnershipHeld(id);
+    });
+    this.emitBackpacksChanged();
   }
 
   private acquireWorkspaceMutationForProject(projectId: string): () => void {

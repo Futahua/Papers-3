@@ -55,11 +55,12 @@ single-use challenge and then executes it. The challenge is bound to that
 connection, exact action, Backpack ID and current name; it expires after five
 minutes, is consumed by the first execution attempt, and is revoked when the
 connection closes. Papers rechecks the Backpack's name and archived state
-immediately before mutation. A different connection, stale name/state, wrong
-phrase, expired challenge or replay is refused. `backpack.remove` also retains
-the product rule that only an already archived Backpack may be removed; its
-internal record remains recoverable and external files/applications are not
-touched.
+while holding the same per-project ownership gate used by rename, archive,
+restore and removal, and keeps that gate through mutation. A different
+connection, stale name/state, wrong phrase, expired challenge or replay is
+refused. `backpack.remove` also retains the product rule that only an already
+archived Backpack may be removed; its internal record remains recoverable and
+external files/applications are not touched.
 
 When attached to a terminal, `papersctl` prompts for the exact phrase. Automated
 callers may pass `--confirmation`, but must supply the complete phrase naming

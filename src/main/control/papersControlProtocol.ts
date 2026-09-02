@@ -297,8 +297,8 @@ export interface PapersControlDependencies {
   windows(): unknown;
   createWindow(): Promise<unknown>;
   backpack?(projectId: string): unknown;
-  archiveBackpack?(projectId: string): Promise<void>;
-  removeBackpack?(projectId: string): Promise<void>;
+  archiveBackpack?(projectId: string, confirmedName: string): Promise<void>;
+  removeBackpack?(projectId: string, confirmedName: string): Promise<void>;
   /** Publish only schema-validated, redacted semantic events to subscribed
    * control connections. The transport owns connection-local fan-out. */
   publishEvent?(event: PapersControlEventName, payload: unknown): void;
@@ -376,11 +376,11 @@ export async function dispatchPapersControl(
       if (challenge.action === 'backpack.archive') {
         if (backpack.archived) throw new Error('The confirmed Backpack is already archived.');
         if (!dependencies.archiveBackpack) throw new Error('Backpack archiving is unavailable.');
-        await dependencies.archiveBackpack(challenge.target.projectId);
+        await dependencies.archiveBackpack(challenge.target.projectId, challenge.target.name);
       } else {
         if (!backpack.archived) throw new Error('The confirmed Backpack is no longer archived.');
         if (!dependencies.removeBackpack) throw new Error('Backpack deletion is unavailable.');
-        await dependencies.removeBackpack(challenge.target.projectId);
+        await dependencies.removeBackpack(challenge.target.projectId, challenge.target.name);
       }
       return papersControlCommands[request.method].output.parse({
         action: challenge.action,

@@ -1085,17 +1085,28 @@ remains the correctness path, with no production behavior change.
   attempt, and revoke them when their connection closes.
 - [x] Recheck exact target name and archive state immediately before mutation;
   removal still requires the Backpack to be archived.
+- [x] Serialize rename and archive/restore/remove under the same per-project
+  ownership gate; confirmed control actions hold that gate continuously from
+  final exact-name/state validation through mutation.
 - [x] Keep `papersctl` on one connection for prepare→confirm→execute, with an
   interactive exact-phrase prompt or explicit `--confirmation` text.
 - [x] Prove wrong-connection, wrong-phrase, expiry, replay, disconnect, stale
   target and live archive/removal behavior.
 - [ ] Reviewer sign-off on the exact pushed head.
 
-Validation at the candidate worktree: typecheck passed; focused confirmation,
-protocol, server and client tests passed 43/43; full Vitest passed 732/736 (4
-skipped); production build passed; live developer-control Electron E2E passed
-4/4 using the real `papersctl` executable; and `git diff --check` passed. The
-pre-existing user-owned modification to
+The initial exact-head review at `c4a67793f10b767e2024b15641c36fc00823b8d2`
+found one concrete rename race between protocol revalidation and entry into the
+facade's project-ownership gate. The correction gates rename and adds confirmed
+facade operations that revalidate and mutate while continuously holding that
+same gate. A focused regression consumes the challenge, deliberately pauses
+before facade entry, lets rename win, then proves the destructive mutation is
+refused and the challenge cannot be replayed.
+
+Validation at the corrected candidate worktree: typecheck passed; focused
+confirmation/protocol/server/client/facade tests passed 87/87; full Vitest
+passed 733/737 (4 skipped); production build passed; live developer-control
+Electron E2E passed 4/4 using the real `papersctl` executable; and
+`git diff --check` passed. The pre-existing user-owned modification to
 `docs/evidence/worker-comparison.json` remains untouched.
 
 ### Electron 43.1.1 live-WebContentsView reparent compatibility — signed off
