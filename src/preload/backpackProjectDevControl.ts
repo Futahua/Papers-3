@@ -55,6 +55,7 @@ function installVisualDiagnosticListeners(
       document,
       MutationObserver: typeof MutationObserver === 'undefined' ? undefined : MutationObserver,
       documentInstanceId: documentInstanceId ?? undefined,
+      devicePixelRatio: window.devicePixelRatio,
     });
   } catch {
     // Semantic observation is diagnostic-only and must never affect startup.

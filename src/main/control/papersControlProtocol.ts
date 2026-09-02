@@ -11,7 +11,7 @@ import type {
   PapersControlDestructiveAction,
 } from './papersControlConfirmation';
 import { visualDiagnosticRecordSchema } from '../visual/visualDiagnostics';
-import { visualSemanticKeyListSchema, visualSemanticKeySchema } from '@shared/visualSemanticKeys';
+import { visualElementObservationSchema, visualSemanticKeyListSchema, visualSemanticKeySchema } from '@shared/visualSemanticKeys';
 
 export const PAPERS_CONTROL_PROTOCOL_VERSION = 1;
 
@@ -70,7 +70,8 @@ const visualElementIdentitySchema = z.object({ key: visualSemanticKeySchema }).s
 const visualElementsInspectionSchema = z.object({
   windowId: z.number().int(),
   surfaceId: z.string().min(1).max(128),
-  elements: z.array(visualElementIdentitySchema).max(256),
+  layoutEpoch: z.number().int().nonnegative().nullable().optional(),
+  elements: z.array(z.union([visualElementIdentitySchema, visualElementObservationSchema])).max(256),
 }).strict();
 const visualArtifactIdSchema = z.string().regex(/^va-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const visualArtifactMetadataSchema = z.object({

@@ -45,7 +45,7 @@ import { controlBuildIdentity } from './buildIdentity';
 import { createProcessInstanceIdentity, currentProcessInstanceSeed, type ProcessInstanceIdentity } from './visual/processIdentity';
 import { attachVisualLifecycleMonitor, recordRendererVisualDiagnostic, visualConsoleLevel, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
 import { createVisualDiagnosticBuffer, type VisualDiagnosticBuffer } from './visual/visualDiagnostics';
-import { createVisualSemanticKeyRegistry, type VisualSemanticKeyRegistry } from '@shared/visualSemanticKeys';
+import { createVisualSemanticKeyRegistry, type VisualElementObservation, type VisualSemanticKeyRegistry } from '@shared/visualSemanticKeys';
 import { attachVisualResourceMonitor, type VisualResourceMonitor } from './visual/visualResourceMonitor';
 import { refreshCurrentVisualSemanticKeys } from './visual/visualSemanticObservationRefresh';
 import { createVisualSurfaceObservationStore } from './visual/visualSurfaceObservationState';
@@ -161,6 +161,7 @@ const visualLifecycleMonitors = new Map<number, VisualLifecycleMonitor>();
 interface VisualSemanticKeySurfaceState {
   registry: VisualSemanticKeyRegistry;
   currentSenderId: number | null;
+  observations: VisualElementObservation[];
 }
 
 const visualSemanticKeysBySurface = new Map<string, VisualSemanticKeySurfaceState>();
@@ -175,7 +176,7 @@ function semanticKeyStateForSurface(windowId: number, surfaceId: string): Visual
   const key = visualSemanticKeyMapKey(windowId, surfaceId);
   let state = visualSemanticKeysBySurface.get(key);
   if (!state) {
-    state = { registry: createVisualSemanticKeyRegistry(), currentSenderId: null };
+    state = { registry: createVisualSemanticKeyRegistry(), currentSenderId: null, observations: [] };
     visualSemanticKeysBySurface.set(key, state);
   }
   return state;
@@ -187,6 +188,7 @@ function bindVisualSemanticKeySender(windowId: number, surfaceId: string, sender
   if (state.currentSenderId !== senderId) {
     state.currentSenderId = senderId;
     state.registry.clear();
+    state.observations = [];
   }
 }
 
@@ -196,12 +198,14 @@ function invalidateVisualSemanticKeySender(windowId: number, surfaceId: string, 
   if (!state || state.currentSenderId !== senderId) return;
   state.currentSenderId = null;
   state.registry.clear();
+  state.observations = [];
 }
 
 function resetVisualSemanticKeyObservation(windowId: number, surfaceId: string, senderId: number): void {
   const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
   if (!state || state.currentSenderId !== senderId) return;
   state.registry.clear();
+  state.observations = [];
 }
 
 function retireVisualSemanticKeySurface(surfaceId: string): void {
@@ -1830,8 +1834,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
       return state?.currentSenderId === senderId ? state.registry : null;
     },
-    onObserved: ({ windowId, surfaceId }, senderId, keys) => {
+    onObserved: ({ windowId, surfaceId }, senderId, keys, observations) => {
       visualSurfaceObservationState.replaceSemanticKeys(windowId, surfaceId, senderId, keys);
+      const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
+      if (state?.currentSenderId === senderId) state.observations = observations ? observations.map((observation) => ({ ...observation })) : [];
     },
     isCurrentDocumentInstance: ({ windowId, surfaceId }, senderId, documentInstanceId) => {
       const state = visualSurfaceObservationState.snapshot(windowId, surfaceId);
@@ -1897,10 +1903,16 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           const observed = state && state.currentSenderId === currentSenderId
             ? state.registry.snapshot(keys)
             : [];
+          const requested = keys ? new Set(keys) : null;
+          const elements = state && state.currentSenderId === currentSenderId
+            ? state.observations.filter((observation) => !requested || requested.has(observation.key))
+            : [];
+          const layoutEpoch = visualSurfaceObservationState.snapshot(windowId, surfaceId)?.layoutEpoch ?? null;
           return {
             windowId,
             surfaceId,
-            elements: observed.map((key) => ({ key })),
+            ...(layoutEpoch !== null ? { layoutEpoch } : {}),
+            elements: elements.length > 0 ? elements : observed.map((key) => ({ key })),
           };
         },
         visualArtifactRead: visualArtifactStore

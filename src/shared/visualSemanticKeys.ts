@@ -33,6 +33,34 @@ export const visualSemanticKeyListSchema = z.array(visualSemanticKeySchema)
 
 export type VisualSemanticKey = z.infer<typeof visualSemanticKeySchema>;
 
+const visualBoundsSchema = z.object({
+  x: z.number().finite(), y: z.number().finite(),
+  width: z.number().finite().nonnegative(), height: z.number().finite().nonnegative(),
+}).strict();
+
+export const visualElementObservationSchema = z.object({
+  key: visualSemanticKeySchema,
+  role: z.string().max(64).optional(),
+  accessibleName: z.string().max(256).optional(),
+  boundsCss: visualBoundsSchema,
+  boundsDevice: visualBoundsSchema,
+  visible: z.boolean(),
+  visibilityReasons: z.array(z.enum([
+    'display-none', 'visibility-hidden', 'opacity-zero', 'zero-area',
+    'outside-viewport', 'ancestor-clipped', 'covered-at-sample-points', 'detached', 'surface-hidden',
+  ])).max(8),
+  clippedPercent: z.number().finite().min(0).max(100),
+  opacity: z.number().finite().min(0).max(1),
+  overlapKeys: z.array(visualSemanticKeySchema).max(16),
+  contrast: z.union([
+    z.object({ status: z.literal('known'), ratio: z.number().finite().min(1).max(21) }).strict(),
+    z.object({ status: z.literal('unknown') }).strict(),
+  ]),
+}).strict();
+
+export const visualElementObservationListSchema = z.array(visualElementObservationSchema).max(VISUAL_SEMANTIC_KEY_MAX_COUNT);
+export type VisualElementObservation = z.infer<typeof visualElementObservationSchema>;
+
 export interface VisualSemanticKeyRegistry {
   /** Replace one surface's observed set atomically after strict validation. */
   replaceObserved(rawKeys: unknown): readonly VisualSemanticKey[];

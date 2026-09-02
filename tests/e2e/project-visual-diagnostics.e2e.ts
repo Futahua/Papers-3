@@ -242,12 +242,16 @@ describe('project renderer visual diagnostics', () => {
     await expect(call('inspect.visual.elements', {
       windowId, surfaceId: second.surfaceId,
     })).rejects.toThrow(/not open/);
-    await expect(call('inspect.visual.elements', {
+    const finalElements = await call('inspect.visual.elements', {
       windowId, surfaceId: opened.surfaceId,
-    })).resolves.toEqual({
-      windowId, surfaceId: opened.surfaceId,
-      elements: [{ key: 'canvas.root' }, { key: 'title.main' }],
-    });
+    }) as { windowId: number; surfaceId: string; layoutEpoch?: number | null; elements: Array<{ key: string; boundsCss?: { width: number; height: number }; visible?: boolean; contrast?: { status: string } }> };
+    expect(finalElements.windowId).toBe(windowId);
+    expect(finalElements.surfaceId).toBe(opened.surfaceId);
+    expect(finalElements.layoutEpoch).toEqual(expect.any(Number));
+    expect(finalElements.elements).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'canvas.root', boundsCss: expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }), visible: expect.any(Boolean) }),
+      expect.objectContaining({ key: 'title.main', boundsCss: expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }), visible: expect.any(Boolean) }),
+    ]));
     const stagedFailures = (await call('inspect.visual.diagnostics', { windowId: secondary.windowId }) as Array<{
       sequence: number; target: { surfaceId?: string }; payload: { kind?: string };
     }>).filter((record) => record.sequence > beforeTargetSequence
