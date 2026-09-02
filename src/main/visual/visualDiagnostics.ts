@@ -6,6 +6,7 @@ export const visualLifecyclePhases = [
   'state-hydrated',
   'first-paint',
   'layout-stable',
+  'layout-epoch',
   'render-failed',
 ] as const;
 export type VisualLifecyclePhase = (typeof visualLifecyclePhases)[number];
@@ -21,6 +22,7 @@ const hydrationSummarySchema = z.record(
     context.addIssue({ code: 'custom', message: 'hydration summary has too many entries' });
   }
 });
+const documentInstanceIdSchema = z.string().uuid();
 
 const lifecyclePayloadSchema = z.object({
   kind: z.literal('lifecycle'),
@@ -30,6 +32,8 @@ const lifecyclePayloadSchema = z.object({
   summary: hydrationSummarySchema.optional(),
   stage: hydrationFailureStageSchema.optional(),
   code: hydrationFailureCodeSchema.optional(),
+  epoch: z.number().int().nonnegative().optional(),
+  documentInstanceId: documentInstanceIdSchema.optional(),
 }).strict().superRefine((payload, context) => {
   if (payload.phase === 'state-hydrated' && !payload.revision) {
     context.addIssue({ code: 'custom', path: ['revision'], message: 'state-hydrated requires an opaque revision' });
@@ -52,6 +56,12 @@ const lifecyclePayloadSchema = z.object({
   if (payload.phase === 'render-failed' && payload.stage === undefined && payload.code === undefined && payload.revision !== undefined) {
     context.addIssue({ code: 'custom', message: 'render-failed revision requires hydration failure metadata' });
   }
+  if (payload.phase === 'layout-epoch' && payload.epoch === undefined) {
+    context.addIssue({ code: 'custom', path: ['epoch'], message: 'layout-epoch requires an epoch' });
+  }
+  if (payload.phase !== 'layout-epoch' && payload.phase !== 'layout-stable' && payload.epoch !== undefined) {
+    context.addIssue({ code: 'custom', path: ['epoch'], message: 'epoch is only valid for layout-epoch' });
+  }
 });
 
 const visualDiagnosticPayloadSchema = z.discriminatedUnion('kind', [
@@ -60,35 +70,42 @@ const visualDiagnosticPayloadSchema = z.discriminatedUnion('kind', [
     kind: z.literal('console'),
     level: z.enum(['debug', 'info', 'log', 'warn', 'error']),
     message: z.string().min(1).max(4096),
+    documentInstanceId: documentInstanceIdSchema.optional(),
   }).strict(),
   z.object({
     kind: z.literal('uncaught-error'),
     message: z.string().min(1).max(4096),
+    documentInstanceId: documentInstanceIdSchema.optional(),
   }).strict(),
   z.object({
     kind: z.literal('unhandled-rejection'),
     message: z.string().min(1).max(4096),
+    documentInstanceId: documentInstanceIdSchema.optional(),
   }).strict(),
   z.object({
     kind: z.literal('navigation-failed'),
     errorCode: z.number().int(),
     message: z.string().min(1).max(2048),
+    documentInstanceId: documentInstanceIdSchema.optional(),
   }).strict(),
   z.object({
     kind: z.literal('resource-failed'),
     resourceKind: z.enum(['script', 'style', 'image', 'font', 'other']),
     errorCode: z.number().int().optional(),
     message: z.string().min(1).max(2048),
+    documentInstanceId: documentInstanceIdSchema.optional(),
   }).strict(),
   z.object({
     kind: z.literal('renderer-gone'),
     reason: z.string().min(1).max(256),
+    documentInstanceId: documentInstanceIdSchema.optional(),
   }).strict(),
   z.object({
     kind: z.literal('hydration-failed'),
     revision: hydrationRevisionSchema.optional(),
     stage: z.string().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/),
     code: z.string().min(1).max(128).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/),
+    documentInstanceId: documentInstanceIdSchema.optional(),
   }).strict(),
 ]);
 
@@ -116,6 +133,7 @@ export const visualHydrationSummarySchema = hydrationSummarySchema;
 export const visualHydrationRevisionSchema = hydrationRevisionSchema;
 export const visualHydrationFailureStageSchema = hydrationFailureStageSchema;
 export const visualHydrationFailureCodeSchema = hydrationFailureCodeSchema;
+export const visualDocumentInstanceIdSchema = documentInstanceIdSchema;
 
 const DEFAULT_CAPACITY = 128;
 const MAX_CAPACITY = 512;

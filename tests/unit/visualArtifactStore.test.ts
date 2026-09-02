@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -44,5 +44,17 @@ describe('opaque visual artifact store', () => {
     await store.cleanup();
     await expect(store.read(metadata.artifactId, 0, 1)).rejects.toThrow(/unavailable/);
     expect(await store.delete(metadata.artifactId)).toBe(false);
+  });
+
+  it('removes artifacts left by a previous process on startup cleanup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-artifacts-restart-'));
+    const first = createVisualArtifactStore(root);
+    const metadata = await first.put(new Uint8Array([7, 8, 9]), 'image/png');
+    const orphan = 'va-11111111-1111-4111-8111-111111111111.bin';
+    await writeFile(join(root, orphan), new Uint8Array([1]));
+    const second = createVisualArtifactStore(root);
+    await second.cleanup();
+    await expect(second.read(metadata.artifactId, 0, 10)).rejects.toThrow('unavailable');
+    await expect(second.read(orphan.slice(0, -4), 0, 10)).rejects.toThrow('unavailable');
   });
 });

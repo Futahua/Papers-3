@@ -1,4 +1,4 @@
-import { reportProjectLayoutSignal, type ProjectVisualDiagnosticIpc } from './projectVisualDiagnostics';
+import { reportProjectLayoutEpoch, reportProjectLayoutSignal, type ProjectVisualDiagnosticIpc } from './projectVisualDiagnostics';
 
 const REQUIRED_UNCHANGED_FRAMES = 3;
 const MAX_STABILITY_FRAMES = 12;
@@ -42,6 +42,7 @@ export function installProjectVisualLayoutObserver(
   let unchangedFrames = 0;
   let previousGeometry: string | null = null;
   let attemptActive = false;
+  let layoutEpoch = 0;
 
   const scheduleFrame = (): void => {
     if (frameScheduled) return;
@@ -64,7 +65,7 @@ export function installProjectVisualLayoutObserver(
       unchangedFrames = geometry === previousGeometry ? unchangedFrames + 1 : 1;
       previousGeometry = geometry;
       if (unchangedFrames >= REQUIRED_UNCHANGED_FRAMES) {
-        reportProjectLayoutSignal(ipc, 'layout-stable');
+        reportProjectLayoutSignal(ipc, 'layout-stable', undefined, layoutEpoch);
         attemptActive = false;
         return;
       }
@@ -78,7 +79,12 @@ export function installProjectVisualLayoutObserver(
   };
 
   const beginEpoch = (): void => {
-    if (!geometrySnapshot(document)) return;
+    layoutEpoch += 1;
+    reportProjectLayoutEpoch(ipc, layoutEpoch);
+    if (!geometrySnapshot(document)) {
+      attemptActive = false;
+      return;
+    }
     if (!attemptActive) {
       frameCount = 0;
       attemptActive = true;

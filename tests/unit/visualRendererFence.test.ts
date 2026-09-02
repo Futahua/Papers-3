@@ -10,13 +10,13 @@ describe('fixed renderer visual fence', () => {
     const contents = {
       id: 42,
       isDestroyed: () => false,
-      send: vi.fn((_channel: string, payload: { requestId: string }) => {
-        receive?.({ sender: { id: 42 } }, { requestId: payload.requestId, ready: true });
+      send: vi.fn((_channel: string, payload: { requestId: string; documentInstanceId: string }) => {
+        receive?.({ sender: { id: 42 } }, { requestId: payload.requestId, documentInstanceId: payload.documentInstanceId, ready: true });
       }),
     };
 
-    await expect(service.request(contents as never, 'request-1', 100)).resolves.toBe(true);
-    expect(contents.send).toHaveBeenCalledWith('papers:visual:fence-request', { requestId: 'request-1' });
+    await expect(service.request(contents as never, 'request-1', '33333333-3333-4333-8333-333333333333', 100)).resolves.toBe(true);
+    expect(contents.send).toHaveBeenCalledWith('papers:visual:fence-request', { requestId: 'request-1', documentInstanceId: '33333333-3333-4333-8333-333333333333' });
   });
 
   it('ignores a foreign sender and times out without throwing', async () => {
@@ -26,11 +26,11 @@ describe('fixed renderer visual fence', () => {
     const contents = {
       id: 42,
       isDestroyed: () => false,
-      send: vi.fn((_channel: string, payload: { requestId: string }) => {
-        receive?.({ sender: { id: 99 } }, { requestId: payload.requestId, ready: true });
+      send: vi.fn((_channel: string, payload: { requestId: string; documentInstanceId: string }) => {
+        receive?.({ sender: { id: 99 } }, { requestId: payload.requestId, documentInstanceId: payload.documentInstanceId, ready: true });
       }),
     };
 
-    await expect(service.request(contents as never, 'request-2', 10)).resolves.toBe(false);
+    await expect(service.request(contents as never, 'request-2', '33333333-3333-4333-8333-333333333333', 10)).resolves.toBe(false);
   });
 });

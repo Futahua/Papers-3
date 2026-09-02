@@ -6,9 +6,20 @@ import {
 } from './projectVisualDiagnostics';
 import { installProjectVisualLayoutObserver } from './projectVisualLayoutObserver';
 import { installProjectVisualSemanticKeyObserver } from './projectVisualSemanticKeys';
-import { VISUAL_FENCE_REQUEST_CHANNEL, VISUAL_FENCE_RESPONSE_CHANNEL } from '@shared/visualSemanticKeyConstants';
+import { VISUAL_DOCUMENT_INSTANCE_CHANNEL, VISUAL_FENCE_REQUEST_CHANNEL, VISUAL_FENCE_RESPONSE_CHANNEL } from '@shared/visualSemanticKeyConstants';
 
 const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
+
+function createDocumentInstanceId(): string {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+const documentInstanceId = createDocumentInstanceId();
 
 function installVisualDiagnosticListeners(
   ipc: { send(channel: string, payload: unknown): void },
@@ -54,6 +65,7 @@ function installVisualDiagnosticListeners(
     refreshSemanticKeys = installProjectVisualSemanticKeyObserver(ipc, {
       document,
       MutationObserver: typeof MutationObserver === 'undefined' ? undefined : MutationObserver,
+      documentInstanceId,
     });
   } catch {
     // Semantic observation is diagnostic-only and must never affect startup.
@@ -91,13 +103,26 @@ function installVisualDiagnosticListeners(
 }
 
 
-installVisualDiagnosticListeners(ipcRenderer, contextBridge);
+const documentScopedIpc = {
+  send(channel: string, payload: unknown): void {
+    if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)) {
+      ipcRenderer.send(channel, { ...(payload as Record<string, unknown>), documentInstanceId });
+    }
+  },
+  on(channel: string, listener: (...args: unknown[]) => void): void {
+    ipcRenderer.on(channel, listener as never);
+  },
+};
+ipcRenderer.send(VISUAL_DOCUMENT_INSTANCE_CHANNEL, { documentInstanceId });
+installVisualDiagnosticListeners(documentScopedIpc, contextBridge);
 
 ipcRenderer.on(VISUAL_FENCE_REQUEST_CHANNEL, (_event, payload) => {
   if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
   const requestId = (payload as { requestId?: unknown }).requestId;
-  if (typeof requestId !== 'string' || requestId.length < 1 || requestId.length > 128) return;
-  ipcRenderer.send(VISUAL_FENCE_RESPONSE_CHANNEL, { requestId, ready: true });
+  const requestedDocumentInstanceId = (payload as { documentInstanceId?: unknown }).documentInstanceId;
+  if (typeof requestId !== 'string' || requestId.length < 1 || requestId.length > 128
+    || requestedDocumentInstanceId !== documentInstanceId) return;
+  ipcRenderer.send(VISUAL_FENCE_RESPONSE_CHANNEL, { requestId, documentInstanceId, ready: true });
 });
 
 interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }

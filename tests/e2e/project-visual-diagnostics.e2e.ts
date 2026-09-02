@@ -181,8 +181,8 @@ describe('project renderer visual diagnostics', () => {
       && (record.payload.kind === 'uncaught-error' || record.payload.kind === 'unhandled-rejection'));
     expect(failures).toHaveLength(2);
     expect(failures).toEqual(expect.arrayContaining([
-      expect.objectContaining({ target: { windowId, surfaceId: opened.surfaceId }, payload: { kind: 'uncaught-error', message: 'Uncaught Error: <path> token=<redacted>' } }),
-      expect.objectContaining({ target: { windowId, surfaceId: opened.surfaceId }, payload: { kind: 'unhandled-rejection', message: '<path> password=<redacted>' } }),
+      expect.objectContaining({ target: { windowId, surfaceId: opened.surfaceId }, payload: expect.objectContaining({ kind: 'uncaught-error', message: 'Uncaught Error: <path> token=<redacted>' }) }),
+      expect.objectContaining({ target: { windowId, surfaceId: opened.surfaceId }, payload: expect.objectContaining({ kind: 'unhandled-rejection', message: '<path> password=<redacted>' }) }),
     ]));
 
     // Cross-window preparation loads a new renderer before the logical surface

@@ -132,13 +132,13 @@ describe('visual observation side effects', () => {
     stable.flushFrame();
     stable.flushFrame();
     stable.flushFrame();
-    expect(stable.send).toHaveBeenCalledTimes(1);
+    expect(stable.send).toHaveBeenCalledTimes(5);
     expect(stable.pendingFrames()).toBe(0);
 
     const timeout = layoutHarness();
     timeout.setBodyAvailable(false);
     for (let frame = 0; frame < 12; frame += 1) timeout.flushFrame();
-    expect(timeout.send).toHaveBeenCalledTimes(1);
+    expect(timeout.send).toHaveBeenCalledTimes(2);
     expect(timeout.pendingFrames()).toBe(0);
     expect(setInterval).not.toHaveBeenCalled();
     expect(setTimeout).not.toHaveBeenCalled();

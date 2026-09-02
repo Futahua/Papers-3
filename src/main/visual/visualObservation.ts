@@ -8,6 +8,7 @@ export interface VisualObservationFence {
   renderCycleId: string | null;
   layoutEpoch: number | null;
   senderBinding: string | null;
+  documentInstanceId: string | null;
 }
 export type VisualConsistencyReason =
   | 'layout-changed'
@@ -48,7 +49,8 @@ export function assessVisualConsistency(
     return { status: 'unstable', reason: 'topology-changed' };
   }
   if (before.documentStateRevision !== after.documentStateRevision
-    || before.renderCycleId !== after.renderCycleId) {
+    || before.renderCycleId !== after.renderCycleId
+    || before.documentInstanceId !== after.documentInstanceId) {
     return { status: 'unstable', reason: 'state-changed' };
   }
   if (before.layoutEpoch !== after.layoutEpoch) {

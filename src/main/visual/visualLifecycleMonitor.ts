@@ -5,6 +5,7 @@ import {
   visualHydrationFailureCodeSchema,
   visualHydrationFailureStageSchema,
   visualHydrationSummarySchema,
+  visualDocumentInstanceIdSchema,
   type VisualDiagnosticBuffer,
   type VisualDiagnosticPayload,
 } from './visualDiagnostics';
@@ -32,11 +33,14 @@ const rendererHydrationSignalSchema = z.object({
   phase: z.literal('state-hydrated'),
   revision: visualHydrationRevisionSchema,
   summary: visualHydrationSummarySchema.optional(),
+  documentInstanceId: visualDocumentInstanceIdSchema.optional(),
 }).strict();
 const rendererPresentationSignalSchema = z.object({
   kind: z.literal('lifecycle'),
-  phase: z.enum(['first-paint', 'layout-stable', 'render-failed']),
+  phase: z.enum(['first-paint', 'layout-stable', 'layout-epoch', 'render-failed']),
   detail: z.string().max(2048).optional(),
+  epoch: z.number().int().nonnegative().optional(),
+  documentInstanceId: visualDocumentInstanceIdSchema.optional(),
 }).strict();
 const rendererHydrationFailureSignalSchema = z.object({
   kind: z.literal('lifecycle'),
@@ -44,15 +48,18 @@ const rendererHydrationFailureSignalSchema = z.object({
   revision: visualHydrationRevisionSchema.optional(),
   stage: visualHydrationFailureStageSchema,
   code: visualHydrationFailureCodeSchema,
+  documentInstanceId: visualDocumentInstanceIdSchema.optional(),
 }).strict();
 const rendererDiagnosticPayloadSchema = z.object({
   kind: z.enum(['uncaught-error', 'unhandled-rejection']),
   message: z.string().min(1).max(4096),
+  documentInstanceId: visualDocumentInstanceIdSchema.optional(),
 }).strict().or(z.object({
   kind: z.literal('hydration-failed'),
   revision: z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._~-]*$/).optional(),
   stage: z.string().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/),
   code: z.string().min(1).max(128).regex(/^[A-Za-z][A-Za-z0-9._~-]*$/),
+  documentInstanceId: visualDocumentInstanceIdSchema.optional(),
 }).strict());
 
 interface RecentRendererDiagnostic {

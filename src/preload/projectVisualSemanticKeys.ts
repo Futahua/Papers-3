@@ -14,6 +14,7 @@ export type RefreshProjectVisualSemanticKeys = () => void;
 interface SemanticKeyObserverEnvironment {
   document: Document;
   MutationObserver?: typeof MutationObserver;
+  documentInstanceId?: string;
 }
 
 const PAPERS_SEMANTIC_KEY_ATTRIBUTE = 'data-papers-visual-key';
@@ -24,7 +25,7 @@ export function installProjectVisualSemanticKeyObserver(
   ipc: ProjectVisualSemanticKeyIpc,
   environment: SemanticKeyObserverEnvironment,
 ): RefreshProjectVisualSemanticKeys {
-  const { document, MutationObserver } = environment;
+  const { document, MutationObserver, documentInstanceId } = environment;
   if (!MutationObserver) return () => undefined;
 
   let lastPayload = '';
@@ -38,7 +39,10 @@ export function installProjectVisualSemanticKeyObserver(
     const payload = JSON.stringify(keys);
     if (!force && payload === lastPayload) return;
     lastPayload = payload;
-    ipc.send(VISUAL_SEMANTIC_KEYS_CHANNEL, { keys });
+    ipc.send(VISUAL_SEMANTIC_KEYS_CHANNEL, {
+      keys,
+      ...(documentInstanceId ? { documentInstanceId } : {}),
+    });
   };
 
   publish();

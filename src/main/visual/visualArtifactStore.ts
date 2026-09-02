@@ -41,6 +41,7 @@ function publicMetadata(entry: StoredArtifact): VisualArtifactMetadata {
 }
 
 const artifactIdPattern = /^va-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const artifactFilePattern = /^va-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.bin$/i;
 
 function assertMimeType(mimeType: string): void {
   if (!/^[-\w.+]+\/[-\w.+]+$/.test(mimeType) || mimeType.length > 128) {
@@ -99,6 +100,13 @@ export function createVisualArtifactStore(
     const names = await readdir(rootDir).catch(() => [] as string[]);
     await Promise.all(names
       .filter((name) => name.endsWith('.tmp'))
+      .map((name) => rm(path.join(rootDir, name), { force: true })));
+    // Artifacts are deliberately process-ephemeral. A fresh Papers process
+    // has no trusted metadata for files from an older process, so remove
+    // those bounded binary artifacts instead of allowing them to accumulate
+    // outside the in-memory capacity accounting.
+    await Promise.all(names
+      .filter((name) => artifactFilePattern.test(name) && !entries.has(name.slice(0, -4)))
       .map((name) => rm(path.join(rootDir, name), { force: true })));
   };
 

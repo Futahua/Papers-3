@@ -1,4 +1,5 @@
 import type { IpcMain } from 'electron';
+import { VISUAL_DOCUMENT_INSTANCE_CHANNEL } from '@shared/visualSemanticKeyConstants';
 
 import { recordRendererVisualDiagnostic, recordRendererVisualSignal, type VisualDiagnosticTarget } from '../visual/visualLifecycleMonitor';
 import type { VisualDiagnosticBuffer } from '../visual/visualDiagnostics';
@@ -8,6 +9,8 @@ export interface VisualDiagnosticsIpcDependencies {
   resolveTarget(sender: { id: number }): VisualDiagnosticTarget | null;
   bufferForWindow(windowId: number): VisualDiagnosticBuffer | null;
   onRendererSignal?(senderId: number, target: VisualDiagnosticTarget, payload: unknown): void;
+  onDocumentInstance?(senderId: number, target: VisualDiagnosticTarget, documentInstanceId: string): void;
+  isCurrentDocumentInstance?(senderId: number, target: VisualDiagnosticTarget, documentInstanceId: string): boolean;
 }
 
 export interface VisualDiagnosticSender {
@@ -48,6 +51,12 @@ export function registerVisualDiagnosticsIpc(deps: VisualDiagnosticsIpcDependenc
   const recordFromSender = (sender: { id: number }, payload: unknown, record: (buffer: VisualDiagnosticBuffer, target: VisualDiagnosticTarget, payload: unknown) => void): void => {
     const target = deps.resolveTarget(sender);
     if (!target) return;
+    if (deps.isCurrentDocumentInstance) {
+      const documentInstanceId = payload !== null && typeof payload === 'object' && !Array.isArray(payload)
+        ? (payload as Record<string, unknown>)['documentInstanceId'] : undefined;
+      if (typeof documentInstanceId !== 'string'
+        || !deps.isCurrentDocumentInstance(sender.id, target, documentInstanceId)) return;
+    }
     const buffer = deps.bufferForWindow(target.windowId);
     if (!buffer) return;
     try {
@@ -63,5 +72,13 @@ export function registerVisualDiagnosticsIpc(deps: VisualDiagnosticsIpcDependenc
   });
   deps.ipcMain.on(VISUAL_RENDERER_DIAGNOSTIC_CHANNEL, (event, payload) => {
     recordFromSender(event.sender, payload, recordRendererVisualDiagnostic);
+  });
+  deps.ipcMain.on(VISUAL_DOCUMENT_INSTANCE_CHANNEL, (event, payload) => {
+    const target = deps.resolveTarget(event.sender);
+    if (!target?.surfaceId || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
+    const value = payload as Record<string, unknown>;
+    if (Object.keys(value).length !== 1 || typeof value['documentInstanceId'] !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value['documentInstanceId'])) return;
+    deps.onDocumentInstance?.(event.sender.id, target, value['documentInstanceId']);
   });
 }

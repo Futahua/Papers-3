@@ -50,11 +50,19 @@ export function reportProjectLayoutSignal(
   ipc: ProjectVisualDiagnosticIpc,
   phase: 'layout-stable' | 'render-failed',
   detail?: string,
+  epoch?: number,
 ): void {
   ipc.send(VISUAL_RENDERER_SIGNAL_CHANNEL, {
     kind: 'lifecycle',
     phase,
     ...(detail ? { detail } : {}),
+    ...(epoch !== undefined ? { epoch } : {}),
+  });
+}
+
+export function reportProjectLayoutEpoch(ipc: ProjectVisualDiagnosticIpc, epoch: number): void {
+  ipc.send(VISUAL_RENDERER_SIGNAL_CHANNEL, {
+    kind: 'lifecycle', phase: 'layout-epoch', epoch,
   });
 }
 

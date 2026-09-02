@@ -197,7 +197,6 @@ function invalidateVisualSemanticKeySender(windowId: number, surfaceId: string, 
 }
 
 function resetVisualSemanticKeyObservation(windowId: number, surfaceId: string, senderId: number): void {
-  visualSurfaceObservationState.resetForNavigation(windowId, surfaceId, senderId);
   const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));
   if (!state || state.currentSenderId !== senderId) return;
   state.registry.clear();
@@ -1767,6 +1766,39 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     ipcMain,
     resolveTarget: resolveVisualTarget,
     bufferForWindow: (windowId) => visualDiagnosticsByWindow.get(windowId) ?? null,
+    onDocumentInstance: (senderId, target, documentInstanceId) => {
+      if (target.surfaceId) visualSurfaceObservationState.bindDocumentInstance(target.windowId, target.surfaceId, senderId, documentInstanceId);
+    },
+    isCurrentDocumentInstance: (senderId, target, documentInstanceId) => {
+      if (!target.surfaceId) return false;
+      const state = visualSurfaceObservationState.snapshot(target.windowId, target.surfaceId);
+      if (!state) {
+        visualSurfaceObservationState.bindSender(target.windowId, target.surfaceId, senderId);
+        visualSurfaceObservationState.bindDocumentInstance(target.windowId, target.surfaceId, senderId, documentInstanceId);
+        return true;
+      }
+      if (state.senderId !== senderId) return false;
+      if (state.documentInstanceId === documentInstanceId) return true;
+      // The document-start hello and the first semantic publication are
+      // separate IPC messages. If Chromium delivers the scoped publication
+      // first, establish identity from that same preload. Later navigation
+      // clears it before accepting the incoming document's facts.
+      if (state.documentInstanceId === null) {
+        visualSurfaceObservationState.bindDocumentInstance(target.windowId, target.surfaceId, senderId, documentInstanceId);
+        return true;
+      }
+      if (state.navigationCount <= 1 && !state.domReady && !state.hydrated && !state.firstPaint) {
+        visualSurfaceObservationState.startNavigation(target.windowId, target.surfaceId, senderId);
+        visualSurfaceObservationState.bindDocumentInstance(target.windowId, target.surfaceId, senderId, documentInstanceId);
+        return true;
+      }
+      if (!state.hydrated && state.documentStateRevision === null) {
+        visualSurfaceObservationState.startNavigation(target.windowId, target.surfaceId, senderId);
+        visualSurfaceObservationState.bindDocumentInstance(target.windowId, target.surfaceId, senderId, documentInstanceId);
+        return true;
+      }
+      return false;
+    },
     onRendererSignal: (senderId, target, payload) => {
       if (!target.surfaceId || payload === null || typeof payload !== 'object' || Array.isArray(payload)) return;
       const phase = (payload as { phase?: unknown }).phase;
@@ -1777,8 +1809,15 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         }
       } else if (phase === 'first-paint') {
         visualSurfaceObservationState.markFirstPaint(target.windowId, target.surfaceId, senderId);
+      } else if (phase === 'layout-epoch') {
+        const epoch = (payload as { epoch?: unknown }).epoch;
+        if (typeof epoch === 'number' && Number.isSafeInteger(epoch) && epoch >= 0) {
+          visualSurfaceObservationState.markLayoutEpoch(target.windowId, target.surfaceId, senderId, epoch);
+        }
       } else if (phase === 'layout-stable') {
-        visualSurfaceObservationState.markLayoutStable(target.windowId, target.surfaceId, senderId);
+        const epoch = (payload as { epoch?: unknown }).epoch;
+        visualSurfaceObservationState.markLayoutStable(target.windowId, target.surfaceId, senderId,
+          typeof epoch === 'number' && Number.isSafeInteger(epoch) ? epoch : undefined);
       } else if (phase === 'render-failed') {
         visualSurfaceObservationState.markRenderFailed(target.windowId, target.surfaceId, senderId);
       }
@@ -1794,6 +1833,31 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     },
     onObserved: ({ windowId, surfaceId }, senderId, keys) => {
       visualSurfaceObservationState.replaceSemanticKeys(windowId, surfaceId, senderId, keys);
+    },
+    isCurrentDocumentInstance: ({ windowId, surfaceId }, senderId, documentInstanceId) => {
+      const state = visualSurfaceObservationState.snapshot(windowId, surfaceId);
+      if (!state) {
+        visualSurfaceObservationState.bindSender(windowId, surfaceId, senderId);
+        visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
+        return true;
+      }
+      if (state.senderId !== senderId) return false;
+      if (state.documentInstanceId === documentInstanceId) return true;
+      if (state.documentInstanceId === null) {
+        visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
+        return true;
+      }
+      if (state.navigationCount <= 1 && !state.domReady && !state.hydrated && !state.firstPaint) {
+        visualSurfaceObservationState.startNavigation(windowId, surfaceId, senderId);
+        visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
+        return true;
+      }
+      if (!state.hydrated && state.documentStateRevision === null) {
+        visualSurfaceObservationState.startNavigation(windowId, surfaceId, senderId);
+        visualSurfaceObservationState.bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId);
+        return true;
+      }
+      return false;
     },
   });
   if (process.env['PAPERS_DEV_CONTROL'] === '1') {
@@ -1880,8 +1944,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
                 capturePage: async () => new Uint8Array((await runtime.capturePage()).toPNG()),
                 requestFence: (requestId) => {
                   const contents = runtime.webContents;
-                  return contents && visualRendererFence
-                    ? visualRendererFence.request(contents, requestId)
+                  const documentInstanceId = visualSurfaceObservationState.snapshot(windowId, surfaceId)?.documentInstanceId;
+                  return contents && visualRendererFence && documentInstanceId
+                    ? visualRendererFence.request(contents, requestId, documentInstanceId)
                     : Promise.resolve(false);
                 },
               };

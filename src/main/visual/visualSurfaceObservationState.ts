@@ -5,6 +5,8 @@ export interface VisualSurfaceObservationState {
   surfaceId: string;
   senderId: number | null;
   senderGeneration: number;
+  documentInstanceId: string | null;
+  navigationCount: number;
   renderCycleId: string | null;
   documentStateRevision: string | null;
   domReady: boolean;
@@ -18,6 +20,7 @@ export interface VisualSurfaceObservationState {
 
 export interface VisualSurfaceObservationStore {
   bindSender(windowId: number, surfaceId: string, senderId: number): void;
+  bindDocumentInstance(windowId: number, surfaceId: string, senderId: number, documentInstanceId: string): void;
   startNavigation(windowId: number, surfaceId: string, senderId: number): void;
   markDomReady(windowId: number, surfaceId: string, senderId: number): void;
   markHydrated(windowId: number, surfaceId: string, senderId: number, revision: string): void;
@@ -44,6 +47,8 @@ function freshState(windowId: number, surfaceId: string, senderId: number): Visu
     surfaceId,
     senderId,
     senderGeneration: 1,
+    documentInstanceId: null,
+    navigationCount: 0,
     renderCycleId: randomUUID(),
     documentStateRevision: null,
     domReady: false,
@@ -58,6 +63,7 @@ function freshState(windowId: number, surfaceId: string, senderId: number): Visu
 
 function clearDocumentState(state: VisualSurfaceObservationState): void {
   state.renderCycleId = randomUUID();
+  state.documentInstanceId = null;
   state.documentStateRevision = null;
   state.domReady = false;
   state.hydrated = false;
@@ -95,11 +101,31 @@ export function createVisualSurfaceObservationStore(): VisualSurfaceObservationS
       if (state.senderId === senderId) return;
       state.senderId = senderId;
       state.senderGeneration += 1;
+      state.navigationCount = 0;
       clearDocumentState(state);
+    },
+    bindDocumentInstance(windowId, surfaceId, senderId, documentInstanceId) {
+      const state = stateFor(windowId, surfaceId);
+      if (!current(state, senderId)) return;
+      // Only the first document-start hello after navigation can become
+      // current. A late hello from the outgoing same-WebContents document
+      // must not replace the accepted incoming document identity.
+      if (state.documentInstanceId === null) state.documentInstanceId = documentInstanceId;
     },
     startNavigation(windowId, surfaceId, senderId) {
       const state = stateFor(windowId, surfaceId);
-      if (current(state, senderId)) clearDocumentState(state);
+      if (!current(state, senderId)) return;
+      // Chromium can deliver the preload's document-start hello before the
+      // WebContents did-start-loading callback for the initial load. Preserve
+      // that first hello, while every later navigation still clears the
+      // accepted document identity before B's hello arrives.
+      const initialHello = state.documentInstanceId !== null
+        && state.navigationCount === 0
+        && !state.domReady && !state.hydrated && !state.firstPaint;
+      const documentInstanceId = initialHello ? state.documentInstanceId : null;
+      clearDocumentState(state);
+      state.documentInstanceId = documentInstanceId;
+      state.navigationCount += 1;
     },
     markDomReady(windowId, surfaceId, senderId) {
       const state = stateFor(windowId, surfaceId);
@@ -126,8 +152,7 @@ export function createVisualSurfaceObservationStore(): VisualSurfaceObservationS
     markLayoutStable(windowId, surfaceId, senderId, epoch) {
       const state = stateFor(windowId, surfaceId);
       if (!current(state, senderId)) return;
-      const nextEpoch = epoch ?? ((state.layoutEpoch ?? 0) + 1);
-      state.layoutEpoch = nextEpoch;
+      if (state.layoutEpoch === null || (epoch !== undefined && state.layoutEpoch !== epoch)) return;
       state.layoutStable = true;
     },
     markRenderFailed(windowId, surfaceId, senderId) {

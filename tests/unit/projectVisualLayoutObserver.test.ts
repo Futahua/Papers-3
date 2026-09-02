@@ -45,9 +45,12 @@ describe('project visual layout observer', () => {
     observer.flushFrame();
     observer.flushFrame();
 
-    expect(observer.send).toHaveBeenCalledOnce();
-    expect(observer.send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
-      kind: 'lifecycle', phase: 'layout-stable',
+    expect(observer.send).toHaveBeenCalledTimes(2);
+    expect(observer.send).toHaveBeenNthCalledWith(1, VISUAL_RENDERER_SIGNAL_CHANNEL, {
+      kind: 'lifecycle', phase: 'layout-epoch', epoch: 1,
+    });
+    expect(observer.send).toHaveBeenNthCalledWith(2, VISUAL_RENDERER_SIGNAL_CHANNEL, {
+      kind: 'lifecycle', phase: 'layout-stable', epoch: 1,
     });
   });
 
@@ -60,7 +63,7 @@ describe('project visual layout observer', () => {
     observer.flushFrame();
 
     expect(observer.send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
-      kind: 'lifecycle', phase: 'layout-stable',
+      kind: 'lifecycle', phase: 'layout-stable', epoch: 1,
     });
   });
 
@@ -72,7 +75,7 @@ describe('project visual layout observer', () => {
     observer.flushFrame();
 
     expect(observer.send).toHaveBeenCalledWith(VISUAL_RENDERER_SIGNAL_CHANNEL, {
-      kind: 'lifecycle', phase: 'layout-stable',
+      kind: 'lifecycle', phase: 'layout-stable', epoch: 1,
     });
   });
 
@@ -99,7 +102,7 @@ describe('project visual layout observer', () => {
     observer.flushFrame();
     observer.flushFrame();
 
-    expect(observer.send).toHaveBeenCalledTimes(2);
+    expect(observer.send).toHaveBeenCalledTimes(4);
   });
 
   it('reports timeout instead of waiting forever when geometry keeps changing', () => {

@@ -7,13 +7,17 @@ import {
 import type { IpcMain } from 'electron';
 import type { VisualDiagnosticTarget } from '../visual/visualLifecycleMonitor';
 
-const semanticKeysPayloadSchema = z.object({ keys: visualSemanticKeyListSchema }).strict();
+const semanticKeysPayloadSchema = z.object({
+  keys: visualSemanticKeyListSchema,
+  documentInstanceId: z.string().uuid().optional(),
+}).strict();
 
 export interface VisualSemanticKeysIpcDependencies {
   ipcMain: Pick<IpcMain, 'on'>;
   resolveTarget(sender: { id: number }): VisualDiagnosticTarget | null;
   registryForTarget(target: { windowId: number; surfaceId: string }, senderId: number): VisualSemanticKeyRegistry | null;
   onObserved?(target: { windowId: number; surfaceId: string }, senderId: number, keys: string[]): void;
+  isCurrentDocumentInstance?(target: { windowId: number; surfaceId: string }, senderId: number, documentInstanceId: string): boolean;
 }
 
 /** Accept only the predefined project observation payload. The sender owns
@@ -25,6 +29,11 @@ export function registerVisualSemanticKeysIpc(deps: VisualSemanticKeysIpcDepende
     if (!target || !surfaceId) return;
     try {
       const parsed = semanticKeysPayloadSchema.parse(payload);
+      if (deps.isCurrentDocumentInstance
+        && (!parsed.documentInstanceId || !deps.isCurrentDocumentInstance(
+          { windowId: target.windowId, surfaceId }, event.sender.id, parsed.documentInstanceId))) {
+        return;
+      }
       const registry = deps.registryForTarget({ windowId: target.windowId, surfaceId }, event.sender.id);
       if (!registry) return;
       registry.replaceObserved(parsed.keys);
