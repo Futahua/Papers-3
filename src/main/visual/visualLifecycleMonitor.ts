@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { VisualDiagnosticBuffer, VisualDiagnosticPayload } from './visualDiagnostics';
 
@@ -29,10 +30,11 @@ interface RecentRendererDiagnostic {
   source: RendererDiagnosticSource;
   target: VisualDiagnosticTarget;
   kind: 'uncaught-error' | 'unhandled-rejection';
-  rawMessage: string;
+  fingerprint: string;
   observedAt: number;
 }
 
+const MAX_RECENT_RENDERER_DIAGNOSTICS = 64;
 const recentRendererDiagnostics = new WeakMap<VisualDiagnosticBuffer, RecentRendererDiagnostic[]>();
 
 /** Validate a renderer signal at the main-process boundary. The caller owns
@@ -71,9 +73,10 @@ export function recordRendererVisualDiagnostic(
     && candidate.target.windowId === target.windowId
     && candidate.target.surfaceId === target.surfaceId
     && candidate.kind === parsed.kind
-    // Compare the pre-redaction message so two different private paths or
-    // credential values cannot collide after they become <path>/<redacted>.
-    && candidate.rawMessage === parsed.message);
+    // Compare a fingerprint of the pre-redaction message so two different
+    // private paths or credential values cannot collide after redaction while
+    // the transient matcher itself never retains the raw message.
+    && candidate.fingerprint === messageFingerprint(parsed.message));
   if (duplicateIndex >= 0) {
     // Consume the pair. Keeping the first source candidate around would make
     // a later genuine same-source repeat look like another duplicate.
@@ -81,9 +84,33 @@ export function recordRendererVisualDiagnostic(
     recentRendererDiagnostics.set(buffer, recent);
     return;
   }
-  recent.push({ source, target: { ...target }, kind: parsed.kind, rawMessage: parsed.message, observedAt });
+  if (recent.length >= MAX_RECENT_RENDERER_DIAGNOSTICS) recent.shift();
+  recent.push({ source, target: { ...target }, kind: parsed.kind, fingerprint: messageFingerprint(parsed.message), observedAt });
   recentRendererDiagnostics.set(buffer, recent);
   buffer.append(target, parsed);
+}
+
+function messageFingerprint(message: string): string {
+  return createHash('sha256').update(message, 'utf8').digest('hex');
+}
+
+/** Narrow test seam for the transient matcher. It deliberately exposes only
+ * fingerprints and bounded metadata, never the pre-redaction message. It is
+ * not connected to control/MCP output. */
+export function recentRendererDiagnosticMatcherSnapshotForTest(buffer: VisualDiagnosticBuffer): Array<{
+  source: RendererDiagnosticSource;
+  target: VisualDiagnosticTarget;
+  kind: 'uncaught-error' | 'unhandled-rejection';
+  fingerprint: string;
+  observedAt: number;
+}> {
+  return (recentRendererDiagnostics.get(buffer) ?? []).map((candidate) => ({
+    source: candidate.source,
+    target: { ...candidate.target },
+    kind: candidate.kind,
+    fingerprint: candidate.fingerprint,
+    observedAt: candidate.observedAt,
+  }));
 }
 
 function consoleLevel(level: unknown): 'debug' | 'info' | 'log' | 'warn' | 'error' {

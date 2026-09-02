@@ -529,11 +529,12 @@ surface and is refused; a replaced old renderer is refused even if its listener
 has not detached yet. The fallback records only uncaught error/rejection forms,
 is disabled at `dom-ready`, and the shared failure path suppresses only a
 matching cross-source pair (bootstrap-console plus observer) for the same
-exact pre-redaction message, target, and short burst. Same-source repeats and
-different raw messages that redact alike remain separate; a suppressed pair is
-consumed so it cannot hide a later same-source failure. It is best-effort and
-is not awaited by `show()`, so observation cannot make ordinary project startup
-fail.
+exact pre-redaction message, target, and short burst. The transient matcher
+stores only a SHA-256 fingerprint of that raw message and at most 64 unmatched
+candidates; a suppressed pair is consumed so it cannot hide a later same-source
+failure. Same-source repeats and different raw messages that redact alike remain
+separate. It is best-effort and is not awaited by `show()`, so observation cannot
+make ordinary project startup fail.
 The main-process IPC boundary accepts only strict bounded `{kind,message}`
 payloads after sender-authoritative target resolution. No runtime capability
 query, shared sandbox preload chunk, arbitrary renderer execution, or polling

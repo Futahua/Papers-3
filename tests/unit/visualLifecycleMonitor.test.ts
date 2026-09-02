@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { attachVisualLifecycleMonitor, recordRendererVisualDiagnostic, type VisualLifecycleSource } from '../../src/main/visual/visualLifecycleMonitor';
+import {
+  attachVisualLifecycleMonitor,
+  recentRendererDiagnosticMatcherSnapshotForTest,
+  recordRendererVisualDiagnostic,
+  type VisualLifecycleSource,
+} from '../../src/main/visual/visualLifecycleMonitor';
 import { createVisualDiagnosticBuffer } from '../../src/main/visual/visualDiagnostics';
 
 class FakeSource implements VisualLifecycleSource {
@@ -105,6 +110,16 @@ describe('visual lifecycle monitor', () => {
       kind: 'uncaught-error', message: 'D:\\private\\b.js token=two',
     });
     expect(redactionCollision.snapshot()).toHaveLength(2);
+    const bounded = createVisualDiagnosticBuffer();
+    for (let index = 0; index < 100; index += 1) {
+      recordRendererVisualDiagnostic(bounded, { windowId: 8, surfaceId: 'surface-c' }, {
+        kind: 'uncaught-error', message: `C:\\private\\view-${index}.js token=${index}`,
+      }, 'bootstrap-console');
+    }
+    const matcher = recentRendererDiagnosticMatcherSnapshotForTest(bounded);
+    expect(matcher).toHaveLength(64);
+    expect(JSON.stringify(matcher)).not.toContain('C:\\private\\');
+    expect(JSON.stringify(matcher)).not.toContain('token=');
     expect(() => recordRendererVisualDiagnostic(buffer, { windowId: 8 }, {
       kind: 'uncaught-error', message: 'not retained', stack: 'must be ignored',
     })).toThrow();
