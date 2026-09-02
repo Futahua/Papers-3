@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.2 deterministic redaction closure implemented; exact-SHA reviewer gate pending
+Persistent status: C1.2 no-polling/recovery-side-effect closure in progress; exact-SHA reviewer gate pending
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -949,6 +949,25 @@ console/rejection/failed-image publication.
 Validation and exact-SHA reviewer gate are pending for this slice. The
 user-owned `docs/evidence/worker-comparison.json` remains unstaged and
 untouched; no release, install, package, or policy action is in scope.
+
+Reviewer checkpoint at exact pushed head
+`ee16454131193049823a8467e3e7aa5695c83964`: **SIGNED OFF** for deterministic
+visual diagnostic redaction closure. The reviewer confirmed the real buffer →
+real control event hub → serialized frame path across console, renderer error,
+rejection, navigation, resource, renderer exit, hydration, and render-failed
+classes. Windows paths, URLs/queries, credential assignments, and hostile
+hydration metadata do not enter retained snapshots or live frames; no
+production redaction change was needed.
+
+Next smallest reviewed slice: **C1.2 no timer-based continuous polling /
+recovery-side-effect closure** — prove that attaching, observing, failing, and
+detaching visual observation never creates recurring polling loops, reloads or
+restarts a renderer as diagnostic recovery, or mutates workspace/product
+state, while allowing only the intended bounded one-shot timing and animation-
+frame mechanisms and cleaning up observers/listeners.
+
+This is evidence-first. Change production code only if the targeted closure
+finds a concrete polling, recovery, teardown, or product-state side effect.
 
 ## Architectural boundary / likely owner
 
