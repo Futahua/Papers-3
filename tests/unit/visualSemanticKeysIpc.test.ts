@@ -46,4 +46,31 @@ describe('visual semantic-key IPC authority', () => {
     expect(registry.snapshot()).toEqual(['canvas.root']);
     expect(resolveTarget).toHaveBeenCalledTimes(5);
   });
+
+  it('keeps identical semantic keys local to their exact surface', () => {
+    const listeners = new Map<string, (event: { sender: { id: number } }, payload: unknown) => void>();
+    const registries = new Map([
+      ['surface-a', createVisualSemanticKeyRegistry()],
+      ['surface-b', createVisualSemanticKeyRegistry()],
+    ]);
+    const ipcMain = {
+      on(channel: string, listener: (...args: unknown[]) => void) {
+        listeners.set(channel, listener as (event: { sender: { id: number } }, payload: unknown) => void);
+        return ipcMain;
+      },
+    } as unknown as Parameters<typeof registerVisualSemanticKeysIpc>[0]['ipcMain'];
+    registerVisualSemanticKeysIpc({
+      ipcMain,
+      resolveTarget: (sender) => sender.id === 7
+        ? { windowId: 4, surfaceId: 'surface-a' }
+        : sender.id === 8 ? { windowId: 5, surfaceId: 'surface-b' } : null,
+      registryForTarget: (target) => target.surfaceId ? registries.get(target.surfaceId) ?? null : null,
+    });
+    const receive = listeners.get(VISUAL_SEMANTIC_KEYS_CHANNEL)!;
+    receive({ sender: { id: 7 } }, { keys: ['canvas.root'] });
+    receive({ sender: { id: 8 } }, { keys: ['canvas.root'] });
+    receive({ sender: { id: 7 } }, { keys: ['canvas.root', 'toolbar.primary'] });
+    expect(registries.get('surface-a')?.snapshot()).toEqual(['canvas.root', 'toolbar.primary']);
+    expect(registries.get('surface-b')?.snapshot()).toEqual(['canvas.root']);
+  });
 });
