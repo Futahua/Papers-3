@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: planning checklist; implementation not started
+Persistent status: C1.1 foundation in progress; renderer capture not started
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -260,6 +260,30 @@ executableCanonicalFileId
 On Windows, `executableCanonicalFileId` should derive from file/volume identity or equivalent canonical handle-based identity, not the input pathname.
 
 Raw canonical filesystem paths do not need to cross control.
+
+## Current implementation slice
+
+The first bounded slice is intentionally below the control/API boundary. It
+establishes the identity and comparison primitives that a later observation
+service must use, without pretending that a screenshot is coherent merely
+because one request completed:
+
+* [x] `src/main/visual/processIdentity.ts` records PID, random app-instance ID,
+  start time, safe build identity, and a volume/file identity from `stat`.
+* [x] `src/main/visual/visualObservation.ts` compares the pre/post capture
+  fences and returns an explicit unstable reason on any identity, topology,
+  document, render-cycle, or layout change.
+* [x] aliases are tested against the file identity rather than pathname
+  equality, and unavailable file identity fails closed.
+* [ ] compose the identity once in the main process and make it available to
+  the observation service.
+* [ ] implement the bounded renderer observation and native PNG capture.
+* [ ] expose the first read-only `capture.surface` command only after the
+  synchronized service exists.
+
+Implementation checkpoint: local focused test `tests/unit/visualObservation.test.ts`
+passes 9/9 and `npm run typecheck` passes. This is not C1.1 completion; the
+remaining unchecked items are the user-visible capture and packaged proof.
 
 ### Required invariant
 
