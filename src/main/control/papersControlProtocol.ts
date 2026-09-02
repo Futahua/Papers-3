@@ -10,6 +10,7 @@ import type {
   PapersControlConfirmationBroker,
   PapersControlDestructiveAction,
 } from './papersControlConfirmation';
+import { visualDiagnosticRecordSchema } from '../visual/visualDiagnostics';
 
 export const PAPERS_CONTROL_PROTOCOL_VERSION = 1;
 
@@ -169,6 +170,12 @@ const snapshotSchema = z.object({
 export const papersControlCommands = {
   'inspect.snapshot': { input: emptyParamsSchema, output: snapshotSchema, scope: 'app', effect: 'query' },
   'inspect.process': { input: emptyParamsSchema, output: processInstanceIdentitySchema, scope: 'app', effect: 'query' },
+  'inspect.visual.diagnostics': {
+    input: z.object({ windowId: z.number().int(), surfaceId: z.string().min(1).max(128).optional() }).strict(),
+    output: z.array(visualDiagnosticRecordSchema),
+    scope: 'window',
+    effect: 'query',
+  },
   'inspect.windows': { input: emptyParamsSchema, output: z.array(controlWindowSchema), scope: 'app', effect: 'query' },
   'inspect.surfaces': {
     input: emptyParamsSchema,
@@ -313,6 +320,8 @@ export interface PapersControlDependencies {
   snapshot(): unknown;
   /** A safe process-instance projection; it must contain no filesystem path. */
   processIdentity?(): unknown;
+  /** Bounded, redacted records for one exact live window/surface target. */
+  visualDiagnostics?(target: { windowId: number; surfaceId?: string }): unknown;
   windows(): unknown;
   createWindow(): Promise<unknown>;
   backpack?(projectId: string): unknown;
@@ -415,6 +424,12 @@ export async function dispatchPapersControl(
       const identity = dependencies.processIdentity?.();
       if (!identity) throw new Error('Process identity is unavailable.');
       return papersControlCommands[request.method].output.parse(identity);
+    }
+    case 'inspect.visual.diagnostics': {
+      const target = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const records = dependencies.visualDiagnostics?.(target);
+      if (!records) throw new Error('That Papers visual diagnostic target is unavailable.');
+      return papersControlCommands[request.method].output.parse(records);
     }
     case 'inspect.surfaces': return papersControlCommands[request.method].output.parse(dependencies.surfaces());
     case 'inspect.surface': {

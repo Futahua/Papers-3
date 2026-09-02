@@ -113,6 +113,28 @@ describe('Papers developer control protocol', () => {
       .resolves.toEqual({ windowId: 3 });
   });
 
+  it('returns only bounded visual diagnostics for the exact requested window/surface', async () => {
+    const record = {
+      sequence: 1,
+      observedAt: '2026-09-02T00:00:00.000Z',
+      target: { windowId: 4, surfaceId: 'surface-a' },
+      payload: { kind: 'lifecycle' as const, phase: 'first-paint' as const },
+    };
+    const visualDiagnostics = vi.fn((target: { windowId: number; surfaceId?: string }) =>
+      target.windowId === 4 && target.surfaceId === 'surface-a' ? [record] : null);
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [], surface: () => null,
+      createWindow: async () => ({ windowId: 3 }), visualDiagnostics,
+    };
+    await expect(dispatchPapersControl(dependencies, request('inspect.visual.diagnostics', {
+      windowId: 4, surfaceId: 'surface-a',
+    }))).resolves.toEqual([record]);
+    await expect(dispatchPapersControl(dependencies, request('inspect.visual.diagnostics', {
+      windowId: 5,
+    }))).rejects.toThrow(/unavailable/);
+    expect(visualDiagnostics).toHaveBeenCalledWith({ windowId: 5 });
+  });
+
   it('validates subscriptions and emits only redacted semantic frames', async () => {
     const publishEvent = vi.fn();
     const dependencies = {

@@ -445,15 +445,19 @@ later lifecycle hooks will append to:
 * [ ] attribute real resource failures through `session.webRequest` to an exact
   monitored WebContents/surface; the adapter does not claim a nonexistent
   WebContents event.
-* [ ] compose monitors for real host/project renderer surfaces.
-* [ ] expose event subscription and bounded diagnostic inspection through the
+* [x] compose one monitor and bounded buffer per opt-in Papers host window,
+  detach both on native-window close, and expose the read-only exact-target
+  `inspect.visual.diagnostics` control query.
+* [ ] route project-frame renderer signals through the authenticated sender →
+  `{windowId,surfaceId}` mapping.
+* [ ] expose event subscription and resource attribution through the
   authenticated control plane.
 
 Implementation checkpoint: `tests/unit/visualDiagnostics.test.ts` passes 6/6;
 `tests/unit/visualLifecycleMonitor.test.ts` passes 3/3;
 the full host suite passes 760/760 with 4 skipped across 68 files; typecheck and
-diff check pass. This is not C1.2 completion; live window composition and
-control exposure are not claimed yet.
+diff check pass. This is not C1.2 completion; project-frame routing, resource
+attribution, event subscription, and broader control exposure remain unchecked.
 
 ## Architectural boundary / likely owner
 

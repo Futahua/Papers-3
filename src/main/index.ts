@@ -41,6 +41,8 @@ import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
 import { controlBuildIdentity } from './buildIdentity';
 import { createProcessInstanceIdentity, currentProcessInstanceSeed, type ProcessInstanceIdentity } from './visual/processIdentity';
+import { attachVisualLifecycleMonitor, type VisualLifecycleMonitor } from './visual/visualLifecycleMonitor';
+import { createVisualDiagnosticBuffer, type VisualDiagnosticBuffer } from './visual/visualDiagnostics';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
@@ -142,6 +144,8 @@ const workspaceTopologyRevisions = new Map<number, number>();
 /** Live-only association. Durable workspace IDs persist; native window IDs do not. */
 const workspaceIds = new Map<number, string>();
 const closingPapersWindows = new Set<number>();
+const visualDiagnosticsByWindow = new Map<number, VisualDiagnosticBuffer>();
+const visualLifecycleMonitors = new Map<number, VisualLifecycleMonitor>();
 
 /** The exact project runtime belonging to a bound project-frame sender. A host
  * sender is only a window actor and must use an explicit surface id. */
@@ -391,17 +395,36 @@ async function bootstrap(): Promise<void> {
     );
     if (workspace) detachRegistry.unregister(workspace.id);
   };
-  const makePapersWindow = (bounds?: WindowBounds) => createPapersWindow({
-    bounds,
-    appIcon,
-    transparent: papersSettings.transparentWindow,
-    currentTransparent: () => papersSettings.transparentWindow,
-    hostPreloadPath: path.join(preloadDir, 'host.cjs'),
-    projectPreloadPath: path.join(preloadDir, 'backpackProject.cjs'),
-    rendererUrl: process.env['ELECTRON_RENDERER_URL'],
-    rendererFile: path.join(app.getAppPath(), 'out', 'renderer', 'index.html'),
-    onProjectSurfaceClosed,
-  });
+  const makePapersWindow = (bounds?: WindowBounds) => {
+    const instance = createPapersWindow({
+      bounds,
+      appIcon,
+      transparent: papersSettings.transparentWindow,
+      currentTransparent: () => papersSettings.transparentWindow,
+      hostPreloadPath: path.join(preloadDir, 'host.cjs'),
+      projectPreloadPath: path.join(preloadDir, 'backpackProject.cjs'),
+      rendererUrl: process.env['ELECTRON_RENDERER_URL'],
+      rendererFile: path.join(app.getAppPath(), 'out', 'renderer', 'index.html'),
+      onProjectSurfaceClosed,
+    });
+    if (process.env['PAPERS_DEV_CONTROL'] === '1') {
+      const windowId = instance.window.id;
+      const buffer = createVisualDiagnosticBuffer();
+      const monitor = attachVisualLifecycleMonitor(
+        instance.hostView.webContents as unknown as Parameters<typeof attachVisualLifecycleMonitor>[0],
+        { windowId },
+        buffer,
+      );
+      visualDiagnosticsByWindow.set(windowId, buffer);
+      visualLifecycleMonitors.set(windowId, monitor);
+      instance.window.once('closed', () => {
+        monitor.detach();
+        visualLifecycleMonitors.delete(windowId);
+        visualDiagnosticsByWindow.delete(windowId);
+      });
+    }
+    return instance;
+  };
   const windowInstance = makePapersWindow(savedBounds ?? undefined);
   const lifecycleDependencies = (restoreBackpackId: string | null) => ({
     register: (instance: Parameters<typeof preparePapersWindow>[0]) => {
@@ -1530,6 +1553,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           },
         }),
         processIdentity: () => processInstanceIdentity,
+        visualDiagnostics: ({ windowId, surfaceId }) => {
+          if (!papersWindows.has(windowId)) return null;
+          if (surfaceId && !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
+          const buffer = visualDiagnosticsByWindow.get(windowId);
+          if (!buffer) return [];
+          return buffer.snapshot().filter((record) => surfaceId === undefined || record.target.surfaceId === surfaceId);
+        },
         surfaces: () => logicalSurfaces.project().map(projectSurfaceControlSnapshot),
         workspace: (windowId) => papersWindows.has(windowId) && workspaceTopologies.has(windowId)
           ? { topology: workspaceTopologies.get(windowId), revision: workspaceTopologyRevisions.get(windowId) ?? 0 }
