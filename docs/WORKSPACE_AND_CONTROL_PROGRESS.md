@@ -1,7 +1,7 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
 Last updated: 2026-09-02
-Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`; interrupted-report proof, element-PNG bundle, cancellation-during-capture, and packaged visual proof remain open and outside the current no-package boundary
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, and cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`; only packaged visual/MCP acceptance remains outside the current no-package boundary
 Working branch: `agent/surface-context-routing`
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
@@ -1958,7 +1958,7 @@ This works within the existing framed control transport without opening filesyst
 * [x] lifecycle-only screenshot count bounded;
 * [x] no timer polling;
 * [x] report manifest hashes verify;
-* [ ] interrupted report leaves no exposed partial artifact;
+* [x] interrupted report leaves no exposed partial artifact;
 * [x] artifact reader cannot access arbitrary filesystem paths;
 * [x] expired artifact refused;
 * [x] no project state file included in report.
@@ -1972,16 +1972,21 @@ The append path consumes only already-emitted diagnostic events, enforces the
 256-event/10-second bounds, and carries render-cycle, document, layout, and
 workspace-topology revisions. The reviewer signed off the corrected slice at
 the exact code SHA above with no remaining concrete defect. Report element
-coverage, interrupted-report proof, packaged proof, and the remaining
-isolation checks are still open.
+coverage and interrupted-report cleanup are now implemented and reviewed;
+packaged proof and the remaining isolation checks are still open.
 
 Report checkpoint: `visual.report.create` and the bounded ZIP artifact builder
 are implemented at [`abed691f`](https://github.com/Futahua/Papers-3/commit/abed691f67add77d3768ad532a797a37903b3ba8).
 The exact-surface report includes safe process/snapshot/surface projections,
 lookback-filtered lifecycle/diagnostic/timeline evidence, semantic observations,
 and an optional verified surface PNG. The reviewer signed off this slice at the
-exact SHA with no remaining concrete defect. Remaining work is interrupted-
-report proof, the unimplemented element-PNG bundle, and packaged acceptance.
+exact SHA with no remaining concrete defect. Element-PNG entries were added and
+signed off at [`ff890251`](https://github.com/Futahua/Papers-3/commit/ff890251b1b59e6a3e98a2d7d95a784dd52e8daa).
+Interrupted-report cleanup was added and signed off at
+[`0114d5b6`](https://github.com/Futahua/Papers-3/commit/0114d5b6154db045d8814679dd5bc7ef52a5db1f).
+Cancellation-aware capture/report cleanup was completed and signed off at
+[`e05286d5`](https://github.com/Futahua/Papers-3/commit/e05286d5cb77a7e8adc6a737652e862ff41cb9c1).
+Remaining work is packaged acceptance.
 
 Additional proof checkpoint: the production visual E2E now queries two same-
 project surfaces after one moves across windows and proves each timeline stays
@@ -1991,9 +1996,9 @@ screenshot capture is present.
 
 Final C1.5 checkpoint: the reviewer signed off the complete implemented scope
 at [`f5a67bfc`](https://github.com/Futahua/Papers-3/commit/f5a67bfc40f690a5c7e551492ef533a308579e3b).
-The deferred items are intentionally not represented as complete: interrupted
-report fault injection, element-PNG entries, and packaged success/failure
-acceptance require their own later evidence.
+The later report element, interruption, and cancellation evidence is recorded
+in the C1.6 checkpoints above; packaged success/failure acceptance remains
+intentionally separate.
 
 ## Packaged live proof
 
@@ -2137,11 +2142,11 @@ No loop that repeatedly asks “are we ready yet?”
 ## Deterministic tests
 
 * [x] MCP exact parameter pass-through for every visual command family;
-* [ ] invalid/foreign surface refusal preserved;
-* [ ] artifact chunk reconstruction yields expected SHA;
-* [ ] MCP cannot turn element key into selector/script;
-* [ ] lifecycle events remain correctly correlated with outstanding calls;
-* [ ] cancellation during capture leaves no partial artifact and no continued operation;
+* [x] invalid/foreign surface refusal preserved;
+* [x] artifact chunk reconstruction yields expected SHA;
+* [x] MCP cannot turn element key into selector/script;
+* [x] lifecycle events remain correctly correlated with outstanding calls;
+* [x] cancellation during capture leaves no partial artifact and no continued operation;
 * [x] adapter contains no Papers visual business rules.
 
 Implementation checkpoint: the standalone MCP adapter remains a mechanical
@@ -2153,7 +2158,9 @@ in Papers' reviewed protocol; no visual logic was duplicated in MCP.
 Reviewer checkpoint: C1.6's non-packaged MCP boundary is signed off at exact
 SHA [`03d2ef7e`](https://github.com/Futahua/Papers-3/commit/03d2ef7e4174d1620f833f3526f9183a39b42294).
 The reviewer found no concrete defect. Packaged MCP acceptance and
-cancellation-during-capture remain intentionally open.
+cancellation-during-capture were subsequently closed in the reviewed local
+scope at [`e05286d5`](https://github.com/Futahua/Papers-3/commit/e05286d5cb77a7e8adc6a737652e862ff41cb9c1), with no remaining concrete
+reviewer defect. Packaged MCP acceptance remains intentionally open.
 
 ## Real packaged Electron acceptance
 
