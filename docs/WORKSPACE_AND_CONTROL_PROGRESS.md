@@ -343,15 +343,16 @@ subtree relocation and deletion wins), and surface-local navigation, selection a
 trail expansion. The browser reviewer later marked the live integration
 **NOT SIGNED OFF**: the transport/session scope is not yet observable in real
 Papers windows, and a follower failure could strand an optimistic mutation.
-The follower recovery correction, race fences, generation cleanup and
-lock-safe conflict recovery are now pushed at exact SHA
-[`5a7745e`](https://github.com/Futahua/as-you-go-backpack/commit/5a7745e17f1b60e03d5281a074ee6abd9f3729a0).
+The follower recovery correction, race fences, generation cleanup,
+lock-safe conflict recovery and durable-timeout recognition are now pushed at
+exact SHA
+[`73a5b34`](https://github.com/Futahua/as-you-go-backpack/commit/73a5b3487b417343952726fd81ab29125402f6e4).
 
 * [x] queued optimistic edits are protected in coordinator tests; live transport
   convergence remains unproven after the real reproduction;
 * [x] follower failure and writer promotion are explicit and recoverable in
   the project-local coordinator tests; live follower recovery is hardened at
-  `5a7745e` but still needs installed two-window proof;
+  `73a5b34` but still needs installed two-window proof;
 * [x] prompt moves, inserts, reorders, subtree edits and identity deletion
   converge deterministically;
 * [x] every open surface is designed to update shared actions while retaining
@@ -362,8 +363,9 @@ lock-safe conflict recovery are now pushed at exact SHA
 Validation before the recovery correction at `f19842a`: `npm test` passed 1,083
 tests with 0 failures and 0 skips; focused coordinator coverage was 42 tests and
 store coverage 29 tests. After the recovery/race/authority correction at
-`5a7745e`, the coordinator+store targeted suites are 74/74; the full suite is
-being rerun. The remaining release gate is a cloned-real-profile,
+`73a5b34`, the coordinator+store targeted suites are 75/75 and the full suite
+passes 1,089 tests with 0 failures and 0 skips. The remaining release gate is
+a cloned-real-profile,
 installed-app matrix with two native Papers windows, identity/session/channel
 telemetry, follower-originated mutations, and deterministic missed-message
 recovery. This does not authorize another installation or creator-data mutation.
