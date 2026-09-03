@@ -70,6 +70,15 @@ describe('bounded exact-target visual wait', () => {
     await expect(pending).resolves.toMatchObject({ status: 'timeout' });
   });
 
+  it('does not let an older terminal override a current incomplete state', async () => {
+    const service = createVisualWaitService({
+      isLive: () => true,
+      snapshot: () => [record(1, 'layout-stable')],
+      currentState: () => ({ layoutStable: false, renderFailed: false }),
+    });
+    await expect(service.wait(target, 'layout-stable', 20)).resolves.toMatchObject({ status: 'timeout' });
+  });
+
   it('rejects retired or invalid targets before registering a waiter', async () => {
     const service = createVisualWaitService({ isLive: () => false, snapshot: () => [] });
     await expect(service.wait(target, 'layout-stable', 100)).rejects.toThrow('not open');
