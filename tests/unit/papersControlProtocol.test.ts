@@ -135,6 +135,28 @@ describe('Papers developer control protocol', () => {
     expect(visualDiagnostics).toHaveBeenCalledWith({ windowId: 5 });
   });
 
+  it('dispatches bounded exact-target visual.wait through the generic dependency', async () => {
+    const terminal = {
+      sequence: 3,
+      observedAt: '2026-09-02T00:00:00.000Z',
+      target: { windowId: 4, surfaceId: 'surface-a' },
+      payload: { kind: 'lifecycle' as const, phase: 'layout-stable' as const },
+    };
+    const visualWait = vi.fn(async () => ({ windowId: 4, surfaceId: 'surface-a', status: 'layout-stable', terminal }));
+    const dependencies = {
+      snapshot: () => ({}), windows: () => [], surfaces: () => [],
+      surface: vi.fn((target: { windowId: number; surfaceId: string }) => target.windowId === 4 && target.surfaceId === 'surface-a' ? target : null),
+      createWindow: async () => ({ windowId: 3 }), visualWait,
+    };
+    await expect(dispatchPapersControl(dependencies, request('visual.wait', {
+      windowId: 4, surfaceId: 'surface-a', until: 'layout-stable', timeoutMs: 250,
+    }))).resolves.toMatchObject({ status: 'layout-stable', terminal });
+    expect(visualWait).toHaveBeenCalledWith({ windowId: 4, surfaceId: 'surface-a', until: 'layout-stable', timeoutMs: 250 });
+    await expect(dispatchPapersControl(dependencies, request('visual.wait', {
+      windowId: 4, surfaceId: 'other', until: 'layout-stable', timeoutMs: 250,
+    }))).rejects.toThrow(/not open/);
+  });
+
   it('dispatches an exact composed window capture result', async () => {
     const processIdentity = {
       pid: 321,

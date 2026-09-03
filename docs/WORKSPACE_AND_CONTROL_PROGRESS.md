@@ -78,9 +78,11 @@ Ranked follow-ups for the easiest reliable workflow:
 5. **Longer bounded client-side incident transcript.** Preserve slow/intermittent
    context without enlarging Papers' ordinary 10-second history.
 
-Reviewer checklist execution is now active in ordered tranches: P1 (the
-read-only runner) is implemented locally and awaits its exact-SHA audit gate;
-P2, P3, and P4 remain queued behind that gate. P5 host-layer inspection stays
+Reviewer checklist execution is now active in ordered tranches. P1's
+read-only runner is implemented and signed off at
+`886bbda6dd192e5264bfa5d2ccae7713d55e5f8b`; P2's generic bounded
+`visual.wait` implementation is now pushed and awaits its exact-SHA audit gate;
+P3 and P4 remain queued behind that gate. P5 host-layer inspection stays
 conditional on a new host-composition diagnosis gap, and no As you Go changes
 are scheduled without a concrete project-local bug.
 

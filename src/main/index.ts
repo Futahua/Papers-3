@@ -57,6 +57,7 @@ import { createVisualRendererFenceService } from './visual/visualRendererFence';
 import { createVisualWindowNativeCaptureService } from './visual/visualWindowNativeCapture';
 import { captureVisualWindow } from './visual/visualCaptureWindowService';
 import { evaluateVisualAssertions, type VisualAssertion } from './visual/visualAssertions';
+import { createVisualWaitService } from './visual/visualWait';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
@@ -162,6 +163,11 @@ const closingPapersWindows = new Set<number>();
 const visualDiagnosticsByWindow = new Map<number, VisualDiagnosticBuffer>();
 const visualLifecycleMonitors = new Map<number, VisualLifecycleMonitor>();
 const visualTimelinesBySurface = new Map<string, VisualTimeline>();
+const visualWaitService = createVisualWaitService({
+  isLive: ({ windowId, surfaceId }) => logicalSurfaces.isLiveIn(surfaceId, windowId),
+  snapshot: ({ windowId, surfaceId }) => visualDiagnosticsByWindow.get(windowId)?.snapshot()
+    .filter((record) => record.target.windowId === windowId && record.target.surfaceId === surfaceId) ?? [],
+});
 interface VisualSemanticKeySurfaceState {
   registry: VisualSemanticKeyRegistry;
   currentSenderId: number | null;
@@ -237,6 +243,7 @@ function retireVisualSemanticKeySurface(surfaceId: string): void {
 }
 
 function retireVisualSemanticKeySurfaceAt(windowId: number, surfaceId: string): void {
+  visualWaitService.retire({ windowId, surfaceId });
   visualSurfaceObservationState.retireSurfaceAt(windowId, surfaceId);
   visualSemanticKeysBySurface.delete(visualSemanticKeyMapKey(windowId, surfaceId));
   visualTimelinesBySurface.delete(visualSemanticKeyMapKey(windowId, surfaceId));
@@ -259,6 +266,7 @@ function moveLogicalSurface(surfaceId: string, targetWindowId: number): boolean 
 
 function retireLogicalSurfacesInWindow(windowId: number): string[] {
   const retired = logicalSurfaces.retireWindow(windowId);
+  visualWaitService.retireWindow(windowId);
   for (const surfaceId of retired) retireVisualSemanticKeySurface(surfaceId);
   return retired;
 }
@@ -636,6 +644,7 @@ async function bootstrap(): Promise<void> {
               workspaceTopologyRevision: workspaceTopologyRevisions.get(windowId) ?? 0,
             }));
           }
+          visualWaitService.append(record);
           const event = record.payload.kind === 'lifecycle' ? 'visual.lifecycle' : 'visual.diagnostic';
           controlEventHub?.publish(event, record);
         },
@@ -2079,6 +2088,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             signal,
           }, request);
         },
+        visualWait: (request, signal) => visualWaitService.wait(request, request.until, request.timeoutMs, signal),
         visualAssert: ({ windowId, surfaceId }, assertions) => {
           if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return null;
           const state = visualSemanticKeysBySurface.get(visualSemanticKeyMapKey(windowId, surfaceId));

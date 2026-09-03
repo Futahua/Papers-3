@@ -80,6 +80,7 @@ describe('Papers stdio MCP adapter', () => {
       ['inspect.visual.timeline', { windowId: 4, surfaceId: 'surface-a', beforeMs: 1000 }],
       ['visual.assert', { windowId: 4, surfaceId: 'surface-a', assertions: [{ kind: 'visible', elementKey: 'canvas.root' }] }],
       ['visual.report.create', { windowId: 4, surfaceId: 'surface-a', beforeMs: 1000 }],
+      ['visual.wait', { windowId: 4, surfaceId: 'surface-a', until: 'layout-stable', timeoutMs: 500 }],
       ['visual.artifact.read', { artifactId: 'va-11111111-1111-4111-8111-111111111111', offset: 0, length: 1 }],
       ['capture.surface', { windowId: 4, surfaceId: 'surface-a' }],
       ['capture.element', { windowId: 4, surfaceId: 'surface-a', elementKey: 'canvas.root', paddingCssPx: 0 }],

@@ -181,6 +181,18 @@ const visualReportResultSchema = z.object({
     includes: visualReportIncludeSchema,
   }).strict(),
 }).strict();
+const visualWaitRequestSchema = z.object({
+  windowId: z.number().int(),
+  surfaceId: z.string().min(1).max(128),
+  until: z.enum(['layout-stable', 'render-failed']),
+  timeoutMs: z.number().int().positive().max(5_000).default(5_000),
+}).strict();
+const visualWaitResultSchema = z.object({
+  windowId: z.number().int(),
+  surfaceId: z.string().min(1).max(128),
+  status: z.enum(['layout-stable', 'render-failed', 'timeout', 'retired']),
+  terminal: visualDiagnosticRecordSchema.optional(),
+}).strict();
 const layoutTargetSchema = z.object({ windowId: z.number().int(), layoutId: z.string().uuid() }).strict();
 const namedLayoutSchema = z.object({
   layoutId: z.string().uuid(),
@@ -362,6 +374,11 @@ export const papersControlCommands = {
       }),
     }).strict(),
     output: visualReportResultSchema,
+    scope: 'surface', effect: 'query',
+  },
+  'visual.wait': {
+    input: visualWaitRequestSchema,
+    output: visualWaitResultSchema,
     scope: 'surface', effect: 'query',
   },
   'visual.assert': {
@@ -560,6 +577,7 @@ export interface PapersControlDependencies {
   visualElements?(target: { windowId: number; surfaceId: string }, keys?: string[]): unknown;
   visualTimeline?(target: { windowId: number; surfaceId: string }, beforeMs: number): unknown;
   visualReportCreate?(request: VisualReportRequest, signal?: AbortSignal): Promise<unknown>;
+  visualWait?(request: { windowId: number; surfaceId: string; until: 'layout-stable' | 'render-failed'; timeoutMs: number }, signal?: AbortSignal): Promise<unknown>;
   visualAssert?(target: { windowId: number; surfaceId: string }, assertions: unknown[]): unknown;
   visualArtifactRead?(artifactId: string, offset: number, length: number): Promise<{
     metadata: unknown;
@@ -712,6 +730,16 @@ export async function dispatchPapersControl(
         : dependencies.visualReportCreate?.(params));
       if (!report) throw new Error('Visual report generation is unavailable.');
       return papersControlCommands[request.method].output.parse(report);
+    }
+    case 'visual.wait': {
+      const params = papersControlCommands[request.method].input.parse(request.params ?? {});
+      const target = { windowId: params.windowId, surfaceId: params.surfaceId };
+      if (!dependencies.surface(target)) throw new Error('That surface is not open in that Papers window.');
+      const result = await (context.signal
+        ? dependencies.visualWait?.(params, context.signal)
+        : dependencies.visualWait?.(params));
+      if (!result) throw new Error('Visual wait is unavailable.');
+      return papersControlCommands[request.method].output.parse(result);
     }
     case 'visual.assert': {
       const params = papersControlCommands[request.method].input.parse(request.params ?? {});

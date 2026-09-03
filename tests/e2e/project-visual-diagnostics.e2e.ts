@@ -247,6 +247,22 @@ describe('project renderer visual diagnostics', () => {
     expect(healthyBundle.terminal?.payload?.phase).toBe('layout-stable');
     expect(healthyBundle.report.verified).toBe(true);
     expect(await readFile(join(healthyBundleDir, 'summary.json'), 'utf8')).toContain('layout-stable');
+    const waitMcpTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [join(process.cwd(), 'tools', 'papersMcp.mjs'), '--descriptor', descriptorPath],
+      cwd: process.cwd(), stderr: 'pipe',
+    });
+    const waitMcpClient = new Client({ name: 'papers-visual-wait-e2e', version: '1.0.0' });
+    await waitMcpClient.connect(waitMcpTransport);
+    try {
+      const waitResult = await waitMcpClient.callTool({ name: 'papers_control', arguments: {
+        method: 'visual.wait', params: { windowId, surfaceId: opened.surfaceId, until: 'layout-stable', timeoutMs: 500 },
+      } });
+      expect(waitResult.isError).toBeFalsy();
+      expect(JSON.parse((waitResult.content as Array<{ type: string; text: string }>)[0]!.text)).toMatchObject({ status: 'layout-stable' });
+    } finally {
+      await waitMcpClient.close();
+    }
     for (const phase of ['state-hydrated', 'first-paint', 'layout-stable']) {
       expect(healthyLifecycleEvents).toEqual(expect.arrayContaining([
         expect.objectContaining({
