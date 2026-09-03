@@ -81,8 +81,11 @@ Ranked follow-ups for the easiest reliable workflow:
 Reviewer checklist execution is now active in ordered tranches. P1's
 read-only runner is implemented and signed off at
 `886bbda6dd192e5264bfa5d2ccae7713d55e5f8b`; P2's generic bounded
-`visual.wait` implementation is now pushed and awaits its exact-SHA audit gate;
-P3 and P4 remain queued behind that gate. P5 host-layer inspection stays
+`visual.wait` implementation is signed off at
+`e9e03066aa34e708de4f19df0b8f120870fda2e5`; P3's read-only live baseline
+comparison is signed off at `6d7064008b6f1f928e10c19c419241603c9acf45`.
+P4's bounded incident transcript is implemented and awaits its exact-SHA audit
+gate. P5 host-layer inspection stays
 conditional on a new host-composition diagnosis gap, and no As you Go changes
 are scheduled without a concrete project-local bug.
 
