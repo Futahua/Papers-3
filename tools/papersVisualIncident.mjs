@@ -26,11 +26,11 @@ async function boundedCall(promise, deadline, signal) {
 }
 
 /** Collect a bounded, session-local event transcript without extending Papers' runtime history. */
-export async function collectIncidentTranscript(connection, target, { durationMs = 60_000, maxRecords = MAX_RECORDS, maxBytes = MAX_BYTES, signal } = {}) {
+export async function collectIncidentTranscript(connection, target, { durationMs = 60_000, maxRecords = MAX_RECORDS, maxBytes = MAX_BYTES, signal, deadline: suppliedDeadline } = {}) {
   if (!targetIsValid(target)) throw new Error('an explicit window and surface target are required');
   if (!Number.isInteger(durationMs) || durationMs < 1 || durationMs > MAX_DURATION_MS) throw new Error(`duration-ms must be an integer from 1 to ${MAX_DURATION_MS}`);
   if (!Number.isInteger(maxRecords) || maxRecords < 1 || maxRecords > MAX_RECORDS || !Number.isInteger(maxBytes) || maxBytes < 1024 || maxBytes > MAX_BYTES) throw new Error('incident transcript bounds are invalid');
-  const startedAt = Date.now(); const deadline = startedAt + durationMs; const records = []; const liveRecords = []; const seen = new Set(); let bytes = 0; let liveBytes = 0; let truncated = false; let stopEvents = () => undefined; let timer; let settled = false;
+  const startedAt = Date.now(); const deadline = suppliedDeadline ?? startedAt + durationMs; const records = []; const liveRecords = []; const seen = new Set(); let bytes = 0; let liveBytes = 0; let truncated = false; let stopEvents = () => undefined; let timer; let settled = false;
   const append = (record, live = false) => {
     if (!targetMatches(record, target) || !Number.isInteger(record.sequence) || seen.has(record.sequence)) return;
     seen.add(record.sequence); const recordBytes = Buffer.byteLength(JSON.stringify(record)); if (live) { liveRecords.push(record); liveBytes += recordBytes; } records.push(record); bytes += recordBytes;
@@ -54,10 +54,12 @@ export async function collectIncidentTranscript(connection, target, { durationMs
       const finish = (value, error) => { if (settled) return; settled = true; clearTimeout(timer); stopEvents(); signal?.removeEventListener('abort', onAbort); error ? rejectResult(error) : resolveResult(value); };
       const onAbort = () => finish(undefined, abortError());
       signal?.addEventListener('abort', onAbort, { once: true });
-      const remaining = Math.max(1, deadline - Date.now());
-      timer = setTimeout(() => finish({ records: [...records].sort((a, b) => a.sequence - b.sequence), liveRecords: [...liveRecords], bytes, truncated, timedOut: false, windowDiagnostics: windowInitial.result ?? [] }), remaining);
+      const remaining = Math.max(1, deadline - Date.now()); const reconciliationReserve = Math.min(1000, Math.max(1, Math.floor(durationMs / 2)));
+      timer = setTimeout(() => finish({ records: [...records].sort((a, b) => a.sequence - b.sequence), liveRecords: [...liveRecords], bytes, truncated, timedOut: false, windowDiagnostics: windowInitial.result ?? [] }), Math.max(1, remaining - reconciliationReserve));
     });
-    const reconciled = reconcileEventSequences(result.liveRecords, result.records, result.windowDiagnostics, target);
+    const finalWindow = await boundedCall(connection.call('inspect.visual.diagnostics', { windowId: target.windowId }), deadline, signal);
+    if (!finalWindow?.ok) throw new Error(finalWindow?.error ?? 'final visual diagnostics inspection failed');
+    const reconciled = reconcileEventSequences(result.liveRecords, result.records, finalWindow.result ?? result.windowDiagnostics, target);
     return { ...result, durationMs: Date.now() - startedAt, target, rawSequenceGaps: rawGaps(result.liveRecords), eventGaps: reconciled };
   } finally {
     settled = true; clearTimeout(timer); stopEvents();
@@ -71,9 +73,14 @@ export async function runVisualIncident({ descriptorPath, windowId, surfaceId, d
   let connection; try { connection = await connectPapersControl(descriptor); } catch { throw new Error('diagnostic mode unavailable: the existing control endpoint is not reachable'); }
   const destination = outputDir ? resolve(outputDir) : await mkdtemp(join(tmpdir(), 'papers-visual-incident-')); await mkdir(destination, { recursive: true });
   try {
-    const process = await connection.call('inspect.process'); const windows = await connection.call('inspect.windows'); const surfaces = await connection.call('inspect.surfaces');
+    const deadline = Date.now() + durationMs;
+    const [process, windows, surfaces] = await Promise.all([
+      boundedCall(connection.call('inspect.process'), deadline, signal),
+      boundedCall(connection.call('inspect.windows'), deadline, signal),
+      boundedCall(connection.call('inspect.surfaces'), deadline, signal),
+    ]);
     if (!process?.ok || !windows?.ok || !surfaces?.ok || !windows.result.some((window) => window.windowId === windowId) || !surfaces.result.some((surface) => surface.windowId === windowId && surface.surfaceId === surfaceId)) throw new Error('explicit incident target is not live');
-    const transcript = await collectIncidentTranscript(connection, { windowId, surfaceId }, { durationMs, signal });
+    const transcript = await collectIncidentTranscript(connection, { windowId, surfaceId }, { durationMs, signal, deadline });
     await writeFile(join(destination, 'events.ndjson'), `${transcript.records.map((record) => JSON.stringify(record)).join('\n')}${transcript.records.length ? '\n' : ''}`);
     const summary = { schemaVersion: 1, target: { windowId, surfaceId }, durationMs, transcript: { count: transcript.records.length, bytes: transcript.bytes, truncated: transcript.truncated }, timedOut: transcript.timedOut, eventGaps: { observed: transcript.rawSequenceGaps, ...transcript.eventGaps }, outputDir: destination };
     await writeFile(join(destination, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`); return summary;
