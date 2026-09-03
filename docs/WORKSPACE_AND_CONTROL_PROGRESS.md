@@ -343,14 +343,14 @@ subtree relocation and deletion wins), and surface-local navigation, selection a
 trail expansion. The browser reviewer later marked the live integration
 **NOT SIGNED OFF**: the transport/session scope is not yet observable in real
 Papers windows, and a follower failure could strand an optimistic mutation.
-The follower recovery correction is now pushed at exact SHA
-[`01455cb`](https://github.com/Futahua/as-you-go-backpack/commit/01455cb7dac08fcf2ad073b4e3b5dd4a5465db10).
+The follower recovery correction and race fences are now pushed at exact SHA
+[`d151a0e`](https://github.com/Futahua/as-you-go-backpack/commit/d151a0e8ed630f7a57de9fa9d2c1b2e84dc741b5).
 
 * [x] queued optimistic edits are protected in coordinator tests; live transport
   convergence remains unproven after the real reproduction;
 * [x] follower failure and writer promotion are explicit and recoverable in
   the project-local coordinator tests; live follower recovery is hardened at
-  `01455cb` but still needs installed two-window proof;
+  `d151a0e` but still needs installed two-window proof;
 * [x] prompt moves, inserts, reorders, subtree edits and identity deletion
   converge deterministically;
 * [x] every open surface is designed to update shared actions while retaining
@@ -360,8 +360,9 @@ The follower recovery correction is now pushed at exact SHA
 
 Validation before the recovery correction at `f19842a`: `npm test` passed 1,083
 tests with 0 failures and 0 skips; focused coordinator coverage was 42 tests and
-store coverage 29 tests. After the correction, the coordinator suite is 41/41
-and `npm test` passes. The remaining release gate is a cloned-real-profile,
+store coverage 29 tests. After the recovery/race correction at `d151a0e`, the
+coordinator suite is 43/43 and `npm test` passes 1,087 tests with 0 failures and
+0 skips. The remaining release gate is a cloned-real-profile,
 installed-app matrix with two native Papers windows, identity/session/channel
 telemetry, follower-originated mutations, and deterministic missed-message
 recovery. This does not authorize another installation or creator-data mutation.
