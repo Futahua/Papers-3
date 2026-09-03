@@ -20,6 +20,7 @@
     "papersctl": "node tools/papersctl.mjs",
     "papers:visual-debug": "node tools/papersVisualDebug.mjs",
     "papers:visual-compare": "node tools/papersVisualCompare.mjs",
+    "papers:visual-incident": "node tools/papersVisualIncident.mjs",
     "papers:mcp": "node tools/papersMcp.mjs",
     "demo:seed": "node tools/seed-demo-backpack.mjs",
     "fixture:logseq": "node tools/logseq-fixture.mjs setup",
