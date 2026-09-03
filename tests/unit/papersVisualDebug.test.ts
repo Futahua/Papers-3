@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- the diagnostic runner is intentionally a plain ESM CLI.
-import { readArtifact, reconcileEventSequences, waitForVisualTerminal } from '../../tools/papersVisualDebug.mjs';
+import { readArtifact, reconcileEventSequences, runVisualDebug, waitForVisualTerminal } from '../../tools/papersVisualDebug.mjs';
 
 const target = { windowId: 7, surfaceId: 'surface-a' };
 const lifecycle = (phase: 'layout-stable' | 'render-failed', sequence = 1) => ({
@@ -75,6 +78,13 @@ describe('read-only visual debug runner primitives', () => {
     expect(result).toMatchObject({ status: 'timeout', timedOut: true, records: [] });
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(result.records).toEqual([]);
+  });
+
+  it('normalizes a stale descriptor endpoint without exposing its pipe name', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'papers-visual-debug-stale-'));
+    const descriptorPath = join(dir, 'dev-control.json');
+    await writeFile(descriptorPath, JSON.stringify({ protocolVersion: 1, pipe: `\\\\.\\pipe\\papers-missing-${Date.now()}`, token: 'secret-token', pid: 1 }));
+    await expect(runVisualDebug({ descriptorPath, windowId: 7, surfaceId: 'surface-a', timeoutMs: 10 })).rejects.toThrow('diagnostic mode unavailable: the existing control endpoint is not reachable');
   });
 
   it('reconciles target history and distinguishes a known other-surface sequence', () => {

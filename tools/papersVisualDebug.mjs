@@ -202,7 +202,9 @@ export async function runVisualDebug({ descriptorPath, windowId, surfaceId, time
   let descriptor;
   try { descriptor = await readDescriptor(descriptorPath); }
   catch { throw new Error('diagnostic mode unavailable: an existing control descriptor is required'); }
-  const connection = await connectPapersControl(descriptor);
+  let connection;
+  try { connection = await connectPapersControl(descriptor); }
+  catch { throw new Error('diagnostic mode unavailable: the existing control endpoint is not reachable'); }
   const destination = outputDir ? resolve(outputDir) : await mkdtemp(join(tmpdir(), 'papers-visual-debug-'));
   await mkdir(destination, { recursive: true });
   try {
