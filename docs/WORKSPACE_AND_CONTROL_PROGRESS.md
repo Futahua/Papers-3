@@ -313,7 +313,9 @@ release/install action is authorized by this checkpoint.
 ### As you Go multi-surface coordination closure (2026-09-03)
 
 Deployment checkpoint (creator-authorized, 2026-09-03 22:46 local): the live
-As you Go project already resolves to signed-off `f19842afc0fc15de2832a4c6d9f12ad75ed335b9`.
+As you Go project resolved to `f19842afc0fc15de2832a4c6d9f12ad75ed335b9` at
+installation time. A subsequent real two-window reproduction showed that the
+synthetic/project-local signoff did not prove live transport convergence.
 Built an unpublished Papers 1.3.11 NSIS installer from `bab2872bc399a77beb8bc4485eabb94bac64797e`,
 including the generic project-owned new-surface routing changes. Build stamp is
 `bab2872+local` (the protected, unbundled worker-comparison evidence remains dirty),
@@ -333,26 +335,36 @@ shortcut launched live PID 31924 at `2026-09-03T22:46:22+07:00`. Normal launch
 does not enable developer control; installed synthetic tests do not claim a
 desktop-compositor or live creator multi-window interaction audit.
 
-The independent As you Go project now has the intended all-window document
+The independent As you Go project has the intended all-window document
 pipeline: one durable Web-Lock writer with CAS protection, ordered optimistic
 queue/ACK handling, generation invalidation and promotion recovery, authoritative
 base tracking, stable prompt/entity merge semantics (including move/reorder,
 subtree relocation and deletion wins), and surface-local navigation, selection and
-trail expansion. The browser reviewer explicitly signed off the complete agenda
-at exact pushed SHA
-[`f19842a`](https://github.com/Futahua/as-you-go-backpack/commit/f19842afc0fc15de2832a4c6d9f12ad75ed335b9).
+trail expansion. The browser reviewer later marked the live integration
+**NOT SIGNED OFF**: the transport/session scope is not yet observable in real
+Papers windows, and a follower failure could strand an optimistic mutation.
+The follower recovery correction is now pushed at exact SHA
+[`01455cb`](https://github.com/Futahua/as-you-go-backpack/commit/01455cb7dac08fcf2ad073b4e3b5dd4a5465db10).
 
-* [x] queued optimistic edits cannot regress live or durable state;
-* [x] follower failure and writer promotion are explicit and recoverable;
+* [x] queued optimistic edits are protected in coordinator tests; live transport
+  convergence remains unproven after the real reproduction;
+* [x] follower failure and writer promotion are explicit and recoverable in
+  the project-local coordinator tests; live follower recovery is hardened at
+  `01455cb` but still needs installed two-window proof;
 * [x] prompt moves, inserts, reorders, subtree edits and identity deletion
   converge deterministically;
-* [x] every open surface updates shared actions while retaining its own view;
-* [x] reviewer full-agenda audit signed off at the exact SHA above.
+* [x] every open surface is designed to update shared actions while retaining
+  its own view;
+* [ ] reviewer live-integration hardening audit and installed two-native-window
+  acceptance remain open.
 
-Validation at that SHA: `npm test` passes 1,083 tests with 0 failures and 0
-skips; focused coordinator coverage is 42 tests and store coverage is 29 tests.
-This closes the As you Go project-local agenda without changing Papers' generic
-host contract or authorizing installation, release or creator-data mutation.
+Validation before the recovery correction at `f19842a`: `npm test` passed 1,083
+tests with 0 failures and 0 skips; focused coordinator coverage was 42 tests and
+store coverage 29 tests. After the correction, the coordinator suite is 41/41
+and `npm test` passes. The remaining release gate is a cloned-real-profile,
+installed-app matrix with two native Papers windows, identity/session/channel
+telemetry, follower-originated mutations, and deterministic missed-message
+recovery. This does not authorize another installation or creator-data mutation.
 
 ---
 
