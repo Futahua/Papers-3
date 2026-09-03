@@ -150,7 +150,8 @@ export async function waitForVisualTerminal(connection, target, timeoutMs = 5_00
       transcriptTruncated = true;
     }
   };
-  const eligibleTerminal = () => records.filter((record) => isTerminal(record) && record.sequence > latestNavigationSequence).at(-1);
+  const eligibleTerminal = () => records.filter((record) => isTerminal(record) && record.sequence > latestNavigationSequence)
+    .sort((left, right) => left.sequence - right.sequence).at(-1);
   let timer;
   let stopEvents = () => {};
   let snapshotPending = true;

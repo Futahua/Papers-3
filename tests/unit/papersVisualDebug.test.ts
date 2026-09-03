@@ -42,6 +42,23 @@ describe('read-only visual debug runner primitives', () => {
     await expect(waitForVisualTerminal(connection, target, 100)).resolves.toMatchObject({ status: 'terminal', terminal: { sequence: 12 } });
   });
 
+  it('chooses the newest terminal when a live event arrives during the snapshot', async () => {
+    const listeners = new Set<(frame: unknown) => void>();
+    const connection = {
+      onEvent(listener: (frame: unknown) => void) { listeners.add(listener); return () => listeners.delete(listener); },
+      call: async (method: string) => {
+        if (method === 'events.subscribe') return { ok: true, result: {} };
+        if (method === 'inspect.visual.diagnostics') {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return { ok: true, result: [lifecycle('layout-stable', 10)] };
+        }
+        throw new Error(`unexpected ${method}`);
+      },
+    };
+    setTimeout(() => listeners.forEach((listener) => listener({ type: 'event', event: 'visual.lifecycle', payload: lifecycle('render-failed', 15) })), 2);
+    await expect(waitForVisualTerminal(connection, target, 100)).resolves.toMatchObject({ status: 'terminal', terminal: { sequence: 15, payload: { phase: 'render-failed' } } });
+  });
+
   it('reconciles target history and distinguishes a known other-surface sequence', () => {
     const received = [lifecycle('layout-stable', 10), lifecycle('render-failed', 12)];
     expect(reconcileEventSequences(received, [{ eventSeq: 11 }], [
