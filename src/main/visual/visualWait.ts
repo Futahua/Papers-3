@@ -45,6 +45,11 @@ export function createVisualWaitService({
   snapshot(target: VisualWaitTarget): VisualDiagnosticRecord[];
 }): VisualWaitService {
   const waiters = new Map<string, Set<Waiter>>();
+  // A target may be adopted by a new renderer without a did-start-loading
+  // event (prepared cross-window renderers are intentionally quiet). Retiring
+  // a target records the last sequence seen so old terminal history cannot
+  // satisfy a later visit to the same {windowId,surfaceId} pair.
+  const sequenceFloors = new Map<string, number>();
 
   const remove = (waiter: Waiter): void => {
     clearTimeout(waiter.timer);
@@ -76,7 +81,8 @@ export function createVisualWaitService({
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5_000) return Promise.reject(new Error('visual.wait timeout must be from 1 to 5000 milliseconds'));
     if (!isLive(target)) return Promise.reject(new Error('That visual wait target is not open.'));
     return new Promise((resolve, reject) => {
-      const waiter: Waiter = { target, until, navigationSequence: 0, resolve, reject, timer: undefined as unknown as ReturnType<typeof setTimeout>, signal };
+      const floor = sequenceFloors.get(key(target)) ?? 0;
+      const waiter: Waiter = { target, until, navigationSequence: floor, resolve, reject, timer: undefined as unknown as ReturnType<typeof setTimeout>, signal };
       waiter.timer = setTimeout(() => settle(waiter, { windowId: target.windowId, surfaceId: target.surfaceId, status: 'timeout' }), timeoutMs);
       waiter.abort = () => fail(waiter, new Error('visual.wait was cancelled'));
       if (signal?.aborted) { fail(waiter, new Error('visual.wait was cancelled')); return; }
@@ -90,6 +96,8 @@ export function createVisualWaitService({
     });
   };
   const retire = (target: VisualWaitTarget): void => {
+    const latest = snapshot(target).filter((record) => targetMatches(record, target)).reduce((max, record) => Math.max(max, record.sequence), 0);
+    sequenceFloors.set(key(target), Math.max(sequenceFloors.get(key(target)) ?? 0, latest));
     for (const waiter of [...(waiters.get(key(target)) ?? [])]) settle(waiter, { windowId: target.windowId, surfaceId: target.surfaceId, status: 'retired' });
   };
   return {

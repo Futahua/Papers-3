@@ -35,6 +35,16 @@ describe('bounded exact-target visual wait', () => {
     await expect(pending).resolves.toMatchObject({ status: 'layout-stable', terminal: { sequence: 3 } });
   });
 
+  it('floors history across move-away/move-back adoption without a navigation marker', async () => {
+    const service = setup([record(1, 'layout-stable')]);
+    service.retire(target);
+    const pending = service.wait(target, 'layout-stable', 30);
+    await expect(pending).resolves.toMatchObject({ status: 'timeout' });
+    const next = service.wait(target, 'layout-stable', 500);
+    setTimeout(() => service.append(record(2, 'layout-stable')), 5);
+    await expect(next).resolves.toMatchObject({ status: 'layout-stable', terminal: { sequence: 2 } });
+  });
+
   it('settles timeout, cancellation, and retirement without leaked waiters', async () => {
     const service = setup();
     await expect(service.wait(target, 'render-failed', 5)).resolves.toMatchObject({ status: 'timeout' });
