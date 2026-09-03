@@ -691,6 +691,22 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.runProjectOwnership(id, () => this.openBackpackProjectUngated(senderId, id));
   }
 
+  /** Project-owned request for another Papers tab. The project may choose only
+   * a URL on its own authenticated backpack origin; Papers creates the generic
+   * workspace surface and routes the URL without understanding project data. */
+  async openBackpackProjectNewSurface(senderId: number, url: string): Promise<unknown> {
+    const projectId = this.requireProjectForSender(senderId);
+    const context = this.deps.surfaces.contextForSender(senderId);
+    if (!context) throw new Error('Enter a Backpack project before opening another tab.');
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { throw new Error('Backpack project surface URL is not valid.'); }
+    if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || parsed.host !== projectId) {
+      throw new Error('This project may open only its own Papers tab.');
+    }
+    return this.runProjectOwnership(projectId, () =>
+      this.openWorkspaceSurfaceFromControlUngated(context.windowId, projectId, parsed.toString()));
+  }
+
   private async openBackpackProjectUngated(senderId: number, id: string): Promise<OpenBackpackProject | null> {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may open a Backpack project.');
@@ -1601,7 +1617,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.runProjectOwnership(projectId, () => this.openWorkspaceSurfaceFromControlUngated(windowId, projectId));
   }
 
-  private async openWorkspaceSurfaceFromControlUngated(windowId: number, projectId: string): Promise<{
+  private async openWorkspaceSurfaceFromControlUngated(windowId: number, projectId: string, requestedUrl?: string): Promise<{
     windowId: number; surfaceId: string; projectId: string; topology: WorkspaceTopologyV1;
   }> {
     const initialBackpack = this.deps.registry.find(projectId);
@@ -1627,7 +1643,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       // Queue exact renderer delivery first. Electron cannot handle it until
       // this main-process stack yields; canonical commit follows immediately.
       this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-project-opened', {
-        project: { surfaceId: surface.surfaceId, projectId, title: backpack.name, url: project.url },
+        project: { surfaceId: surface.surfaceId, projectId, title: backpack.name, url: requestedUrl ?? project.url },
         topology: next,
       });
       this.deps.setActiveSurfaceId(windowId, surface.surfaceId);

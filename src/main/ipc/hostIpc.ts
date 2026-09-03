@@ -31,6 +31,7 @@ export interface HostFacade {
   hydrateStartupWorkspace(senderId: number): Promise<{ hydrated: boolean }>;
 
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
+  openBackpackProjectNewSurface(senderId: number, url: string): Promise<unknown>;
   closeBackpackProject(senderId: number, surfaceId: string): Promise<void>;
   activateBackpackProjectSurface(senderId: number, surfaceId: string): void;
   showBackpackProjectSurface(senderId: number, surfaceId: string, url: string): Promise<void>;
@@ -202,6 +203,10 @@ export function registerHostIpc(facade: HostFacade): void {
 
   handle('host:backpack-project:open', (event, id) =>
     facade.openBackpackProject(event.sender.id, backpackRemovalIdSchema.parse(id)),
+  );
+  handle('host:backpack-project:open-new-surface', (event, url) =>
+    facade.openBackpackProjectNewSurface(event.sender.id, z.string().url().max(2_048).parse(url)),
+    true,
   );
   handle('host:backpack-project:close', (event, surfaceId) =>
     facade.closeBackpackProject(event.sender.id, surfaceIdSchema.parse(surfaceId)),
