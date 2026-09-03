@@ -56,6 +56,33 @@ Windows desktop control or capture was performed by the agent.
 
 ## Debugging-pipeline research — reviewer follow-up, 2026-09-03
 
+### Main installation updated — 2026-09-03 16:02 local
+
+The creator authorized updating the main installation. Built an unpublished
+NSIS installer from `3e28b7ac64bf4b9e71cb000e368d8d4b6376d8f4`, keeping version
+1.3.11. The embedded stamp is `3e28b7a+local` because the preserved, unbundled
+`docs/evidence/worker-comparison.json` modification remains in the checkout.
+Build timestamp: `2026-09-03T09:00:48.820Z`.
+
+The old app exited gracefully. App/Data backups, the external As you Go state,
+and the desktop shortcut were preserved under
+`Runtime/Backups/before-debug-update-20260903-1602`. NSIS installed into the
+existing `Runtime/App` with exit code 0. The installer was archived as
+`Runtime/Installers/Papers-Setup-1.3.11-3e28b7a.exe`; no publication occurred.
+Installed and packaged `app.asar` SHA-256 match:
+`499446651E026A2373CFB1486B24378F4259321D0352058E13CA10B7F6B8E407`.
+
+Settings, registry, workspace topology, project registry, As you Go state, and
+desktop shortcut hashes were unchanged across installation. Both project visual
+diagnostics (including MCP) and workspace transparency E2Es passed against the
+unpacked package and again against the installed executable, using isolated
+synthetic profiles. The existing desktop shortcut launched the updated live
+app (PID 43436, start 2026-09-03 16:02:28 local). Normal launch remains normal;
+developer control still requires an explicitly diagnostic launch. Client tools
+remain in the source checkout. No desktop-compositor capture was performed.
+
+### Reviewed pipeline scope
+
 The audit found C1 complete and no transparency blocker. The existing stack can
 already identify the exact process/window/surface, subscribe to lifecycle and
 diagnostic events, inspect semantic geometry, capture window/surface/element
