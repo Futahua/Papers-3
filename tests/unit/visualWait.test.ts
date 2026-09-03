@@ -60,6 +60,16 @@ describe('bounded exact-target visual wait', () => {
     expect(service.pendingCount()).toBe(0);
   });
 
+  it('does not use retained history while the exact renderer is gone', async () => {
+    const service = createVisualWaitService({
+      isLive: () => true,
+      snapshot: () => [record(1, 'layout-stable')],
+      currentState: () => null,
+    });
+    const pending = service.wait(target, 'layout-stable', 20);
+    await expect(pending).resolves.toMatchObject({ status: 'timeout' });
+  });
+
   it('rejects retired or invalid targets before registering a waiter', async () => {
     const service = createVisualWaitService({ isLive: () => false, snapshot: () => [] });
     await expect(service.wait(target, 'layout-stable', 100)).rejects.toThrow('not open');

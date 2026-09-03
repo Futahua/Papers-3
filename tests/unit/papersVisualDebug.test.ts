@@ -45,6 +45,11 @@ describe('read-only visual debug runner primitives', () => {
     await expect(waitForVisualTerminal(connection, target, 100)).resolves.toMatchObject({ status: 'terminal', terminal: { sequence: 12 } });
   });
 
+  it('does not accept a retained terminal after renderer-gone', async () => {
+    const gone = { sequence: 6, observedAt: '2026-09-03T00:00:00.000Z', target, payload: { kind: 'renderer-gone', reason: 'crashed' } };
+    await expect(waitForVisualTerminal(connectionFor([lifecycle('layout-stable', 5), gone]), target, 10)).resolves.toMatchObject({ status: 'timeout' });
+  });
+
   it('chooses the newest terminal when a live event arrives during the snapshot', async () => {
     const listeners = new Set<(frame: unknown) => void>();
     const connection = {

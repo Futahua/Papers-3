@@ -139,9 +139,11 @@ export async function waitForVisualTerminal(connection, target, timeoutMs = 5_00
   let eventBytes = 0;
   let transcriptTruncated = false;
   let latestNavigationSequence = 0;
+  let latestInvalidationSequence = 0;
   const appendRecord = (record) => {
     if (!isTargetRecord(record, target)) return;
     if (record.payload?.kind === 'lifecycle' && record.payload.phase === 'navigation-started') latestNavigationSequence = Math.max(latestNavigationSequence, record.sequence);
+    if (record.payload?.kind === 'renderer-gone') latestInvalidationSequence = Math.max(latestInvalidationSequence, record.sequence);
     records.push(record);
     eventBytes += Buffer.byteLength(JSON.stringify(record));
     while (records.length > MAX_EVENT_RECORDS || eventBytes > MAX_EVENT_BYTES) {
@@ -150,7 +152,7 @@ export async function waitForVisualTerminal(connection, target, timeoutMs = 5_00
       transcriptTruncated = true;
     }
   };
-  const eligibleTerminal = () => records.filter((record) => isTerminal(record) && record.sequence > latestNavigationSequence)
+  const eligibleTerminal = () => records.filter((record) => isTerminal(record) && record.sequence > Math.max(latestNavigationSequence, latestInvalidationSequence))
     .sort((left, right) => left.sequence - right.sequence).at(-1);
   let timer;
   let stopEvents = () => {};

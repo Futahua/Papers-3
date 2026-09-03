@@ -626,7 +626,6 @@ async function bootstrap(): Promise<void> {
       const buffer = visualDiagnosticsByWindow.get(windowId);
       if (!buffer) return;
       try {
-        buffer.clearTarget({ windowId, surfaceId });
         buffer.append(target, { kind: 'renderer-gone', reason: reason.slice(0, 256) || 'unknown' });
       } catch {
         // Renderer exit collection is best effort and must never affect teardown.

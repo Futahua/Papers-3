@@ -92,7 +92,11 @@ export function createVisualWaitService({
         const state = currentState?.(target);
         const stateComplete = until === 'layout-stable' ? state?.layoutStable : state?.renderFailed;
         if (stateComplete) settle(waiter, { windowId: target.windowId, surfaceId: target.surfaceId, status: until });
-        else inspect(waiter, visualDiagnosticRecordSchema.array().parse(snapshot(target)));
+        else if (currentState && !state) {
+          // No current renderer owns this target (for example renderer-gone).
+          // Historical terminal records are retained for C1 reports but cannot
+          // satisfy a new wait until a replacement renderer is observed.
+        } else inspect(waiter, visualDiagnosticRecordSchema.array().parse(snapshot(target)));
       }
       catch (error) { fail(waiter, error); }
     });
