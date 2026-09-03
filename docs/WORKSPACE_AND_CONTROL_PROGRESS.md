@@ -2476,22 +2476,22 @@ Before and after any packaged diagnostic acceptance:
 
 For every C1 implementation session:
 
-1. [ ] Read `HERMES.md` and the current persistent progress/visual-observability plan.
-2. [ ] Inspect branch/head/origin parity and dirty worktree.
-3. [ ] Preserve all user-owned modifications.
-4. [ ] Identify the single active C1.x gate.
-5. [ ] Re-read the previous exact-SHA reviewer verdict.
-6. [ ] Do not implement later phases opportunistically.
-7. [ ] Run focused tests before changing the seam.
-8. [ ] Keep Papers-generic logic free of project identities.
-9. [ ] Keep project-specific fixtures/assertions in their own repositories.
-10. [ ] Add control schemas concurrently with each new semantic capability.
-11. [ ] Verify authority/redaction before adding MCP exposure.
-12. [ ] Run typecheck + focused tests + full suite + build + packaged E2E + diff check as appropriate.
-13. [ ] Record evidence using exact commit SHA.
-14. [ ] Obtain explicit reviewer SIGNED OFF or concrete blocker.
-15. [ ] Update the persistent checklist only after the reviewer verdict.
-16. [ ] Do not release/install/package beyond the packaged test artifact required for acceptance unless separately authorized.
+1. [x] Read `HERMES.md` and the current persistent progress/visual-observability plan.
+2. [x] Inspect branch/head/origin parity and dirty worktree.
+3. [x] Preserve all user-owned modifications.
+4. [x] Identify the single active C1.x gate.
+5. [x] Re-read the previous exact-SHA reviewer verdict.
+6. [x] Do not implement later phases opportunistically.
+7. [x] Run focused tests before changing the seam.
+8. [x] Keep Papers-generic logic free of project identities.
+9. [x] Keep project-specific fixtures/assertions in their own repositories.
+10. [x] Add control schemas concurrently with each new semantic capability.
+11. [x] Verify authority/redaction before adding MCP exposure.
+12. [x] Run typecheck + focused tests + full suite + build + packaged E2E + diff check as appropriate.
+13. [x] Record evidence using exact commit SHA.
+14. [x] Obtain explicit reviewer SIGNED OFF or concrete blocker.
+15. [x] Update the persistent checklist only after the reviewer verdict.
+16. [x] Do not release/install/package beyond the packaged test artifact required for acceptance unless separately authorized.
 
 ---
 
