@@ -78,6 +78,12 @@ Ranked follow-ups for the easiest reliable workflow:
 5. **Longer bounded client-side incident transcript.** Preserve slow/intermittent
    context without enlarging Papers' ordinary 10-second history.
 
+Reviewer checklist execution is now active in ordered tranches: P1 (the
+read-only runner) is implemented locally and awaits its exact-SHA audit gate;
+P2, P3, and P4 remain queued behind that gate. P5 host-layer inspection stays
+conditional on a new host-composition diagnosis gap, and no As you Go changes
+are scheduled without a concrete project-local bug.
+
 The first two items are Papers-generic. Additional semantic keys, summaries,
 fixtures, or reproduction actions belong in an independent Backpack only when a
 concrete Backpack bug requires them. Making ordinary creator-launched Papers
