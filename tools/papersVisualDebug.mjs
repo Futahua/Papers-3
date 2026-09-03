@@ -155,9 +155,11 @@ export async function waitForVisualTerminal(connection, target, timeoutMs = 5_00
   let timer;
   let stopEvents = () => {};
   let snapshotPending = true;
+  let settled = false;
   const result = await new Promise((resolve) => {
-    const finish = (value) => { clearTimeout(timer); stopEvents(); resolve(value); };
+    const finish = (value) => { if (settled) return; settled = true; clearTimeout(timer); stopEvents(); resolve(value); };
     stopEvents = connection.onEvent((frame) => {
+      if (settled) return;
       if (!frame || !['visual.lifecycle', 'visual.diagnostic'].includes(frame.event)) return;
       appendRecord(frame.payload);
       if (!snapshotPending) {
@@ -168,10 +170,12 @@ export async function waitForVisualTerminal(connection, target, timeoutMs = 5_00
     void (async () => {
       try {
         const subscription = await connection.call('events.subscribe', { events: ['visual.lifecycle', 'visual.diagnostic'], visualTarget: target });
+        if (settled) return;
         if (!subscription?.ok) { finish({ status: 'error', error: subscription?.error ?? 'visual event subscription failed', records, rawSequenceGaps: rawSequenceGaps(records), timedOut: false }); return; }
         // The event listener and server-side subscription are established before
         // this snapshot, closing the subscribe/read race without polling.
         const initial = await connection.call('inspect.visual.diagnostics', target);
+        if (settled) return;
         if (!initial?.ok) { finish({ status: 'error', error: initial?.error ?? 'visual diagnostics inspection failed', records, rawSequenceGaps: rawSequenceGaps(records), timedOut: false }); return; }
         initial.result.forEach(appendRecord);
         snapshotPending = false;

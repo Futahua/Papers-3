@@ -59,6 +59,24 @@ describe('read-only visual debug runner primitives', () => {
     await expect(waitForVisualTerminal(connection, target, 100)).resolves.toMatchObject({ status: 'terminal', terminal: { sequence: 15, payload: { phase: 'render-failed' } } });
   });
 
+  it('freezes the timeout result when the snapshot resolves late', async () => {
+    const connection = {
+      onEvent: () => () => {},
+      call: async (method: string) => {
+        if (method === 'events.subscribe') return { ok: true, result: {} };
+        if (method === 'inspect.visual.diagnostics') {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          return { ok: true, result: [lifecycle('layout-stable', 10)] };
+        }
+        throw new Error(`unexpected ${method}`);
+      },
+    };
+    const result = await waitForVisualTerminal(connection, target, 5);
+    expect(result).toMatchObject({ status: 'timeout', timedOut: true, records: [] });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(result.records).toEqual([]);
+  });
+
   it('reconciles target history and distinguishes a known other-surface sequence', () => {
     const received = [lifecycle('layout-stable', 10), lifecycle('render-failed', 12)];
     expect(reconcileEventSequences(received, [{ eventSeq: 11 }], [
