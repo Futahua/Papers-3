@@ -103,7 +103,7 @@ export function createVisualWaitService({
     for (const waiter of [...(waiters.get(key(target)) ?? [])]) settle(waiter, { windowId: target.windowId, surfaceId: target.surfaceId, status: 'retired' });
   };
   const forget = (target: VisualWaitTarget): void => {
-    retire(target);
+    for (const waiter of [...(waiters.get(key(target)) ?? [])]) settle(waiter, { windowId: target.windowId, surfaceId: target.surfaceId, status: 'retired' });
     sequenceFloors.delete(key(target));
   };
   return {
