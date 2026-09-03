@@ -346,13 +346,13 @@ Papers windows, and a follower failure could strand an optimistic mutation.
 The follower recovery correction, race fences, generation cleanup,
 lock-safe conflict recovery, durable-timeout/rebase recognition, and
 writer-cancellation fence are now pushed at exact SHA
-[`b8f0e59`](https://github.com/Futahua/as-you-go-backpack/commit/b8f0e5997bc52d86d9f1c98d8abd385ae59736bc).
+[`7cabe18`](https://github.com/Futahua/as-you-go-backpack/commit/7cabe188ab9421e3bb96734af2c228c20c7a68cf).
 
 * [x] queued optimistic edits are protected in coordinator tests; live transport
   convergence remains unproven after the real reproduction;
 * [x] follower failure and writer promotion are explicit and recoverable in
   the project-local coordinator tests; live follower recovery is hardened at
-  `b8f0e59` but still needs installed two-window proof;
+  `7cabe18` but still needs installed two-window proof;
 * [x] prompt moves, inserts, reorders, subtree edits and identity deletion
   converge deterministically;
 * [x] every open surface is designed to update shared actions while retaining
@@ -363,8 +363,8 @@ writer-cancellation fence are now pushed at exact SHA
 Validation before the recovery correction at `f19842a`: `npm test` passed 1,083
 tests with 0 failures and 0 skips; focused coordinator coverage was 42 tests and
 store coverage 29 tests. After the recovery/race/authority correction at
-`b8f0e59`, the coordinator+store targeted suites are 88/88 and the full suite
-passes 1,103 tests with 0 failures and 0 skips. The remaining release gate is
+`7cabe18`, the coordinator+store targeted suites are 96/96 and the full suite
+passes 1,111 tests with 0 failures and 0 skips. The remaining release gate is
 a cloned-real-profile,
 installed-app matrix with two native Papers windows, identity/session/channel
 telemetry, follower-originated mutations, and deterministic missed-message
