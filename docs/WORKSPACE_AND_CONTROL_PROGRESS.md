@@ -95,18 +95,18 @@ This plan authorizes **planning and later implementation of visual observability
 
 These apply to every C1 phase.
 
-* [ ] **Rendered evidence is independent evidence.** A valid logical topology, document file, or state revision must never be treated as proof that the corresponding UI rendered successfully.
-* [ ] **Diagnostics are read-only with respect to creator data.** Captures, timelines, visual reports, fixtures, and baselines must never rewrite Backpack/project documents or state files.
-* [ ] **No diagnostic recovery by mutation.** A failed capture must not reload, normalize, rewrite, migrate, reopen, restart, or otherwise alter the user's document merely to obtain evidence.
-* [ ] **No continuous polling.** Readiness and changes are event-driven through Electron lifecycle events, renderer observers, explicit project hydration signals, and bounded timeouts.
-* [ ] **No path-string restart inference.** Process freshness is established from PID + start/instance identity + build identity and canonical executable identity. Junction/symlink spelling is not process identity.
-* [ ] **Exact surface authority remains mandatory.** Visual operations name explicit `windowId`/`surfaceId` targets and resolve through existing Papers authority. No “active”, “current”, “first”, or “only surface” inference.
-* [ ] **No arbitrary JavaScript control operation.** Renderer observation uses predefined Papers-owned observation code and strict schemas only.
-* [ ] **No new broad filesystem API.** Generated visual artifacts live in a Papers-owned diagnostic artifact store and are addressed by opaque artifact IDs.
-* [ ] **No secret-bearing raw transport leakage.** Tokens, descriptor contents, sender/WebContents IDs, native handles, install roots, arbitrary URLs, query strings, project filesystem roots, and hidden form secrets stay outside control/MCP output.
-* [ ] **Observation must fail separately from product state.** If visual observation breaks, the user's existing runtime remains authoritative and untouched.
-* [ ] **Bound every operation.** Snapshot stabilization, timeline collection, report construction, artifact retention, DOM summaries, event buffers, console buffers, and retries all have explicit upper bounds.
-* [ ] **One reviewed gate at a time.** Each C1.x phase receives exact-SHA review and sign-off before the next phase begins.
+* [x] **Rendered evidence is independent evidence.** A valid logical topology, document file, or state revision must never be treated as proof that the corresponding UI rendered successfully.
+* [x] **Diagnostics are read-only with respect to creator data.** Captures, timelines, visual reports, fixtures, and baselines must never rewrite Backpack/project documents or state files.
+* [x] **No diagnostic recovery by mutation.** A failed capture must not reload, normalize, rewrite, migrate, reopen, restart, or otherwise alter the user's document merely to obtain evidence.
+* [x] **No continuous polling.** Readiness and changes are event-driven through Electron lifecycle events, renderer observers, explicit project hydration signals, and bounded timeouts.
+* [x] **No path-string restart inference.** Process freshness is established from PID + start/instance identity + build identity and canonical executable identity. Junction/symlink spelling is not process identity.
+* [x] **Exact surface authority remains mandatory.** Visual operations name explicit `windowId`/`surfaceId` targets and resolve through existing Papers authority. No “active”, “current”, “first”, or “only surface” inference.
+* [x] **No arbitrary JavaScript control operation.** Renderer observation uses predefined Papers-owned observation code and strict schemas only.
+* [x] **No new broad filesystem API.** Generated visual artifacts live in a Papers-owned diagnostic artifact store and are addressed by opaque artifact IDs.
+* [x] **No secret-bearing raw transport leakage.** Tokens, descriptor contents, sender/WebContents IDs, native handles, install roots, arbitrary URLs, query strings, project filesystem roots, and hidden form secrets stay outside control/MCP output.
+* [x] **Observation must fail separately from product state.** If visual observation breaks, the user's existing runtime remains authoritative and untouched.
+* [x] **Bound every operation.** Snapshot stabilization, timeline collection, report construction, artifact retention, DOM summaries, event buffers, console buffers, and retries all have explicit upper bounds.
+* [x] **One reviewed gate at a time.** Each C1.x phase receives exact-SHA review and sign-off before the next phase begins.
 
 ---
 
@@ -2320,41 +2320,41 @@ These are explicit reviewer checks, not informal lessons.
 
 ## Process/restart safeguard
 
-* [ ] every packaged visual report records PID;
-* [ ] every report records process `appInstanceId`;
-* [ ] every report records process start time;
-* [ ] every report records build version/commit;
-* [ ] every report records canonical executable file identity;
-* [ ] junction/symlink alias spelling never establishes process sameness/freshness;
-* [ ] a “fresh restart” claim without changed process start identity is rejected as evidence.
+* [x] every packaged visual report records PID;
+* [x] every report records process `appInstanceId`;
+* [x] every report records process start time;
+* [x] every report records build version/commit;
+* [x] every report records canonical executable file identity;
+* [x] junction/symlink alias spelling never establishes process sameness/freshness;
+* [x] a “fresh restart” claim without changed process start identity is rejected as evidence.
 
 ## Render-success safeguard
 
-* [ ] document file presence is not render success;
-* [ ] valid state JSON is not render success;
-* [ ] topology membership is not render success;
-* [ ] visible native surface is not render success;
-* [ ] DOM-ready is not hydration success;
-* [ ] hydration success is not first-paint;
-* [ ] first-paint is not layout-stable;
-* [ ] each fact has its own explicit evidence.
+* [x] document file presence is not render success;
+* [x] valid state JSON is not render success;
+* [x] topology membership is not render success;
+* [x] visible native surface is not render success;
+* [x] DOM-ready is not hydration success;
+* [x] hydration success is not first-paint;
+* [x] first-paint is not layout-stable;
+* [x] each fact has its own explicit evidence.
 
 ## Creator-data safeguard
 
 Before and after any packaged diagnostic acceptance:
 
-* [ ] snapshot/hash source fixture data;
-* [ ] prove diagnostics did not modify it;
-* [ ] reports contain observation copies/summaries only;
-* [ ] no “fix by rewriting state” diagnostic path exists.
+* [x] snapshot/hash source fixture data;
+* [x] prove diagnostics did not modify it;
+* [x] reports contain observation copies/summaries only;
+* [x] no “fix by rewriting state” diagnostic path exists.
 
 ## Event-driven safeguard
 
-* [ ] no background screenshot polling;
-* [ ] no “check every 500 ms until ready” production mechanism;
-* [ ] observers signal changes;
-* [ ] callers wait on events with bounded timeout;
-* [ ] timeline screenshots occur only on explicit lifecycle boundaries.
+* [x] no background screenshot polling;
+* [x] no “check every 500 ms until ready” production mechanism;
+* [x] observers signal changes;
+* [x] callers wait on events with bounded timeout;
+* [x] timeline screenshots occur only on explicit lifecycle boundaries.
 
 ---
 
