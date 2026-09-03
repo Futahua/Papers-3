@@ -9,6 +9,8 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { evalInBackpackProject, evalInHost, launchPapers, waitFor, type LaunchedApp } from './helpers';
 // @ts-expect-error -- the shared control client is plain ESM shipped with the tools.
 import { connectPapersControl, readDescriptor } from '../../tools/papersControlClient.mjs';
+// @ts-expect-error -- the shared diagnostic runner is a plain ESM CLI.
+import { runVisualDebug } from '../../tools/papersVisualDebug.mjs';
 
 const PROJECT = 'bp-11111111-1111-4111-8111-111111111111';
 let launched: LaunchedApp;
@@ -240,6 +242,11 @@ describe('project renderer visual diagnostics', () => {
     expect(successfulLifecyclePhases).toEqual(expect.arrayContaining([
       'state-hydrated', 'first-paint', 'layout-stable',
     ]));
+    const healthyBundleDir = await mkdtemp(join(tmpdir(), 'papers-visual-debug-healthy-'));
+    const healthyBundle = await runVisualDebug({ descriptorPath, windowId, surfaceId: opened.surfaceId, outputDir: healthyBundleDir, elementKeys: ['canvas.root'] });
+    expect(healthyBundle.terminal?.payload?.phase).toBe('layout-stable');
+    expect(healthyBundle.report.verified).toBe(true);
+    expect(await readFile(join(healthyBundleDir, 'summary.json'), 'utf8')).toContain('layout-stable');
     for (const phase of ['state-hydrated', 'first-paint', 'layout-stable']) {
       expect(healthyLifecycleEvents).toEqual(expect.arrayContaining([
         expect.objectContaining({
@@ -503,6 +510,11 @@ describe('project renderer visual diagnostics', () => {
     expect(renderFailedRecord.payload).toMatchObject({
       kind: 'lifecycle', phase: 'render-failed', revision: 'failure-rev-1', stage: 'render', code: 'fixture-render-failure',
     });
+    const failureBundleDir = await mkdtemp(join(tmpdir(), 'papers-visual-debug-failure-'));
+    const failureBundle = await runVisualDebug({ descriptorPath, windowId: secondary.windowId, surfaceId: second.surfaceId, outputDir: failureBundleDir });
+    expect(failureBundle.terminal?.payload?.phase).toBe('render-failed');
+    expect(failureBundle.report.verified).toBe(true);
+    expect(await readFile(join(failureBundleDir, 'summary.json'), 'utf8')).toContain('render-failed');
     await waitFor(async () => failureLifecycleEvents.some((frame) => frame.event === 'visual.lifecycle'
       && frame.payload?.target?.windowId === secondary.windowId
       && frame.payload?.target?.surfaceId === second.surfaceId

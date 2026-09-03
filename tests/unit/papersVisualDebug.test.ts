@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error -- the diagnostic runner is intentionally a plain ESM CLI.
-import { readArtifact, waitForVisualTerminal } from '../../tools/papersVisualDebug.mjs';
+import { readArtifact, reconcileEventSequences, waitForVisualTerminal } from '../../tools/papersVisualDebug.mjs';
 
 const target = { windowId: 7, surfaceId: 'surface-a' };
 const lifecycle = (phase: 'layout-stable' | 'render-failed', sequence = 1) => ({
@@ -32,6 +32,32 @@ describe('read-only visual debug runner primitives', () => {
   it('returns already-terminal history immediately and times out with no event', async () => {
     await expect(waitForVisualTerminal(connectionFor([lifecycle('render-failed', 4)]), target, 100)).resolves.toMatchObject({ status: 'terminal', timedOut: false });
     await expect(waitForVisualTerminal(connectionFor(), target, 10)).resolves.toMatchObject({ status: 'timeout', timedOut: true });
+  });
+
+  it('does not accept a terminal record from before the latest navigation', async () => {
+    const connection = connectionFor([
+      lifecycle('layout-stable', 10),
+      { sequence: 11, observedAt: '2026-09-03T00:00:00.000Z', target, payload: { kind: 'lifecycle', phase: 'navigation-started' } },
+    ], (emit) => setTimeout(() => emit({ type: 'event', event: 'visual.lifecycle', payload: lifecycle('layout-stable', 12) }), 5));
+    await expect(waitForVisualTerminal(connection, target, 100)).resolves.toMatchObject({ status: 'terminal', terminal: { sequence: 12 } });
+  });
+
+  it('reconciles target history and distinguishes a known other-surface sequence', () => {
+    const received = [lifecycle('layout-stable', 10), lifecycle('render-failed', 12)];
+    expect(reconcileEventSequences(received, [{ eventSeq: 11 }], [
+      { sequence: 11, target: { windowId: 7, surfaceId: 'surface-b' } },
+    ])).toEqual({ recoveredSequences: [], crossSurfaceSequences: [11], unrecoverableGaps: [] });
+    expect(reconcileEventSequences(received, [{ eventSeq: 11 }])).toEqual({ recoveredSequences: [11], crossSurfaceSequences: [], unrecoverableGaps: [] });
+  });
+
+  it('bounds the session-local live transcript deterministically', async () => {
+    const connection = connectionFor([], (emit) => {
+      for (let sequence = 1; sequence <= 700; sequence += 1) emit({ type: 'event', event: 'visual.diagnostic', payload: {
+        sequence, observedAt: '2026-09-03T00:00:00.000Z', target, payload: { kind: 'console', level: 'info', message: `event-${sequence}` },
+      } });
+      emit({ type: 'event', event: 'visual.lifecycle', payload: lifecycle('layout-stable', 701) });
+    });
+    await expect(waitForVisualTerminal(connection, target, 100)).resolves.toMatchObject({ status: 'terminal', transcriptTruncated: true });
   });
 
   it('reassembles chunks and verifies the advertised artifact hash and size', async () => {
