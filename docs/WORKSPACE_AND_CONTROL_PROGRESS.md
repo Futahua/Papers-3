@@ -344,15 +344,15 @@ trail expansion. The browser reviewer later marked the live integration
 **NOT SIGNED OFF**: the transport/session scope is not yet observable in real
 Papers windows, and a follower failure could strand an optimistic mutation.
 The follower recovery correction, race fences, generation cleanup,
-lock-safe conflict recovery and durable-timeout recognition are now pushed at
-exact SHA
-[`73a5b34`](https://github.com/Futahua/as-you-go-backpack/commit/73a5b3487b417343952726fd81ab29125402f6e4).
+lock-safe conflict recovery and durable-timeout/rebase recognition are now
+pushed at exact SHA
+[`e611103`](https://github.com/Futahua/as-you-go-backpack/commit/e611103b23da2c942c63184639b448635717107e).
 
 * [x] queued optimistic edits are protected in coordinator tests; live transport
   convergence remains unproven after the real reproduction;
 * [x] follower failure and writer promotion are explicit and recoverable in
   the project-local coordinator tests; live follower recovery is hardened at
-  `73a5b34` but still needs installed two-window proof;
+  `e611103` but still needs installed two-window proof;
 * [x] prompt moves, inserts, reorders, subtree edits and identity deletion
   converge deterministically;
 * [x] every open surface is designed to update shared actions while retaining
@@ -363,7 +363,7 @@ exact SHA
 Validation before the recovery correction at `f19842a`: `npm test` passed 1,083
 tests with 0 failures and 0 skips; focused coordinator coverage was 42 tests and
 store coverage 29 tests. After the recovery/race/authority correction at
-`73a5b34`, the coordinator+store targeted suites are 75/75 and the full suite
+`e611103`, the coordinator+store targeted suites are 76/76 and the full suite
 passes 1,089 tests with 0 failures and 0 skips. The remaining release gate is
 a cloned-real-profile,
 installed-app matrix with two native Papers windows, identity/session/channel
