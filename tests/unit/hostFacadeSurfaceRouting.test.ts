@@ -175,6 +175,20 @@ describe('surface routing in the host facade', () => {
     });
   });
 
+  it('lets an authenticated project request a new tab on its own origin only', async () => {
+    const { facade, logicalSurfaces, workspaceTopologies, sendToWindow, surfaces } = createFacade();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    const existing = await facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    surfaces.bind(FRAME, { surfaceId: existing.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project' });
+    const ownUrl = `papers-backpack://${PROJECT}/open/one/public/workspace.js?as-you-go-folder=g1`;
+    await facade.openBackpackProjectNewSurface(FRAME, ownUrl);
+    expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:workspace-project-opened', expect.objectContaining({
+      project: expect.objectContaining({ url: ownUrl }),
+    }));
+    await expect(facade.openBackpackProjectNewSurface(FRAME, `papers-backpack://${OTHER}/open/one/public/workspace.js`))
+      .rejects.toThrow(/own Papers tab/);
+  });
+
   it('refuses unavailable project without creating a surface', async () => {
     const { facade, logicalSurfaces, workspaceTopologies, setWorkspaceTopology } = createFacade();
     workspaceTopologies.set(1, createWorkspaceTopology());
