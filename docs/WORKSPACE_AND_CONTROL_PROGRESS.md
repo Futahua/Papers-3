@@ -39,6 +39,22 @@ installed desktop-compositor validation remain outstanding, not implied by
 this sign-off. Live installation, running app, and creator data are unchanged;
 `docs/evidence/worker-comparison.json` remains untouched and unstaged.
 
+Deployment checkpoint (creator-authorized, 2026-09-03): built the local installer
+from `58cde5e53b1c4f42e0a1f2087881175ff356f7ab` (reviewed code remains
+`ae53fcb33e92f70ff7565236ae35b354b8acf1a9`), closed the old live process
+gracefully, and installed into the existing canonical `Runtime\App` using NSIS
+(exit 0). No version bump or publication. Previous app preserved at
+`Runtime\App.backup-before-transparency-20260903-1104`; installer archived at
+`Runtime\Installers\Papers-Setup-1.3.11-58cde5e5.exe`. Installed/package
+`app.asar` SHA-256 match:
+`2ECEB7EB15CC3FE6C21F2A9E8FC0DF81CFC63A961C243149C7305CE2E7A3C6DE`.
+Settings and As you Go `state.json` hashes are unchanged across installation.
+The transparency E2E passes against the installed executable with an isolated
+synthetic profile. The existing desktop shortcut was preserved and used to
+launch a fresh live process (PID 45560, start 2026-09-03 12:57:43 local).
+Actual creator desktop-compositor appearance still requires visual confirmation;
+no Windows desktop control or capture was performed.
+
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
 
 ## Multi-session reviewer continuation
