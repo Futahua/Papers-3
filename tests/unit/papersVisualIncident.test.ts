@@ -37,4 +37,10 @@ describe('bounded visual incident transcript', () => {
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   });
+
+  it('cancels while a control setup call is still pending', async () => {
+    const controller = new AbortController(); const connection = { call: () => new Promise(() => undefined), onEvent: () => () => undefined };
+    const pending = collectIncidentTranscript(connection, target, { durationMs: 1000, signal: controller.signal }); controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });
