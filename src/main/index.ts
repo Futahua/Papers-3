@@ -167,6 +167,12 @@ const visualWaitService = createVisualWaitService({
   isLive: ({ windowId, surfaceId }) => logicalSurfaces.isLiveIn(surfaceId, windowId),
   snapshot: ({ windowId, surfaceId }) => visualDiagnosticsByWindow.get(windowId)?.snapshot()
     .filter((record) => record.target.windowId === windowId && record.target.surfaceId === surfaceId) ?? [],
+  currentState: ({ windowId, surfaceId }) => {
+    const state = visualSurfaceObservationState.snapshot(windowId, surfaceId);
+    const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId);
+    if (!state || state.senderId === null || runtime?.senderId !== state.senderId) return null;
+    return { layoutStable: state.layoutStable, renderFailed: state.renderFailed };
+  },
 });
 interface VisualSemanticKeySurfaceState {
   registry: VisualSemanticKeyRegistry;
@@ -244,7 +250,9 @@ function retireVisualSemanticKeySurface(surfaceId: string): void {
 
 function retireVisualSemanticKeySurfaceAt(windowId: number, surfaceId: string): void {
   visualWaitService.retire({ windowId, surfaceId });
-  visualSurfaceObservationState.retireSurfaceAt(windowId, surfaceId);
+  // The surface may be compensated back to this window with its original
+  // renderer. Keep the observation state as the current-state source for that
+  // exact renderer; sender authority still rejects it while moved away.
   visualSemanticKeysBySurface.delete(visualSemanticKeyMapKey(windowId, surfaceId));
   visualTimelinesBySurface.delete(visualSemanticKeyMapKey(windowId, surfaceId));
 }
@@ -618,6 +626,7 @@ async function bootstrap(): Promise<void> {
       const buffer = visualDiagnosticsByWindow.get(windowId);
       if (!buffer) return;
       try {
+        buffer.clearTarget({ windowId, surfaceId });
         buffer.append(target, { kind: 'renderer-gone', reason: reason.slice(0, 256) || 'unknown' });
       } catch {
         // Renderer exit collection is best effort and must never affect teardown.

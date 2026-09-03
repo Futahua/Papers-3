@@ -41,9 +41,11 @@ function terminal(record: VisualDiagnosticRecord, until: VisualWaitUntil, naviga
 export function createVisualWaitService({
   isLive,
   snapshot,
+  currentState,
 }: {
   isLive(target: VisualWaitTarget): boolean;
   snapshot(target: VisualWaitTarget): VisualDiagnosticRecord[];
+  currentState?(target: VisualWaitTarget): { layoutStable: boolean; renderFailed: boolean } | null;
 }): VisualWaitService {
   const waiters = new Map<string, Set<Waiter>>();
 
@@ -86,7 +88,12 @@ export function createVisualWaitService({
       bucket.add(waiter); waiters.set(key(target), bucket);
       // Registration precedes this snapshot, so an append racing the read is
       // observed by the same waiter rather than lost between two operations.
-      try { inspect(waiter, visualDiagnosticRecordSchema.array().parse(snapshot(target))); }
+      try {
+        const state = currentState?.(target);
+        const stateComplete = until === 'layout-stable' ? state?.layoutStable : state?.renderFailed;
+        if (stateComplete) settle(waiter, { windowId: target.windowId, surfaceId: target.surfaceId, status: until });
+        else inspect(waiter, visualDiagnosticRecordSchema.array().parse(snapshot(target)));
+      }
       catch (error) { fail(waiter, error); }
     });
   };
