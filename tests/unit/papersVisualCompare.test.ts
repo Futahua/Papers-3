@@ -39,7 +39,7 @@ async function evidence(root: string, image: Buffer, semanticValue = semantic) {
     { name: 'surface.png', size: image.length, sha256: createHash('sha256').update(image).digest('hex') },
   ];
   const archive = zip([{ name: 'manifest.json', bytes: Buffer.from(`${JSON.stringify({ schemaVersion: 1, entries: manifestEntries })}\n`) }, { name: 'elements.json', bytes: elements }, { name: 'surface.png', bytes: image }]);
-  await writeFile(join(root, 'report.zip'), archive);
+  await writeFile(join(root, 'report.zip'), archive); await writeFile(join(root, 'summary.json'), JSON.stringify({ report: { size: archive.length, sha256: createHash('sha256').update(archive).digest('hex') } }));
 }
 
 describe('read-only visual baseline comparison', () => {
@@ -58,5 +58,11 @@ describe('read-only visual baseline comparison', () => {
     const root = await mkdtemp(join(tmpdir(), 'papers-visual-compare-integrity-')); const image = png(1, 1, new Uint8Array([0, 0, 0, 255]));
     await writeFile(join(root, 'baseline.json'), JSON.stringify({ schemaVersion: 1, pngSha256: '0'.repeat(64), dimensions: { width: 1, height: 1 }, semanticSnapshotSha256: hashSemanticSnapshot(semantic) })); await writeFile(join(root, 'baseline.png'), image); await evidence(root, image);
     await expect(compareEvidence({ baselineManifestPath: join(root, 'baseline.json'), baselinePngPath: join(root, 'baseline.png'), evidenceDir: root })).rejects.toThrow('baseline PNG hash mismatch');
+  });
+
+  it('requires the evidence ZIP to match the runner-recorded summary identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'papers-visual-compare-summary-')); const image = png(1, 1, new Uint8Array([0, 0, 0, 255]));
+    await writeFile(join(root, 'baseline.json'), JSON.stringify({ schemaVersion: 1, pngSha256: createHash('sha256').update(image).digest('hex'), dimensions: { width: 1, height: 1 }, semanticSnapshotSha256: hashSemanticSnapshot(semantic) })); await writeFile(join(root, 'baseline.png'), image); await evidence(root, image); await writeFile(join(root, 'summary.json'), JSON.stringify({ report: { size: 1, sha256: '0'.repeat(64) } }));
+    await expect(compareEvidence({ baselineManifestPath: join(root, 'baseline.json'), baselinePngPath: join(root, 'baseline.png'), evidenceDir: root })).rejects.toThrow('does not match the P1 summary identity');
   });
 });

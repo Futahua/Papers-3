@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
 import { inflateSync } from 'node:zlib';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { readDescriptor } from './papersControlClient.mjs';
@@ -9,6 +9,8 @@ import { runVisualDebug, verifyReportArchive } from './papersVisualDebug.mjs';
 
 const MAX_PNG_BYTES = 16 * 1024 * 1024;
 const MAX_DIMENSION = 16384;
+const MAX_DECODED_BYTES = 128 * 1024 * 1024;
+const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
 
 function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
 
@@ -48,8 +50,10 @@ export function decodePngRgba(bytes) {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > MAX_DIMENSION || height > MAX_DIMENSION
     || bitDepth !== 8 || interlace !== 0 || ![2, 3, 4, 6].includes(colorType) || idat.length === 0) throw new Error('PNG format is unsupported');
   const channels = ({ 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
-  const rowBytes = width * channels; const inflated = new Uint8Array(inflateSync(Buffer.concat(idat)));
-  if (inflated.byteLength !== height * (rowBytes + 1)) throw new Error('PNG scanline data is invalid');
+  const rowBytes = width * channels; const expectedInflatedBytes = height * (rowBytes + 1);
+  if (!Number.isSafeInteger(expectedInflatedBytes) || expectedInflatedBytes > MAX_DECODED_BYTES) throw new Error('PNG decoded data exceeds the allowed bound');
+  const inflated = new Uint8Array(inflateSync(Buffer.concat(idat), { maxOutputLength: expectedInflatedBytes }));
+  if (inflated.byteLength !== expectedInflatedBytes) throw new Error('PNG scanline data is invalid');
   const raw = new Uint8Array(height * rowBytes); const prior = new Uint8Array(rowBytes); let source = 0;
   for (let y = 0; y < height; y += 1) {
     const filter = inflated[source++]; const row = inflated.slice(source, source + rowBytes); source += rowBytes;
@@ -88,6 +92,7 @@ export function compareRasters(expected, actual, expectedSemanticSha256, actualS
 async function readBaseline(manifestPath, pngPath) {
   const manifest = JSON.parse(await readFile(resolve(manifestPath), 'utf8'));
   if (manifest?.schemaVersion !== 1 || typeof manifest.pngSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(manifest.pngSha256) || !manifest.dimensions || typeof manifest.semanticSnapshotSha256 !== 'string') throw new Error('baseline manifest is invalid');
+  const pngFile = await stat(resolve(pngPath)); if (!pngFile.isFile() || pngFile.size > MAX_PNG_BYTES) throw new Error('baseline PNG is outside the allowed bound');
   const png = new Uint8Array(await readFile(resolve(pngPath))); if (sha256(png) !== manifest.pngSha256) throw new Error('baseline PNG hash mismatch');
   const raster = decodePngRgba(png); if (raster.width !== manifest.dimensions.width || raster.height !== manifest.dimensions.height) throw new Error('baseline PNG dimensions mismatch');
   return { manifest, raster };
@@ -95,11 +100,15 @@ async function readBaseline(manifestPath, pngPath) {
 
 export async function compareEvidence({ baselineManifestPath, baselinePngPath, evidenceDir }) {
   const baseline = await readBaseline(baselineManifestPath, baselinePngPath);
-  const reportBytes = await readFile(join(resolve(evidenceDir), 'report.zip')); const report = { size: reportBytes.byteLength, sha256: sha256(reportBytes) };
+  const evidenceRoot = resolve(evidenceDir); const summary = JSON.parse(await readFile(join(evidenceRoot, 'summary.json'), 'utf8'));
+  if (!Number.isSafeInteger(summary?.report?.size) || typeof summary.report.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(summary.report.sha256)) throw new Error('P1 evidence summary report identity is invalid');
+  const reportFile = await stat(join(evidenceRoot, 'report.zip')); if (!reportFile.isFile() || reportFile.size > MAX_EVIDENCE_BYTES) throw new Error('visual evidence ZIP is outside the allowed bound');
+  const reportBytes = await readFile(join(evidenceRoot, 'report.zip')); const report = { size: reportBytes.byteLength, sha256: sha256(reportBytes) };
+  if (report.size !== summary.report.size || report.sha256 !== summary.report.sha256) throw new Error('visual evidence ZIP does not match the P1 summary identity');
   const { entries } = verifyReportArchive(reportBytes, report); const actualPng = entries.get('surface.png'); if (!actualPng) throw new Error('live report surface PNG is missing');
   const actualSemanticBytes = entries.get('elements.json'); if (!actualSemanticBytes) throw new Error('live report semantic elements are missing');
   const actualSemantic = JSON.parse(Buffer.from(actualSemanticBytes).toString('utf8')); const actual = decodePngRgba(actualPng);
-  return { schemaVersion: 1, baseline: { manifest: baseline.manifest, pngSha256Verified: true }, actual: { pngSha256: sha256(actualPng), semanticSnapshotSha256: hashSemanticSnapshot(actualSemantic), evidenceDir: resolve(evidenceDir) }, comparison: compareRasters(baseline.raster, actual, baseline.manifest.semanticSnapshotSha256, hashSemanticSnapshot(actualSemantic)) };
+  return { schemaVersion: 1, baseline: { manifest: baseline.manifest, pngSha256Verified: true }, actual: { pngSha256: sha256(actualPng), semanticSnapshotSha256: hashSemanticSnapshot(actualSemantic), evidenceDir: evidenceRoot }, comparison: compareRasters(baseline.raster, actual, baseline.manifest.semanticSnapshotSha256, hashSemanticSnapshot(actualSemantic)) };
 }
 
 export async function runVisualCompare(options) {
