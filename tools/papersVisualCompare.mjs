@@ -10,7 +10,9 @@ import { runVisualDebug, verifyReportArchive } from './papersVisualDebug.mjs';
 const MAX_PNG_BYTES = 16 * 1024 * 1024;
 const MAX_DIMENSION = 16384;
 const MAX_DECODED_BYTES = 128 * 1024 * 1024;
+const MAX_RASTER_BYTES = 128 * 1024 * 1024;
 const MAX_EVIDENCE_BYTES = 64 * 1024 * 1024;
+const MAX_METADATA_BYTES = 1024 * 1024;
 
 function sha256(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
 
@@ -50,6 +52,7 @@ export function decodePngRgba(bytes) {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width > MAX_DIMENSION || height > MAX_DIMENSION
     || bitDepth !== 8 || interlace !== 0 || ![2, 3, 4, 6].includes(colorType) || idat.length === 0) throw new Error('PNG format is unsupported');
   const channels = ({ 2: 3, 3: 1, 4: 2, 6: 4 })[colorType];
+  if (!Number.isSafeInteger(width * height * 4) || width * height * 4 > MAX_RASTER_BYTES) throw new Error('PNG raster exceeds the allowed bound');
   const rowBytes = width * channels; const expectedInflatedBytes = height * (rowBytes + 1);
   if (!Number.isSafeInteger(expectedInflatedBytes) || expectedInflatedBytes > MAX_DECODED_BYTES) throw new Error('PNG decoded data exceeds the allowed bound');
   const inflated = new Uint8Array(inflateSync(Buffer.concat(idat), { maxOutputLength: expectedInflatedBytes }));
@@ -90,17 +93,22 @@ export function compareRasters(expected, actual, expectedSemanticSha256, actualS
 }
 
 async function readBaseline(manifestPath, pngPath) {
-  const manifest = JSON.parse(await readFile(resolve(manifestPath), 'utf8'));
-  if (manifest?.schemaVersion !== 1 || typeof manifest.pngSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(manifest.pngSha256) || !manifest.dimensions || typeof manifest.semanticSnapshotSha256 !== 'string') throw new Error('baseline manifest is invalid');
+  const manifest = JSON.parse((await readBoundedFile(resolve(manifestPath), MAX_METADATA_BYTES, 'baseline manifest')).toString('utf8'));
+  if (manifest?.schemaVersion !== 1 || typeof manifest.pngSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(manifest.pngSha256) || !manifest.dimensions || !Number.isSafeInteger(manifest.dimensions.width) || !Number.isSafeInteger(manifest.dimensions.height) || typeof manifest.semanticSnapshotSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(manifest.semanticSnapshotSha256)) throw new Error('baseline manifest is invalid');
   const pngFile = await stat(resolve(pngPath)); if (!pngFile.isFile() || pngFile.size > MAX_PNG_BYTES) throw new Error('baseline PNG is outside the allowed bound');
   const png = new Uint8Array(await readFile(resolve(pngPath))); if (sha256(png) !== manifest.pngSha256) throw new Error('baseline PNG hash mismatch');
   const raster = decodePngRgba(png); if (raster.width !== manifest.dimensions.width || raster.height !== manifest.dimensions.height) throw new Error('baseline PNG dimensions mismatch');
   return { manifest, raster };
 }
 
+async function readBoundedFile(filePath, maxBytes, label) {
+  const file = await stat(filePath); if (!file.isFile() || file.size > maxBytes) throw new Error(`${label} is outside the allowed bound`);
+  const bytes = await readFile(filePath); if (bytes.byteLength > maxBytes) throw new Error(`${label} is outside the allowed bound`); return bytes;
+}
+
 export async function compareEvidence({ baselineManifestPath, baselinePngPath, evidenceDir }) {
   const baseline = await readBaseline(baselineManifestPath, baselinePngPath);
-  const evidenceRoot = resolve(evidenceDir); const summary = JSON.parse(await readFile(join(evidenceRoot, 'summary.json'), 'utf8'));
+  const evidenceRoot = resolve(evidenceDir); const summary = JSON.parse((await readBoundedFile(join(evidenceRoot, 'summary.json'), MAX_METADATA_BYTES, 'P1 evidence summary')).toString('utf8'));
   if (!Number.isSafeInteger(summary?.report?.size) || typeof summary.report.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(summary.report.sha256)) throw new Error('P1 evidence summary report identity is invalid');
   const reportFile = await stat(join(evidenceRoot, 'report.zip')); if (!reportFile.isFile() || reportFile.size > MAX_EVIDENCE_BYTES) throw new Error('visual evidence ZIP is outside the allowed bound');
   const reportBytes = await readFile(join(evidenceRoot, 'report.zip')); const report = { size: reportBytes.byteLength, sha256: sha256(reportBytes) };
