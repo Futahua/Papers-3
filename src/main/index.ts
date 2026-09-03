@@ -263,6 +263,7 @@ function moveLogicalSurface(surfaceId: string, targetWindowId: number): boolean 
   const current = logicalSurfaces.get(surfaceId);
   const moved = logicalSurfaces.moveToWindow(surfaceId, targetWindowId);
   if (moved && current && current.windowId !== targetWindowId) {
+    visualDiagnosticsByWindow.get(current.windowId)?.clearTarget({ windowId: current.windowId, surfaceId });
     retireVisualSemanticKeySurfaceAt(current.windowId, surfaceId);
   }
   return moved;

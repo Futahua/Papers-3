@@ -126,6 +126,7 @@ export type VisualDiagnosticRecord = z.infer<typeof visualDiagnosticRecordSchema
 export interface VisualDiagnosticBuffer {
   append(target: { windowId: number; surfaceId?: string }, payload: unknown): VisualDiagnosticRecord;
   snapshot(): VisualDiagnosticRecord[];
+  clearTarget(target: { windowId: number; surfaceId: string }): void;
   clear(): void;
 }
 
@@ -180,6 +181,11 @@ export function createVisualDiagnosticBuffer(options: {
     },
     snapshot() {
       return records.map(cloneRecord);
+    },
+    clearTarget(target) {
+      for (let index = records.length - 1; index >= 0; index -= 1) {
+        if (records[index]!.target.windowId === target.windowId && records[index]!.target.surfaceId === target.surfaceId) records.splice(index, 1);
+      }
     },
     clear() {
       records.length = 0;

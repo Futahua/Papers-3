@@ -85,6 +85,14 @@ describe('bounded visual diagnostic buffer', () => {
     expect(buffer.snapshot()).toEqual([]);
   });
 
+  it('can retire one moved surface without erasing other surface history', () => {
+    const buffer = createVisualDiagnosticBuffer();
+    buffer.append({ windowId: 1, surfaceId: 'surface-a' }, { kind: 'console', level: 'info', message: 'a' });
+    buffer.append({ windowId: 1, surfaceId: 'surface-b' }, { kind: 'console', level: 'info', message: 'b' });
+    buffer.clearTarget({ windowId: 1, surfaceId: 'surface-a' });
+    expect(buffer.snapshot().map((record) => record.target.surfaceId)).toEqual(['surface-b']);
+  });
+
   it('publishes only after a schema-valid record is retained', () => {
     const onAppend = vi.fn();
     const buffer = createVisualDiagnosticBuffer({ onAppend });
