@@ -19,6 +19,7 @@
     "test:e2e:fixtures": "electron-vite build && vitest run --config vitest.e2e.config.ts tests/e2e/killtest.e2e.ts tests/e2e/repository-workflow.e2e.ts",
     "papersctl": "node tools/papersctl.mjs",
     "papers:visual-debug": "node tools/papersVisualDebug.mjs",
+    "papers:visual-compare": "node tools/papersVisualCompare.mjs",
     "papers:mcp": "node tools/papersMcp.mjs",
     "demo:seed": "node tools/seed-demo-backpack.mjs",
     "fixture:logseq": "node tools/logseq-fixture.mjs setup",
