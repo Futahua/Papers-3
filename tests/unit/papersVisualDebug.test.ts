@@ -48,6 +48,14 @@ describe('read-only visual debug runner primitives', () => {
       { sequence: 11, target: { windowId: 7, surfaceId: 'surface-b' } },
     ])).toEqual({ recoveredSequences: [], crossSurfaceSequences: [11], unrecoverableGaps: [] });
     expect(reconcileEventSequences(received, [{ eventSeq: 11 }])).toEqual({ recoveredSequences: [11], crossSurfaceSequences: [], unrecoverableGaps: [] });
+    expect(reconcileEventSequences(
+      [lifecycle('layout-stable', 10), lifecycle('render-failed', 15)],
+      [{ eventSeq: 14 }],
+      [
+        { sequence: 12, target: { windowId: 7, surfaceId: 'surface-b' } },
+        { sequence: 13, target },
+      ],
+    )).toEqual({ recoveredSequences: [13, 14], crossSurfaceSequences: [12], unrecoverableGaps: [{ from: 11, to: 11, reason: 'not-in-current-target-history' }] });
   });
 
   it('bounds the session-local live transcript deterministically', async () => {

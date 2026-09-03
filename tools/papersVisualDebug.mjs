@@ -104,26 +104,32 @@ function rawSequenceGaps(records) {
   return gaps;
 }
 
-export function reconcileEventSequences(received, historical, windowDiagnostics = []) {
+export function reconcileEventSequences(received, historical, windowDiagnostics = [], target = received[0]?.target) {
   const targetSequences = new Set(historical.map((record) => record.eventSeq ?? record.sequence).filter(Number.isInteger));
   const allRecords = new Map(windowDiagnostics.filter((record) => Number.isInteger(record.sequence)).map((record) => [record.sequence, record]));
   const observed = [...new Set(received.map((record) => record.sequence).filter(Number.isInteger))].sort((a, b) => a - b);
   const recovered = [];
   const crossSurface = [];
-  const unrecoverable = [];
+  const unresolved = [];
   for (let index = 1; index < observed.length; index += 1) {
     const from = observed[index - 1] + 1;
     const to = observed[index] - 1;
     if (from > to) continue;
     const missing = [];
     for (let sequence = from; sequence <= to; sequence += 1) {
-      if (allRecords.has(sequence) && allRecords.get(sequence)?.target?.surfaceId !== received[0]?.target?.surfaceId) crossSurface.push(sequence);
-      else if (targetSequences.has(sequence)) recovered.push(sequence);
+      const historicalRecord = allRecords.get(sequence);
+      if (historicalRecord) {
+        if (historicalRecord.target?.windowId === target?.windowId && historicalRecord.target?.surfaceId === target?.surfaceId) recovered.push(sequence);
+        else crossSurface.push(sequence);
+      } else if (targetSequences.has(sequence)) recovered.push(sequence);
       else missing.push(sequence);
     }
-    if (missing.length) unrecoverable.push({ from: missing[0], to: missing.at(-1), reason: 'not-in-current-target-history' });
+    for (const sequence of missing) {
+      if (unresolved.at(-1)?.to === sequence - 1) unresolved[unresolved.length - 1].to = sequence;
+      else unresolved.push({ from: sequence, to: sequence, reason: 'not-in-current-target-history' });
+    }
   }
-  return { recoveredSequences: [...new Set(recovered)], crossSurfaceSequences: [...new Set(crossSurface)], unrecoverableGaps: unrecoverable };
+  return { recoveredSequences: [...new Set(recovered)], crossSurfaceSequences: [...new Set(crossSurface)], unrecoverableGaps: unresolved };
 }
 
 export async function waitForVisualTerminal(connection, target, timeoutMs = 5_000) {
@@ -219,7 +225,7 @@ export async function runVisualDebug({ descriptorPath, windowId, surfaceId, time
     await writeFile(join(destination, 'report.zip'), reportBytes);
     if (windowPng) await writeFile(join(destination, 'window.png'), windowPng);
     await writeFile(join(destination, 'events.ndjson'), `${wait.records.map((record) => JSON.stringify(record)).join('\n')}${wait.records.length ? '\n' : ''}`);
-    const summary = { schemaVersion: 1, process, target, terminal: wait.terminal ?? null, timedOut: wait.timedOut, eventTranscript: { count: wait.records.length, bytes: Buffer.byteLength(wait.records.map((record) => JSON.stringify(record)).join('\n')), truncated: wait.transcriptTruncated ?? false }, eventGaps: { observed: wait.rawSequenceGaps ?? [], ...reconcileEventSequences(wait.records, timeline, windowDiagnostics) }, timelineEntries: timeline.length, windowCapture: { ...windowCapture, png: windowCapture.png ? { ...windowCapture.png, verified: true } : undefined }, report: { ...report, verified: true, manifest: verified.manifest }, outputDir: destination };
+    const summary = { schemaVersion: 1, process, target, terminal: wait.terminal ?? null, timedOut: wait.timedOut, eventTranscript: { count: wait.records.length, bytes: Buffer.byteLength(wait.records.map((record) => JSON.stringify(record)).join('\n')), truncated: wait.transcriptTruncated ?? false }, eventGaps: { observed: wait.rawSequenceGaps ?? [], ...reconcileEventSequences(wait.records, timeline, windowDiagnostics, target) }, timelineEntries: timeline.length, windowCapture: { ...windowCapture, png: windowCapture.png ? { ...windowCapture.png, verified: true } : undefined }, report: { ...report, verified: true, manifest: verified.manifest }, outputDir: destination };
     await writeFile(join(destination, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
     return summary;
   } finally {
