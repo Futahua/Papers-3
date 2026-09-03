@@ -41,9 +41,9 @@ function geometrySnapshot(document: Document): string | null {
 export function installProjectVisualLayoutObserver(
   ipc: ProjectVisualDiagnosticIpc,
   environment: LayoutObserverEnvironment,
-): void {
+): () => void {
   const { document, requestAnimationFrame } = environment;
-  if (!environment.MutationObserver) return;
+  if (!environment.MutationObserver) return () => undefined;
 
   let frameScheduled = false;
   let frameCount = 0;
@@ -123,4 +123,5 @@ export function installProjectVisualLayoutObserver(
   const fonts = document.fonts;
   if (fonts) void fonts.ready.then(() => beginEpoch());
   beginEpoch();
+  return beginEpoch;
 }

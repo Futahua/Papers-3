@@ -6,18 +6,19 @@ import {
 } from './projectVisualDiagnostics';
 import { installProjectVisualLayoutObserver } from './projectVisualLayoutObserver';
 import { installProjectVisualSemanticKeyObserver } from './projectVisualSemanticKeys';
-import { VISUAL_DOCUMENT_INSTANCE_CHANNEL, VISUAL_FENCE_REQUEST_CHANNEL, VISUAL_FENCE_RESPONSE_CHANNEL } from '@shared/visualSemanticKeyConstants';
+import { VISUAL_DOCUMENT_INSTANCE_CHANNEL, VISUAL_FENCE_REQUEST_CHANNEL, VISUAL_FENCE_RESPONSE_CHANNEL, VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL } from '@shared/visualSemanticKeyConstants';
 
 const MAIN_WORLD_DIAGNOSTIC_BRIDGE = 'papersVisualDiagnosticBridgeV1';
 
 function installVisualDiagnosticListeners(
-  ipc: { send(channel: string, payload: unknown): void },
+  ipc: { send(channel: string, payload: unknown): void; on?(channel: string, listener: (...args: unknown[]) => void): void },
   mainWorld: {
     exposeInMainWorld(apiKey: string, api: ProjectVisualDiagnosticBridge): void;
     executeInMainWorld(script: { func: () => void }): unknown;
   },
 ): void {
   let refreshSemanticKeys = (): void => undefined;
+  let refreshLayoutObserver = (): void => undefined;
   let stableLayoutEpoch: number | null = null;
   const diagnosticBridge = createProjectVisualDiagnosticBridge(ipc, () => refreshSemanticKeys());
   mainWorld.exposeInMainWorld(MAIN_WORLD_DIAGNOSTIC_BRIDGE, diagnosticBridge);
@@ -42,7 +43,7 @@ function installVisualDiagnosticListeners(
     // API leaves first-paint unknown; it is never inferred from load or DOM readiness.
   }
   try {
-    installProjectVisualLayoutObserver(ipc, {
+    refreshLayoutObserver = installProjectVisualLayoutObserver(ipc, {
       document,
       requestAnimationFrame: window.requestAnimationFrame.bind(window),
       ResizeObserver: typeof ResizeObserver === 'undefined' ? undefined : ResizeObserver,
@@ -53,6 +54,7 @@ function installVisualDiagnosticListeners(
   } catch {
     // Missing observer APIs leave layout stability unknown; no success is synthesized.
   }
+  ipc.on?.(VISUAL_SEMANTIC_KEYS_REFRESH_CHANNEL, () => refreshLayoutObserver());
   try {
     refreshSemanticKeys = installProjectVisualSemanticKeyObserver(ipc, {
       document,
