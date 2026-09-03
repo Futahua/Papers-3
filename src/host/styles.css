@@ -775,6 +775,16 @@ input:focus-visible {
   height: 100%;
 }
 
+/* Native project views composite over the host. Keep every workspace content
+   layer clear, including the group color declared on Dockview's own theme root. */
+:root[data-transparent-window="true"] .workspace-dock {
+  background: transparent;
+}
+
+:root[data-transparent-window="true"] .workspace-dock .dockview-theme-light {
+  --dv-group-view-background-color: transparent;
+}
+
 .workspace-layout-actions {
   position: absolute;
   z-index: 5;

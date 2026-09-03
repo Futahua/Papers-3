@@ -4,6 +4,36 @@ Last updated: 2026-09-03
 Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`, and packaged visual success/failure plus stdio MCP acceptance signed off at `d977a2974beddd1ea94aade311c65ab9e29fec74`; the reviewed C1 core is complete, while only older live-fixture integration checklists remain outside this acceptance record
 Working branch: `agent/surface-context-routing`
 
+## Post-C1 transparency incident — 2026-09-03
+
+The creator's live screenshot shows an opaque project rectangle despite enabled
+window transparency. Isolated Electron reproduction against `bc790a6` found
+three opaque host ancestors beneath the native project: `.workspace-dock`
+(`rgb(239, 237, 231)`), `.dv-grid-view.dv-dockview` (white), and `.dv-groupview`
+(white). Dockview's theme root declares `--dv-group-view-background-color`;
+the host's older `--dv-background-color` does not clear those layers.
+
+The correction clears the workspace background and overrides the group color
+on the actual Dockview theme root only when window transparency is enabled.
+No native window architecture or independent Backpack behavior is changed.
+An earlier uncommitted BrowserWindow/BrowserView prototype was backed out;
+an old Electron issue is not evidence that current Electron lacks transparency.
+
+`tests/e2e/workspace-transparency.e2e.ts` fails before the correction with the
+three opaque ancestors and passes afterward. It uses a synthetic profile and
+neutral project, verifies the project capture's alpha is zero, checks the full
+host ancestor chain, and captures actual host pixels over two synthetic colors.
+It also checks opaque mode remains opaque. This is host-layer regression proof,
+not a claim that the running creator installation has been corrected or that
+desktop composition has been revalidated. The earlier C1 opaque-fixture
+acceptance did not cover this transparent workspace regression.
+
+Validation: typecheck, production build, 88 passing unit files / 865 passing
+tests (1 file / 4 tests skipped), focused workspace-transparency, workspace-tabs,
+and project-visual-diagnostics Electron tests (3/3), and diff check pass.
+Reviewer audit is pending. Live installation, running app, and creator data are
+unchanged; `docs/evidence/worker-comparison.json` remains untouched and unstaged.
+
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
 
 ## Multi-session reviewer continuation
