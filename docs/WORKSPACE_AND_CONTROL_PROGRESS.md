@@ -310,6 +310,29 @@ suite passes 1,055 tests, explicit packaged acceptance passes 1/1, and live
 `state.json` is unchanged. No As-you-Go-specific logic was added to Papers and no
 release/install action is authorized by this checkpoint.
 
+### As you Go multi-surface coordination closure (2026-09-03)
+
+The independent As you Go project now has the intended all-window document
+pipeline: one durable Web-Lock writer with CAS protection, ordered optimistic
+queue/ACK handling, generation invalidation and promotion recovery, authoritative
+base tracking, stable prompt/entity merge semantics (including move/reorder,
+subtree relocation and deletion wins), and surface-local navigation, selection and
+trail expansion. The browser reviewer explicitly signed off the complete agenda
+at exact pushed SHA
+[`f19842a`](https://github.com/Futahua/as-you-go-backpack/commit/f19842afc0fc15de2832a4c6d9f12ad75ed335b9).
+
+* [x] queued optimistic edits cannot regress live or durable state;
+* [x] follower failure and writer promotion are explicit and recoverable;
+* [x] prompt moves, inserts, reorders, subtree edits and identity deletion
+  converge deterministically;
+* [x] every open surface updates shared actions while retaining its own view;
+* [x] reviewer full-agenda audit signed off at the exact SHA above.
+
+Validation at that SHA: `npm test` passes 1,083 tests with 0 failures and 0
+skips; focused coordinator coverage is 42 tests and store coverage is 29 tests.
+This closes the As you Go project-local agenda without changing Papers' generic
+host contract or authorizing installation, release or creator-data mutation.
+
 ---
 
 # 2. Phase order
