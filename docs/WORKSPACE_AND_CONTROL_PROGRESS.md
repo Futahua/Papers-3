@@ -31,8 +31,13 @@ acceptance did not cover this transparent workspace regression.
 Validation: typecheck, production build, 88 passing unit files / 865 passing
 tests (1 file / 4 tests skipped), focused workspace-transparency, workspace-tabs,
 and project-visual-diagnostics Electron tests (3/3), and diff check pass.
-Reviewer audit is pending. Live installation, running app, and creator data are
-unchanged; `docs/evidence/worker-comparison.json` remains untouched and unstaged.
+Reviewer checkpoint: **SOURCE-AUDITED SIGNED OFF** for the host-layer fix at
+exact pushed SHA `ae53fcb33e92f70ff7565236ae35b354b8acf1a9`. The reviewer found
+no concrete defect or missing host-layer proof and accepted the scoped CSS,
+real pixel regression, and bounded incident claims. Deployment and real
+installed desktop-compositor validation remain outstanding, not implied by
+this sign-off. Live installation, running app, and creator data are unchanged;
+`docs/evidence/worker-comparison.json` remains untouched and unstaged.
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
 
