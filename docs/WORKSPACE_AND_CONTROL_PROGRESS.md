@@ -1537,7 +1537,7 @@ output:
 Generic semantic inspection:
 
 ```text
-visual.inspect.elements
+inspect.visual.elements
 input:
   windowId
   surfaceId
@@ -2189,7 +2189,7 @@ capture.window
 capture.surface
 capture.element
 
-visual.inspect.elements
+inspect.visual.elements
 visual.assert
 
 visual.report.create
