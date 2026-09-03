@@ -312,6 +312,27 @@ release/install action is authorized by this checkpoint.
 
 ### As you Go multi-surface coordination closure (2026-09-03)
 
+Deployment checkpoint (creator-authorized, 2026-09-03 22:46 local): the live
+As you Go project already resolves to signed-off `f19842afc0fc15de2832a4c6d9f12ad75ed335b9`.
+Built an unpublished Papers 1.3.11 NSIS installer from `bab2872bc399a77beb8bc4485eabb94bac64797e`,
+including the generic project-owned new-surface routing changes. Build stamp is
+`bab2872+local` (the protected, unbundled worker-comparison evidence remains dirty),
+timestamp `2026-09-03T15:43:49.123Z`. Installed into canonical `Runtime/App` with
+exit 0, without publication or version bump. Backup:
+`Runtime/Backups/before-coordination-update-20260903-2244` (App, Data, As you Go
+state and desktop shortcut). Installer archived at
+`Runtime/Installers/Papers-Setup-1.3.11-bab2872.exe`.
+Installed/package app.asar SHA-256:
+`BF8326D5582F7E2C1955BFAC66A913106AFF6CC6D019D14F45106781C16AD47B`.
+All 194 profile files, external As you Go state and desktop shortcut hashes
+were unchanged across installation before normal launch. Typecheck and three
+packaged Electron tests (workspace tabs/new-surface routing, transparency and
+project visual diagnostics) passed, then the same three passed against the
+installed executable, each using synthetic profiles. The unchanged desktop
+shortcut launched live PID 31924 at `2026-09-03T22:46:22+07:00`. Normal launch
+does not enable developer control; installed synthetic tests do not claim a
+desktop-compositor or live creator multi-window interaction audit.
+
 The independent As you Go project now has the intended all-window document
 pipeline: one durable Web-Lock writer with CAS protection, ordered optimistic
 queue/ACK handling, generation invalidation and promotion recovery, authoritative
