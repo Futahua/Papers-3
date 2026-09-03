@@ -152,24 +152,22 @@ Those integrations live in the project repository.
 
 As you Go may use C1 once the generic Papers contract exists, but:
 
-* [ ] no `As you Go` ID, filename, schema, group model, shortcut model, or rendering behavior is embedded in Papers;
-* [ ] its existing state-envelope fix remains project-owned;
-* [ ] its regression fixture uses copied synthetic fixture state, never creator `state.json`;
-* [ ] Papers generic tests use a neutral diagnostic fixture project instead.
+* [x] no `As you Go` ID, filename, schema, group model, shortcut model, or rendering behavior is embedded in Papers;
+* [x] its existing state-envelope fix remains project-owned;
+* [x] its regression fixture uses copied synthetic fixture state, never creator `state.json`;
+* [x] Papers generic tests use a neutral diagnostic fixture project instead.
 
-Companion implementation checkpoint: the independent As you Go project now consumes
-the generic hydration/failure bridge and publishes bounded model counters only after
+Companion implementation checkpoint: the independent As you Go project consumes the
+generic hydration/failure bridge and publishes bounded model counters only after
 versioned state installation at exact pushed SHA
-[`77d65b1`](https://github.com/Futahua/as-you-go-backpack/commit/77d65b141edbecf2f85c59675ff7cb7ed5df1422).
-It adds stable project-owned semantic keys, a synthetic non-empty source fixture with
-before/after SHA-256 invariance, deterministic profile metadata, explicit baseline
-update opt-in, and file-backed success/failure fixture pages. Its full project suite
-passes 1,055 tests and live `state.json` is unchanged. The companion reviewer audit
-found no defect in AY-C1.1, but withheld closure for AY-C1.3–C1.5 because the
-project-local packaged acceptance runner still needs a green exact-surface
-`visual.inspect.elements`/geometry assertion and `visual.report.create` + artifact
-retrieval proof against the file-backed failure fixture. No As-you-Go-specific logic
-was added to Papers and no release/install action is authorized by this checkpoint.
+[`1299560`](https://github.com/Futahua/as-you-go-backpack/commit/1299560cd7753cc205b8255b15f3b54b2941c698).
+Its packaged acceptance runs the real production renderer from persisted synthetic
+`state.json`, proves exact semantic-key geometry, enforces the 1280x800/en-US/light/
+Segoe UI profile and 1280x760 surface baseline, and retrieves both healthy and
+failure reports with SHA-256 plus lifecycle/diagnostic evidence. Its full project
+suite passes 1,055 tests, explicit packaged acceptance passes 1/1, and live
+`state.json` is unchanged. No As-you-Go-specific logic was added to Papers and no
+release/install action is authorized by this checkpoint.
 
 ---
 
@@ -2246,13 +2244,13 @@ These tasks begin only when the corresponding generic Papers phase exists.
 
 ## AY-C1.1 — Generic hydration/revision integration
 
-* [ ] Preserve the versioned `{state,revision}` state envelope through the existing fixed path.
-* [ ] After successful decode/parse/normalization and model installation, report generic `state-hydrated` with the opaque revision.
-* [ ] Optionally provide safe summary counters such as model/entity totals through the generic bounded summary map.
-* [ ] On parse/decode/hydration failure, report structured `hydration-failed`.
-* [ ] Never send raw serialized state through the visual diagnostics channel.
-* [ ] Regression fixture proves non-empty source state cannot silently become an empty hydrated model without generating observable disagreement/failure.
-* [ ] Hash fixture source state before/after; prove no mutation.
+ * [x] Preserve the versioned `{state,revision}` state envelope through the existing fixed path.
+ * [x] After successful decode/parse/normalization and model installation, report generic `state-hydrated` with the opaque revision.
+ * [x] Optionally provide safe summary counters such as model/entity totals through the generic bounded summary map.
+ * [x] On parse/decode/hydration failure, report structured `hydration-failed`.
+ * [x] Never send raw serialized state through the visual diagnostics channel.
+ * [x] Regression fixture proves non-empty source state cannot silently become an empty hydrated model without generating observable disagreement/failure.
+ * [x] Hash fixture source state before/after; prove no mutation.
 
 This specifically guards the class of defect fixed by `a247778`, but the implementation remains entirely project-owned.
 
@@ -2270,10 +2268,10 @@ shortcut.<fixture-key>
 
 Exact names are an As you Go decision.
 
-* [ ] keys are stable across styling/refactors;
-* [ ] they do not encode DOM selectors;
-* [ ] fixture assertions verify expected semantic elements are visible and correctly bounded;
-* [ ] Papers contains no knowledge of those keys.
+ * [x] keys are stable across styling/refactors;
+ * [x] they do not encode DOM selectors;
+ * [x] fixture assertions verify expected semantic elements are visible and correctly bounded;
+ * [x] Papers contains no knowledge of those keys.
 
 ## AY-C1.4 — Deterministic project fixture
 
@@ -2290,11 +2288,11 @@ visual graph visibly non-empty
 
 The exact group/shortcut counts belong to the As you Go fixture, not Papers.
 
-* [ ] no creator `state.json` copied or modified;
-* [ ] deterministic theme/font/window profile;
-* [ ] screenshot baseline;
-* [ ] semantic geometry assertions;
-* [ ] intentional baseline-update workflow.
+ * [x] no creator `state.json` copied or modified;
+ * [x] deterministic theme/font/window profile;
+ * [x] screenshot baseline;
+ * [x] semantic geometry assertions;
+ * [x] intentional baseline-update workflow.
 
 ## AY-C1.5 — Incident-style visual report regression
 
@@ -2310,6 +2308,9 @@ diagnostics
 ```
 
 No temporary red box, visible counter, manual instrumentation, or Windows accessibility inspection should be required.
+
+* [x] the packaged production-renderer fixture emits the failure through its own file-backed page;
+* [x] retrieved report artifacts contain revision, hydration/failure, model summary, paint/layout, screenshot, and diagnostics evidence.
 
 ---
 
@@ -2399,7 +2400,7 @@ C1 is complete only when all of the following are true:
 * [x] reports never contain creator state files or broad filesystem contents;
 * [x] MCP can use the same reviewed control semantics without gaining extra authority;
 * [x] successful and failing flows work in real packaged Electron acceptance;
-* [ ] As you Go can consume the generic contract without any As-you-Go-specific logic appearing in Papers;
+ * [x] As you Go can consume the generic contract without any As-you-Go-specific logic appearing in Papers;
 * [x] diagnostics demonstrably do not mutate project data;
 * [x] no reviewed blocker remains in the non-packaged scope.
 
