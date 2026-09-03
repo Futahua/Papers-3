@@ -84,10 +84,29 @@ read-only runner is implemented and signed off at
 `visual.wait` implementation is signed off at
 `e9e03066aa34e708de4f19df0b8f120870fda2e5`; P3's read-only live baseline
 comparison is signed off at `6d7064008b6f1f928e10c19c419241603c9acf45`.
-P4's bounded incident transcript is implemented and awaits its exact-SHA audit
-gate. P5 host-layer inspection stays
-conditional on a new host-composition diagnosis gap, and no As you Go changes
-are scheduled without a concrete project-local bug.
+P4's bounded incident transcript is signed off at
+`288d07be4cb79e60c57cbd3521d430293407197d`. P5 host-layer inspection was
+evaluated and is **not triggered**: the transparency incident already has a
+source-audited host-layer correction, and no new host-composition diagnosis gap
+remains. No As you Go changes are scheduled without a concrete project-local
+bug.
+
+Reviewer checklist completion (2026-09-03):
+
+* [x] P1 read-only diagnostic runner/evidence bundle — signed off at
+  `886bbda6dd192e5264bfa5d2ccae7713d55e5f8b`.
+* [x] P2 exact-target bounded `visual.wait` — signed off at
+  `e9e03066aa34e708de4f19df0b8f120870fda2e5`.
+* [x] P3 read-only live baseline comparison — signed off at
+  `6d7064008b6f1f928e10c19c419241603c9acf45`.
+* [x] P4 bounded client-side incident transcript — signed off at
+  `288d07be4cb79e60c57cbd3521d430293407197d`.
+* [x] Conditional P5 host-layer inspection evaluated; no new recurrence, so no
+  additional scope is authorized or required.
+
+The reviewer-defined debugging-pipeline agenda is complete. This completion
+does not authorize installation, release, publication, automatic baseline
+blessing, or mutation of creator data.
 
 The first two items are Papers-generic. Additional semantic keys, summaries,
 fixtures, or reproduction actions belong in an independent Backpack only when a
