@@ -10,6 +10,7 @@ const MAX_RECORDS = 1024;
 const MAX_BYTES = 4 * 1024 * 1024;
 
 function targetIsValid(target) { return Number.isInteger(target?.windowId) && target.windowId > 0 && typeof target.surfaceId === 'string' && target.surfaceId.length > 0 && target.surfaceId.length <= 128; }
+function assertDuration(durationMs) { if (!Number.isInteger(durationMs) || durationMs < 1 || durationMs > MAX_DURATION_MS) throw new Error(`duration-ms must be an integer from 1 to ${MAX_DURATION_MS}`); }
 function targetMatches(record, target) { return record?.target?.windowId === target.windowId && record?.target?.surfaceId === target.surfaceId; }
 function rawGaps(records) { const values = [...new Set(records.map((record) => record.sequence).filter(Number.isInteger))].sort((a, b) => a - b); const gaps = []; for (let i = 1; i < values.length; i += 1) if (values[i] > values[i - 1] + 1) gaps.push({ from: values[i - 1] + 1, to: values[i] - 1 }); return gaps; }
 function abortError() { return Object.assign(new Error('incident transcript cancelled'), { name: 'AbortError' }); }
@@ -28,7 +29,7 @@ async function boundedCall(promise, deadline, signal) {
 /** Collect a bounded, session-local event transcript without extending Papers' runtime history. */
 export async function collectIncidentTranscript(connection, target, { durationMs = 60_000, maxRecords = MAX_RECORDS, maxBytes = MAX_BYTES, signal, deadline: suppliedDeadline } = {}) {
   if (!targetIsValid(target)) throw new Error('an explicit window and surface target are required');
-  if (!Number.isInteger(durationMs) || durationMs < 1 || durationMs > MAX_DURATION_MS) throw new Error(`duration-ms must be an integer from 1 to ${MAX_DURATION_MS}`);
+  assertDuration(durationMs);
   if (!Number.isInteger(maxRecords) || maxRecords < 1 || maxRecords > MAX_RECORDS || !Number.isInteger(maxBytes) || maxBytes < 1024 || maxBytes > MAX_BYTES) throw new Error('incident transcript bounds are invalid');
   const startedAt = Date.now(); const deadline = suppliedDeadline ?? startedAt + durationMs; const records = []; const liveRecords = []; const seen = new Set(); let bytes = 0; let liveBytes = 0; let truncated = false; let stopEvents = () => undefined; let timer; let settled = false;
   const append = (record, live = false) => {
@@ -69,6 +70,7 @@ export async function collectIncidentTranscript(connection, target, { durationMs
 export async function runVisualIncident({ descriptorPath, windowId, surfaceId, durationMs = 60_000, outputDir, signal }) {
   if (!descriptorPath) throw new Error('PAPERS_DEV_CONTROL_DESCRIPTOR or --descriptor is required');
   if (!targetIsValid({ windowId, surfaceId })) throw new Error('an explicit --window integer and --surface id are required');
+  assertDuration(durationMs);
   let descriptor; try { descriptor = await readDescriptor(descriptorPath); } catch { throw new Error('diagnostic mode unavailable: an existing control descriptor is required'); }
   let connection; try { connection = await connectPapersControl(descriptor); } catch { throw new Error('diagnostic mode unavailable: the existing control endpoint is not reachable'); }
   const destination = outputDir ? resolve(outputDir) : await mkdtemp(join(tmpdir(), 'papers-visual-incident-')); await mkdir(destination, { recursive: true });
