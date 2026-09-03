@@ -23,9 +23,8 @@ an old Electron issue is not evidence that current Electron lacks transparency.
 three opaque ancestors and passes afterward. It uses a synthetic profile and
 neutral project, verifies the project capture's alpha is zero, checks the full
 host ancestor chain, and captures actual host pixels over two synthetic colors.
-It also checks opaque mode remains opaque. This is host-layer regression proof,
-not a claim that the running creator installation has been corrected or that
-desktop composition has been revalidated. The earlier C1 opaque-fixture
+It also checks opaque mode remains opaque. The fix is now installed and the
+creator has confirmed the live desktop appearance. The earlier C1 opaque-fixture
 acceptance did not cover this transparent workspace regression.
 
 Validation: typecheck, production build, 88 passing unit files / 865 passing
@@ -52,8 +51,42 @@ Settings and As you Go `state.json` hashes are unchanged across installation.
 The transparency E2E passes against the installed executable with an isolated
 synthetic profile. The existing desktop shortcut was preserved and used to
 launch a fresh live process (PID 45560, start 2026-09-03 12:57:43 local).
-Actual creator desktop-compositor appearance still requires visual confirmation;
-no Windows desktop control or capture was performed.
+The creator confirmed the desktop-compositor appearance after restart; no
+Windows desktop control or capture was performed by the agent.
+
+## Debugging-pipeline research — reviewer follow-up, 2026-09-03
+
+The audit found C1 complete and no transparency blocker. The existing stack can
+already identify the exact process/window/surface, subscribe to lifecycle and
+diagnostic events, inspect semantic geometry, capture window/surface/element
+pixels, create a bounded report, and reconstruct/hash its artifacts through
+MCP when Papers was launched with `PAPERS_DEV_CONTROL=1`.
+
+Ranked follow-ups for the easiest reliable workflow:
+
+1. **Read-only diagnostic runner/evidence bundle (highest value, lowest risk).**
+   Compose process check, exact target selection, lifecycle subscription,
+   bounded event wait, `capture.window`, `visual.report.create`, artifact
+   reconstruction, and SHA verification into one runner. This is tooling over
+   existing reviewed semantics, not a new authority surface.
+2. **Exact-target event-driven wait for MCP.** Add a bounded control-side wait
+   primitive only if MCP callers need it; retain the thin MCP forwarder.
+3. **Read-only live baseline comparison.** Connect the reviewed baseline core to
+   live capture/control without automatic baseline blessing.
+4. **Predefined host-layer inspection.** Add only if host-composition incidents
+   recur; do not reopen arbitrary renderer execution or selectors.
+5. **Longer bounded client-side incident transcript.** Preserve slow/intermittent
+   context without enlarging Papers' ordinary 10-second history.
+
+The first two items are Papers-generic. Additional semantic keys, summaries,
+fixtures, or reproduction actions belong in an independent Backpack only when a
+concrete Backpack bug requires them. Making ordinary creator-launched Papers
+always attachable, automatic restart/termination/install/release, mutating
+debugging, arbitrary JavaScript/filesystem inspection, desktop capture, or
+automatic baseline updates remain out of scope and require separate creator
+authorization. The only current friction blocker is that normal Papers runs do
+not expose C1; the safe interim workflow is an explicitly authorized diagnostic
+restart plus the read-only runner.
 
 This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
 
