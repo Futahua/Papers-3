@@ -1,6 +1,6 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
-Last updated: 2026-09-02
+Last updated: 2026-09-03
 Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`, and packaged visual success/failure plus stdio MCP acceptance signed off at `d977a2974beddd1ea94aade311c65ab9e29fec74`; the reviewed C1 core is complete, while only older live-fixture integration checklists remain outside this acceptance record
 Working branch: `agent/surface-context-routing`
 
@@ -156,6 +156,20 @@ As you Go may use C1 once the generic Papers contract exists, but:
 * [ ] its existing state-envelope fix remains project-owned;
 * [ ] its regression fixture uses copied synthetic fixture state, never creator `state.json`;
 * [ ] Papers generic tests use a neutral diagnostic fixture project instead.
+
+Companion implementation checkpoint: the independent As you Go project now consumes
+the generic hydration/failure bridge and publishes bounded model counters only after
+versioned state installation at exact pushed SHA
+[`77d65b1`](https://github.com/Futahua/as-you-go-backpack/commit/77d65b141edbecf2f85c59675ff7cb7ed5df1422).
+It adds stable project-owned semantic keys, a synthetic non-empty source fixture with
+before/after SHA-256 invariance, deterministic profile metadata, explicit baseline
+update opt-in, and file-backed success/failure fixture pages. Its full project suite
+passes 1,055 tests and live `state.json` is unchanged. The companion reviewer audit
+found no defect in AY-C1.1, but withheld closure for AY-C1.3–C1.5 because the
+project-local packaged acceptance runner still needs a green exact-surface
+`visual.inspect.elements`/geometry assertion and `visual.report.create` + artifact
+retrieval proof against the file-backed failure fixture. No As-you-Go-specific logic
+was added to Papers and no release/install action is authorized by this checkpoint.
 
 ---
 
@@ -448,8 +462,8 @@ checklist is:
   `state-changed`, distinct from sender-generation replacement;
 * [x] focused Electron proof reconstructs `capture.window` through bounded
   `visual.artifact.read` chunks and verifies size plus SHA-256;
-* [ ] packaged/alias/restart acceptance evidence;
-* [ ] exact-SHA reviewer sign-off before advancing to geometry/assertions.
+* [x] packaged/alias/restart acceptance evidence;
+* [x] exact-SHA reviewer sign-off before advancing to geometry/assertions.
 
 Reviewer checkpoint: **SIGNED OFF** for the synchronized `capture.surface`
 slice at exact pushed head `d25b5d643092b3a32e7e2836b7cea10d16c370d3`.
