@@ -24,6 +24,7 @@ export interface VisualWaitService {
   wait(target: VisualWaitTarget, until: VisualWaitUntil, timeoutMs: number, signal?: AbortSignal): Promise<VisualWaitResult>;
   append(record: VisualDiagnosticRecord): void;
   retire(target: VisualWaitTarget): void;
+  forget(target: VisualWaitTarget): void;
   retireWindow(windowId: number): void;
   pendingCount(): number;
 }
@@ -98,11 +99,19 @@ export function createVisualWaitService({
   const retire = (target: VisualWaitTarget): void => {
     const latest = snapshot(target).filter((record) => targetMatches(record, target)).reduce((max, record) => Math.max(max, record.sequence), 0);
     sequenceFloors.set(key(target), Math.max(sequenceFloors.get(key(target)) ?? 0, latest));
+    while (sequenceFloors.size > 256) sequenceFloors.delete(sequenceFloors.keys().next().value!);
     for (const waiter of [...(waiters.get(key(target)) ?? [])]) settle(waiter, { windowId: target.windowId, surfaceId: target.surfaceId, status: 'retired' });
   };
+  const forget = (target: VisualWaitTarget): void => {
+    retire(target);
+    sequenceFloors.delete(key(target));
+  };
   return {
-    wait, append, retire,
-    retireWindow(windowId) { for (const [targetKey, bucket] of waiters) if (targetKey.startsWith(`${windowId}\0`)) for (const waiter of [...bucket]) settle(waiter, { windowId, surfaceId: waiter.target.surfaceId, status: 'retired' }); },
+    wait, append, retire, forget,
+    retireWindow(windowId) {
+      for (const [targetKey, bucket] of waiters) if (targetKey.startsWith(`${windowId}\0`)) for (const waiter of [...bucket]) settle(waiter, { windowId, surfaceId: waiter.target.surfaceId, status: 'retired' });
+      for (const targetKey of sequenceFloors.keys()) if (targetKey.startsWith(`${windowId}\0`)) sequenceFloors.delete(targetKey);
+    },
     pendingCount() { return [...waiters.values()].reduce((count, bucket) => count + bucket.size, 0); },
   };
 }

@@ -253,7 +253,7 @@ function retireLogicalSurface(surfaceId: string): boolean {
   const current = logicalSurfaces.get(surfaceId);
   const retired = logicalSurfaces.retire(surfaceId);
   if (retired) {
-    if (current) visualWaitService.retire({ windowId: current.windowId, surfaceId });
+    if (current) visualWaitService.forget({ windowId: current.windowId, surfaceId });
     retireVisualSemanticKeySurface(surfaceId);
   }
   return retired;
@@ -279,7 +279,7 @@ function retireLogicalProjectSurfaces(projectId: string): string[] {
   const targets = logicalSurfaces.project().filter((surface) => surface.projectId === projectId)
     .map((surface) => ({ windowId: surface.windowId, surfaceId: surface.surfaceId }));
   const retired = logicalSurfaces.retireProject(projectId);
-  for (const target of targets) visualWaitService.retire(target);
+  for (const target of targets) visualWaitService.forget(target);
   for (const surfaceId of retired) retireVisualSemanticKeySurface(surfaceId);
   return retired;
 }
