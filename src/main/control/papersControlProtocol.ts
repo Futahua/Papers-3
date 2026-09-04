@@ -556,7 +556,7 @@ export interface PapersControlDependencies {
   surface(target: { windowId: number; surfaceId: string }): unknown;
   workspace?(windowId: number): unknown;
   restoreWorkspace?(windowId: number, topology: z.infer<typeof workspaceTopologySchema>): unknown;
-  closeWorkspace?(windowId: number, surfaceId: string, topology: z.infer<typeof workspaceTopologySchema>): unknown;
+  closeWorkspace?(windowId: number, surfaceId: string, topology: z.infer<typeof workspaceTopologySchema>): unknown | Promise<unknown>;
   openWorkspace?(windowId: number, projectId: string): Promise<unknown>;
   listWorkspaceLayouts?(): Promise<unknown>;
   saveWorkspaceLayout?(windowId: number, name: string): Promise<unknown>;
@@ -880,7 +880,7 @@ export async function dispatchPapersControl(
       if (request.method === 'workspace.activate') {
         topology = activateWorkspaceSurface(topology, params.surfaceId);
       } else if (request.method === 'workspace.close') {
-        const closed = dependencies.closeWorkspace?.(params.windowId, params.surfaceId, topology);
+        const closed = await dependencies.closeWorkspace?.(params.windowId, params.surfaceId, topology);
         if (!closed) throw new Error('That Papers window cannot close the workspace surface.');
         const result = papersControlCommands[request.method].output.parse({ windowId: params.windowId, topology: closed });
         dependencies.publishEvent?.('workspace.changed', { kind: 'close', ...result });
