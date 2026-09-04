@@ -61,6 +61,7 @@ export function App(): React.JSX.Element {
   const [basicOpen, setBasicOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspaceOverlayActive, setWorkspaceOverlayActive] = useState(false);
+  const [splitNotice, setSplitNotice] = useState<string | null>(null);
   const sidebarCloseTimer = useRef<number | null>(null);
   const cancelSidebarClose = useCallback((): void => {
     if (sidebarCloseTimer.current === null) return;
@@ -130,6 +131,7 @@ export function App(): React.JSX.Element {
       // mutation owns the lock. Rehydrate the canonical snapshot immediately
       // so a speculative Dockview drag cannot remain renderer-only.
       void host().layout.refreshWorkspaceTopology().catch(() => undefined);
+      setSplitNotice('Split cancelled — workspace changed; the canonical layout was restored');
     });
   }, [hydrationReady, workspaceTopology]);
 
@@ -586,6 +588,7 @@ export function App(): React.JSX.Element {
           onSplit={splitWorkspaceProject}
           onMove={moveWorkspaceProject}
           onOverlayActiveChange={setWorkspaceOverlayFromDock}
+          splitNotice={splitNotice}
           onCommitLayout={commitWorkspaceLayout}
           interactionDisabled={navigationBusy}
         />
