@@ -57,7 +57,7 @@ export function WorkspaceDock(props: {
   onClose: (surfaceId: string) => void;
   onSplit: (surfaceId: string, direction: 'right' | 'down', position?: 'before' | 'after') => string | void;
   onMove: (surfaceId: string, targetGroupId: string, targetIndex: number) => void;
-  onOverlayActiveChange?: (active: boolean) => void;
+  onOverlayActiveChange?: (active: boolean) => void | Promise<void>;
   interactionDisabled?: boolean;
   onCommitLayout: (snapshot: {
     groups: Array<{ groupId: string; surfaceIds: string[] }>;
@@ -79,6 +79,9 @@ export function WorkspaceDock(props: {
   const previewRef = useRef<SplitPreview | null>(null);
   const previewCandidate = useRef<{ surfaceId: string; position: SplitEdge; generation: number } | null>(null);
   const previewGeneration = useRef(0);
+  const dragActive = useRef(false);
+  const hostRaised = useRef(false);
+  const statusTimer = useRef<number | null>(null);
   const [preview, setPreview] = useState<SplitPreview | null>(null);
   const interactionDisabledRef = useRef(false);
   projectsRef.current = projects;
@@ -86,7 +89,13 @@ export function WorkspaceDock(props: {
   interactionDisabledRef.current = interactionDisabled;
 
   const setHostOverlay = useCallback((active: boolean): void => {
-    onOverlayActiveChange?.(active);
+    void onOverlayActiveChange?.(active);
+  }, [onOverlayActiveChange]);
+
+  const setHostOverlayAwaited = useCallback((active: boolean): Promise<void> => {
+    return Promise.resolve(onOverlayActiveChange?.(active)).then(() => {
+      hostRaised.current = active;
+    });
   }, [onOverlayActiveChange]);
 
   const clearPreview = useCallback((releaseHost = true): void => {
@@ -94,13 +103,25 @@ export function WorkspaceDock(props: {
     previewCandidate.current = null;
     previewRef.current = null;
     setPreview(null);
-    if (releaseHost) setHostOverlay(false);
+    if (releaseHost && !dragActive.current) {
+      hostRaised.current = false;
+      setHostOverlay(false);
+    }
   }, [setHostOverlay]);
 
   const showPreview = useCallback((next: SplitPreview): void => {
     previewRef.current = next;
     setPreview(next);
   }, []);
+
+  const showRejected = useCallback((position: SplitEdge, message: string): void => {
+    if (statusTimer.current !== null) window.clearTimeout(statusTimer.current);
+    showPreview({ position, allowed: false, armed: true, message });
+    statusTimer.current = window.setTimeout(() => {
+      statusTimer.current = null;
+      clearPreview();
+    }, 1200);
+  }, [clearPreview, showPreview]);
 
   useEffect(() => {
     disposing.current = false;
@@ -159,19 +180,24 @@ export function WorkspaceDock(props: {
   }, [commitLayout]);
 
   useEffect(() => {
-    const finishDrop = (): void => clearPreview();
+    const finishDrop = (): void => {
+      dragActive.current = false;
+      const current = previewRef.current;
+      if (current?.allowed) clearPreview();
+      else if (current) showRejected(current.position, current.message);
+      else clearPreview();
+    };
     window.addEventListener('dragend', finishDrop);
     window.addEventListener('drop', finishDrop);
-    window.addEventListener('pointerup', finishDrop);
     window.addEventListener('blur', finishDrop);
     return () => {
-      window.removeEventListener('dragend', finishDrop);
-      window.removeEventListener('drop', finishDrop);
-      window.removeEventListener('pointerup', finishDrop);
+    window.removeEventListener('dragend', finishDrop);
+    window.removeEventListener('drop', finishDrop);
       window.removeEventListener('blur', finishDrop);
+      dragActive.current = false;
       clearPreview();
     };
-  }, [clearPreview]);
+  }, [clearPreview, showRejected]);
 
   const reconcileFromTopology = useCallback((api: DockviewApi): void => {
     refreshGroupIds(api);
@@ -285,24 +311,25 @@ export function WorkspaceDock(props: {
         sideDrop.current = null;
         if (interactionDisabledRef.current || resizing.current) {
           reconcileFromTopology(event.api);
-          showPreview({ position: pending.position, allowed: false, armed: true, message: 'Split cancelled — workspace is busy' });
+          showRejected(pending.position, 'Split cancelled — workspace is busy');
           setHostOverlay(true);
-          window.setTimeout(() => clearPreview(), 900);
           return;
         }
         const panel = event.api.getPanel(pending.surfaceId);
         const destinationDockviewId = panel?.group.id;
         if (!panel || !destinationDockviewId) {
           reconcileFromTopology(event.api);
-          showPreview({ position: pending.position, allowed: false, armed: true, message: 'Split cancelled — workspace changed' });
+          showRejected(pending.position, 'Split cancelled — workspace changed');
           setHostOverlay(true);
-          window.setTimeout(() => clearPreview(), 900);
           return;
         }
         const direction = pending.position === 'left' || pending.position === 'right' ? 'right' : 'down';
         const position = pending.position === 'left' || pending.position === 'top' ? 'before' : 'after';
         const newGroupId = onSplit(pending.surfaceId, direction, position);
-        if (newGroupId) groupIds.current.set(destinationDockviewId, newGroupId);
+        if (newGroupId) {
+          groupIds.current.set(destinationDockviewId, newGroupId);
+          clearPreview();
+        }
         else reconcileFromTopology(event.api);
         return;
       }
@@ -349,21 +376,29 @@ export function WorkspaceDock(props: {
         const position = overlay.position as SplitEdge;
         const generation = ++previewGeneration.current;
         previewCandidate.current = { surfaceId, position, generation };
+        // Record the semantic intent as soon as Dockview identifies the side
+        // cell. Dockview's pointer backend may deliver onWillDrop after the
+        // native pointer-up; the drop callback below still revalidates it.
+        sideDrop.current = { surfaceId, position };
         showPreview({
           position,
           allowed: true,
           armed: false,
           message: `Move to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}`,
         });
-        setHostOverlay(true);
-        requestAnimationFrame(() => {
-          const candidate = previewCandidate.current;
-          if (!candidate || candidate.generation !== generation || candidate.surfaceId !== surfaceId || candidate.position !== position) return;
-          const armed = { position, allowed: true, armed: true, message: `Release to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}` } as SplitPreview;
-          showPreview(armed);
+        void setHostOverlayAwaited(true).then(() => {
+          requestAnimationFrame(() => {
+            const candidate = previewCandidate.current;
+            if (!hostRaised.current || !candidate || candidate.generation !== generation || candidate.surfaceId !== surfaceId || candidate.position !== position) return;
+            const armed = { position, allowed: true, armed: true, message: `Release to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}` } as SplitPreview;
+            showPreview(armed);
+          });
         });
       }
-      else if (overlay.position === 'center') clearPreview();
+      else if (overlay.position === 'center') {
+        sideDrop.current = null;
+        clearPreview(false);
+      }
     }));
     apiSubscriptions.current.push(event.api.onWillDrop((drop) => {
       if ((drop.kind !== 'content' && drop.kind !== 'edge') || drop.position === 'center') return;
@@ -395,7 +430,8 @@ export function WorkspaceDock(props: {
       }
       const position = drop.position as SplitEdge;
       const armed = previewRef.current;
-      if (!armed || !armed.allowed || !armed.armed || armed.position !== position || armed.message.indexOf('Release to split') !== 0) {
+      if ((!armed || !armed.allowed || !armed.armed || armed.position !== position || armed.message.indexOf('Release to split') !== 0)
+        && (!sideDrop.current || sideDrop.current.surfaceId !== surfaceId || sideDrop.current.position !== position)) {
         drop.preventDefault();
         sideDrop.current = null;
         showPreview({ position, allowed: false, armed: true, message: 'Split cancelled — preview was not armed' });
@@ -409,20 +445,40 @@ export function WorkspaceDock(props: {
     }));
     apiSubscriptions.current.push(event.api.onDidDrop(() => {
       refreshGroupIds(event.api);
+      // Pointer-backed Dockview versions can emit onDidDrop without the
+      // corresponding layout mutation event. Consume the accepted semantic
+      // intent here as a guarded fallback; the normal path has already nulled
+      // sideDrop and therefore remains exactly-once.
+      const pending = sideDrop.current;
+      if (!pending || interactionDisabledRef.current || resizing.current) return;
+      sideDrop.current = null;
+      const panel = event.api.getPanel(pending.surfaceId);
+      const destinationDockviewId = panel?.group.id;
+      if (!panel || !destinationDockviewId) {
+        reconcileFromTopology(event.api);
+        showRejected(pending.position, 'Split cancelled — workspace changed');
+        return;
+      }
+      const direction = pending.position === 'left' || pending.position === 'right' ? 'right' : 'down';
+      const position = pending.position === 'left' || pending.position === 'top' ? 'before' : 'after';
+      const newGroupId = onSplit(pending.surfaceId, direction, position);
+      if (newGroupId) groupIds.current.set(destinationDockviewId, newGroupId);
     }));
     apiSubscriptions.current.push(event.api.onWillDragPanel(({ panel }) => {
-      // Raise the host before the pointer can enter a native WebContentsView;
-      // otherwise Dockview cannot paint a guaranteed preview over the view.
+      // Track the drag from its first pointer event. The host is raised and
+      // acknowledged as soon as Dockview identifies an eligible edge target;
+      // keeping this start hook state-only preserves tab-strip reordering.
       previewGeneration.current += 1;
       previewCandidate.current = null;
       previewRef.current = null;
       sideDrop.current = null;
       setPreview(null);
-      setHostOverlay(true);
+      dragActive.current = true;
+      hostRaised.current = false;
       // Keep the source identity available for the first overlay callback.
       previewCandidate.current = { surfaceId: panel.id, position: 'right', generation: previewGeneration.current };
     }));
-  }, [addMissingPanels, clearPreview, commitLayout, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setHostOverlay, showPreview]);
+  }, [addMissingPanels, clearPreview, commitLayout, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
 
   useEffect(() => {
     const api = apiRef.current;
@@ -473,7 +529,7 @@ export function WorkspaceDock(props: {
           event.stopPropagation();
           return;
         }
-        if (event.ctrlKey && event.altKey && canSplit) {
+        if (event.ctrlKey && event.altKey) {
           const commands: Record<string, ['right' | 'down', 'before' | 'after']> = {
             ArrowLeft: ['right', 'before'],
             ArrowRight: ['right', 'after'],
@@ -484,7 +540,11 @@ export function WorkspaceDock(props: {
           if (command) {
             event.preventDefault();
             event.stopPropagation();
-            splitActive(command[0], command[1]);
+            if (canSplit) splitActive(command[0], command[1]);
+            else showRejected(
+              command[0] === 'right' ? (command[1] === 'before' ? 'left' : 'right') : (command[1] === 'before' ? 'top' : 'bottom'),
+              interactionDisabled ? 'Split unavailable — workspace is busy' : topology.root.kind !== 'group' ? 'Split unavailable — layout is already split' : 'Split unavailable — keep another tab in this group',
+            );
           }
         }
       }}
@@ -499,6 +559,15 @@ export function WorkspaceDock(props: {
         if (event.button !== 0 || !(event.target instanceof Element)
           || !event.target.closest('.dv-sash')) return;
         resizing.current = true;
+      }}
+      onDragLeaveCapture={(event) => {
+        if (!dragActive.current) return;
+        const next = event.relatedTarget;
+        if (next instanceof Node && event.currentTarget.contains(next)) return;
+        // Leaving the drop surface invalidates the armed candidate, but keep
+        // the host raised for the remainder of the tab drag so a later return
+        // can establish a fresh, compositor-visible preview.
+        clearPreview(false);
       }}>
       <p className="workspace-split-help" aria-live="polite">
         Drag a tab to an edge to preview a split. Keyboard: Control+Alt+Arrow keys split the focused tab.

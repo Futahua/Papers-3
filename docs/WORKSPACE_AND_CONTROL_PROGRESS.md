@@ -2814,11 +2814,13 @@ for hit testing and structural mutation, while Papers supplies the visible
 guarantee layer above native Backpack surfaces.
 
  * [x] Removed the explicit Split Right / Split Down controls.
- * [x] Tab drags raise the host compositor before entering native content.
  * [x] Allowed left/right/top/bottom candidates show a Papers-owned half-pane
-   preview and only an acknowledged, animation-frame-armed preview may drop.
- * [x] Rejected or busy candidates show visible cancellation/unavailable text;
-   tab-strip and center drops remain ordinary reorder operations.
+   preview and only an animation-frame-armed preview, after the host-raise IPC
+   acknowledgement, may drop.
+ * [x] Rejected or busy candidates retain visible cancellation/unavailable text
+   after release; tab-strip and center drops remain ordinary reorder operations,
+   and leaving the drop surface invalidates the candidate without lowering the
+   host during the remainder of the drag.
  * [x] Keyboard fallback is retained through Control+Alt+ArrowLeft/Right/Up/Down
    on the focused Dockview tab, using the same semantic split transaction.
  * [x] Sash resizing remains live and does not enter split-preview composition.

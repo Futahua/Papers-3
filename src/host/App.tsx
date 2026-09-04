@@ -327,6 +327,14 @@ export function App(): React.JSX.Element {
     void host().layout.setHostOverlayActive(sidebarOpen || workspaceOverlayActive).catch(() => undefined);
   }, [sidebarOpen, workspaceOverlayActive]);
 
+  const setWorkspaceOverlayFromDock = useCallback((active: boolean): Promise<void> => {
+    setWorkspaceOverlayActive(active);
+    // A drag needs an acknowledgement that Electron has raised the host
+    // child view before its preview may become armed. The effect above keeps
+    // picker and workspace ownership OR-composed for later state changes.
+    return host().layout.setHostOverlayActive(sidebarOpen || active);
+  }, [sidebarOpen]);
+
   // Dismiss the Basic menu on outside click.
   useEffect(() => {
     if (!basicOpen) return;
@@ -577,7 +585,7 @@ export function App(): React.JSX.Element {
           onClose={closeWorkspaceProject}
           onSplit={splitWorkspaceProject}
           onMove={moveWorkspaceProject}
-          onOverlayActiveChange={setWorkspaceOverlayActive}
+          onOverlayActiveChange={setWorkspaceOverlayFromDock}
           onCommitLayout={commitWorkspaceLayout}
           interactionDisabled={navigationBusy}
         />
