@@ -712,7 +712,7 @@ input:focus-visible {
   z-index: 75;
   cursor: col-resize;
   background: transparent;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .backpack-sidebar {

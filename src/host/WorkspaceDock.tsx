@@ -95,6 +95,7 @@ export function WorkspaceDock(props: {
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const resizing = useRef(false);
   const resizeSession = useRef<{ pointerId: number; generation: number; focusedGroupId: string; activeByGroup: Map<string, string | null>; captureTarget: HTMLElement | null } | null>(null);
+  const finishResizeRef = useRef<((cancelled?: boolean) => void) | null>(null);
   const [resizeActive, setResizeActive] = useState(false);
   const sideDrop = useRef<{ surfaceId: string; position: SplitEdge } | null>(null);
   const previewRef = useRef<SplitPreview | null>(null);
@@ -336,6 +337,7 @@ export function WorkspaceDock(props: {
       }
       setHostOverlay(false, 'workspace-resize');
     };
+    finishResizeRef.current = finishResize;
     const onPointerUp = (event: PointerEvent): void => {
       if (resizeSession.current?.pointerId === event.pointerId) window.setTimeout(() => finishResize(), 0);
     };
@@ -343,15 +345,24 @@ export function WorkspaceDock(props: {
       if (resizeSession.current?.pointerId === event.pointerId) window.setTimeout(() => finishResize(true), 0);
     };
     const onBlur = (): void => finishResize(true);
+    const onLostPointerCapture = (event: PointerEvent): void => {
+      if (resizeSession.current?.pointerId === event.pointerId) finishResize(true);
+    };
+    const onContextMenu = (): void => { if (resizing.current) finishResize(true); };
     const onMouseUp = (): void => { if (resizing.current) finishResize(); };
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
+    window.addEventListener('lostpointercapture', onLostPointerCapture);
+    window.addEventListener('contextmenu', onContextMenu, true);
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('blur', onBlur);
     return () => {
       finishResize(true);
+      finishResizeRef.current = null;
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerCancel);
+      window.removeEventListener('lostpointercapture', onLostPointerCapture);
+      window.removeEventListener('contextmenu', onContextMenu, true);
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('blur', onBlur);
     };
@@ -772,6 +783,10 @@ export function WorkspaceDock(props: {
   useEffect(() => {
     const api = apiRef.current;
     if (!api) return;
+    // A canonical revision arriving from another window wins deterministically
+    // over a local sash gesture; cancel before reconciling so stale local
+    // weights can never be committed after the remote mutation.
+    if (resizing.current) finishResizeRef.current?.(true);
     reconciliationFeedback.current.apply(() => {
       addMissingPanels(api);
       const desired = new Set(projects.map((project) => project.surfaceId));
