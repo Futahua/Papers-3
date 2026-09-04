@@ -558,10 +558,14 @@ export function WorkspaceDock(props: {
       if (typeof PointerEvent !== 'undefined' && nativeEvent instanceof PointerEvent) {
         const pointerId = nativeEvent.pointerId;
         const onPointerUp = (event: PointerEvent): void => {
-          if (event.pointerId === pointerId) queueMicrotask(finishDrop);
+          // Dockview registers its pointerup listener immediately after the
+          // synchronous onWillDragPanel callback. Defer to a macrotask so its
+          // onWillDrop/onDidDrop work and Papers' semantic-consumption
+          // microtask both complete before teardown.
+          if (event.pointerId === pointerId) window.setTimeout(finishDrop, 0);
         };
         const onPointerCancel = (event: PointerEvent): void => {
-          if (event.pointerId === pointerId) queueMicrotask(finishDrop);
+          if (event.pointerId === pointerId) window.setTimeout(finishDrop, 0);
         };
         // Register in the normal bubble phase so Dockview's own pointer
         // backend receives the terminal event first and can dispatch
