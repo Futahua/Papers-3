@@ -58,7 +58,7 @@ export function WorkspaceDock(props: {
   onSplit: (surfaceId: string, direction: 'right' | 'down', position?: 'before' | 'after') => string | void;
   onMove: (surfaceId: string, targetGroupId: string, targetIndex: number) => void;
   onOverlayActiveChange?: (active: boolean) => void | Promise<void>;
-  splitNotice?: string | null;
+  splitNotice?: { id: number; message: string } | null;
   interactionDisabled?: boolean;
   onCommitLayout: (snapshot: {
     groups: Array<{ groupId: string; surfaceIds: string[] }>;
@@ -125,8 +125,8 @@ export function WorkspaceDock(props: {
   }, [clearPreview, showPreview]);
 
   useEffect(() => {
-    if (splitNotice) showRejected('right', splitNotice);
-  }, [showRejected, splitNotice]);
+    if (splitNotice) showRejected('right', splitNotice.message);
+  }, [showRejected, splitNotice?.id]);
 
   useEffect(() => {
     disposing.current = false;
@@ -260,6 +260,8 @@ export function WorkspaceDock(props: {
     const armed = previewRef.current;
     if (!armed || !armed.allowed || !armed.armed || armed.position !== pending.position) {
       sideDrop.current = null;
+      previewGeneration.current += 1;
+      previewCandidate.current = null;
       showRejected(pending.position, 'Split cancelled — preview was not armed');
       return;
     }
@@ -279,8 +281,6 @@ export function WorkspaceDock(props: {
 
   useEffect(() => {
     const finishDrop = (): void => {
-      consumePendingSplit();
-      window.setTimeout(consumePendingSplit, 0);
       dragActive.current = false;
       const current = previewRef.current;
       if (current?.allowed) clearPreview();
@@ -289,17 +289,15 @@ export function WorkspaceDock(props: {
     };
     window.addEventListener('dragend', finishDrop);
     window.addEventListener('drop', finishDrop);
-    window.addEventListener('pointerup', consumePendingSplit);
     window.addEventListener('blur', finishDrop);
     return () => {
       window.removeEventListener('dragend', finishDrop);
       window.removeEventListener('drop', finishDrop);
-      window.removeEventListener('pointerup', consumePendingSplit);
       window.removeEventListener('blur', finishDrop);
       dragActive.current = false;
       clearPreview();
     };
-  }, [clearPreview, consumePendingSplit, showRejected]);
+  }, [clearPreview, showRejected]);
 
   const components = useMemo(() => ({ workspace: WorkspacePanel }), []);
   const addMissingPanels = useCallback((api: DockviewApi): void => {
@@ -476,6 +474,8 @@ export function WorkspaceDock(props: {
       if (!armed || !armed.allowed || !armed.armed || armed.message.indexOf('Release to split') !== 0) {
         drop.preventDefault();
         sideDrop.current = null;
+        previewGeneration.current += 1;
+        previewCandidate.current = null;
         showPreview({ position, allowed: false, armed: true, message: 'Split cancelled — preview was not armed' });
         return;
       }

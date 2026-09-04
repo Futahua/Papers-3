@@ -61,7 +61,9 @@ export function App(): React.JSX.Element {
   const [basicOpen, setBasicOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspaceOverlayActive, setWorkspaceOverlayActive] = useState(false);
-  const [splitNotice, setSplitNotice] = useState<string | null>(null);
+  const [splitNotice, setSplitNotice] = useState<{ id: number; message: string } | null>(null);
+  const sidebarOpenRef = useRef(false);
+  sidebarOpenRef.current = sidebarOpen;
   const sidebarCloseTimer = useRef<number | null>(null);
   const cancelSidebarClose = useCallback((): void => {
     if (sidebarCloseTimer.current === null) return;
@@ -131,7 +133,7 @@ export function App(): React.JSX.Element {
       // mutation owns the lock. Rehydrate the canonical snapshot immediately
       // so a speculative Dockview drag cannot remain renderer-only.
       void host().layout.refreshWorkspaceTopology().catch(() => undefined);
-      setSplitNotice('Split cancelled — workspace changed; the canonical layout was restored');
+      setSplitNotice({ id: Date.now(), message: 'Split cancelled — workspace changed; the canonical layout was restored' });
     });
   }, [hydrationReady, workspaceTopology]);
 
@@ -334,8 +336,8 @@ export function App(): React.JSX.Element {
     // A drag needs an acknowledgement that Electron has raised the host
     // child view before its preview may become armed. The effect above keeps
     // picker and workspace ownership OR-composed for later state changes.
-    return host().layout.setHostOverlayActive(sidebarOpen || active);
-  }, [sidebarOpen]);
+    return host().layout.setHostOverlayActive(sidebarOpenRef.current || active);
+  }, []);
 
   // Dismiss the Basic menu on outside click.
   useEffect(() => {
