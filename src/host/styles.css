@@ -811,6 +811,7 @@ input:focus-visible {
 :root[data-workspace-drag="true"] .workspace-dock .dockview-theme-light,
 :root[data-workspace-drag="true"] .workspace-dock .dv-dockview,
 :root[data-workspace-drag="true"] .workspace-dock .dv-groupview,
+:root[data-workspace-drag="true"] .workspace-dock .backpack-project-frame,
 :root[data-workspace-drag="true"] .workspace-dock .dv-groupview-content {
   background: transparent !important;
   --dv-group-view-background-color: transparent !important;

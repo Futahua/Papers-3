@@ -491,6 +491,7 @@ export function WorkspaceDock(props: {
         // Invalidate any edge acknowledgement that may still be in flight;
         // otherwise its delayed RAF could resurrect sideDrop after the cursor
         // has already returned to the neutral center target.
+        sideDrop.current = null;
         clearPreview(false);
         showPreview({
           position: 'center',
@@ -511,6 +512,7 @@ export function WorkspaceDock(props: {
         // but it is not a split target. Keep the host raised and make that
         // otherwise ambiguous no-op explicit instead of silently clearing the
         // preview while the user is still dragging.
+        sideDrop.current = null;
         clearPreview(false);
         showPreview({
           position: 'center',
@@ -528,7 +530,10 @@ export function WorkspaceDock(props: {
         return;
       }
       if ((drop.kind !== 'content' && drop.kind !== 'edge') || drop.position === 'center') {
-        if (drop.position === 'center') clearPreview(false);
+        if (drop.position === 'center') {
+          sideDrop.current = null;
+          clearPreview(false);
+        }
         return;
       }
       const nativeTarget = drop.nativeEvent.target;
