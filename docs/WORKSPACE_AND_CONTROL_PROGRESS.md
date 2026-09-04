@@ -2824,8 +2824,13 @@ guarantee layer above native Backpack surfaces.
  * [x] Fast-release candidates are rejected unless the matching edge preview is
    already armed; accepted structural drops use a guarded exactly-once fallback
    for Dockview pointer/HTML5 event ordering.
+ * [x] Pointer-backed (touch/pen/coarse-pointer) drags mirror Dockview's
+   window-level pointer-up/cancel boundary so `dragActive` and host compositor
+   ownership are always released even when no native HTML5 `dragend` fires.
  * [x] Main-owned topology rejection reports an announced cancellation while
-   fresh canonical topology reconciliation restores the renderer.
+   fresh canonical topology reconciliation restores the renderer; the rejection
+   path re-raises the host before displaying its visual status above native
+   project views.
  * [x] Keyboard fallback is retained through Control+Alt+ArrowLeft/Right/Up/Down
    on the focused Dockview tab, using the same semantic split transaction.
  * [x] Sash resizing remains live and does not enter split-preview composition.

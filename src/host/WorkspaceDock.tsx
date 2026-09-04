@@ -81,6 +81,7 @@ export function WorkspaceDock(props: {
   const previewCandidate = useRef<{ surfaceId: string; position: SplitEdge; generation: number } | null>(null);
   const previewGeneration = useRef(0);
   const dragActive = useRef(false);
+  const pointerDragCleanup = useRef<(() => void) | null>(null);
   const hostRaised = useRef(false);
   const statusTimer = useRef<number | null>(null);
   const [preview, setPreview] = useState<SplitPreview | null>(null);
@@ -93,9 +94,9 @@ export function WorkspaceDock(props: {
     void onOverlayActiveChange?.(active);
   }, [onOverlayActiveChange]);
 
-  const setHostOverlayAwaited = useCallback((active: boolean): Promise<void> => {
+  const setHostOverlayAwaited = useCallback((active: boolean, guard?: () => boolean): Promise<void> => {
     return Promise.resolve(onOverlayActiveChange?.(active)).then(() => {
-      hostRaised.current = active;
+      if (!guard || guard()) hostRaised.current = active;
     });
   }, [onOverlayActiveChange]);
 
@@ -117,12 +118,19 @@ export function WorkspaceDock(props: {
 
   const showRejected = useCallback((position: SplitEdge, message: string): void => {
     if (statusTimer.current !== null) window.clearTimeout(statusTimer.current);
+    const generation = ++previewGeneration.current;
     showPreview({ position, allowed: false, armed: true, message });
+    // A rejection can arrive after the normal drag cleanup (for example when
+    // the topology commit fails asynchronously). Raise the host again before
+    // displaying the status so the visual half-pane is above native project
+    // WebContentsViews, not merely ARIA-visible underneath them.
+    void setHostOverlayAwaited(true, () => previewGeneration.current === generation
+      && previewRef.current?.message === message);
     statusTimer.current = window.setTimeout(() => {
       statusTimer.current = null;
       clearPreview();
     }, 1200);
-  }, [clearPreview, showPreview]);
+  }, [clearPreview, setHostOverlayAwaited, showPreview]);
 
   useEffect(() => {
     if (splitNotice) showRejected('right', splitNotice.message);
@@ -279,14 +287,17 @@ export function WorkspaceDock(props: {
     if (newGroupId) groupIds.current.set(destinationDockviewId, newGroupId);
   }, [onSplit, reconcileFromTopology, showRejected]);
 
-  useEffect(() => {
-    const finishDrop = (): void => {
+  const finishDrop = useCallback((): void => {
+      pointerDragCleanup.current?.();
+      pointerDragCleanup.current = null;
       dragActive.current = false;
       const current = previewRef.current;
       if (current?.allowed) clearPreview();
       else if (current) showRejected(current.position, current.message);
       else clearPreview();
-    };
+  }, [clearPreview, showRejected]);
+
+  useEffect(() => {
     window.addEventListener('dragend', finishDrop);
     window.addEventListener('drop', finishDrop);
     window.addEventListener('blur', finishDrop);
@@ -294,10 +305,12 @@ export function WorkspaceDock(props: {
       window.removeEventListener('dragend', finishDrop);
       window.removeEventListener('drop', finishDrop);
       window.removeEventListener('blur', finishDrop);
+      pointerDragCleanup.current?.();
+      pointerDragCleanup.current = null;
       dragActive.current = false;
       clearPreview();
     };
-  }, [clearPreview, showRejected]);
+  }, [clearPreview, finishDrop]);
 
   const components = useMemo(() => ({ workspace: WorkspacePanel }), []);
   const addMissingPanels = useCallback((api: DockviewApi): void => {
@@ -520,7 +533,7 @@ export function WorkspaceDock(props: {
       const newGroupId = onSplit(pending.surfaceId, direction, position);
       if (newGroupId) groupIds.current.set(destinationDockviewId, newGroupId);
     }));
-    apiSubscriptions.current.push(event.api.onWillDragPanel(({ panel }) => {
+    apiSubscriptions.current.push(event.api.onWillDragPanel(({ panel, nativeEvent }) => {
       // Track the drag from its first pointer event. The host is raised and
       // acknowledged as soon as Dockview identifies an eligible edge target;
       // keeping this start hook state-only preserves tab-strip reordering.
@@ -535,10 +548,35 @@ export function WorkspaceDock(props: {
       setPreview(null);
       dragActive.current = true;
       hostRaised.current = false;
+      pointerDragCleanup.current?.();
+      pointerDragCleanup.current = null;
+      // Dockview's pointer backend (touch/pen, and all input on coarse
+      // systems) terminates on its own window pointerup and does not emit a
+      // native HTML5 dragend/drop. Mirror that terminal boundary locally so
+      // the host overlay cannot remain raised forever after a successful
+      // pointer-backed drop or cancellation.
+      if (typeof PointerEvent !== 'undefined' && nativeEvent instanceof PointerEvent) {
+        const pointerId = nativeEvent.pointerId;
+        const onPointerUp = (event: PointerEvent): void => {
+          if (event.pointerId === pointerId) queueMicrotask(finishDrop);
+        };
+        const onPointerCancel = (event: PointerEvent): void => {
+          if (event.pointerId === pointerId) queueMicrotask(finishDrop);
+        };
+        // Register in the normal bubble phase so Dockview's own pointer
+        // backend receives the terminal event first and can dispatch
+        // onWillDrop/onDidDrop while the preview is still armed.
+        window.addEventListener('pointerup', onPointerUp);
+        window.addEventListener('pointercancel', onPointerCancel);
+        pointerDragCleanup.current = () => {
+          window.removeEventListener('pointerup', onPointerUp);
+          window.removeEventListener('pointercancel', onPointerCancel);
+        };
+      }
       // Keep the source identity available for the first overlay callback.
       previewCandidate.current = { surfaceId: panel.id, position: 'right', generation: previewGeneration.current };
     }));
-  }, [addMissingPanels, clearPreview, commitLayout, consumePendingSplit, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
+  }, [addMissingPanels, clearPreview, commitLayout, consumePendingSplit, finishDrop, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
 
   useEffect(() => {
     const api = apiRef.current;
