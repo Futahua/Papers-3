@@ -3035,3 +3035,31 @@ remain valid; the reviewer's physical native matrix (mixed 6+ pane reload,
 native clicks in every pane, held-sash remote mutation, touch/pen terminals,
 rapid resize→tab-drag, and picker+resize owner overlap) is still a separate
 Windows acceptance gate and was not claimed by this install.
+
+### 10.5 Arbitrary mixed-split policy correction and live installation (2026-09-05 00:21 local)
+
+The reviewer re-audited exact source head
+`4fe91905b289db593acfc2a9bf806e1608b4bf57` and returned **READY / SIGNED OFF —
+source**. The obsolete main-process one/two-group `flatRoot` restriction was
+removed; recursive topology validation and exact live surface identity checks
+remain the authority boundary. The added regression commits a three-group
+mixed horizontal/vertical topology through `PapersHostFacade`.
+
+The creator then authorized installation. Papers processes were stopped and the
+prior live `Runtime/App` was moved reversibly to
+`Runtime/Backups/before-live-install-20260905-002141`. The package rebuilt from
+the signed-off source was copied into the original junction-backed path. The
+package, installed executable, and existing desktop shortcut-resolved
+executable all hash to
+`200D882D82BC22A970153222700A25A96188C016A9C30FB92FCC81EA1457DB85`.
+`Runtime/Data` had 192 files with zero byte/hash differences at the swap
+boundary, and the shortcut still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`.
+
+Typecheck, full unit tests (93 files, 909 passed, 4 skipped), build, package,
+and the new focused host-facade regression passed. Packaged navigation and
+workspace acceptance reached their pre-existing resize assertions but timed
+out in repeated runs; this remains a separate package/physical acceptance
+gate, not a source blocker or evidence of a data mutation. No publication or
+installer release occurred. The requested `TOGGLE MODE.bat` and PC shutdown
+remain the final creator-authorized post-sign-off actions.
