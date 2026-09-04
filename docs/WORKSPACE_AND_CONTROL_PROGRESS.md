@@ -81,6 +81,31 @@ app (PID 43436, start 2026-09-03 16:02:28 local). Normal launch remains normal;
 developer control still requires an explicitly diagnostic launch. Client tools
 remain in the source checkout. No desktop-compositor capture was performed.
 
+### Live installation refreshed — 2026-09-04 10:15 local
+
+The creator requested the current signed source be put into the live setup while
+preserving the real profile. Built an unpublished Papers 1.3.11 NSIS installer
+from source HEAD `c6dfb2d0f1657922bb8eed8efbebfbe315d636f6` (code through
+`517cf1c61c3bfa6ae0b0d1ace44dd24bef690372`). The preserved
+`docs/evidence/worker-comparison.json` modification means the local build stamp
+is `c6dfb2d+local`; no publication occurred.
+
+The running app exited gracefully. The previous installed App and the complete
+live Data profile were copied to
+`Runtime/Backups/before-live-install-20260904-101418`, and the installer was
+archived as `Runtime/Installers/Papers-Setup-1.3.11-c6dfb2d.exe`. NSIS then
+installed into the existing `Runtime/App` target (exit code 0). Installed and
+packaged `app.asar` SHA-256 match:
+`47383EA58451864E0CAFA741F1BC347CD4B6AE8B1F4B93CB74E8AD21AB063830`.
+The archived installer SHA-256 is
+`FD2E85C6456484E986E79EF314BA4429DBDD9A0C6C371C3D7121C047C1733BD7`.
+
+All 192 live Data files have identical hashes before and after installation;
+the As you Go `state.json` remains the creator's live file. The existing desktop
+shortcut still targets `D:\\Letters\\MatTroiSeConMoc\\Papers\\App\\Papers.exe`,
+which is the junction-backed live App. The refreshed executable launched
+normally with the real profile (PID 28368, start 2026-09-04 10:14:53 local).
+
 ### Reviewed pipeline scope
 
 The audit found C1 complete and no transparency blocker. The existing stack can
