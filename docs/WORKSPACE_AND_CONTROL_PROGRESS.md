@@ -2921,3 +2921,22 @@ explicit handle, and cancel/lost-capture/blur/destroy roll back without
 persistence or click suppression; the full independent suite passes 1,121
 tests with 0 failures and 0 skips. No As-you-Go implementation is included in
 this Papers commit, and no live project data was changed.
+
+### 10.1 Successful split terminal hardening (2026-09-04)
+
+The screenshot-class regression where a successful split left the delegated
+surface above the opposite native pane is closed in source at
+`00a49738e91d0a5bd3ba5a4fddf1c00e169ceb0f` (READY / SIGNED OFF by the
+reviewer). Every semantic success consumer now calls an idempotent
+`finishSuccessfulDrop()` that ends the drag session before clearing the preview,
+releases the `workspace-drag` host lease, and makes late terminal events
+harmless. The focused packaged navigation E2E asserts the preview is gone and
+`document.documentElement.dataset.workspaceDrag` is `false` immediately after
+release; typecheck, the full 92-file/902-test unit suite (4 skipped), and the
+focused navigation/workspace-tabs E2Es all pass.
+
+This correction is source-signoff only. The currently installed executable
+(`99B2A6B16EFBB70ACCEEC7610CFFFC928E83E02BA1133CF8659E7DA967E4DA50`) predates
+this fix; a creator-authorized live swap and physical two-native-pane click
+acceptance remain the final operational gate. The existing rollback backup and
+creator data remain preserved.
