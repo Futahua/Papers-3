@@ -3014,7 +3014,8 @@ sign-off. Only Papers processes were closed, and the previous live
 `Runtime/App` was moved reversibly to
 `Runtime/Backups/before-live-install-20260904-232843`. The prepared unpacked
 package was copied into the original `Runtime/App` path; no installer release,
-publication, second app copy, or `Runtime\Data` mutation was performed.
+publication, or second app copy was performed, and the swap itself did not
+write `Runtime\Data`.
 
 The installed executable, package executable, and the existing desktop
 shortcut-resolved executable all hash to
@@ -3022,7 +3023,10 @@ shortcut-resolved executable all hash to
 built from source sign-off `b930ba35`). The `Papers` desktop shortcut still
 targets `D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, which remains the
 same junction-backed runtime path. A clean before/after manifest found all 192
-`Runtime/Data` files byte-for-byte unchanged.
+`Runtime/Data` files byte-for-byte unchanged at the swap boundary. The normal
+post-install shortcut launch restored the live workspace and updated only
+`PapersData\workspace-topologies.json` and its backup; backpack records,
+registry, and settings were unchanged.
 
 Against the installed executable, isolated single-worker packaged
 `backpack-navigation.e2e.ts` passed on retry after one intermittent resize
