@@ -1130,6 +1130,12 @@ async function bootstrap(): Promise<void> {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
     },
+    setHostOverlayActive: (windowId, active) => {
+      const context = papersWindows.get(windowId);
+      if (!context || context.owned.window.isDestroyed()) return;
+      if (active) context.owned.window.contentView.addChildView(context.owned.hostView);
+      else context.owned.projectSurfaces.raisePresented();
+    },
     runtime,
     canvasState,
     catalog: () => catalog,

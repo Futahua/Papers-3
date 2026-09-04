@@ -175,6 +175,11 @@ export class BackpackProjectSurfaceCollection {
     for (const runtime of this.runtimes.values()) runtime.fit();
   }
 
+  /** Restore native project surfaces above a temporarily raised host view. */
+  raisePresented(): void {
+    for (const runtime of this.runtimes.values()) runtime.raise();
+  }
+
   setBounds(surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): void {
     this.ensure(surfaceId).setBounds(bounds);
   }

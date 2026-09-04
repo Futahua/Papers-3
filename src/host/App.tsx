@@ -124,7 +124,12 @@ export function App(): React.JSX.Element {
       return;
     }
     externallyRestoredTopology.current = null;
-    void host().layout.commitWorkspaceTopology(workspaceTopology).catch(() => undefined);
+    void host().layout.commitWorkspaceTopology(workspaceTopology).catch(() => {
+      // Main may reject a renderer layout commit while a cross-window
+      // mutation owns the lock. Rehydrate the canonical snapshot immediately
+      // so a speculative Dockview drag cannot remain renderer-only.
+      void host().layout.hydrateStartupWorkspace().catch(() => undefined);
+    });
   }, [hydrationReady, workspaceTopology]);
 
   useEffect(() => {
@@ -313,6 +318,13 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     void host().layout.setOverlayActive(basicOpen || entered !== null);
   }, [basicOpen, entered]);
+
+  // Native Backpack views are child surfaces and otherwise sit above host DOM
+  // regardless of CSS z-index. Raise the host only while this picker is open,
+  // then restore project surfaces without changing their bounds or identities.
+  useEffect(() => {
+    void host().layout.setHostOverlayActive(sidebarOpen).catch(() => undefined);
+  }, [sidebarOpen]);
 
   // Dismiss the Basic menu on outside click.
   useEffect(() => {

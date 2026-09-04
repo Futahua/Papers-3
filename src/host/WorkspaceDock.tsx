@@ -8,6 +8,7 @@ import {
 import 'dockview-react/dist/styles/dockview.css';
 
 import { BackpackProjectFrame } from './BackpackProjectFrame';
+import { host } from './bridge';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { rebuildWorkspaceGroupMap } from './workspaceGroupMapping';
 import { createWorkspaceReconciliationFeedbackGate } from './workspaceReconciliationFeedback';
@@ -67,10 +68,17 @@ export function WorkspaceDock(props: {
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const resizing = useRef(false);
   const sideDrop = useRef<{ surfaceId: string; position: 'top' | 'bottom' | 'left' | 'right' } | null>(null);
+  const hostOverlayActive = useRef(false);
   const interactionDisabledRef = useRef(false);
   projectsRef.current = projects;
   topologyRef.current = topology;
   interactionDisabledRef.current = interactionDisabled;
+
+  const setHostOverlay = useCallback((active: boolean): void => {
+    if (hostOverlayActive.current === active) return;
+    hostOverlayActive.current = active;
+    void host().layout.setHostOverlayActive(active).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     disposing.current = false;
@@ -130,13 +138,22 @@ export function WorkspaceDock(props: {
 
   useEffect(() => {
     const cancelDrop = (): void => { sideDrop.current = null; };
+    const finishDrop = (): void => setHostOverlay(false);
     window.addEventListener('dragend', cancelDrop);
     window.addEventListener('drop', cancelDrop);
+    window.addEventListener('dragend', finishDrop);
+    window.addEventListener('drop', finishDrop);
+    window.addEventListener('pointerup', finishDrop);
+    window.addEventListener('blur', finishDrop);
     return () => {
       window.removeEventListener('dragend', cancelDrop);
       window.removeEventListener('drop', cancelDrop);
+      window.removeEventListener('dragend', finishDrop);
+      window.removeEventListener('drop', finishDrop);
+      window.removeEventListener('pointerup', finishDrop);
+      window.removeEventListener('blur', finishDrop);
     };
-  }, []);
+  }, [setHostOverlay]);
 
   const reconcileFromTopology = useCallback((api: DockviewApi): void => {
     refreshGroupIds(api);
@@ -284,7 +301,9 @@ export function WorkspaceDock(props: {
         if (!allowSideDrop || !surfaceId) {
           overlay.preventDefault();
           sideDrop.current = null;
+          return;
         }
+        setHostOverlay(true);
       }
     }));
     apiSubscriptions.current.push(event.api.onWillDrop((drop) => {
@@ -309,6 +328,7 @@ export function WorkspaceDock(props: {
         sideDrop.current = null;
         return;
       }
+      setHostOverlay(true);
       sideDrop.current = {
         surfaceId,
         position: drop.position as 'top' | 'bottom' | 'left' | 'right',
@@ -317,7 +337,7 @@ export function WorkspaceDock(props: {
     apiSubscriptions.current.push(event.api.onDidDrop(() => {
       refreshGroupIds(event.api);
     }));
-  }, [addMissingPanels, commitLayout, onActivate, onClose, onMove, refreshGroupIds]);
+  }, [addMissingPanels, commitLayout, onActivate, onClose, onMove, refreshGroupIds, setHostOverlay]);
 
   useEffect(() => {
     const api = apiRef.current;

@@ -100,6 +100,7 @@ const api = {
     setProgramBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke('host:layout:set-program-bounds', bounds),
     setOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-overlay', active),
+    setHostOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-host-overlay', active),
     setTitleBarOverlay: (color: string, symbolColor: string) =>
       ipcRenderer.invoke('host:layout:set-titlebar', color, symbolColor),
     commitWorkspaceTopology: (topology: unknown) =>
@@ -184,4 +185,3 @@ contextBridge.exposeInMainWorld('papersHost', api);
 installVisualDiagnosticListeners(ipcRenderer, contextBridge);
 
 export type PapersHostBridge = typeof api;
-

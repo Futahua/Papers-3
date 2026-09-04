@@ -77,6 +77,7 @@ export interface HostFacade {
 
   setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): void;
   setOverlayActive(active: boolean): void;
+  setHostOverlayActive(senderId: number, active: boolean): void;
   setTitleBarOverlay(senderId: number, color: string, symbolColor: string): void;
   getSettings(): unknown;
   setTransparentWindow(enabled: boolean): Promise<void>;
@@ -324,6 +325,9 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:layout:set-overlay', (_e, active) =>
     facade.setOverlayActive(z.boolean().parse(active)),
+  );
+  handle('host:layout:set-host-overlay', (event, active) =>
+    facade.setHostOverlayActive(event.sender.id, z.boolean().parse(active)),
   );
   handle('host:layout:set-titlebar', (event, color, symbolColor) =>
     facade.setTitleBarOverlay(event.sender.id, colorSchema.parse(color), colorSchema.parse(symbolColor)),

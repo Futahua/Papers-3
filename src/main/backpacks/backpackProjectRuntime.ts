@@ -196,6 +196,14 @@ export class BackpackProjectRuntime {
     this.fit();
   }
 
+  /** Re-add an already-presented native view at the top of its window's child
+   * stack so host-renderer popovers can paint above it. Bounds and renderer
+   * identity are unchanged. */
+  raise(): void {
+    if (!this.view || !this.presented || this.window.isDestroyed()) return;
+    this.window.contentView.addChildView(this.view);
+  }
+
   /** Remove the native view from composition without ending its renderer. */
   conceal(): void {
     if (!this.view || !this.presented) return;
