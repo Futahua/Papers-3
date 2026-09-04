@@ -536,8 +536,8 @@ writer-cancellation fence are now pushed at exact SHA
   converge deterministically;
 * [x] every open surface is designed to update shared actions while retaining
   its own view;
-* [ ] reviewer live-integration hardening audit and installed two-native-window
-  acceptance remain open.
+* [ ] installed two-native-window native/compositor acceptance remains open;
+  the reviewer source hardening audit is complete and signed off.
 
 Validation before the recovery correction at `f19842a`: `npm test` passed 1,083
 tests with 0 failures and 0 skips; focused coordinator coverage was 42 tests and
@@ -2913,8 +2913,11 @@ exactly one persisted split. The same run must cover all four edges, center,
 `header_space`, fast release, delayed compositor acknowledgement, and picker
 open/close ownership. No new live install or release is implied by this record.
 
-The As-you-Go button/handle correction remains independent project work at its
-audited source head `4e27ba22799977ad167498808f8c0c33d419ab50`: action buttons
-must become pure buttons, movement must use an explicit handle, and cancel/lost
-capture/blur must roll back without persistence or click suppression. No
-As-you-Go implementation is included in this Papers commit.
+The As-you-Go button/handle correction remains independent project work. Its
+exact pushed source head is `9d8147e95fff12b7a7fb98eaae14c677db497b0a`
+(`agent/single-writer-surfaces`), audited READY / SIGNED OFF by the reviewer.
+Action buttons are pure buttons inside positioned shells, movement uses an
+explicit handle, and cancel/lost-capture/blur/destroy roll back without
+persistence or click suppression; the full independent suite passes 1,121
+tests with 0 failures and 0 skips. No As-you-Go implementation is included in
+this Papers commit, and no live project data was changed.
