@@ -2940,3 +2940,11 @@ This correction is source-signoff only. The currently installed executable
 this fix; a creator-authorized live swap and physical two-native-pane click
 acceptance remain the final operational gate. The existing rollback backup and
 creator data remain preserved.
+
+A fresh unpacked package was nevertheless rebuilt from this source head for
+verification. Its `release/win-unpacked/Papers.exe` SHA-256 is
+`3AC269E8F0E7EA113E7F0197232FEA22ED3F16F9090B6245F776F834A6D0AA02`.
+Single-worker packaged runs of `backpack-navigation.e2e.ts` and
+`workspace-tabs.e2e.ts` both pass against that exact executable; the earlier
+parallel invocation was not used as evidence because two simultaneous packaged
+Electron launches raced their isolated startup profiles.
