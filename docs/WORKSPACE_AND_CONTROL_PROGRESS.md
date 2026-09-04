@@ -2836,9 +2836,6 @@ guarantee layer above native Backpack surfaces.
  * [x] Tab-drag initiation claims host compositor/input ownership before the
    pointer can enter a native project view; the project placeholder becomes
    transparent during that interval so live project pixels remain visible.
- * [x] A permanent host-owned 12px edge gutter provides a native-hit-test
-   fallback while the compositor acknowledgement is in flight; opaque-window
-   drags temporarily clear the host child background and restore it on release.
  * [x] Main-owned topology rejection reports an announced cancellation while
    fresh canonical topology reconciliation restores the renderer; the rejection
    path re-raises the host before displaying its visual status above native

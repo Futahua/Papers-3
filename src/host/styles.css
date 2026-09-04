@@ -745,12 +745,11 @@ input:focus-visible {
 .backpack-sidebar-list button[aria-current="page"] { background: var(--raised-strong); }
 .backpack-sidebar-empty { color: var(--muted); padding: 8px; }
 
-/* Leave a permanent host-owned gutter at native view edges so a physical tab
-   drag can reach Dockview even before compositor acknowledgement completes. */
-.workspace-dock .backpack-project-frame {
-  width: calc(100% - 24px);
-  height: calc(100% - 24px);
-  margin: 12px;
+/* Leave a host-owned hit area at native view edges for the split sash. */
+.workspace-dock[data-split] .backpack-project-frame {
+  width: calc(100% - 8px);
+  height: calc(100% - 8px);
+  margin: 4px;
 }
 
 /* Native project views composite over the host. Keep every workspace content
@@ -805,19 +804,6 @@ input:focus-visible {
    the host while its tab strip and split preview stay interactive. */
 .workspace-drag-active .backpack-project-frame {
   background: transparent;
-}
-
-/* The host child surface is temporarily transparent during a workspace drag,
-   including opaque-window mode, so native project pixels remain visible while
-   Dockview owns input and paints the split preview. */
-:root[data-workspace-drag="true"] body,
-:root[data-workspace-drag="true"] #root,
-:root[data-workspace-drag="true"] .app,
-:root[data-workspace-drag="true"] .workspace-dock,
-:root[data-workspace-drag="true"] .workspace-dock .dockview-theme-light,
-:root[data-workspace-drag="true"] .workspace-dock .dv-groupview,
-:root[data-workspace-drag="true"] .workspace-dock .dv-groupview-content {
-  background: transparent !important;
 }
 
 .backpack-project-frame {

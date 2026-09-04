@@ -156,7 +156,6 @@ interface HostBridge {
     setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setOverlayActive(active: boolean): Promise<void>;
     setHostOverlayActive(active: boolean): Promise<void>;
-    setWorkspaceDragActive(active: boolean): Promise<void>;
     setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
     commitWorkspaceTopology(topology: WorkspaceTopologyV1): Promise<void>;
     refreshWorkspaceTopology(): Promise<void>;
