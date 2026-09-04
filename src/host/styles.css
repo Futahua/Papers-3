@@ -808,6 +808,10 @@ input:focus-visible {
    outer theme wrapper so native project pixels remain visible through the
    host while the split preview is painted. */
 :root[data-workspace-drag="true"] .workspace-dock,
+:root[data-workspace-drag="true"],
+:root[data-workspace-drag="true"] body,
+:root[data-workspace-drag="true"] #root,
+:root[data-workspace-drag="true"] .app,
 :root[data-workspace-drag="true"] .workspace-dock .dockview-theme-light,
 :root[data-workspace-drag="true"] .workspace-dock .dv-dockview,
 :root[data-workspace-drag="true"] .workspace-dock .dv-groupview,

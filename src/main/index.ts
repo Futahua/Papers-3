@@ -473,6 +473,14 @@ async function bootstrap(): Promise<void> {
     ...(settingsReport.value && typeof settingsReport.value === 'object' ? settingsReport.value : {}),
     transparentWindow: settingsReport.value?.transparentWindow === true,
   };
+  const applyHostViewBackground = (windowId: number, view: WebContentsView): void => {
+    const workspaceDragActive = hostOverlayOwners.get(windowId)?.has('workspace-drag') ?? false;
+    view.setBackgroundColor(
+      workspaceDragActive || papersSettings.transparentWindow
+        ? TRANSPARENT_CHILD_SURFACE_COLOR
+        : OPAQUE_SURFACE_COLOR,
+    );
+  };
 
   const registry = new BackpackRegistry(baseDir);
   const registryReport = await registry.initialize();
@@ -768,12 +776,11 @@ async function bootstrap(): Promise<void> {
     // white RGB payload paints literally and every transparent page above it
     // reads as a white panel. Verified over CDP — with the whole DOM computing
     // rgba(0,0,0,0), the canvas was still white until this base changed.
-    const color = transparent ? TRANSPARENT_CHILD_SURFACE_COLOR : OPAQUE_SURFACE_COLOR;
     // This is an application-wide appearance setting. Repaint every live
     // Papers window, not only the bootstrap window captured by this closure.
     for (const context of papersWindows.all()) {
       if (!context.owned.hostView.webContents.isDestroyed()) {
-        context.owned.hostView.setBackgroundColor(color);
+        applyHostViewBackground(context.owned.window.id, context.owned.hostView);
       }
       if (!context.owned.window.isDestroyed()) {
         context.owned.window.setBackgroundColor(
@@ -1155,12 +1162,7 @@ async function bootstrap(): Promise<void> {
       if (owners.size === 0) hostOverlayOwners.delete(windowId);
       else hostOverlayOwners.set(windowId, owners);
 
-      const workspaceDragActive = owners.has('workspace-drag');
-      context.owned.hostView.setBackgroundColor(
-        workspaceDragActive || papersSettings.transparentWindow
-          ? TRANSPARENT_CHILD_SURFACE_COLOR
-          : OPAQUE_SURFACE_COLOR,
-      );
+      applyHostViewBackground(windowId, context.owned.hostView);
       if (owners.size > 0) context.owned.window.contentView.addChildView(context.owned.hostView);
       else context.owned.projectSurfaces.raisePresented();
     },
@@ -1176,16 +1178,14 @@ async function bootstrap(): Promise<void> {
       // Repaint the native window controls to match the active Papers theme.
       const windowId = papersWindows.windowForSender(senderId);
       const context = windowId === null ? null : papersWindows.get(windowId);
-      if (!context || context.owned.window.isDestroyed() || context.owned.hostView.webContents.isDestroyed()) {
+      if (windowId === null || !context || context.owned.window.isDestroyed() || context.owned.hostView.webContents.isDestroyed()) {
         return;
       }
       context.owned.window.setTitleBarOverlay?.({ color, symbolColor, height: TITLE_BAR_HEIGHT });
       context.owned.window.setBackgroundColor(
         papersSettings.transparentWindow ? TRANSPARENT_SURFACE_COLOR : color,
       );
-      context.owned.hostView.setBackgroundColor(
-        papersSettings.transparentWindow ? TRANSPARENT_CHILD_SURFACE_COLOR : OPAQUE_SURFACE_COLOR,
-      );
+      applyHostViewBackground(windowId, context.owned.hostView);
     },
     getSettings: () => ({ ...papersSettings }),
     setTransparentWindow: async (enabled) => {
