@@ -1148,6 +1148,22 @@ async function bootstrap(): Promise<void> {
       if (active) context.owned.window.contentView.addChildView(context.owned.hostView);
       else context.owned.projectSurfaces.raisePresented();
     },
+    setWorkspaceDragActive: (windowId, active) => {
+      const context = papersWindows.get(windowId);
+      if (!context || context.owned.window.isDestroyed()) return;
+      // Workspace drag owns the host compositor for edge discovery. In
+      // opaque-window mode temporarily clear the host child surface too, so
+      // the native project remains visible through the transparent drag DOM.
+      if (active) {
+        context.owned.hostView.setBackgroundColor(TRANSPARENT_CHILD_SURFACE_COLOR);
+        context.owned.window.contentView.addChildView(context.owned.hostView);
+      } else {
+        context.owned.hostView.setBackgroundColor(
+          papersSettings.transparentWindow ? TRANSPARENT_CHILD_SURFACE_COLOR : OPAQUE_SURFACE_COLOR,
+        );
+        context.owned.projectSurfaces.raisePresented();
+      }
+    },
     runtime,
     canvasState,
     catalog: () => catalog,

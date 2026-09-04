@@ -8,6 +8,7 @@ import {
 import 'dockview-react/dist/styles/dockview.css';
 
 import { BackpackProjectFrame } from './BackpackProjectFrame';
+import { host } from './bridge';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { rebuildWorkspaceGroupMap } from './workspaceGroupMapping';
 import { createWorkspaceReconciliationFeedbackGate } from './workspaceReconciliationFeedback';
@@ -97,6 +98,8 @@ export function WorkspaceDock(props: {
 
   const setDragSurfaceActive = useCallback((active: boolean): void => {
     dockRootRef.current?.classList.toggle('workspace-drag-active', active);
+    document.documentElement.dataset.workspaceDrag = active ? 'true' : 'false';
+    void host().layout.setWorkspaceDragActive(active).catch(() => undefined);
   }, []);
 
   const setHostOverlayAwaited = useCallback((active: boolean, guard?: () => boolean): Promise<void> => {
