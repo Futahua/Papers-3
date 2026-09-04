@@ -1008,8 +1008,8 @@ async function bootstrap(): Promise<void> {
         widgetSession?.closeProject(backpackId).catch(() => undefined),
       ]);
     },
-    closeAttachedProjectSurface: async (windowId, surfaceId) => {
-      await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
+    closeAttachedProjectSurface: async (windowId, surfaceId, options) => {
+      await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
     closeBackpackProjectSurface: async (senderId, surfaceId) => {
       const windowId = papersWindows.windowForSender(senderId);

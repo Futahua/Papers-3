@@ -135,7 +135,7 @@ export class BackpackProjectSurfaceCollection {
   }
 
   /** Destroy one attached presentation, leaving logical retirement to its owner. */
-  async close(surfaceId: string): Promise<void> {
+  async close(surfaceId: string, options: { strict?: boolean } = {}): Promise<void> {
     const runtime = this.runtimes.get(surfaceId);
     if (!runtime) return;
     // Collection ownership is retained through native teardown so the
@@ -144,6 +144,7 @@ export class BackpackProjectSurfaceCollection {
     try {
       await runtime.hide();
     } catch (caught) {
+      if (options.strict) throw caught;
       console.error(`[workspace-move] native close failed for ${surfaceId}:`, caught);
     } finally {
       if (this.runtimes.get(surfaceId) === runtime) this.runtimes.delete(surfaceId);

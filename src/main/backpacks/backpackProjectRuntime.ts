@@ -244,11 +244,9 @@ export class BackpackProjectRuntime {
             ).then(() => 'flushed' as const),
             new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2500)),
           ]);
-          if (outcome === 'timeout') {
-            console.error('[papers] project close flush timed out before renderer close');
-          }
+          if (outcome === 'timeout') throw new Error('project close flush timed out before renderer close');
         } catch (caught) {
-          console.error('[papers] project close flush failed before renderer close:', caught);
+          throw caught instanceof Error ? caught : new Error(String(caught));
         }
       }
       if (this.view === view) {
@@ -261,7 +259,17 @@ export class BackpackProjectRuntime {
         view.webContents.close();
       }
     };
-    const pending = close().finally(() => {
+    const pending = close().catch((caught) => {
+      // Voluntary replacement/close must remain recoverable when the
+      // renderer cannot flush. The view is detached above but still alive;
+      // restore it so callers can keep using the old tab and retry.
+      if (this.view === view && !this.window.isDestroyed()) {
+        this.window.contentView.addChildView(view);
+        this.presented = true;
+        this.fit();
+      }
+      throw caught;
+    }).finally(() => {
       if (this.hidePromise === pending) this.hidePromise = null;
     });
     this.hidePromise = pending;

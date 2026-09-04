@@ -1,6 +1,6 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
-Last updated: 2026-09-03
+Last updated: 2026-09-04
 Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`, and packaged visual success/failure plus stdio MCP acceptance signed off at `d977a2974beddd1ea94aade311c65ab9e29fec74`; the reviewed C1 core is complete, while only older live-fixture integration checklists remain outside this acceptance record
 Working branch: `agent/surface-context-routing`
 
@@ -26,6 +26,9 @@ middle-click opens it in a new tab. The same current-tab/new-tab contract is
 used by the main Backpacks picker. Navigation is serialized per host window,
 and a replacement transaction preserves the logical surface and split/group
 topology while flushing the previous project's durable state before retirement.
+If that voluntary flush rejects or times out, replacement fails closed and the
+old native presentation is restored; the old logical surface and topology are
+retained for retry.
 
 Dockview split borders are draggable. During a drag, native project views are
 temporarily occluded (not destroyed), and the canonical root/group weights are
@@ -33,6 +36,10 @@ committed when the gesture ends, preserving renderer identity and creator data.
 The topology effect distinguishes an externally supplied canonical snapshot
 from a local update batched in the same render, so a user's resize or tab
 action cannot be silently skipped.
+Sash/tab interaction is disabled while a replacement transaction owns the
+mutation lock. The sidebar is also exposed on title-button focus, supports
+Escape dismissal, and offers Shift+Enter as a keyboard equivalent of
+middle-click new-tab activation.
 
 Validation is covered by `tests/e2e/backpack-navigation.e2e.ts` (synthetic
 Backpacks): current-tab replacement, middle-click tab creation, hover-sidebar
@@ -40,6 +47,8 @@ selection and scrolling, vertical and horizontal split resizing, unchanged
 native WebContents identities, empty-selection retention, and absence of the
 removed Layouts control. Focused host routing tests cover deferred-close
 durability and cross-window/archived-target rejection.
+The runtime unit suite also proves a rejected voluntary flush restores the
+same native sender/presentation without closing it.
 
 ## Creator acceptance and positioning reversal — 2026-09-04
 

@@ -54,12 +54,14 @@ export function WorkspaceDock(props: {
   onClose: (surfaceId: string) => void;
   onSplit: (surfaceId: string, direction: 'right' | 'down') => void;
   onMove: (surfaceId: string, targetGroupId: string, targetIndex: number) => void;
+  interactionDisabled?: boolean;
   onCommitLayout: (snapshot: {
     groups: Array<{ groupId: string; surfaceIds: string[] }>;
     rootWeights?: number[];
   }) => void;
 }): React.JSX.Element {
-  const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onCommitLayout } = props;
+  const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onCommitLayout,
+    interactionDisabled = false } = props;
   const apiRef = useRef<DockviewApi | null>(null);
   const projectsRef = useRef(projects);
   const topologyRef = useRef(topology);
@@ -231,7 +233,7 @@ export function WorkspaceDock(props: {
     addMissingPanels(event.api);
     refreshGroupIds(event.api);
     apiSubscriptions.current.push(event.api.onDidActivePanelChange(({ panel, origin }) => {
-      if (panel && !reconciliationFeedback.current.isSuppressed() && origin !== 'api') onActivate(panel.id);
+      if (panel && !interactionDisabled && !reconciliationFeedback.current.isSuppressed() && origin !== 'api') onActivate(panel.id);
     }));
     apiSubscriptions.current.push(event.api.onDidRemovePanel((panel) => {
       if (disposing.current) return;
@@ -243,15 +245,15 @@ export function WorkspaceDock(props: {
       const targetGroupId = groupIds.current.get(to.id);
       if (!targetGroupId) return;
       const targetIndex = to.panels.findIndex((candidate) => candidate.id === panel.id);
-      if (targetIndex >= 0) onMove(panel.id, targetGroupId, targetIndex);
+      if (targetIndex >= 0 && !interactionDisabled) onMove(panel.id, targetGroupId, targetIndex);
     }));
     apiSubscriptions.current.push(event.api.onDidMutateLayout(({ origin }) => {
-      if (resizing.current || reconciliationFeedback.current.isSuppressed() || origin === 'api') return;
+      if (interactionDisabled || resizing.current || reconciliationFeedback.current.isSuppressed() || origin === 'api') return;
       commitLayout(event.api);
       setNativeSuspended(false);
     }));
     apiSubscriptions.current.push(event.api.onDidLayoutChange(() => {
-      if (!resizing.current && !reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
+      if (!interactionDisabled && !resizing.current && !reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
     }));
     apiSubscriptions.current.push(event.api.onWillShowOverlay((overlay) => {
       if ((overlay.kind === 'content' || overlay.kind === 'edge') && overlay.position !== 'center') {
@@ -264,7 +266,7 @@ export function WorkspaceDock(props: {
       refreshGroupIds(event.api);
       setNativeSuspended(false);
     }));
-  }, [addMissingPanels, commitLayout, onActivate, onClose, onMove, refreshGroupIds]);
+  }, [addMissingPanels, commitLayout, interactionDisabled, onActivate, onClose, onMove, refreshGroupIds]);
 
   useEffect(() => {
     const api = apiRef.current;
@@ -284,6 +286,7 @@ export function WorkspaceDock(props: {
   }, [activeSurfaceId, addMissingPanels, projects, reconcileFromTopology, topology]);
 
   const splitActive = useCallback((direction: 'right' | 'down'): void => {
+    if (interactionDisabled) return;
     const panel = apiRef.current?.activePanel;
     if (!panel) return;
     const source = topologyRef.current.groups.find((group) => group.surfaceIds.includes(panel.id));
@@ -294,19 +297,26 @@ export function WorkspaceDock(props: {
     });
     onSplit(panel.id, direction);
     groupIds.current.set(panel.group.id, `group-${panel.id}`);
-  }, [onSplit]);
+  }, [interactionDisabled, onSplit]);
 
   const activeGroup = activeSurfaceId
     ? topology.groups.find((group) => group.surfaceIds.includes(activeSurfaceId))
     : undefined;
   const canSplit = Boolean(
-    activeSurfaceId && activeGroup && activeGroup.surfaceIds.length > 1 && topology.root.kind === 'group',
+    !interactionDisabled && activeSurfaceId && activeGroup && activeGroup.surfaceIds.length > 1 && topology.root.kind === 'group',
   );
 
   return (
     <section className="workspace-dock" aria-label="Workspace tabs"
       data-split={topology.root.kind === 'split' ? '' : undefined}
       onMouseDownCapture={(event) => {
+        if (interactionDisabled) {
+          if (event.target instanceof Element && event.target.closest('.dv-sash')) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+          return;
+        }
         if (event.button !== 0 || !(event.target instanceof Element)
           || !event.target.closest('.dv-sash')) return;
         resizing.current = true;

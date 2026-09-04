@@ -15,7 +15,6 @@ import {
   moveWorkspaceSurface,
   reorderWorkspaceGroup,
   setRootWorkspaceSplitWeights,
-  openWorkspaceSurface,
   splitWorkspaceGroup,
 } from '@shared/workspaceTopology';
 
@@ -62,6 +61,7 @@ export function App(): React.JSX.Element {
   const [basicOpen, setBasicOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigationQueue = useRef(Promise.resolve());
+  const [navigationBusy, setNavigationBusy] = useState(false);
   const [entered, setEntered] = useState<string | null>(null);
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
   const [openProjects, setOpenProjects] = useState<OpenWorkspaceProject[]>([]);
@@ -325,31 +325,25 @@ export function App(): React.JSX.Element {
     setBasicOpen(false);
     setView('backpacks');
     navigationQueue.current = navigationQueue.current.then(async () => {
-      const active = openProjectsRef.current.find((project) => project.surfaceId === surfaceIdRef.current);
-      if (!newTab && active?.projectId === id) {
-        setProjectUrl(active.url);
-        setEntered(id);
-        await host().backpackProject.activateSurface(active.surfaceId);
-        return;
+      setNavigationBusy(true);
+      try {
+        const active = openProjectsRef.current.find((project) => project.surfaceId === surfaceIdRef.current);
+        if (!newTab && active?.projectId === id) {
+          setProjectUrl(active.url);
+          setEntered(id);
+          await host().backpackProject.activateSurface(active.surfaceId);
+          return;
+        }
+        if (!newTab && active) {
+          const project = await host().backpackProject.replace(active.surfaceId, id);
+          if (!project) { setEntered(id); setProjectUrl(null); }
+          return;
+        }
+        const project = await host().backpackProject.open(id);
+        if (!project) return;
+      } finally {
+        setNavigationBusy(false);
       }
-      if (!newTab && active) {
-        const project = await host().backpackProject.replace(active.surfaceId, id);
-        if (!project) { setEntered(id); setProjectUrl(null); }
-        return;
-      }
-      const project = await host().backpackProject.open(id);
-      setEntered(id);
-      setProjectUrl(project?.url ?? null);
-      if (!project) return;
-      surfaceIdRef.current = project.surfaceId;
-      setSurfaceId(project.surfaceId);
-      topologyCommitArmed.current = true;
-      const title = backpacks.backpacks.find((backpack) => backpack.id === id)?.name ?? id;
-      openProjectsRef.current = [...openProjectsRef.current,
-        { surfaceId: project.surfaceId, projectId: id, title, url: project.url }];
-      setOpenProjects(openProjectsRef.current);
-      setWorkspaceTopology((topology) => openWorkspaceSurface(topology,
-        { surfaceId: project.surfaceId, projectId: id, title }));
     }).catch((caught) => setHostErrors((previous) => [...previous, {
       component: 'Backpack',
       what: 'The independent Backpack project could not be opened.',
@@ -453,11 +447,13 @@ export function App(): React.JSX.Element {
         <div className="titlebar-left" ref={basicRef}
           onMouseEnter={() => { if (view === 'backpacks' && !basicOpen) setSidebarOpen(true); }}
           onMouseLeave={() => setSidebarOpen(false)}
+          onFocus={() => { if (view === 'backpacks' && !basicOpen) setSidebarOpen(true); }}
           onKeyDown={(event) => { if (event.key === 'Escape') { setSidebarOpen(false); setBasicOpen(false); } }}>
           <button
             className={`pill-button${basicOpen ? ' active' : ''}`}
             aria-haspopup="menu"
-            aria-expanded={entered === null && basicOpen}
+            aria-controls="backpack-sidebar"
+            aria-expanded={entered === null && (basicOpen || sidebarOpen)}
             aria-label={
               entered === null
                 ? `${VIEW_LABEL[view]} — open Basic menu`
@@ -548,6 +544,7 @@ export function App(): React.JSX.Element {
           onSplit={splitWorkspaceProject}
           onMove={moveWorkspaceProject}
           onCommitLayout={commitWorkspaceLayout}
+          interactionDisabled={navigationBusy}
         />
       )}
 

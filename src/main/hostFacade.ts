@@ -102,7 +102,7 @@ export interface FacadeDeps {
   /** Tear down one attached workspace presentation by logical identity. The
    * host renderer is only a window actor and is never looked up as a project
    * surface. */
-  closeAttachedProjectSurface: (windowId: number, surfaceId: string) => void | Promise<void>;
+  closeAttachedProjectSurface: (windowId: number, surfaceId: string, options?: { strict?: boolean }) => void | Promise<void>;
   /** Semantic close removes the native runtime entry; hide preserves it for
    * renderer remount. */
   closeBackpackProjectSurface: (senderId: number, surfaceId: string) => void | Promise<void>;
@@ -735,10 +735,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // commands.
     // The creation operation allocates the logical surface and hands back its
     // id. Every later operation on this view names that id explicitly.
-    const surface = this.deps.logicalSurfaces.create({ windowId, projectId: id, kind: 'project' });
-    this.deps.setActiveSurfaceId(windowId, surface.surfaceId);
-    this.emitBackpacksChanged();
-    return { ...project, surfaceId: surface.surfaceId };
+    const opened = await this.openWorkspaceSurfaceFromControlUngated(windowId, id, project.url);
+    return { ...project, surfaceId: opened.surfaceId };
   }
 
   async closeBackpackProject(senderId: number, surfaceId: string): Promise<void> {
@@ -763,13 +761,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       const { windowId } = this.requireHostSurfaceTarget(senderId, surfaceId);
       const release = this.acquireWorkspaceMutation([windowId]);
       let allocated: string | null = null;
+      let prepared: PreparedProjectSurface | null = null;
       try {
         const topology = this.deps.workspaceTopology?.(windowId);
         if (!topology) throw new Error('That window has no workspace topology.');
         this.validateWorkspaceTopology(windowId, topology);
-        await this.deps.closeAttachedProjectSurface(windowId, surfaceId);
         const fresh = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
         allocated = fresh.surfaceId;
+        // Stage and load the replacement while the old native view remains
+        // intact. Any preparation, validation, adoption, or delivery failure
+        // can then discard only the fresh surface.
+        prepared = await this.deps.workspaceMove!.prepareProjectSurface(windowId, fresh.surfaceId, project.url);
         const descriptor = { surfaceId: fresh.surfaceId, projectId, title: backpack.name, url: project.url };
         const next: WorkspaceTopologyV1 = {
           ...topology,
@@ -783,9 +785,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         };
         this.validateWorkspaceTopologyAgainst(windowId, next,
           this.currentProjectSurfaceSet(windowId).filter((surface) => surface.surfaceId !== surfaceId));
+        prepared.adopt();
         this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-project-replaced', {
           previousSurfaceId: surfaceId, project: descriptor, topology: next,
         });
+        // This is the only destructive boundary. The staged replacement and
+        // event delivery have already succeeded, and runtime.hide() restores
+        // the old native view if its final flush rejects or times out.
+        await this.deps.closeAttachedProjectSurface(windowId, surfaceId, { strict: true });
         this.retireLogicalSurface(surfaceId);
         for (const sender of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(sender);
         this.deps.setActiveSurfaceId(windowId, fresh.surfaceId);
@@ -794,6 +801,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         this.emitBackpacksChanged();
         return { ...project, surfaceId: fresh.surfaceId };
       } catch (error) {
+        prepared?.discard();
         if (allocated) this.retireLogicalSurface(allocated);
         throw error;
       } finally {
@@ -1137,7 +1145,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async saveWorkspaceLayoutFromControl(windowId: number, name: string): Promise<NamedWorkspaceLayout> {
     this.requireLiveWorkspaceWindow(windowId);
     const topology = this.deps.workspaceTopology?.(windowId) ?? null;
-    if (!topology) throw new Error('That Papers window has not committed workspace topology.');
+    if (!topology) throw new Error('That Papers window has no workspace topology.');
     this.validateWorkspaceTopology(windowId, topology);
     return this.deps.workspaceLayouts.create(name, topology);
   }
@@ -1679,22 +1687,36 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (!project) throw new Error('That Backpack has no usable project surface.');
     // The project lookup awaited filesystem work. Re-resolve every authority
     // fact after that boundary so a concurrent close/layout/archive wins.
-    const topology = this.deps.workspaceTopology?.(windowId) ?? null;
-    if (!topology) throw new Error('That Papers window has not committed workspace topology.');
+    let topology = this.deps.workspaceTopology?.(windowId) ?? null;
+    if (!topology) {
+      // The first picker click may arrive while startup hydration is still
+      // resolving. Join that promise, then create an empty canonical root for
+      // a new installation with no saved workspace.
+      await this.deps.hydrateStartupWorkspace?.(windowId);
+      topology = this.deps.workspaceTopology?.(windowId) ?? createWorkspaceTopology();
+    }
     this.validateWorkspaceTopology(windowId, topology);
     const backpack = this.deps.registry.find(projectId);
     if (!backpack || backpack.archived) throw new Error('That Backpack is not available.');
-    this.assertWorkspaceMutationAvailable(windowId);
-    const surface = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
+    const releaseMutation = this.acquireWorkspaceMutation([windowId]);
+    let surfaceId: string | null = null;
+    let prepared: PreparedProjectSurface | null = null;
     try {
-      const next = openWorkspaceSurface(topology, {
+      const latest = this.deps.workspaceTopology?.(windowId) ?? topology;
+      this.validateWorkspaceTopology(windowId, latest);
+      const surface = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
+      surfaceId = surface.surfaceId;
+      prepared = await this.deps.workspaceMove!.prepareProjectSurface(windowId, surface.surfaceId, requestedUrl ?? project.url);
+      const next = openWorkspaceSurface(latest, {
         surfaceId: surface.surfaceId,
         projectId,
         title: backpack.name,
       });
-      this.validateWorkspaceTopology(windowId, next);
-      // Queue exact renderer delivery first. Electron cannot handle it until
-      // this main-process stack yields; canonical commit follows immediately.
+      this.validateWorkspaceTopologyAgainst(windowId, next, this.currentProjectSurfaceSet(windowId));
+      // Adopt the prepared native view only after the topology is validated.
+      // It is still hidden from the renderer until this event is delivered;
+      // any delivery failure can discard it without an orphaned logical tab.
+      prepared.adopt();
       this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-project-opened', {
         project: { surfaceId: surface.surfaceId, projectId, title: backpack.name, url: requestedUrl ?? project.url },
         topology: next,
@@ -1704,8 +1726,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       this.deps.setWorkspaceTopology(windowId, next);
       return { windowId, surfaceId: surface.surfaceId, projectId, topology: next };
     } catch (caught) {
-      this.retireLogicalSurface(surface.surfaceId);
+      if (prepared) prepared.discard();
+      if (surfaceId) this.retireLogicalSurface(surfaceId);
       throw caught;
+    } finally {
+      releaseMutation();
     }
   }
 

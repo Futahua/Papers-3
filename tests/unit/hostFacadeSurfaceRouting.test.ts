@@ -190,6 +190,19 @@ describe('surface routing in the host facade', () => {
     expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:workspace-project-replaced', expect.objectContaining({ previousSurfaceId: second.surfaceId }));
   });
 
+  it('keeps the old logical tab and canonical topology when replacement flush fails', async () => {
+    const { facade, workspaceTopologies, logicalSurfaces, closeAttachedProjectSurface } = createFacade();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    const opened = await facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    const before = workspaceTopologies.get(1)!;
+    closeAttachedProjectSurface.mockRejectedValueOnce(new Error('flush failed'));
+
+    await expect(facade.replaceBackpackProject(HOST, opened.surfaceId, OTHER)).rejects.toThrow('flush failed');
+    expect(logicalSurfaces.isLiveIn(opened.surfaceId, 1)).toBe(true);
+    expect(workspaceTopologies.get(1)).toEqual(before);
+    expect(logicalSurfaces.project().filter((surface) => surface.windowId === 1)).toHaveLength(1);
+  });
+
   it('rejects cross-window replacement and unavailable destinations before closing a tab', async () => {
     const { facade, workspaceTopologies, closeAttachedProjectSurface, archivedProjects } = createFacade();
     workspaceTopologies.set(2, createWorkspaceTopology());

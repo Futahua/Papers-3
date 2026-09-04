@@ -209,6 +209,17 @@ describe('BackpackProjectRuntime.hide', () => {
     expect(view.webContents.close).toHaveBeenCalledTimes(1);
   });
 
+  it('restores the old presentation when a voluntary close flush rejects', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    view.webContents.executeJavaScript.mockRejectedValue(new Error('flush failed'));
+
+    await expect(runtime.hide()).rejects.toThrow('flush failed');
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(runtime.senderId).toBe(view.webContents.id);
+    expect(harness.window.addChildView).toHaveBeenCalledTimes(2);
+  });
+
   it('does not create a replacement renderer while the old close flush is pending', async () => {
     const runtime = await shownRuntime();
     const oldView = soleView();
