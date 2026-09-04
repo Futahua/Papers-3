@@ -130,6 +130,20 @@ export function WorkspaceDock(props: {
     }
   }, [setHostOverlay]);
 
+  // A successful semantic split is a terminal drag boundary in its own
+  // right. Dockview may not emit dragend/drop/pointerup after the topology
+  // mutation, so release every drag-owned resource explicitly here. This is
+  // idempotent and safe to call from any success path.
+  const finishSuccessfulDrop = useCallback((): void => {
+    pointerDragCleanup.current?.();
+    pointerDragCleanup.current = null;
+    dragActive.current = false;
+    dragSessionGeneration.current += 1;
+    setDragSurfaceActive(false);
+    sideDrop.current = null;
+    clearPreview();
+  }, [clearPreview, setDragSurfaceActive]);
+
   const showPreview = useCallback((next: SplitPreview): void => {
     previewRef.current = next;
     setPreview(next);
@@ -308,10 +322,14 @@ export function WorkspaceDock(props: {
     const direction = pending.position === 'left' || pending.position === 'right' ? 'right' : 'down';
     const position = pending.position === 'left' || pending.position === 'top' ? 'before' : 'after';
     const newGroupId = onSplit(pending.surfaceId, direction, position);
-    if (newGroupId) groupIds.current.set(destinationDockviewId, newGroupId);
-  }, [onSplit, reconcileFromTopology, showRejected]);
+    if (newGroupId) {
+      groupIds.current.set(destinationDockviewId, newGroupId);
+      finishSuccessfulDrop();
+    }
+  }, [finishSuccessfulDrop, onSplit, reconcileFromTopology, showRejected]);
 
   const finishDrop = useCallback((): void => {
+      if (!dragActive.current && !previewRef.current && !sideDrop.current) return;
       pointerDragCleanup.current?.();
       pointerDragCleanup.current = null;
       dragActive.current = false;
@@ -406,7 +424,7 @@ export function WorkspaceDock(props: {
         const newGroupId = onSplit(pending.surfaceId, direction, position);
         if (newGroupId) {
           groupIds.current.set(destinationDockviewId, newGroupId);
-          clearPreview();
+          finishSuccessfulDrop();
         }
         else reconcileFromTopology(event.api);
         return;
@@ -625,7 +643,10 @@ export function WorkspaceDock(props: {
       const direction = pending.position === 'left' || pending.position === 'right' ? 'right' : 'down';
       const position = pending.position === 'left' || pending.position === 'top' ? 'before' : 'after';
       const newGroupId = onSplit(pending.surfaceId, direction, position);
-      if (newGroupId) groupIds.current.set(destinationDockviewId, newGroupId);
+      if (newGroupId) {
+        groupIds.current.set(destinationDockviewId, newGroupId);
+        finishSuccessfulDrop();
+      }
     }));
     apiSubscriptions.current.push(event.api.onWillDragPanel(({ panel, nativeEvent }) => {
       // Track the drag from its first pointer event. The host is raised and
@@ -683,7 +704,7 @@ export function WorkspaceDock(props: {
       // Keep the source identity available for the first overlay callback.
       previewCandidate.current = { surfaceId: panel.id, position: 'right', generation: previewGeneration.current };
     }));
-  }, [addMissingPanels, clearPreview, commitLayout, consumePendingSplit, finishDrop, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setDragSurfaceActive, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
+  }, [addMissingPanels, clearPreview, commitLayout, consumePendingSplit, finishDrop, finishSuccessfulDrop, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setDragSurfaceActive, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
 
   useEffect(() => {
     const api = apiRef.current;

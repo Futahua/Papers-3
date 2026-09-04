@@ -63,6 +63,8 @@ it('hover picker and main-screen clicks reuse tabs, middle-click adds, and split
     await waitFor(async () => await page.locator('.workspace-split-preview.is-armed:not(.is-rejected)').isVisible(), 10000, 'armed split preview');
     expect(await page.locator('.workspace-split-preview').getAttribute('data-position')).toBe('right');
     await page.mouse.up();
+    await waitFor(async () => await page.locator('.workspace-split-preview').count() === 0, 10000, 'split preview cleared after drop');
+    expect(await page.evaluate(() => document.documentElement.dataset.workspaceDrag)).toBe('false');
     const sash = page.locator('.dv-sash.dv-enabled').first();
     await waitFor(async () => await sash.isVisible(), 10000, 'split divider');
     const readTopology = async () => {
