@@ -2964,27 +2964,45 @@ all 194 `Runtime/Data` files byte-for-byte unchanged. Isolated packaged runs of
 `backpack-navigation.e2e.ts` and `workspace-tabs.e2e.ts` pass against the live
 executable. No publication or installer release occurred.
 
-### 10.3 Resize and nested-tiling audit (reviewer follow-up, 2026-09-04)
+### 10.3 Resize and nested-tiling source sign-off (reviewer follow-up, 2026-09-04)
 
-The next live screenshots identify a new blocker, distinct from the signed-off
-successful-split terminal. During sash movement Dockview can emit a user-origin
-active-panel change, and the native WebContentsView can steal the pointer stream
-after the small host gutter. Papers therefore needs a generation-scoped resize
-session: a dedicated host lease, transparent interaction shield, frozen and
-restored active-panel/focus state, pointer-ID terminal handling, and a
-geometry-only commit that cannot persist tab activation or reorder side effects.
-The reviewer marks this live interaction slice **OPEN / NOT SIGNED OFF** until
-that session and physical native-pane acceptance are implemented.
+The reviewer audited the final source head
+[`b930ba35`](https://github.com/Futahua/Papers-3/commit/b930ba35f6a93bd7c1647355faac93e429264a71)
+and marked the Papers resize/arbitrary nested multi-group agenda **READY / SIGNED
+OFF — source**. The implementation is generic Papers host logic; no As-you-Go
+project behavior was copied into Papers.
 
-The reviewer also confirms that `WorkspaceTopologyV1` already supports arbitrary
-recursive trees and n-ary children. The current `WorkspaceDock`/`App` projection
-caps (`root.kind === 'group'`, exactly-one/two-group checks, root-only weights)
-are the artificial limit. The recommended mature path is a recursive Dockview
-adapter using public `toJSON()`/`fromJSON()` where native sender identity is
-proven (otherwise programmatic reconciliation), a bijective canonical↔live group
-ID map, same-axis normalization to n-ary nodes, and atomic full-tree topology
-commits. The acceptance matrix must cover H-in-H, V-in-V, mixed nested H/V,
-4/6/8 groups, inner/outer resize, tab reorder/move/close, picker composition,
-cross-window mutation, reload, late pointer events, and a physical click in
-every visible native pane. No implementation is included in this audit record
-yet; the existing successful-drop fix and As-you-Go signoff remain intact.
+Closed source gates:
+
+* Generation-scoped resize ownership with pointer-ID terminals, frozen and
+  restored active/focused panels, Dockview pointer-cancel termination before
+  canonical rollback, competing-pointer rejection, and fail-closed capture or
+  host-raise failure handling.
+* Resize transparency remains until the acknowledged owner release succeeds;
+  uncertain release stays fail-closed and cannot be stranded by a later tab drag.
+* Recursive Dockview `toJSON()`/`fromJSON()` projection preserves native panel
+  reuse, allocates distinct stable live group IDs during coarse hydration,
+  evicts stale canonical↔live mappings, restores canonical focus, and projects
+  same-count orientation/order changes instead of treating them as a size-only
+  update.
+* Same-axis splits normalize to n-ary canonical nodes, nested geometry commits
+  round-trip through Dockview's alternating axes, and close/move operations
+  preserve surviving sibling proportions.
+
+Validation at the signed-off source head: `npm run typecheck`; full unit suite
+(`93` files, `908` passed, `4` skipped); focused
+`backpack-navigation.e2e.ts` and `workspace-tabs.e2e.ts` passed in clean
+single-worker runs; `git diff --check` passed. The protected
+`docs/evidence/worker-comparison.json` remains the only uncommitted user-owned
+change.
+
+A fresh `npm run package:dir` build from this exact source produced
+`release/win-unpacked/Papers.exe` with SHA-256
+`D8A437B17D98948B487A7AFB98AEA80D3FE184575D30CD5B671559125ECF6CDD`.
+Packaged single-worker runs of both focused E2Es passed against that executable.
+This package is not installed into `Runtime/App`; the existing live install,
+desktop shortcut, `RuntimeData`, and creator data remain untouched. A separate
+creator-authorized live swap still requires physical Windows acceptance of the
+reviewer's final matrix: mixed 6+ pane reload with stable sender IDs, native
+clicks in every visible pane, held-sash remote mutation, touch/pen terminal
+handling, rapid resize→tab-drag, and picker+resize owner overlap.
