@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const styles = readFileSync(resolve(process.cwd(), 'src/host/styles.css'), 'utf8');
+const workspaceDock = readFileSync(resolve(process.cwd(), 'src/host/WorkspaceDock.tsx'), 'utf8');
 
 describe('host theme contract', () => {
   it('keeps light values, adds OS dark values, and preserves hex native overlay tokens', () => {
@@ -38,5 +39,14 @@ describe('host theme contract', () => {
     expect(styles).toContain(':root[data-transparent-window="true"] .pane');
     expect(styles).toContain(':root[data-transparent-window="true"] .backpack-project-frame iframe');
     expect(styles).toContain('background: transparent;');
+  });
+
+  it('keeps a native-project edge seam and explains header-space drops', () => {
+    expect(styles).toContain('.workspace-dock .backpack-project-frame');
+    expect(styles).toContain('width: calc(100% - 16px);');
+    expect(styles).toContain('margin: 8px;');
+    expect(styles).toContain('.workspace-dock .dv-dockview');
+    expect(styles).toContain('--dv-group-view-background-color: transparent !important;');
+    expect(workspaceDock).toContain('Drop on a panel edge to split');
   });
 });

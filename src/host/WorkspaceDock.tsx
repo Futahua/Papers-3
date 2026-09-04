@@ -25,8 +25,9 @@ interface WorkspacePanelParams {
 }
 
 type SplitEdge = 'top' | 'bottom' | 'left' | 'right';
+type SplitPreviewPosition = SplitEdge | 'center';
 type SplitPreview = {
-  position: SplitEdge;
+  position: SplitPreviewPosition;
   allowed: boolean;
   armed: boolean;
   message: string;
@@ -298,7 +299,8 @@ export function WorkspaceDock(props: {
       dragActive.current = false;
       const current = previewRef.current;
       if (current?.allowed) clearPreview();
-      else if (current) showRejected(current.position, current.message);
+      else if (current && current.position !== 'center') showRejected(current.position, current.message);
+      else if (current) clearPreview();
       else clearPreview();
   }, [clearPreview, showRejected]);
 
@@ -467,12 +469,25 @@ export function WorkspaceDock(props: {
         sideDrop.current = null;
         clearPreview(false);
       }
-      else if (overlay.kind === 'tab' || overlay.kind === 'header_space') {
+      else if (overlay.kind === 'tab') {
         // Dockview reports tab-strip/header hover with a different kind than
-        // content/edge. Invalidate any prior edge candidate while keeping the
-        // host raised for the remainder of the active drag.
+        // content/edge. Tab drops remain ordinary reorder operations.
         sideDrop.current = null;
         clearPreview(false);
+      }
+      else if (overlay.kind === 'header_space') {
+        // The blank strip to the right of the tabs is a valid Dockview target,
+        // but it is not a split target. Keep the host raised and make that
+        // otherwise ambiguous no-op explicit instead of silently clearing the
+        // preview while the user is still dragging.
+        sideDrop.current = null;
+        showPreview({
+          position: 'center',
+          allowed: false,
+          armed: true,
+          message: 'Drop on a panel edge to split',
+        });
+        setHostOverlay(true);
       }
     }));
     apiSubscriptions.current.push(event.api.onWillDrop((drop) => {
@@ -519,6 +534,11 @@ export function WorkspaceDock(props: {
         return;
       }
       const acceptedPosition = armed.position;
+      if (acceptedPosition === 'center') {
+        drop.preventDefault();
+        sideDrop.current = null;
+        return;
+      }
       setHostOverlay(true);
       sideDrop.current = {
         surfaceId,

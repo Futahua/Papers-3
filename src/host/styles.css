@@ -745,11 +745,13 @@ input:focus-visible {
 .backpack-sidebar-list button[aria-current="page"] { background: var(--raised-strong); }
 .backpack-sidebar-empty { color: var(--muted); padding: 8px; }
 
-/* Leave a host-owned hit area at native view edges for the split sash. */
-.workspace-dock[data-split] .backpack-project-frame {
-  width: calc(100% - 8px);
-  height: calc(100% - 8px);
-  margin: 4px;
+/* Keep an always-host-owned edge band at native view boundaries. This gives
+   Dockview a compositor-independent seam for the first edge move while host
+   ownership is settling, without changing the project's logical bounds. */
+.workspace-dock .backpack-project-frame {
+  width: calc(100% - 16px);
+  height: calc(100% - 16px);
+  margin: 8px;
 }
 
 /* Native project views composite over the host. Keep every workspace content
@@ -797,6 +799,20 @@ input:focus-visible {
 .workspace-split-preview[data-position="right"] { inset: 42px 0 0 50%; }
 .workspace-split-preview[data-position="top"] { inset: 42px 0 50% 0; }
 .workspace-split-preview[data-position="bottom"] { inset: 50% 0 0 0; }
+.workspace-split-preview[data-position="center"] { inset: 42px 0 0 0; }
+
+/* During a workspace drag the host may be raised above a native project even
+   in opaque-window mode. Clear Dockview's inner grid root as well as its
+   outer theme wrapper so native project pixels remain visible through the
+   host while the split preview is painted. */
+:root[data-workspace-drag="true"] .workspace-dock,
+:root[data-workspace-drag="true"] .workspace-dock .dockview-theme-light,
+:root[data-workspace-drag="true"] .workspace-dock .dv-dockview,
+:root[data-workspace-drag="true"] .workspace-dock .dv-groupview,
+:root[data-workspace-drag="true"] .workspace-dock .dv-groupview-content {
+  background: transparent !important;
+  --dv-group-view-background-color: transparent !important;
+}
 
 .backpack-project-frame {
   position: relative;
