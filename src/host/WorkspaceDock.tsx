@@ -47,7 +47,7 @@ export function WorkspaceDock(props: {
   activeSurfaceId: string | null;
   onActivate: (surfaceId: string) => void;
   onClose: (surfaceId: string) => void;
-  onSplit: (surfaceId: string, direction: 'right' | 'down') => void;
+  onSplit: (surfaceId: string, direction: 'right' | 'down', position?: 'before' | 'after') => string | void;
   onMove: (surfaceId: string, targetGroupId: string, targetIndex: number) => void;
   interactionDisabled?: boolean;
   onCommitLayout: (snapshot: {
@@ -66,6 +66,7 @@ export function WorkspaceDock(props: {
   const apiSubscriptions = useRef<Array<{ dispose(): void }>>([]);
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const resizing = useRef(false);
+  const sideDrop = useRef<{ surfaceId: string; position: 'top' | 'bottom' | 'left' | 'right' } | null>(null);
   const interactionDisabledRef = useRef(false);
   projectsRef.current = projects;
   topologyRef.current = topology;
@@ -126,6 +127,16 @@ export function WorkspaceDock(props: {
       window.removeEventListener('blur', finishResize);
     };
   }, [commitLayout]);
+
+  useEffect(() => {
+    const cancelDrop = (): void => { sideDrop.current = null; };
+    window.addEventListener('dragend', cancelDrop);
+    window.addEventListener('drop', cancelDrop);
+    return () => {
+      window.removeEventListener('dragend', cancelDrop);
+      window.removeEventListener('drop', cancelDrop);
+    };
+  }, []);
 
   const reconcileFromTopology = useCallback((api: DockviewApi): void => {
     refreshGroupIds(api);
@@ -233,7 +244,21 @@ export function WorkspaceDock(props: {
       if (targetIndex >= 0 && !interactionDisabledRef.current) onMove(panel.id, targetGroupId, targetIndex);
     }));
     apiSubscriptions.current.push(event.api.onDidMutateLayout(({ origin }) => {
-      if (interactionDisabledRef.current || resizing.current || reconciliationFeedback.current.isSuppressed() || origin === 'api') return;
+      if (origin === 'api' || reconciliationFeedback.current.isSuppressed()) return;
+      const pending = sideDrop.current;
+      if (pending) {
+        sideDrop.current = null;
+        if (interactionDisabledRef.current || resizing.current) return;
+        const panel = event.api.getPanel(pending.surfaceId);
+        const destinationDockviewId = panel?.group.id;
+        if (!panel || !destinationDockviewId) return;
+        const direction = pending.position === 'left' || pending.position === 'right' ? 'right' : 'down';
+        const position = pending.position === 'left' || pending.position === 'top' ? 'before' : 'after';
+        const newGroupId = onSplit(pending.surfaceId, direction, position);
+        if (newGroupId) groupIds.current.set(destinationDockviewId, newGroupId);
+        return;
+      }
+      if (interactionDisabledRef.current || resizing.current) return;
       commitLayout(event.api);
     }));
     apiSubscriptions.current.push(event.api.onDidLayoutChange(() => {
@@ -241,9 +266,53 @@ export function WorkspaceDock(props: {
     }));
     apiSubscriptions.current.push(event.api.onWillShowOverlay((overlay) => {
       if ((overlay.kind === 'content' || overlay.kind === 'edge') && overlay.position !== 'center') {
-        overlay.preventDefault();
+        const nativeTarget = overlay.nativeEvent.target;
+        if (nativeTarget instanceof Element && nativeTarget.closest('.dv-tab, .dv-tabs-and-actions-container')) {
+          overlay.preventDefault();
+          sideDrop.current = null;
+          return;
+        }
+        const surfaceId = overlay.getData()?.panelId ?? overlay.panel?.id ?? null;
+        const source = surfaceId
+          ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
+          : undefined;
+        const allowSideDrop = !interactionDisabledRef.current
+          && topologyRef.current.root.kind === 'group'
+          && topologyRef.current.groups.length === 1
+          && Boolean(source && source.surfaceIds.length >= 2)
+          && Boolean(surfaceId);
+        if (!allowSideDrop || !surfaceId) {
+          overlay.preventDefault();
+          sideDrop.current = null;
+        }
+      }
+    }));
+    apiSubscriptions.current.push(event.api.onWillDrop((drop) => {
+      if ((drop.kind !== 'content' && drop.kind !== 'edge') || drop.position === 'center') return;
+      const nativeTarget = drop.nativeEvent.target;
+      if (nativeTarget instanceof Element && nativeTarget.closest('.dv-tab, .dv-tabs-and-actions-container')) {
+        drop.preventDefault();
+        sideDrop.current = null;
         return;
       }
+      const surfaceId = drop.getData()?.panelId ?? drop.panel?.id ?? null;
+      const source = surfaceId
+        ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
+        : undefined;
+      const allowSideDrop = !interactionDisabledRef.current
+        && topologyRef.current.root.kind === 'group'
+        && topologyRef.current.groups.length === 1
+        && Boolean(source && source.surfaceIds.length >= 2)
+        && Boolean(surfaceId);
+      if (!allowSideDrop || !surfaceId) {
+        drop.preventDefault();
+        sideDrop.current = null;
+        return;
+      }
+      sideDrop.current = {
+        surfaceId,
+        position: drop.position as 'top' | 'bottom' | 'left' | 'right',
+      };
     }));
     apiSubscriptions.current.push(event.api.onDidDrop(() => {
       refreshGroupIds(event.api);

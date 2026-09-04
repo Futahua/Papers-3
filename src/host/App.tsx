@@ -397,19 +397,21 @@ export function App(): React.JSX.Element {
     void host().backpackProject.close(closingSurfaceId).catch(() => undefined);
   }, []);
 
-  const splitWorkspaceProject = useCallback((splitSurfaceId: string, direction: 'right' | 'down'): void => {
+  const splitWorkspaceProject = useCallback((splitSurfaceId: string, direction: 'right' | 'down', position: 'before' | 'after' = 'after'): string => {
+    const newGroupId = `group-${splitSurfaceId}-${crypto.randomUUID()}`;
     setWorkspaceTopology((topology) => {
       if (topology.root.kind === 'split') return topology;
       const source = topology.groups.find((group) => group.surfaceIds.includes(splitSurfaceId));
       if (!source || source.surfaceIds.length < 2) return topology;
       return splitWorkspaceGroup(topology, {
         groupId: source.groupId,
-        newGroupId: `group-${splitSurfaceId}`,
+        newGroupId,
         surfaceId: splitSurfaceId,
         orientation: direction === 'right' ? 'horizontal' : 'vertical',
-        position: 'after',
+        position,
       });
     });
+    return newGroupId;
   }, []);
 
   const moveWorkspaceProject = useCallback((movedSurfaceId: string, targetGroupId: string, targetIndex: number): void => {

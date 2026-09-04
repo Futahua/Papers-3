@@ -52,7 +52,15 @@ it('hover picker and main-screen clicks reuse tabs, middle-click adds, and split
     await page.locator('.titlebar-left > button').hover();
     await sidebar.getByRole('button', { name: 'Beta', exact: true }).click({ button: 'middle' });
     await tabCount(3);
-    await page.getByRole('button', { name: 'Split Right', exact: true }).click();
+    const draggedTab = page.getByRole('tab', { name: 'Beta' }).first();
+    const draggedTabBox = await draggedTab.boundingBox();
+    const dockBox = await page.locator('.workspace-dock').boundingBox();
+    expect(draggedTabBox).not.toBeNull();
+    expect(dockBox).not.toBeNull();
+    await page.mouse.move(draggedTabBox!.x + draggedTabBox!.width / 2, draggedTabBox!.y + draggedTabBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(dockBox!.x + dockBox!.width - 6, dockBox!.y + dockBox!.height / 2, { steps: 12 });
+    await page.mouse.up();
     const sash = page.locator('.dv-sash.dv-enabled').first();
     await waitFor(async () => await sash.isVisible(), 10000, 'split divider');
     const readTopology = async () => {
