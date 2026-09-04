@@ -89,6 +89,29 @@ Rollback is the App snapshot
 The live registry digest and desktop shortcut hash remain unchanged; no
 `Runtime\Data` file was intentionally modified.
 
+### Live overlay hardening follow-up — 2026-09-04 14:30 local
+
+Reviewer audit of the direct tab-drop candidate found two composition/race
+risks. Source commit `8f5a73e30ff0be85256fec64f7c478f5aad7e30f` closes them:
+host DOM is raised above native project child views only while a picker or
+Dockview side-drop overlay is active (sash resizing remains live), and a
+rejected renderer topology commit immediately rehydrates canonical main state.
+The prior Dockview one-flat-group side-drop policy, native surface identity,
+and existing reorder/sash paths remain unchanged. Typecheck, full unit suite,
+and both focused workspace E2Es pass after this correction.
+
+The corrected source was packaged and installed into the same authorized live
+`Runtime\App` target (NSIS exit 0) and launched normally. Installed/package
+`app.asar` SHA-256 match:
+`16A0C46534FE7EB717C154CEC34893A279913CD6FE7FAF52B90F14BA571AD8A0`.
+Installer archive:
+`Runtime\Installers\Papers-Setup-1.3.11-8f5a73e.exe`, SHA-256
+`3DCFC51717E472287CE66462D4D3EAE8755524DB9A4CDA98850DB21B42351AC3`.
+Rollback snapshot:
+`Runtime\Backups\before-live-install-20260904-143018` (App only).
+The live registry digest and desktop shortcut hash remain unchanged; no
+`Runtime\Data` file was intentionally modified.
+
 ## Creator acceptance and positioning reversal — 2026-09-04
 
 Follow-up correction: the creator reported indefinite motion after `d15f717`.
