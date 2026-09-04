@@ -119,17 +119,22 @@ export function WorkspaceDock(props: {
   const showRejected = useCallback((position: SplitEdge, message: string): void => {
     if (statusTimer.current !== null) window.clearTimeout(statusTimer.current);
     const generation = ++previewGeneration.current;
-    showPreview({ position, allowed: false, armed: true, message });
+    previewCandidate.current = null;
+    sideDrop.current = null;
+    setPreview(null);
     // A rejection can arrive after the normal drag cleanup (for example when
-    // the topology commit fails asynchronously). Raise the host again before
-    // displaying the status so the visual half-pane is above native project
-    // WebContentsViews, not merely ARIA-visible underneath them.
+    // the topology commit fails asynchronously). Await the host raise before
+    // displaying or timing the status so the visual cancellation is guaranteed
+    // to be above native project WebContentsViews for its full interval.
     void setHostOverlayAwaited(true, () => previewGeneration.current === generation
-      && previewRef.current?.message === message);
-    statusTimer.current = window.setTimeout(() => {
-      statusTimer.current = null;
-      clearPreview();
-    }, 1200);
+      && !previewCandidate.current).then(() => {
+      if (previewGeneration.current !== generation) return;
+      showPreview({ position, allowed: false, armed: true, message });
+      statusTimer.current = window.setTimeout(() => {
+        statusTimer.current = null;
+        clearPreview();
+      }, 1200);
+    });
   }, [clearPreview, setHostOverlayAwaited, showPreview]);
 
   useEffect(() => {
