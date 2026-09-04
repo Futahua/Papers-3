@@ -2218,6 +2218,27 @@ in the C1.6 checkpoints above. Packaged success/failure acceptance is closed at
 with same-target hydration-to-failure evidence, real failure pixels, full
 report hash verification, and stdio-MCP retrieval.
 
+## As you Go convergence and close-path source sign-off
+
+The source-level convergence and durability agenda is signed off by the
+reviewer at Papers [`517cf1c`](https://github.com/Futahua/Papers-3/commit/517cf1c61c3bfa6ae0b0d1ace44dd24bef690372)
+and As you Go [`f4e2c42`](https://github.com/Futahua/as-you-go-backpack/commit/f4e2c420a4683d24a162780e9356006a96ac85b1).
+The reviewed chain covers checked-save envelopes, immediate cross-window
+convergence, topology-scoped settled layouts, position last-writer-wins,
+navigation/native-close durability before renderer teardown, semantic tab-close
+authority, repeated-close fencing, and serialized hide/show replacement.
+Reviewer result: P0 0, P1 0, P2 0 at those exact heads. Validation recorded at
+the sign-off was Papers 92 test files (1 skipped), 896 tests passed (4 skipped),
+typecheck passed; As you Go 1,113 tests passed plus 8 visual pretest checks.
+
+The sole remaining gate is installed evidence, not a source defect: a real
+cloned profile and bound As you Go project, the exact installed Papers build,
+two native same-project windows, identity/origin/channel/physical-lock
+telemetry, disk=A=B fingerprints after the bidirectional action matrix,
+local-view isolation, close-before-1500-ms fresh-renderer proof, fault
+injection, the fefaf regression, and one complete incident bundle. Do not
+interpret this source sign-off as installed-runtime sign-off.
+
 ## Packaged live proof
 
 Packaged fixture intentionally fails after hydration.
