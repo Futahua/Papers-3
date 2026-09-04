@@ -1672,15 +1672,19 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     mutationAlreadyHeld = false,
   ): Promise<WorkspaceTopologyV1> {
     if (!topology) throw new Error('That Papers window has not committed workspace topology.');
-    if (!mutationAlreadyHeld) this.assertWorkspaceMutationAvailable(windowId);
-    this.validateWorkspaceTopology(windowId, topology);
-    await this.deps.closeAttachedProjectSurface(windowId, surfaceId);
-    this.retireLogicalSurface(surfaceId);
-    for (const senderId of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(senderId);
-    const next = closeWorkspaceSurface(topology, surfaceId);
-    this.restoreWorkspaceTopology(windowId, next, mutationAlreadyHeld);
-    this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', { surfaceId });
-    return next;
+    const releaseMutation = mutationAlreadyHeld ? null : this.acquireWorkspaceMutation([windowId]);
+    try {
+      this.validateWorkspaceTopology(windowId, topology);
+      await this.deps.closeAttachedProjectSurface(windowId, surfaceId);
+      this.retireLogicalSurface(surfaceId);
+      for (const senderId of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(senderId);
+      const next = closeWorkspaceSurface(topology, surfaceId);
+      this.restoreWorkspaceTopology(windowId, next, true);
+      this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', { surfaceId });
+      return next;
+    } finally {
+      releaseMutation?.();
+    }
   }
 
   private validateWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {
