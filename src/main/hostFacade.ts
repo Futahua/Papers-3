@@ -102,10 +102,10 @@ export interface FacadeDeps {
   /** Tear down one attached workspace presentation by logical identity. The
    * host renderer is only a window actor and is never looked up as a project
    * surface. */
-  closeAttachedProjectSurface: (windowId: number, surfaceId: string) => void;
+  closeAttachedProjectSurface: (windowId: number, surfaceId: string) => void | Promise<void>;
   /** Semantic close removes the native runtime entry; hide preserves it for
    * renderer remount. */
-  closeBackpackProjectSurface: (senderId: number, surfaceId: string) => void;
+  closeBackpackProjectSurface: (senderId: number, surfaceId: string) => void | Promise<void>;
   restoreBackpack: (windowId: number) => string | null;
   setHermesDockOwner: (windowId: number | null) => void;
   /** The window whose Canvas runtime a program event belongs to. One runtime
@@ -475,7 +475,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         // The Backpack itself became unavailable, so EVERY window that entered
         // it must leave. This is one of the few operations that legitimately
         // reaches across windows; an ordinary leave touches only its own.
-        this.closeAndRetireLogicalProjectSurfaces(id, true);
+        await this.closeAndRetireLogicalProjectSurfaces(id, true);
         await this.deps.retireBackpackProjectSurfaces(id);
         this.deps.clearEnteredBackpackEverywhere(id);
         this.deps.surfaces.unbindProject(id);
@@ -504,7 +504,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const releaseMutation = this.acquireWorkspaceMutationForProject(id);
     try {
       await this.deps.registry.remove(id);
-      this.closeAndRetireLogicalProjectSurfaces(id, true);
+      await this.closeAndRetireLogicalProjectSurfaces(id, true);
       await this.deps.retireBackpackProjectSurfaces(id);
       this.deps.clearEnteredBackpackEverywhere(id);
       this.deps.surfaces.unbindProject(id);
@@ -535,11 +535,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   /** Close every attached presentation before retiring its logical identity.
    * Capture first: retireProjectSurfaces intentionally removes the records. */
-  private closeAndRetireLogicalProjectSurfaces(projectId: string, mutationAlreadyHeld = false): void {
+  private async closeAndRetireLogicalProjectSurfaces(projectId: string, mutationAlreadyHeld = false): Promise<void> {
     const targets = this.deps.listLogicalSurfaces()
       .filter((surface) => surface.projectId === projectId && surface.kind === 'project');
     for (const { windowId, surfaceId } of targets) {
-      this.closeLogicalProjectSurface(windowId, surfaceId, undefined, mutationAlreadyHeld);
+      await this.closeLogicalProjectSurface(windowId, surfaceId, undefined, mutationAlreadyHeld);
     }
     this.deps.retireProjectSurfaces(projectId);
   }
@@ -745,7 +745,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // Leaving retires the surface: this is the creator closing the view, not a
     // renderer being rebuilt, so its id is spent for good.
     const { windowId } = this.requireHostSurfaceTarget(senderId, surfaceId);
-    this.closeLogicalProjectSurface(windowId, surfaceId);
+    await this.closeLogicalProjectSurface(windowId, surfaceId);
     this.emitBackpacksChanged();
   }
 
@@ -835,12 +835,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * Delivered to that surface's own window: two windows may show one project,
    * and closing here must not close there.
    */
-  requestCloseBackpackProject(senderId: number): void {
+  async requestCloseBackpackProject(senderId: number): Promise<void> {
     const context = this.deps.surfaces.contextForSender(senderId);
     if (!context?.surfaceId) return;
     const surface = this.deps.logicalSurfaces.get(context.surfaceId);
     if (!surface || surface.windowId !== context.windowId) return;
-    this.closeLogicalProjectSurface(context.windowId, context.surfaceId);
+    await this.closeLogicalProjectSurface(context.windowId, context.surfaceId);
   }
 
   async runBackpackProjectAction(senderId: number, actionId: string): Promise<void> {
@@ -1656,7 +1656,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     }
   }
 
-  closeWorkspaceSurfaceFromControl(windowId: number, surfaceId: string, topology: WorkspaceTopologyV1): WorkspaceTopologyV1 {
+  async closeWorkspaceSurfaceFromControl(windowId: number, surfaceId: string, topology: WorkspaceTopologyV1): Promise<WorkspaceTopologyV1> {
     const surface = this.deps.logicalSurfaces.get(surfaceId);
     if (!surface || surface.windowId !== windowId || surface.kind !== 'project') {
       throw new Error('That surface is not open in that Papers window.');
@@ -1665,16 +1665,16 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   /** One main-owned terminal close transaction for every close producer. */
-  private closeLogicalProjectSurface(
+  private async closeLogicalProjectSurface(
     windowId: number,
     surfaceId: string,
     topology = this.deps.workspaceTopology?.(windowId) ?? null,
     mutationAlreadyHeld = false,
-  ): WorkspaceTopologyV1 {
+  ): Promise<WorkspaceTopologyV1> {
     if (!topology) throw new Error('That Papers window has not committed workspace topology.');
     if (!mutationAlreadyHeld) this.assertWorkspaceMutationAvailable(windowId);
     this.validateWorkspaceTopology(windowId, topology);
-    this.deps.closeAttachedProjectSurface(windowId, surfaceId);
+    await this.deps.closeAttachedProjectSurface(windowId, surfaceId);
     this.retireLogicalSurface(surfaceId);
     for (const senderId of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(senderId);
     const next = closeWorkspaceSurface(topology, surfaceId);

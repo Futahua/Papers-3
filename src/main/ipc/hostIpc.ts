@@ -37,7 +37,7 @@ export interface HostFacade {
   showBackpackProjectSurface(senderId: number, surfaceId: string, url: string): Promise<void>;
   hideBackpackProjectSurface(senderId: number, surfaceId: string): void;
   setBackpackProjectSurfaceBounds(senderId: number, surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): void;
-  requestCloseBackpackProject(senderId: number): void;
+  requestCloseBackpackProject(senderId: number): Promise<void>;
   runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
   copyBackpackProjectText(senderId: number, text: string): void;
   loadBackpackProjectState(senderId: number): Promise<unknown>;
@@ -298,7 +298,7 @@ export function registerHostIpc(facade: HostFacade): void {
   ipcMain.on('host:backpack-project:request-close', (event) => {
     void facade.waitForBackpackProjectAuthority?.(event.sender.id).then(() => {
       if (!facade.isBackpackProjectSender(event.sender)) return;
-      facade.requestCloseBackpackProject(event.sender.id);
+      return facade.requestCloseBackpackProject(event.sender.id);
     }).catch(() => undefined);
   });
 

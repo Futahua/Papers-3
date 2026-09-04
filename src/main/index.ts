@@ -1008,12 +1008,12 @@ async function bootstrap(): Promise<void> {
         widgetSession?.closeProject(backpackId).catch(() => undefined),
       ]);
     },
-    closeAttachedProjectSurface: (windowId, surfaceId) => {
-      papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
+    closeAttachedProjectSurface: async (windowId, surfaceId) => {
+      await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
     },
-    closeBackpackProjectSurface: (senderId, surfaceId) => {
+    closeBackpackProjectSurface: async (senderId, surfaceId) => {
       const windowId = papersWindows.windowForSender(senderId);
-      if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
+      if (windowId !== null) await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
     },
     restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
     setHermesDockOwner: (windowId) => papersWindows.setHermesDockOwner(windowId),

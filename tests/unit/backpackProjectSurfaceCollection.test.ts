@@ -40,7 +40,7 @@ function collectionWithFakes() {
 }
 
 describe('BackpackProjectSurfaceCollection', () => {
-  it('keeps two surfaces independent and closes only the named one', () => {
+  it('keeps two surfaces independent and closes only the named one', async () => {
     const { collection, runtimes } = collectionWithFakes();
     const p = collection.ensure('surface-p');
     const q = collection.ensure('surface-q');
@@ -52,7 +52,7 @@ describe('BackpackProjectSurfaceCollection', () => {
     expect(runtimes.get('surface-q')!.conceal).not.toHaveBeenCalled();
     expect(collection.get('surface-q')).toBe(q);
 
-    collection.close('surface-p');
+    await collection.close('surface-p');
 
     expect(collection.get('surface-p')).toBeNull();
     expect(collection.get('surface-q')).toBe(q);
@@ -68,7 +68,7 @@ describe('BackpackProjectSurfaceCollection', () => {
     expect(collection.entryUrlForProject('project-x')).toBe('papers-backpack://project-x/entry.html');
   });
 
-  it('composes two logical projects into one native-window collection', () => {
+  it('composes two logical projects into one native-window collection', async () => {
     const logicalSurfaces = createLogicalSurfaceRegistry(() => `sf-${logicalSurfaces.size + 1}`);
     const { collection } = collectionWithFakes();
     const x = logicalSurfaces.create({ windowId: 7, projectId: 'project-x', kind: 'project' });
@@ -77,21 +77,21 @@ describe('BackpackProjectSurfaceCollection', () => {
     collection.ensure(x.surfaceId);
     collection.ensure(y.surfaceId);
     logicalSurfaces.retire(x.surfaceId);
-    collection.close(x.surfaceId);
+    await collection.close(x.surfaceId);
 
     expect(logicalSurfaces.listForWindow(7).map((surface) => surface.surfaceId)).toEqual([y.surfaceId]);
     expect(collection.get(x.surfaceId)).toBeNull();
     expect(collection.get(y.surfaceId)).not.toBeNull();
   });
 
-  it('fans out window-wide presentation changes to every surface', () => {
+  it('fans out window-wide presentation changes to every surface', async () => {
     const { collection, runtimes } = collectionWithFakes();
     collection.ensure('surface-p');
     collection.ensure('surface-q');
 
     collection.fit();
     collection.setTransparent(true);
-    collection.hideAll();
+    await collection.hideAll();
 
     for (const runtime of runtimes.values()) {
       expect(runtime.fit).toHaveBeenCalledTimes(1);
@@ -112,7 +112,7 @@ describe('BackpackProjectSurfaceCollection', () => {
     expect(runtimes.get('surface-q')!.setBounds).not.toHaveBeenCalled();
   });
 
-  it('restores normal close lifecycle on adoption but keeps compensation silent', () => {
+  it('restores normal close lifecycle on adoption but keeps compensation silent', async () => {
     const closed = vi.fn();
     let stagedClose: ((projectId: string) => void) | undefined;
     const runtime = {
@@ -145,12 +145,12 @@ describe('BackpackProjectSurfaceCollection', () => {
     expect(collection.get('surface-p')).toBeNull();
   });
 
-  it('removes canonical ownership before a throwing native close', () => {
+  it('removes canonical ownership before a throwing native close', async () => {
     const { collection, runtimes } = collectionWithFakes();
     collection.ensure('surface-p');
     runtimes.get('surface-p')!.hide.mockImplementation(() => { throw new Error('destroyed'); });
 
-    expect(() => collection.close('surface-p')).not.toThrow();
+    await expect(collection.close('surface-p')).resolves.toBeUndefined();
     expect(collection.get('surface-p')).toBeNull();
   });
 

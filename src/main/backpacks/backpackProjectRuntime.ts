@@ -14,6 +14,7 @@ export class BackpackProjectRuntime {
   private bounds: { x: number; y: number; width: number; height: number } | null = null;
   private presented = false;
   private hidePromise: Promise<void> | null = null;
+  private showPromise: Promise<void> | null = null;
   private readonly frameDestroyedCallbacks = new Map<number, () => void>();
   private readonly observedDestroyedFrames = new Set<number>();
 
@@ -103,9 +104,21 @@ export class BackpackProjectRuntime {
   }
 
   async show(url: string, options: { present?: boolean; beforeLoad?: (senderId: number) => void } = {}): Promise<void> {
+    if (this.showPromise) await this.showPromise;
+    const pending = this.showInternal(url, options);
+    this.showPromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.showPromise === pending) this.showPromise = null;
+    }
+  }
+
+  private async showInternal(url: string, options: { present?: boolean; beforeLoad?: (senderId: number) => void } = {}): Promise<void> {
     const present = options.present ?? true;
     const parsed = new URL(url);
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:`) throw new Error('Only a bound Backpack project may use the project surface.');
+    if (this.hidePromise) await this.hidePromise;
     if (this.view && this.projectId === parsed.host && this.entryUrl === url) {
       if (present) this.present();
       this.fit();

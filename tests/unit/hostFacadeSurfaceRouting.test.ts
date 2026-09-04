@@ -342,7 +342,7 @@ describe('surface routing in the host facade', () => {
     expect(setActiveSurfaceId).toHaveBeenLastCalledWith(1, b.surfaceId);
   });
 
-  it('project-originated close uses canonical focus rather than the first registry survivor', () => {
+  it('project-originated close uses canonical focus rather than the first registry survivor', async () => {
     const {
       facade, surfaces, logicalSurfaces, closeAttachedProjectSurface,
       sendToWindow, setActiveSurfaceId, setEnteredBackpack, workspaceTopologies,
@@ -364,7 +364,7 @@ describe('surface routing in the host facade', () => {
     });
     setActiveSurfaceId(1, closing.surfaceId);
 
-    facade.requestCloseBackpackProject(FRAME);
+    await facade.requestCloseBackpackProject(FRAME);
 
     expect(closeAttachedProjectSurface).toHaveBeenCalledWith(1, closing.surfaceId);
     expect(logicalSurfaces.get(closing.surfaceId)).toBeNull();

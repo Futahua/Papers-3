@@ -135,16 +135,19 @@ export class BackpackProjectSurfaceCollection {
   }
 
   /** Destroy one attached presentation, leaving logical retirement to its owner. */
-  close(surfaceId: string): void {
+  async close(surfaceId: string): Promise<void> {
     const runtime = this.runtimes.get(surfaceId);
     if (!runtime) return;
-    this.runtimes.delete(surfaceId);
-    // Collection ownership is canonical state. Remove it before native
-    // teardown so a late Electron destroyed-object error cannot leave an
-    // orphan that blocks a later prepare/adopt for the same logical surface.
-    closeRuntime(runtime, (caught) => {
+    // Collection ownership is retained through native teardown so the
+    // runtime's close-time flush has completed: the
+    // project sender is authenticated through this collection while it saves.
+    try {
+      await runtime.hide();
+    } catch (caught) {
       console.error(`[workspace-move] native close failed for ${surfaceId}:`, caught);
-    });
+    } finally {
+      if (this.runtimes.get(surfaceId) === runtime) this.runtimes.delete(surfaceId);
+    }
   }
 
   hide(surfaceId: string): void {
