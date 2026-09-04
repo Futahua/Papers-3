@@ -1892,12 +1892,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       throw new Error('Workspace topology surface identity does not match its expected surface set.');
     }
     assertValidWorkspaceTopology(topology);
-    const flatRoot = topology.root.kind === 'group'
-      ? topology.groups.length === 1 && topology.root.groupId === topology.groups[0]?.groupId
-      : topology.groups.length === 2
-        && topology.root.children.length === 2
-        && topology.root.children.every((child) => child.kind === 'group');
-    if (!flatRoot) throw new Error('Only an exact flat one- or two-group workspace topology is currently supported.');
   }
 
   validateWorkspaceTopologyForStartup(windowId: number, topology: WorkspaceTopologyV1): void {

@@ -475,6 +475,30 @@ describe('surface routing in the host facade', () => {
     expect(() => facade.commitWorkspaceTopology(HOST, fabricated)).toThrow(/does not match/);
   });
 
+  it('accepts recursive three-group mixed layouts without a host group-count cap', () => {
+    const { facade, logicalSurfaces, setWorkspaceTopology } = createFacade();
+    const first = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const second = logicalSurfaces.create({ windowId: 1, projectId: OTHER, kind: 'project' });
+    const third = logicalSurfaces.create({ windowId: 1, projectId: 'bp-c', kind: 'project' });
+
+    let topology = createWorkspaceTopology();
+    topology = openWorkspaceSurface(topology, { surfaceId: first.surfaceId, projectId: PROJECT, title: 'First' });
+    topology = openWorkspaceSurface(topology, { surfaceId: second.surfaceId, projectId: OTHER, title: 'Second' });
+    topology = openWorkspaceSurface(topology, { surfaceId: third.surfaceId, projectId: 'bp-c', title: 'Third' });
+    topology = splitWorkspaceGroup(topology, {
+      groupId: 'group-main', newGroupId: 'group-right', surfaceId: second.surfaceId,
+      orientation: 'horizontal', position: 'after',
+    });
+    topology = splitWorkspaceGroup(topology, {
+      groupId: 'group-main', newGroupId: 'group-bottom', surfaceId: third.surfaceId,
+      orientation: 'vertical', position: 'after',
+    });
+
+    expect(topology.groups).toHaveLength(3);
+    expect(() => facade.commitWorkspaceTopology(HOST, topology)).not.toThrow();
+    expect(setWorkspaceTopology).toHaveBeenLastCalledWith(1, topology);
+  });
+
   it('moves one logical surface with exact bindings, durable pair, and complete projections', async () => {
     const {
       facade, surfaces, logicalSurfaces, workspaceTopologies, workspaceIds,
