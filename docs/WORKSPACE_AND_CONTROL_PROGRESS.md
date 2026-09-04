@@ -3001,7 +3001,7 @@ A fresh `npm run package:dir` build from this exact source produced
 `D8A437B17D98948B487A7AFB98AEA80D3FE184575D30CD5B671559125ECF6CDD`.
 Packaged single-worker runs of both focused E2Es passed against that executable.
 This package is not installed into `Runtime/App`; the existing live install,
-desktop shortcut, `RuntimeData`, and creator data remain untouched. A separate
+desktop shortcut, `Runtime/Data`, and creator data remain untouched. A separate
 creator-authorized live swap still requires physical Windows acceptance of the
 reviewer's final matrix: mixed 6+ pane reload with stable sender IDs, native
 clicks in every visible pane, held-sash remote mutation, touch/pen terminal
