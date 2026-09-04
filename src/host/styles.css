@@ -712,7 +712,10 @@ input:focus-visible {
   z-index: 75;
   cursor: col-resize;
   background: transparent;
-  pointer-events: auto;
+  /* Pointer capture on the sash is the interaction fence.  Keeping this
+     composition-only layer hit-test transparent lets Dockview continue to
+     receive its live sash move events while native views remain raised. */
+  pointer-events: none;
 }
 
 .backpack-sidebar {

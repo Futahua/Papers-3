@@ -13,7 +13,7 @@ type SerializedGroup = { id: string; views: string[]; activeView?: string };
 
 function groupDockviewId(api: DockviewApi, papersGroupId: string, surfaceIds: readonly string[], mapping: ReadonlyMap<string, string>, used: ReadonlySet<string>): string {
   const existing = mapping.get(papersGroupId);
-  if (existing && api.groups.some((group) => group.id === existing)) return existing;
+  if (existing && !used.has(existing) && api.groups.some((group) => group.id === existing)) return existing;
   const matching = api.groups.find((group) => !used.has(group.id) && group.panels.some((panel) => surfaceIds.includes(panel.id)));
   if (matching) return matching.id;
   const base = papersGroupId;

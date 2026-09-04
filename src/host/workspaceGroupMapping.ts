@@ -9,7 +9,15 @@ export function rebuildWorkspaceGroupMap(
   const livePapersIds = new Set(papersGroups.map((group) => group.groupId));
   const next = new Map(
     [...previous].filter(([dockviewId, papersId]) =>
-      liveDockviewIds.has(dockviewId) && livePapersIds.has(papersId)),
+      liveDockviewIds.has(dockviewId)
+      && livePapersIds.has(papersId)
+      && (() => {
+        const papers = papersGroups.find((group) => group.groupId === papersId);
+        const dockview = dockviewGroups.find((group) => group.id === dockviewId);
+        return Boolean(papers && dockview
+          && (papers.surfaceIds.length === 0
+            || dockview.panelIds.some((surfaceId) => papers.surfaceIds.includes(surfaceId))));
+      })()),
   );
   for (const group of papersGroups) {
     if ([...next.values()].includes(group.groupId)) continue;

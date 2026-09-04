@@ -24,4 +24,15 @@ describe('workspace Dockview group mapping', () => {
     ]);
     expect([...result]).toEqual([['dock-main', 'papers-main']]);
   });
+
+  it('drops a surviving dock id when its panels no longer overlap the canonical group', () => {
+    const result = rebuildWorkspaceGroupMap(new Map([['dock-shared', 'papers-a']]), [
+      { id: 'dock-shared', panelIds: ['b'] },
+      { id: 'dock-b', panelIds: ['b'] },
+    ], [
+      { groupId: 'papers-a', surfaceIds: ['a'], activeSurfaceId: 'a' },
+      { groupId: 'papers-b', surfaceIds: ['b'], activeSurfaceId: 'b' },
+    ]);
+    expect([...result]).toEqual([['dock-shared', 'papers-b']]);
+  });
 });

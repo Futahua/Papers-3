@@ -234,7 +234,8 @@ export function WorkspaceDock(props: {
     };
     const hasNestedLayout = desired.root.kind === 'split'
       && desired.root.children.some((child) => child.kind === 'split');
-    if (desiredGroups.length > 2 || hasNestedLayout) {
+    const needsRecursiveProjection = desiredGroups.length > 2 || hasNestedLayout || api.groups.length < desiredGroups.length;
+    if (needsRecursiveProjection) {
       try {
         const current = api.toJSON();
         const canonicalToDockview = new Map([...groupIds.current].map(([dockviewId, papersGroupId]) => [papersGroupId, dockviewId]));
@@ -244,6 +245,9 @@ export function WorkspaceDock(props: {
           : current.grid.orientation;
         mutate(() => api.fromJSON({ ...current, grid: { ...current.grid, root, orientation } }, { reuseExistingPanels: true }));
         refreshGroupIds(api);
+        const focused = desiredGroups.find((group) => group.groupId === desired.focusedGroupId);
+        const focusedPanel = focused?.activeSurfaceId ? api.getPanel(focused.activeSurfaceId) : undefined;
+        if (focusedPanel) mutate(() => focusedPanel.api.setActive());
       } catch {
         // Keep the existing live projection intact if Dockview rejects a
         // serialized shape; the canonical topology remains authoritative and
@@ -361,10 +365,20 @@ export function WorkspaceDock(props: {
       if (resizeSession.current?.pointerId === event.pointerId) finishResize(true);
     };
     const onContextMenu = (): void => { if (resizing.current) finishResize(true); };
+    const onMouseUp = (event: MouseEvent): void => {
+      const session = resizeSession.current;
+      const target = event.target;
+      // Chromium normally delivers pointerup, but retain a narrowly scoped
+      // legacy fallback for Dockview's mouse backend.  An unrelated mouseup
+      // outside the captured workspace is never allowed to terminate a newer
+      // resize session.
+      if (session && event.button === 0 && target instanceof Node && session.captureTarget?.contains(target)) finishResize();
+    };
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
     window.addEventListener('lostpointercapture', onLostPointerCapture);
     window.addEventListener('contextmenu', onContextMenu, true);
+    window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('blur', onBlur);
     return () => {
       finishResize(true);
@@ -373,6 +387,7 @@ export function WorkspaceDock(props: {
       window.removeEventListener('pointercancel', onPointerCancel);
       window.removeEventListener('lostpointercapture', onLostPointerCapture);
       window.removeEventListener('contextmenu', onContextMenu, true);
+      window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('blur', onBlur);
     };
   }, [commitLayout, reconcileFromTopology, setHostOverlay]);
@@ -882,10 +897,25 @@ export function WorkspaceDock(props: {
           activeByGroup: new Map(topologyRef.current.groups.map((group) => [group.groupId, group.activeSurfaceId])),
           captureTarget: event.currentTarget,
         };
-        try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Dockview may own capture */ }
+        let captured = false;
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          // Chromium does not guarantee that hasPointerCapture() is observable
+          // until the next task; a non-throwing call is the synchronous
+          // acquisition boundary we can safely establish here.
+          captured = true;
+        } catch { /* fail closed below */ }
+        if (!captured) {
+          resizing.current = false;
+          resizeSession.current = null;
+          return;
+        }
         setResizeActive(true);
         document.documentElement.dataset.workspaceResize = 'true';
-        void setHostOverlayAwaited(true, () => resizeSession.current?.generation === generation, 'workspace-resize');
+        void setHostOverlayAwaited(true, () => resizeSession.current?.generation === generation, 'workspace-resize')
+          .catch(() => {
+            if (resizeSession.current?.generation === generation) finishResizeRef.current?.(true);
+          });
       }}
       onDragLeaveCapture={(event) => {
         if (!dragActive.current) return;
