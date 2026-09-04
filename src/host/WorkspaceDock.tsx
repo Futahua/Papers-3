@@ -6,14 +6,15 @@ import {
   type IDockviewPanelProps,
   type PositionResolver,
 } from 'dockview-react';
+import { Orientation } from 'dockview-core';
 import 'dockview-react/dist/styles/dockview.css';
 
 import { BackpackProjectFrame } from './BackpackProjectFrame';
 import type { HostOverlayOwner } from './bridge';
-import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import type { WorkspaceLayoutNode, WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { rebuildWorkspaceGroupMap } from './workspaceGroupMapping';
 import { createWorkspaceReconciliationFeedbackGate } from './workspaceReconciliationFeedback';
-import { serializedRootForTopology } from './workspaceDockLayout';
+import { serializedRootForTopology, workspaceRootFromDockview } from './workspaceDockLayout';
 
 export interface OpenWorkspaceProject {
   surfaceId: string;
@@ -78,6 +79,7 @@ export function WorkspaceDock(props: {
   interactionDisabled?: boolean;
   onCommitLayout: (snapshot: {
     groups: Array<{ groupId: string; surfaceIds: string[] }>;
+    root?: WorkspaceLayoutNode;
     rootWeights?: number[];
   }) => void;
 }): React.JSX.Element {
@@ -200,22 +202,25 @@ export function WorkspaceDock(props: {
       const groupId = groupIds.current.get(group.id);
       return groupId ? [{ groupId, surfaceIds: group.panels.map((panel) => panel.id) }] : [];
     });
-    const root = topologyRef.current.root;
+    let root: WorkspaceLayoutNode | undefined;
+    try { root = workspaceRootFromDockview(api, topologyRef.current, new Map([...groupIds.current].map(([dockviewId, papersId]) => [papersId, dockviewId]))); }
+    catch { root = undefined; }
     let rootWeights: number[] | undefined;
-    if (root.kind === 'split' && root.children.every((child) => child.kind === 'group')) {
+    const canonicalRoot = topologyRef.current.root;
+    if (canonicalRoot.kind === 'split' && canonicalRoot.children.every((child) => child.kind === 'group')) {
       const byPapersId = new Map([...groupIds.current].map(([dockviewId, papersId]) => [papersId, dockviewId]));
-      const sizes = root.children.map((child) => {
+      const sizes = canonicalRoot.children.map((child) => {
         if (child.kind !== 'group') return 0;
         const dockviewId = byPapersId.get(child.groupId);
         const group = dockviewId ? api.groups.find((candidate) => candidate.id === dockviewId) : undefined;
-        return root.orientation === 'horizontal' ? group?.api.width ?? 0 : group?.api.height ?? 0;
+        return canonicalRoot.orientation === 'horizontal' ? group?.api.width ?? 0 : group?.api.height ?? 0;
       });
       if (sizes.every((size) => size > 0)) {
         const total = sizes.reduce((sum, size) => sum + size, 0);
         rootWeights = sizes.map((size) => size / total);
       }
     }
-    onCommitLayout({ groups, ...(rootWeights ? { rootWeights } : {}) });
+    onCommitLayout({ groups, ...(root ? { root } : {}), ...(rootWeights ? { rootWeights } : {}) });
   }, [onCommitLayout, refreshGroupIds]);
 
   const reconcileFromTopology = useCallback((api: DockviewApi): void => {
@@ -233,7 +238,10 @@ export function WorkspaceDock(props: {
         const current = api.toJSON();
         const canonicalToDockview = new Map([...groupIds.current].map(([dockviewId, papersGroupId]) => [papersGroupId, dockviewId]));
         const root = serializedRootForTopology(api, desired, canonicalToDockview, current);
-        mutate(() => api.fromJSON({ ...current, grid: { ...current.grid, root } }, { reuseExistingPanels: true }));
+        const orientation: typeof current.grid.orientation = desired.root.kind === 'split'
+          ? desired.root.orientation === 'vertical' ? Orientation.VERTICAL : Orientation.HORIZONTAL
+          : current.grid.orientation;
+        mutate(() => api.fromJSON({ ...current, grid: { ...current.grid, root, orientation } }, { reuseExistingPanels: true }));
         refreshGroupIds(api);
       } catch {
         // Keep the existing live projection intact if Dockview rejects a

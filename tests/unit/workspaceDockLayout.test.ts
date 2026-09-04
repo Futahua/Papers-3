@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { serializedRootForTopology } from '../../src/host/workspaceDockLayout';
+import { serializedRootForTopology, workspaceRootFromDockview } from '../../src/host/workspaceDockLayout';
 import type { WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 
 describe('workspace Dockview recursive adapter', () => {
@@ -46,5 +46,51 @@ describe('workspace Dockview recursive adapter', () => {
     const nested = (root.data as Array<{ type: string; data: unknown }>)[1]!;
     expect(nested.type).toBe('branch');
     expect((nested.data as Array<{ data: { id: string } }>).map((leaf) => leaf.data.id)).toEqual(['dock-b', 'dock-c']);
+  });
+
+  it('round-trips nested Dockview geometry into canonical weights and orientation', () => {
+    const topology: WorkspaceTopologyV1 = {
+      schemaVersion: 1,
+      surfaces: [
+        { surfaceId: 'a', projectId: 'pa', title: 'A' },
+        { surfaceId: 'b', projectId: 'pb', title: 'B' },
+        { surfaceId: 'c', projectId: 'pc', title: 'C' },
+      ],
+      groups: [
+        { groupId: 'group-a', surfaceIds: ['a'], activeSurfaceId: 'a' },
+        { groupId: 'group-b', surfaceIds: ['b'], activeSurfaceId: 'b' },
+        { groupId: 'group-c', surfaceIds: ['c'], activeSurfaceId: 'c' },
+      ],
+      root: { kind: 'group', groupId: 'group-a' },
+      focusedGroupId: 'group-a',
+    };
+    const api = {
+      toJSON: () => ({
+        grid: {
+          orientation: 'HORIZONTAL',
+          root: {
+            type: 'branch', size: 100,
+            data: [
+              { type: 'leaf', size: 40, data: { id: 'dock-a', views: ['a'] } },
+              { type: 'branch', size: 60, data: [
+                { type: 'leaf', size: 20, data: { id: 'dock-b', views: ['b'] } },
+                { type: 'leaf', size: 40, data: { id: 'dock-c', views: ['c'] } },
+              ] },
+            ],
+          },
+        },
+      }),
+    } as never;
+    expect(workspaceRootFromDockview(api, topology, new Map([
+      ['group-a', 'dock-a'], ['group-b', 'dock-b'], ['group-c', 'dock-c'],
+    ]))).toEqual({
+      kind: 'split', orientation: 'horizontal', weights: [0.4, 0.6], children: [
+        { kind: 'group', groupId: 'group-a' },
+        { kind: 'split', orientation: 'vertical', weights: [1 / 3, 2 / 3], children: [
+          { kind: 'group', groupId: 'group-b' },
+          { kind: 'group', groupId: 'group-c' },
+        ] },
+      ],
+    });
   });
 });

@@ -11,6 +11,7 @@ import {
   remapWorkspaceTopologySurfaceIds,
   reorderWorkspaceGroup,
   setRootWorkspaceSplitWeights,
+  normalizeWorkspaceLayout,
   splitWorkspaceGroup,
 } from '../../src/shared/workspaceTopology';
 
@@ -149,6 +150,33 @@ describe('workspace topology', () => {
     });
     topology = setRootWorkspaceSplitWeights(topology, [3, 1]);
     expect(topology.root).toMatchObject({ weights: [0.75, 0.25] });
+  });
+
+  it('flattens same-axis nested splits while preserving proportional area', () => {
+    expect(normalizeWorkspaceLayout({
+      kind: 'split', orientation: 'horizontal', weights: [0.25, 0.75], children: [
+        { kind: 'group', groupId: 'a' },
+        { kind: 'split', orientation: 'horizontal', weights: [0.2, 0.8], children: [
+          { kind: 'group', groupId: 'b' },
+          { kind: 'group', groupId: 'c' },
+        ] },
+      ],
+    })).toMatchObject({
+      kind: 'split', orientation: 'horizontal', children: [
+        { kind: 'group', groupId: 'a' },
+        { kind: 'group', groupId: 'b' },
+        { kind: 'group', groupId: 'c' },
+      ],
+    });
+    const normalized = normalizeWorkspaceLayout({
+      kind: 'split', orientation: 'horizontal', weights: [0.25, 0.75], children: [
+        { kind: 'group', groupId: 'a' },
+        { kind: 'split', orientation: 'horizontal', weights: [0.2, 0.8], children: [
+          { kind: 'group', groupId: 'b' }, { kind: 'group', groupId: 'c' },
+        ] },
+      ],
+    });
+    expect(normalized.kind === 'split' ? normalized.weights : []).toEqual([0.25, 0.15, 0.6].map((weight) => expect.closeTo(weight, 10)));
   });
 
   it('purely remaps split surface identity while preserving project and layout semantics', () => {

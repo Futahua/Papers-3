@@ -14,7 +14,8 @@ import {
   createWorkspaceTopology,
   moveWorkspaceSurface,
   reorderWorkspaceGroup,
-  setRootWorkspaceSplitWeights,
+  setWorkspaceLayoutRoot,
+  workspaceLayoutEqual,
   splitWorkspaceGroup,
 } from '@shared/workspaceTopology';
 
@@ -447,6 +448,7 @@ export function App(): React.JSX.Element {
 
   const commitWorkspaceLayout = useCallback((snapshot: {
     groups: Array<{ groupId: string; surfaceIds: string[] }>;
+    root?: import('@shared/workspaceTopology').WorkspaceLayoutNode;
     rootWeights?: number[];
   }): void => {
     setWorkspaceTopology((current) => {
@@ -457,10 +459,20 @@ export function App(): React.JSX.Element {
         if (existing.surfaceIds.every((surface, index) => surface === group.surfaceIds[index])) continue;
         next = reorderWorkspaceGroup(next, group.groupId, group.surfaceIds);
       }
-      if (snapshot.rootWeights && next.root.kind === 'split') {
+      if (snapshot.root) {
+        if (!workspaceLayoutEqual(next.root, snapshot.root)) {
+          try { next = setWorkspaceLayoutRoot(next, snapshot.root); } catch { /* keep canonical topology authoritative */ }
+        }
+      }
+      if (!snapshot.root && snapshot.rootWeights && next.root.kind === 'split') {
         const unchanged = next.root.weights.length === snapshot.rootWeights.length
           && next.root.weights.every((weight, index) => Math.abs(weight - (snapshot.rootWeights?.[index] ?? 0)) < 0.001);
-        if (!unchanged) next = setRootWorkspaceSplitWeights(next, snapshot.rootWeights);
+        if (!unchanged) {
+          const total = snapshot.rootWeights.reduce((sum, weight) => sum + weight, 0);
+          if (total > 0 && snapshot.rootWeights.every((weight) => Number.isFinite(weight) && weight > 0)) {
+            next = { ...next, root: { ...next.root, weights: snapshot.rootWeights.map((weight) => weight / total) } };
+          }
+        }
       }
       return next;
     });

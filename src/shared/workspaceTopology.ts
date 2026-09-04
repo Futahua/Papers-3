@@ -200,6 +200,67 @@ export function setRootWorkspaceSplitWeights(
   return next;
 }
 
+/**
+ * Dockview alternates split orientation at each nested grid level.  Keep the
+ * durable topology equally stable by flattening adjacent same-axis splits into
+ * one n-ary node while preserving each descendant's proportional area.
+ */
+export function normalizeWorkspaceLayout(node: WorkspaceLayoutNode): WorkspaceLayoutNode {
+  if (node.kind === 'group') return { ...node };
+  const normalizedChildren = node.children.map(normalizeWorkspaceLayout);
+  const children: WorkspaceLayoutNode[] = [];
+  const weights: number[] = [];
+  normalizedChildren.forEach((child, index) => {
+    const parentWeight = node.weights[index] ?? 1;
+    if (child.kind === 'split' && child.orientation === node.orientation) {
+      child.children.forEach((grandchild, grandchildIndex) => {
+        children.push(grandchild);
+        weights.push(parentWeight * (child.weights[grandchildIndex] ?? (1 / child.children.length)));
+      });
+    } else {
+      children.push(child);
+      weights.push(parentWeight);
+    }
+  });
+  if (children.length === 1) return children[0]!;
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  return {
+    kind: 'split',
+    orientation: node.orientation,
+    children,
+    weights: weights.map((weight) => weight / total),
+  };
+}
+
+/** Replace only the geometry tree, retaining the authoritative tab/group data. */
+export function setWorkspaceLayoutRoot(
+  topology: WorkspaceTopologyV1,
+  root: WorkspaceLayoutNode,
+): WorkspaceTopologyV1 {
+  const normalized = normalizeWorkspaceLayout(root);
+  const existingGroups = new Set(topology.groups.map((group) => group.groupId));
+  const next = { ...topology, root: normalized };
+  assertValidWorkspaceTopology(next);
+  const layoutGroups = new Set<string>();
+  const visit = (node: WorkspaceLayoutNode): void => {
+    if (node.kind === 'group') layoutGroups.add(node.groupId);
+    else node.children.forEach(visit);
+  };
+  visit(normalized);
+  if (layoutGroups.size !== existingGroups.size || [...existingGroups].some((groupId) => !layoutGroups.has(groupId))) {
+    throw new Error('layout geometry must preserve the existing workspace groups');
+  }
+  return next;
+}
+
+export function workspaceLayoutEqual(a: WorkspaceLayoutNode, b: WorkspaceLayoutNode, epsilon = 0.001): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'group' && b.kind === 'group') return a.groupId === b.groupId;
+  if (a.kind !== 'split' || b.kind !== 'split' || a.orientation !== b.orientation || a.children.length !== b.children.length) return false;
+  return a.children.every((child, index) => workspaceLayoutEqual(child, b.children[index]!, epsilon))
+    && a.weights.every((weight, index) => Math.abs(weight - b.weights[index]!) <= epsilon);
+}
+
 function replaceGroupNode(
   node: WorkspaceLayoutNode,
   groupId: string,
@@ -248,7 +309,7 @@ export function moveWorkspaceSurface(
         activeSurfaceId: group.activeSurfaceId === surfaceId ? surfaceIds[0] ?? null : group.activeSurfaceId,
       };
     });
-  const root = removeEmptySource ? removeGroupNode(topology.root, source.groupId) : topology.root;
+  const root = removeEmptySource ? normalizeWorkspaceLayout(removeGroupNode(topology.root, source.groupId)!) : topology.root;
   if (!root) throw new Error('workspace must retain one group');
   const next: WorkspaceTopologyV1 = {
     ...topology,
@@ -306,7 +367,7 @@ export function closeWorkspaceSurface(topology: WorkspaceTopologyV1, surfaceId: 
         activeSurfaceId: group.activeSurfaceId === surfaceId ? remaining[0] ?? null : group.activeSurfaceId,
       };
     });
-  const root = removeEmptyGroup ? removeGroupNode(topology.root, source.groupId) : topology.root;
+  const root = removeEmptyGroup ? normalizeWorkspaceLayout(removeGroupNode(topology.root, source.groupId)!) : topology.root;
   if (!root || groups.length === 0) throw new Error('workspace must retain one group');
   const focusedGroupId = groups.some((group) => group.groupId === topology.focusedGroupId)
     ? topology.focusedGroupId
@@ -356,12 +417,12 @@ export function splitWorkspaceGroup(
         : { ...group, surfaceIds: [...group.surfaceIds] }),
       newGroup,
     ],
-    root: replaceGroupNode(topology.root, options.groupId, {
+    root: normalizeWorkspaceLayout(replaceGroupNode(topology.root, options.groupId, {
       kind: 'split',
       orientation: options.orientation,
       weights: [0.5, 0.5],
       children: groupNodes,
-    }),
+    })),
     focusedGroupId: options.newGroupId,
   };
   assertValidWorkspaceTopology(next);
