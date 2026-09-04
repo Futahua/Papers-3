@@ -2867,3 +2867,15 @@ through `D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, which is the same
 junction-backed executable. Packaged acceptance was re-run against the installed
 executable with the isolated backpack-navigation and workspace-tabs E2Es; both
 passed.
+
+## 9. Post-install interaction audit (2026-09-04)
+
+The follow-up reviewer audit of the live screenshot found two separate issues
+that are not included in the signed-off install: As-you-Go action buttons are
+also 4px drag handles with unsafe pointer-cancel/click-suppression behavior,
+and a physical tab drag can lose Dockview edge discovery while a native project
+view is topmost. The former belongs to the independent As-you-Go project; the
+latter needs a Papers-native hit-testing/compositor design and physical-input
+acceptance. A candidate implementation was intentionally reverted after it
+regressed the focused E2E path, so the signed-off live build remains unchanged
+until that follow-up is proven.
