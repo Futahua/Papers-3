@@ -59,13 +59,6 @@ export function App(): React.JSX.Element {
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });
   const [view, setView] = useState<BasicView>('backpacks');
   const [basicOpen, setBasicOpen] = useState(false);
-  const [layoutsOpen, setLayoutsOpen] = useState(false);
-  const [layouts, setLayouts] = useState<Array<{
-    layoutId: string; name: string; topology: ReturnType<typeof createWorkspaceTopology>; createdAt: string; updatedAt: string;
-  }>>([]);
-  const [layoutName, setLayoutName] = useState('');
-  const [layoutBusy, setLayoutBusy] = useState(false);
-  const [layoutError, setLayoutError] = useState<string | null>(null);
   const [entered, setEntered] = useState<string | null>(null);
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
   const [openProjects, setOpenProjects] = useState<OpenWorkspaceProject[]>([]);
@@ -89,7 +82,6 @@ export function App(): React.JSX.Element {
   const [hermes, setHermes] = useState<HermesSurfaceStatus>({ placement: 'closed', status: 'idle', ownedByThisWindow: false });
   const [hostErrors, setHostErrors] = useState<HostErrorPayload[]>([]);
   const basicRef = useRef<HTMLDivElement | null>(null);
-  const layoutsRef = useRef<HTMLDivElement | null>(null);
 
   const refreshBackpacks = useCallback(async () => {
     setBackpacks(await host().backpacks.list());
@@ -279,36 +271,6 @@ export function App(): React.JSX.Element {
     });
   }, []);
 
-  const openLayouts = useCallback((): void => {
-    setLayoutsOpen((open) => !open);
-    setLayoutError(null);
-    void host().layout.list().then(setLayouts).catch((caught) => {
-      setLayoutError(String(caught instanceof Error ? caught.message : caught));
-    });
-  }, []);
-
-  const saveNamedLayout = useCallback((): void => {
-    const trimmed = layoutName.trim();
-    if (!trimmed) {
-      setLayoutError('Enter a name for this layout.');
-      return;
-    }
-    setLayoutBusy(true);
-    setLayoutError(null);
-    void host().layout.save(trimmed)
-      .then(async () => setLayouts(await host().layout.list()))
-      .then(() => setLayoutName(''))
-      .catch((caught) => setLayoutError(String(caught instanceof Error ? caught.message : caught)))
-      .finally(() => setLayoutBusy(false));
-  }, [layoutName]);
-
-  const loadNamedLayout = useCallback((layoutId: string): void => {
-    setLayoutBusy(true);
-    setLayoutError(null);
-    void host().layout.load(layoutId)
-      .catch((caught) => setLayoutError(String(caught instanceof Error ? caught.message : caught)))
-      .finally(() => setLayoutBusy(false));
-  }, []);
 
   // The Hermes surface (a native view) must sit behind renderer overlays.
   useEffect(() => {
@@ -327,14 +289,6 @@ export function App(): React.JSX.Element {
     return () => window.removeEventListener('mousedown', onClick);
   }, [basicOpen]);
 
-  useEffect(() => {
-    if (!layoutsOpen) return;
-    const onClick = (event: MouseEvent): void => {
-      if (layoutsRef.current && !layoutsRef.current.contains(event.target as Node)) setLayoutsOpen(false);
-    };
-    window.addEventListener('mousedown', onClick);
-    return () => window.removeEventListener('mousedown', onClick);
-  }, [layoutsOpen]);
 
   const enteredBackpack = useMemo(
     () => (entered ? backpacks.backpacks.find((b) => b.id === entered) ?? null : null),
@@ -536,47 +490,6 @@ export function App(): React.JSX.Element {
         <div className="titlebar-drag" />
 
         <div className="titlebar-actions">
-          <div className="layouts-control" ref={layoutsRef}>
-            <button
-              type="button"
-              className={`pill-button${layoutsOpen ? ' active' : ''}`}
-              aria-haspopup="dialog"
-              aria-expanded={layoutsOpen}
-              onClick={openLayouts}
-            >
-              Layouts
-            </button>
-            {layoutsOpen && (
-              <div className="layouts-popover" role="dialog" aria-label="Layouts">
-                <p className="eyebrow">Layouts</p>
-                <div className="layouts-save-row">
-                  <input
-                    aria-label="Layout name"
-                    value={layoutName}
-                    maxLength={120}
-                    placeholder="Name this layout"
-                    onChange={(event) => setLayoutName(event.target.value)}
-                    onKeyDown={(event) => { if (event.key === 'Enter') saveNamedLayout(); }}
-                  />
-                  <button type="button" className="secondary" disabled={layoutBusy} onClick={saveNamedLayout}>
-                    Save current layout
-                  </button>
-                </div>
-                {layoutError && <p className="layouts-error" role="alert">{layoutError}</p>}
-                <div className="layouts-list">
-                  {layouts.length === 0 && <p className="layouts-empty">No named layouts yet.</p>}
-                  {layouts.map((layout) => (
-                    <div className="layouts-row" key={layout.layoutId}>
-                      <strong>{layout.name}</strong>
-                      <button type="button" className="secondary" disabled={layoutBusy} onClick={() => loadNamedLayout(layout.layoutId)}>
-                        Load
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
           <button
             type="button"
             className="titlebar-icon-button"

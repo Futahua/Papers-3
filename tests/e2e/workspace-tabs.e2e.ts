@@ -330,7 +330,7 @@ describe('A1 workspace tabs', () => {
     await waitFor(async () => (await call('inspect.windows') as Array<{ windowId: number }>)
       .some(({ windowId }) => windowId === secondary.windowId), 10_000, 'cross-window move target');
     await waitFor(async () => await evalInHostWindow<boolean>(launched.app, secondary.windowId,
-      `Boolean([...document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Layouts'))`),
+      `Boolean(document.querySelector('button[aria-label="New window"]'))`),
     10_000, 'cross-window move target host');
     const movableGammaSurface = (await call('inspect.surfaces') as Array<{ surfaceId: string; projectId: string; windowId: number }>)
       .find((surface) => surface.projectId === C && surface.windowId === windowId);

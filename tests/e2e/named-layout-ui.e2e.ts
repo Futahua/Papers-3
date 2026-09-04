@@ -92,19 +92,18 @@ afterAll(async () => {
   if (launched?.userDataDir) await fs.rm(launched.userDataDir, { recursive: true, force: true });
 });
 
-describe('A2.1d named-layout UI acceptance', () => {
-  it('saves, mutates, loads through the UI, isolates a second window, and fails closed for unavailable projects', async () => {
+describe('Retired named-layout menu and storage compatibility', () => {
+  it('omits the menu while existing layout APIs retain isolation and safe failure', async () => {
     await waitFor(async () => (await call('inspect.surfaces') as unknown[]).length === 2, 15_000, 'initial hydrated surfaces');
     const hostPage = await launched.app.firstWindow();
-    await waitFor(async () => (await hostPage.getByRole('button', { name: 'Layouts' }).count()) === 1, 10_000, 'Layouts button');
+    await waitFor(async () => (await hostPage.getByRole('button', { name: 'New window', exact: true }).count()) === 1, 10_000, 'host toolbar');
+    expect(await hostPage.getByRole('button', { name: 'Layouts', exact: true }).count()).toBe(0);
+    expect(await hostPage.locator('.layouts-popover').count()).toBe(0);
     const initialSurfaces = await call('inspect.surfaces') as Array<{ surfaceId: string; projectId: string; windowId: number }>;
     const windowId = initialSurfaces[0]!.windowId;
     const initialWorkspace = await call('inspect.workspace', { windowId }) as { revision: number; topology: unknown };
 
-    await hostPage.getByRole('button', { name: 'Layouts' }).click();
-    await hostPage.getByRole('textbox', { name: 'Layout name' }).fill('Work');
-    await hostPage.getByRole('button', { name: 'Save current layout' }).click();
-    await waitFor(async () => (await hostPage.getByText('Work', { exact: true }).count()) === 1, 10_000, 'saved Work layout in UI');
+    await evalInHost(launched.app, 'window.papersHost.layout.save("Work")');
 
     const layoutsPath = path.join(launched.userDataDir, 'PapersData', 'workspace-layouts.json');
     await waitFor(async () => {
@@ -123,11 +122,11 @@ describe('A2.1d named-layout UI acceptance', () => {
       10_000, 'material workspace mutation');
 
     const beforeLoad = await call('inspect.surfaces') as Array<{ surfaceId: string; projectId: string }>;
-    await hostPage.getByRole('button', { name: 'Load' }).click();
+    await evalInHost(launched.app, `window.papersHost.layout.load(${JSON.stringify(savedLayout.layoutId)})`);
     await waitFor(async () => {
       const current = await call('inspect.surfaces') as Array<{ surfaceId: string; projectId: string }>;
       return current.length === 2 && current.every((surface) => !beforeLoad.some((old) => old.surfaceId === surface.surfaceId));
-    }, 15_000, 'fresh IDs after UI load');
+    }, 15_000, 'fresh IDs after compatibility API load');
     const loadedWorkspace = await call('inspect.workspace', { windowId }) as {
       topology: { groups: unknown[]; root: { kind: string } };
     };
@@ -144,11 +143,11 @@ describe('A2.1d named-layout UI acceptance', () => {
     await waitFor(async () => (await call('inspect.windows') as Array<{ windowId: number }>).some(({ windowId: candidate }) => candidate === second.windowId),
       15_000, 'second Papers window');
     await waitFor(async () => await evalInHostWindow<boolean>(launched.app, second.windowId,
-      `Boolean([...document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Layouts'))`), 10_000, 'second host Layouts button');
+      `Boolean(document.querySelector('button[aria-label="New window"]'))`), 10_000, 'second host toolbar');
+    expect(await evalInHostWindow<boolean>(launched.app, second.windowId,
+      `Boolean(document.querySelector('.layouts-control, .layouts-popover'))`)).toBe(false);
     await evalInHostWindow(launched.app, second.windowId,
-      `([...document.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Layouts'))?.click()`);
-    await waitFor(async () => await evalInHostWindow<boolean>(launched.app, second.windowId, `Boolean(document.querySelector('.layouts-popover'))`), 10_000, 'second Layouts popover');
-    await evalInHostWindow(launched.app, second.windowId, `([...document.querySelectorAll('.layouts-row button')][0])?.click()`);
+      `window.papersHost.layout.load(${JSON.stringify(savedLayout.layoutId)})`);
     await waitFor(async () => (await call('inspect.surfaces') as Array<{ windowId: number }>).filter(({ windowId: candidate }) => candidate === second.windowId).length === 2,
       15_000, 'second window layout load');
     const secondSurfaces = await call('inspect.surfaces') as Array<{ surfaceId: string; windowId: number }>;
@@ -170,7 +169,7 @@ describe('A2.1d named-layout UI acceptance', () => {
     expect(new Set(persistedWorkspaces.workspaces.map(({ workspaceId }) => workspaceId)).size).toBe(2);
 
     // Move the first window to an unrelated current project, then archive a
-    // referenced-but-not-current project. A failed UI load must leave that
+    // referenced-but-not-current project. A failed compatibility load must leave that
     // target's current topology and surface set unchanged.
     for (const surface of firstWindowSurfaces) await call('workspace.close', { windowId, surfaceId: surface.surfaceId });
     await waitFor(async () => (await call('inspect.surfaces') as Array<{ windowId: number }>).filter(({ windowId: candidate }) => candidate === windowId).length === 0,
@@ -178,8 +177,8 @@ describe('A2.1d named-layout UI acceptance', () => {
     const openedGamma = await call('workspace.open', { windowId, projectId: GAMMA }) as { surfaceId: string };
     const gammaBeforeFailure = await call('inspect.workspace', { windowId }) as { revision: number; topology: unknown };
     await evalInHost(launched.app, `window.papersHost.backpacks.setArchived(${JSON.stringify(ALPHA)}, true)`);
-    await hostPage.getByRole('button', { name: 'Load' }).click();
-    await waitFor(async () => (await hostPage.locator('.layouts-error').count()) === 1, 10_000, 'unavailable layout error');
+    await expect(evalInHost(launched.app,
+      `window.papersHost.layout.load(${JSON.stringify(savedLayout.layoutId)})`)).rejects.toThrow();
     const gammaAfterFailure = await call('inspect.workspace', { windowId }) as { revision: number; topology: unknown };
     expect(gammaAfterFailure).toEqual(gammaBeforeFailure);
     expect((await call('inspect.surfaces') as Array<{ surfaceId: string }>).map(({ surfaceId }) => surfaceId)).toContain(openedGamma.surfaceId);

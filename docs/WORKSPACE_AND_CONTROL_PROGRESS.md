@@ -4,6 +4,20 @@ Last updated: 2026-09-03
 Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`, and packaged visual success/failure plus stdio MCP acceptance signed off at `d977a2974beddd1ea94aade311c65ab9e29fec74`; the reviewed C1 core is complete, while only older live-fixture integration checklists remain outside this acceptance record
 Working branch: `agent/surface-context-routing`
 
+## Creator removes saved-layout menu — 2026-09-04
+
+The creator marked the title-bar Layouts button and rejected this feature.
+Remove the named-layout button, save/load popover, associated renderer state,
+handlers and styles. New Window, workspace tabs/splits, and existing saved data
+remain available. Existing host layout APIs retain compatibility; there is no
+creator-facing saved-layout menu. This supersedes the historical named-layout
+UI acceptance recorded below.
+
+Validation: typecheck and production build pass. The adapted named-layout
+compatibility test verifies that both native host windows omit the menu while
+saved data remains usable; workspace tab/split/move/close acceptance also
+passes (2 E2E files / 2 tests).
+
 ## Creator acceptance and positioning reversal — 2026-09-04
 
 Follow-up correction: the creator reported indefinite motion after `d15f717`.
