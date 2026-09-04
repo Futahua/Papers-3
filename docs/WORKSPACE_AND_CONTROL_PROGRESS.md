@@ -2948,3 +2948,18 @@ Single-worker packaged runs of `backpack-navigation.e2e.ts` and
 `workspace-tabs.e2e.ts` both pass against that exact executable; the earlier
 parallel invocation was not used as evidence because two simultaneous packaged
 Electron launches raced their isolated startup profiles.
+
+### 10.2 Creator-authorized live swap (2026-09-04 21:25 local)
+
+The creator authorized installation of the successful-split terminal fix. Papers
+processes were stopped, and the previous canonical `Runtime/App` package was
+moved reversibly to
+`Runtime/Backups/before-live-install-20260904-212439`. Because
+`D:\Letters\MatTroiSeConMoc\Papers` is a junction to `Runtime`, this single
+replacement also updates the desktop shortcut target; no second app copy was
+created. The new live executable and shortcut-resolved executable both hash to
+`3AC269E8F0E7EA113E7F0197232FEA22ED3F16F9090B6245F776F834A6D0AA02`, and the
+updated app is running normally from that path. A before/after manifest found
+all 194 `Runtime/Data` files byte-for-byte unchanged. Isolated packaged runs of
+`backpack-navigation.e2e.ts` and `workspace-tabs.e2e.ts` pass against the live
+executable. No publication or installer release occurred.
