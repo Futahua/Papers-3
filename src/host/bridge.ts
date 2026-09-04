@@ -39,7 +39,7 @@ export interface SaveStatusPayload {
 
 export type HermesPlacement = 'closed' | 'docked' | 'detached';
 export type HermesStatusKind = 'idle' | 'starting' | 'ready' | 'error';
-export type HostOverlayOwner = 'picker' | 'workspace-drag' | 'legacy';
+export type HostOverlayOwner = 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy';
 
 export interface HermesSurfaceStatus {
   /** Global truth about Hermes: there is one Hermes, in one placement. */

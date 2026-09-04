@@ -77,7 +77,7 @@ export interface HostFacade {
 
   setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): void;
   setOverlayActive(active: boolean): void;
-  setHostOverlayActive(senderId: number, active: boolean, owner?: 'picker' | 'workspace-drag' | 'legacy'): void;
+  setHostOverlayActive(senderId: number, active: boolean, owner?: 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy'): void;
   setTitleBarOverlay(senderId: number, color: string, symbolColor: string): void;
   getSettings(): unknown;
   setTransparentWindow(enabled: boolean): Promise<void>;
@@ -331,7 +331,7 @@ export function registerHostIpc(facade: HostFacade): void {
     facade.setHostOverlayActive(
       event.sender.id,
       z.boolean().parse(active),
-      z.enum(['picker', 'workspace-drag', 'legacy']).default('legacy').parse(owner),
+      z.enum(['picker', 'workspace-drag', 'workspace-resize', 'legacy']).default('legacy').parse(owner),
     ),
   );
   handle('host:layout:set-titlebar', (event, color, symbolColor) =>

@@ -706,6 +706,14 @@ input:focus-visible {
   cursor: wait;
   background: transparent;
 }
+.workspace-resize-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 75;
+  cursor: col-resize;
+  background: transparent;
+  pointer-events: none;
+}
 
 .backpack-sidebar {
   position: absolute;
@@ -817,6 +825,19 @@ input:focus-visible {
 :root[data-workspace-drag="true"] .workspace-dock .dv-groupview,
 :root[data-workspace-drag="true"] .workspace-dock .backpack-project-frame,
 :root[data-workspace-drag="true"] .workspace-dock .dv-groupview-content {
+  background: transparent !important;
+  --dv-group-view-background-color: transparent !important;
+}
+:root[data-workspace-resize="true"] .workspace-dock,
+:root[data-workspace-resize="true"],
+:root[data-workspace-resize="true"] body,
+:root[data-workspace-resize="true"] #root,
+:root[data-workspace-resize="true"] .app,
+:root[data-workspace-resize="true"] .workspace-dock .dockview-theme-light,
+:root[data-workspace-resize="true"] .workspace-dock .dv-dockview,
+:root[data-workspace-resize="true"] .workspace-dock .dv-groupview,
+:root[data-workspace-resize="true"] .workspace-dock .backpack-project-frame,
+:root[data-workspace-resize="true"] .workspace-dock .dv-groupview-content {
   background: transparent !important;
   --dv-group-view-background-color: transparent !important;
 }

@@ -9,9 +9,11 @@ import {
 import 'dockview-react/dist/styles/dockview.css';
 
 import { BackpackProjectFrame } from './BackpackProjectFrame';
+import type { HostOverlayOwner } from './bridge';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { rebuildWorkspaceGroupMap } from './workspaceGroupMapping';
 import { createWorkspaceReconciliationFeedbackGate } from './workspaceReconciliationFeedback';
+import { serializedRootForTopology } from './workspaceDockLayout';
 
 export interface OpenWorkspaceProject {
   surfaceId: string;
@@ -71,7 +73,7 @@ export function WorkspaceDock(props: {
   onClose: (surfaceId: string) => void;
   onSplit: (surfaceId: string, direction: 'right' | 'down', position?: 'before' | 'after') => string | void;
   onMove: (surfaceId: string, targetGroupId: string, targetIndex: number) => void;
-  onOverlayActiveChange?: (active: boolean) => void | Promise<void>;
+  onOverlayActiveChange?: (active: boolean, owner?: HostOverlayOwner) => void | Promise<void>;
   splitNotice?: { id: number; message: string } | null;
   interactionDisabled?: boolean;
   onCommitLayout: (snapshot: {
@@ -90,6 +92,8 @@ export function WorkspaceDock(props: {
   const apiSubscriptions = useRef<Array<{ dispose(): void }>>([]);
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const resizing = useRef(false);
+  const resizeSession = useRef<{ pointerId: number; generation: number; focusedGroupId: string; activeByGroup: Map<string, string | null>; captureTarget: HTMLElement | null } | null>(null);
+  const [resizeActive, setResizeActive] = useState(false);
   const sideDrop = useRef<{ surfaceId: string; position: SplitEdge } | null>(null);
   const previewRef = useRef<SplitPreview | null>(null);
   const previewCandidate = useRef<{ surfaceId: string; position: SplitEdge; generation: number } | null>(null);
@@ -105,16 +109,16 @@ export function WorkspaceDock(props: {
   topologyRef.current = topology;
   interactionDisabledRef.current = interactionDisabled;
 
-  const setHostOverlay = useCallback((active: boolean): void => {
-    void onOverlayActiveChange?.(active);
+  const setHostOverlay = useCallback((active: boolean, owner: HostOverlayOwner = 'workspace-drag'): void => {
+    void onOverlayActiveChange?.(active, owner);
   }, [onOverlayActiveChange]);
 
   const setDragSurfaceActive = useCallback((active: boolean): void => {
     document.documentElement.dataset.workspaceDrag = active ? 'true' : 'false';
   }, []);
 
-  const setHostOverlayAwaited = useCallback((active: boolean, guard?: () => boolean): Promise<void> => {
-    return Promise.resolve(onOverlayActiveChange?.(active)).then(() => {
+  const setHostOverlayAwaited = useCallback((active: boolean, guard?: () => boolean, owner: HostOverlayOwner = 'workspace-drag'): Promise<void> => {
+    return Promise.resolve(onOverlayActiveChange?.(active, owner)).then(() => {
       if (!guard || guard()) hostRaised.current = active;
     });
   }, [onOverlayActiveChange]);
@@ -214,36 +218,34 @@ export function WorkspaceDock(props: {
     onCommitLayout({ groups, ...(rootWeights ? { rootWeights } : {}) });
   }, [onCommitLayout, refreshGroupIds]);
 
-  useEffect(() => {
-    const finishResize = (): void => {
-      if (!resizing.current) return;
-      resizing.current = false;
-      if (apiRef.current) commitLayout(apiRef.current);
-    };
-    window.addEventListener('mouseup', finishResize);
-    window.addEventListener('pointercancel', finishResize);
-    window.addEventListener('blur', finishResize);
-    return () => {
-      window.removeEventListener('mouseup', finishResize);
-      window.removeEventListener('pointercancel', finishResize);
-      window.removeEventListener('blur', finishResize);
-    };
-  }, [commitLayout]);
-
   const reconcileFromTopology = useCallback((api: DockviewApi): void => {
     refreshGroupIds(api);
     const desired = topologyRef.current;
     const desiredGroups = desired.groups;
     const splitRoot = desired.root.kind === 'split' ? desired.root : null;
-    if (desiredGroups.length > 2 || (splitRoot
-      && !splitRoot.children.every((child) => child.kind === 'group'))) return;
+    const mutate = (operation: () => void): void => {
+      reconciliationFeedback.current.apply(operation);
+    };
+    const hasNestedLayout = desired.root.kind === 'split'
+      && desired.root.children.some((child) => child.kind === 'split');
+    if (desiredGroups.length > 2 || hasNestedLayout) {
+      try {
+        const current = api.toJSON();
+        const canonicalToDockview = new Map([...groupIds.current].map(([dockviewId, papersGroupId]) => [papersGroupId, dockviewId]));
+        const root = serializedRootForTopology(api, desired, canonicalToDockview, current);
+        mutate(() => api.fromJSON({ ...current, grid: { ...current.grid, root } }, { reuseExistingPanels: true }));
+        refreshGroupIds(api);
+      } catch {
+        // Keep the existing live projection intact if Dockview rejects a
+        // serialized shape; the canonical topology remains authoritative and
+        // the next external reconciliation will retry.
+      }
+      return;
+    }
     const firstSplitGroupId = splitRoot && splitRoot.children[0]?.kind === 'group'
       ? splitRoot.children[0].groupId
       : null;
 
-    const mutate = (operation: () => void): void => {
-      reconciliationFeedback.current.apply(operation);
-    };
     const dockGroupFor = (papersGroupId: string) => {
       const dockviewId = [...groupIds.current].find(([, id]) => id === papersGroupId)?.[0];
       return dockviewId ? api.groups.find((group) => group.id === dockviewId) : undefined;
@@ -298,6 +300,54 @@ export function WorkspaceDock(props: {
     }
 
   }, [refreshGroupIds]);
+
+  useEffect(() => {
+    const finishResize = (cancelled = false): void => {
+      const session = resizeSession.current;
+      if (!resizing.current || !session) return;
+      resizing.current = false;
+      resizeSession.current = null;
+      try { session.captureTarget?.releasePointerCapture(session.pointerId); } catch { /* capture may already be released */ }
+      setResizeActive(false);
+      document.documentElement.dataset.workspaceResize = 'false';
+      const api = apiRef.current;
+      if (api) {
+        for (const [groupId, activeSurfaceId] of session.activeByGroup) {
+          const dockviewId = [...groupIds.current].find(([, papersId]) => papersId === groupId)?.[0];
+          const panel = activeSurfaceId ? api.getPanel(activeSurfaceId) : undefined;
+          if (dockviewId && panel && panel.group.id !== dockviewId) continue;
+          if (panel && panel.group.activePanel?.id !== panel.id) reconciliationFeedback.current.apply(() => panel.api.setActive());
+        }
+        const focusedSurfaceId = session.activeByGroup.get(session.focusedGroupId);
+        const focusedPanel = focusedSurfaceId ? api.getPanel(focusedSurfaceId) : undefined;
+        if (focusedPanel && api.activePanel?.id !== focusedPanel.id) {
+          reconciliationFeedback.current.apply(() => focusedPanel.api.setActive());
+        }
+        if (cancelled) reconcileFromTopology(api);
+        else commitLayout(api);
+      }
+      setHostOverlay(false, 'workspace-resize');
+    };
+    const onPointerUp = (event: PointerEvent): void => {
+      if (resizeSession.current?.pointerId === event.pointerId) window.setTimeout(() => finishResize(), 0);
+    };
+    const onPointerCancel = (event: PointerEvent): void => {
+      if (resizeSession.current?.pointerId === event.pointerId) window.setTimeout(() => finishResize(true), 0);
+    };
+    const onBlur = (): void => finishResize(true);
+    const onMouseUp = (): void => { if (resizing.current) finishResize(); };
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      finishResize(true);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [commitLayout, reconcileFromTopology, setHostOverlay]);
 
   const consumePendingSplit = useCallback((): void => {
     const pending = sideDrop.current;
@@ -381,6 +431,14 @@ export function WorkspaceDock(props: {
     addMissingPanels(event.api);
     refreshGroupIds(event.api);
     apiSubscriptions.current.push(event.api.onDidActivePanelChange(({ panel, origin }) => {
+      if (resizing.current) {
+        const frozen = panel ? resizeSession.current?.activeByGroup.get(groupIds.current.get(panel.group.id) ?? '') : null;
+        if (panel && frozen && frozen !== panel.id) {
+          const expected = event.api.getPanel(frozen);
+          if (expected) reconciliationFeedback.current.apply(() => expected.api.setActive());
+        }
+        return;
+      }
       if (panel && !interactionDisabledRef.current && !reconciliationFeedback.current.isSuppressed() && origin !== 'api') onActivate(panel.id);
     }));
     apiSubscriptions.current.push(event.api.onDidRemovePanel((panel) => {
@@ -389,6 +447,7 @@ export function WorkspaceDock(props: {
       onClose(panel.id);
     }));
     apiSubscriptions.current.push(event.api.onDidMovePanel(({ panel, to }) => {
+      if (resizing.current) return;
       if (reconciliationFeedback.current.isSuppressed()) return;
       const targetGroupId = groupIds.current.get(to.id);
       if (!targetGroupId) return;
@@ -448,9 +507,7 @@ export function WorkspaceDock(props: {
         const source = surfaceId
           ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
           : undefined;
-        const allowSideDrop = !interactionDisabledRef.current
-          && topologyRef.current.root.kind === 'group'
-          && topologyRef.current.groups.length === 1
+      const allowSideDrop = !interactionDisabledRef.current
           && Boolean(source && source.surfaceIds.length >= 2)
           && Boolean(surfaceId);
         if (!allowSideDrop || !surfaceId) {
@@ -462,9 +519,9 @@ export function WorkspaceDock(props: {
             armed: true,
             message: interactionDisabledRef.current
               ? 'Split unavailable — workspace is busy'
-              : topologyRef.current.root.kind !== 'group' || topologyRef.current.groups.length !== 1
-                ? 'Split unavailable — layout is already split'
-                : 'Split unavailable — keep another tab in this group',
+              : !source || source.surfaceIds.length < 2
+                ? 'Split unavailable — keep another tab in this group'
+                : 'Split unavailable — layout is busy',
           });
           setHostOverlay(true);
           return;
@@ -565,8 +622,6 @@ export function WorkspaceDock(props: {
         ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
         : undefined;
       const allowSideDrop = !interactionDisabledRef.current
-        && topologyRef.current.root.kind === 'group'
-        && topologyRef.current.groups.length === 1
         && Boolean(source && source.surfaceIds.length >= 2)
         && Boolean(surfaceId);
       if (!allowSideDrop || !surfaceId) {
@@ -741,7 +796,7 @@ export function WorkspaceDock(props: {
     ? topology.groups.find((group) => group.surfaceIds.includes(activeSurfaceId))
     : undefined;
   const canSplit = Boolean(
-    !interactionDisabled && activeSurfaceId && activeGroup && activeGroup.surfaceIds.length > 1 && topology.root.kind === 'group',
+    !interactionDisabled && activeSurfaceId && activeGroup && activeGroup.surfaceIds.length > 1,
   );
 
   return (
@@ -769,12 +824,12 @@ export function WorkspaceDock(props: {
             if (canSplit) splitActive(command[0], command[1]);
             else showRejected(
               command[0] === 'right' ? (command[1] === 'before' ? 'left' : 'right') : (command[1] === 'before' ? 'top' : 'bottom'),
-              interactionDisabled ? 'Split unavailable — workspace is busy' : topology.root.kind !== 'group' ? 'Split unavailable — layout is already split' : 'Split unavailable — keep another tab in this group',
+              interactionDisabled ? 'Split unavailable — workspace is busy' : 'Split unavailable — keep another tab in this group',
             );
           }
         }
       }}
-      onMouseDownCapture={(event) => {
+      onPointerDownCapture={(event) => {
         if (interactionDisabled) {
           if (event.target instanceof Element && event.target.closest('.dv-sash')) {
             event.preventDefault();
@@ -784,7 +839,21 @@ export function WorkspaceDock(props: {
         }
         if (event.button !== 0 || !(event.target instanceof Element)
           || !event.target.closest('.dv-sash')) return;
+        if (resizing.current) return;
         resizing.current = true;
+        const generation = dragSessionGeneration.current + 1;
+        dragSessionGeneration.current = generation;
+        resizeSession.current = {
+          pointerId: event.pointerId,
+          generation,
+          focusedGroupId: topologyRef.current.focusedGroupId,
+          activeByGroup: new Map(topologyRef.current.groups.map((group) => [group.groupId, group.activeSurfaceId])),
+          captureTarget: event.currentTarget,
+        };
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Dockview may own capture */ }
+        setResizeActive(true);
+        document.documentElement.dataset.workspaceResize = 'true';
+        void setHostOverlayAwaited(true, () => resizeSession.current?.generation === generation, 'workspace-resize');
       }}
       onDragLeaveCapture={(event) => {
         if (!dragActive.current) return;
@@ -816,6 +885,7 @@ export function WorkspaceDock(props: {
         disableFloatingGroups
         dropPositionResolver={resolveWorkspaceDropPosition}
       />
+      {resizeActive && <div className="workspace-resize-shield" aria-hidden="true" />}
       {interactionDisabled && <div className="workspace-interaction-shield" aria-hidden="true" />}
     </section>
   );

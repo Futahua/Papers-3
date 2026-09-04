@@ -333,13 +333,13 @@ export function App(): React.JSX.Element {
     void host().layout.setHostOverlayActive(workspaceOverlayActive, 'workspace-drag').catch(() => undefined);
   }, [workspaceOverlayActive]);
 
-  const setWorkspaceOverlayFromDock = useCallback((active: boolean): Promise<void> => {
-    setWorkspaceOverlayActive(active);
+  const setWorkspaceOverlayFromDock = useCallback((active: boolean, owner: 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy' = 'workspace-drag'): Promise<void> => {
+    if (owner === 'workspace-drag') setWorkspaceOverlayActive(active);
     // A drag needs an acknowledgement that Electron has raised the host
     // child view before its preview may become armed. Native ownership is
     // tracked by owner token in main, so releasing this lease cannot lower the
     // host while the picker or a status overlay still owns it.
-    return host().layout.setHostOverlayActive(active, 'workspace-drag');
+    return host().layout.setHostOverlayActive(active, owner);
   }, []);
 
   // Dismiss the Basic menu on outside click.
@@ -428,7 +428,6 @@ export function App(): React.JSX.Element {
   const splitWorkspaceProject = useCallback((splitSurfaceId: string, direction: 'right' | 'down', position: 'before' | 'after' = 'after'): string => {
     const newGroupId = `group-${splitSurfaceId}-${crypto.randomUUID()}`;
     setWorkspaceTopology((topology) => {
-      if (topology.root.kind === 'split') return topology;
       const source = topology.groups.find((group) => group.surfaceIds.includes(splitSurfaceId));
       if (!source || source.surfaceIds.length < 2) return topology;
       return splitWorkspaceGroup(topology, {

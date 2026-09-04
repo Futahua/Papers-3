@@ -155,7 +155,7 @@ interface PapersWindowOwned {
 }
 
   const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
-  const hostOverlayOwners = new Map<number, Set<'picker' | 'workspace-drag' | 'legacy'>>();
+  const hostOverlayOwners = new Map<number, Set<'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy'>>();
 const workspaceTopologies = new Map<number, WorkspaceTopologyV1>();
 const workspaceTopologyRevisions = new Map<number, number>();
 /** Live-only association. Durable workspace IDs persist; native window IDs do not. */
@@ -475,8 +475,9 @@ async function bootstrap(): Promise<void> {
   };
   const applyHostViewBackground = (windowId: number, view: WebContentsView): void => {
     const workspaceDragActive = hostOverlayOwners.get(windowId)?.has('workspace-drag') ?? false;
+    const workspaceResizeActive = hostOverlayOwners.get(windowId)?.has('workspace-resize') ?? false;
     view.setBackgroundColor(
-      workspaceDragActive || papersSettings.transparentWindow
+      workspaceDragActive || workspaceResizeActive || papersSettings.transparentWindow
         ? TRANSPARENT_CHILD_SURFACE_COLOR
         : OPAQUE_SURFACE_COLOR,
     );
@@ -1156,7 +1157,7 @@ async function bootstrap(): Promise<void> {
     setHostOverlayActive: (windowId, active, owner = 'legacy') => {
       const context = papersWindows.get(windowId);
       if (!context || context.owned.window.isDestroyed()) return;
-      const owners = hostOverlayOwners.get(windowId) ?? new Set<'picker' | 'workspace-drag' | 'legacy'>();
+      const owners = hostOverlayOwners.get(windowId) ?? new Set<'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy'>();
       if (active) owners.add(owner);
       else owners.delete(owner);
       if (owners.size === 0) hostOverlayOwners.delete(windowId);

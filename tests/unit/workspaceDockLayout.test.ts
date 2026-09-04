@@ -1,0 +1,50 @@
+import { describe, expect, it } from 'vitest';
+import { serializedRootForTopology } from '../../src/host/workspaceDockLayout';
+import type { WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
+
+describe('workspace Dockview recursive adapter', () => {
+  it('projects mixed nested canonical splits into Dockview branches with stable group ids', () => {
+    const topology: WorkspaceTopologyV1 = {
+      schemaVersion: 1,
+      surfaces: [
+        { surfaceId: 'a', projectId: 'pa', title: 'A' },
+        { surfaceId: 'b', projectId: 'pb', title: 'B' },
+        { surfaceId: 'c', projectId: 'pc', title: 'C' },
+      ],
+      groups: [
+        { groupId: 'group-a', surfaceIds: ['a'], activeSurfaceId: 'a' },
+        { groupId: 'group-b', surfaceIds: ['b'], activeSurfaceId: 'b' },
+        { groupId: 'group-c', surfaceIds: ['c'], activeSurfaceId: 'c' },
+      ],
+      root: {
+        kind: 'split', orientation: 'horizontal', weights: [0.4, 0.6], children: [
+          { kind: 'group', groupId: 'group-a' },
+          { kind: 'split', orientation: 'vertical', weights: [0.5, 0.5], children: [
+            { kind: 'group', groupId: 'group-b' },
+            { kind: 'group', groupId: 'group-c' },
+          ] },
+        ],
+      },
+      focusedGroupId: 'group-c',
+    };
+    const api = {
+      groups: [
+        { id: 'dock-a', panels: [{ id: 'a' }] },
+        { id: 'dock-b', panels: [{ id: 'b' }] },
+        { id: 'dock-c', panels: [{ id: 'c' }] },
+      ],
+    } as never;
+    const existing = {
+      panels: {},
+      grid: { root: { type: 'leaf', data: { id: 'dock-a', views: ['a'] }, size: 1 }, height: 100, width: 100, orientation: 'horizontal' },
+    } as never;
+    const root = serializedRootForTopology(api, topology, new Map([
+      ['group-a', 'dock-a'], ['group-b', 'dock-b'], ['group-c', 'dock-c'],
+    ]), existing);
+    expect(root.type).toBe('branch');
+    expect(root.data).toHaveLength(2);
+    const nested = (root.data as Array<{ type: string; data: unknown }>)[1]!;
+    expect(nested.type).toBe('branch');
+    expect((nested.data as Array<{ data: { id: string } }>).map((leaf) => leaf.data.id)).toEqual(['dock-b', 'dock-c']);
+  });
+});

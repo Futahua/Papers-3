@@ -84,7 +84,7 @@ const api = {
     setProgramBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke('host:layout:set-program-bounds', bounds),
     setOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-overlay', active),
-    setHostOverlayActive: (active: boolean, owner: 'picker' | 'workspace-drag' | 'legacy' = 'legacy') =>
+    setHostOverlayActive: (active: boolean, owner: 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy' = 'legacy') =>
       ipcRenderer.invoke('host:layout:set-host-overlay', active, owner),
     setTitleBarOverlay: (color: string, symbolColor: string) =>
       ipcRenderer.invoke('host:layout:set-titlebar', color, symbolColor),
