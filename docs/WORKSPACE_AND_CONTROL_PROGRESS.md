@@ -3006,3 +3006,28 @@ creator-authorized live swap still requires physical Windows acceptance of the
 reviewer's final matrix: mixed 6+ pane reload with stable sender IDs, native
 clicks in every visible pane, held-sash remote mutation, touch/pen terminal
 handling, rapid resize→tab-drag, and picker+resize owner overlap.
+
+### 10.4 Creator-authorized live installation (2026-09-04 23:28 local)
+
+The creator authorized installation of the resize and nested-tiling source
+sign-off. Only Papers processes were closed, and the previous live
+`Runtime/App` was moved reversibly to
+`Runtime/Backups/before-live-install-20260904-232843`. The prepared unpacked
+package was copied into the original `Runtime/App` path; no installer release,
+publication, second app copy, or `Runtime\Data` mutation was performed.
+
+The installed executable, package executable, and the existing desktop
+shortcut-resolved executable all hash to
+`D8A437B17D98948B487A7AFB98AEA80D3FE184575D30CD5B671559125ECF6CDD` (package
+built from source sign-off `b930ba35`). The `Papers` desktop shortcut still
+targets `D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, which remains the
+same junction-backed runtime path. A clean before/after manifest found all 192
+`Runtime/Data` files byte-for-byte unchanged.
+
+Against the installed executable, isolated single-worker packaged
+`backpack-navigation.e2e.ts` passed on retry after one intermittent resize
+timeout, and `workspace-tabs.e2e.ts` passed. The source and packaged acceptance
+remain valid; the reviewer's physical native matrix (mixed 6+ pane reload,
+native clicks in every pane, held-sash remote mutation, touch/pen terminals,
+rapid resize→tab-drag, and picker+resize owner overlap) is still a separate
+Windows acceptance gate and was not claimed by this install.
