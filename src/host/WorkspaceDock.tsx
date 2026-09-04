@@ -68,6 +68,7 @@ export function WorkspaceDock(props: {
   const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onOverlayActiveChange, splitNotice, onCommitLayout,
     interactionDisabled = false } = props;
   const apiRef = useRef<DockviewApi | null>(null);
+  const dockRootRef = useRef<HTMLElement | null>(null);
   const projectsRef = useRef(projects);
   const topologyRef = useRef(topology);
   const synchronizingRemovals = useRef(new Set<string>());
@@ -93,6 +94,10 @@ export function WorkspaceDock(props: {
   const setHostOverlay = useCallback((active: boolean): void => {
     void onOverlayActiveChange?.(active);
   }, [onOverlayActiveChange]);
+
+  const setDragSurfaceActive = useCallback((active: boolean): void => {
+    dockRootRef.current?.classList.toggle('workspace-drag-active', active);
+  }, []);
 
   const setHostOverlayAwaited = useCallback((active: boolean, guard?: () => boolean): Promise<void> => {
     return Promise.resolve(onOverlayActiveChange?.(active)).then(() => {
@@ -296,11 +301,12 @@ export function WorkspaceDock(props: {
       pointerDragCleanup.current?.();
       pointerDragCleanup.current = null;
       dragActive.current = false;
+      setDragSurfaceActive(false);
       const current = previewRef.current;
       if (current?.allowed) clearPreview();
       else if (current) showRejected(current.position, current.message);
       else clearPreview();
-  }, [clearPreview, showRejected]);
+  }, [clearPreview, setDragSurfaceActive, showRejected]);
 
   useEffect(() => {
     window.addEventListener('dragend', finishDrop);
@@ -313,9 +319,10 @@ export function WorkspaceDock(props: {
       pointerDragCleanup.current?.();
       pointerDragCleanup.current = null;
       dragActive.current = false;
+      setDragSurfaceActive(false);
       clearPreview();
     };
-  }, [clearPreview, finishDrop]);
+  }, [clearPreview, finishDrop, setDragSurfaceActive]);
 
   const components = useMemo(() => ({ workspace: WorkspacePanel }), []);
   const addMissingPanels = useCallback((api: DockviewApi): void => {
@@ -583,8 +590,14 @@ export function WorkspaceDock(props: {
       setPreview(null);
       dragActive.current = true;
       hostRaised.current = false;
+      setDragSurfaceActive(true);
       pointerDragCleanup.current?.();
       pointerDragCleanup.current = null;
+      // Claim host input before the pointer can cross a native project view;
+      // otherwise Dockview may never receive the edge dragover needed to
+      // discover a split candidate. The active-drag CSS keeps the project
+      // placeholder transparent so the live native surface remains visible.
+      void setHostOverlayAwaited(true);
       // Dockview's pointer backend (touch/pen, and all input on coarse
       // systems) terminates on its own window pointerup and does not emit a
       // native HTML5 dragend/drop. Mirror that terminal boundary locally so
@@ -615,7 +628,7 @@ export function WorkspaceDock(props: {
       // Keep the source identity available for the first overlay callback.
       previewCandidate.current = { surfaceId: panel.id, position: 'right', generation: previewGeneration.current };
     }));
-  }, [addMissingPanels, clearPreview, commitLayout, consumePendingSplit, finishDrop, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
+  }, [addMissingPanels, clearPreview, commitLayout, consumePendingSplit, finishDrop, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setDragSurfaceActive, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
 
   useEffect(() => {
     const api = apiRef.current;
@@ -656,7 +669,7 @@ export function WorkspaceDock(props: {
   );
 
   return (
-    <section className="workspace-dock" aria-label="Workspace tabs"
+    <section ref={dockRootRef} className="workspace-dock" aria-label="Workspace tabs"
       tabIndex={0}
       data-split={topology.root.kind === 'split' ? '' : undefined}
       aria-busy={interactionDisabled || undefined}

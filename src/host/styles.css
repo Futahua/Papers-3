@@ -798,6 +798,14 @@ input:focus-visible {
 .workspace-split-preview[data-position="top"] { inset: 42px 0 50% 0; }
 .workspace-split-preview[data-position="bottom"] { inset: 50% 0 0 0; }
 
+/* During a tab drag the host is temporarily composited above native project
+   views so Dockview can continue receiving edge hit-testing. Keep the
+   renderer-owned placeholder clear so the live project remains visible below
+   the host while its tab strip and split preview stay interactive. */
+.workspace-drag-active .backpack-project-frame {
+  background: transparent;
+}
+
 .backpack-project-frame {
   position: relative;
   width: 100%;
