@@ -50,6 +50,20 @@ durability and cross-window/archived-target rejection.
 The runtime unit suite also proves a rejected voluntary flush restores the
 same native sender/presentation without closing it.
 
+Deployment checkpoint (creator-authorized, 2026-09-04): packaged and installed
+exact source `de0830d0dd3a5da12500b9c1478ba5237e21cca6` into the existing
+canonical `Runtime\App` using the NSIS installer (exit 0), then launched the
+live alias. The rollback snapshot is
+`Runtime\Backups\before-live-install-20260904-134820` (App, Data, and shortcut).
+Installed/package `app.asar` SHA-256 match:
+`957695A770212FFC63AD3161B58F71B92C216A9D9F5346A6477B4F0418D7FB3E`.
+The live Data tree digest is unchanged at
+`E2EF452E7B20F967032708B164C5F7546FDABB4B2F7EB9E57604FB69548B81EF`, and the
+desktop shortcut hash is unchanged at
+`97B9F14AE6FAFF9F41157A5582CBEAED3E091F212F5209F8389D5A8D9834B4EC`.
+Installer archive: `Runtime\Installers\Papers-Setup-1.3.11-66D9BB11.exe`.
+No Runtime\Data, creator data, or As you Go source was modified.
+
 ## Creator acceptance and positioning reversal — 2026-09-04
 
 Follow-up correction: the creator reported indefinite motion after `d15f717`.
