@@ -2879,3 +2879,42 @@ latter needs a Papers-native hit-testing/compositor design and physical-input
 acceptance. A candidate implementation was intentionally reverted after it
 regressed the focused E2E path, so the signed-off live build remains unchanged
 until that follow-up is proven.
+
+## 10. Screenshot-class drag hardening source sign-off (2026-09-04)
+
+The follow-up Papers source chain is now reviewed and signed off at
+`33cd66debccd968b811e9accf790b26fc10497c2` (READY / SIGNED OFF — source).
+The chain closes the concrete source blockers found in the screenshot audit:
+
+* Dockview content resolution uses an explicit deterministic center/edge
+  resolver; center and `header_space` transitions visibly explain that they are
+  reorder/keep-in-group targets and explicitly clear `sideDrop`, candidate
+  generation and preview state.
+* Workspace drag ownership is acquired on the next animation frame and is
+  generation guarded. Picker and workspace drag use independent host-overlay
+  owner leases, so releasing one cannot lower the host while another remains.
+* Native host backing and every repaint path derive from one owner-aware
+  function. During a workspace drag, the host backing and the complete
+  renderer paint chain (`:root`, `body`, `#root`, `.app`, Dockview roots and
+  `.backpack-project-frame`) are transparent, preserving native project pixels
+  beneath the Papers preview in opaque mode.
+
+Validation at the signed-off source head: typecheck passed; full unit suite
+passed (92 files, 902 tests, 4 skipped); focused `backpack-navigation` and
+`workspace-tabs` E2Es passed together; production build and `git diff --check`
+passed. The protected `docs/evidence/worker-comparison.json` remains the only
+uncommitted user-owned change.
+
+This is source sign-off, not installed-runtime sign-off. The remaining gate is
+one physical Windows/Electron acceptance with a real native As-you-Go surface:
+hold a tab over a split band inside the project rectangle, capture the composed
+window before release, prove live project pixels plus armed preview, then prove
+exactly one persisted split. The same run must cover all four edges, center,
+`header_space`, fast release, delayed compositor acknowledgement, and picker
+open/close ownership. No new live install or release is implied by this record.
+
+The As-you-Go button/handle correction remains independent project work at its
+audited source head `4e27ba22799977ad167498808f8c0c33d419ab50`: action buttons
+must become pure buttons, movement must use an explicit handle, and cancel/lost
+capture/blur must roll back without persistence or click suppression. No
+As-you-Go implementation is included in this Papers commit.
