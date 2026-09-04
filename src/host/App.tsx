@@ -451,7 +451,7 @@ export function App(): React.JSX.Element {
           onKeyDown={(event) => { if (event.key === 'Escape') { setSidebarOpen(false); setBasicOpen(false); } }}>
           <button
             className={`pill-button${basicOpen ? ' active' : ''}`}
-            aria-haspopup={basicOpen ? 'menu' : sidebarOpen ? 'true' : undefined}
+            aria-haspopup={basicOpen ? 'menu' : undefined}
             aria-controls={basicOpen ? 'basic-menu' : sidebarOpen ? 'backpack-sidebar' : undefined}
             aria-expanded={basicOpen || sidebarOpen}
             aria-label={
