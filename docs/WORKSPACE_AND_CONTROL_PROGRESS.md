@@ -6,6 +6,19 @@ Working branch: `agent/surface-context-routing`
 
 ## Creator acceptance and positioning reversal — 2026-09-04
 
+Follow-up correction: the creator reported indefinite motion after `d15f717`.
+Its unconditional reheat let periodic coordinated position saves restart the
+simulation on every render. As you Go
+`4e27ba22799977ad167498808f8c0c33d419ab50` now reheats only when physical layout
+inputs change (entry, topology, sets, pins, node size or viewport), while ordinary
+position/status updates allow cooling. Entry still starts physics; this does
+not restore the rejected saved-position freeze. All 1,116 unit tests and 8
+visual pretests pass. A two-native-window synthetic test with six folders and
+overlapping sets fails on `d15f717` and passes with the fix against installed
+Papers: after 12 seconds, node transforms stay unchanged for 3 further seconds,
+and all six positions are saved. The live bound project contains the correction;
+existing tabs need reopening. No creator data or Papers binary was changed.
+
 The creator confirms that multiple-window interactions work well, and requests
 restoring positioning from before the "already settled on entry" change.
 As you Go commit `d15f717a79a7dc55bde0526b788d9fb144921230` removes the
