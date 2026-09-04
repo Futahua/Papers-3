@@ -4,6 +4,24 @@ Last updated: 2026-09-03
 Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`, and packaged visual success/failure plus stdio MCP acceptance signed off at `d977a2974beddd1ea94aade311c65ab9e29fec74`; the reviewed C1 core is complete, while only older live-fixture integration checklists remain outside this acceptance record
 Working branch: `agent/surface-context-routing`
 
+## Creator acceptance and positioning reversal — 2026-09-04
+
+The creator confirms that multiple-window interactions work well, and requests
+restoring positioning from before the "already settled on entry" change.
+As you Go commit `d15f717a79a7dc55bde0526b788d9fb144921230` removes the
+simulation-freeze rule introduced at `f10c6df` and its later topology guards.
+Entry and updates again reheat the physics simulation from remembered starting
+coordinates. Coordination, state merging, durable save queues and close-time
+flushes are retained. This is a project-only change in the live bound project;
+existing tabs must be reopened to load it. Papers was not rebuilt or restarted.
+
+Validation: 1,114 project unit tests pass, plus 8 visual pretests. The new
+production-function entry tests fail twice before the revert and pass afterward.
+Packaged visual acceptance reaches rendering and capture but fails its saved
+PNG hash check both before (`f4e2c42`, isolated checkout) and after this change.
+That existing baseline gate is not signed off by this correction, and no
+baseline was overwritten. No creator state file was edited.
+
 ## Post-C1 transparency incident — 2026-09-03
 
 The creator's live screenshot shows an opaque project rectangle despite enabled
