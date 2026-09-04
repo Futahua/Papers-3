@@ -2850,3 +2850,18 @@ guarantee layer above native Backpack surfaces.
 The implementation is Papers-generic. Backpack project URLs remain authenticated
 and project-owned; Papers does not interpret folder/document data. The protected
 user-owned `docs/evidence/worker-comparison.json` remains outside this change.
+
+## 8. Signed-off live installation (2026-09-04)
+
+Reviewer sign-off: `ddaec3384ba3bffd63650941b713acc76af0311c` (READY / SIGNED
+OFF). A fresh `npm run package:dir` build from that source was installed into
+the user-facing `Runtime/App` junction target after stopping only Papers
+processes. The installed `Papers.exe` SHA-256 is
+`FA8C1B0C0D698796ED4E63665F0E0A7558CC2C4226D2DFF82F59C564CB8B7BD1`, matching
+the unpacked package exactly.
+
+Rollback is reversible by moving the current `Runtime/App` aside and restoring
+`Runtime/Backups/before-live-install-20260904-164700` to `Runtime/App`.
+`Runtime/Data` was not changed. The existing desktop shortcut still resolves
+through `D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, which is the same
+junction-backed executable.
