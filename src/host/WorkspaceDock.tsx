@@ -339,22 +339,32 @@ export function WorkspaceDock(props: {
     };
     finishResizeRef.current = finishResize;
     const onPointerUp = (event: PointerEvent): void => {
-      if (resizeSession.current?.pointerId === event.pointerId) window.setTimeout(() => finishResize(), 0);
+      const session = resizeSession.current;
+      if (session?.pointerId === event.pointerId) {
+        const generation = session.generation;
+        window.setTimeout(() => {
+          if (resizeSession.current?.generation === generation) finishResize();
+        }, 0);
+      }
     };
     const onPointerCancel = (event: PointerEvent): void => {
-      if (resizeSession.current?.pointerId === event.pointerId) window.setTimeout(() => finishResize(true), 0);
+      const session = resizeSession.current;
+      if (session?.pointerId === event.pointerId) {
+        const generation = session.generation;
+        window.setTimeout(() => {
+          if (resizeSession.current?.generation === generation) finishResize(true);
+        }, 0);
+      }
     };
     const onBlur = (): void => finishResize(true);
     const onLostPointerCapture = (event: PointerEvent): void => {
       if (resizeSession.current?.pointerId === event.pointerId) finishResize(true);
     };
     const onContextMenu = (): void => { if (resizing.current) finishResize(true); };
-    const onMouseUp = (): void => { if (resizing.current) finishResize(); };
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
     window.addEventListener('lostpointercapture', onLostPointerCapture);
     window.addEventListener('contextmenu', onContextMenu, true);
-    window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('blur', onBlur);
     return () => {
       finishResize(true);
@@ -363,7 +373,6 @@ export function WorkspaceDock(props: {
       window.removeEventListener('pointercancel', onPointerCancel);
       window.removeEventListener('lostpointercapture', onLostPointerCapture);
       window.removeEventListener('contextmenu', onContextMenu, true);
-      window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('blur', onBlur);
     };
   }, [commitLayout, reconcileFromTopology, setHostOverlay]);

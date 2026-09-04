@@ -14,6 +14,7 @@ import {
   normalizeWorkspaceLayout,
   splitWorkspaceGroup,
 } from '../../src/shared/workspaceTopology';
+import type { WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 
 describe('workspace topology', () => {
   it('inserts a cross-window surface at an explicit destination index', () => {
@@ -177,6 +178,32 @@ describe('workspace topology', () => {
       ],
     });
     expect(normalized.kind === 'split' ? normalized.weights : []).toEqual([0.25, 0.15, 0.6].map((weight) => expect.closeTo(weight, 10)));
+  });
+
+  it('renormalizes surviving sibling geometry after nested group removal', () => {
+    const topology = {
+      schemaVersion: 1 as const,
+      surfaces: [
+        { surfaceId: 'a', projectId: 'pa', title: 'A' },
+        { surfaceId: 'b', projectId: 'pb', title: 'B' },
+        { surfaceId: 'c', projectId: 'pc', title: 'C' },
+      ],
+      groups: [
+        { groupId: 'a', surfaceIds: ['a'], activeSurfaceId: 'a' },
+        { groupId: 'b', surfaceIds: ['b'], activeSurfaceId: 'b' },
+        { groupId: 'c', surfaceIds: ['c'], activeSurfaceId: 'c' },
+      ],
+      root: { kind: 'split' as const, orientation: 'horizontal' as const, weights: [0.2, 0.3, 0.5], children: [
+        { kind: 'group' as const, groupId: 'a' }, { kind: 'group' as const, groupId: 'b' }, { kind: 'group' as const, groupId: 'c' },
+      ] },
+      focusedGroupId: 'a',
+    } satisfies WorkspaceTopologyV1;
+    const closed = closeWorkspaceSurface(topology, 'b');
+    expect(closed.root.kind).toBe('split');
+    if (closed.root.kind === 'split') {
+      expect(closed.root.weights[0]).toBeCloseTo(2 / 7, 10);
+      expect(closed.root.weights[1]).toBeCloseTo(5 / 7, 10);
+    }
   });
 
   it('purely remaps split surface identity while preserving project and layout semantics', () => {

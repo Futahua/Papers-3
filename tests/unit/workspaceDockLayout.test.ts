@@ -93,4 +93,30 @@ describe('workspace Dockview recursive adapter', () => {
       ],
     });
   });
+
+  it('allocates distinct stable live groups when hydrating a coarse one-group layout', () => {
+    const topology: WorkspaceTopologyV1 = {
+      schemaVersion: 1,
+      surfaces: [
+        { surfaceId: 'a', projectId: 'pa', title: 'A' },
+        { surfaceId: 'b', projectId: 'pb', title: 'B' },
+        { surfaceId: 'c', projectId: 'pc', title: 'C' },
+      ],
+      groups: [
+        { groupId: 'group-a', surfaceIds: ['a'], activeSurfaceId: 'a' },
+        { groupId: 'group-b', surfaceIds: ['b'], activeSurfaceId: 'b' },
+        { groupId: 'group-c', surfaceIds: ['c'], activeSurfaceId: 'c' },
+      ],
+      root: { kind: 'split', orientation: 'horizontal', weights: [1 / 3, 1 / 3, 1 / 3], children: [
+        { kind: 'group', groupId: 'group-a' }, { kind: 'group', groupId: 'group-b' }, { kind: 'group', groupId: 'group-c' },
+      ] },
+      focusedGroupId: 'group-a',
+    };
+    const api = { groups: [{ id: 'coarse', panels: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }] } as never;
+    const root = serializedRootForTopology(api, topology, new Map(), { panels: {}, grid: {} } as never);
+    const ids = (root.data as Array<{ data: { id: string } }>).map((leaf) => leaf.data.id);
+    expect(new Set(ids).size).toBe(3);
+    expect(ids[0]).toBe('coarse');
+    expect(ids.slice(1)).toEqual(['group-b', 'group-c']);
+  });
 });

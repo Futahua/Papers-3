@@ -11,10 +11,16 @@ type SerializedGridObject = {
 
 type SerializedGroup = { id: string; views: string[]; activeView?: string };
 
-function groupDockviewId(api: DockviewApi, papersGroupId: string, surfaceIds: readonly string[], mapping: ReadonlyMap<string, string>): string | undefined {
+function groupDockviewId(api: DockviewApi, papersGroupId: string, surfaceIds: readonly string[], mapping: ReadonlyMap<string, string>, used: ReadonlySet<string>): string {
   const existing = mapping.get(papersGroupId);
   if (existing && api.groups.some((group) => group.id === existing)) return existing;
-  return api.groups.find((group) => group.panels.some((panel) => surfaceIds.includes(panel.id)))?.id;
+  const matching = api.groups.find((group) => !used.has(group.id) && group.panels.some((panel) => surfaceIds.includes(panel.id)));
+  if (matching) return matching.id;
+  const base = papersGroupId;
+  if (!api.groups.some((group) => group.id === base) && !used.has(base)) return base;
+  let suffix = 1;
+  while (api.groups.some((group) => group.id === `${base}-dock-${suffix}`) || used.has(`${base}-dock-${suffix}`)) suffix += 1;
+  return `${base}-dock-${suffix}`;
 }
 
 export function serializedRootForTopology(
@@ -24,12 +30,13 @@ export function serializedRootForTopology(
   existing: ReturnType<DockviewApi['toJSON']>,
 ): ReturnType<DockviewApi['toJSON']>['grid']['root'] {
   const byGroup = new Map(topology.groups.map((group) => [group.groupId, group]));
+  const usedDockviewIds = new Set<string>();
   const convert = (node: WorkspaceLayoutNode): SerializedGridObject => {
     if (node.kind === 'group') {
       const group = byGroup.get(node.groupId);
       if (!group) throw new Error(`Canonical group missing for ${node.groupId}`);
-      const dockviewId = groupDockviewId(api, node.groupId, group.surfaceIds, mapping);
-      if (!dockviewId) throw new Error(`Dockview group missing for ${node.groupId}`);
+      const dockviewId = groupDockviewId(api, node.groupId, group.surfaceIds, mapping, usedDockviewIds);
+      usedDockviewIds.add(dockviewId);
     const data: SerializedGroup = {
       id: dockviewId,
       views: [...group.surfaceIds],

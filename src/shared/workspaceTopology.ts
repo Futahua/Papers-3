@@ -272,13 +272,18 @@ function replaceGroupNode(
 
 function removeGroupNode(node: WorkspaceLayoutNode, groupId: string): WorkspaceLayoutNode | null {
   if (node.kind === 'group') return node.groupId === groupId ? null : { ...node };
-  const children = node.children
-    .map((child) => removeGroupNode(child, groupId))
-    .filter((child): child is WorkspaceLayoutNode => child !== null);
-  if (children.length === 0) return null;
-  if (children.length === 1) return children[0]!;
-  const weight = 1 / children.length;
-  return { ...node, children, weights: children.map(() => weight) };
+  const survivors = node.children.map((child, index) => ({
+    child: removeGroupNode(child, groupId),
+    weight: node.weights[index] ?? 1,
+  })).filter((entry): entry is { child: WorkspaceLayoutNode; weight: number } => entry.child !== null);
+  if (survivors.length === 0) return null;
+  if (survivors.length === 1) return survivors[0]!.child;
+  const total = survivors.reduce((sum, entry) => sum + entry.weight, 0);
+  return {
+    ...node,
+    children: survivors.map((entry) => entry.child),
+    weights: survivors.map((entry) => entry.weight / total),
+  };
 }
 
 export function moveWorkspaceSurface(
