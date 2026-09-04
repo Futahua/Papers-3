@@ -2864,4 +2864,6 @@ Rollback is reversible by moving the current `Runtime/App` aside and restoring
 `Runtime/Backups/before-live-install-20260904-164700` to `Runtime/App`.
 `Runtime/Data` was not changed. The existing desktop shortcut still resolves
 through `D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, which is the same
-junction-backed executable.
+junction-backed executable. Packaged acceptance was re-run against the installed
+executable with the isolated backpack-navigation and workspace-tabs E2Es; both
+passed.
