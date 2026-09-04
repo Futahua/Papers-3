@@ -234,7 +234,25 @@ export function WorkspaceDock(props: {
     };
     const hasNestedLayout = desired.root.kind === 'split'
       && desired.root.children.some((child) => child.kind === 'split');
-    const needsRecursiveProjection = desiredGroups.length > 2 || hasNestedLayout || api.groups.length < desiredGroups.length;
+    let twoGroupShapeMismatch = false;
+    if (desired.root.kind === 'split' && desiredGroups.length === 2 && api.groups.length === 2) {
+      try {
+        const live = api.toJSON();
+        const expectedOrientation = desired.root.orientation === 'vertical' ? Orientation.VERTICAL : Orientation.HORIZONTAL;
+        const liveRoot = live.grid.root as { type?: string; data?: Array<{ type?: string; data?: { id?: string } }> };
+        const expectedIds = desired.root.children.map((child) => child.kind === 'group'
+          ? [...groupIds.current].find(([, papersId]) => papersId === child.groupId)?.[0]
+          : undefined);
+        const liveIds = liveRoot.type === 'branch' && Array.isArray(liveRoot.data)
+          ? liveRoot.data.map((child) => child.data?.id)
+          : [];
+        twoGroupShapeMismatch = live.grid.orientation !== expectedOrientation
+          || liveIds.length !== expectedIds.length
+          || expectedIds.some((id, index) => id === undefined || liveIds[index] !== id);
+      } catch { twoGroupShapeMismatch = true; }
+    }
+    const needsRecursiveProjection = desiredGroups.length > 2 || hasNestedLayout
+      || api.groups.length < desiredGroups.length || twoGroupShapeMismatch;
     if (needsRecursiveProjection) {
       try {
         const current = api.toJSON();
@@ -318,11 +336,19 @@ export function WorkspaceDock(props: {
     const finishResize = (cancelled = false): void => {
       const session = resizeSession.current;
       if (!resizing.current || !session) return;
+      if (cancelled && typeof PointerEvent !== 'undefined') {
+        // Dockview owns a document-level sash session of its own. Deliver a
+        // real terminal before releasing our capture so its old handler cannot
+        // continue applying stale geometry after a remote reconcile.
+        try {
+          session.captureTarget?.dispatchEvent(new PointerEvent('pointercancel', {
+            bubbles: true, cancelable: true, pointerId: session.pointerId,
+          }));
+        } catch { /* the browser may already have torn down the target */ }
+      }
       resizing.current = false;
       resizeSession.current = null;
       try { session.captureTarget?.releasePointerCapture(session.pointerId); } catch { /* capture may already be released */ }
-      setResizeActive(false);
-      document.documentElement.dataset.workspaceResize = 'false';
       const api = apiRef.current;
       if (api) {
         for (const [groupId, activeSurfaceId] of session.activeByGroup) {
@@ -339,7 +365,13 @@ export function WorkspaceDock(props: {
         if (cancelled) reconcileFromTopology(api);
         else commitLayout(api);
       }
-      setHostOverlay(false, 'workspace-resize');
+      const generation = session.generation;
+      void setHostOverlayAwaited(false, () => true, 'workspace-resize').finally(() => {
+        if (dragSessionGeneration.current === generation && !resizeSession.current) {
+          setResizeActive(false);
+          document.documentElement.dataset.workspaceResize = 'false';
+        }
+      });
     };
     finishResizeRef.current = finishResize;
     const onPointerUp = (event: PointerEvent): void => {
@@ -884,9 +916,21 @@ export function WorkspaceDock(props: {
           }
           return;
         }
+        if (resizing.current && event.target instanceof Element
+          && event.target.closest('.dv-sash, .dv-tab, .dv-tabs-and-actions-container')) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.nativeEvent.stopImmediatePropagation?.();
+          return;
+        }
         if (event.button !== 0 || !(event.target instanceof Element)
           || !event.target.closest('.dv-sash')) return;
-        if (resizing.current) return;
+        if (resizing.current) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.nativeEvent.stopImmediatePropagation?.();
+          return;
+        }
         resizing.current = true;
         const generation = dragSessionGeneration.current + 1;
         dragSessionGeneration.current = generation;
@@ -908,6 +952,9 @@ export function WorkspaceDock(props: {
         if (!captured) {
           resizing.current = false;
           resizeSession.current = null;
+          event.preventDefault();
+          event.stopPropagation();
+          event.nativeEvent.stopImmediatePropagation?.();
           return;
         }
         setResizeActive(true);

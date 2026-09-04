@@ -459,12 +459,15 @@ export function App(): React.JSX.Element {
         if (existing.surfaceIds.every((surface, index) => surface === group.surfaceIds[index])) continue;
         next = reorderWorkspaceGroup(next, group.groupId, group.surfaceIds);
       }
+      let rootApplied = false;
       if (snapshot.root) {
         if (!workspaceLayoutEqual(next.root, snapshot.root)) {
-          try { next = setWorkspaceLayoutRoot(next, snapshot.root); } catch { /* keep canonical topology authoritative */ }
+          try { next = setWorkspaceLayoutRoot(next, snapshot.root); rootApplied = true; } catch { /* use the direct two-pane fallback below */ }
+        } else {
+          rootApplied = true;
         }
       }
-      if (!snapshot.root && snapshot.rootWeights && next.root.kind === 'split') {
+      if ((!snapshot.root || !rootApplied) && snapshot.rootWeights && next.root.kind === 'split') {
         const unchanged = next.root.weights.length === snapshot.rootWeights.length
           && next.root.weights.every((weight, index) => Math.abs(weight - (snapshot.rootWeights?.[index] ?? 0)) < 0.001);
         if (!unchanged) {
