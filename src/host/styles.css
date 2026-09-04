@@ -762,30 +762,41 @@ input:focus-visible {
   --dv-group-view-background-color: transparent;
 }
 
-.workspace-layout-actions {
+.workspace-split-help {
   position: absolute;
-  z-index: 5;
-  top: 3px;
-  right: 8px;
-  display: flex;
-  gap: 4px;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
-.workspace-layout-actions button {
-  min-height: 28px;
-  padding: 0 9px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--raised);
-  color: var(--muted);
-  font-size: 10px;
-  cursor: pointer;
-}
-
-.workspace-layout-actions button:hover:not(:disabled) {
-  border-color: var(--line-strong);
+.workspace-split-preview {
+  position: absolute;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  border: 2px solid color-mix(in srgb, var(--accent) 85%, white);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 45%);
+  opacity: 0;
+  transition: opacity 80ms ease;
 }
+
+.workspace-split-preview.is-armed { opacity: 1; }
+.workspace-split-preview.is-rejected {
+  border-color: color-mix(in srgb, #d9822b 85%, white);
+  background: color-mix(in srgb, #d9822b 20%, transparent);
+}
+.workspace-split-preview[data-position="left"] { inset: 42px 50% 0 0; }
+.workspace-split-preview[data-position="right"] { inset: 42px 0 0 50%; }
+.workspace-split-preview[data-position="top"] { inset: 42px 0 50% 0; }
+.workspace-split-preview[data-position="bottom"] { inset: 50% 0 0 0; }
 
 .backpack-project-frame {
   position: relative;

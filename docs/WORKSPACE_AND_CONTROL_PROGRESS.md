@@ -2806,3 +2806,29 @@ C1 is complete only when all of the following are true:
 * [x] no reviewed blocker remains in the non-packaged scope.
 
 **C1 completion means Papers can prove both what it believes the application state is and what the user actually sees.**
+
+# 7. Workspace split-preview and project-tab hardening (2026-09-04)
+
+The reviewed workspace interaction now uses Dockview's mature drag/drop engine
+for hit testing and structural mutation, while Papers supplies the visible
+guarantee layer above native Backpack surfaces.
+
+ * [x] Removed the explicit Split Right / Split Down controls.
+ * [x] Tab drags raise the host compositor before entering native content.
+ * [x] Allowed left/right/top/bottom candidates show a Papers-owned half-pane
+   preview and only an acknowledged, animation-frame-armed preview may drop.
+ * [x] Rejected or busy candidates show visible cancellation/unavailable text;
+   tab-strip and center drops remain ordinary reorder operations.
+ * [x] Keyboard fallback is retained through Control+Alt+ArrowLeft/Right/Up/Down
+   on the focused Dockview tab, using the same semantic split transaction.
+ * [x] Sash resizing remains live and does not enter split-preview composition.
+ * [x] A queued project renderer is bound to its logical surface before staged
+   authority is released, preventing new-tab bootstrap state-load calls from
+   being rejected as non-host senders.
+ * [x] Focused E2E coverage proves the visible armed preview precedes release,
+   horizontal and vertical keyboard splits still persist, and the removed
+   buttons are absent.
+
+The implementation is Papers-generic. Backpack project URLs remain authenticated
+and project-owned; Papers does not interpret folder/document data. The protected
+user-owned `docs/evidence/worker-comparison.json` remains outside this change.

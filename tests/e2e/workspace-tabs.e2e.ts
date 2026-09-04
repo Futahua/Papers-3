@@ -193,14 +193,14 @@ describe('A1 workspace tabs', () => {
     }, 10_000, 'Alpha tab activation');
     expect(await projectSenderId(A)).toBe(alphaSenderId);
 
-    await hostPage.getByRole('button', { name: 'Split Right' }).click();
+    await hostPage.getByRole('tab', { name: 'Alpha' }).press('Control+Alt+ArrowRight');
     await waitFor(async () => {
       const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
       return surfaces.filter((surface) => surface.presentation === 'visible').length === 2;
     }, 10_000, 'two visible native split panes');
     expect(await hostPage.locator('.dv-groupview').count()).toBe(2);
-    expect(await hostPage.getByRole('button', { name: 'Split Right' }).isDisabled()).toBe(true);
-    expect(await hostPage.getByRole('button', { name: 'Split Down' }).isDisabled()).toBe(true);
+    expect(await hostPage.getByRole('button', { name: 'Split Right', exact: true }).count()).toBe(0);
+    expect(await hostPage.getByRole('button', { name: 'Split Down', exact: true }).count()).toBe(0);
 
     const sash = hostPage.locator('.dv-sash.dv-enabled').first();
     const sashBox = await sash.boundingBox();

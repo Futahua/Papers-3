@@ -972,6 +972,17 @@ async function bootstrap(): Promise<void> {
             senderId,
             adopt: () => {
               prepared.adopt();
+              const projectId = prepared.runtime.liveProjectId;
+              if (!projectId) throw new Error('Destination project surface has no project identity.');
+              // Release queued project IPC only after its sender is bound to
+              // the newly adopted logical surface. The page can issue its
+              // first state-load while navigation is still in flight.
+              surfaceContexts.bind(senderId!, {
+                surfaceId,
+                projectId,
+                windowId,
+                kind: 'project',
+              });
               authority?.adopt();
               bindVisualSemanticKeySender(windowId, surfaceId, senderId!);
               prepared.runtime.onFrameDestroyed(senderId!, () => {
@@ -983,6 +994,7 @@ async function bootstrap(): Promise<void> {
             },
             discard: () => {
               authority?.discard();
+              if (senderId !== null) surfaceContexts.unbind(senderId);
               prepared.discard();
               if (senderId !== null) projectSurfaceAuthority.forget(senderId);
             },

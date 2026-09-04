@@ -60,6 +60,8 @@ it('hover picker and main-screen clicks reuse tabs, middle-click adds, and split
     await page.mouse.move(draggedTabBox!.x + draggedTabBox!.width / 2, draggedTabBox!.y + draggedTabBox!.height / 2);
     await page.mouse.down();
     await page.mouse.move(dockBox!.x + dockBox!.width - 6, dockBox!.y + dockBox!.height / 2, { steps: 12 });
+    await waitFor(async () => await page.locator('.workspace-split-preview.is-armed').isVisible(), 10000, 'armed split preview');
+    expect(await page.locator('.workspace-split-preview').getAttribute('data-position')).toBe('right');
     await page.mouse.up();
     const sash = page.locator('.dv-sash.dv-enabled').first();
     await waitFor(async () => await sash.isVisible(), 10000, 'split divider');
@@ -84,7 +86,7 @@ it('hover picker and main-screen clicks reuse tabs, middle-click adds, and split
     const loneGroup = splitTopology.groups.find((group) => group.surfaceIds.length === 1)!;
     await evalInHost(launched.app, `window.papersHost.backpackProject.close(${JSON.stringify(loneGroup.activeSurfaceId)})`);
     await tabCount(2);
-    await page.getByRole('button', { name: 'Split Down', exact: true }).click();
+    await page.getByRole('tab').first().press('Control+Alt+ArrowDown');
     await waitFor(async () => (await readTopology()).root.kind === 'split', 10000, 'vertical split');
     const verticalBefore = await readTopology();
     const horizontalSash = page.locator('.dv-split-view-container.dv-vertical > .dv-sash-container > .dv-sash.dv-enabled').first();
