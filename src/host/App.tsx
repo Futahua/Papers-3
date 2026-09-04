@@ -60,6 +60,7 @@ export function App(): React.JSX.Element {
   const [view, setView] = useState<BasicView>('backpacks');
   const [basicOpen, setBasicOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [workspaceOverlayActive, setWorkspaceOverlayActive] = useState(false);
   const sidebarCloseTimer = useRef<number | null>(null);
   const cancelSidebarClose = useCallback((): void => {
     if (sidebarCloseTimer.current === null) return;
@@ -128,7 +129,7 @@ export function App(): React.JSX.Element {
       // Main may reject a renderer layout commit while a cross-window
       // mutation owns the lock. Rehydrate the canonical snapshot immediately
       // so a speculative Dockview drag cannot remain renderer-only.
-      void host().layout.hydrateStartupWorkspace().catch(() => undefined);
+      void host().layout.refreshWorkspaceTopology().catch(() => undefined);
     });
   }, [hydrationReady, workspaceTopology]);
 
@@ -323,8 +324,8 @@ export function App(): React.JSX.Element {
   // regardless of CSS z-index. Raise the host only while this picker is open,
   // then restore project surfaces without changing their bounds or identities.
   useEffect(() => {
-    void host().layout.setHostOverlayActive(sidebarOpen).catch(() => undefined);
-  }, [sidebarOpen]);
+    void host().layout.setHostOverlayActive(sidebarOpen || workspaceOverlayActive).catch(() => undefined);
+  }, [sidebarOpen, workspaceOverlayActive]);
 
   // Dismiss the Basic menu on outside click.
   useEffect(() => {
@@ -576,6 +577,7 @@ export function App(): React.JSX.Element {
           onClose={closeWorkspaceProject}
           onSplit={splitWorkspaceProject}
           onMove={moveWorkspaceProject}
+          onOverlayActiveChange={setWorkspaceOverlayActive}
           onCommitLayout={commitWorkspaceLayout}
           interactionDisabled={navigationBusy}
         />

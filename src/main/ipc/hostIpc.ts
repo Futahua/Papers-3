@@ -84,6 +84,7 @@ export interface HostFacade {
   saveWindowBounds(senderId: number): Promise<{ x: number; y: number; width: number; height: number } | null>;
   clearWindowBounds(): Promise<void>;
   commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void;
+  refreshWorkspaceTopology(senderId: number): void;
   listWorkspaceLayouts(): Promise<unknown>;
   saveWorkspaceLayout(senderId: number, name: string): Promise<unknown>;
   loadWorkspaceLayout(senderId: number, layoutId: string): Promise<unknown>;
@@ -340,6 +341,9 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:settings:clear-window-bounds', () => facade.clearWindowBounds());
   handle('host:workspace:commit-topology', (event, topology) =>
     facade.commitWorkspaceTopology(event.sender.id, parseWorkspaceTopology(topology)),
+  );
+  handle('host:workspace:refresh-topology', (event) =>
+    facade.refreshWorkspaceTopology(event.sender.id),
   );
   handle('host:workspace:move-surface-to-window', (event, rawTarget) =>
     facade.moveWorkspaceSurfaceFromHost(

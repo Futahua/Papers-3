@@ -8,7 +8,6 @@ import {
 import 'dockview-react/dist/styles/dockview.css';
 
 import { BackpackProjectFrame } from './BackpackProjectFrame';
-import { host } from './bridge';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { rebuildWorkspaceGroupMap } from './workspaceGroupMapping';
 import { createWorkspaceReconciliationFeedbackGate } from './workspaceReconciliationFeedback';
@@ -50,13 +49,14 @@ export function WorkspaceDock(props: {
   onClose: (surfaceId: string) => void;
   onSplit: (surfaceId: string, direction: 'right' | 'down', position?: 'before' | 'after') => string | void;
   onMove: (surfaceId: string, targetGroupId: string, targetIndex: number) => void;
+  onOverlayActiveChange?: (active: boolean) => void;
   interactionDisabled?: boolean;
   onCommitLayout: (snapshot: {
     groups: Array<{ groupId: string; surfaceIds: string[] }>;
     rootWeights?: number[];
   }) => void;
 }): React.JSX.Element {
-  const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onCommitLayout,
+  const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onOverlayActiveChange, onCommitLayout,
     interactionDisabled = false } = props;
   const apiRef = useRef<DockviewApi | null>(null);
   const projectsRef = useRef(projects);
@@ -68,17 +68,14 @@ export function WorkspaceDock(props: {
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const resizing = useRef(false);
   const sideDrop = useRef<{ surfaceId: string; position: 'top' | 'bottom' | 'left' | 'right' } | null>(null);
-  const hostOverlayActive = useRef(false);
   const interactionDisabledRef = useRef(false);
   projectsRef.current = projects;
   topologyRef.current = topology;
   interactionDisabledRef.current = interactionDisabled;
 
   const setHostOverlay = useCallback((active: boolean): void => {
-    if (hostOverlayActive.current === active) return;
-    hostOverlayActive.current = active;
-    void host().layout.setHostOverlayActive(active).catch(() => undefined);
-  }, []);
+    onOverlayActiveChange?.(active);
+  }, [onOverlayActiveChange]);
 
   useEffect(() => {
     disposing.current = false;
@@ -152,6 +149,7 @@ export function WorkspaceDock(props: {
       window.removeEventListener('drop', finishDrop);
       window.removeEventListener('pointerup', finishDrop);
       window.removeEventListener('blur', finishDrop);
+      setHostOverlay(false);
     };
   }, [setHostOverlay]);
 

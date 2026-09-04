@@ -158,6 +158,7 @@ interface HostBridge {
     setHostOverlayActive(active: boolean): Promise<void>;
     setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
     commitWorkspaceTopology(topology: WorkspaceTopologyV1): Promise<void>;
+    refreshWorkspaceTopology(): Promise<void>;
     moveSurfaceToWindow(target: {
       surfaceId: string;
       targetWindowId: number;

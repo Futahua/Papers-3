@@ -89,6 +89,7 @@ const api = {
       ipcRenderer.invoke('host:layout:set-titlebar', color, symbolColor),
     commitWorkspaceTopology: (topology: unknown) =>
       ipcRenderer.invoke('host:workspace:commit-topology', topology),
+    refreshWorkspaceTopology: () => ipcRenderer.invoke('host:workspace:refresh-topology'),
     moveSurfaceToWindow: (target: {
       surfaceId: string;
       targetWindowId: number;

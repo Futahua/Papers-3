@@ -1688,6 +1688,16 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.setWorkspaceTopology(windowId, topology);
   }
 
+  /** Re-send the current main-owned topology after a renderer mutation was
+   * rejected by a concurrent workspace lock. This bypasses cached startup
+   * hydration and restores the renderer to canonical state immediately. */
+  refreshWorkspaceTopology(senderId: number): void {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may refresh workspace topology.');
+    const topology = this.deps.workspaceTopology?.(windowId);
+    if (topology) this.deps.sendToWindow(windowId, 'host:event:workspace-topology', topology);
+  }
+
   restoreWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1, mutationAlreadyHeld = false): void {
     if (!mutationAlreadyHeld) this.assertWorkspaceMutationAvailable(windowId);
     this.validateWorkspaceTopology(windowId, topology);
