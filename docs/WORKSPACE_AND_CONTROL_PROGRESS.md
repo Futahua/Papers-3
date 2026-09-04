@@ -18,6 +18,29 @@ compatibility test verifies that both native host windows omit the menu while
 saved data remains usable; workspace tab/split/move/close acceptance also
 passes (2 E2E files / 2 tests).
 
+## Backpack navigation and split resizing — 2026-09-04
+
+Backpacks now exposes a hover sidebar with a scrollable list of available
+Backpacks. A normal click selects the Backpack in the current Papers tab;
+middle-click opens it in a new tab. The same current-tab/new-tab contract is
+used by the main Backpacks picker. Navigation is serialized per host window,
+and a replacement transaction preserves the logical surface and split/group
+topology while flushing the previous project's durable state before retirement.
+
+Dockview split borders are draggable. During a drag, native project views are
+temporarily occluded (not destroyed), and the canonical root/group weights are
+committed when the gesture ends, preserving renderer identity and creator data.
+The topology effect distinguishes an externally supplied canonical snapshot
+from a local update batched in the same render, so a user's resize or tab
+action cannot be silently skipped.
+
+Validation is covered by `tests/e2e/backpack-navigation.e2e.ts` (synthetic
+Backpacks): current-tab replacement, middle-click tab creation, hover-sidebar
+selection and scrolling, vertical and horizontal split resizing, unchanged
+native WebContents identities, empty-selection retention, and absence of the
+removed Layouts control. Focused host routing tests cover deferred-close
+durability and cross-window/archived-target rejection.
+
 ## Creator acceptance and positioning reversal — 2026-09-04
 
 Follow-up correction: the creator reported indefinite motion after `d15f717`.

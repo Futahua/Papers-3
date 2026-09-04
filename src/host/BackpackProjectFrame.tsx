@@ -13,9 +13,13 @@ export function BackpackProjectFrame(props: {
    * inferred from "the window's only surface". */
   surfaceId: string | null;
   visible?: boolean;
+  occluded?: boolean;
 }): React.JSX.Element {
-  const { url, surfaceId, visible = true } = props;
+  const { url, surfaceId, visible = true, occluded = false } = props;
   const frameRef = useRef<HTMLElement | null>(null);
+  const occludedRef = useRef(occluded);
+  occludedRef.current = occluded;
+  const syncBoundsRef = useRef<(() => void) | null>(null);
 
   useLayoutEffect(() => {
     if (!surfaceId || !visible) return undefined;
@@ -26,19 +30,23 @@ export function BackpackProjectFrame(props: {
       void host().backpackProject.setSurfaceBounds(surfaceId, {
         x: Math.max(0, Math.round(rect.x)),
         y: Math.max(0, Math.round(rect.y)),
-        width: Math.max(0, Math.round(rect.width)),
-        height: Math.max(0, Math.round(rect.height)),
+        width: occludedRef.current ? 0 : Math.max(0, Math.round(rect.width)),
+        height: occludedRef.current ? 0 : Math.max(0, Math.round(rect.height)),
       });
     };
+    syncBoundsRef.current = syncBounds;
     syncBounds();
     const observer = new ResizeObserver(syncBounds);
     observer.observe(frame);
     void host().backpackProject.showSurface(surfaceId, url).then(syncBounds);
     return () => {
       observer.disconnect();
+      syncBoundsRef.current = null;
       void host().backpackProject.hideSurface(surfaceId);
     };
   }, [surfaceId, url, visible]);
+
+  useLayoutEffect(() => { syncBoundsRef.current?.(); }, [occluded]);
 
   return <section ref={frameRef} className="backpack-project-frame" aria-label="Backpack project" />;
 }

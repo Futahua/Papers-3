@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { host, type BackpacksList, type HermesSurfaceStatus, type HostErrorPayload } from './bridge';
 import { BackpacksPane } from './BackpacksPane';
+import { BackpackSidebar } from './BackpackSidebar';
 import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
 import { EmptyBackpackWarning } from './EmptyBackpackWarning';
@@ -59,6 +60,8 @@ export function App(): React.JSX.Element {
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });
   const [view, setView] = useState<BasicView>('backpacks');
   const [basicOpen, setBasicOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const navigationQueue = useRef(Promise.resolve());
   const [entered, setEntered] = useState<string | null>(null);
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
   const [openProjects, setOpenProjects] = useState<OpenWorkspaceProject[]>([]);
@@ -67,7 +70,10 @@ export function App(): React.JSX.Element {
   const [workspaceTopology, setWorkspaceTopology] = useState(createWorkspaceTopology);
   const [hydrationReady, setHydrationReady] = useState(false);
   const topologyCommitArmed = useRef(false);
-  const externallyRestoredTopology = useRef(false);
+  // Track the exact object supplied by main. If a local interaction is
+  // batched with an external update, the newer local topology must still be
+  // persisted rather than being mistaken for the restore itself.
+  const externallyRestoredTopology = useRef<ReturnType<typeof createWorkspaceTopology> | null>(null);
   /**
    * The logical surface this window is showing.
    *
@@ -95,10 +101,11 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     if (!hydrationReady || (!topologyCommitArmed.current && workspaceTopology.surfaces.length === 0)) return;
-    if (externallyRestoredTopology.current) {
-      externallyRestoredTopology.current = false;
+    if (externallyRestoredTopology.current === workspaceTopology) {
+      externallyRestoredTopology.current = null;
       return;
     }
+    externallyRestoredTopology.current = null;
     void host().layout.commitWorkspaceTopology(workspaceTopology).catch(() => undefined);
   }, [hydrationReady, workspaceTopology]);
 
@@ -125,7 +132,7 @@ export function App(): React.JSX.Element {
       }),
       bridge.events.onWorkspaceTopology((topology) => {
         topologyCommitArmed.current = true;
-        externallyRestoredTopology.current = true;
+        externallyRestoredTopology.current = topology;
         setWorkspaceTopology(topology);
         const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
         const nextSurfaceId = focused?.activeSurfaceId ?? null;
@@ -141,8 +148,20 @@ export function App(): React.JSX.Element {
           project,
         ];
         setOpenProjects(openProjectsRef.current);
-        externallyRestoredTopology.current = true;
+        externallyRestoredTopology.current = topology;
         setWorkspaceTopology(topology);
+        setSurfaceId(project.surfaceId);
+        setProjectUrl(project.url);
+        setEntered(project.projectId);
+      }),
+      bridge.events.onWorkspaceProjectReplaced(({ previousSurfaceId, project, topology }) => {
+        topologyCommitArmed.current = true;
+        externallyRestoredTopology.current = topology;
+        openProjectsRef.current = openProjectsRef.current.map((candidate) =>
+          candidate.surfaceId === previousSurfaceId ? project : candidate);
+        setOpenProjects(openProjectsRef.current);
+        setWorkspaceTopology(topology);
+        surfaceIdRef.current = project.surfaceId;
         setSurfaceId(project.surfaceId);
         setProjectUrl(project.url);
         setEntered(project.projectId);
@@ -151,7 +170,7 @@ export function App(): React.JSX.Element {
         topologyCommitArmed.current = true;
         openProjectsRef.current = projects;
         setOpenProjects(projects);
-        externallyRestoredTopology.current = true;
+        externallyRestoredTopology.current = topology;
         setWorkspaceTopology(topology);
         const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
         const active = projects.find((project) => project.surfaceId === focused?.activeSurfaceId) ?? null;
@@ -167,7 +186,7 @@ export function App(): React.JSX.Element {
         topologyCommitArmed.current = true;
         openProjectsRef.current = projects;
         setOpenProjects(projects);
-        externallyRestoredTopology.current = true;
+        externallyRestoredTopology.current = topology;
         setWorkspaceTopology(topology);
         const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
         const active = projects.find((project) => project.surfaceId === focused?.activeSurfaceId) ?? null;
@@ -182,7 +201,7 @@ export function App(): React.JSX.Element {
         topologyCommitArmed.current = true;
         openProjectsRef.current = projects;
         setOpenProjects(projects);
-        externallyRestoredTopology.current = true;
+        externallyRestoredTopology.current = topology;
         setWorkspaceTopology(topology);
         const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
         const active = projects.find((project) => project.surfaceId === focused?.activeSurfaceId) ?? null;
@@ -298,58 +317,56 @@ export function App(): React.JSX.Element {
   const goto = (next: BasicView): void => {
     setView(next);
     setBasicOpen(false);
+    setSidebarOpen(false);
   };
 
-  const enterBackpack = (id: string): void => {
-    void host()
-      .backpackProject.open(id)
-      .then((project) => {
-        setProjectUrl(project?.url ?? null);
-        setSurfaceId(project?.surfaceId ?? null);
+  const enterBackpack = (id: string, newTab = false): void => {
+    setSidebarOpen(false);
+    setBasicOpen(false);
+    setView('backpacks');
+    navigationQueue.current = navigationQueue.current.then(async () => {
+      const active = openProjectsRef.current.find((project) => project.surfaceId === surfaceIdRef.current);
+      if (!newTab && active?.projectId === id) {
+        setProjectUrl(active.url);
         setEntered(id);
-        if (project) {
-          topologyCommitArmed.current = true;
-          const title = backpacks.backpacks.find((backpack) => backpack.id === id)?.name ?? id;
-          setOpenProjects((projects) => [
-            ...projects,
-            { surfaceId: project.surfaceId, projectId: id, title, url: project.url },
-          ]);
-          setWorkspaceTopology((topology) => openWorkspaceSurface(
-            topology,
-            { surfaceId: project.surfaceId, projectId: id, title },
-          ));
-        }
-      })
-      .catch((caught) =>
-        setHostErrors((previous) => [
-          ...previous,
-          {
-            component: 'Backpack',
-            what: 'The independent Backpack project could not be opened.',
-            known: String(caught instanceof Error ? caught.message : caught),
-            intact: 'The Backpack record and project files were not changed.',
-            retryUseful: true,
-            inspect: 'Return to Backpacks and enter it again.',
-            recover: 'The independent project remains outside Papers.',
-          },
-        ]),
-      );
+        await host().backpackProject.activateSurface(active.surfaceId);
+        return;
+      }
+      if (!newTab && active) {
+        const project = await host().backpackProject.replace(active.surfaceId, id);
+        if (!project) { setEntered(id); setProjectUrl(null); }
+        return;
+      }
+      const project = await host().backpackProject.open(id);
+      setEntered(id);
+      setProjectUrl(project?.url ?? null);
+      if (!project) return;
+      surfaceIdRef.current = project.surfaceId;
+      setSurfaceId(project.surfaceId);
+      topologyCommitArmed.current = true;
+      const title = backpacks.backpacks.find((backpack) => backpack.id === id)?.name ?? id;
+      openProjectsRef.current = [...openProjectsRef.current,
+        { surfaceId: project.surfaceId, projectId: id, title, url: project.url }];
+      setOpenProjects(openProjectsRef.current);
+      setWorkspaceTopology((topology) => openWorkspaceSurface(topology,
+        { surfaceId: project.surfaceId, projectId: id, title }));
+    }).catch((caught) => setHostErrors((previous) => [...previous, {
+      component: 'Backpack',
+      what: 'The independent Backpack project could not be opened.',
+      known: String(caught instanceof Error ? caught.message : caught),
+      intact: 'The Backpack record and project files were not changed.',
+      retryUseful: true,
+      inspect: 'Return to Backpacks and enter it again.',
+      recover: 'The independent project remains outside Papers.',
+    }]));
   };
 
   const leaveEnteredBackpack = useCallback((): void => {
-    const closingSurfaceId = surfaceId;
-    void (closingSurfaceId ? host().backpackProject.close(closingSurfaceId) : Promise.resolve())
-      .catch(() => undefined)
-      .finally(() => {
-        if (closingSurfaceId) {
-          setOpenProjects((projects) => projects.filter((project) => project.surfaceId !== closingSurfaceId));
-          setWorkspaceTopology((topology) => closeTopologySurface(topology, closingSurfaceId));
-        }
-        setProjectUrl(null);
-        setSurfaceId(null);
-        setEntered(null);
-      });
-  }, [surfaceId]);
+    // Dismissing an empty Backpack returns to the picker without retiring
+    // the working tab that was selected before this navigation attempt.
+    setProjectUrl(null);
+    setEntered(null);
+  }, []);
 
   const activateWorkspaceProject = useCallback((nextSurfaceId: string): void => {
     const project = openProjects.find((candidate) => candidate.surfaceId === nextSurfaceId);
@@ -409,6 +426,7 @@ export function App(): React.JSX.Element {
   }, []);
 
   const openBasicOrReturnToBackpacks = (): void => {
+    setSidebarOpen(false);
     if (entered !== null) {
       setView('backpacks');
       setBasicOpen(false);
@@ -425,14 +443,17 @@ export function App(): React.JSX.Element {
   const hermesBusy = hermes.status === 'starting';
 
   return (
-    <div className="app">
+    <div className={`app${sidebarOpen ? ' backpack-sidebar-open' : ''}`}>
       {/* Slim title bar: the whole band is an invisible OS drag region (so the
           window still moves), with interactive controls opting out. It replaces
           the generic dark Electron title bar and menu; the native
           minimize/maximize/close controls are painted by the OS in the reserved
           top-right inset. No wordmark, no File/Edit/View/Window menu. */}
       <header className="titlebar">
-        <div className="titlebar-left" ref={basicRef}>
+        <div className="titlebar-left" ref={basicRef}
+          onMouseEnter={() => { if (view === 'backpacks' && !basicOpen) setSidebarOpen(true); }}
+          onMouseLeave={() => setSidebarOpen(false)}
+          onKeyDown={(event) => { if (event.key === 'Escape') { setSidebarOpen(false); setBasicOpen(false); } }}>
           <button
             className={`pill-button${basicOpen ? ' active' : ''}`}
             aria-haspopup="menu"
@@ -446,6 +467,7 @@ export function App(): React.JSX.Element {
           >
             {VIEW_LABEL[view]}
           </button>
+          {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack} />}
           {basicOpen && (
             <div className="basic-menu" role="menu">
               <p className="eyebrow">Basic</p>
@@ -516,7 +538,7 @@ export function App(): React.JSX.Element {
       {view === 'tools' && <ToolsPane />}
       {view === 'settings' && <SettingsPane />}
 
-      {openProjects.length > 0 && entered !== null && (
+      {openProjects.length > 0 && entered !== null && projectUrl !== null && (
         <WorkspaceDock
           projects={openProjects}
           topology={workspaceTopology}

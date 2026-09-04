@@ -79,7 +79,7 @@ function enterBackpack(name: string): string {
     const card = [...document.querySelectorAll('.backpack-card')].find((item) =>
       item.querySelector('.name')?.textContent?.trim() === ${JSON.stringify(name)});
     const enter = [...(card?.querySelectorAll('button') ?? [])].find((button) => button.textContent?.trim() === 'Enter');
-    enter?.click();
+    enter?.dispatchEvent(new MouseEvent('auxclick', { button: 1, bubbles: true }));
     return Boolean(enter);
   })()`;
 }

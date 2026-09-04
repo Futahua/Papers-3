@@ -126,6 +126,7 @@ interface HostBridge {
      * operation on that view names the id explicitly: main never infers the
      * target from "the window's only surface". */
     open(id: string): Promise<{ url: string; surfaceId: string } | null>;
+    replace(surfaceId: string, id: string): Promise<{ url: string; surfaceId: string } | null>;
     close(surfaceId: string): Promise<void>;
     /** Focus this already-open logical surface in its owning Papers window. */
     activateSurface(surfaceId: string): Promise<void>;
@@ -216,6 +217,11 @@ interface HostBridge {
     }) => void): () => void;
     onWorkspaceHydrated(cb: (payload: {
       projects: Array<{ surfaceId: string; projectId: string; title: string; url: string }>;
+      topology: WorkspaceTopologyV1;
+    }) => void): () => void;
+    onWorkspaceProjectReplaced(cb: (payload: {
+      previousSurfaceId: string;
+      project: { surfaceId: string; projectId: string; title: string; url: string };
       topology: WorkspaceTopologyV1;
     }) => void): () => void;
     onWorkspaceLayoutLoaded(cb: (payload: {

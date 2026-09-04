@@ -229,6 +229,7 @@ input:focus-visible {
 /* Anything clickable in the title bar must opt out of the drag region. */
 .titlebar .pill-button,
 .titlebar .basic-menu,
+.titlebar .backpack-sidebar,
 .titlebar .hermes-controls,
 .titlebar button {
   -webkit-app-region: no-drag;
@@ -696,6 +697,44 @@ input:focus-visible {
 .workspace-dock > .dockview-react {
   width: 100%;
   height: 100%;
+}
+
+.backpack-sidebar-open .workspace-dock { left: 260px; }
+.backpack-sidebar-open > .pane { margin-left: 260px; }
+.backpack-sidebar {
+  position: fixed;
+  inset: var(--titlebar-height) auto 0 0;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  background: var(--menu-surface);
+  border-right: 1px solid var(--line-strong);
+  box-shadow: var(--shadow);
+}
+.backpack-sidebar > .eyebrow { padding: 8px; }
+.backpack-sidebar-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.backpack-sidebar-list button {
+  display: block;
+  width: 100%;
+  padding: 11px 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+.backpack-sidebar-list button:hover,
+.backpack-sidebar-list button[aria-current="page"] { background: var(--raised-strong); }
+.backpack-sidebar-empty { color: var(--muted); padding: 8px; }
+
+/* Leave a host-owned hit area at native view edges for the split sash. */
+.workspace-dock[data-split] .backpack-project-frame {
+  width: calc(100% - 8px);
+  height: calc(100% - 8px);
+  margin: 4px;
 }
 
 /* Native project views composite over the host. Keep every workspace content

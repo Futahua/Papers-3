@@ -12,7 +12,7 @@ import { host, type BackpacksList } from './bridge';
 export function BackpacksPane(props: {
   list: BackpacksList;
   onChanged: () => Promise<void>;
-  onEnter: (id: string) => void;
+  onEnter: (id: string, newTab?: boolean) => void;
 }): React.JSX.Element {
   const [name, setName] = useState('');
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -120,7 +120,9 @@ export function BackpacksPane(props: {
                   </div>
                   <div className="actions">
                     {!backpack.archived && (
-                      <button className="secondary" onClick={() => props.onEnter(backpack.id)}>
+                      <button className="secondary" onClick={() => props.onEnter(backpack.id)}
+                        onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
+                        onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); props.onEnter(backpack.id, true); } }}>
                         Enter
                       </button>
                     )}

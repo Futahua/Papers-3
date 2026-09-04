@@ -162,6 +162,47 @@ describe('surface routing in the host facade', () => {
   const FRAME = 12;
   const WIDGET = 13;
 
+  it('replaces one tab after its saves flush, preserving group and split geometry', async () => {
+    const { facade, workspaceTopologies, logicalSurfaces, closeAttachedProjectSurface, sendToWindow } = createFacade();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    const first = await facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    const second = await facade.openWorkspaceSurfaceFromControl(1, OTHER);
+    const split = splitWorkspaceGroup(second.topology, {
+      groupId: 'group-main', newGroupId: 'right', surfaceId: second.surfaceId,
+      orientation: 'horizontal', position: 'after',
+    });
+    workspaceTopologies.set(1, split);
+    let finish!: () => void;
+    closeAttachedProjectSurface.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const replacing = facade.replaceBackpackProject(HOST, second.surfaceId, PROJECT);
+    await vi.waitFor(() => expect(closeAttachedProjectSurface).toHaveBeenCalled());
+    expect(logicalSurfaces.isLiveIn(second.surfaceId, 1)).toBe(true);
+    expect(workspaceTopologies.get(1)).toEqual(split);
+    expect(() => facade.commitWorkspaceTopology(HOST, split)).toThrow();
+    finish();
+    const replaced = await replacing;
+    expect(logicalSurfaces.isLiveIn(second.surfaceId, 1)).toBe(false);
+    expect(workspaceTopologies.get(1)?.root).toEqual(split.root);
+    expect(workspaceTopologies.get(1)?.surfaces.map((surface) => surface.surfaceId))
+      .toEqual([first.surfaceId, replaced!.surfaceId]);
+    expect(workspaceTopologies.get(1)?.groups.find((group) => group.groupId === 'right')?.surfaceIds)
+      .toEqual([replaced!.surfaceId]);
+    expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:workspace-project-replaced', expect.objectContaining({ previousSurfaceId: second.surfaceId }));
+  });
+
+  it('rejects cross-window replacement and unavailable destinations before closing a tab', async () => {
+    const { facade, workspaceTopologies, closeAttachedProjectSurface, archivedProjects } = createFacade();
+    workspaceTopologies.set(2, createWorkspaceTopology());
+    const foreign = await facade.openWorkspaceSurfaceFromControl(2, PROJECT);
+    await expect(facade.replaceBackpackProject(HOST, foreign.surfaceId, OTHER)).rejects.toThrow();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    const own = await facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    archivedProjects.add(OTHER);
+    await expect(facade.replaceBackpackProject(HOST, own.surfaceId, OTHER)).rejects.toThrow();
+    expect(closeAttachedProjectSurface).not.toHaveBeenCalled();
+    expect(workspaceTopologies.get(1)?.surfaces[0]?.surfaceId).toBe(own.surfaceId);
+  });
+
   it('opens a real project into the exact window and atomically sends descriptor plus topology', async () => {
     const { facade, logicalSurfaces, workspaceTopologies, sendToWindow } = createFacade();
     workspaceTopologies.set(1, createWorkspaceTopology());

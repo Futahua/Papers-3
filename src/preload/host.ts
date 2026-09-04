@@ -50,6 +50,7 @@ const api = {
   // roots and action targets never cross into a renderer.
   backpackProject: {
     open: (id: string) => ipcRenderer.invoke('host:backpack-project:open', id),
+    replace: (surfaceId: string, id: string) => ipcRenderer.invoke('host:backpack-project:replace', surfaceId, id),
     close: (surfaceId: string) => ipcRenderer.invoke('host:backpack-project:close', surfaceId),
     activateSurface: (surfaceId: string) => ipcRenderer.invoke('host:backpack-project:activate-surface', surfaceId),
     showSurface: (surfaceId: string, url: string) => ipcRenderer.invoke('host:backpack-project:show-surface', surfaceId, url),
@@ -145,6 +146,7 @@ const api = {
     onBackpackProjectCloseRequest: subscribe('host:event:backpack-project-close-request'),
     onWorkspaceTopology: subscribe('host:event:workspace-topology'),
     onWorkspaceProjectOpened: subscribe('host:event:workspace-project-opened'),
+    onWorkspaceProjectReplaced: subscribe('host:event:workspace-project-replaced'),
     onWorkspaceHydrated: subscribe('host:event:workspace-hydrated'),
     onWorkspaceLayoutLoaded: subscribe('host:event:workspace-layout-loaded'),
     onWorkspaceSurfaceMoved: subscribe('host:event:workspace-surface-moved'),

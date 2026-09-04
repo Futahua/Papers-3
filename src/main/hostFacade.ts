@@ -749,6 +749,59 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.emitBackpacksChanged();
   }
 
+  /** Navigate one existing tab without changing its group or split geometry. */
+  async replaceBackpackProject(senderId: number, surfaceId: string, projectId: string): Promise<OpenBackpackProject | null> {
+    const original = this.requireHostSurfaceTarget(senderId, surfaceId);
+    return this.withProjectOwnershipGates([original.projectId, projectId], async () => {
+      const backpack = this.deps.registry.find(projectId);
+      if (!backpack || backpack.archived) throw new Error('That Backpack is not available.');
+      const project = await this.deps.backpackProjects.open(projectId);
+      this.requireHostSurfaceTarget(senderId, surfaceId);
+      // Empty Backpacks retain the existing tab behind the empty-state notice.
+      if (!project) return null;
+      await this.deps.registry.markEntered(projectId);
+      const { windowId } = this.requireHostSurfaceTarget(senderId, surfaceId);
+      const release = this.acquireWorkspaceMutation([windowId]);
+      let allocated: string | null = null;
+      try {
+        const topology = this.deps.workspaceTopology?.(windowId);
+        if (!topology) throw new Error('That window has no workspace topology.');
+        this.validateWorkspaceTopology(windowId, topology);
+        await this.deps.closeAttachedProjectSurface(windowId, surfaceId);
+        const fresh = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
+        allocated = fresh.surfaceId;
+        const descriptor = { surfaceId: fresh.surfaceId, projectId, title: backpack.name, url: project.url };
+        const next: WorkspaceTopologyV1 = {
+          ...topology,
+          surfaces: topology.surfaces.map((surface) => surface.surfaceId === surfaceId
+            ? { surfaceId: fresh.surfaceId, projectId, title: backpack.name } : surface),
+          groups: topology.groups.map((group) => ({ ...group,
+            surfaceIds: group.surfaceIds.map((id) => id === surfaceId ? fresh.surfaceId : id),
+            activeSurfaceId: group.activeSurfaceId === surfaceId ? fresh.surfaceId : group.activeSurfaceId,
+          })),
+          focusedGroupId: topology.groups.find((group) => group.surfaceIds.includes(surfaceId))!.groupId,
+        };
+        this.validateWorkspaceTopologyAgainst(windowId, next,
+          this.currentProjectSurfaceSet(windowId).filter((surface) => surface.surfaceId !== surfaceId));
+        this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-project-replaced', {
+          previousSurfaceId: surfaceId, project: descriptor, topology: next,
+        });
+        this.retireLogicalSurface(surfaceId);
+        for (const sender of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(sender);
+        this.deps.setActiveSurfaceId(windowId, fresh.surfaceId);
+        this.deps.setEnteredBackpack(windowId, projectId);
+        this.deps.setWorkspaceTopology(windowId, next);
+        this.emitBackpacksChanged();
+        return { ...project, surfaceId: fresh.surfaceId };
+      } catch (error) {
+        if (allocated) this.retireLogicalSurface(allocated);
+        throw error;
+      } finally {
+        release();
+      }
+    });
+  }
+
   activateBackpackProjectSurface(senderId: number, surfaceId: string): void {
     const { windowId, projectId } = this.requireHostSurfaceTarget(senderId, surfaceId);
     this.deps.setActiveSurfaceId(windowId, surfaceId);

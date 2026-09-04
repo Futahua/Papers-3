@@ -40,7 +40,8 @@ function WorkspacePanel(props: IDockviewPanelProps<WorkspacePanelParams>): React
     <BackpackProjectFrame
       url={params.url}
       surfaceId={params.surfaceId}
-      visible={visible && !suspended}
+      visible={visible}
+      occluded={suspended}
     />
   );
 }
@@ -68,6 +69,7 @@ export function WorkspaceDock(props: {
   const apiSubscriptions = useRef<Array<{ dispose(): void }>>([]);
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const [nativeSuspended, setNativeSuspended] = useState(false);
+  const resizing = useRef(false);
   projectsRef.current = projects;
   topologyRef.current = topology;
 
@@ -103,10 +105,30 @@ export function WorkspaceDock(props: {
         const group = dockviewId ? api.groups.find((candidate) => candidate.id === dockviewId) : undefined;
         return root.orientation === 'horizontal' ? group?.api.width ?? 0 : group?.api.height ?? 0;
       });
-      if (sizes.every((size) => size > 0)) rootWeights = sizes;
+      if (sizes.every((size) => size > 0)) {
+        const total = sizes.reduce((sum, size) => sum + size, 0);
+        rootWeights = sizes.map((size) => size / total);
+      }
     }
     onCommitLayout({ groups, ...(rootWeights ? { rootWeights } : {}) });
   }, [onCommitLayout, refreshGroupIds]);
+
+  useEffect(() => {
+    const finishResize = (): void => {
+      if (!resizing.current) return;
+      resizing.current = false;
+      if (apiRef.current) commitLayout(apiRef.current);
+      setNativeSuspended(false);
+    };
+    window.addEventListener('mouseup', finishResize);
+    window.addEventListener('pointercancel', finishResize);
+    window.addEventListener('blur', finishResize);
+    return () => {
+      window.removeEventListener('mouseup', finishResize);
+      window.removeEventListener('pointercancel', finishResize);
+      window.removeEventListener('blur', finishResize);
+    };
+  }, [commitLayout]);
 
   const reconcileFromTopology = useCallback((api: DockviewApi): void => {
     refreshGroupIds(api);
@@ -224,12 +246,12 @@ export function WorkspaceDock(props: {
       if (targetIndex >= 0) onMove(panel.id, targetGroupId, targetIndex);
     }));
     apiSubscriptions.current.push(event.api.onDidMutateLayout(({ origin }) => {
-      if (reconciliationFeedback.current.isSuppressed() || origin === 'api') return;
+      if (resizing.current || reconciliationFeedback.current.isSuppressed() || origin === 'api') return;
       commitLayout(event.api);
       setNativeSuspended(false);
     }));
     apiSubscriptions.current.push(event.api.onDidLayoutChange(() => {
-      if (!reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
+      if (!resizing.current && !reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
     }));
     apiSubscriptions.current.push(event.api.onWillShowOverlay((overlay) => {
       if ((overlay.kind === 'content' || overlay.kind === 'edge') && overlay.position !== 'center') {
@@ -282,7 +304,14 @@ export function WorkspaceDock(props: {
   );
 
   return (
-    <section className="workspace-dock" aria-label="Workspace tabs">
+    <section className="workspace-dock" aria-label="Workspace tabs"
+      data-split={topology.root.kind === 'split' ? '' : undefined}
+      onMouseDownCapture={(event) => {
+        if (event.button !== 0 || !(event.target instanceof Element)
+          || !event.target.closest('.dv-sash')) return;
+        resizing.current = true;
+        flushSync(() => setNativeSuspended(true));
+      }}>
       <div className="workspace-layout-actions" aria-label="Workspace layout actions">
         <button type="button" onClick={() => splitActive('right')} disabled={!canSplit}>Split Right</button>
         <button type="button" onClick={() => splitActive('down')} disabled={!canSplit}>Split Down</button>
