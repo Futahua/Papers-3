@@ -462,8 +462,20 @@ export function WorkspaceDock(props: {
         sideDrop.current = null;
         clearPreview(false);
       }
+      else if (overlay.kind === 'tab' || overlay.kind === 'header_space') {
+        // Dockview reports tab-strip/header hover with a different kind than
+        // content/edge. Invalidate any prior edge candidate while keeping the
+        // host raised for the remainder of the active drag.
+        sideDrop.current = null;
+        clearPreview(false);
+      }
     }));
     apiSubscriptions.current.push(event.api.onWillDrop((drop) => {
+      if (drop.kind === 'tab' || drop.kind === 'header_space') {
+        sideDrop.current = null;
+        clearPreview(false);
+        return;
+      }
       if ((drop.kind !== 'content' && drop.kind !== 'edge') || drop.position === 'center') return;
       const nativeTarget = drop.nativeEvent.target;
       if (nativeTarget instanceof Element && nativeTarget.closest('.dv-tab, .dv-tabs-and-actions-container')) {

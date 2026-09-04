@@ -2831,6 +2831,8 @@ guarantee layer above native Backpack surfaces.
  * [x] Delayed host-raise acknowledgements are generation-guarded before they
    write `sideDrop`, so edge → center/reorder transitions cannot resurrect a
    stale split intent.
+ * [x] Dockview `tab`/`header_space` overlays explicitly clear side intent and
+   preserve the raised host, so edge → tab-strip drops remain pure reorders.
  * [x] Main-owned topology rejection reports an announced cancellation while
    fresh canonical topology reconciliation restores the renderer; the rejection
    path re-raises the host before displaying its visual status above native
