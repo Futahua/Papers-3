@@ -1,13 +1,16 @@
 import React from 'react';
 import type { BackpacksList } from './bridge';
 
-export function BackpackSidebar({ list, activeId, onEnter }: {
+export function BackpackSidebar({ list, activeId, onEnter, onMouseEnter, onMouseLeave }: {
   list: BackpacksList;
   activeId: string | null;
   onEnter: (id: string, newTab?: boolean) => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }): React.JSX.Element {
   const backpacks = list.backpacks.filter((backpack) => !backpack.archived);
-  return <nav id="backpack-sidebar" className="backpack-sidebar" aria-label="Choose Backpack">
+  return <nav id="backpack-sidebar" className="backpack-sidebar" aria-label="Choose Backpack"
+    onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
     <p className="eyebrow">Backpacks</p>
     <div className="backpack-sidebar-list">
       {backpacks.map((backpack) => <button

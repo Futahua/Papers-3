@@ -60,6 +60,24 @@ export function App(): React.JSX.Element {
   const [view, setView] = useState<BasicView>('backpacks');
   const [basicOpen, setBasicOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarCloseTimer = useRef<number | null>(null);
+  const cancelSidebarClose = useCallback((): void => {
+    if (sidebarCloseTimer.current === null) return;
+    window.clearTimeout(sidebarCloseTimer.current);
+    sidebarCloseTimer.current = null;
+  }, []);
+  const openSidebar = useCallback((): void => {
+    cancelSidebarClose();
+    if (view === 'backpacks' && !basicOpen) setSidebarOpen(true);
+  }, [basicOpen, cancelSidebarClose, view]);
+  const scheduleSidebarClose = useCallback((): void => {
+    cancelSidebarClose();
+    sidebarCloseTimer.current = window.setTimeout(() => {
+      sidebarCloseTimer.current = null;
+      setSidebarOpen(false);
+    }, 240);
+  }, [cancelSidebarClose]);
+  useEffect(() => () => cancelSidebarClose(), [cancelSidebarClose]);
   const navigationQueue = useRef(Promise.resolve());
   const [navigationBusy, setNavigationBusy] = useState(false);
   const [entered, setEntered] = useState<string | null>(null);
@@ -445,9 +463,9 @@ export function App(): React.JSX.Element {
           top-right inset. No wordmark, no File/Edit/View/Window menu. */}
       <header className="titlebar">
         <div className="titlebar-left" ref={basicRef}
-          onMouseEnter={() => { if (view === 'backpacks' && !basicOpen) setSidebarOpen(true); }}
-          onMouseLeave={() => setSidebarOpen(false)}
-          onFocus={() => { if (view === 'backpacks' && !basicOpen) setSidebarOpen(true); }}
+          onMouseEnter={openSidebar}
+          onMouseLeave={scheduleSidebarClose}
+          onFocus={openSidebar}
           onKeyDown={(event) => { if (event.key === 'Escape') { setSidebarOpen(false); setBasicOpen(false); } }}>
           <button
             className={`pill-button${basicOpen ? ' active' : ''}`}
@@ -463,7 +481,8 @@ export function App(): React.JSX.Element {
           >
             {VIEW_LABEL[view]}
           </button>
-          {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack} />}
+          {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack}
+            onMouseEnter={cancelSidebarClose} onMouseLeave={scheduleSidebarClose} />}
           {basicOpen && (
             <div id="basic-menu" className="basic-menu" role="menu">
               <p className="eyebrow">Basic</p>

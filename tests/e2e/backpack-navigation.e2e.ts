@@ -39,7 +39,12 @@ it('hover picker and main-screen clicks reuse tabs, middle-click adds, and split
     await tabCount(2);
     const sidebar = page.getByRole('navigation', { name: 'Choose Backpack' });
     await page.mouse.move(500, 20);
+    const dockBeforeSidebar = await page.locator('.workspace-dock').boundingBox();
     await page.locator('.titlebar-left > button').hover();
+    expect(await sidebar.evaluate((element) => getComputedStyle(element).position)).toBe('absolute');
+    const dockAfterSidebar = await page.locator('.workspace-dock').boundingBox();
+    expect(dockAfterSidebar?.x).toBe(dockBeforeSidebar?.x);
+    expect(dockAfterSidebar?.width).toBe(dockBeforeSidebar?.width);
     await sidebar.getByRole('button', { name: 'Alpha', exact: true }).click();
     await waitFor(async () => await page.getByRole('tab', { name: 'Alpha' }).count() === 1, 10000, 'sidebar replacement');
     await tabCount(2);

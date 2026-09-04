@@ -1,5 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DockviewReact,
   type DockviewApi,
@@ -25,12 +24,9 @@ interface WorkspacePanelParams {
   url: string;
 }
 
-const NativePresentationSuspended = createContext(false);
-
 function WorkspacePanel(props: IDockviewPanelProps<WorkspacePanelParams>): React.JSX.Element {
   const { params, api } = props;
   const [visible, setVisible] = useState(api.isVisible);
-  const suspended = useContext(NativePresentationSuspended);
   useEffect(() => {
     setVisible(api.isVisible);
     const disposable = api.onDidVisibilityChange((event) => setVisible(event.isVisible));
@@ -41,7 +37,6 @@ function WorkspacePanel(props: IDockviewPanelProps<WorkspacePanelParams>): React
       url={params.url}
       surfaceId={params.surfaceId}
       visible={visible}
-      occluded={suspended}
     />
   );
 }
@@ -70,7 +65,6 @@ export function WorkspaceDock(props: {
   const groupIds = useRef(new Map<string, string>());
   const apiSubscriptions = useRef<Array<{ dispose(): void }>>([]);
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
-  const [nativeSuspended, setNativeSuspended] = useState(false);
   const resizing = useRef(false);
   const interactionDisabledRef = useRef(false);
   projectsRef.current = projects;
@@ -122,7 +116,6 @@ export function WorkspaceDock(props: {
       if (!resizing.current) return;
       resizing.current = false;
       if (apiRef.current) commitLayout(apiRef.current);
-      setNativeSuspended(false);
     };
     window.addEventListener('mouseup', finishResize);
     window.addEventListener('pointercancel', finishResize);
@@ -203,16 +196,6 @@ export function WorkspaceDock(props: {
 
   }, [refreshGroupIds]);
 
-  useEffect(() => {
-    const restore = (): void => setNativeSuspended(false);
-    window.addEventListener('dragend', restore);
-    window.addEventListener('drop', restore);
-    return () => {
-      window.removeEventListener('dragend', restore);
-      window.removeEventListener('drop', restore);
-    };
-  }, []);
-
   const components = useMemo(() => ({ workspace: WorkspacePanel }), []);
   const addMissingPanels = useCallback((api: DockviewApi): void => {
     for (const project of projectsRef.current) {
@@ -252,7 +235,6 @@ export function WorkspaceDock(props: {
     apiSubscriptions.current.push(event.api.onDidMutateLayout(({ origin }) => {
       if (interactionDisabledRef.current || resizing.current || reconciliationFeedback.current.isSuppressed() || origin === 'api') return;
       commitLayout(event.api);
-      setNativeSuspended(false);
     }));
     apiSubscriptions.current.push(event.api.onDidLayoutChange(() => {
       if (!interactionDisabledRef.current && !resizing.current && !reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
@@ -262,11 +244,9 @@ export function WorkspaceDock(props: {
         overlay.preventDefault();
         return;
       }
-      flushSync(() => setNativeSuspended(true));
     }));
     apiSubscriptions.current.push(event.api.onDidDrop(() => {
       refreshGroupIds(event.api);
-      setNativeSuspended(false);
     }));
   }, [addMissingPanels, commitLayout, onActivate, onClose, onMove, refreshGroupIds]);
 
@@ -328,21 +308,18 @@ export function WorkspaceDock(props: {
         if (event.button !== 0 || !(event.target instanceof Element)
           || !event.target.closest('.dv-sash')) return;
         resizing.current = true;
-        flushSync(() => setNativeSuspended(true));
       }}>
       <div className="workspace-layout-actions" aria-label="Workspace layout actions">
         <button type="button" onClick={() => splitActive('right')} disabled={!canSplit}>Split Right</button>
         <button type="button" onClick={() => splitActive('down')} disabled={!canSplit}>Split Down</button>
       </div>
-      <NativePresentationSuspended.Provider value={nativeSuspended}>
-        <DockviewReact
-          className="dockview-theme-light"
-          components={components}
-          onReady={onReady}
-          disableFloatingGroups
-        />
-        {interactionDisabled && <div className="workspace-interaction-shield" aria-hidden="true" />}
-      </NativePresentationSuspended.Provider>
+      <DockviewReact
+        className="dockview-theme-light"
+        components={components}
+        onReady={onReady}
+        disableFloatingGroups
+      />
+      {interactionDisabled && <div className="workspace-interaction-shield" aria-hidden="true" />}
     </section>
   );
 }
