@@ -122,7 +122,13 @@ export function BackpacksPane(props: {
                     {!backpack.archived && (
                       <button className="secondary" onClick={() => props.onEnter(backpack.id)}
                         onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
-                        onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); props.onEnter(backpack.id, true); } }}>
+                        onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); props.onEnter(backpack.id, true); } }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' && event.shiftKey) {
+                            event.preventDefault();
+                            props.onEnter(backpack.id, true);
+                          }
+                        }}>
                         Enter
                       </button>
                     )}

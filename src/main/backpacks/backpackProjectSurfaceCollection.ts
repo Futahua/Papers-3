@@ -204,6 +204,10 @@ export class BackpackProjectSurfaceCollection {
     return null;
   }
 
+  entryUrlForSurface(surfaceId: string): string | null {
+    return this.runtimes.get(surfaceId)?.liveEntryUrl ?? null;
+  }
+
   all(): BackpackProjectRuntime[] {
     return [...this.runtimes.values()];
   }

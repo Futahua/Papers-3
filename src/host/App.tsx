@@ -451,9 +451,9 @@ export function App(): React.JSX.Element {
           onKeyDown={(event) => { if (event.key === 'Escape') { setSidebarOpen(false); setBasicOpen(false); } }}>
           <button
             className={`pill-button${basicOpen ? ' active' : ''}`}
-            aria-haspopup="menu"
-            aria-controls="backpack-sidebar"
-            aria-expanded={entered === null && (basicOpen || sidebarOpen)}
+            aria-haspopup={basicOpen ? 'menu' : sidebarOpen ? 'listbox' : undefined}
+            aria-controls={basicOpen ? 'basic-menu' : sidebarOpen ? 'backpack-sidebar' : undefined}
+            aria-expanded={basicOpen || sidebarOpen}
             aria-label={
               entered === null
                 ? `${VIEW_LABEL[view]} — open Basic menu`
@@ -465,7 +465,7 @@ export function App(): React.JSX.Element {
           </button>
           {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack} />}
           {basicOpen && (
-            <div className="basic-menu" role="menu">
+            <div id="basic-menu" className="basic-menu" role="menu">
               <p className="eyebrow">Basic</p>
               <button
                 className={`basic-row${view === 'backpacks' ? ' active' : ''}`}

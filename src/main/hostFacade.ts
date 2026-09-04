@@ -103,6 +103,7 @@ export interface FacadeDeps {
    * host renderer is only a window actor and is never looked up as a project
    * surface. */
   closeAttachedProjectSurface: (windowId: number, surfaceId: string, options?: { strict?: boolean }) => void | Promise<void>;
+  projectEntryUrlForSurface?: (windowId: number, surfaceId: string) => string | null;
   /** Semantic close removes the native runtime entry; hide preserves it for
    * renderer remount. */
   closeBackpackProjectSurface: (senderId: number, surfaceId: string) => void | Promise<void>;
@@ -807,7 +808,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       } catch (error) {
         if (replacementEventSent) {
           const old = originalTopology?.surfaces.find((surface) => surface.surfaceId === surfaceId);
-          const oldUrl = this.deps.workspaceMove?.projectEntryUrl(windowId, original.projectId)
+          const oldUrl = this.deps.projectEntryUrlForSurface?.(windowId, surfaceId)
+            ?? this.deps.workspaceMove?.projectEntryUrl(windowId, original.projectId)
             ?? `papers-backpack://${original.projectId}/open`;
           try {
             this.deps.sendToWindow(windowId, 'host:event:workspace-project-replaced', {

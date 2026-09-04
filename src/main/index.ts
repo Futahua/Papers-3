@@ -1011,6 +1011,8 @@ async function bootstrap(): Promise<void> {
     closeAttachedProjectSurface: async (windowId, surfaceId, options) => {
       await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
+    projectEntryUrlForSurface: (windowId, surfaceId) =>
+      papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForSurface(surfaceId) ?? null,
     closeBackpackProjectSurface: async (senderId, surfaceId) => {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);

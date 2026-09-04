@@ -66,6 +66,10 @@ export class BackpackProjectRuntime {
     return this.projectId;
   }
 
+  get liveEntryUrl(): string | null {
+    return this.entryUrl;
+  }
+
   get isPresented(): boolean {
     return this.presented;
   }
