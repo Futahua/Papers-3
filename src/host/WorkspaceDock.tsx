@@ -4,6 +4,7 @@ import {
   type DockviewApi,
   type DockviewReadyEvent,
   type IDockviewPanelProps,
+  type PositionResolver,
 } from 'dockview-react';
 import 'dockview-react/dist/styles/dockview.css';
 
@@ -31,6 +32,18 @@ type SplitPreview = {
   allowed: boolean;
   armed: boolean;
   message: string;
+};
+
+const resolveWorkspaceDropPosition: PositionResolver = {
+  resolve: ({ x, y, width, height, zones }) => {
+    const xBand = Math.min(180, Math.max(72, width * 0.22));
+    const yBand = Math.min(160, Math.max(72, height * 0.2));
+    if (zones.has('left') && x <= xBand) return { position: 'left' };
+    if (zones.has('right') && x >= width - xBand) return { position: 'right' };
+    if (zones.has('top') && y <= yBand) return { position: 'top' };
+    if (zones.has('bottom') && y >= height - yBand) return { position: 'bottom' };
+    return zones.has('center') ? { position: 'center' } : null;
+  },
 };
 
 function WorkspacePanel(props: IDockviewPanelProps<WorkspacePanelParams>): React.JSX.Element {
@@ -83,6 +96,7 @@ export function WorkspaceDock(props: {
   const previewGeneration = useRef(0);
   const dragActive = useRef(false);
   const pointerDragCleanup = useRef<(() => void) | null>(null);
+  const dragSessionGeneration = useRef(0);
   const hostRaised = useRef(false);
   const statusTimer = useRef<number | null>(null);
   const [preview, setPreview] = useState<SplitPreview | null>(null);
@@ -94,6 +108,10 @@ export function WorkspaceDock(props: {
   const setHostOverlay = useCallback((active: boolean): void => {
     void onOverlayActiveChange?.(active);
   }, [onOverlayActiveChange]);
+
+  const setDragSurfaceActive = useCallback((active: boolean): void => {
+    document.documentElement.dataset.workspaceDrag = active ? 'true' : 'false';
+  }, []);
 
   const setHostOverlayAwaited = useCallback((active: boolean, guard?: () => boolean): Promise<void> => {
     return Promise.resolve(onOverlayActiveChange?.(active)).then(() => {
@@ -297,12 +315,14 @@ export function WorkspaceDock(props: {
       pointerDragCleanup.current?.();
       pointerDragCleanup.current = null;
       dragActive.current = false;
+      dragSessionGeneration.current += 1;
+      setDragSurfaceActive(false);
       const current = previewRef.current;
       if (current?.allowed) clearPreview();
       else if (current && current.position !== 'center') showRejected(current.position, current.message);
       else if (current) clearPreview();
       else clearPreview();
-  }, [clearPreview, showRejected]);
+  }, [clearPreview, setDragSurfaceActive, showRejected]);
 
   useEffect(() => {
     window.addEventListener('dragend', finishDrop);
@@ -315,9 +335,11 @@ export function WorkspaceDock(props: {
       pointerDragCleanup.current?.();
       pointerDragCleanup.current = null;
       dragActive.current = false;
+      dragSessionGeneration.current += 1;
+      setDragSurfaceActive(false);
       clearPreview();
     };
-  }, [clearPreview, finishDrop]);
+  }, [clearPreview, finishDrop, setDragSurfaceActive]);
 
   const components = useMemo(() => ({ workspace: WorkspacePanel }), []);
   const addMissingPanels = useCallback((api: DockviewApi): void => {
@@ -467,7 +489,13 @@ export function WorkspaceDock(props: {
       }
       else if (overlay.position === 'center') {
         sideDrop.current = null;
-        clearPreview(false);
+        showPreview({
+          position: 'center',
+          allowed: false,
+          armed: true,
+          message: 'Keep in this tab group',
+        });
+        setHostOverlay(true);
       }
       else if (overlay.kind === 'tab') {
         // Dockview reports tab-strip/header hover with a different kind than
@@ -603,6 +631,15 @@ export function WorkspaceDock(props: {
       setPreview(null);
       dragActive.current = true;
       hostRaised.current = false;
+      const session = ++dragSessionGeneration.current;
+      setDragSurfaceActive(true);
+      // Let Dockview finish establishing its drag backend before requesting
+      // native child-view reordering. The acknowledgement is generation
+      // guarded so a fast cancellation cannot resurrect host ownership.
+      requestAnimationFrame(() => {
+        if (!dragActive.current || dragSessionGeneration.current !== session) return;
+        void setHostOverlayAwaited(true, () => dragActive.current && dragSessionGeneration.current === session);
+      });
       pointerDragCleanup.current?.();
       pointerDragCleanup.current = null;
       // Dockview's pointer backend (touch/pen, and all input on coarse
@@ -635,7 +672,7 @@ export function WorkspaceDock(props: {
       // Keep the source identity available for the first overlay callback.
       previewCandidate.current = { surfaceId: panel.id, position: 'right', generation: previewGeneration.current };
     }));
-  }, [addMissingPanels, clearPreview, commitLayout, consumePendingSplit, finishDrop, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
+  }, [addMissingPanels, clearPreview, commitLayout, consumePendingSplit, finishDrop, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setDragSurfaceActive, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
 
   useEffect(() => {
     const api = apiRef.current;
@@ -745,6 +782,7 @@ export function WorkspaceDock(props: {
         components={components}
         onReady={onReady}
         disableFloatingGroups
+        dropPositionResolver={resolveWorkspaceDropPosition}
       />
       {interactionDisabled && <div className="workspace-interaction-shield" aria-hidden="true" />}
     </section>

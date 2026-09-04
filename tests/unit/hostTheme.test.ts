@@ -41,10 +41,10 @@ describe('host theme contract', () => {
     expect(styles).toContain('background: transparent;');
   });
 
-  it('keeps a native-project edge seam and explains header-space drops', () => {
-    expect(styles).toContain('.workspace-dock .backpack-project-frame');
-    expect(styles).toContain('width: calc(100% - 16px);');
-    expect(styles).toContain('margin: 8px;');
+  it('keeps the native-project edge seam and explains explicit drag states', () => {
+    expect(styles).toContain('.workspace-dock[data-split] .backpack-project-frame');
+    expect(styles).toContain('width: calc(100% - 8px);');
+    expect(styles).toContain('margin: 4px;');
     expect(styles).toContain('.workspace-dock .dv-dockview');
     expect(styles).toContain('--dv-group-view-background-color: transparent !important;');
     expect(workspaceDock).toContain('Drop on a panel edge to split');

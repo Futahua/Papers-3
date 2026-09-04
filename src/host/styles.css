@@ -745,13 +745,11 @@ input:focus-visible {
 .backpack-sidebar-list button[aria-current="page"] { background: var(--raised-strong); }
 .backpack-sidebar-empty { color: var(--muted); padding: 8px; }
 
-/* Keep an always-host-owned edge band at native view boundaries. This gives
-   Dockview a compositor-independent seam for the first edge move while host
-   ownership is settling, without changing the project's logical bounds. */
-.workspace-dock .backpack-project-frame {
-  width: calc(100% - 16px);
-  height: calc(100% - 16px);
-  margin: 8px;
+/* Leave a host-owned hit area at native view edges for the split sash. */
+.workspace-dock[data-split] .backpack-project-frame {
+  width: calc(100% - 8px);
+  height: calc(100% - 8px);
+  margin: 4px;
 }
 
 /* Native project views composite over the host. Keep every workspace content
