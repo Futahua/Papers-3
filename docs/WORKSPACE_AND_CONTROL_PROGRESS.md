@@ -2963,3 +2963,28 @@ updated app is running normally from that path. A before/after manifest found
 all 194 `Runtime/Data` files byte-for-byte unchanged. Isolated packaged runs of
 `backpack-navigation.e2e.ts` and `workspace-tabs.e2e.ts` pass against the live
 executable. No publication or installer release occurred.
+
+### 10.3 Resize and nested-tiling audit (reviewer follow-up, 2026-09-04)
+
+The next live screenshots identify a new blocker, distinct from the signed-off
+successful-split terminal. During sash movement Dockview can emit a user-origin
+active-panel change, and the native WebContentsView can steal the pointer stream
+after the small host gutter. Papers therefore needs a generation-scoped resize
+session: a dedicated host lease, transparent interaction shield, frozen and
+restored active-panel/focus state, pointer-ID terminal handling, and a
+geometry-only commit that cannot persist tab activation or reorder side effects.
+The reviewer marks this live interaction slice **OPEN / NOT SIGNED OFF** until
+that session and physical native-pane acceptance are implemented.
+
+The reviewer also confirms that `WorkspaceTopologyV1` already supports arbitrary
+recursive trees and n-ary children. The current `WorkspaceDock`/`App` projection
+caps (`root.kind === 'group'`, exactly-one/two-group checks, root-only weights)
+are the artificial limit. The recommended mature path is a recursive Dockview
+adapter using public `toJSON()`/`fromJSON()` where native sender identity is
+proven (otherwise programmatic reconciliation), a bijective canonical↔live group
+ID map, same-axis normalization to n-ary nodes, and atomic full-tree topology
+commits. The acceptance matrix must cover H-in-H, V-in-V, mixed nested H/V,
+4/6/8 groups, inner/outer resize, tab reorder/move/close, picker composition,
+cross-window mutation, reload, late pointer events, and a physical click in
+every visible native pane. No implementation is included in this audit record
+yet; the existing successful-drop fix and As-you-Go signoff remain intact.
