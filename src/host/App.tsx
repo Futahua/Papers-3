@@ -62,8 +62,6 @@ export function App(): React.JSX.Element {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspaceOverlayActive, setWorkspaceOverlayActive] = useState(false);
   const [splitNotice, setSplitNotice] = useState<{ id: number; message: string } | null>(null);
-  const sidebarOpenRef = useRef(false);
-  sidebarOpenRef.current = sidebarOpen;
   const sidebarCloseTimer = useRef<number | null>(null);
   const cancelSidebarClose = useCallback((): void => {
     if (sidebarCloseTimer.current === null) return;
@@ -328,15 +326,20 @@ export function App(): React.JSX.Element {
   // regardless of CSS z-index. Raise the host only while this picker is open,
   // then restore project surfaces without changing their bounds or identities.
   useEffect(() => {
-    void host().layout.setHostOverlayActive(sidebarOpen || workspaceOverlayActive).catch(() => undefined);
-  }, [sidebarOpen, workspaceOverlayActive]);
+    void host().layout.setHostOverlayActive(sidebarOpen, 'picker').catch(() => undefined);
+  }, [sidebarOpen]);
+
+  useEffect(() => {
+    void host().layout.setHostOverlayActive(workspaceOverlayActive, 'workspace-drag').catch(() => undefined);
+  }, [workspaceOverlayActive]);
 
   const setWorkspaceOverlayFromDock = useCallback((active: boolean): Promise<void> => {
     setWorkspaceOverlayActive(active);
     // A drag needs an acknowledgement that Electron has raised the host
-    // child view before its preview may become armed. The effect above keeps
-    // picker and workspace ownership OR-composed for later state changes.
-    return host().layout.setHostOverlayActive(sidebarOpenRef.current || active);
+    // child view before its preview may become armed. Native ownership is
+    // tracked by owner token in main, so releasing this lease cannot lower the
+    // host while the picker or a status overlay still owns it.
+    return host().layout.setHostOverlayActive(active, 'workspace-drag');
   }, []);
 
   // Dismiss the Basic menu on outside click.

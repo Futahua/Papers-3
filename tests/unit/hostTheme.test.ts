@@ -47,6 +47,7 @@ describe('host theme contract', () => {
     expect(styles).toContain('margin: 4px;');
     expect(styles).toContain('.workspace-dock .dv-dockview');
     expect(styles).toContain('--dv-group-view-background-color: transparent !important;');
+    expect(styles).toContain('.workspace-split-preview.is-neutral');
     expect(workspaceDock).toContain('Drop on a panel edge to split');
   });
 });

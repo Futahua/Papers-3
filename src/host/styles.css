@@ -793,6 +793,10 @@ input:focus-visible {
   border-color: color-mix(in srgb, #d9822b 85%, white);
   background: color-mix(in srgb, #d9822b 20%, transparent);
 }
+.workspace-split-preview.is-neutral {
+  border-color: color-mix(in srgb, var(--muted) 70%, white);
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+}
 .workspace-split-preview[data-position="left"] { inset: 42px 50% 0 0; }
 .workspace-split-preview[data-position="right"] { inset: 42px 0 0 50%; }
 .workspace-split-preview[data-position="top"] { inset: 42px 0 50% 0; }

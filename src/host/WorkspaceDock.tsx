@@ -488,7 +488,10 @@ export function WorkspaceDock(props: {
         });
       }
       else if (overlay.position === 'center') {
-        sideDrop.current = null;
+        // Invalidate any edge acknowledgement that may still be in flight;
+        // otherwise its delayed RAF could resurrect sideDrop after the cursor
+        // has already returned to the neutral center target.
+        clearPreview(false);
         showPreview({
           position: 'center',
           allowed: false,
@@ -508,7 +511,7 @@ export function WorkspaceDock(props: {
         // but it is not a split target. Keep the host raised and make that
         // otherwise ambiguous no-op explicit instead of silently clearing the
         // preview while the user is still dragging.
-        sideDrop.current = null;
+        clearPreview(false);
         showPreview({
           position: 'center',
           allowed: false,
@@ -524,7 +527,10 @@ export function WorkspaceDock(props: {
         clearPreview(false);
         return;
       }
-      if ((drop.kind !== 'content' && drop.kind !== 'edge') || drop.position === 'center') return;
+      if ((drop.kind !== 'content' && drop.kind !== 'edge') || drop.position === 'center') {
+        if (drop.position === 'center') clearPreview(false);
+        return;
+      }
       const nativeTarget = drop.nativeEvent.target;
       if (nativeTarget instanceof Element && nativeTarget.closest('.dv-tab, .dv-tabs-and-actions-container')) {
         drop.preventDefault();
@@ -768,7 +774,7 @@ export function WorkspaceDock(props: {
       </p>
       {preview && (
         <div
-          className={`workspace-split-preview${preview.allowed ? '' : ' is-rejected'}${preview.armed ? ' is-armed' : ''}`}
+          className={`workspace-split-preview${preview.allowed ? '' : preview.position === 'center' ? ' is-neutral' : ' is-rejected'}${preview.armed ? ' is-armed' : ''}`}
           data-position={preview.position}
           role="status"
           aria-live="polite"

@@ -153,7 +153,7 @@ export interface FacadeDeps {
   ) => void;
   /** Temporarily raise the host renderer above native project views for
    * clickable DOM popovers/drag overlays, then restore project z-order. */
-  setHostOverlayActive?: (windowId: number, active: boolean) => void;
+  setHostOverlayActive?: (windowId: number, active: boolean, owner?: 'picker' | 'workspace-drag' | 'legacy') => void;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
@@ -1125,10 +1125,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.runtime.setOverlayVisible(!active);
   }
 
-  setHostOverlayActive(senderId: number, active: boolean): void {
+  setHostOverlayActive(senderId: number, active: boolean, owner: 'picker' | 'workspace-drag' | 'legacy' = 'legacy'): void {
     const windowId = this.deps.windowIdForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may change host overlay composition.');
-    this.deps.setHostOverlayActive?.(windowId, active);
+    this.deps.setHostOverlayActive?.(windowId, active, owner);
   }
 
   /** Match the native min/maximize/close overlay to the active Papers theme. */

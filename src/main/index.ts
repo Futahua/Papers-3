@@ -154,7 +154,8 @@ interface PapersWindowOwned {
   projectSurfaces: BackpackProjectSurfaceCollection;
 }
 
-const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
+  const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
+  const hostOverlayOwners = new Map<number, Set<'picker' | 'workspace-drag' | 'legacy'>>();
 const workspaceTopologies = new Map<number, WorkspaceTopologyV1>();
 const workspaceTopologyRevisions = new Map<number, number>();
 /** Live-only association. Durable workspace IDs persist; native window IDs do not. */
@@ -727,7 +728,10 @@ async function bootstrap(): Promise<void> {
             workspaceTopologyRevisions.delete(id);
             workspaceIds.delete(id);
           },
-          removeWindow: (id) => { papersWindows.remove(id); },
+          removeWindow: (id) => {
+            hostOverlayOwners.delete(id);
+            papersWindows.remove(id);
+          },
           emitHermesSurface: () => facade.emitHermesSurface(),
         });
       } finally {
@@ -1142,10 +1146,22 @@ async function bootstrap(): Promise<void> {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
     },
-    setHostOverlayActive: (windowId, active) => {
+    setHostOverlayActive: (windowId, active, owner = 'legacy') => {
       const context = papersWindows.get(windowId);
       if (!context || context.owned.window.isDestroyed()) return;
-      if (active) context.owned.window.contentView.addChildView(context.owned.hostView);
+      const owners = hostOverlayOwners.get(windowId) ?? new Set<'picker' | 'workspace-drag' | 'legacy'>();
+      if (active) owners.add(owner);
+      else owners.delete(owner);
+      if (owners.size === 0) hostOverlayOwners.delete(windowId);
+      else hostOverlayOwners.set(windowId, owners);
+
+      const workspaceDragActive = owners.has('workspace-drag');
+      context.owned.hostView.setBackgroundColor(
+        workspaceDragActive || papersSettings.transparentWindow
+          ? TRANSPARENT_CHILD_SURFACE_COLOR
+          : OPAQUE_SURFACE_COLOR,
+      );
+      if (owners.size > 0) context.owned.window.contentView.addChildView(context.owned.hostView);
       else context.owned.projectSurfaces.raisePresented();
     },
     runtime,

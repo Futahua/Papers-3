@@ -39,6 +39,7 @@ export interface SaveStatusPayload {
 
 export type HermesPlacement = 'closed' | 'docked' | 'detached';
 export type HermesStatusKind = 'idle' | 'starting' | 'ready' | 'error';
+export type HostOverlayOwner = 'picker' | 'workspace-drag' | 'legacy';
 
 export interface HermesSurfaceStatus {
   /** Global truth about Hermes: there is one Hermes, in one placement. */
@@ -155,7 +156,7 @@ interface HostBridge {
     load(layoutId: string): Promise<{ windowId: number; layoutId: string; topology: WorkspaceTopologyV1 }>;
     setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setOverlayActive(active: boolean): Promise<void>;
-    setHostOverlayActive(active: boolean): Promise<void>;
+    setHostOverlayActive(active: boolean, owner?: HostOverlayOwner): Promise<void>;
     setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
     commitWorkspaceTopology(topology: WorkspaceTopologyV1): Promise<void>;
     refreshWorkspaceTopology(): Promise<void>;
