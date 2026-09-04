@@ -89,6 +89,21 @@ Rollback is the App snapshot
 The live registry digest and desktop shortcut hash remain unchanged; no
 `Runtime\Data` file was intentionally modified.
 
+### Final reviewed live install — 2026-09-04 14:40 local
+
+The browser reviewer marked exact source `73371a289b88e4ab96a87cd7064ffdccaa6e5462`
+READY after auditing the fresh canonical-topology recovery and single-owner
+host-overlay composition. That exact package is now installed and launched in
+the live setup (NSIS exit 0). Installed/package `app.asar` SHA-256 match:
+`6848C7295FE3D3498F95B128B12BD101504B918B0B201BA70D27DD673DDFB08C`.
+Installer archive:
+`Runtime\Installers\Papers-Setup-1.3.11-73371a2.exe`, SHA-256
+`4BC93F882730D99724F2FDF04E6BCF5D716D12E0268BF0F73ABA9D4D59415D15`.
+Rollback snapshot:
+`Runtime\Backups\before-live-install-20260904-144003` (App only).
+The live registry and desktop shortcut hashes remain unchanged; no
+`Runtime\Data` file was intentionally modified.
+
 ### Live overlay hardening follow-up — 2026-09-04 14:30 local
 
 Reviewer audit of the direct tab-drop candidate found two composition/race
