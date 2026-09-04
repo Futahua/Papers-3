@@ -214,7 +214,7 @@ export class BackpackProjectRuntime {
     this.fit();
   }
 
-  async hide(): Promise<void> {
+  async hide(options: { restoreOnFlushFailure?: boolean } = {}): Promise<void> {
     if (this.hidePromise) return this.hidePromise;
     const view = this.view;
     if (!view) return;
@@ -260,13 +260,24 @@ export class BackpackProjectRuntime {
       }
     };
     const pending = close().catch((caught) => {
-      // Voluntary replacement/close must remain recoverable when the
-      // renderer cannot flush. The view is detached above but still alive;
-      // restore it so callers can keep using the old tab and retry.
-      if (this.view === view && !this.window.isDestroyed()) {
-        this.window.contentView.addChildView(view);
-        this.presented = true;
-        this.fit();
+      if (this.view === view && options.restoreOnFlushFailure !== false) {
+        // Voluntary replacement must remain recoverable when the renderer
+        // cannot flush. The view is detached above but still alive; restore it
+        // so callers can keep using the old tab and retry.
+        if (!this.window.isDestroyed()) {
+          this.window.contentView.addChildView(view);
+          this.presented = true;
+          this.fit();
+        }
+      } else if (this.view === view) {
+        // Terminal teardown is best-effort: do not leave an attached native
+        // view orphaned when its final flush fails.
+        this.view = null;
+        this.projectId = null;
+        this.entryUrl = null;
+        this.presented = false;
+        if (projectId) this.onSurfaceClosed?.(projectId);
+        if (!view.webContents.isDestroyed()) view.webContents.close();
       }
       throw caught;
     }).finally(() => {

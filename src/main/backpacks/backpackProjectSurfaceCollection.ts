@@ -16,9 +16,9 @@ type RuntimeFactory = (
   onRendererGone?: (senderId: number, reason: string) => void,
 ) => BackpackProjectRuntime;
 
-function closeRuntime(runtime: BackpackProjectRuntime, report: (error: unknown) => void): void {
+function closeRuntime(runtime: BackpackProjectRuntime, report: (error: unknown) => void, options?: { restoreOnFlushFailure?: boolean }): void {
   try {
-    void Promise.resolve(runtime.hide()).catch(report);
+    void Promise.resolve(runtime.hide(options)).catch(report);
   } catch (caught) {
     report(caught);
   }
@@ -124,12 +124,12 @@ export class BackpackProjectSurfaceCollection {
           this.runtimes.delete(surfaceId);
           closeRuntime(runtime, (caught) => {
             console.error(`[workspace-move] staged native discard failed for ${surfaceId}:`, caught);
-          });
+          }, { restoreOnFlushFailure: false });
           return;
         }
         closeRuntime(runtime, (caught) => {
           console.error(`[workspace-move] staged native discard failed for ${surfaceId}:`, caught);
-        });
+        }, { restoreOnFlushFailure: false });
       },
     };
   }
@@ -141,13 +141,15 @@ export class BackpackProjectSurfaceCollection {
     // Collection ownership is retained through native teardown so the
     // runtime's close-time flush has completed: the
     // project sender is authenticated through this collection while it saves.
+    let closed = false;
     try {
-      await runtime.hide();
+      await runtime.hide({ restoreOnFlushFailure: options.strict === true });
+      closed = true;
     } catch (caught) {
       if (options.strict) throw caught;
       console.error(`[workspace-move] native close failed for ${surfaceId}:`, caught);
     } finally {
-      if (this.runtimes.get(surfaceId) === runtime) this.runtimes.delete(surfaceId);
+      if (this.runtimes.get(surfaceId) === runtime && (closed || !options.strict)) this.runtimes.delete(surfaceId);
     }
   }
 
@@ -159,7 +161,7 @@ export class BackpackProjectSurfaceCollection {
     // Window teardown is terminal, unlike hiding one inactive tab.
     return Promise.all([...this.runtimes.values()].map((runtime) => {
       try {
-        return Promise.resolve(runtime.hide()).catch((caught) => {
+        return Promise.resolve(runtime.hide({ restoreOnFlushFailure: false })).catch((caught) => {
           console.error('[workspace-move] native window teardown failed:', caught);
         });
       } catch (caught) {

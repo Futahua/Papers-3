@@ -722,10 +722,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // A null project is a successful entry into a valid empty Backpack. The
     // window must still become entered and the registry must still record the
     // application MRU; only the project-surface binding is conditional.
-    this.deps.setEnteredBackpack(windowId, id);
     // Bind the asking host surface immediately, so every later request from
     // this window resolves through its own sender rather than ambient state.
     if (!project) {
+      this.deps.setEnteredBackpack(windowId, id);
       this.emitBackpacksChanged();
       return null;
     }
@@ -762,9 +762,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       const release = this.acquireWorkspaceMutation([windowId]);
       let allocated: string | null = null;
       let prepared: PreparedProjectSurface | null = null;
+      let replacementEventSent = false;
+      let originalTopology: WorkspaceTopologyV1 | null = null;
       try {
         const topology = this.deps.workspaceTopology?.(windowId);
         if (!topology) throw new Error('That window has no workspace topology.');
+        originalTopology = topology;
         this.validateWorkspaceTopology(windowId, topology);
         const fresh = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
         allocated = fresh.surfaceId;
@@ -789,6 +792,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-project-replaced', {
           previousSurfaceId: surfaceId, project: descriptor, topology: next,
         });
+        replacementEventSent = true;
         // This is the only destructive boundary. The staged replacement and
         // event delivery have already succeeded, and runtime.hide() restores
         // the old native view if its final flush rejects or times out.
@@ -801,6 +805,21 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         this.emitBackpacksChanged();
         return { ...project, surfaceId: fresh.surfaceId };
       } catch (error) {
+        if (replacementEventSent) {
+          const old = originalTopology?.surfaces.find((surface) => surface.surfaceId === surfaceId);
+          const oldUrl = this.deps.workspaceMove?.projectEntryUrl(windowId, original.projectId)
+            ?? `papers-backpack://${original.projectId}/open`;
+          try {
+            this.deps.sendToWindow(windowId, 'host:event:workspace-project-replaced', {
+              previousSurfaceId: allocated,
+              project: { surfaceId, projectId: original.projectId, title: old?.title ?? original.projectId, url: oldUrl },
+              topology: originalTopology,
+            });
+          } catch {
+            // The host may have gone away; main's canonical state remains the
+            // source of truth and a later hydration will repair the renderer.
+          }
+        }
         prepared?.discard();
         if (allocated) this.retireLogicalSurface(allocated);
         throw error;

@@ -72,8 +72,10 @@ export function WorkspaceDock(props: {
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const [nativeSuspended, setNativeSuspended] = useState(false);
   const resizing = useRef(false);
+  const interactionDisabledRef = useRef(false);
   projectsRef.current = projects;
   topologyRef.current = topology;
+  interactionDisabledRef.current = interactionDisabled;
 
   useEffect(() => {
     disposing.current = false;
@@ -233,7 +235,7 @@ export function WorkspaceDock(props: {
     addMissingPanels(event.api);
     refreshGroupIds(event.api);
     apiSubscriptions.current.push(event.api.onDidActivePanelChange(({ panel, origin }) => {
-      if (panel && !interactionDisabled && !reconciliationFeedback.current.isSuppressed() && origin !== 'api') onActivate(panel.id);
+      if (panel && !interactionDisabledRef.current && !reconciliationFeedback.current.isSuppressed() && origin !== 'api') onActivate(panel.id);
     }));
     apiSubscriptions.current.push(event.api.onDidRemovePanel((panel) => {
       if (disposing.current) return;
@@ -245,15 +247,15 @@ export function WorkspaceDock(props: {
       const targetGroupId = groupIds.current.get(to.id);
       if (!targetGroupId) return;
       const targetIndex = to.panels.findIndex((candidate) => candidate.id === panel.id);
-      if (targetIndex >= 0 && !interactionDisabled) onMove(panel.id, targetGroupId, targetIndex);
+      if (targetIndex >= 0 && !interactionDisabledRef.current) onMove(panel.id, targetGroupId, targetIndex);
     }));
     apiSubscriptions.current.push(event.api.onDidMutateLayout(({ origin }) => {
-      if (interactionDisabled || resizing.current || reconciliationFeedback.current.isSuppressed() || origin === 'api') return;
+      if (interactionDisabledRef.current || resizing.current || reconciliationFeedback.current.isSuppressed() || origin === 'api') return;
       commitLayout(event.api);
       setNativeSuspended(false);
     }));
     apiSubscriptions.current.push(event.api.onDidLayoutChange(() => {
-      if (!interactionDisabled && !resizing.current && !reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
+      if (!interactionDisabledRef.current && !resizing.current && !reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
     }));
     apiSubscriptions.current.push(event.api.onWillShowOverlay((overlay) => {
       if ((overlay.kind === 'content' || overlay.kind === 'edge') && overlay.position !== 'center') {
@@ -266,7 +268,7 @@ export function WorkspaceDock(props: {
       refreshGroupIds(event.api);
       setNativeSuspended(false);
     }));
-  }, [addMissingPanels, commitLayout, interactionDisabled, onActivate, onClose, onMove, refreshGroupIds]);
+  }, [addMissingPanels, commitLayout, onActivate, onClose, onMove, refreshGroupIds]);
 
   useEffect(() => {
     const api = apiRef.current;
@@ -309,6 +311,12 @@ export function WorkspaceDock(props: {
   return (
     <section className="workspace-dock" aria-label="Workspace tabs"
       data-split={topology.root.kind === 'split' ? '' : undefined}
+      aria-busy={interactionDisabled || undefined}
+      onKeyDownCapture={(event) => {
+        if (!interactionDisabled) return;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
       onMouseDownCapture={(event) => {
         if (interactionDisabled) {
           if (event.target instanceof Element && event.target.closest('.dv-sash')) {
@@ -333,6 +341,7 @@ export function WorkspaceDock(props: {
           onReady={onReady}
           disableFloatingGroups
         />
+        {interactionDisabled && <div className="workspace-interaction-shield" aria-hidden="true" />}
       </NativePresentationSuspended.Provider>
     </section>
   );

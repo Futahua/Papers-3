@@ -698,6 +698,13 @@ input:focus-visible {
   width: 100%;
   height: 100%;
 }
+.workspace-interaction-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  cursor: wait;
+  background: transparent;
+}
 
 .backpack-sidebar-open .workspace-dock { left: 260px; }
 .backpack-sidebar-open > .pane { margin-left: 260px; }

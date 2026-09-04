@@ -154,6 +154,15 @@ describe('BackpackProjectSurfaceCollection', () => {
     expect(collection.get('surface-p')).toBeNull();
   });
 
+  it('retains strict-close ownership when voluntary teardown rejects', async () => {
+    const { collection } = collectionWithFakes();
+    const runtime = collection.ensure('surface-p') as unknown as FakeRuntime;
+    runtime.hide.mockRejectedValueOnce(new Error('flush failed'));
+
+    await expect(collection.close('surface-p', { strict: true })).rejects.toThrow('flush failed');
+    expect(collection.get('surface-p')).toBe(runtime);
+  });
+
   it('retries native presentation after a first adoption failure', () => {
     const { collection } = collectionWithFakes();
     const prepared = collection.prepare('surface-q');
