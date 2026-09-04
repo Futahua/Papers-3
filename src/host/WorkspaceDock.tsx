@@ -94,7 +94,8 @@ export function WorkspaceDock(props: {
   const apiSubscriptions = useRef<Array<{ dispose(): void }>>([]);
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const resizing = useRef(false);
-  const resizeSession = useRef<{ pointerId: number; generation: number; focusedGroupId: string; activeByGroup: Map<string, string | null>; captureTarget: HTMLElement | null } | null>(null);
+  const resizeSession = useRef<{ pointerId: number; generation: number; terminal: 'active' | 'success' | 'cancelled'; focusedGroupId: string; activeByGroup: Map<string, string | null>; captureTarget: HTMLElement | null } | null>(null);
+  const resizeUiGeneration = useRef(0);
   const finishResizeRef = useRef<((cancelled?: boolean) => void) | null>(null);
   const [resizeActive, setResizeActive] = useState(false);
   const sideDrop = useRef<{ surfaceId: string; position: SplitEdge } | null>(null);
@@ -336,6 +337,7 @@ export function WorkspaceDock(props: {
     const finishResize = (cancelled = false): void => {
       const session = resizeSession.current;
       if (!resizing.current || !session) return;
+      if (cancelled) session.terminal = 'cancelled';
       if (cancelled && typeof PointerEvent !== 'undefined') {
         // Dockview owns a document-level sash session of its own. Deliver a
         // real terminal before releasing our capture so its old handler cannot
@@ -366,17 +368,20 @@ export function WorkspaceDock(props: {
         else commitLayout(api);
       }
       const generation = session.generation;
-      void setHostOverlayAwaited(false, () => true, 'workspace-resize').finally(() => {
-        if (dragSessionGeneration.current === generation && !resizeSession.current) {
+      void setHostOverlayAwaited(false, () => true, 'workspace-resize').then(() => {
+        if (resizeUiGeneration.current === generation && !resizeSession.current) {
           setResizeActive(false);
           document.documentElement.dataset.workspaceResize = 'false';
         }
+      }, () => {
+        // Remain fail-closed when owner release is uncertain.
       });
     };
     finishResizeRef.current = finishResize;
     const onPointerUp = (event: PointerEvent): void => {
       const session = resizeSession.current;
-      if (session?.pointerId === event.pointerId) {
+      if (session?.pointerId === event.pointerId && session.terminal === 'active') {
+        session.terminal = 'success';
         const generation = session.generation;
         window.setTimeout(() => {
           if (resizeSession.current?.generation === generation) finishResize();
@@ -385,18 +390,29 @@ export function WorkspaceDock(props: {
     };
     const onPointerCancel = (event: PointerEvent): void => {
       const session = resizeSession.current;
-      if (session?.pointerId === event.pointerId) {
+      if (session?.pointerId === event.pointerId && session.terminal === 'active') {
+        session.terminal = 'cancelled';
         const generation = session.generation;
         window.setTimeout(() => {
           if (resizeSession.current?.generation === generation) finishResize(true);
         }, 0);
       }
     };
-    const onBlur = (): void => finishResize(true);
-    const onLostPointerCapture = (event: PointerEvent): void => {
-      if (resizeSession.current?.pointerId === event.pointerId) finishResize(true);
+    const onBlur = (): void => {
+      const session = resizeSession.current;
+      if (session?.terminal === 'active') { session.terminal = 'cancelled'; finishResize(true); }
     };
-    const onContextMenu = (): void => { if (resizing.current) finishResize(true); };
+    const onLostPointerCapture = (event: PointerEvent): void => {
+      const session = resizeSession.current;
+      if (session?.pointerId === event.pointerId && session.terminal === 'active') {
+        session.terminal = 'cancelled';
+        finishResize(true);
+      }
+    };
+    const onContextMenu = (): void => {
+      const session = resizeSession.current;
+      if (session?.terminal === 'active') { session.terminal = 'cancelled'; finishResize(true); }
+    };
     const onMouseUp = (event: MouseEvent): void => {
       const session = resizeSession.current;
       const target = event.target;
@@ -404,7 +420,11 @@ export function WorkspaceDock(props: {
       // legacy fallback for Dockview's mouse backend.  An unrelated mouseup
       // outside the captured workspace is never allowed to terminate a newer
       // resize session.
-      if (session && event.button === 0 && target instanceof Node && session.captureTarget?.contains(target)) finishResize();
+      if (session && event.button === 0 && target instanceof Node && session.captureTarget?.contains(target)
+        && session.terminal === 'active') {
+        session.terminal = 'success';
+        finishResize();
+      }
     };
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
@@ -932,11 +952,12 @@ export function WorkspaceDock(props: {
           return;
         }
         resizing.current = true;
-        const generation = dragSessionGeneration.current + 1;
-        dragSessionGeneration.current = generation;
+        const generation = resizeUiGeneration.current + 1;
+        resizeUiGeneration.current = generation;
         resizeSession.current = {
           pointerId: event.pointerId,
           generation,
+          terminal: 'active',
           focusedGroupId: topologyRef.current.focusedGroupId,
           activeByGroup: new Map(topologyRef.current.groups.map((group) => [group.groupId, group.activeSurfaceId])),
           captureTarget: event.currentTarget,
