@@ -19,6 +19,7 @@ type FakeWebContents = {
   on: ReturnType<typeof vi.fn>;
   once: ReturnType<typeof vi.fn>;
   loadURL: ReturnType<typeof vi.fn>;
+  executeJavaScript: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   isDestroyed: () => boolean;
 };
@@ -63,6 +64,7 @@ vi.mock('electron', () => ({
         on: vi.fn(),
         once: vi.fn(),
         loadURL: vi.fn().mockResolvedValue(undefined),
+        executeJavaScript: vi.fn().mockResolvedValue(undefined),
         close: vi.fn(),
         isDestroyed() {
           return webContents.destroyed;
@@ -180,12 +182,31 @@ describe('BackpackProjectRuntime.hide', () => {
     const runtime = await shownRuntime();
     const view = soleView();
 
-    runtime.hide();
+    await runtime.hide();
 
     expect(harness.window.removeChildView).toHaveBeenCalledTimes(1);
     expect(harness.window.removeChildView).toHaveBeenCalledWith(view);
     expect(view.webContents.close).toHaveBeenCalledTimes(1);
     expect(runtime.isSender(view.webContents as unknown as import('electron').WebContents)).toBe(false);
+  });
+
+  it('waits for the optional close-time durability hook before closing', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    let release!: () => void;
+    const flush = new Promise<void>((resolve) => { release = resolve; });
+    view.webContents.executeJavaScript.mockReturnValue(flush);
+
+    const closing = runtime.hide();
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(
+      'globalThis.__papersFlushBeforeClose?.()',
+      true,
+    );
+    expect(view.webContents.close).not.toHaveBeenCalled();
+
+    release();
+    await closing;
+    expect(view.webContents.close).toHaveBeenCalledTimes(1);
   });
 
   it('018V6: exposes the retained workspace entry only to its live matching sender', async () => {
@@ -194,7 +215,7 @@ describe('BackpackProjectRuntime.hide', () => {
     const view = soleView();
     expect(runtime.entryUrlFor(view.webContents as unknown as import('electron').WebContents, 'bp-004-test')).toBe(PROJECT_URL);
     expect(runtime.entryUrlFor(view.webContents as unknown as import('electron').WebContents, 'bp-other')).toBeNull();
-    runtime.hide();
+    await runtime.hide();
     expect(runtime.entryUrlFor(view.webContents as unknown as import('electron').WebContents, 'bp-004-test')).toBeNull();
   });
 
@@ -228,17 +249,17 @@ describe('BackpackProjectRuntime.hide', () => {
     const runtime = await shownRuntime();
     const view = soleView();
 
-    runtime.hide();
-    runtime.hide();
+    await runtime.hide();
+    await runtime.hide();
 
     expect(harness.window.removeChildView).toHaveBeenCalledTimes(1);
     expect(view.webContents.close).toHaveBeenCalledTimes(1);
   });
 
-  it('with nothing shown is a safe no-op', () => {
+  it('with nothing shown is a safe no-op', async () => {
     const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false);
 
-    expect(() => runtime.hide()).not.toThrow();
+    await expect(runtime.hide()).resolves.toBeUndefined();
     expect(harness.window.removeChildView).not.toHaveBeenCalled();
   });
 
@@ -247,7 +268,7 @@ describe('BackpackProjectRuntime.hide', () => {
     const view = soleView();
     harness.window.destroyed = true;
 
-    runtime.hide();
+    await runtime.hide();
 
     expect(harness.window.removeChildView).not.toHaveBeenCalled();
     expect(view.webContents.close).toHaveBeenCalledTimes(1);
@@ -258,7 +279,7 @@ describe('BackpackProjectRuntime.hide', () => {
     const view = soleView();
     view.webContents.destroyed = true;
 
-    runtime.hide();
+    await runtime.hide();
 
     expect(harness.window.removeChildView).toHaveBeenCalledTimes(1);
     expect(view.webContents.close).not.toHaveBeenCalled();
@@ -270,7 +291,7 @@ describe('BackpackProjectRuntime.hide', () => {
     harness.window.destroyed = true;
     view.webContents.destroyed = true;
 
-    runtime.hide();
+    await runtime.hide();
 
     expect(harness.window.removeChildView).not.toHaveBeenCalled();
     expect(view.webContents.close).not.toHaveBeenCalled();

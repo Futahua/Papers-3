@@ -111,7 +111,7 @@ export class BackpackProjectRuntime {
       this.applySurface();
       return;
     }
-    this.hide();
+    await this.hide();
     const view = new WebContentsView({ webPreferences: {
       preload: this.preloadPath, nodeIntegration: false, contextIsolation: true,
       sandbox: true, webviewTag: false, transparent: true,
@@ -200,7 +200,7 @@ export class BackpackProjectRuntime {
     this.fit();
   }
 
-  hide(): void {
+  async hide(): Promise<void> {
     const view = this.view;
     if (!view) return;
     const projectId = this.projectId;
@@ -219,6 +219,23 @@ export class BackpackProjectRuntime {
     // swallowed: unrelated errors still propagate.
     if (!this.window.isDestroyed()) {
       this.window.contentView.removeChildView(view);
+    }
+    // Projects may expose an optional close-time durability hook. Papers
+    // remains schema-agnostic: it only gives the page a bounded opportunity to
+    // finish its own queued persistence before the renderer is destroyed.
+    if (!view.webContents.isDestroyed()) {
+      try {
+        await Promise.race([
+          view.webContents.executeJavaScript(
+            'globalThis.__papersFlushBeforeClose?.()',
+            true,
+          ),
+          new Promise((resolve) => setTimeout(resolve, 2500)),
+        ]);
+      } catch {
+        // Close remains best-effort if the page has already gone away or does
+        // not implement the optional hook.
+      }
     }
     if (!view.webContents.isDestroyed()) {
       view.webContents.close();

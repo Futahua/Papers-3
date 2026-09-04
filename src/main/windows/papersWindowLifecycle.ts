@@ -4,7 +4,7 @@ import type { PapersWindowInstance } from './papersWindowFactory';
 export interface PapersWindowLifecycleDependencies {
   register(instance: PapersWindowInstance): void;
   install?(instance: PapersWindowInstance): void;
-  onClose?(instance: PapersWindowInstance): void;
+  onClose?(instance: PapersWindowInstance): void | Promise<void>;
   finalize(windowId: number): void | Promise<void>;
 }
 
@@ -34,7 +34,19 @@ export function preparePapersWindow(
 
   dependencies.register(instance);
   dependencies.install?.(instance);
-  instance.window.once('close', () => dependencies.onClose?.(instance));
+  let closePreparationStarted = false;
+  instance.window.once('close', (event?: { preventDefault?: () => void }) => {
+    if (closePreparationStarted) return;
+    closePreparationStarted = true;
+    // Keep the native window (and its project renderers) alive while each
+    // project gets its bounded close-time durability opportunity. The second
+    // destroy below bypasses this one-shot close listener and lets Electron
+    // emit `closed` normally for the existing finalization path.
+    event?.preventDefault?.();
+    void Promise.resolve(dependencies.onClose?.(instance)).catch(() => undefined).finally(() => {
+      if (!instance.window.isDestroyed()) instance.window.destroy();
+    });
+  });
   instance.window.once('closed', () => { void finalize().catch(() => undefined); });
 
   return {
@@ -45,7 +57,7 @@ export function preparePapersWindow(
         await instance.loadHostRenderer();
         return instance;
       } catch (error) {
-        instance.projectSurfaces.hideAll();
+        await instance.projectSurfaces.hideAll();
         await finalize();
         if (!instance.window.isDestroyed()) instance.window.destroy();
         throw error;

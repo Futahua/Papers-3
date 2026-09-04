@@ -67,7 +67,7 @@ describe('prepared Papers window lifecycle', () => {
     expect(order).toEqual(['create', 'register', 'load']);
   });
 
-  it('hides the owned runtime before finalizing on normal close', () => {
+  it('hides the owned runtime before finalizing on normal close', async () => {
     const current = instance(async () => undefined);
     const order: string[] = [];
     const hide = current.projectSurfaces.hideAll as ReturnType<typeof vi.fn>;
@@ -81,8 +81,35 @@ describe('prepared Papers window lifecycle', () => {
 
     (current.window as never as EventEmitter).emit('close');
     (current.window as never as EventEmitter).emit('closed');
+    await Promise.resolve();
     expect(order).toEqual(['hide', 'finalize']);
     expect(finalize).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds native close until asynchronous project teardown is complete', async () => {
+    const current = instance(async () => undefined);
+    let release!: () => void;
+    const teardown = new Promise<void>((resolve) => { release = resolve; });
+    const hide = current.projectSurfaces.hideAll as ReturnType<typeof vi.fn>;
+    hide.mockReturnValue(teardown);
+    const prepared = preparePapersWindow(current, {
+      register: vi.fn(),
+      onClose: (window) => window.projectSurfaces.hideAll(),
+      finalize: vi.fn(),
+    });
+    const preventDefault = vi.fn();
+
+    (current.window as never as EventEmitter).emit('close', { preventDefault });
+    await Promise.resolve();
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(current.window.destroy).not.toHaveBeenCalled();
+
+    release();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(current.window.destroy).toHaveBeenCalledTimes(1);
+    // The existing closed listener remains responsible for finalization.
+    (current.window as never as EventEmitter).emit('closed');
+    expect(prepared.windowId).toBe(current.window.id);
   });
 
   it('registers two windows independently without changing primary aliases', () => {

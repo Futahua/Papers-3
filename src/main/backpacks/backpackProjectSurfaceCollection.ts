@@ -16,6 +16,14 @@ type RuntimeFactory = (
   onRendererGone?: (senderId: number, reason: string) => void,
 ) => BackpackProjectRuntime;
 
+function closeRuntime(runtime: BackpackProjectRuntime, report: (error: unknown) => void): void {
+  try {
+    void Promise.resolve(runtime.hide()).catch(report);
+  } catch (caught) {
+    report(caught);
+  }
+}
+
 /**
  * The native project presentations owned by one Papers window.
  *
@@ -114,20 +122,14 @@ export class BackpackProjectSurfaceCollection {
           // ownership observers.
           lifecycleActive = false;
           this.runtimes.delete(surfaceId);
-          try {
-            runtime.hide();
-          } catch (caught) {
-            // The canonical collection is already restored; a late Electron
-            // teardown error must not leave an orphan keyed by this surface.
+          closeRuntime(runtime, (caught) => {
             console.error(`[workspace-move] staged native discard failed for ${surfaceId}:`, caught);
-          }
+          });
           return;
         }
-        try {
-          runtime.hide();
-        } catch (caught) {
+        closeRuntime(runtime, (caught) => {
           console.error(`[workspace-move] staged native discard failed for ${surfaceId}:`, caught);
-        }
+        });
       },
     };
   }
@@ -140,20 +142,27 @@ export class BackpackProjectSurfaceCollection {
     // Collection ownership is canonical state. Remove it before native
     // teardown so a late Electron destroyed-object error cannot leave an
     // orphan that blocks a later prepare/adopt for the same logical surface.
-    try {
-      runtime.hide();
-    } catch (caught) {
+    closeRuntime(runtime, (caught) => {
       console.error(`[workspace-move] native close failed for ${surfaceId}:`, caught);
-    }
+    });
   }
 
   hide(surfaceId: string): void {
     this.runtimes.get(surfaceId)?.conceal();
   }
 
-  hideAll(): void {
+  hideAll(): Promise<void> {
     // Window teardown is terminal, unlike hiding one inactive tab.
-    for (const runtime of this.runtimes.values()) runtime.hide();
+    return Promise.all([...this.runtimes.values()].map((runtime) => {
+      try {
+        return Promise.resolve(runtime.hide()).catch((caught) => {
+          console.error('[workspace-move] native window teardown failed:', caught);
+        });
+      } catch (caught) {
+        console.error('[workspace-move] native window teardown failed:', caught);
+        return Promise.resolve();
+      }
+    })).then(() => undefined);
   }
 
   fit(): void {

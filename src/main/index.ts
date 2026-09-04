@@ -710,9 +710,9 @@ async function bootstrap(): Promise<void> {
         if (papersWindows.hermesDockOwner() === windowId) hermesSurface.onPapersActivated();
       });
     },
-    onClose: (instance: Parameters<typeof preparePapersWindow>[0]) => {
+    onClose: async (instance: Parameters<typeof preparePapersWindow>[0]) => {
       closingPapersWindows.add(instance.window.id);
-      instance.projectSurfaces.hideAll();
+      await instance.projectSurfaces.hideAll();
     },
     finalize: async (windowId: number) => {
       await facade.waitForWorkspaceMutation(windowId);
