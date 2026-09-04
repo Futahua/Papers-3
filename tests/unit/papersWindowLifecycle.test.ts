@@ -103,6 +103,9 @@ describe('prepared Papers window lifecycle', () => {
     await Promise.resolve();
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(current.window.destroy).not.toHaveBeenCalled();
+    (current.window as never as EventEmitter).emit('close', { preventDefault });
+    expect(preventDefault).toHaveBeenCalledTimes(2);
+    expect(current.window.destroy).not.toHaveBeenCalled();
 
     release();
     await new Promise<void>((resolve) => setTimeout(resolve, 0));

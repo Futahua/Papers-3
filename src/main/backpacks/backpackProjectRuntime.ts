@@ -13,6 +13,7 @@ export class BackpackProjectRuntime {
   private transparent: boolean;
   private bounds: { x: number; y: number; width: number; height: number } | null = null;
   private presented = false;
+  private hidePromise: Promise<void> | null = null;
   private readonly frameDestroyedCallbacks = new Map<number, () => void>();
   private readonly observedDestroyedFrames = new Set<number>();
 
@@ -201,14 +202,11 @@ export class BackpackProjectRuntime {
   }
 
   async hide(): Promise<void> {
+    if (this.hidePromise) return this.hidePromise;
     const view = this.view;
     if (!view) return;
     const projectId = this.projectId;
-    this.view = null;
-    this.projectId = null;
-    this.entryUrl = null;
     this.presented = false;
-    if (projectId) this.onSurfaceClosed?.(projectId);
     // Detach and close the child surface before its parent window is
     // destroyed. hide() can also arrive late — the window teardown used to
     // call it from `closed`, after Electron destroyed the BaseWindow, and a
@@ -220,26 +218,41 @@ export class BackpackProjectRuntime {
     if (!this.window.isDestroyed()) {
       this.window.contentView.removeChildView(view);
     }
-    // Projects may expose an optional close-time durability hook. Papers
-    // remains schema-agnostic: it only gives the page a bounded opportunity to
-    // finish its own queued persistence before the renderer is destroyed.
-    if (!view.webContents.isDestroyed()) {
-      try {
-        await Promise.race([
-          view.webContents.executeJavaScript(
-            'globalThis.__papersFlushBeforeClose?.()',
-            true,
-          ),
-          new Promise((resolve) => setTimeout(resolve, 2500)),
-        ]);
-      } catch {
-        // Close remains best-effort if the page has already gone away or does
-        // not implement the optional hook.
+    const close = async (): Promise<void> => {
+      // Keep the live sender identity until the page has completed its own
+      // checked save. Project IPC authorization is sender-based, so retiring
+      // this.view before the hook would make the close flush fail closed.
+      if (!view.webContents.isDestroyed()) {
+        try {
+          const outcome = await Promise.race([
+            view.webContents.executeJavaScript(
+              'globalThis.__papersFlushBeforeClose?.()',
+              true,
+            ).then(() => 'flushed' as const),
+            new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2500)),
+          ]);
+          if (outcome === 'timeout') {
+            console.error('[papers] project close flush timed out before renderer close');
+          }
+        } catch (caught) {
+          console.error('[papers] project close flush failed before renderer close:', caught);
+        }
       }
-    }
-    if (!view.webContents.isDestroyed()) {
-      view.webContents.close();
-    }
+      if (this.view === view) {
+        this.view = null;
+        this.projectId = null;
+        this.entryUrl = null;
+        if (projectId) this.onSurfaceClosed?.(projectId);
+      }
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.close();
+      }
+    };
+    const pending = close().finally(() => {
+      if (this.hidePromise === pending) this.hidePromise = null;
+    });
+    this.hidePromise = pending;
+    return pending;
   }
 
   private applySurface(): void {

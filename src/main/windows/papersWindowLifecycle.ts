@@ -35,15 +35,17 @@ export function preparePapersWindow(
   dependencies.register(instance);
   dependencies.install?.(instance);
   let closePreparationStarted = false;
-  instance.window.once('close', (event?: { preventDefault?: () => void }) => {
+  let closePreparationFinished = false;
+  instance.window.on('close', (event?: { preventDefault?: () => void }) => {
+    if (closePreparationFinished) return;
+    // Keep the native window (and its project renderers) alive while each
+    // project gets its bounded close-time durability opportunity. Every close
+    // attempt remains fenced until the one preparation completes.
+    event?.preventDefault?.();
     if (closePreparationStarted) return;
     closePreparationStarted = true;
-    // Keep the native window (and its project renderers) alive while each
-    // project gets its bounded close-time durability opportunity. The second
-    // destroy below bypasses this one-shot close listener and lets Electron
-    // emit `closed` normally for the existing finalization path.
-    event?.preventDefault?.();
     void Promise.resolve(dependencies.onClose?.(instance)).catch(() => undefined).finally(() => {
+      closePreparationFinished = true;
       if (!instance.window.isDestroyed()) instance.window.destroy();
     });
   });

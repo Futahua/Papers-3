@@ -209,6 +209,23 @@ describe('BackpackProjectRuntime.hide', () => {
     expect(view.webContents.close).toHaveBeenCalledTimes(1);
   });
 
+  it('does not create a replacement renderer while the old close flush is pending', async () => {
+    const runtime = await shownRuntime();
+    const oldView = soleView();
+    let release!: () => void;
+    const flush = new Promise<void>((resolve) => { release = resolve; });
+    oldView.webContents.executeJavaScript.mockReturnValue(flush);
+
+    const closing = runtime.hide();
+    const showing = runtime.show('papers-backpack://bp-004-test/entry/next.html');
+    expect(harness.views).toHaveLength(1);
+
+    release();
+    await Promise.all([closing, showing]);
+    expect(harness.views).toHaveLength(2);
+    expect(harness.views[1]).not.toBe(oldView);
+  });
+
   it('018V6: exposes the retained workspace entry only to its live matching sender', async () => {
     const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false);
     await runtime.show(PROJECT_URL);
