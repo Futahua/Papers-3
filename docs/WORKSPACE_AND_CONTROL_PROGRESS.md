@@ -2823,10 +2823,14 @@ guarantee layer above native Backpack surfaces.
    host during the remainder of the drag.
  * [x] Fast-release candidates are rejected unless the matching edge preview is
    already armed; accepted structural drops use a guarded exactly-once fallback
-   for Dockview pointer/HTML5 event ordering.
+   for Dockview pointer/HTML5 event ordering, and post-drop fallback requires
+   the same still-armed preview before consuming semantic intent.
  * [x] Pointer-backed (touch/pen/coarse-pointer) drags mirror Dockview's
    window-level pointer-up/cancel boundary so `dragActive` and host compositor
    ownership are always released even when no native HTML5 `dragend` fires.
+ * [x] Delayed host-raise acknowledgements are generation-guarded before they
+   write `sideDrop`, so edge → center/reorder transitions cannot resurrect a
+   stale split intent.
  * [x] Main-owned topology rejection reports an announced cancellation while
    fresh canonical topology reconciliation restores the renderer; the rejection
    path re-raises the host before displaying its visual status above native

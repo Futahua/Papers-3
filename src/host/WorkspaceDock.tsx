@@ -439,11 +439,20 @@ export function WorkspaceDock(props: {
           armed: false,
           message: `Move to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}`,
         });
-        void setHostOverlayAwaited(true).then(() => {
-          sideDrop.current = { surfaceId, position };
+        const isCurrentCandidate = (): boolean => {
+          const candidate = previewCandidate.current;
+          return Boolean(candidate
+            && candidate.generation === generation
+            && candidate.surfaceId === surfaceId
+            && candidate.position === position);
+        };
+        void setHostOverlayAwaited(true, isCurrentCandidate).then(() => {
+          // Do not resurrect semantic intent when the pointer has already
+          // moved to center/tab-strip or another edge while IPC was pending.
+          if (!hostRaised.current || !isCurrentCandidate()) return;
           requestAnimationFrame(() => {
-            const candidate = previewCandidate.current;
-            if (!hostRaised.current || !candidate || candidate.generation !== generation || candidate.surfaceId !== surfaceId || candidate.position !== position) return;
+            if (!hostRaised.current || !isCurrentCandidate()) return;
+            sideDrop.current = { surfaceId, position };
             const armed = { position, allowed: true, armed: true, message: `Release to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}` } as SplitPreview;
             showPreview(armed);
           });
@@ -520,6 +529,15 @@ export function WorkspaceDock(props: {
       // sideDrop and therefore remains exactly-once.
       const pending = sideDrop.current;
       if (!pending || interactionDisabledRef.current || resizing.current) return;
+      const armed = previewRef.current;
+      if (!armed || !armed.allowed || !armed.armed || armed.position !== pending.position
+        || !armed.message.startsWith('Release to split')) {
+        // A delayed acknowledgement or a center/tab reorder must never turn
+        // an obsolete edge intent into a split after the visible preview is
+        // gone. Drop the stale intent and preserve ordinary reorder behavior.
+        sideDrop.current = null;
+        return;
+      }
       sideDrop.current = null;
       const panel = event.api.getPanel(pending.surfaceId);
       const destinationDockviewId = panel?.group.id;
