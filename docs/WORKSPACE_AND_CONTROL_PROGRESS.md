@@ -30,9 +30,12 @@ If that voluntary flush rejects or times out, replacement fails closed and the
 old native presentation is restored; the old logical surface and topology are
 retained for retry.
 
-Dockview split borders are draggable. During a drag, native project views are
-temporarily occluded (not destroyed), and the canonical root/group weights are
-committed when the gesture ends, preserving renderer identity and creator data.
+Dockview split borders are draggable. During a drag, native project views stay
+live and continue receiving their current bounds; the canonical root/group
+weights are committed when the gesture ends, preserving renderer identity and
+creator data. Tabs can also be dragged to a group's left/right/top/bottom drop
+zone to create the supported two-way split directly; the existing Dockview
+reorder path remains in place for tab-strip drops.
 The topology effect distinguishes an externally supplied canonical snapshot
 from a local update batched in the same render, so a user's resize or tab
 action cannot be silently skipped.
@@ -63,6 +66,28 @@ desktop shortcut hash is unchanged at
 `97B9F14AE6FAFF9F41157A5582CBEAED3E091F212F5209F8389D5A8D9834B4EC`.
 Installer archive: `Runtime\Installers\Papers-Setup-1.3.11-66D9BB11.exe`.
 No Runtime\Data, creator data, or As you Go source was modified.
+
+### Live interaction follow-up — 2026-09-04 14:23 local
+
+The creator requested a floating Backpack picker and direct tab-drag splitting.
+Source commit `b06f94d61e97216e9cebbe839fb06581ac10edcd` adds the floating
+popover/hover bridge, keeps native panes rendered throughout sash drags, and
+routes a completed Dockview side drop through the existing Papers topology
+transaction. The focused development E2E matrix passes both
+`tests/e2e/backpack-navigation.e2e.ts` and `tests/e2e/workspace-tabs.e2e.ts`;
+typecheck and production build also pass.
+
+This exact source was packaged and installed into the creator-authorized live
+`Runtime\App` target with NSIS (exit 0), then launched normally. Installed
+`app.asar` SHA-256 is
+`5CFD43AADBB4CF663080EFF9C35BA81C081F228F923151166F9FB336ACBC7017`.
+The installer archive is
+`Runtime\Installers\Papers-Setup-1.3.11-b06f94d.exe` with SHA-256
+`C50B4073448090627A893B15D5EA375131285ABE2B478868D4A242DE289F8EEE`.
+Rollback is the App snapshot
+`Runtime\Backups\before-live-install-20260904-142259`.
+The live registry digest and desktop shortcut hash remain unchanged; no
+`Runtime\Data` file was intentionally modified.
 
 ## Creator acceptance and positioning reversal — 2026-09-04
 
