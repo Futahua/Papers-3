@@ -80,6 +80,19 @@ it('hover picker and main-screen clicks reuse tabs, middle-click adds, and split
     const previewBox = await page.locator('.workspace-split-preview').boundingBox();
     expect(previewBox).not.toBeNull();
     expect(previewBox!.width).toBeLessThan(dockBox!.width * 0.75);
+    expect(await page.locator('.workspace-drag-status').count()).toBe(0);
+    // A valid group-local preview must remain armed while the pointer makes
+    // small movements inside the same edge zone; it must not flash away when
+    // Dockview re-emits an equivalent overlay or a root-edge notification.
+    await page.mouse.move(dockBox!.x + dockBox!.width - 24, dockBox!.y + dockBox!.height / 2 + 8, { steps: 3 });
+    await page.waitForTimeout(800);
+    expect(await page.locator('.workspace-split-preview.is-armed:not(.is-rejected)').count()).toBe(1);
+    const stablePreviewBox = await page.locator('.workspace-split-preview').boundingBox();
+    expect(stablePreviewBox).not.toBeNull();
+    expect(Math.abs(stablePreviewBox!.x - previewBox!.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(stablePreviewBox!.y - previewBox!.y)).toBeLessThanOrEqual(2);
+    expect(Math.abs(stablePreviewBox!.width - previewBox!.width)).toBeLessThanOrEqual(2);
+    expect(Math.abs(stablePreviewBox!.height - previewBox!.height)).toBeLessThanOrEqual(2);
     const contentBoxes = await page.locator('.dv-content-container').evaluateAll((elements) => elements.map((element) => {
       const rect = element.getBoundingClientRect();
       return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };

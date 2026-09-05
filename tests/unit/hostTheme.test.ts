@@ -49,7 +49,10 @@ describe('host theme contract', () => {
     expect(styles).toContain('.workspace-dock .backpack-project-frame');
     expect(styles).toContain(':root[data-workspace-drag="true"] .app');
     expect(styles).toContain('--dv-group-view-background-color: transparent !important;');
-    expect(styles).toContain('.workspace-split-preview.is-neutral');
-    expect(workspaceDock).toContain('Drop on a panel edge to split');
+    expect(styles).toContain('.workspace-drag-status');
+    expect(styles).toContain('@keyframes workspace-drag-status-fade');
+    expect(workspaceDock).not.toContain('Keep in this tab group');
+    expect(workspaceDock).not.toContain('Drop on a panel edge to split');
+    expect(workspaceDock).toContain('preview.targetGroupId && preview.rect');
   });
 });

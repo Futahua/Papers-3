@@ -29,15 +29,14 @@ interface WorkspacePanelParams {
 }
 
 type SplitEdge = 'top' | 'bottom' | 'left' | 'right';
-type SplitPreviewPosition = SplitEdge | 'center';
 type PreviewRect = { left: number; top: number; width: number; height: number };
 type SplitPreview = {
-  position: SplitPreviewPosition;
-  allowed: boolean;
+  position: SplitEdge;
+  allowed: true;
   armed: boolean;
   message: string;
-  targetGroupId?: string;
-  rect?: PreviewRect | null;
+  targetGroupId: string;
+  rect: PreviewRect;
 };
 type ArmedSplitCandidate = { surfaceId: string; position: SplitEdge; targetGroupId: string; generation: number };
 
@@ -125,7 +124,10 @@ export function WorkspaceDock(props: {
   const dragSessionGeneration = useRef(0);
   const hostRaised = useRef(false);
   const statusTimer = useRef<number | null>(null);
+  const statusKey = useRef<string | null>(null);
+  const statusGeneration = useRef(0);
   const [preview, setPreview] = useState<SplitPreview | null>(null);
+  const [dragStatus, setDragStatus] = useState<string | null>(null);
   const interactionDisabledRef = useRef(false);
   projectsRef.current = projects;
   topologyRef.current = topology;
@@ -180,6 +182,16 @@ export function WorkspaceDock(props: {
     }
   }, [setHostOverlay]);
 
+  const clearDragStatus = useCallback((): void => {
+    statusGeneration.current += 1;
+    statusKey.current = null;
+    if (statusTimer.current !== null) {
+      window.clearTimeout(statusTimer.current);
+      statusTimer.current = null;
+    }
+    setDragStatus(null);
+  }, []);
+
   // A successful semantic split is a terminal drag boundary in its own
   // right. Dockview may not emit dragend/drop/pointerup after the topology
   // mutation, so release every drag-owned resource explicitly here. This is
@@ -192,7 +204,8 @@ export function WorkspaceDock(props: {
     setDragSurfaceActive(false);
     sideDrop.current = null;
     clearPreview();
-  }, [clearPreview, setDragSurfaceActive]);
+    clearDragStatus();
+  }, [clearDragStatus, clearPreview, setDragSurfaceActive]);
 
   const showPreview = useCallback((next: SplitPreview): void => {
     previewRef.current = next;
@@ -200,26 +213,33 @@ export function WorkspaceDock(props: {
   }, []);
 
   const showRejected = useCallback((position: SplitEdge, message: string): void => {
+    const nextStatusKey = `${dragSessionGeneration.current}:${position}:${message}`;
+    if (statusKey.current === nextStatusKey) return;
     if (statusTimer.current !== null) window.clearTimeout(statusTimer.current);
+    statusKey.current = nextStatusKey;
+    const statusId = ++statusGeneration.current;
     const generation = ++previewGeneration.current;
     previewCandidate.current = null;
     armedCandidate.current = null;
     sideDrop.current = null;
+    previewRef.current = null;
     setPreview(null);
-    // A rejection can arrive after the normal drag cleanup (for example when
-    // the topology commit fails asynchronously). Await the host raise before
-    // displaying or timing the status so the visual cancellation is guaranteed
-    // to be above native project WebContentsViews for its full interval.
+    setDragStatus(null);
+    // A rejection can arrive after normal drag cleanup. Await the host raise
+    // before displaying or timing the status so it stays above native project
+    // WebContentsViews for its brief, fadeaway interval.
     void setHostOverlayAwaited(true, () => previewGeneration.current === generation
       && !previewCandidate.current).then(() => {
-      if (previewGeneration.current !== generation) return;
-      showPreview({ position, allowed: false, armed: true, message });
+      if (previewGeneration.current !== generation || statusGeneration.current !== statusId) return;
+      setDragStatus(message);
       statusTimer.current = window.setTimeout(() => {
+        if (statusGeneration.current !== statusId) return;
         statusTimer.current = null;
-        clearPreview();
-      }, 1200);
+        statusKey.current = null;
+        setDragStatus(null);
+      }, 1100);
     });
-  }, [clearPreview, setHostOverlayAwaited, showPreview]);
+  }, [setHostOverlayAwaited]);
 
   useEffect(() => {
     if (splitNotice) showRejected('right', splitNotice.message);
@@ -528,7 +548,7 @@ export function WorkspaceDock(props: {
       setDragSurfaceActive(false);
       const current = previewRef.current;
       if (current?.allowed) clearPreview();
-      else if (current && current.position !== 'center') showRejected(current.position, current.message);
+      else if (current) showRejected(current.position, current.message);
       else if (current) clearPreview();
       else clearPreview();
   }, [clearPreview, setDragSurfaceActive, showRejected]);
@@ -547,8 +567,9 @@ export function WorkspaceDock(props: {
       dragSessionGeneration.current += 1;
       setDragSurfaceActive(false);
       clearPreview();
+      clearDragStatus();
     };
-  }, [clearPreview, finishDrop, setDragSurfaceActive]);
+  }, [clearDragStatus, clearPreview, finishDrop, setDragSurfaceActive]);
 
   const components = useMemo(() => ({ workspace: WorkspacePanel }), []);
   const addMissingPanels = useCallback((api: DockviewApi): void => {
@@ -643,7 +664,14 @@ export function WorkspaceDock(props: {
       if (!interactionDisabledRef.current && !resizing.current && !reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
     }));
     apiSubscriptions.current.push(event.api.onWillShowOverlay((overlay) => {
-      if ((overlay.kind === 'content' || overlay.kind === 'edge') && overlay.position !== 'center') {
+      if (overlay.kind === 'edge') {
+        // Dockview's root-layout edge is not a Papers split target. It can be
+        // re-emitted after a group-content edge has armed; ignore it without
+        // touching the current group-local candidate or visual rectangle.
+        overlay.preventDefault();
+        return;
+      }
+      if (overlay.kind === 'content' && overlay.position !== 'center') {
         const nativeTarget = overlay.nativeEvent.target;
         if (nativeTarget instanceof Element && nativeTarget.closest('.dv-tab, .dv-tabs-and-actions-container')) {
           overlay.preventDefault();
@@ -669,19 +697,16 @@ export function WorkspaceDock(props: {
         if (!allowSideDrop || !surfaceId) {
           overlay.preventDefault();
           sideDrop.current = null;
-          showPreview({
-            position: overlay.position as SplitEdge,
-            allowed: false,
-            armed: true,
-            message: interactionDisabledRef.current
+          showRejected(
+            overlay.position as SplitEdge,
+            interactionDisabledRef.current
               ? 'Split unavailable — workspace is busy'
               : !source || source.surfaceIds.length < 2
                 ? 'Split unavailable — keep another tab in this group'
                 : !targetGroupId || !rect
                   ? 'Split unavailable — target group is not measurable'
                   : 'Split unavailable — layout is busy',
-            rect,
-          });
+          );
           setHostOverlay(true);
           return;
         }
@@ -694,6 +719,18 @@ export function WorkspaceDock(props: {
           // overlay is repainting. Do not allocate a new generation for the
           // identical surface/group/edge tuple: the existing acknowledgement
           // (or in-flight acknowledgement) remains authoritative.
+          const current = previewCandidate.current;
+          const remembered = armedCandidate.current;
+          if (current && isCurrentArmedSplitCandidate(remembered, current, current.generation)) {
+            showPreview({
+              position: current.position,
+              allowed: true,
+              armed: true,
+              message: `Release to split ${current.position === 'right' ? 'right' : current.position === 'left' ? 'left' : current.position === 'top' ? 'above' : 'below'}`,
+              targetGroupId: current.targetGroupId,
+              rect: current.rect,
+            });
+          }
           return;
         }
         const generation = ++previewGeneration.current;
@@ -706,6 +743,7 @@ export function WorkspaceDock(props: {
           return;
         }
         previewCandidate.current = { surfaceId, position, targetGroupId, generation, rect };
+        clearDragStatus();
         showPreview({
           position,
           allowed: true,
@@ -741,12 +779,7 @@ export function WorkspaceDock(props: {
         // has already returned to the neutral center target.
         sideDrop.current = null;
         clearPreview(false);
-        showPreview({
-          position: 'center',
-          allowed: false,
-          armed: true,
-          message: 'Keep in this tab group',
-        });
+        clearDragStatus();
         setHostOverlay(true);
       }
       else if (overlay.kind === 'tab') {
@@ -762,12 +795,7 @@ export function WorkspaceDock(props: {
         // preview while the user is still dragging.
         sideDrop.current = null;
         clearPreview(false);
-        showPreview({
-          position: 'center',
-          allowed: false,
-          armed: true,
-          message: 'Drop on a panel edge to split',
-        });
+        clearDragStatus();
         setHostOverlay(true);
       }
     }));
@@ -807,12 +835,8 @@ export function WorkspaceDock(props: {
       if (!allowSideDrop || !surfaceId) {
         drop.preventDefault();
         sideDrop.current = null;
-        showPreview({
-          position: drop.position as SplitEdge,
-          allowed: false,
-          armed: true,
-          message: interactionDisabledRef.current ? 'Split unavailable — workspace is busy' : 'Split unavailable — layout changed',
-        });
+        showRejected(drop.position as SplitEdge,
+          interactionDisabledRef.current ? 'Split unavailable — workspace is busy' : 'Split unavailable — layout changed');
         return;
       }
       const position = drop.position as SplitEdge;
@@ -834,7 +858,7 @@ export function WorkspaceDock(props: {
         armedCandidate.current = null;
         previewGeneration.current += 1;
         previewCandidate.current = null;
-        showPreview({ position, allowed: false, armed: true, message: 'Split cancelled — preview was not armed' });
+        showRejected(position, 'Split cancelled — preview was not armed');
         return;
       }
       const acceptedPosition: SplitEdge = visualMatches ? armed!.position as SplitEdge : remembered!.position;
@@ -905,6 +929,7 @@ export function WorkspaceDock(props: {
         window.clearTimeout(statusTimer.current);
         statusTimer.current = null;
       }
+      clearDragStatus();
       setPreview(null);
       dragActive.current = true;
       hostRaised.current = false;
@@ -948,7 +973,7 @@ export function WorkspaceDock(props: {
       }
       // Keep the source identity available for the first overlay callback.
     }));
-  }, [addMissingPanels, clearPreview, commitLayout, consumePendingSplit, finishDrop, finishSuccessfulDrop, measureSplitRect, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setDragSurfaceActive, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
+  }, [addMissingPanels, clearDragStatus, clearPreview, commitLayout, consumePendingSplit, finishDrop, finishSuccessfulDrop, measureSplitRect, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setDragSurfaceActive, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
 
   useEffect(() => {
     const api = apiRef.current;
@@ -1111,21 +1136,27 @@ export function WorkspaceDock(props: {
       <p className="workspace-split-help" aria-live="polite">
         Drag a tab to an edge to preview a split. Keyboard: Control+Alt+Arrow keys split the focused tab.
       </p>
-      {preview && (
+      {preview && preview.allowed && preview.targetGroupId && preview.rect && (
         <div
-          className={`workspace-split-preview${preview.allowed ? '' : preview.position === 'center' ? ' is-neutral' : ' is-rejected'}${preview.armed ? ' is-armed' : ''}`}
+          className={`workspace-split-preview${preview.armed ? ' is-armed' : ''}`}
           data-position={preview.position}
-          style={preview.rect ? {
+          data-target-group={preview.targetGroupId}
+          style={{
             left: `${preview.rect.left}px`,
             top: `${preview.rect.top}px`,
             width: `${preview.rect.width}px`,
             height: `${preview.rect.height}px`,
-          } : undefined}
+          }}
           role="status"
           aria-live="polite"
           aria-label={preview.message}
         >
           <span>{preview.message}</span>
+        </div>
+      )}
+      {dragStatus && (
+        <div className="workspace-drag-status" role="status" aria-live="polite">
+          {dragStatus}
         </div>
       )}
       <DockviewReact
