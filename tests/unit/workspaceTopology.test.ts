@@ -13,6 +13,7 @@ import {
   setRootWorkspaceSplitWeights,
   normalizeWorkspaceLayout,
   splitWorkspaceGroup,
+  splitWorkspaceSurfaceAtTarget,
 } from '../../src/shared/workspaceTopology';
 import type { WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 
@@ -100,6 +101,31 @@ describe('workspace topology', () => {
       orientation: 'vertical',
       position: 'after',
     })).toThrow(/only surface/);
+  });
+
+  it('splits a measured target group when a tab comes from another group', () => {
+    let topology = createWorkspaceTopology();
+    topology = openWorkspaceSurface(topology, { surfaceId: 'sf-a', projectId: 'bp-a', title: 'A' });
+    topology = openWorkspaceSurface(topology, { surfaceId: 'sf-b', projectId: 'bp-b', title: 'B' });
+    topology = splitWorkspaceGroup(topology, {
+      groupId: 'group-main', newGroupId: 'group-right', surfaceId: 'sf-b',
+      orientation: 'horizontal', position: 'after',
+    });
+    const split = splitWorkspaceSurfaceAtTarget(topology, {
+      sourceGroupId: 'group-main', targetGroupId: 'group-right', newGroupId: 'group-bottom',
+      surfaceId: 'sf-a', orientation: 'vertical', position: 'after',
+    });
+    expect(split.groups).toEqual([
+      { groupId: 'group-right', surfaceIds: ['sf-b'], activeSurfaceId: 'sf-b' },
+      { groupId: 'group-bottom', surfaceIds: ['sf-a'], activeSurfaceId: 'sf-a' },
+    ]);
+    expect(split.root).toEqual({
+      kind: 'split', orientation: 'vertical', weights: [0.5, 0.5],
+      children: [
+        { kind: 'group', groupId: 'group-right' }, { kind: 'group', groupId: 'group-bottom' },
+      ],
+    });
+    expect(() => assertValidWorkspaceTopology(split)).not.toThrow();
   });
 
   it('reorders tabs and collapses an empty split group on close', () => {

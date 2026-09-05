@@ -17,6 +17,7 @@ import {
   setWorkspaceLayoutRoot,
   workspaceLayoutEqual,
   splitWorkspaceGroup,
+  splitWorkspaceSurfaceAtTarget,
 } from '@shared/workspaceTopology';
 
 /** Papers content-relative docked-Hermes rectangle. Must match the main
@@ -426,18 +427,27 @@ export function App(): React.JSX.Element {
     void host().backpackProject.close(closingSurfaceId).catch(() => undefined);
   }, []);
 
-  const splitWorkspaceProject = useCallback((splitSurfaceId: string, direction: 'right' | 'down', position: 'before' | 'after' = 'after'): string => {
+  const splitWorkspaceProject = useCallback((splitSurfaceId: string, direction: 'right' | 'down', position: 'before' | 'after' = 'after', targetGroupId?: string): string => {
     const newGroupId = `group-${splitSurfaceId}-${crypto.randomUUID()}`;
     setWorkspaceTopology((topology) => {
       const source = topology.groups.find((group) => group.surfaceIds.includes(splitSurfaceId));
-      if (!source || source.surfaceIds.length < 2) return topology;
-      return splitWorkspaceGroup(topology, {
-        groupId: source.groupId,
-        newGroupId,
-        surfaceId: splitSurfaceId,
-        orientation: direction === 'right' ? 'horizontal' : 'vertical',
-        position,
-      });
+      if (!source || (source.surfaceIds.length < 2 && !targetGroupId)) return topology;
+      return targetGroupId && targetGroupId !== source.groupId
+        ? splitWorkspaceSurfaceAtTarget(topology, {
+            sourceGroupId: source.groupId,
+            targetGroupId,
+            newGroupId,
+            surfaceId: splitSurfaceId,
+            orientation: direction === 'right' ? 'horizontal' : 'vertical',
+            position,
+          })
+        : splitWorkspaceGroup(topology, {
+            groupId: source.groupId,
+            newGroupId,
+            surfaceId: splitSurfaceId,
+            orientation: direction === 'right' ? 'horizontal' : 'vertical',
+            position,
+          });
     });
     return newGroupId;
   }, []);

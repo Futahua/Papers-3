@@ -77,6 +77,11 @@ it('hover picker and main-screen clicks reuse tabs, middle-click adds, and split
     await page.mouse.move(dockBox!.x + dockBox!.width - 6, dockBox!.y + dockBox!.height / 2, { steps: 12 });
     await waitFor(async () => await page.locator('.workspace-split-preview.is-armed:not(.is-rejected)').isVisible(), 10000, 'armed split preview');
     expect(await page.locator('.workspace-split-preview').getAttribute('data-position')).toBe('right');
+    const previewBox = await page.locator('.workspace-split-preview').boundingBox();
+    expect(previewBox).not.toBeNull();
+    expect(previewBox!.width).toBeLessThan(dockBox!.width * 0.75);
+    expect(await page.locator('.dv-drop-target-selection').evaluateAll((elements) =>
+      elements.every((element) => getComputedStyle(element).opacity === '0'))).toBe(true);
     await page.mouse.up();
     await waitFor(async () => await page.locator('.workspace-split-preview').count() === 0, 10000, 'split preview cleared after drop');
     expect(await page.evaluate(() => document.documentElement.dataset.workspaceDrag)).toBe('false');

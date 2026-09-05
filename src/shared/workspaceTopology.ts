@@ -434,6 +434,70 @@ export function splitWorkspaceGroup(
   return next;
 }
 
+/** Split a different target group around a surface dragged from another
+ * group. The source tab is removed atomically (including removal of an empty
+ * source group), while the target group's identity and all unrelated geometry
+ * remain stable. */
+export function splitWorkspaceSurfaceAtTarget(
+  topology: WorkspaceTopologyV1,
+  options: {
+    sourceGroupId: string;
+    targetGroupId: string;
+    newGroupId: string;
+    surfaceId: string;
+    orientation: WorkspaceSplitOrientation;
+    position: 'before' | 'after';
+  },
+): WorkspaceTopologyV1 {
+  if (options.sourceGroupId === options.targetGroupId) {
+    return splitWorkspaceGroup(topology, {
+      groupId: options.targetGroupId,
+      newGroupId: options.newGroupId,
+      surfaceId: options.surfaceId,
+      orientation: options.orientation,
+      position: options.position,
+    });
+  }
+  assertIdentity(options.newGroupId, 'newGroupId');
+  if (topology.groups.some((group) => group.groupId === options.newGroupId)) throw new Error('new group already exists');
+  const source = topology.groups.find((group) => group.groupId === options.sourceGroupId);
+  const target = topology.groups.find((group) => group.groupId === options.targetGroupId);
+  if (!source?.surfaceIds.includes(options.surfaceId)) throw new Error('surface is not in the source group');
+  if (!target) throw new Error('target group does not exist');
+  const removeEmptySource = source.surfaceIds.length === 1;
+  const groups = topology.groups
+    .filter((group) => !removeEmptySource || group.groupId !== source.groupId)
+    .map((group) => {
+      if (group.groupId !== source.groupId) return { ...group, surfaceIds: [...group.surfaceIds] };
+      const surfaceIds = group.surfaceIds.filter((candidate) => candidate !== options.surfaceId);
+      return {
+        ...group,
+        surfaceIds,
+        activeSurfaceId: group.activeSurfaceId === options.surfaceId ? surfaceIds[0] ?? null : group.activeSurfaceId,
+      };
+    });
+  const withoutSource = removeEmptySource ? normalizeWorkspaceLayout(removeGroupNode(topology.root, source.groupId)!) : topology.root;
+  const groupNodes: WorkspaceLayoutNode[] = [
+    { kind: 'group', groupId: options.targetGroupId },
+    { kind: 'group', groupId: options.newGroupId },
+  ];
+  if (options.position === 'before') groupNodes.reverse();
+  const root = normalizeWorkspaceLayout(replaceGroupNode(withoutSource, options.targetGroupId, {
+    kind: 'split',
+    orientation: options.orientation,
+    weights: [0.5, 0.5],
+    children: groupNodes,
+  }));
+  const next: WorkspaceTopologyV1 = {
+    ...topology,
+    groups: [...groups, { groupId: options.newGroupId, surfaceIds: [options.surfaceId], activeSurfaceId: options.surfaceId }],
+    root,
+    focusedGroupId: options.newGroupId,
+  };
+  assertValidWorkspaceTopology(next);
+  return next;
+}
+
 /** Pure persisted-snapshot identity rewrite. Project/group/layout identity is
  * preserved; every old surface must map exactly once to a unique fresh id. */
 export function remapWorkspaceTopologySurfaceIds(

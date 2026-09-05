@@ -786,11 +786,13 @@ input:focus-visible {
 .workspace-split-preview {
   position: absolute;
   z-index: 80;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
   pointer-events: none;
-  border: 2px solid color-mix(in srgb, var(--accent) 85%, white);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 0;
+  border-radius: 12px;
+  background: rgb(170 180 185 / 7%);
   color: var(--ink);
   font-size: 14px;
   font-weight: 600;
@@ -799,20 +801,49 @@ input:focus-visible {
   transition: opacity 80ms ease;
 }
 
+.workspace-split-preview::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(115deg, #7c9ca0, #a08eaa 36%, #a9a06f 68%, #7b9e94);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  opacity: 0.78;
+}
+
+.workspace-split-preview > span {
+  position: relative;
+  z-index: 1;
+  max-width: calc(100% - 32px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgb(28 31 32 / 48%);
+  color: rgb(235 239 237 / 92%);
+  text-align: center;
+}
+
 .workspace-split-preview.is-armed { opacity: 1; }
 .workspace-split-preview.is-rejected {
-  border-color: color-mix(in srgb, #d9822b 85%, white);
-  background: color-mix(in srgb, #d9822b 20%, transparent);
+  background: rgb(176 126 82 / 7%);
 }
 .workspace-split-preview.is-neutral {
-  border-color: color-mix(in srgb, var(--muted) 70%, white);
-  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  background: rgb(150 155 158 / 7%);
 }
-.workspace-split-preview[data-position="left"] { inset: 42px 50% 0 0; }
-.workspace-split-preview[data-position="right"] { inset: 42px 0 0 50%; }
-.workspace-split-preview[data-position="top"] { inset: 42px 0 50% 0; }
-.workspace-split-preview[data-position="bottom"] { inset: 50% 0 0 0; }
-.workspace-split-preview[data-position="center"] { inset: 42px 0 0 0; }
+
+/* Dockview's own selection is a full-width strip. Papers supplies the
+   measured group-local rectangle above, so suppress only that native paint
+   while preserving Dockview's hit-testing and drop lifecycle. */
+:root[data-workspace-drag="true"] .workspace-dock .dv-drop-target-selection {
+  opacity: 0 !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
 
 /* During a workspace drag the host may be raised above a native project even
    in opaque-window mode. Clear Dockview's inner grid root as well as its
