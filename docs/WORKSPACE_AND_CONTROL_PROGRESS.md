@@ -3123,3 +3123,25 @@ operational acceptance is physical Windows validation of all four edges,
 mixed 3+ nesting, stale-ack races, split-versus-resize pointer ownership,
 native clicks after a split, and full restart/reload; installation still
 requires explicit creator authorization under the release/rollback procedure.
+
+### 10.8 Creator-authorized split-preview installation (2026-09-05 18:56 local)
+
+The creator authorized installation of the reviewer-signed split-preview
+hardening build. Only Papers processes were stopped. The previous live App was
+moved reversibly to
+`Runtime/Backups/before-live-install-20260905-185615`, and the signed unpacked
+package was copied into the same junction-backed `Runtime/App` path. No
+installer release or publication occurred.
+
+The live executable, package executable, and desktop shortcut-resolved
+executable now hash to
+`7E829091B2EBE3A63BEA7D7E0126FC0660842667D13CD1DAADF8ECE664611AC5`.
+The protected `Runtime/Data` manifest contained 194 files before and after the
+swap with zero byte/hash differences. `Papers.lnk` still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, and the updated app was
+relaunched successfully.
+
+Live-path `backpack-navigation.e2e.ts` reaches the split-preview assertions
+and then reproduces the known intermittent sash-persistence timeout at the
+dragged split-size checkpoint on two retries. This remains a separate resize
+acceptance issue; it did not alter the installed hash or Runtime/Data.
