@@ -40,6 +40,38 @@ type SplitPreview = {
 };
 type ArmedSplitCandidate = { surfaceId: string; position: SplitEdge; targetGroupId: string; generation: number };
 
+type WorkspaceGroupSurface = { element: HTMLElement };
+
+export function resolveContentSplitEdge(
+  position: SplitEdge | 'center',
+  sourceGroup: WorkspaceGroupSurface | undefined,
+  targetGroup: WorkspaceGroupSurface | undefined,
+  nativeEvent?: Event,
+): SplitEdge {
+  if (position !== 'center') return position;
+  const targetRect = targetGroup?.element.getBoundingClientRect();
+  const sourceRect = sourceGroup?.element.getBoundingClientRect();
+  if (targetRect && sourceRect && targetRect.width > 1 && targetRect.height > 1) {
+    const targetCenterX = targetRect.left + targetRect.width / 2;
+    const targetCenterY = targetRect.top + targetRect.height / 2;
+    const sourceCenterX = sourceRect.left + sourceRect.width / 2;
+    const sourceCenterY = sourceRect.top + sourceRect.height / 2;
+    const dx = (sourceCenterX - targetCenterX) / targetRect.width;
+    const dy = (sourceCenterY - targetCenterY) / targetRect.height;
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 0.01) return dx > 0 ? 'right' : 'left';
+    if (Math.abs(dy) > 0.01) return dy > 0 ? 'bottom' : 'top';
+    if (nativeEvent && 'clientX' in nativeEvent && 'clientY' in nativeEvent) {
+      const clientX = Number(nativeEvent.clientX);
+      const clientY = Number(nativeEvent.clientY);
+      const pointerDx = (clientX - targetCenterX) / targetRect.width;
+      const pointerDy = (clientY - targetCenterY) / targetRect.height;
+      if (Math.abs(pointerDx) >= Math.abs(pointerDy)) return pointerDx >= 0 ? 'right' : 'left';
+      return pointerDy >= 0 ? 'bottom' : 'top';
+    }
+  }
+  return 'right';
+}
+
 export function isCurrentArmedSplitCandidate(
   candidate: ArmedSplitCandidate | null,
   tuple: Pick<ArmedSplitCandidate, 'surfaceId' | 'position' | 'targetGroupId'>,
@@ -623,6 +655,11 @@ export function WorkspaceDock(props: {
     apiSubscriptions.current.push(event.api.onDidMovePanel(({ panel, to }) => {
       if (resizing.current) return;
       if (reconciliationFeedback.current.isSuppressed()) return;
+      // Dockview's provisional side move is only the visual half of a
+      // semantic split. The guarded sideDrop consumer owns its canonical
+      // mutation; never persist that transient group move as an ordinary
+      // cross-group reorder first.
+      if (sideDrop.current?.surfaceId === panel.id) return;
       const targetGroupId = groupIds.current.get(to.id);
       if (!targetGroupId) return;
       const targetIndex = to.panels.findIndex((candidate) => candidate.id === panel.id);
@@ -679,7 +716,7 @@ export function WorkspaceDock(props: {
         overlay.preventDefault();
         return;
       }
-      if (overlay.kind === 'content' && overlay.position !== 'center') {
+      if (overlay.kind === 'content') {
         const nativeTarget = overlay.nativeEvent.target;
         if (nativeTarget instanceof Element && nativeTarget.closest('.dv-tab, .dv-tabs-and-actions-container')) {
           overlay.preventDefault();
@@ -694,7 +731,9 @@ export function WorkspaceDock(props: {
             ?? topologyRef.current.groups.find((candidate) => overlay.group?.panels.some((panel) => candidate.surfaceIds.includes(panel.id)))?.groupId
             ?? null
           : null;
-        const rect = overlay.group ? measureSplitRect(overlay.group, overlay.position as SplitEdge) : null;
+        const sourceDockviewGroup = surfaceId ? apiRef.current?.getPanel(surfaceId)?.group : undefined;
+        const position = resolveContentSplitEdge(overlay.position as SplitEdge | 'center', sourceDockviewGroup, overlay.group, overlay.nativeEvent);
+        const rect = overlay.group ? measureSplitRect(overlay.group, position) : null;
         const source = surfaceId
           ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
           : undefined;
@@ -706,7 +745,7 @@ export function WorkspaceDock(props: {
           overlay.preventDefault();
           sideDrop.current = null;
           showRejected(
-            overlay.position as SplitEdge,
+            position,
             interactionDisabledRef.current
               ? 'Split unavailable — workspace is busy'
               : !source || source.surfaceIds.length < 2
@@ -718,7 +757,6 @@ export function WorkspaceDock(props: {
           setHostOverlay(true);
           return;
         }
-        const position = overlay.position as SplitEdge;
         const sameCandidate = previewCandidate.current?.surfaceId === surfaceId
           && previewCandidate.current?.position === position
           && previewCandidate.current?.targetGroupId === targetGroupId;
@@ -813,11 +851,13 @@ export function WorkspaceDock(props: {
         clearPreview(false);
         return;
       }
-      if ((drop.kind !== 'content' && drop.kind !== 'edge') || drop.position === 'center') {
-        if (drop.position === 'center') {
-          sideDrop.current = null;
-          clearPreview(false);
-        }
+      if (drop.kind === 'edge') {
+        // Whole-layout edges are outside the group-local split contract.
+        drop.preventDefault();
+        sideDrop.current = null;
+        return;
+      }
+      if (drop.kind !== 'content') {
         return;
       }
       const nativeTarget = drop.nativeEvent.target;
@@ -836,6 +876,8 @@ export function WorkspaceDock(props: {
       const source = surfaceId
         ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
         : undefined;
+      const sourceDockviewGroup = surfaceId ? apiRef.current?.getPanel(surfaceId)?.group : undefined;
+      const position = resolveContentSplitEdge(drop.position as SplitEdge | 'center', sourceDockviewGroup, drop.group, drop.nativeEvent);
       const allowSideDrop = !interactionDisabledRef.current
         && !resizing.current
         && Boolean(source && source.surfaceIds.length >= 2)
@@ -843,23 +885,22 @@ export function WorkspaceDock(props: {
       if (!allowSideDrop || !surfaceId) {
         drop.preventDefault();
         sideDrop.current = null;
-        showRejected(drop.position as SplitEdge,
+        showRejected(position,
           interactionDisabledRef.current ? 'Split unavailable — workspace is busy' : 'Split unavailable — layout changed');
         return;
       }
-      const position = drop.position as SplitEdge;
       const armed = previewRef.current;
       const remembered = armedCandidate.current;
       const rememberedMatches = isCurrentArmedSplitCandidate(remembered, {
         surfaceId,
-        position: drop.position as SplitEdge,
+        position,
         targetGroupId: targetGroupId ?? '',
       }, previewGeneration.current);
       const visualMatches = Boolean(armed?.allowed
         && armed.armed
         && armed.message.indexOf('Release to split') === 0
         && armed.targetGroupId === targetGroupId
-        && armed.position === drop.position);
+        && armed.position === position);
       if ((!visualMatches && !rememberedMatches) || !targetGroupId) {
         drop.preventDefault();
         sideDrop.current = null;
