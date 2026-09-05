@@ -3327,3 +3327,33 @@ direct-center split, center-to-edge/header delayed-ack races, fast release,
 nested 3+ mixed H/V restart/reload, and resolution/classification of the
 existing sash-persistence timeout. The protected
 `docs/evidence/worker-comparison.json` remains untouched.
+
+### 10.16 Creator-authorized singleton-source live installation (2026-09-06 01:35 local)
+
+The creator authorized installation of the reviewer-signed singleton-source
+direct-split build from exact source head
+[`e4027906`](https://github.com/Futahua/Papers-3/commit/e402790699b35c1cf0785196fab389216b55fa49).
+Only Papers processes were stopped. The previous live App was moved
+reversibly to
+`Runtime\Backups\before-live-install-20260906-013548`; the verified unpacked
+package was staged, hash-checked, and moved into the same canonical
+`Runtime\App` path. No installer release or publication was performed.
+
+The package, installed executable, and all relaunched desktop-shortcut
+processes hash to
+`CAD588CDC70397AAEBB421FAD58650061ADF75FBEBF2FD5595E78CA015496BB4`.
+The desktop shortcut remains
+`C:\Users\admin\Desktop\Papers.lnk` targeting
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, which resolves through
+the existing `Papers` junction to `Products\Papers\Runtime`.
+
+The swap boundary was clean: all 194 `Runtime\Data` files had zero byte/hash
+differences before versus after the App replacement. On the controlled
+post-install stop/relaunch check, normal Chromium/app startup updated eight
+runtime entries (cache/log files plus `PapersData\workspace-topologies.json`
+and its backup); this was runtime persistence, not an App-copy mutation. The
+new build relaunched successfully with nine Papers processes, all using the
+verified hash. Rollback is reversible by moving the current `Runtime\App`
+aside and restoring
+`Runtime\Backups\before-live-install-20260906-013548` to `Runtime\App`.
+The protected `docs/evidence/worker-comparison.json` remains untouched.
