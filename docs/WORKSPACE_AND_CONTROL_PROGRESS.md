@@ -3204,3 +3204,33 @@ delayed/out-of-order acknowledgement races, fast release, split-versus-resize
 ownership, full restart/reload, and resolution/classification of the existing
 sash-persistence timeout. The protected
 `docs/evidence/worker-comparison.json` remains untouched.
+
+### 10.11 Direct cross-group content-center split sign-off (2026-09-05)
+
+The reviewer audited exact source/test head
+[`bb8c833`](https://github.com/Futahua/Papers-3/commit/bb8c8336909d2438da63d032dc2a04a4ac9f266d)
+and returned **READY / SIGNED OFF — source**. Content-center drags now resolve
+to a real left/right/top/bottom destination using source-versus-target group
+geometry (with pointer-relative fallback for same-group center), intercept
+Dockview before its ordinary center move, and use the existing atomic
+cross-group split path. Tab strips and blank headers remain ordinary reorder
+territory. Provisional Dockview side moves are fenced from ordinary canonical
+`onMove` persistence.
+
+The dedicated packaged regression
+`tests/e2e/workspace-center-split.e2e.ts` passes against the fresh package. It
+proves a tab can be dragged directly from a source group into another group's
+content center without an intermediate canonical move, shows a non-center
+bounded preview inside the target content rectangle, and creates the third
+group on release. The fresh package from this exact source/test head has
+SHA-256
+`1E8050E3FFF87FED6351ABE056C25F48A1FB1CFA9CF33D9F4163D13D2C8117C9`.
+Typecheck, the full unit suite (94 files, 912 passed, 4 skipped), and
+`npm run package:dir` pass.
+
+This package is **not installed**. Live remains on the previously authorized
+`81FA9D2A...` build. Singleton-source direct splitting remains intentionally
+out of scope because it requires prospective post-collapse geometry. Remaining
+live gates are native click-through/sender identity after direct-center split,
+center-to-edge/header delayed-ack races, fast release, nested 3+ mixed H/V
+restart, and classification of the existing sash-persistence timeout.
