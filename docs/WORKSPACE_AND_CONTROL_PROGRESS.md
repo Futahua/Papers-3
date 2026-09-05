@@ -3091,3 +3091,35 @@ share SHA-256
 boundary, and the existing shortcut/junction was preserved. Typecheck and
 production build pass; the focused navigation test reaches the new tab-control
 checks before the pre-existing sash-persistence timeout.
+
+### 10.7 Split-preview generation hardening source sign-off (2026-09-05)
+
+The reviewer audited exact source head
+[`6fa3eb50`](https://github.com/Futahua/Papers-3/commit/6fa3eb5014e77c937d711e1a41c9e38ea91a5a1d)
+and returned **READY / SIGNED OFF — source** for the arbitrary mixed-split
+and bounded visual-preview agenda. The stale acknowledged-edge race is closed
+with one generation-scoped arm predicate requiring the exact surface, target
+group, edge, and current candidate generation. Same-candidate Dockview
+re-emissions reuse the active generation; real edge/group changes invalidate
+the previous arm before a new acknowledgement/animation-frame barrier. The
+final Dockview move and each semantic topology consumer use the same accepted
+edge authority. A focused unit regression covers right → bottom → right
+re-entry before the new arm can complete.
+
+Validation from the exact pushed head: `npm run typecheck` passed; the full
+unit suite passed (94 files, 911 passed, 4 skipped); `npm run package:dir`
+passed; and the clean unpacked package
+`release/win-unpacked/Papers.exe` has SHA-256
+`7E829091B2EBE3A63BEA7D7E0126FC0660842667D13CD1DAADF8ECE664611AC5`.
+Packaged `backpack-navigation.e2e.ts` passed on the final clean-package retry
+after intermittent armed-preview timing misses. `workspace-tabs.e2e.ts`
+continues to time out only at its pre-existing sash-persistence assertion
+(line 212); this remains a separate package/physical gate and is not a source
+blocker for the signed-off preview work.
+
+This package is not installed into `Runtime/App`. The live executable,
+desktop shortcut, `Runtime/Data`, and creator data remain unchanged. Remaining
+operational acceptance is physical Windows validation of all four edges,
+mixed 3+ nesting, stale-ack races, split-versus-resize pointer ownership,
+native clicks after a split, and full restart/reload; installation still
+requires explicit creator authorization under the release/rollback procedure.
