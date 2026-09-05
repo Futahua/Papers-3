@@ -3075,3 +3075,19 @@ out in repeated runs; this remains a separate package/physical acceptance
 gate, not a source blocker or evidence of a data mutation. No publication or
 installer release occurred. The requested `TOGGLE MODE.bat` and PC shutdown
 remain the final creator-authorized post-sign-off actions.
+
+### 10.6 Creator-authorized tab-control installation (2026-09-05)
+
+The middle-click tab-close and blank-strip drag guard are pushed at
+`5941ce6a8df77c275e0ebb58ccbd2638e9292469`. The package rebuilt from that
+commit was installed after stopping only Papers processes. The previous live
+app is reversible at
+`Runtime/Backups/before-live-install-20260905-171315`.
+
+The package, installed executable, and desktop shortcut-resolved executable
+share SHA-256
+`47CCE74865D85303C7FC983BCDF5608FC73A16B552677E5163E0486F4C159959`.
+`Runtime/Data` contained 192 files with zero byte/hash differences at the swap
+boundary, and the existing shortcut/junction was preserved. Typecheck and
+production build pass; the focused navigation test reaches the new tab-control
+checks before the pre-existing sash-persistence timeout.
