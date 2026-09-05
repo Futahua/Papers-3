@@ -3205,6 +3205,23 @@ ownership, full restart/reload, and resolution/classification of the existing
 sash-persistence timeout. The protected
 `docs/evidence/worker-comparison.json` remains untouched.
 
+### 10.13 Remove split guidance text (2026-09-05)
+
+The reviewer audited exact source head
+[`57a34610`](https://github.com/Futahua/Papers-3/commit/57a346101f825f01aca5dd40d69ff6cd6bf4b934)
+and returned **READY / SIGNED OFF — source**. The hidden general drag-help
+paragraph and the visible `Release to split...` preview label are removed;
+the semantic preview object, bounded rectangle, ARIA status/name, generation
+authority, warning fadeaway, and native transparency path are unchanged.
+
+Validation: typecheck passed; the full unit suite passed (94 files, 912
+passed, 4 skipped); and `npm run package:dir` passed. The fresh package hash
+is
+`61D2FDE608E46723D5C09A9D99566EA164E4F784B0A7C52AA18D8E6E26FFD73F`.
+This cosmetic package is not installed; live remains on the authorized
+direct-center build from 10.12. The protected
+`docs/evidence/worker-comparison.json` remains untouched.
+
 ### 10.11 Direct cross-group content-center split sign-off (2026-09-05)
 
 The reviewer audited exact source/test head
