@@ -642,6 +642,9 @@ async function bootstrap(): Promise<void> {
       }
     }
     : undefined;
+  const onProjectTitleChanged = (windowId: number, surfaceId: string, _senderId: number, title: string): void => {
+    facade.updateWorkspaceSurfaceTitle(windowId, surfaceId, title);
+  };
   const makePapersWindow = (bounds?: WindowBounds) => {
     const instance = createPapersWindow({
       bounds,
@@ -656,6 +659,7 @@ async function bootstrap(): Promise<void> {
       onProjectConsoleMessage,
       onProjectLifecycleEvent,
       onProjectRendererGone,
+      onProjectTitleChanged,
     });
     if (process.env['PAPERS_DEV_CONTROL'] === '1') {
       const windowId = instance.window.id;

@@ -628,9 +628,25 @@ export function WorkspaceDock(props: {
     }
   }, [onClose]);
 
+  const syncPanelTitles = useCallback((api: DockviewApi): void => {
+    for (const project of projectsRef.current) {
+      const panel = api.getPanel(project.surfaceId);
+      if (!panel) continue;
+      if (panel.api.title !== project.title) panel.api.setTitle(project.title);
+      const tab = workspaceRef.current?.querySelector<HTMLElement>(
+        `.dv-tab[data-tab-panel-id="${CSS.escape(project.surfaceId)}"]`,
+      );
+      if (tab) {
+        tab.setAttribute('title', project.title);
+        tab.setAttribute('aria-label', project.title);
+      }
+    }
+  }, []);
+
   const onReady = useCallback((event: DockviewReadyEvent): void => {
     apiRef.current = event.api;
     addMissingPanels(event.api);
+    syncPanelTitles(event.api);
     refreshGroupIds(event.api);
     // Empty header space must never pick up an entire group.
     apiSubscriptions.current.push(event.api.onWillDragGroup(({ nativeEvent }) => {
@@ -1022,7 +1038,7 @@ export function WorkspaceDock(props: {
       }
       // Keep the source identity available for the first overlay callback.
     }));
-  }, [addMissingPanels, clearDragStatus, clearPreview, commitLayout, consumePendingSplit, finishDrop, finishSuccessfulDrop, measureSplitRect, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setDragSurfaceActive, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected]);
+  }, [addMissingPanels, clearDragStatus, clearPreview, commitLayout, consumePendingSplit, finishDrop, finishSuccessfulDrop, measureSplitRect, onActivate, onClose, onMove, reconcileFromTopology, refreshGroupIds, setDragSurfaceActive, setHostOverlay, setHostOverlayAwaited, showPreview, showRejected, syncPanelTitles]);
 
   useEffect(() => {
     const api = apiRef.current;
@@ -1033,6 +1049,7 @@ export function WorkspaceDock(props: {
     if (resizing.current) finishResizeRef.current?.(true);
     reconciliationFeedback.current.apply(() => {
       addMissingPanels(api);
+      syncPanelTitles(api);
       const desired = new Set(projects.map((project) => project.surfaceId));
       for (const panel of [...api.panels]) {
         if (desired.has(panel.id)) continue;
@@ -1043,7 +1060,7 @@ export function WorkspaceDock(props: {
       if (active && api.activePanel?.id !== active.id) active.api.setActive();
       reconcileFromTopology(api);
     });
-  }, [activeSurfaceId, addMissingPanels, projects, reconcileFromTopology, topology]);
+  }, [activeSurfaceId, addMissingPanels, projects, reconcileFromTopology, syncPanelTitles, topology]);
 
   const splitActive = useCallback((direction: 'right' | 'down', position: 'before' | 'after' = 'after'): void => {
     if (interactionDisabled) return;

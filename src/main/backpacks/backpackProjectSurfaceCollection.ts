@@ -14,6 +14,7 @@ type RuntimeFactory = (
   onConsoleMessage?: (senderId: number, level: number, message: string, isBootstrap: boolean) => void,
   onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void,
   onRendererGone?: (senderId: number, reason: string) => void,
+  onTitleChanged?: (senderId: number, title: string) => void,
 ) => BackpackProjectRuntime;
 
 function closeRuntime(runtime: BackpackProjectRuntime, report: (error: unknown) => void, options?: { restoreOnFlushFailure?: boolean }): void {
@@ -51,6 +52,7 @@ export class BackpackProjectSurfaceCollection {
     private readonly onProjectConsoleMessage?: (surfaceId: string, senderId: number, level: number, message: string, isBootstrap: boolean) => void,
     private readonly onProjectLifecycleEvent?: (surfaceId: string, senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void,
     private readonly onProjectRendererGone?: (surfaceId: string, senderId: number, reason: string) => void,
+    private readonly onProjectTitleChanged?: (surfaceId: string, senderId: number, title: string) => void,
   ) {}
 
   get(surfaceId: string): BackpackProjectRuntime | null {
@@ -66,9 +68,11 @@ export class BackpackProjectSurfaceCollection {
     const onConsoleMessage = (senderId: number, level: number, message: string, isBootstrap: boolean): void => this.onProjectConsoleMessage?.(surfaceId, senderId, level, message, isBootstrap);
     const onLifecycleEvent = (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string): void => this.onProjectLifecycleEvent?.(surfaceId, senderId, event, documentInstanceId);
     const onRendererGone = (senderId: number, reason: string): void => this.onProjectRendererGone?.(surfaceId, senderId, reason);
-    const runtime = this.createRuntime?.(surfaceId, onSurfaceClosed, onConsoleMessage, onLifecycleEvent, onRendererGone) ?? new BackpackProjectRuntime(
+    const onTitleChanged = (senderId: number, title: string): void => this.onProjectTitleChanged?.(surfaceId, senderId, title);
+    const runtime = this.createRuntime?.(surfaceId, onSurfaceClosed, onConsoleMessage, onLifecycleEvent, onRendererGone, onTitleChanged) ?? new BackpackProjectRuntime(
       this.window, this.preloadPath, this.transparent, onSurfaceClosed,
       onConsoleMessage, onLifecycleEvent, onRendererGone,
+      onTitleChanged,
     );
     this.runtimes.set(surfaceId, runtime);
     return runtime;
@@ -84,12 +88,20 @@ export class BackpackProjectSurfaceCollection {
   prepare(surfaceId: string): PreparedProjectSurface {
     if (this.runtimes.has(surfaceId)) throw new Error('project surface is already present in this window');
     let lifecycleActive = false;
+    let pendingTitle: { senderId: number; title: string } | null = null;
     const onConsoleMessage = (senderId: number, level: number, message: string, isBootstrap: boolean): void => this.onProjectConsoleMessage?.(surfaceId, senderId, level, message, isBootstrap);
     const onLifecycleEvent = (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string): void => this.onProjectLifecycleEvent?.(surfaceId, senderId, event, documentInstanceId);
     const onRendererGone = (senderId: number, reason: string): void => this.onProjectRendererGone?.(surfaceId, senderId, reason);
+    const onTitleChanged = (senderId: number, title: string): void => {
+      if (!lifecycleActive) {
+        pendingTitle = { senderId, title };
+        return;
+      }
+      this.onProjectTitleChanged?.(surfaceId, senderId, title);
+    };
     const runtime = this.createRuntime?.(surfaceId, (projectId) => {
       if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
-    }, onConsoleMessage, onLifecycleEvent, onRendererGone) ?? new BackpackProjectRuntime(
+    }, onConsoleMessage, onLifecycleEvent, onRendererGone, onTitleChanged) ?? new BackpackProjectRuntime(
       this.window,
       this.preloadPath,
       this.transparent,
@@ -99,6 +111,7 @@ export class BackpackProjectSurfaceCollection {
       onConsoleMessage,
       onLifecycleEvent,
       onRendererGone,
+      onTitleChanged,
     );
     let adopted = false;
     return {
@@ -109,6 +122,12 @@ export class BackpackProjectSurfaceCollection {
           adopted = true;
           this.runtimes.set(surfaceId, runtime);
           lifecycleActive = true;
+          const title = pendingTitle;
+          pendingTitle = null;
+          // Adoption is immediately followed by the caller's canonical
+          // topology/event commit. Flush after that synchronous transaction so
+          // the first page title cannot be dropped as "not yet canonical".
+          if (title) queueMicrotask(() => this.onProjectTitleChanged?.(surfaceId, title.senderId, title.title));
         }
         // Keep collection insertion idempotent, but retry native presentation
         // after a first addChildView/fit failure. The facade may need this

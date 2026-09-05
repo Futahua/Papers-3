@@ -240,6 +240,7 @@ interface HostBridge {
       topology: WorkspaceTopologyV1;
       compensating?: boolean;
     }) => void): () => void;
+    onWorkspaceProjectTitle(cb: (payload: { surfaceId: string; title: string }) => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;

@@ -26,6 +26,7 @@ export class BackpackProjectRuntime {
     private readonly onConsoleMessage?: (senderId: number, level: number, message: string, isBootstrap: boolean) => void,
     private readonly onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void,
     private readonly onRendererGone?: (senderId: number, reason: string) => void,
+    private readonly onTitleChanged?: (senderId: number, title: string) => void,
   ) {
     this.transparent = transparent;
   }
@@ -166,6 +167,9 @@ export class BackpackProjectRuntime {
       const documentInstanceId = randomUUID();
       view.webContents.send(VISUAL_DOCUMENT_INSTANCE_CHANNEL, { documentInstanceId });
       this.onLifecycleEvent?.(view.webContents.id, 'did-finish-load', documentInstanceId);
+    });
+    view.webContents.on('page-title-updated', (_event, title) => {
+      this.onTitleChanged?.(view.webContents.id, title);
     });
     view.webContents.on('console-message', (...args: unknown[]) => {
       const level = args[1];

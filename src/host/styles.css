@@ -699,6 +699,19 @@ input:focus-visible {
   width: 100%;
   height: 100%;
 }
+
+/* Keep tabs compact while retaining the complete semantic title for the
+   native tooltip and accessibility name. */
+.workspace-dock .dv-tab {
+  max-width: 240px;
+}
+.workspace-dock .dv-tab .dv-default-tab-content {
+  min-width: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .workspace-interaction-shield {
   position: absolute;
   inset: 0;

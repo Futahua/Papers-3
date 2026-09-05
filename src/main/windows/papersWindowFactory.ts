@@ -21,6 +21,7 @@ export interface PapersWindowFactoryOptions {
   onProjectConsoleMessage?: (windowId: number, surfaceId: string, senderId: number, level: number, message: string, isBootstrap: boolean) => void;
   onProjectLifecycleEvent?: (windowId: number, surfaceId: string, senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void;
   onProjectRendererGone?: (windowId: number, surfaceId: string, senderId: number, reason: string) => void;
+  onProjectTitleChanged?: (windowId: number, surfaceId: string, senderId: number, title: string) => void;
   rendererUrl?: string;
   rendererFile: string;
 }
@@ -67,6 +68,7 @@ export function createPapersWindow(options: PapersWindowFactoryOptions): PapersW
     (surfaceId, senderId, level, message, isBootstrap) => options.onProjectConsoleMessage?.(window.id, surfaceId, senderId, level, message, isBootstrap),
     (surfaceId, senderId, event, documentInstanceId) => options.onProjectLifecycleEvent?.(window.id, surfaceId, senderId, event, documentInstanceId),
     (surfaceId, senderId, reason) => options.onProjectRendererGone?.(window.id, surfaceId, senderId, reason),
+    (surfaceId, senderId, title) => options.onProjectTitleChanged?.(window.id, surfaceId, senderId, title),
   );
 
   const applyHostSurface = (): void => {

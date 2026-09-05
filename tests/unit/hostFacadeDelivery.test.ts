@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PapersHostFacade, type FacadeDeps } from '../../src/main/hostFacade';
 import type { HermesSurfaceState } from '../../src/main/hermes/hermesSurface';
+import { createWorkspaceTopology, openWorkspaceSurface, type WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 
 /**
  * Delivery is the part that breaks quietly once a second window exists: an
@@ -29,6 +30,27 @@ function createFacade({ hostWindows = [1, 2], runtimeWindow = 1 as number | null
 }
 
 describe('host event delivery across windows', () => {
+  it('relays a bounded document title to the exact surface and canonical topology', () => {
+    const targeted: Array<{ windowId: number; channel: string; payload: unknown }> = [];
+    let topology: WorkspaceTopologyV1 = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: 'surface-a', projectId: 'bp-a', title: 'As you Go',
+    });
+    const facade = new PapersHostFacade({
+      workspaceTopology: () => topology,
+      setWorkspaceTopology: (_windowId: number, next: WorkspaceTopologyV1) => { topology = next; },
+      sendToWindow: (windowId: number, channel: string, payload: unknown) => targeted.push({ windowId, channel, payload }),
+    } as unknown as FacadeDeps);
+
+    facade.updateWorkspaceSurfaceTitle(7, 'surface-a', '  Hồ sơ 📦  ');
+
+    expect(topology.surfaces[0]?.title).toBe('Hồ sơ 📦');
+    expect(targeted).toEqual([{
+      windowId: 7,
+      channel: 'host:event:workspace-project-title',
+      payload: { surfaceId: 'surface-a', title: 'Hồ sơ 📦' },
+    }]);
+  });
+
   it('broadcasts application-level facts to every live host', () => {
     const { facade, broadcasts, targeted } = createFacade();
 

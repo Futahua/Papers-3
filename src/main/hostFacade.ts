@@ -52,6 +52,7 @@ import {
   remapWorkspaceTopologySurfaceIds,
   type WorkspaceTopologyV1,
 } from '@shared/workspaceTopology';
+import { normalizeWorkspaceSurfaceTitle } from '@shared/workspaceSurfaceTitle';
 
 interface CanvasPersistedState {
   schemaVersion: 1;
@@ -1686,6 +1687,23 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.assertWorkspaceMutationAvailable(windowId);
     this.validateWorkspaceTopology(windowId, topology);
     this.deps.setWorkspaceTopology(windowId, topology);
+  }
+
+  /** Relay one embedded document's authoritative title to its exact host tab. */
+  updateWorkspaceSurfaceTitle(windowId: number, surfaceId: string, rawTitle: unknown): void {
+    const topology = this.deps.workspaceTopology?.(windowId);
+    const surface = topology?.surfaces.find((candidate) => candidate.surfaceId === surfaceId);
+    if (!topology || !surface) return;
+    const title = normalizeWorkspaceSurfaceTitle(rawTitle, surface.title);
+    if (title === surface.title) return;
+    const next: WorkspaceTopologyV1 = {
+      ...topology,
+      surfaces: topology.surfaces.map((candidate) => candidate.surfaceId === surfaceId
+        ? { ...candidate, title }
+        : candidate),
+    };
+    this.deps.setWorkspaceTopology(windowId, next);
+    this.deps.sendToWindow(windowId, 'host:event:workspace-project-title', { surfaceId, title });
   }
 
   /** Re-send the current main-owned topology after a renderer mutation was
