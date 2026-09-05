@@ -39,6 +39,19 @@ type SplitPreview = {
   targetGroupId?: string;
   rect?: PreviewRect | null;
 };
+type ArmedSplitCandidate = { surfaceId: string; position: SplitEdge; targetGroupId: string; generation: number };
+
+export function isCurrentArmedSplitCandidate(
+  candidate: ArmedSplitCandidate | null,
+  tuple: Pick<ArmedSplitCandidate, 'surfaceId' | 'position' | 'targetGroupId'>,
+  currentGeneration: number,
+): boolean {
+  return Boolean(candidate
+    && candidate.generation === currentGeneration
+    && candidate.surfaceId === tuple.surfaceId
+    && candidate.position === tuple.position
+    && candidate.targetGroupId === tuple.targetGroupId);
+}
 
 const resolveWorkspaceDropPosition: PositionResolver = {
   resolve: ({ x, y, width, height, zones }) => {
@@ -105,7 +118,7 @@ export function WorkspaceDock(props: {
   const sideDrop = useRef<{ surfaceId: string; position: SplitEdge; targetGroupId: string } | null>(null);
   const previewRef = useRef<SplitPreview | null>(null);
   const previewCandidate = useRef<{ surfaceId: string; position: SplitEdge; targetGroupId: string; generation: number; rect: PreviewRect } | null>(null);
-  const armedCandidate = useRef<{ surfaceId: string; position: SplitEdge; targetGroupId: string; generation: number } | null>(null);
+  const armedCandidate = useRef<ArmedSplitCandidate | null>(null);
   const previewGeneration = useRef(0);
   const dragActive = useRef(false);
   const pointerDragCleanup = useRef<(() => void) | null>(null);
@@ -481,7 +494,7 @@ export function WorkspaceDock(props: {
     const armed = previewRef.current;
     const remembered = armedCandidate.current;
     const dropWasArmed = Boolean(armed?.allowed && armed.armed && armed.position === pending.position && armed.targetGroupId === pending.targetGroupId)
-      || Boolean(remembered && remembered.surfaceId === pending.surfaceId && remembered.position === pending.position && remembered.targetGroupId === pending.targetGroupId);
+      || isCurrentArmedSplitCandidate(remembered, pending, previewGeneration.current);
     if (!dropWasArmed) {
       sideDrop.current = null;
       previewGeneration.current += 1;
@@ -594,7 +607,7 @@ export function WorkspaceDock(props: {
         const armed = previewRef.current;
         const remembered = armedCandidate.current;
         const dropWasArmed = Boolean(armed?.allowed && armed.armed && armed.position === pending.position && armed.targetGroupId === pending.targetGroupId)
-          || Boolean(remembered && remembered.surfaceId === pending.surfaceId && remembered.position === pending.position && remembered.targetGroupId === pending.targetGroupId);
+          || isCurrentArmedSplitCandidate(remembered, pending, previewGeneration.current);
         if (!dropWasArmed) {
           showRejected(pending.position, 'Split cancelled — preview was not armed');
           return;
@@ -673,16 +686,20 @@ export function WorkspaceDock(props: {
           return;
         }
         const position = overlay.position as SplitEdge;
-        if (previewRef.current?.allowed && previewRef.current.armed
-          && previewRef.current.position === position
-          && previewCandidate.current?.surfaceId === surfaceId
-          && previewCandidate.current?.targetGroupId === targetGroupId) {
-          // Dockview can re-emit the same edge candidate immediately before
-          // pointer-up. Preserve the already acknowledged armed state rather
-          // than reopening a one-frame unarmed window.
+        const sameCandidate = previewCandidate.current?.surfaceId === surfaceId
+          && previewCandidate.current?.position === position
+          && previewCandidate.current?.targetGroupId === targetGroupId;
+        if (sameCandidate) {
+          // Dockview can re-emit the same edge candidate while its native
+          // overlay is repainting. Do not allocate a new generation for the
+          // identical surface/group/edge tuple: the existing acknowledgement
+          // (or in-flight acknowledgement) remains authoritative.
           return;
         }
         const generation = ++previewGeneration.current;
+        // A new edge/group candidate must not inherit acknowledgement from a
+        // prior candidate, even if the pointer later returns to the same edge.
+        armedCandidate.current = null;
         if (!targetGroupId || !rect) {
           sideDrop.current = null;
           clearPreview(false);
@@ -801,9 +818,17 @@ export function WorkspaceDock(props: {
       const position = drop.position as SplitEdge;
       const armed = previewRef.current;
       const remembered = armedCandidate.current;
-      const dropWasArmed = Boolean(armed?.allowed && armed.armed && armed.message.indexOf('Release to split') === 0)
-        || Boolean(remembered && remembered.surfaceId === surfaceId && remembered.targetGroupId === targetGroupId && remembered.position === drop.position);
-      if (!dropWasArmed || !targetGroupId || armed?.targetGroupId !== targetGroupId || armed?.position !== drop.position) {
+      const rememberedMatches = isCurrentArmedSplitCandidate(remembered, {
+        surfaceId,
+        position: drop.position as SplitEdge,
+        targetGroupId: targetGroupId ?? '',
+      }, previewGeneration.current);
+      const visualMatches = Boolean(armed?.allowed
+        && armed.armed
+        && armed.message.indexOf('Release to split') === 0
+        && armed.targetGroupId === targetGroupId
+        && armed.position === drop.position);
+      if ((!visualMatches && !rememberedMatches) || !targetGroupId) {
         drop.preventDefault();
         sideDrop.current = null;
         armedCandidate.current = null;
@@ -812,7 +837,7 @@ export function WorkspaceDock(props: {
         showPreview({ position, allowed: false, armed: true, message: 'Split cancelled — preview was not armed' });
         return;
       }
-      const acceptedPosition = armed.position;
+      const acceptedPosition: SplitEdge = visualMatches ? armed!.position as SplitEdge : remembered!.position;
       setHostOverlay(true);
       sideDrop.current = {
         surfaceId,
