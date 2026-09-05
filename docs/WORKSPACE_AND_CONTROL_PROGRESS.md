@@ -3223,13 +3223,19 @@ overlays/drops cannot re-arm, and a fresh drag is required. Title relays also
 fail closed after a target window starts closing so they cannot overwrite an
 atomic move/compensation record.
 
-Validation: typecheck, production build, full unit suite, and the built-app
-`workspace-center-split.e2e.ts` regression passed. The regression covers both a
-multi-tab source and a singleton source, durable topology membership, and
-restart/reload persistence (surface IDs are compared by project identity after
-startup remapping). This change is source-only until reviewer audit and a
-creator-authorized live install. The protected
-`docs/evidence/worker-comparison.json` remains untouched.
+Reviewer audited exact pushed head
+[`e4027906`](https://github.com/Futahua/Papers-3/commit/e402790699b35c1cf0785196fab389216b55fa49)
+and returned **READY / SIGNED OFF — source**. Validation: typecheck, production
+build, full unit suite (96 files passed, 922 tests passed, 1 skipped file, 4
+skipped tests), built-app `workspace-center-split.e2e.ts`, and the same focused
+E2E against `PAPERS_E2E_EXE=release\\win-unpacked\\Papers.exe` all passed. The
+packaged executable hash is
+`CAD588CDC70397AAEBB421FAD58650061ADF75FBEBF2FD5595E78CA015496BB4`.
+The regression covers both a multi-tab source and a singleton source, durable
+topology membership, and restart/reload persistence (surface IDs are compared
+by project identity after startup remapping). This source head is signed off
+but not installed live; installation still requires creator authorization. The
+protected `docs/evidence/worker-comparison.json` remains untouched.
 
 ### 10.14 Creator-authorized no-guidance installation (2026-09-05 23:41 local)
 
