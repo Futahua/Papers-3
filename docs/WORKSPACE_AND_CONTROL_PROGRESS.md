@@ -3205,6 +3205,25 @@ ownership, full restart/reload, and resolution/classification of the existing
 sash-persistence timeout. The protected
 `docs/evidence/worker-comparison.json` remains untouched.
 
+### 10.14 Singleton-source direct split (2026-09-06)
+
+Cross-group drag now permits moving the only tab in a source group directly
+into another group's split zone. The canonical
+`splitWorkspaceSurfaceAtTarget` mutation removes the empty source group and
+splits the destination atomically; same-group singleton drops remain rejected
+because they have no meaningful source/destination distinction. The renderer
+now predicts the destination rectangle after source collapse before drawing the
+armed preview, including nested mixed-orientation layouts, instead of previewing
+the target's pre-collapse half-pane.
+
+Validation: typecheck, production build, full unit suite (96 files passed, 919
+tests passed, 1 skipped file, 4 skipped tests), and the packaged
+`workspace-center-split.e2e.ts` regression passed. The regression covers both a
+multi-tab source and a singleton source, including armed-preview cleanup and
+post-drop group count. This change is source-only until reviewer audit and a
+creator-authorized live install. The protected
+`docs/evidence/worker-comparison.json` remains untouched.
+
 ### 10.14 Creator-authorized no-guidance installation (2026-09-05 23:41 local)
 
 The creator authorized installation of the reviewer-signed no-guidance build.

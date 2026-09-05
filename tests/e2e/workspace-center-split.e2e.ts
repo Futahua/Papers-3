@@ -76,6 +76,37 @@ it('splits directly from one group into another group through content center', a
     await waitFor(async () => await page.locator('.dv-groupview').count() === 3, 10000, 'direct center split');
     expect(await page.locator('.workspace-split-preview').count()).toBe(0);
     expect(await page.evaluate(() => document.documentElement.dataset.workspaceDrag)).not.toBe('true');
+
+    // A singleton source is also a valid cross-group move. Its old group is
+    // removed by the canonical mutation, so the prospective preview must be
+    // armed before release and the final group count must remain stable after
+    // the target is split in place.
+    const singletonGroups = page.locator('.dv-groupview');
+    let singletonSourceIndex = -1;
+    let singletonTargetIndex = -1;
+    for (let index = 0; index < await singletonGroups.count(); index += 1) {
+      const tabs = singletonGroups.nth(index).locator('.dv-tab');
+      if (await tabs.count() !== 1) continue;
+      if (singletonSourceIndex < 0) singletonSourceIndex = index;
+      else if (singletonTargetIndex < 0) singletonTargetIndex = index;
+    }
+    expect(singletonSourceIndex).toBeGreaterThanOrEqual(0);
+    expect(singletonTargetIndex).toBeGreaterThanOrEqual(0);
+    const singletonTab = singletonGroups.nth(singletonSourceIndex).locator('.dv-tab').first();
+    const singletonTargetContent = singletonGroups.nth(singletonTargetIndex).locator('.dv-content-container');
+    const singletonTabBox = await singletonTab.boundingBox();
+    const singletonTargetBox = await singletonTargetContent.boundingBox();
+    expect(singletonTabBox).not.toBeNull();
+    expect(singletonTargetBox).not.toBeNull();
+    await page.mouse.move(singletonTabBox!.x + singletonTabBox!.width / 2, singletonTabBox!.y + singletonTabBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(singletonTargetBox!.x + singletonTargetBox!.width / 2, singletonTargetBox!.y + singletonTargetBox!.height / 2, { steps: 12 });
+    await waitFor(async () => await page.locator('.workspace-split-preview.is-armed').count() === 1, 10000, 'singleton center split preview');
+    expect(await page.locator('.workspace-split-preview').getAttribute('data-position')).not.toBe('center');
+    await page.mouse.up();
+    await waitFor(async () => await page.locator('.dv-groupview').count() === 3, 10000, 'singleton direct center split');
+    expect(await page.locator('.workspace-split-preview').count()).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.dataset.workspaceDrag)).not.toBe('true');
   } finally {
     await launched.close();
   }
