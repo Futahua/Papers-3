@@ -10,9 +10,10 @@ describe('workspace split arm authority', () => {
       position: 'right' as const,
       targetGroupId: 'group-a',
       topologyToken: 'layout-1',
+      dragSessionGeneration: 3,
       generation: 10,
     };
-    const tuple = { surfaceId: 'surface-a', sourceGroupId: 'group-source', position: 'right' as const, targetGroupId: 'group-a', topologyToken: 'layout-1' };
+    const tuple = { surfaceId: 'surface-a', sourceGroupId: 'group-source', position: 'right' as const, targetGroupId: 'group-a', topologyToken: 'layout-1', dragSessionGeneration: 3 };
 
     expect(isCurrentArmedSplitCandidate(candidate, tuple, 10)).toBe(true);
 
@@ -24,6 +25,7 @@ describe('workspace split arm authority', () => {
     expect(isCurrentArmedSplitCandidate(candidate, { ...tuple, targetGroupId: 'group-b' }, 10)).toBe(false);
     expect(isCurrentArmedSplitCandidate(candidate, { ...tuple, sourceGroupId: 'group-other' }, 10)).toBe(false);
     expect(isCurrentArmedSplitCandidate(candidate, { ...tuple, topologyToken: 'layout-2' }, 10)).toBe(false);
+    expect(isCurrentArmedSplitCandidate(candidate, { ...tuple, dragSessionGeneration: 4 }, 10)).toBe(false);
   });
 
   it('resolves content-center drops to a real edge from source/target geometry', () => {

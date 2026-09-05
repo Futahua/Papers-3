@@ -3217,8 +3217,11 @@ armed preview in outer group/layout coordinates, then converts it back through
 the target's measured header/content insets, including nested mixed-orientation
 layouts. Missing geometry fails closed. Armed drops carry the source group and
 structural topology token and are cancelled when canonical membership/layout
-changes. Title relays also fail closed after a target window starts closing so
-they cannot overwrite an atomic move/compensation record.
+changes. Structural invalidation is terminal for the physical Dockview drag:
+pointer cleanup is released, the drag-session generation is incremented, stale
+overlays/drops cannot re-arm, and a fresh drag is required. Title relays also
+fail closed after a target window starts closing so they cannot overwrite an
+atomic move/compensation record.
 
 Validation: typecheck, production build, full unit suite, and the built-app
 `workspace-center-split.e2e.ts` regression passed. The regression covers both a

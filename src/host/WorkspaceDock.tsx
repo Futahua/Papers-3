@@ -44,6 +44,7 @@ type SplitPreview = {
   targetGroupId: string;
   sourceGroupId: string;
   topologyToken: string;
+  dragSessionGeneration: number;
   rect: PreviewRect;
 };
 type ArmedSplitCandidate = {
@@ -52,6 +53,7 @@ type ArmedSplitCandidate = {
   position: SplitEdge;
   targetGroupId: string;
   topologyToken: string;
+  dragSessionGeneration: number;
   generation: number;
 };
 
@@ -61,6 +63,7 @@ type SideDropIntent = {
   position: SplitEdge;
   targetGroupId: string;
   topologyToken: string;
+  dragSessionGeneration: number;
 };
 
 function workspaceStructuralToken(topology: WorkspaceTopologyV1): string {
@@ -104,7 +107,7 @@ export function resolveContentSplitEdge(
 
 export function isCurrentArmedSplitCandidate(
   candidate: ArmedSplitCandidate | null,
-  tuple: Pick<ArmedSplitCandidate, 'surfaceId' | 'sourceGroupId' | 'position' | 'targetGroupId' | 'topologyToken'>,
+  tuple: Pick<ArmedSplitCandidate, 'surfaceId' | 'sourceGroupId' | 'position' | 'targetGroupId' | 'topologyToken' | 'dragSessionGeneration'>,
   currentGeneration: number,
 ): boolean {
   return Boolean(candidate
@@ -113,7 +116,8 @@ export function isCurrentArmedSplitCandidate(
     && candidate.sourceGroupId === tuple.sourceGroupId
     && candidate.position === tuple.position
     && candidate.targetGroupId === tuple.targetGroupId
-    && candidate.topologyToken === tuple.topologyToken);
+    && candidate.topologyToken === tuple.topologyToken
+    && candidate.dragSessionGeneration === tuple.dragSessionGeneration);
 }
 
 const resolveWorkspaceDropPosition: PositionResolver = {
@@ -186,6 +190,7 @@ export function WorkspaceDock(props: {
     position: SplitEdge;
     targetGroupId: string;
     topologyToken: string;
+    dragSessionGeneration: number;
     generation: number;
     rect: PreviewRect;
   } | null>(null);
@@ -296,6 +301,8 @@ export function WorkspaceDock(props: {
     sideDrop.current = null;
     if (previewCandidate.current || armedCandidate.current || previewRef.current) clearPreview(false);
     if (dragActive.current) {
+      pointerDragCleanup.current?.();
+      pointerDragCleanup.current = null;
       dragActive.current = false;
       dragSessionGeneration.current += 1;
       setDragSurfaceActive(false);
@@ -640,7 +647,7 @@ export function WorkspaceDock(props: {
   const consumePendingSplit = useCallback((): void => {
     const pending = sideDrop.current;
     const api = apiRef.current;
-    if (!pending || !api || interactionDisabledRef.current || resizing.current) return;
+    if (!pending || !api || !dragActive.current || interactionDisabledRef.current || resizing.current) return;
     const armed = previewRef.current;
     const remembered = armedCandidate.current;
     const currentSource = topologyRef.current.groups.find((group) => group.surfaceIds.includes(pending.surfaceId));
@@ -650,10 +657,12 @@ export function WorkspaceDock(props: {
       && armed.position === pending.position
       && armed.targetGroupId === pending.targetGroupId
       && armed.topologyToken === pending.topologyToken
+      && armed.dragSessionGeneration === pending.dragSessionGeneration
       && currentSource?.groupId === pending.sourceGroupId
       && currentToken === pending.topologyToken)
       || (currentSource?.groupId === pending.sourceGroupId
         && currentToken === pending.topologyToken
+        && dragSessionGeneration.current === pending.dragSessionGeneration
         && isCurrentArmedSplitCandidate(remembered, pending, previewGeneration.current));
     if (!dropWasArmed) {
       sideDrop.current = null;
@@ -786,6 +795,10 @@ export function WorkspaceDock(props: {
       const pending = sideDrop.current;
       if (pending) {
         sideDrop.current = null;
+        if (!dragActive.current || dragSessionGeneration.current !== pending.dragSessionGeneration) {
+          reconcileFromTopology(event.api);
+          return;
+        }
         const armed = previewRef.current;
         const remembered = armedCandidate.current;
         const currentSource = topologyRef.current.groups.find((group) => group.surfaceIds.includes(pending.surfaceId));
@@ -795,10 +808,12 @@ export function WorkspaceDock(props: {
           && armed.position === pending.position
           && armed.targetGroupId === pending.targetGroupId
           && armed.topologyToken === pending.topologyToken
+          && armed.dragSessionGeneration === pending.dragSessionGeneration
           && currentSource?.groupId === pending.sourceGroupId
           && currentToken === pending.topologyToken)
           || (currentSource?.groupId === pending.sourceGroupId
             && currentToken === pending.topologyToken
+            && dragSessionGeneration.current === pending.dragSessionGeneration
             && isCurrentArmedSplitCandidate(remembered, pending, previewGeneration.current));
         if (!dropWasArmed) {
           showRejected(pending.position, 'Split cancelled — preview was not armed');
@@ -843,6 +858,13 @@ export function WorkspaceDock(props: {
         return;
       }
       if (overlay.kind === 'content') {
+        if (!dragActive.current) {
+          overlay.preventDefault();
+          sideDrop.current = null;
+          clearPreview(false);
+          return;
+        }
+        const dragGeneration = dragSessionGeneration.current;
         const nativeTarget = overlay.nativeEvent.target;
         if (nativeTarget instanceof Element && nativeTarget.closest('.dv-tab, .dv-tabs-and-actions-container')) {
           overlay.preventDefault();
@@ -888,7 +910,8 @@ export function WorkspaceDock(props: {
           && previewCandidate.current?.sourceGroupId === source?.groupId
           && previewCandidate.current?.position === position
           && previewCandidate.current?.targetGroupId === targetGroupId
-          && previewCandidate.current?.topologyToken === topologyToken;
+          && previewCandidate.current?.topologyToken === topologyToken
+          && previewCandidate.current?.dragSessionGeneration === dragGeneration;
         if (sameCandidate) {
           // Dockview can re-emit the same edge candidate while its native
           // overlay is repainting. Do not allocate a new generation for the
@@ -905,6 +928,7 @@ export function WorkspaceDock(props: {
               sourceGroupId: source!.groupId,
               targetGroupId: current.targetGroupId,
               topologyToken,
+              dragSessionGeneration: dragGeneration,
               rect: current.rect,
             });
           }
@@ -919,7 +943,7 @@ export function WorkspaceDock(props: {
           clearPreview(false);
           return;
         }
-        previewCandidate.current = { surfaceId, sourceGroupId: source!.groupId, position, targetGroupId, topologyToken, generation, rect };
+        previewCandidate.current = { surfaceId, sourceGroupId: source!.groupId, position, targetGroupId, topologyToken, dragSessionGeneration: dragGeneration, generation, rect };
         clearDragStatus();
         showPreview({
           position,
@@ -929,17 +953,21 @@ export function WorkspaceDock(props: {
           sourceGroupId: source!.groupId,
           targetGroupId,
           topologyToken,
+          dragSessionGeneration: dragGeneration,
           rect,
         });
         const isCurrentCandidate = (): boolean => {
           const candidate = previewCandidate.current;
           return Boolean(candidate
+            && dragActive.current
+            && dragSessionGeneration.current === dragGeneration
             && candidate.generation === generation
             && candidate.surfaceId === surfaceId
             && candidate.sourceGroupId === source!.groupId
             && candidate.position === position
             && candidate.targetGroupId === targetGroupId
-            && candidate.topologyToken === topologyToken);
+            && candidate.topologyToken === topologyToken
+            && candidate.dragSessionGeneration === dragGeneration);
         };
         void setHostOverlayAwaited(true, isCurrentCandidate).then(() => {
           // Do not resurrect semantic intent when the pointer has already
@@ -947,9 +975,9 @@ export function WorkspaceDock(props: {
           if (!hostRaised.current || !isCurrentCandidate()) return;
           requestAnimationFrame(() => {
             if (!hostRaised.current || !isCurrentCandidate()) return;
-            sideDrop.current = { surfaceId, sourceGroupId: source!.groupId, position, targetGroupId, topologyToken };
-            armedCandidate.current = { surfaceId, sourceGroupId: source!.groupId, position, targetGroupId, topologyToken, generation };
-            const armed = { position, allowed: true, armed: true, sourceGroupId: source!.groupId, targetGroupId, topologyToken, rect, message: `Release to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}` } as SplitPreview;
+            sideDrop.current = { surfaceId, sourceGroupId: source!.groupId, position, targetGroupId, topologyToken, dragSessionGeneration: dragGeneration };
+            armedCandidate.current = { surfaceId, sourceGroupId: source!.groupId, position, targetGroupId, topologyToken, dragSessionGeneration: dragGeneration, generation };
+            const armed = { position, allowed: true, armed: true, sourceGroupId: source!.groupId, targetGroupId, topologyToken, dragSessionGeneration: dragGeneration, rect, message: `Release to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}` } as SplitPreview;
             showPreview(armed);
           });
         });
@@ -981,6 +1009,13 @@ export function WorkspaceDock(props: {
       }
     }));
     apiSubscriptions.current.push(event.api.onWillDrop((drop) => {
+      if (!dragActive.current) {
+        drop.preventDefault();
+        sideDrop.current = null;
+        clearPreview(false);
+        return;
+      }
+      const dragGeneration = dragSessionGeneration.current;
       if (drop.kind === 'tab' || drop.kind === 'header_space') {
         sideDrop.current = null;
         clearPreview(false);
@@ -1033,6 +1068,7 @@ export function WorkspaceDock(props: {
         position,
         targetGroupId: targetGroupId ?? '',
         topologyToken,
+        dragSessionGeneration: dragGeneration,
       }, previewGeneration.current);
       const visualMatches = Boolean(armed?.allowed
         && armed.armed
@@ -1040,7 +1076,8 @@ export function WorkspaceDock(props: {
         && armed.sourceGroupId === source?.groupId
         && armed.targetGroupId === targetGroupId
         && armed.position === position
-        && armed.topologyToken === topologyToken);
+        && armed.topologyToken === topologyToken
+        && armed.dragSessionGeneration === dragGeneration);
       if ((!visualMatches && !rememberedMatches) || !targetGroupId) {
         drop.preventDefault();
         sideDrop.current = null;
@@ -1058,6 +1095,7 @@ export function WorkspaceDock(props: {
         position: acceptedPosition,
         targetGroupId,
         topologyToken,
+        dragSessionGeneration: dragGeneration,
       };
       // Make the accepted drop deterministic across Dockview's HTML5 and
       // pointer backends: the event is the cancellable drop boundary, so move
@@ -1081,7 +1119,7 @@ export function WorkspaceDock(props: {
       // intent here as a guarded fallback; the normal path has already nulled
       // sideDrop and therefore remains exactly-once.
       const pending = sideDrop.current;
-      if (!pending || interactionDisabledRef.current || resizing.current) return;
+      if (!pending || !dragActive.current || interactionDisabledRef.current || resizing.current) return;
       const armed = previewRef.current;
       const currentSource = topologyRef.current.groups.find((group) => group.surfaceIds.includes(pending.surfaceId));
       const currentToken = workspaceStructuralToken(topologyRef.current);
@@ -1089,8 +1127,10 @@ export function WorkspaceDock(props: {
         || armed.sourceGroupId !== pending.sourceGroupId
         || armed.targetGroupId !== pending.targetGroupId
         || armed.topologyToken !== pending.topologyToken
+        || armed.dragSessionGeneration !== pending.dragSessionGeneration
         || currentSource?.groupId !== pending.sourceGroupId
         || currentToken !== pending.topologyToken
+        || dragSessionGeneration.current !== pending.dragSessionGeneration
         || !armed.message.startsWith('Release to split')) {
         // A delayed acknowledgement or a center/tab reorder must never turn
         // an obsolete edge intent into a split after the visible preview is
