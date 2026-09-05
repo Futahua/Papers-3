@@ -30,6 +30,15 @@ it('hover picker and main-screen clicks reuse tabs, middle-click adds, and split
     await waitFor(async () => await mainEnter('Alpha').count() === 1, 10000, 'main picker');
     await mainEnter('Alpha').click();
     await tabCount(1);
+    await page.getByRole('tab', { name: 'Alpha' }).press('Control+Alt+ArrowDown');
+    await waitFor(async () => await page.locator('.workspace-drag-status').count() === 1, 10000, 'unavailable split warning');
+    await waitFor(async () => await page.locator('.workspace-drag-status').count() === 0, 5000, 'warning fadeaway');
+    expect(await page.evaluate(() => document.documentElement.dataset.workspaceDrag)).toBe('false');
+    // Repeating the same unavailable condition after the fade must not pulse
+    // the warning back into existence until the semantic target changes.
+    await page.getByRole('tab', { name: 'Alpha' }).press('Control+Alt+ArrowDown');
+    await page.waitForTimeout(300);
+    expect(await page.locator('.workspace-drag-status').count()).toBe(0);
     await page.locator('.titlebar-left > button').click();
     await mainEnter('Beta').click();
     await tabCount(1);

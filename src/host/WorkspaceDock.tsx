@@ -218,6 +218,7 @@ export function WorkspaceDock(props: {
     if (statusTimer.current !== null) window.clearTimeout(statusTimer.current);
     statusKey.current = nextStatusKey;
     const statusId = ++statusGeneration.current;
+    const statusSession = dragSessionGeneration.current;
     const generation = ++previewGeneration.current;
     previewCandidate.current = null;
     armedCandidate.current = null;
@@ -235,11 +236,18 @@ export function WorkspaceDock(props: {
       statusTimer.current = window.setTimeout(() => {
         if (statusGeneration.current !== statusId) return;
         statusTimer.current = null;
-        statusKey.current = null;
         setDragStatus(null);
+        // Keyboard and post-drag rejections temporarily raise the host so the
+        // warning is visible above native project views. Release that lease
+        // when this warning expires, but never steal a lease from a newer drag
+        // or lower the host during an active tab drag.
+        if (!dragActive.current && dragSessionGeneration.current === statusSession) {
+          hostRaised.current = false;
+          setHostOverlay(false);
+        }
       }, 1100);
     });
-  }, [setHostOverlayAwaited]);
+  }, [setHostOverlay, setHostOverlayAwaited]);
 
   useEffect(() => {
     if (splitNotice) showRejected('right', splitNotice.message);
@@ -1132,6 +1140,7 @@ export function WorkspaceDock(props: {
         // the host raised for the remainder of the tab drag so a later return
         // can establish a fresh, compositor-visible preview.
         clearPreview(false);
+        clearDragStatus();
       }}>
       <p className="workspace-split-help" aria-live="polite">
         Drag a tab to an edge to preview a split. Keyboard: Control+Alt+Arrow keys split the focused tab.
