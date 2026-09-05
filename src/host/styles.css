@@ -773,16 +773,6 @@ input:focus-visible {
   --dv-group-view-background-color: transparent;
 }
 
-.workspace-split-help {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
 .workspace-split-preview {
   position: absolute;
   z-index: 80;
@@ -814,16 +804,6 @@ input:focus-visible {
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   opacity: 0.78;
-}
-
-.workspace-split-preview > span {
-  position: relative;
-  z-index: 1;
-  max-width: calc(100% - 32px);
-  padding: 4px 8px;
-  background: transparent;
-  color: rgb(235 239 237 / 92%);
-  text-align: center;
 }
 
 .workspace-split-preview.is-armed { opacity: 1; }

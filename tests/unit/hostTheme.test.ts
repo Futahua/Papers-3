@@ -53,6 +53,8 @@ describe('host theme contract', () => {
     expect(styles).toContain('@keyframes workspace-drag-status-fade');
     expect(workspaceDock).not.toContain('Keep in this tab group');
     expect(workspaceDock).not.toContain('Drop on a panel edge to split');
+    expect(workspaceDock).not.toContain('Drag a tab to an edge to preview a split');
+    expect(workspaceDock).not.toContain('<span>{preview.message}</span>');
     expect(workspaceDock).toContain('preview.targetGroupId && preview.rect');
   });
 });

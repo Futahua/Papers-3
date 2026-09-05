@@ -1183,9 +1183,6 @@ export function WorkspaceDock(props: {
         clearPreview(false);
         clearDragStatus();
       }}>
-      <p className="workspace-split-help" aria-live="polite">
-        Drag a tab to an edge to preview a split. Keyboard: Control+Alt+Arrow keys split the focused tab.
-      </p>
       {preview && preview.allowed && preview.targetGroupId && preview.rect && (
         <div
           className={`workspace-split-preview${preview.armed ? ' is-armed' : ''}`}
@@ -1200,9 +1197,7 @@ export function WorkspaceDock(props: {
           role="status"
           aria-live="polite"
           aria-label={preview.message}
-        >
-          <span>{preview.message}</span>
-        </div>
+        />
       )}
       {dragStatus && (
         <div className="workspace-drag-status" role="status" aria-live="polite">
