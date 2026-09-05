@@ -3234,3 +3234,28 @@ out of scope because it requires prospective post-collapse geometry. Remaining
 live gates are native click-through/sender identity after direct-center split,
 center-to-edge/header delayed-ack races, fast release, nested 3+ mixed H/V
 restart, and classification of the existing sash-persistence timeout.
+
+### 10.12 Creator-authorized direct-center installation (2026-09-05 21:50 local)
+
+The creator authorized installation of the reviewer-signed direct-center split
+build. Only Papers processes were stopped. The prior live App was moved
+reversibly to
+`Runtime\Backups\before-live-install-20260905-215050`, and the unpacked
+package from source/test head `bb8c833` was copied into the same
+junction-backed `Runtime\App` path. No installer release or publication was
+performed.
+
+The live executable, package executable, and desktop-shortcut-resolved
+executable hash to
+`1E8050E3FFF87FED6351ABE056C25F48A1FB1CFA9CF33D9F4163D13D2C8117C9`.
+The rollback App is the previously installed `81FA9D2A...` build. A strict
+pre/post swap manifest found 194 `Runtime\Data` files with zero byte/hash
+differences. `Papers.lnk` still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, and the updated app was
+relaunched successfully with six Papers processes using that target.
+
+The remaining live gates are native click-through and sender identity after a
+direct-center split, center-to-edge/header delayed-ack races, fast release,
+nested 3+ mixed H/V restart/reload, and resolution/classification of the
+existing sash-persistence timeout. The protected
+`docs/evidence/worker-comparison.json` remains untouched.
