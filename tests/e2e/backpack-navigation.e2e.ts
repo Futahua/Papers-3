@@ -80,6 +80,14 @@ it('hover picker and main-screen clicks reuse tabs, middle-click adds, and split
     const previewBox = await page.locator('.workspace-split-preview').boundingBox();
     expect(previewBox).not.toBeNull();
     expect(previewBox!.width).toBeLessThan(dockBox!.width * 0.75);
+    const contentBoxes = await page.locator('.dv-content-container').evaluateAll((elements) => elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+    }));
+    expect(contentBoxes.some((box) => previewBox!.x >= box.left - 1
+      && previewBox!.y >= box.top - 1
+      && previewBox!.x + previewBox!.width <= box.right + 1
+      && previewBox!.y + previewBox!.height <= box.bottom + 1)).toBe(true);
     expect(await page.locator('.dv-drop-target-selection').evaluateAll((elements) =>
       elements.every((element) => getComputedStyle(element).opacity === '0'))).toBe(true);
     await page.mouse.up();

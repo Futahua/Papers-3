@@ -105,6 +105,7 @@ export function WorkspaceDock(props: {
   const sideDrop = useRef<{ surfaceId: string; position: SplitEdge; targetGroupId: string } | null>(null);
   const previewRef = useRef<SplitPreview | null>(null);
   const previewCandidate = useRef<{ surfaceId: string; position: SplitEdge; targetGroupId: string; generation: number; rect: PreviewRect } | null>(null);
+  const armedCandidate = useRef<{ surfaceId: string; position: SplitEdge; targetGroupId: string; generation: number } | null>(null);
   const previewGeneration = useRef(0);
   const dragActive = useRef(false);
   const pointerDragCleanup = useRef<(() => void) | null>(null);
@@ -157,6 +158,7 @@ export function WorkspaceDock(props: {
   const clearPreview = useCallback((releaseHost = true): void => {
     previewGeneration.current += 1;
     previewCandidate.current = null;
+    armedCandidate.current = null;
     previewRef.current = null;
     setPreview(null);
     if (releaseHost && !dragActive.current) {
@@ -188,6 +190,7 @@ export function WorkspaceDock(props: {
     if (statusTimer.current !== null) window.clearTimeout(statusTimer.current);
     const generation = ++previewGeneration.current;
     previewCandidate.current = null;
+    armedCandidate.current = null;
     sideDrop.current = null;
     setPreview(null);
     // A rejection can arrive after the normal drag cleanup (for example when
@@ -476,7 +479,10 @@ export function WorkspaceDock(props: {
     const api = apiRef.current;
     if (!pending || !api || interactionDisabledRef.current || resizing.current) return;
     const armed = previewRef.current;
-    if (!armed || !armed.allowed || !armed.armed || armed.position !== pending.position) {
+    const remembered = armedCandidate.current;
+    const dropWasArmed = Boolean(armed?.allowed && armed.armed && armed.position === pending.position && armed.targetGroupId === pending.targetGroupId)
+      || Boolean(remembered && remembered.surfaceId === pending.surfaceId && remembered.position === pending.position && remembered.targetGroupId === pending.targetGroupId);
+    if (!dropWasArmed) {
       sideDrop.current = null;
       previewGeneration.current += 1;
       previewCandidate.current = null;
@@ -586,7 +592,10 @@ export function WorkspaceDock(props: {
       if (pending) {
         sideDrop.current = null;
         const armed = previewRef.current;
-        if (!armed || !armed.allowed || !armed.armed || armed.position !== pending.position) {
+        const remembered = armedCandidate.current;
+        const dropWasArmed = Boolean(armed?.allowed && armed.armed && armed.position === pending.position && armed.targetGroupId === pending.targetGroupId)
+          || Boolean(remembered && remembered.surfaceId === pending.surfaceId && remembered.position === pending.position && remembered.targetGroupId === pending.targetGroupId);
+        if (!dropWasArmed) {
           showRejected(pending.position, 'Split cancelled — preview was not armed');
           return;
         }
@@ -641,7 +650,8 @@ export function WorkspaceDock(props: {
           ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
           : undefined;
       const allowSideDrop = !interactionDisabledRef.current
-          && Boolean(source && (source.surfaceIds.length >= 2 || targetGroupId !== source.groupId))
+          && !resizing.current
+          && Boolean(source && source.surfaceIds.length >= 2)
           && Boolean(surfaceId && targetGroupId && rect);
         if (!allowSideDrop || !surfaceId) {
           overlay.preventDefault();
@@ -652,7 +662,7 @@ export function WorkspaceDock(props: {
             armed: true,
             message: interactionDisabledRef.current
               ? 'Split unavailable — workspace is busy'
-              : !source || (source.surfaceIds.length < 2 && targetGroupId === source.groupId)
+              : !source || source.surfaceIds.length < 2
                 ? 'Split unavailable — keep another tab in this group'
                 : !targetGroupId || !rect
                   ? 'Split unavailable — target group is not measurable'
@@ -702,6 +712,7 @@ export function WorkspaceDock(props: {
           requestAnimationFrame(() => {
             if (!hostRaised.current || !isCurrentCandidate()) return;
             sideDrop.current = { surfaceId, position, targetGroupId };
+            armedCandidate.current = { surfaceId, position, targetGroupId, generation };
             const armed = { position, allowed: true, armed: true, targetGroupId, rect, message: `Release to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}` } as SplitPreview;
             showPreview(armed);
           });
@@ -773,7 +784,8 @@ export function WorkspaceDock(props: {
         ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
         : undefined;
       const allowSideDrop = !interactionDisabledRef.current
-        && Boolean(source && (source.surfaceIds.length >= 2 || targetGroupId !== source.groupId))
+        && !resizing.current
+        && Boolean(source && source.surfaceIds.length >= 2)
         && Boolean(surfaceId && targetGroupId);
       if (!allowSideDrop || !surfaceId) {
         drop.preventDefault();
@@ -788,21 +800,19 @@ export function WorkspaceDock(props: {
       }
       const position = drop.position as SplitEdge;
       const armed = previewRef.current;
-      if (!armed || !armed.allowed || !armed.armed || armed.message.indexOf('Release to split') !== 0
-        || !targetGroupId || armed.targetGroupId !== targetGroupId) {
+      const remembered = armedCandidate.current;
+      const dropWasArmed = Boolean(armed?.allowed && armed.armed && armed.message.indexOf('Release to split') === 0)
+        || Boolean(remembered && remembered.surfaceId === surfaceId && remembered.targetGroupId === targetGroupId && remembered.position === drop.position);
+      if (!dropWasArmed || !targetGroupId || armed?.targetGroupId !== targetGroupId || armed?.position !== drop.position) {
         drop.preventDefault();
         sideDrop.current = null;
+        armedCandidate.current = null;
         previewGeneration.current += 1;
         previewCandidate.current = null;
         showPreview({ position, allowed: false, armed: true, message: 'Split cancelled — preview was not armed' });
         return;
       }
       const acceptedPosition = armed.position;
-      if (acceptedPosition === 'center') {
-        drop.preventDefault();
-        sideDrop.current = null;
-        return;
-      }
       setHostOverlay(true);
       sideDrop.current = {
         surfaceId,
@@ -817,7 +827,7 @@ export function WorkspaceDock(props: {
       const panel = apiRef.current?.getPanel(surfaceId);
       const targetGroup = targetDockviewGroupId ? apiRef.current?.groups.find((group) => group.id === targetDockviewGroupId) : undefined;
       if (panel) {
-        const movePosition = position === 'left' ? 'left' : position === 'right' ? 'right' : position === 'top' ? 'top' : 'bottom';
+        const movePosition = acceptedPosition === 'left' ? 'left' : acceptedPosition === 'right' ? 'right' : acceptedPosition === 'top' ? 'top' : 'bottom';
         panel.api.moveTo({ group: targetGroup ?? panel.group, position: movePosition });
         queueMicrotask(consumePendingSplit);
       } else {
@@ -1009,6 +1019,14 @@ export function WorkspaceDock(props: {
         }
         if (resizing.current && event.target instanceof Element
           && event.target.closest('.dv-sash, .dv-tab, .dv-tabs-and-actions-container')) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.nativeEvent.stopImmediatePropagation?.();
+          return;
+        }
+        if (dragActive.current && event.target instanceof Element && event.target.closest('.dv-sash')) {
+          // A second pointer must not acquire the resize owner while a tab
+          // drag owns the workspace gesture and compositor lease.
           event.preventDefault();
           event.stopPropagation();
           event.nativeEvent.stopImmediatePropagation?.();
