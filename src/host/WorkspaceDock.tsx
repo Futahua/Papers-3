@@ -525,6 +525,10 @@ export function WorkspaceDock(props: {
     apiRef.current = event.api;
     addMissingPanels(event.api);
     refreshGroupIds(event.api);
+    // Empty header space must never pick up an entire group.
+    apiSubscriptions.current.push(event.api.onWillDragGroup(({ nativeEvent }) => {
+      nativeEvent.preventDefault();
+    }));
     apiSubscriptions.current.push(event.api.onDidActivePanelChange(({ panel, origin }) => {
       if (resizing.current) {
         const frozen = panel ? resizeSession.current?.activeByGroup.get(groupIds.current.get(panel.group.id) ?? '') : null;
@@ -903,6 +907,18 @@ export function WorkspaceDock(props: {
       tabIndex={0}
       data-split={topology.root.kind === 'split' ? '' : undefined}
       aria-busy={interactionDisabled || undefined}
+      onAuxClickCapture={(event) => {
+        if (event.button !== 1 || !(event.target instanceof Element)) return;
+        const tab = event.target.closest('.dv-tab');
+        if (!tab) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (interactionDisabled || resizing.current) return;
+        const panel = apiRef.current?.groups
+          .map((group) => group.model.getPanelForTab(tab))
+          .find(Boolean);
+        if (panel) onClose(panel.id);
+      }}
       onKeyDownCapture={(event) => {
         if (interactionDisabled) {
           event.preventDefault();
