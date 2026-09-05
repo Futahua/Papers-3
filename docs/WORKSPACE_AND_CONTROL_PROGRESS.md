@@ -3145,3 +3145,36 @@ Live-path `backpack-navigation.e2e.ts` reaches the split-preview assertions
 and then reproduces the known intermittent sash-persistence timeout at the
 dragged split-size checkpoint on two retries. This remains a separate resize
 acceptance issue; it did not alter the installed hash or Runtime/Data.
+
+### 10.9 Split-preview visual lifecycle hardening (2026-09-05)
+
+The reviewer audited exact source head
+[`30cf99fa`](https://github.com/Futahua/Papers-3/commit/30cf99fa1b7bfae55c07d259678649ff4abcb681)
+and returned **READY / SIGNED OFF — source**. The correction removes the
+persistent center/header `SplitPreview` pill, makes directional previews
+rectangle-only and group-local, ignores Dockview root-edge repaint callbacks
+without replacing an active group candidate, and restores an armed rectangle
+for identical same-edge re-emissions. Unavailable/rejected states are now a
+separate one-shot fadeaway status; the dedupe key remains latched until a real
+semantic transition, and warning expiry releases only its generation-owned
+workspace-drag host lease when no newer drag is active.
+
+Validation from the exact pushed head: `npm run typecheck` passed; the full
+unit suite passed (94 files, 911 passed, 4 skipped); `npm run package:dir`
+passed; and the fresh unpacked package
+`release/win-unpacked/Papers.exe` has SHA-256
+`81FA9D2A1730918179511F9A36966F88204FCC4A4CEFC9C533DE7659D4B56088`.
+Packaged navigation reaches the new warning-fade, no-repeat, stable-preview,
+group-local-bounds, and hidden-Dockview-strip assertions before reproducing
+the known intermittent sash-persistence timeout at the dragged split-size
+checkpoint. That timeout remains a separate package/physical gate.
+
+This corrected package is **not installed** into `Runtime/App`; the current
+live package remains the creator-authorized `7E829091...` build recorded in
+10.8. The protected `docs/evidence/worker-comparison.json` remains the only
+user-owned worktree modification. Remaining physical gates are warning-owner
+native click-through, all four edges in nested mixed 3+ layouts, delayed and
+out-of-order acknowledgements, fast release, split-versus-resize ownership,
+full restart/reload, and resolution/classification of the existing sash
+persistence timeout. Installing this new package still requires explicit
+creator authorization under the rollback procedure.
