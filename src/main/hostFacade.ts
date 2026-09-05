@@ -1698,6 +1698,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       await this.waitForWorkspaceMutation(windowId);
       if (this.workspaceMutationLocks.has(windowId)) return this.updateWorkspaceSurfaceTitle(windowId, surfaceId, senderId, rawTitle);
     }
+    // A title event may have been queued before target-window finalization
+    // began. Once that window is closing, fail closed rather than enqueueing a
+    // stale ordinary topology commit behind an atomic move/compensation path.
+    if (this.deps.workspaceMove?.isWindowClosing?.(windowId)) return;
     const context = this.deps.surfaces.contextForSender(senderId);
     if (!context || context.kind !== 'project' || context.windowId !== windowId || context.surfaceId !== surfaceId) return;
     const topology = this.deps.workspaceTopology?.(windowId);
@@ -1705,6 +1709,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (!topology || !surface) return;
     const title = normalizeWorkspaceSurfaceTitle(rawTitle, surface.title);
     if (title === surface.title) return;
+    if (this.deps.workspaceMove?.isWindowClosing?.(windowId)) return;
     const next: WorkspaceTopologyV1 = {
       ...topology,
       surfaces: topology.surfaces.map((candidate) => candidate.surfaceId === surfaceId

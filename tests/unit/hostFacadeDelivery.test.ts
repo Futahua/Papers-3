@@ -72,6 +72,25 @@ describe('host event delivery across windows', () => {
     expect(targeted).toEqual([]);
   });
 
+  it('drops a queued title from a target window that has started closing', async () => {
+    let topology: WorkspaceTopologyV1 = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: 'surface-a', projectId: 'bp-a', title: 'As you Go',
+    });
+    const setWorkspaceTopology = vi.fn((_windowId: number, next: WorkspaceTopologyV1) => { topology = next; });
+    const facade = new PapersHostFacade({
+      workspaceTopology: () => topology,
+      setWorkspaceTopology,
+      sendToWindow: vi.fn(),
+      workspaceMove: { isWindowClosing: () => true },
+      surfaces: { contextForSender: () => ({ windowId: 7, surfaceId: 'surface-a', projectId: 'bp-a', kind: 'project' }) },
+    } as unknown as FacadeDeps);
+
+    await facade.updateWorkspaceSurfaceTitle(7, 'surface-a', 42, 'stale while closing');
+
+    expect(topology.surfaces[0]?.title).toBe('As you Go');
+    expect(setWorkspaceTopology).not.toHaveBeenCalled();
+  });
+
   it('broadcasts application-level facts to every live host', () => {
     const { facade, broadcasts, targeted } = createFacade();
 

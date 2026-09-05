@@ -3205,7 +3205,7 @@ ownership, full restart/reload, and resolution/classification of the existing
 sash-persistence timeout. The protected
 `docs/evidence/worker-comparison.json` remains untouched.
 
-### 10.14 Singleton-source direct split (2026-09-06)
+### 10.15 Singleton-source direct split hardening (2026-09-06)
 
 Cross-group drag now permits moving the only tab in a source group directly
 into another group's split zone. The canonical
@@ -3213,14 +3213,18 @@ into another group's split zone. The canonical
 splits the destination atomically; same-group singleton drops remain rejected
 because they have no meaningful source/destination distinction. The renderer
 now predicts the destination rectangle after source collapse before drawing the
-armed preview, including nested mixed-orientation layouts, instead of previewing
-the target's pre-collapse half-pane.
+armed preview in outer group/layout coordinates, then converts it back through
+the target's measured header/content insets, including nested mixed-orientation
+layouts. Missing geometry fails closed. Armed drops carry the source group and
+structural topology token and are cancelled when canonical membership/layout
+changes. Title relays also fail closed after a target window starts closing so
+they cannot overwrite an atomic move/compensation record.
 
-Validation: typecheck, production build, full unit suite (96 files passed, 919
-tests passed, 1 skipped file, 4 skipped tests), and the packaged
+Validation: typecheck, production build, full unit suite, and the built-app
 `workspace-center-split.e2e.ts` regression passed. The regression covers both a
-multi-tab source and a singleton source, including armed-preview cleanup and
-post-drop group count. This change is source-only until reviewer audit and a
+multi-tab source and a singleton source, durable topology membership, and
+restart/reload persistence (surface IDs are compared by project identity after
+startup remapping). This change is source-only until reviewer audit and a
 creator-authorized live install. The protected
 `docs/evidence/worker-comparison.json` remains untouched.
 

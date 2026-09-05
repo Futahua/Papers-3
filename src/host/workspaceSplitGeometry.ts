@@ -7,6 +7,11 @@ export type WorkspacePreviewRect = {
   height: number;
 };
 
+export type WorkspaceMeasuredGroup = {
+  outer: WorkspacePreviewRect;
+  content: WorkspacePreviewRect;
+};
+
 function unionRect(a: WorkspacePreviewRect | undefined, b: WorkspacePreviewRect | undefined): WorkspacePreviewRect | undefined {
   if (!a) return b;
   if (!b) return a;
@@ -60,6 +65,14 @@ function layoutRects(
   });
 }
 
+function collectGroupIds(node: WorkspaceLayoutNode, output: Set<string>): void {
+  if (node.kind === 'group') {
+    output.add(node.groupId);
+    return;
+  }
+  node.children.forEach((child) => collectGroupIds(child, output));
+}
+
 /**
  * Returns the target group's predicted content rectangle after a singleton
  * source group is removed and its target group is left in place. The root
@@ -70,18 +83,35 @@ export function prospectiveTargetRectAfterSingletonRemoval(
   root: WorkspaceLayoutNode,
   sourceGroupId: string,
   targetGroupId: string,
-  measuredGroups: ReadonlyMap<string, WorkspacePreviewRect>,
+  measuredGroups: ReadonlyMap<string, WorkspaceMeasuredGroup>,
 ): WorkspacePreviewRect | null {
-  const sourceRect = measuredGroups.get(sourceGroupId);
-  const targetRect = measuredGroups.get(targetGroupId);
-  if (!sourceRect || !targetRect || sourceGroupId === targetGroupId) return targetRect ?? null;
-  const rootRect = [...measuredGroups.values()].reduce<WorkspacePreviewRect | undefined>(unionRect, undefined);
-  if (!rootRect) return targetRect;
+  const source = measuredGroups.get(sourceGroupId);
+  const target = measuredGroups.get(targetGroupId);
+  if (!source || !target || sourceGroupId === targetGroupId) return target?.content ?? null;
+  const requiredGroupIds = new Set<string>();
+  collectGroupIds(root, requiredGroupIds);
+  if ([...requiredGroupIds].some((groupId) => !measuredGroups.has(groupId))) return null;
+  const rootRect = [...measuredGroups.values()].reduce<WorkspacePreviewRect | undefined>((current, measured) => unionRect(current, measured.outer), undefined);
+  if (!rootRect) return null;
   const withoutSource = removeGroup(root, sourceGroupId);
-  if (!withoutSource) return targetRect;
+  if (!withoutSource) return null;
   const predicted = new Map<string, WorkspacePreviewRect>();
   layoutRects(withoutSource, rootRect, predicted);
-  return predicted.get(targetGroupId) ?? targetRect;
+  const targetOuter = predicted.get(targetGroupId);
+  if (!targetOuter) return null;
+  const leftInset = target.content.left - target.outer.left;
+  const topInset = target.content.top - target.outer.top;
+  const rightInset = target.outer.left + target.outer.width - target.content.left - target.content.width;
+  const bottomInset = target.outer.top + target.outer.height - target.content.top - target.content.height;
+  const width = targetOuter.width - leftInset - rightInset;
+  const height = targetOuter.height - topInset - bottomInset;
+  if (width < 2 || height < 2 || ![leftInset, topInset, rightInset, bottomInset].every(Number.isFinite)) return null;
+  return {
+    left: targetOuter.left + leftInset,
+    top: targetOuter.top + topInset,
+    width,
+    height,
+  };
 }
 
 export function splitPreviewRect(base: WorkspacePreviewRect, position: 'top' | 'bottom' | 'left' | 'right'): WorkspacePreviewRect {

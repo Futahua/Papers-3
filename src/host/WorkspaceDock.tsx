@@ -18,6 +18,7 @@ import { serializedRootForTopology, workspaceRootFromDockview } from './workspac
 import {
   prospectiveTargetRectAfterSingletonRemoval,
   splitPreviewRect,
+  type WorkspaceMeasuredGroup,
   type WorkspacePreviewRect,
 } from './workspaceSplitGeometry';
 
@@ -41,9 +42,33 @@ type SplitPreview = {
   armed: boolean;
   message: string;
   targetGroupId: string;
+  sourceGroupId: string;
+  topologyToken: string;
   rect: PreviewRect;
 };
-type ArmedSplitCandidate = { surfaceId: string; position: SplitEdge; targetGroupId: string; generation: number };
+type ArmedSplitCandidate = {
+  surfaceId: string;
+  sourceGroupId: string;
+  position: SplitEdge;
+  targetGroupId: string;
+  topologyToken: string;
+  generation: number;
+};
+
+type SideDropIntent = {
+  surfaceId: string;
+  sourceGroupId: string;
+  position: SplitEdge;
+  targetGroupId: string;
+  topologyToken: string;
+};
+
+function workspaceStructuralToken(topology: WorkspaceTopologyV1): string {
+  return JSON.stringify({
+    groups: topology.groups.map((group) => ({ groupId: group.groupId, surfaceIds: group.surfaceIds })),
+    root: topology.root,
+  });
+}
 
 type WorkspaceGroupSurface = { element: HTMLElement };
 
@@ -79,14 +104,16 @@ export function resolveContentSplitEdge(
 
 export function isCurrentArmedSplitCandidate(
   candidate: ArmedSplitCandidate | null,
-  tuple: Pick<ArmedSplitCandidate, 'surfaceId' | 'position' | 'targetGroupId'>,
+  tuple: Pick<ArmedSplitCandidate, 'surfaceId' | 'sourceGroupId' | 'position' | 'targetGroupId' | 'topologyToken'>,
   currentGeneration: number,
 ): boolean {
   return Boolean(candidate
     && candidate.generation === currentGeneration
     && candidate.surfaceId === tuple.surfaceId
+    && candidate.sourceGroupId === tuple.sourceGroupId
     && candidate.position === tuple.position
-    && candidate.targetGroupId === tuple.targetGroupId);
+    && candidate.targetGroupId === tuple.targetGroupId
+    && candidate.topologyToken === tuple.topologyToken);
 }
 
 const resolveWorkspaceDropPosition: PositionResolver = {
@@ -151,12 +178,21 @@ export function WorkspaceDock(props: {
   const resizeUiGeneration = useRef(0);
   const finishResizeRef = useRef<((cancelled?: boolean) => void) | null>(null);
   const [resizeActive, setResizeActive] = useState(false);
-  const sideDrop = useRef<{ surfaceId: string; position: SplitEdge; targetGroupId: string } | null>(null);
+  const sideDrop = useRef<SideDropIntent | null>(null);
   const previewRef = useRef<SplitPreview | null>(null);
-  const previewCandidate = useRef<{ surfaceId: string; position: SplitEdge; targetGroupId: string; generation: number; rect: PreviewRect } | null>(null);
+  const previewCandidate = useRef<{
+    surfaceId: string;
+    sourceGroupId: string;
+    position: SplitEdge;
+    targetGroupId: string;
+    topologyToken: string;
+    generation: number;
+    rect: PreviewRect;
+  } | null>(null);
   const armedCandidate = useRef<ArmedSplitCandidate | null>(null);
   const previewGeneration = useRef(0);
   const dragActive = useRef(false);
+  const structuralTokenRef = useRef(workspaceStructuralToken(topology));
   const pointerDragCleanup = useRef<(() => void) | null>(null);
   const dragSessionGeneration = useRef(0);
   const hostRaised = useRef(false);
@@ -168,6 +204,7 @@ export function WorkspaceDock(props: {
   const interactionDisabledRef = useRef(false);
   projectsRef.current = projects;
   topologyRef.current = topology;
+  const structuralToken = workspaceStructuralToken(topology);
   interactionDisabledRef.current = interactionDisabled;
 
   const setHostOverlay = useCallback((active: boolean, owner: HostOverlayOwner = 'workspace-drag'): void => {
@@ -192,23 +229,24 @@ export function WorkspaceDock(props: {
       width: contentBox.width,
       height: contentBox.height,
     };
+    let prospectiveRequired = false;
     if (sourceGroupId && targetGroupId
       && sourceGroupId !== targetGroupId
       && topologyRef.current.groups.find((candidate) => candidate.groupId === sourceGroupId)?.surfaceIds.length === 1) {
-      const measuredGroups = new Map<string, WorkspacePreviewRect>();
+      prospectiveRequired = true;
+      const measuredGroups = new Map<string, WorkspaceMeasuredGroup>();
       for (const dockviewGroup of apiRef.current?.groups ?? []) {
         const papersGroupId = groupIds.current.get(dockviewGroup.id)
           ?? (dockviewGroup === group ? targetGroupId : undefined);
         const contentElement = dockviewGroup.element.querySelector<HTMLElement>(':scope > .dv-content-container')
           ?? dockviewGroup.element.querySelector<HTMLElement>('.dv-content-container');
         if (!papersGroupId || !contentElement) continue;
+        const outer = dockviewGroup.element.getBoundingClientRect();
         const measured = contentElement.getBoundingClientRect();
-        if (measured.width >= 2 && measured.height >= 2) {
+        if (outer.width >= 2 && outer.height >= 2 && measured.width >= 2 && measured.height >= 2) {
           measuredGroups.set(papersGroupId, {
-            left: measured.left,
-            top: measured.top,
-            width: measured.width,
-            height: measured.height,
+            outer: { left: outer.left, top: outer.top, width: outer.width, height: outer.height },
+            content: { left: measured.left, top: measured.top, width: measured.width, height: measured.height },
           });
         }
       }
@@ -219,7 +257,9 @@ export function WorkspaceDock(props: {
         measuredGroups,
       );
       if (prospective) base = prospective;
+      else return null;
     }
+    if (prospectiveRequired && (base.width < 2 || base.height < 2)) return null;
     const viewport = splitPreviewRect(base, position);
     return {
       left: Math.max(0, viewport.left - workspaceBox.left),
@@ -246,6 +286,23 @@ export function WorkspaceDock(props: {
       setHostOverlay(false);
     }
   }, [setHostOverlay]);
+
+  useEffect(() => {
+    if (structuralTokenRef.current === structuralToken) return;
+    structuralTokenRef.current = structuralToken;
+    // A canonical group membership/layout change invalidates any preview
+    // armed against the previous structure, even if Dockview keeps the
+    // pointer drag alive across the reconciliation.
+    sideDrop.current = null;
+    if (previewCandidate.current || armedCandidate.current || previewRef.current) clearPreview(false);
+    if (dragActive.current) {
+      dragActive.current = false;
+      dragSessionGeneration.current += 1;
+      setDragSurfaceActive(false);
+      hostRaised.current = false;
+      setHostOverlay(false);
+    }
+  }, [clearPreview, setDragSurfaceActive, setHostOverlay, structuralToken]);
 
   const clearDragStatus = useCallback((): void => {
     statusGeneration.current += 1;
@@ -586,8 +643,18 @@ export function WorkspaceDock(props: {
     if (!pending || !api || interactionDisabledRef.current || resizing.current) return;
     const armed = previewRef.current;
     const remembered = armedCandidate.current;
-    const dropWasArmed = Boolean(armed?.allowed && armed.armed && armed.position === pending.position && armed.targetGroupId === pending.targetGroupId)
-      || isCurrentArmedSplitCandidate(remembered, pending, previewGeneration.current);
+    const currentSource = topologyRef.current.groups.find((group) => group.surfaceIds.includes(pending.surfaceId));
+    const currentToken = workspaceStructuralToken(topologyRef.current);
+    const dropWasArmed = Boolean(armed?.allowed && armed.armed
+      && armed.sourceGroupId === pending.sourceGroupId
+      && armed.position === pending.position
+      && armed.targetGroupId === pending.targetGroupId
+      && armed.topologyToken === pending.topologyToken
+      && currentSource?.groupId === pending.sourceGroupId
+      && currentToken === pending.topologyToken)
+      || (currentSource?.groupId === pending.sourceGroupId
+        && currentToken === pending.topologyToken
+        && isCurrentArmedSplitCandidate(remembered, pending, previewGeneration.current));
     if (!dropWasArmed) {
       sideDrop.current = null;
       previewGeneration.current += 1;
@@ -721,8 +788,18 @@ export function WorkspaceDock(props: {
         sideDrop.current = null;
         const armed = previewRef.current;
         const remembered = armedCandidate.current;
-        const dropWasArmed = Boolean(armed?.allowed && armed.armed && armed.position === pending.position && armed.targetGroupId === pending.targetGroupId)
-          || isCurrentArmedSplitCandidate(remembered, pending, previewGeneration.current);
+        const currentSource = topologyRef.current.groups.find((group) => group.surfaceIds.includes(pending.surfaceId));
+        const currentToken = workspaceStructuralToken(topologyRef.current);
+        const dropWasArmed = Boolean(armed?.allowed && armed.armed
+          && armed.sourceGroupId === pending.sourceGroupId
+          && armed.position === pending.position
+          && armed.targetGroupId === pending.targetGroupId
+          && armed.topologyToken === pending.topologyToken
+          && currentSource?.groupId === pending.sourceGroupId
+          && currentToken === pending.topologyToken)
+          || (currentSource?.groupId === pending.sourceGroupId
+            && currentToken === pending.topologyToken
+            && isCurrentArmedSplitCandidate(remembered, pending, previewGeneration.current));
         if (!dropWasArmed) {
           showRejected(pending.position, 'Split cancelled — preview was not armed');
           return;
@@ -783,6 +860,7 @@ export function WorkspaceDock(props: {
         const source = surfaceId
           ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
           : undefined;
+        const topologyToken = workspaceStructuralToken(topologyRef.current);
         const sourceDockviewGroup = surfaceId ? apiRef.current?.getPanel(surfaceId)?.group : undefined;
         const position = resolveContentSplitEdge(overlay.position as SplitEdge | 'center', sourceDockviewGroup, overlay.group, overlay.nativeEvent);
         const rect = overlay.group ? measureSplitRect(overlay.group, position, source?.groupId, targetGroupId ?? undefined) : null;
@@ -807,8 +885,10 @@ export function WorkspaceDock(props: {
           return;
         }
         const sameCandidate = previewCandidate.current?.surfaceId === surfaceId
+          && previewCandidate.current?.sourceGroupId === source?.groupId
           && previewCandidate.current?.position === position
-          && previewCandidate.current?.targetGroupId === targetGroupId;
+          && previewCandidate.current?.targetGroupId === targetGroupId
+          && previewCandidate.current?.topologyToken === topologyToken;
         if (sameCandidate) {
           // Dockview can re-emit the same edge candidate while its native
           // overlay is repainting. Do not allocate a new generation for the
@@ -822,7 +902,9 @@ export function WorkspaceDock(props: {
               allowed: true,
               armed: true,
               message: `Release to split ${current.position === 'right' ? 'right' : current.position === 'left' ? 'left' : current.position === 'top' ? 'above' : 'below'}`,
+              sourceGroupId: source!.groupId,
               targetGroupId: current.targetGroupId,
+              topologyToken,
               rect: current.rect,
             });
           }
@@ -837,14 +919,16 @@ export function WorkspaceDock(props: {
           clearPreview(false);
           return;
         }
-        previewCandidate.current = { surfaceId, position, targetGroupId, generation, rect };
+        previewCandidate.current = { surfaceId, sourceGroupId: source!.groupId, position, targetGroupId, topologyToken, generation, rect };
         clearDragStatus();
         showPreview({
           position,
           allowed: true,
           armed: false,
           message: `Move to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}`,
+          sourceGroupId: source!.groupId,
           targetGroupId,
+          topologyToken,
           rect,
         });
         const isCurrentCandidate = (): boolean => {
@@ -852,8 +936,10 @@ export function WorkspaceDock(props: {
           return Boolean(candidate
             && candidate.generation === generation
             && candidate.surfaceId === surfaceId
+            && candidate.sourceGroupId === source!.groupId
             && candidate.position === position
-            && candidate.targetGroupId === targetGroupId);
+            && candidate.targetGroupId === targetGroupId
+            && candidate.topologyToken === topologyToken);
         };
         void setHostOverlayAwaited(true, isCurrentCandidate).then(() => {
           // Do not resurrect semantic intent when the pointer has already
@@ -861,9 +947,9 @@ export function WorkspaceDock(props: {
           if (!hostRaised.current || !isCurrentCandidate()) return;
           requestAnimationFrame(() => {
             if (!hostRaised.current || !isCurrentCandidate()) return;
-            sideDrop.current = { surfaceId, position, targetGroupId };
-            armedCandidate.current = { surfaceId, position, targetGroupId, generation };
-            const armed = { position, allowed: true, armed: true, targetGroupId, rect, message: `Release to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}` } as SplitPreview;
+            sideDrop.current = { surfaceId, sourceGroupId: source!.groupId, position, targetGroupId, topologyToken };
+            armedCandidate.current = { surfaceId, sourceGroupId: source!.groupId, position, targetGroupId, topologyToken, generation };
+            const armed = { position, allowed: true, armed: true, sourceGroupId: source!.groupId, targetGroupId, topologyToken, rect, message: `Release to split ${position === 'right' ? 'right' : position === 'left' ? 'left' : position === 'top' ? 'above' : 'below'}` } as SplitPreview;
             showPreview(armed);
           });
         });
@@ -925,6 +1011,7 @@ export function WorkspaceDock(props: {
       const source = surfaceId
         ? topologyRef.current.groups.find((group) => group.surfaceIds.includes(surfaceId))
         : undefined;
+      const topologyToken = workspaceStructuralToken(topologyRef.current);
       const sourceDockviewGroup = surfaceId ? apiRef.current?.getPanel(surfaceId)?.group : undefined;
       const position = resolveContentSplitEdge(drop.position as SplitEdge | 'center', sourceDockviewGroup, drop.group, drop.nativeEvent);
       const allowSideDrop = !interactionDisabledRef.current
@@ -942,14 +1029,18 @@ export function WorkspaceDock(props: {
       const remembered = armedCandidate.current;
       const rememberedMatches = isCurrentArmedSplitCandidate(remembered, {
         surfaceId,
+        sourceGroupId: source?.groupId ?? '',
         position,
         targetGroupId: targetGroupId ?? '',
+        topologyToken,
       }, previewGeneration.current);
       const visualMatches = Boolean(armed?.allowed
         && armed.armed
         && armed.message.indexOf('Release to split') === 0
+        && armed.sourceGroupId === source?.groupId
         && armed.targetGroupId === targetGroupId
-        && armed.position === position);
+        && armed.position === position
+        && armed.topologyToken === topologyToken);
       if ((!visualMatches && !rememberedMatches) || !targetGroupId) {
         drop.preventDefault();
         sideDrop.current = null;
@@ -963,8 +1054,10 @@ export function WorkspaceDock(props: {
       setHostOverlay(true);
       sideDrop.current = {
         surfaceId,
+        sourceGroupId: source!.groupId,
         position: acceptedPosition,
         targetGroupId,
+        topologyToken,
       };
       // Make the accepted drop deterministic across Dockview's HTML5 and
       // pointer backends: the event is the cancellable drop boundary, so move
@@ -990,8 +1083,14 @@ export function WorkspaceDock(props: {
       const pending = sideDrop.current;
       if (!pending || interactionDisabledRef.current || resizing.current) return;
       const armed = previewRef.current;
+      const currentSource = topologyRef.current.groups.find((group) => group.surfaceIds.includes(pending.surfaceId));
+      const currentToken = workspaceStructuralToken(topologyRef.current);
       if (!armed || !armed.allowed || !armed.armed || armed.position !== pending.position
+        || armed.sourceGroupId !== pending.sourceGroupId
         || armed.targetGroupId !== pending.targetGroupId
+        || armed.topologyToken !== pending.topologyToken
+        || currentSource?.groupId !== pending.sourceGroupId
+        || currentToken !== pending.topologyToken
         || !armed.message.startsWith('Release to split')) {
         // A delayed acknowledgement or a center/tab reorder must never turn
         // an obsolete edge intent into a split after the visible preview is

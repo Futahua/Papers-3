@@ -23,7 +23,7 @@ it('splits directly from one group into another group through content center', a
   }
   await fs.writeFile(path.join(data, 'registry.json'), JSON.stringify({ schemaVersion: 1, backpacks, lastActiveBackpackId: null }));
   await fs.writeFile(path.join(data, 'backpack-projects.json'), JSON.stringify({ schemaVersion: 1, projects }));
-  const launched = await launchPapers(profile, { fixtures: false });
+  let launched = await launchPapers(profile, { fixtures: false });
   try {
     const page = await launched.app.firstWindow();
     const mainEnter = (name: string) => page.locator('.backpack-card').filter({ has: page.locator('.name', { hasText: name }) }).getByRole('button', { name: 'Enter', exact: true });
@@ -40,6 +40,12 @@ it('splits directly from one group into another group through content center', a
     // has truthful current and future half-pane geometry.
     await page.getByRole('tab', { name: 'Beta' }).press('Control+Alt+ArrowRight');
     await waitFor(async () => await page.locator('.dv-groupview').count() === 2, 10000, 'two groups');
+    await waitFor(async () => {
+      const current = JSON.parse(await fs.readFile(path.join(data, 'workspace-topologies.json'), 'utf8'));
+      return current.workspaces[0].topology.groups.length === 2;
+    }, 10000, 'two-group canonical topology');
+    await waitFor(async () => await page.locator('.workspace-dock[data-split]').count() === 1, 10000, 'two-group renderer topology');
+    await page.waitForTimeout(500);
     const groups = page.locator('.dv-groupview');
     let sourceIndex = -1;
     let targetIndex = -1;
@@ -93,11 +99,20 @@ it('splits directly from one group into another group through content center', a
     expect(singletonSourceIndex).toBeGreaterThanOrEqual(0);
     expect(singletonTargetIndex).toBeGreaterThanOrEqual(0);
     const singletonTab = singletonGroups.nth(singletonSourceIndex).locator('.dv-tab').first();
+    const singletonSurfaceId = await singletonTab.getAttribute('data-tab-panel-id');
+    const singletonTargetSurfaceId = await singletonGroups.nth(singletonTargetIndex).locator('.dv-tab').first().getAttribute('data-tab-panel-id');
     const singletonTargetContent = singletonGroups.nth(singletonTargetIndex).locator('.dv-content-container');
     const singletonTabBox = await singletonTab.boundingBox();
     const singletonTargetBox = await singletonTargetContent.boundingBox();
     expect(singletonTabBox).not.toBeNull();
     expect(singletonTargetBox).not.toBeNull();
+    expect(singletonSurfaceId).not.toBeNull();
+    const beforeSingleton = JSON.parse(await fs.readFile(path.join(data, 'workspace-topologies.json'), 'utf8'));
+    const beforeWorkspace = beforeSingleton.workspaces[0].topology;
+    const sourceGroupId = beforeWorkspace.groups.find((group: { surfaceIds: string[] }) => group.surfaceIds.includes(singletonSurfaceId!))?.groupId;
+    const targetGroupId = beforeWorkspace.groups.find((group: { surfaceIds: string[] }) => group.surfaceIds.includes(singletonTargetSurfaceId!))?.groupId;
+    expect(sourceGroupId).toBeTruthy();
+    expect(targetGroupId).toBeTruthy();
     await page.mouse.move(singletonTabBox!.x + singletonTabBox!.width / 2, singletonTabBox!.y + singletonTabBox!.height / 2);
     await page.mouse.down();
     await page.mouse.move(singletonTargetBox!.x + singletonTargetBox!.width / 2, singletonTargetBox!.y + singletonTargetBox!.height / 2, { steps: 12 });
@@ -107,6 +122,30 @@ it('splits directly from one group into another group through content center', a
     await waitFor(async () => await page.locator('.dv-groupview').count() === 3, 10000, 'singleton direct center split');
     expect(await page.locator('.workspace-split-preview').count()).toBe(0);
     expect(await page.evaluate(() => document.documentElement.dataset.workspaceDrag)).not.toBe('true');
+    await waitFor(async () => {
+      const current = JSON.parse(await fs.readFile(path.join(data, 'workspace-topologies.json'), 'utf8'));
+      const topology = current.workspaces[0].topology;
+      return topology.groups.length === 3
+        && !topology.groups.some((group: { groupId: string }) => group.groupId === sourceGroupId)
+        && topology.groups.some((group: { groupId: string }) => group.groupId === targetGroupId)
+        && topology.groups.filter((group: { surfaceIds: string[] }) => group.surfaceIds.includes(singletonSurfaceId!)).length === 1;
+    }, 10000, 'singleton durable topology');
+    const durable = JSON.parse(await fs.readFile(path.join(data, 'workspace-topologies.json'), 'utf8')).workspaces[0].topology;
+    expect(durable.groups.some((group: { groupId: string; surfaceIds: string[] }) => group.groupId === targetGroupId && group.surfaceIds.includes(singletonSurfaceId!))).toBe(false);
+
+    // The collapsed source and destination split must survive a fresh
+    // renderer/main restart, not just the in-memory Dockview projection.
+    await launched.close();
+    launched = await launchPapers(profile, { fixtures: false });
+    const relaunchedPage = await launched.app.firstWindow();
+    await waitFor(async () => await relaunchedPage.locator('.dv-groupview').count() === 3, 10000, 'singleton reload groups');
+    const reloaded = JSON.parse(await fs.readFile(path.join(data, 'workspace-topologies.json'), 'utf8')).workspaces[0].topology;
+    const projectMembership = (topology: { groups: Array<{ groupId: string; surfaceIds: string[] }>; surfaces: Array<{ surfaceId: string; projectId: string }> }) => topology.groups.map((group) => ({
+      groupId: group.groupId,
+      projectIds: group.surfaceIds.map((surfaceId) => topology.surfaces.find((surface) => surface.surfaceId === surfaceId)?.projectId),
+    }));
+    expect(projectMembership(reloaded)).toEqual(projectMembership(durable));
+    expect(reloaded.root).toEqual(durable.root);
   } finally {
     await launched.close();
   }

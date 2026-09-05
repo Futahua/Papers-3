@@ -6,11 +6,13 @@ describe('workspace split arm authority', () => {
   it('rejects an acknowledged right edge after right-to-bottom-to-right re-entry', () => {
     const candidate = {
       surfaceId: 'surface-a',
+      sourceGroupId: 'group-source',
       position: 'right' as const,
       targetGroupId: 'group-a',
+      topologyToken: 'layout-1',
       generation: 10,
     };
-    const tuple = { surfaceId: 'surface-a', position: 'right' as const, targetGroupId: 'group-a' };
+    const tuple = { surfaceId: 'surface-a', sourceGroupId: 'group-source', position: 'right' as const, targetGroupId: 'group-a', topologyToken: 'layout-1' };
 
     expect(isCurrentArmedSplitCandidate(candidate, tuple, 10)).toBe(true);
 
@@ -20,6 +22,8 @@ describe('workspace split arm authority', () => {
     expect(isCurrentArmedSplitCandidate(candidate, { ...tuple, position: 'bottom' }, 11)).toBe(false);
     expect(isCurrentArmedSplitCandidate(candidate, tuple, 12)).toBe(false);
     expect(isCurrentArmedSplitCandidate(candidate, { ...tuple, targetGroupId: 'group-b' }, 10)).toBe(false);
+    expect(isCurrentArmedSplitCandidate(candidate, { ...tuple, sourceGroupId: 'group-other' }, 10)).toBe(false);
+    expect(isCurrentArmedSplitCandidate(candidate, { ...tuple, topologyToken: 'layout-2' }, 10)).toBe(false);
   });
 
   it('resolves content-center drops to a real edge from source/target geometry', () => {
