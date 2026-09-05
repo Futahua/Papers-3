@@ -3205,6 +3205,25 @@ ownership, full restart/reload, and resolution/classification of the existing
 sash-persistence timeout. The protected
 `docs/evidence/worker-comparison.json` remains untouched.
 
+### 10.14 Creator-authorized no-guidance installation (2026-09-05 23:41 local)
+
+The creator authorized installation of the reviewer-signed no-guidance build.
+Only Papers processes were stopped. The prior direct-center App was moved
+reversibly to
+`Runtime\Backups\before-live-install-20260905-234105`, and the unpacked
+package from source head `57a3461` was copied into the same junction-backed
+`Runtime\App` path. No installer release or publication was performed.
+
+The live executable, package executable, and desktop-shortcut-resolved
+executable hash to
+`61D2FDE608E46723D5C09A9D99566EA164E4F784B0A7C52AA18D8E6E26FFD73F`.
+A strict pre/post swap manifest found 194 `Runtime\Data` files with zero
+byte/hash differences. `Papers.lnk` still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, and the updated app was
+relaunched successfully with six Papers processes using that target.
+
+The protected `docs/evidence/worker-comparison.json` remains untouched.
+
 ### 10.13 Remove split guidance text (2026-09-05)
 
 The reviewer audited exact source head
