@@ -18,4 +18,18 @@ describe('workspace surface titles', () => {
     expect(bounded.endsWith('…')).toBe(true);
     expect(bounded.includes('\uD800')).toBe(false);
   });
+
+  it('does not cut grapheme clusters at the safety boundary', () => {
+    const prefix = 'x'.repeat(MAX_WORKSPACE_SURFACE_TITLE_CODE_POINTS - 2);
+    const bounded = normalizeWorkspaceSurfaceTitle(`${prefix}👩🏽‍💻Z`, 'fallback');
+    expect(bounded.endsWith('…')).toBe(true);
+    expect(bounded).not.toContain('👩');
+
+    const combining = normalizeWorkspaceSurfaceTitle(
+      `${'x'.repeat(MAX_WORKSPACE_SURFACE_TITLE_CODE_POINTS - 2)}e\u0301Z`,
+      'fallback',
+    );
+    expect(combining.endsWith('…')).toBe(true);
+    expect(combining).not.toMatch(/e$/u);
+  });
 });

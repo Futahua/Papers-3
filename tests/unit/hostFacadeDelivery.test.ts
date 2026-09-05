@@ -39,16 +39,37 @@ describe('host event delivery across windows', () => {
       workspaceTopology: () => topology,
       setWorkspaceTopology: (_windowId: number, next: WorkspaceTopologyV1) => { topology = next; },
       sendToWindow: (windowId: number, channel: string, payload: unknown) => targeted.push({ windowId, channel, payload }),
+      surfaces: { contextForSender: (senderId: number) => senderId === 42
+        ? { windowId: 7, surfaceId: 'surface-a', projectId: 'bp-a', kind: 'project' }
+        : null },
     } as unknown as FacadeDeps);
 
-    facade.updateWorkspaceSurfaceTitle(7, 'surface-a', '  Hồ sơ 📦  ');
+    return facade.updateWorkspaceSurfaceTitle(7, 'surface-a', 42, '  Hồ sơ 📦  ').then(() => {
+      expect(topology.surfaces[0]?.title).toBe('Hồ sơ 📦');
+      expect(targeted).toEqual([{
+        windowId: 7,
+        channel: 'host:event:workspace-project-title',
+        payload: { surfaceId: 'surface-a', title: 'Hồ sơ 📦' },
+      }]);
+    });
+  });
 
-    expect(topology.surfaces[0]?.title).toBe('Hồ sơ 📦');
-    expect(targeted).toEqual([{
-      windowId: 7,
-      channel: 'host:event:workspace-project-title',
-      payload: { surfaceId: 'surface-a', title: 'Hồ sơ 📦' },
-    }]);
+  it('fails closed for an old or unrelated project sender', async () => {
+    const targeted: unknown[] = [];
+    let topology: WorkspaceTopologyV1 = openWorkspaceSurface(createWorkspaceTopology(), {
+      surfaceId: 'surface-a', projectId: 'bp-a', title: 'As you Go',
+    });
+    const facade = new PapersHostFacade({
+      workspaceTopology: () => topology,
+      setWorkspaceTopology: (_windowId: number, next: WorkspaceTopologyV1) => { topology = next; },
+      sendToWindow: (_windowId: number, _channel: string, payload: unknown) => targeted.push(payload),
+      surfaces: { contextForSender: () => null },
+    } as unknown as FacadeDeps);
+
+    await facade.updateWorkspaceSurfaceTitle(7, 'surface-a', 99, 'stale title');
+
+    expect(topology.surfaces[0]?.title).toBe('As you Go');
+    expect(targeted).toEqual([]);
   });
 
   it('broadcasts application-level facts to every live host', () => {

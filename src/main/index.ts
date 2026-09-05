@@ -642,8 +642,8 @@ async function bootstrap(): Promise<void> {
       }
     }
     : undefined;
-  const onProjectTitleChanged = (windowId: number, surfaceId: string, _senderId: number, title: string): void => {
-    facade.updateWorkspaceSurfaceTitle(windowId, surfaceId, title);
+  const onProjectTitleChanged = (windowId: number, surfaceId: string, senderId: number, title: string): void => {
+    void facade.updateWorkspaceSurfaceTitle(windowId, surfaceId, senderId, title);
   };
   const makePapersWindow = (bounds?: WindowBounds) => {
     const instance = createPapersWindow({

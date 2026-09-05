@@ -1690,7 +1690,16 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   /** Relay one embedded document's authoritative title to its exact host tab. */
-  updateWorkspaceSurfaceTitle(windowId: number, surfaceId: string, rawTitle: unknown): void {
+  async updateWorkspaceSurfaceTitle(windowId: number, surfaceId: string, senderId: number, rawTitle: unknown): Promise<void> {
+    // A cross-window move holds both workspace locks while the old sender is
+    // being retired and the prepared destination is adopted. Never persist a
+    // topology snapshot captured on the wrong side of that atomic boundary.
+    if (this.workspaceMutationLocks.has(windowId)) {
+      await this.waitForWorkspaceMutation(windowId);
+      if (this.workspaceMutationLocks.has(windowId)) return this.updateWorkspaceSurfaceTitle(windowId, surfaceId, senderId, rawTitle);
+    }
+    const context = this.deps.surfaces.contextForSender(senderId);
+    if (!context || context.kind !== 'project' || context.windowId !== windowId || context.surfaceId !== surfaceId) return;
     const topology = this.deps.workspaceTopology?.(windowId);
     const surface = topology?.surfaces.find((candidate) => candidate.surfaceId === surfaceId);
     if (!topology || !surface) return;
