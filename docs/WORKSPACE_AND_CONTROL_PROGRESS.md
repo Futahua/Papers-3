@@ -3178,3 +3178,29 @@ out-of-order acknowledgements, fast release, split-versus-resize ownership,
 full restart/reload, and resolution/classification of the existing sash
 persistence timeout. Installing this new package still requires explicit
 creator authorization under the rollback procedure.
+
+### 10.10 Creator-authorized visual-lifecycle installation (2026-09-05 20:49 local)
+
+The creator authorized installation of the reviewer-signed visual-lifecycle
+package. Only Papers processes were stopped. The prior live App was moved
+reversibly to
+`Runtime\Backups\before-live-install-20260905-204906`, and the fresh unpacked
+package from source head `30cf99fa` was copied into the same junction-backed
+`Runtime\App` path. No installer release or publication was performed.
+
+The live executable, package executable, and desktop-shortcut-resolved
+executable hash to
+`81FA9D2A1730918179511F9A36966F88204FCC4A4CEFC9C533DE7659D4B56088`.
+The prior rollback App hash is
+`7E829091B2EBE3A63BEA7D7E0126FC0660842667D13CD1DAADF8ECE664611AC5`.
+`Runtime\Data` was not a swap target; its post-swap manifest contains 194
+files and remains readable. `Papers.lnk` still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, and the updated app was
+relaunched successfully with five Papers processes using that target.
+
+The package/live acceptance gates remain the reviewer-listed native checks:
+warning-owner click-through, all four edges in nested mixed 3+ layouts,
+delayed/out-of-order acknowledgement races, fast release, split-versus-resize
+ownership, full restart/reload, and resolution/classification of the existing
+sash-persistence timeout. The protected
+`docs/evidence/worker-comparison.json` remains untouched.
