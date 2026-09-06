@@ -53,3 +53,51 @@ npx vitest run --config vitest.e2e.config.ts tests/e2e/dev-control.e2e.ts
 
 The Electron E2E proves that the API can inspect Papers, create a real second
 native window and verify both windows without DOM injection.
+
+## In-app ChatGPT reviewer browser workflow
+
+The browser reviewer is an audit-only collaborator. It cannot edit this
+checkout, create patches, or write repository files. Ask it for an audit,
+diagnosis, design options, implementation steps, and a verdict; implement the
+chosen correction locally in the Papers checkout.
+
+When continuing an existing review, reclaim the exact persistent in-app tab by
+its reviewer URL. This is the Codex app's browser session, not an instruction
+to operate the creator's desktop or external browser. Keep the browser work
+scoped to the reviewer conversation and any screenshots or evidence the creator
+explicitly supplied.
+
+Every audit request should include:
+
+- the exact pushed commit SHA being reviewed, with source paths or commit links;
+- the intended behavior and the concrete observed failure, including the
+  relevant screenshot or reproduction sequence;
+- validation evidence (tests, build/package result, executable hash, and any
+  known pre-existing or out-of-scope issue); and
+- an explicit question asking whether the overall agenda is complete, what
+  remains missing, and the smallest set of hardening/implementation steps.
+
+Do not ask the reviewer to implement code. After applying its recommendations,
+run the relevant tests, commit and push the new exact SHA, then resubmit that
+SHA for audit. Treat a reviewer verdict as source-scope evidence, not as a
+replacement for local validation or packaged/native acceptance. If the review
+conversation reaches its message limit, open a fresh reviewer conversation and
+carry forward the current SHA, prior verdict, scope, evidence, screenshots,
+and unresolved questions.
+
+### One deferred completion watcher
+
+After sending a reviewer message, keep the same Codex turn alive and use one
+deferred watcher operation. Inside that single operation, sample roughly once
+per second until the reviewer UI has shown `Stop answering` and then the button
+has disappeared. The watcher must have a generous bounded timeout, terminate
+itself, and call `notify(...)` exactly once when complete. Only after that wake
+should Codex read the completed response, implement changes, or send another
+review request. Do not repeatedly inspect the page from model turns and do not
+create a recurring polling automation. If the tab handle was released, reclaim
+the exact reviewer URL from the persistent browser session before replacing the
+watcher.
+
+The watcher shape is documented in `AGENTS.md`; keep its two-state requirement
+(`Stop answering` appeared, then disappeared) intact so an immediate pre-send
+snapshot cannot be mistaken for a completed answer.
