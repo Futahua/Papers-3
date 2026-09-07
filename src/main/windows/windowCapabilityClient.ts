@@ -29,7 +29,34 @@ interface PendingEntry {
   /** The runtime id the request was issued for; a response carrying an
    * observation for a DIFFERENT id must never satisfy this request. */
   target: RuntimeWindowId | undefined;
+  /** Releases this request's helper slot. Runs exactly once, however it ends. */
+  onSettled: () => void;
 }
+
+/** A speculative request held back until the helper has no real work. */
+interface DeferredRequest {
+  message: WindowRequestMessage;
+  method: WindowCapabilityMethod;
+  target: RuntimeWindowId | undefined;
+  resolve: (result: WindowCapabilityResult) => void;
+}
+
+/**
+ * Speculative work: nothing the creator is waiting on, and by far the most
+ * expensive thing the helper does - a native-size bitmap, PrintWindow, possible
+ * DWM fallback, scale, PNG encode, base64.
+ *
+ * The helper is strictly serial: it reads ONE stdin line, runs the whole
+ * request synchronously, writes the reply, and only then reads the next. So
+ * whatever reaches it first owns it until it finishes, and a hover capture sent
+ * ahead of a minimize/restore delays the moment the real application window
+ * moves. Holding these back until no control request is outstanding keeps at
+ * most one capture ahead of a click instead of an unbounded run of them.
+ *
+ * ONLY these are deferred. Control requests keep dispatching immediately and
+ * independently, so one lost helper reply still cannot stall the others.
+ */
+const DEFERRED_METHODS: ReadonlySet<WindowCapabilityMethod> = new Set(['thumbnail']);
 
 export interface WindowCapabilityClient {
   list(): Promise<WindowCapabilityResult>;
@@ -71,6 +98,51 @@ export function createWindowCapabilityClient({
   let nextRequestId = 1;
   let stopped = false;
   const pending = new Map<number, PendingEntry>();
+  const deferred: DeferredRequest[] = [];
+  let controlInFlight = 0;
+  let speculativeInFlight = 0;
+
+  function dispatch(
+    entry: DeferredRequest,
+    onSettled: () => void,
+  ): void {
+    const { message, method, target, resolve } = entry;
+    // The timeout starts on DISPATCH, never on enqueue: a deferred request must
+    // not be charged for time it spent waiting for the helper to fall idle.
+    const timer = setTimeout(() => {
+      if (pending.delete(message.requestId)) {
+        onSettled();
+        resolve({ outcome: 'timeout', error: `request ${message.requestId} (${method}) timed out` });
+        dispatchDeferred();
+      }
+    }, timeoutMs);
+    pending.set(message.requestId, { resolve, timer, method, target, onSettled });
+    transport.send(message).catch(() => {
+      // The helper never accepted the request: fail this one closed, exactly
+      // once, without disturbing any other pending request.
+      const found = pending.get(message.requestId);
+      if (!found) return;
+      clearTimeout(found.timer);
+      pending.delete(message.requestId);
+      found.onSettled();
+      found.resolve({ outcome: 'helper-unavailable', error: 'transport send failed' });
+      dispatchDeferred();
+    });
+  }
+
+  /** Release one speculative request, but only while the helper owes nothing to
+   * a control operation - and one at a time, since the helper runs one at a
+   * time regardless. */
+  function dispatchDeferred(): void {
+    if (stopped || controlInFlight > 0 || speculativeInFlight > 0) return;
+    const next = deferred.shift();
+    if (!next) return;
+    speculativeInFlight += 1;
+    dispatch(next, () => {
+      speculativeInFlight -= 1;
+      dispatchDeferred();
+    });
+  }
 
   function request(
     method: WindowCapabilityMethod,
@@ -90,7 +162,7 @@ export function createWindowCapabilityClient({
     if (stopped) {
       return Promise.resolve({ outcome: 'helper-unavailable', error: 'client is stopped' });
     }
-    if (pending.size >= maxPending) {
+    if (pending.size + deferred.length >= maxPending) {
       return Promise.resolve({ outcome: 'helper-unavailable', error: 'pending-request limit reached' });
     }
     const requestId = nextRequestId;
@@ -109,24 +181,19 @@ export function createWindowCapabilityClient({
       ...(detail.maxWidth !== undefined ? { maxWidth: detail.maxWidth } : {}),
       ...(detail.maxHeight !== undefined ? { maxHeight: detail.maxHeight } : {}),
     };
-    const result = new Promise<WindowCapabilityResult>((resolve) => {
-      const timer = setTimeout(() => {
-        if (pending.delete(requestId)) {
-          resolve({ outcome: 'timeout', error: `request ${requestId} (${method}) timed out` });
-        }
-      }, timeoutMs);
-      pending.set(requestId, { resolve, timer, method, target: detail.target });
+    return new Promise<WindowCapabilityResult>((resolve) => {
+      const entry: DeferredRequest = { message, method, target: detail.target, resolve };
+      if (DEFERRED_METHODS.has(method)) {
+        deferred.push(entry);
+        dispatchDeferred();
+        return;
+      }
+      controlInFlight += 1;
+      dispatch(entry, () => {
+        controlInFlight -= 1;
+        dispatchDeferred();
+      });
     });
-    transport.send(message).catch(() => {
-      // The helper never accepted the request: fail this one closed, exactly
-      // once, without disturbing any other pending request.
-      const entry = pending.get(requestId);
-      if (!entry) return;
-      clearTimeout(entry.timer);
-      pending.delete(requestId);
-      entry.resolve({ outcome: 'helper-unavailable', error: 'transport send failed' });
-    });
-    return result;
   }
 
   function handleMessage(raw: unknown): void {
@@ -151,6 +218,7 @@ export function createWindowCapabilityClient({
     }
     clearTimeout(entry.timer);
     pending.delete(response.requestId);
+    entry.onSettled();
     entry.resolve({
       outcome: response.outcome,
       ...(response.windows !== undefined ? { windows: response.windows } : {}),
@@ -167,6 +235,11 @@ export function createWindowCapabilityClient({
       pending.delete(requestId);
       entry.resolve({ outcome, error });
     }
+    // Deferred requests were never sent anywhere; they must fail the same way
+    // rather than waiting for a helper that is gone.
+    while (deferred.length > 0) deferred.shift()?.resolve({ outcome, error });
+    controlInFlight = 0;
+    speculativeInFlight = 0;
   }
 
   function stop(): void {
@@ -195,7 +268,9 @@ export function createWindowCapabilityClient({
     rejectAllPending,
     stop,
     get pendingCount() {
-      return pending.size;
+      // Dispatched plus deferred: from a caller's view both are outstanding,
+      // which is what the bound exists to limit.
+      return pending.size + deferred.length;
     },
   };
 }
