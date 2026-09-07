@@ -246,6 +246,8 @@ describe('workspace topology', () => {
     ]));
     expect(remapped.surfaces.map((surface) => [surface.surfaceId, surface.projectId]))
       .toEqual([['fresh-x', 'bp-same'], ['fresh-y', 'bp-same']]);
+    expect(remapped.surfaces.map((surface) => surface.surfaceKey))
+      .toEqual(['old-a', 'old-b']);
     expect(remapped.groups.map((group) => [group.groupId, group.surfaceIds, group.activeSurfaceId]))
       .toEqual([['group-main', ['fresh-x'], 'fresh-x'], ['group-right', ['fresh-y'], 'fresh-y']]);
     expect(remapped.root).toEqual(topology.root);

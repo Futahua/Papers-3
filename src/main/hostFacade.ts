@@ -4,6 +4,7 @@
  * the HostFacade IPC contract.
  */
 import { randomUUID } from 'node:crypto';
+import { withProjectSurfaceKey } from './backpacks/projectSurfaceUrl';
 import { clipboard, dialog, shell, webContents, type WebContents } from 'electron';
 
 import type {
@@ -779,12 +780,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         // Stage and load the replacement while the old native view remains
         // intact. Any preparation, validation, adoption, or delivery failure
         // can then discard only the fresh surface.
-        prepared = await this.deps.workspaceMove!.prepareProjectSurface(windowId, fresh.surfaceId, project.url);
-        const descriptor = { surfaceId: fresh.surfaceId, projectId, title: backpack.name, url: project.url };
+        const originalSurface = topology.surfaces.find((surface) => surface.surfaceId === surfaceId)!;
+        const surfaceKey = originalSurface.surfaceKey ?? randomUUID();
+        const keyedUrl = withProjectSurfaceKey(project.url, surfaceKey);
+        prepared = await this.deps.workspaceMove!.prepareProjectSurface(windowId, fresh.surfaceId, keyedUrl);
+        const descriptor = { surfaceId: fresh.surfaceId, projectId, title: backpack.name, url: keyedUrl };
         const next: WorkspaceTopologyV1 = {
           ...topology,
           surfaces: topology.surfaces.map((surface) => surface.surfaceId === surfaceId
-            ? { surfaceId: fresh.surfaceId, projectId, title: backpack.name } : surface),
+            ? { surfaceId: fresh.surfaceId, surfaceKey, projectId, title: backpack.name } : surface),
           groups: topology.groups.map((group) => ({ ...group,
             surfaceIds: group.surfaceIds.map((id) => id === surfaceId ? fresh.surfaceId : id),
             activeSurfaceId: group.activeSurfaceId === surfaceId ? fresh.surfaceId : group.activeSurfaceId,
@@ -1245,12 +1249,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       const topology = remapWorkspaceTopologySurfaceIds(layout.topology, freshBySavedId);
       const freshSet = topology.surfaces.map((surface) => ({ surfaceId: surface.surfaceId, projectId: surface.projectId }));
       this.validateWorkspaceTopologyAgainst(windowId, topology, freshSet);
-      const projects = resolved.map(({ savedSurface, url }) => ({
-        surfaceId: freshBySavedId.get(savedSurface.surfaceId)!,
-        projectId: savedSurface.projectId,
-        title: savedSurface.title,
-        url,
-      }));
+      const projects = resolved.map(({ savedSurface, url }) => {
+        const surface = topology.surfaces.find((candidate) => candidate.surfaceId === freshBySavedId.get(savedSurface.surfaceId))!;
+        return {
+          surfaceId: surface.surfaceId,
+          projectId: savedSurface.projectId,
+          title: savedSurface.title,
+          url: withProjectSurfaceKey(url, surface.surfaceKey ?? surface.surfaceId),
+        };
+      });
 
       this.assertWorkspaceMutationAvailable(windowId);
       // This is the sole renderer delivery for a successful replacement. No
@@ -1289,7 +1296,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         ?? null;
       const project = preferred ? { url: preferred } : await this.deps.backpackProjects.open(surface.projectId);
       if (!project) throw new Error(`Backpack ${surface.projectId} has no usable project surface.`);
-      return { ...surface, url: project.url };
+      return { ...surface, url: withProjectSurfaceKey(project.url, surface.surfaceKey ?? surface.surfaceId) };
     }));
     return { projects, topology };
   }
@@ -1419,7 +1426,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         }
       };
       try {
-        prepared = await move.prepareProjectSurface(request.targetWindowId, request.surfaceId, movedProject.url);
+        prepared = await move.prepareProjectSurface(
+          request.targetWindowId,
+          request.surfaceId,
+          withProjectSurfaceKey(movedProject.url, movedDescriptor.surfaceKey ?? movedDescriptor.surfaceId),
+        );
         const afterPrepareSource = move.workspaceState(request.sourceWindowId);
         const afterPrepareTarget = move.workspaceState(request.targetWindowId);
         if (afterPrepareSource.revision !== initialSourceState.revision
@@ -1778,9 +1789,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       this.validateWorkspaceTopology(windowId, latest);
       const surface = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
       surfaceId = surface.surfaceId;
-      prepared = await this.deps.workspaceMove!.prepareProjectSurface(windowId, surface.surfaceId, requestedUrl ?? project.url);
+      const surfaceKey = randomUUID();
+      const keyedUrl = withProjectSurfaceKey(requestedUrl ?? project.url, surfaceKey);
+      prepared = await this.deps.workspaceMove!.prepareProjectSurface(windowId, surface.surfaceId, keyedUrl);
       const next = openWorkspaceSurface(latest, {
         surfaceId: surface.surfaceId,
+        surfaceKey,
         projectId,
         title: backpack.name,
       });
@@ -1790,7 +1804,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       // any delivery failure can discard it without an orphaned logical tab.
       prepared.adopt();
       this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-project-opened', {
-        project: { surfaceId: surface.surfaceId, projectId, title: backpack.name, url: requestedUrl ?? project.url },
+        project: { surfaceId: surface.surfaceId, projectId, title: backpack.name, url: keyedUrl },
         topology: next,
       });
       this.deps.setActiveSurfaceId(windowId, surface.surfaceId);

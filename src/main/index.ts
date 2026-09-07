@@ -9,6 +9,7 @@ import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
 import { BackpackProjectSurfaceCollection } from './backpacks/backpackProjectSurfaceCollection';
+import { withProjectSurfaceKey } from './backpacks/projectSurfaceUrl';
 import { CanvasRuntime, defaultProgramsRoot } from './canvas/canvasRuntime';
 import { CanvasSessionState } from './canvas/canvasState';
 import { loadProgramCatalog, type ProgramCatalog } from './canvas/programLoader';
@@ -906,7 +907,13 @@ async function bootstrap(): Promise<void> {
         deliver: (projects, topology) => {
           const contents = papersWindows.get(windowId)?.owned.hostView.webContents;
           if (!contents || contents.isDestroyed()) throw new Error('That Papers window host is unavailable.');
-          contents.send('host:event:workspace-hydrated', { projects, topology });
+          const keyedProjects = projects.map((project) => {
+            const surface = topology.surfaces.find((candidate) => candidate.surfaceId === project.surfaceId);
+            return surface
+              ? { ...project, url: withProjectSurfaceKey(project.url, surface.surfaceKey ?? surface.surfaceId) }
+              : project;
+          });
+          contents.send('host:event:workspace-hydrated', { projects: keyedProjects, topology });
         },
         commit: (workspaceId, topology) => {
           workspaceIds.set(windowId, workspaceId);

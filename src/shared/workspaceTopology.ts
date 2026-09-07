@@ -4,6 +4,9 @@ export type WorkspaceSplitOrientation = 'horizontal' | 'vertical';
 
 export interface WorkspaceSurface {
   surfaceId: string;
+  /** Opaque stable identity for project-local, per-tab restoration. Unlike the
+   * runtime surfaceId, this survives startup hydration and surface-id remaps. */
+  surfaceKey?: string;
   projectId: string;
   title: string;
 }
@@ -46,7 +49,10 @@ const workspaceLayoutNodeSchema: z.ZodType<WorkspaceLayoutNode> = z.lazy(() => z
 export const workspaceTopologySchema: z.ZodType<WorkspaceTopologyV1> = z.object({
   schemaVersion: z.literal(WORKSPACE_TOPOLOGY_SCHEMA_VERSION),
   surfaces: z.array(z.object({
-    surfaceId: z.string().min(1), projectId: z.string().min(1), title: z.string(),
+    surfaceId: z.string().min(1),
+    surfaceKey: z.string().min(1).max(128).optional(),
+    projectId: z.string().min(1),
+    title: z.string(),
   }).strict()),
   groups: z.array(z.object({
     groupId: z.string().min(1),
@@ -521,7 +527,14 @@ export function remapWorkspaceTopologySurfaceIds(
   };
   const next: WorkspaceTopologyV1 = {
     ...topology,
-    surfaces: topology.surfaces.map((surface) => ({ ...surface, surfaceId: remap(surface.surfaceId) })),
+    surfaces: topology.surfaces.map((surface) => ({
+      ...surface,
+      surfaceId: remap(surface.surfaceId),
+      // Older persisted workspaces predate the durable key. Their old logical
+      // id is already opaque and stable in the saved topology, so adopt it
+      // once rather than creating a new project-local identity on every boot.
+      surfaceKey: surface.surfaceKey ?? surface.surfaceId,
+    })),
     groups: topology.groups.map((group) => ({
       ...group,
       surfaceIds: group.surfaceIds.map(remap),
