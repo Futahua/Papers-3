@@ -93,11 +93,19 @@ function assertIdentity(value: string, label: string): void {
 export function assertValidWorkspaceTopology(topology: WorkspaceTopologyV1): void {
   if (topology.schemaVersion !== WORKSPACE_TOPOLOGY_SCHEMA_VERSION) throw new Error('unsupported workspace topology version');
   const surfaceIds = new Set<string>();
+  const surfaceKeys = new Set<string>();
   for (const surface of topology.surfaces) {
     assertIdentity(surface.surfaceId, 'surfaceId');
     assertIdentity(surface.projectId, 'projectId');
     if (surfaceIds.has(surface.surfaceId)) throw new Error(`duplicate surface ${surface.surfaceId}`);
     surfaceIds.add(surface.surfaceId);
+    if (surface.surfaceKey !== undefined) {
+      if (surface.surfaceKey.length === 0 || surface.surfaceKey.length > 128) {
+        throw new Error(`surfaceKey for ${surface.surfaceId} is invalid`);
+      }
+      if (surfaceKeys.has(surface.surfaceKey)) throw new Error(`duplicate surface key ${surface.surfaceKey}`);
+      surfaceKeys.add(surface.surfaceKey);
+    }
   }
   const groupIds = new Set<string>();
   const assigned = new Set<string>();
