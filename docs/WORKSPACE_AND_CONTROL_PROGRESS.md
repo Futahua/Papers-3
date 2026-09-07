@@ -33,6 +33,21 @@ unit suite 922/922 passing (4 skipped), focused routing/topology 64/64, and
 TypeScript typecheck passing. This source change is not installed in the live
 App; creator data and `docs/evidence/worker-comparison.json` remain untouched.
 
+### Live installation — 2026-09-07 10:06 local
+
+The creator explicitly authorized installation. The packaged directory build
+was installed into the actual desktop target
+`D:\Letters\MatTroiSeConMoc\Papers\App` (the running processes and shortcut
+resolve there; `Products\Papers\Runtime\App` is a separate historical copy).
+The prior live App is recoverable at
+`D:\Letters\MatTroiSeConMoc\Papers\Backups\before-live-install-20260907-100659`.
+
+Old executable SHA-256: `CAD588CDC70397AAEBB421FAD58650061ADF75FBEBF2FD5595E78CA015496BB4`.
+Installed executable SHA-256: `A0F4D5F8597C0188E577DEC58B323C625CA7DDC74D5F3E66B79D22D2936C233E`.
+The live As You Go `state.json` hash was identical before and after the swap;
+no `Data` files were modified. Papers relaunched successfully with a
+responsive main window.
+
 ## Creator removes saved-layout menu — 2026-09-04
 
 The creator marked the title-bar Layouts button and rejected this feature.
