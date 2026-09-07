@@ -4,6 +4,7 @@ import { PapersHostFacade, type FacadeDeps } from '../../src/main/hostFacade';
 import { createLogicalSurfaceRegistry } from '../../src/main/windows/logicalSurfaceRegistry';
 import { createSurfaceContextRegistry } from '../../src/main/windows/surfaceContextRegistry';
 import { createWorkspaceTopology, openWorkspaceSurface, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
+import type { WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 import type { NamedWorkspaceLayout } from '../../src/main/persistence/workspaceLayoutStore';
 import { controlRequestSchema, dispatchPapersControl, PAPERS_CONTROL_PROTOCOL_VERSION } from '../../src/main/control/papersControlProtocol';
 import { createPapersControlConfirmationBroker } from '../../src/main/control/papersControlConfirmation';
@@ -225,10 +226,15 @@ describe('surface routing in the host facade', () => {
     expect(opened.projectId).toBe(PROJECT);
     expect(logicalSurfaces.isLiveIn(opened.surfaceId, 1)).toBe(true);
     expect(opened.topology.groups[0]?.activeSurfaceId).toBe(opened.surfaceId);
-    expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:workspace-project-opened', {
-      project: { surfaceId: opened.surfaceId, projectId: PROJECT, title: 'Alpha', url: `papers-backpack://${PROJECT}/open` },
-      topology: opened.topology,
+    const event = sendToWindow.mock.calls.find(([, channel]) => channel === 'host:event:workspace-project-opened')?.[2] as {
+      project: { url: string }; topology: WorkspaceTopologyV1;
+    };
+    expect(event).toMatchObject({
+      project: { surfaceId: opened.surfaceId, projectId: PROJECT, title: 'Alpha' }, topology: opened.topology,
     });
+    const url = new URL(event.project.url);
+    expect(`${url.protocol}//${url.host}${url.pathname}`).toBe(`papers-backpack://${PROJECT}/open`);
+    expect(url.searchParams.get('papers-surface-key')).toBe(event.topology.surfaces[0]?.surfaceKey);
   });
 
   it('lets an authenticated project request a new tab on its own origin only', async () => {
@@ -238,9 +244,11 @@ describe('surface routing in the host facade', () => {
     surfaces.bind(FRAME, { surfaceId: existing.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project' });
     const ownUrl = `papers-backpack://${PROJECT}/open/one/public/workspace.js?as-you-go-folder=g1`;
     await facade.openBackpackProjectNewSurface(FRAME, ownUrl);
-    expect(sendToWindow).toHaveBeenCalledWith(1, 'host:event:workspace-project-opened', expect.objectContaining({
-      project: expect.objectContaining({ url: ownUrl }),
-    }));
+    const event = sendToWindow.mock.calls.at(-1)?.[2] as { project: { url: string } };
+    const openedUrl = new URL(event.project.url);
+    expect(openedUrl.pathname).toBe(`/open/one/public/workspace.js`);
+    expect(openedUrl.searchParams.get('as-you-go-folder')).toBe('g1');
+    expect(openedUrl.searchParams.get('papers-surface-key')).toBeTruthy();
     await expect(facade.openBackpackProjectNewSurface(FRAME, `papers-backpack://${OTHER}/open/one/public/workspace.js`))
       .rejects.toThrow(/own Papers tab/);
   });
@@ -528,7 +536,8 @@ describe('surface routing in the host facade', () => {
     });
 
     expect(commitPair).toHaveBeenCalledTimes(1);
-    expect(prepareProjectSurface).toHaveBeenCalledWith(2, moved.surfaceId, `papers-backpack://${PROJECT}/open`);
+    const preparedUrl = (prepareProjectSurface.mock.calls[0] as unknown as [number, string, string])[2];
+    expect(new URL(preparedUrl).searchParams.get('papers-surface-key')).toBe(moved.surfaceId);
     expect(logicalSurfaces.isLiveIn(moved.surfaceId, 2)).toBe(true);
     expect(surfaces.contextForSender(FRAME)).toBeNull();
     expect(surfaces.contextForSender(99)).toEqual({
