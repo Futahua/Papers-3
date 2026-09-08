@@ -119,7 +119,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot/window-capability.ps1"
 
-$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail')
+$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail')
 $FORBIDDEN_KEYS = @('exec', 'command', 'script', 'path', 'handle', 'env', 'args', 'cmd', 'powershell', 'invoke', 'shell')
 $MAX_SAFE_REQUEST_ID = 9007199254740991L
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
@@ -571,6 +571,23 @@ function Invoke-WhRequest {
     if ($Method -eq 'minimize') {
       Minimize-WhWindow $runtimeId
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
+    }
+    if ($Method -eq 'toggle') {
+      # Read the live state and act on it inside ONE request. The caller used to
+      # observe, carry the answer back across IPC to the renderer, decide there,
+      # and come back to mutate - a round trip that cost latency and let two
+      # fast clicks decide from the same pre-mutation state.
+      #
+      # The BEFORE observation is returned, not the after: the caller persists
+      # the pre-mutation bounds as the window's restore rectangle, and a
+      # minimized window has no meaningful rectangle to offer. The 'action'
+      # tells the caller which way it actually went, which it can no longer
+      # infer for itself.
+      $before = Get-WhResponseObservation $target
+      $wasMinimized = ($before -and $before['state'] -eq 'minimized')
+      if ($wasMinimized) { Restore-WhWindow $runtimeId } else { Minimize-WhWindow $runtimeId }
+      $action = if ($wasMinimized) { 'restore' } else { 'minimize' }
+      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = $before; action = $action } $null)
     }
     if ($Method -eq 'restore') {
       Restore-WhWindow $runtimeId

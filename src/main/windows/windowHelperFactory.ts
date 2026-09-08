@@ -62,6 +62,9 @@ export interface WindowHelperFactory {
   observe(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   minimize(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  /** Optional, like the other later capabilities: an older helper binary does
+   * not know this method, and the service falls back rather than failing. */
+  toggle?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   cloak?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   uncloak?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   cloakMany?(runtimeIds: RuntimeWindowId[]): Promise<WindowCapabilityResult>;
@@ -241,6 +244,7 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
     observe: (runtimeId) => withClient((client) => client.observe(runtimeId), HELPER_NOT_READY),
     minimize: (runtimeId) => withClient((client) => client.minimize(runtimeId), HELPER_NOT_READY),
     restore: (runtimeId) => withClient((client) => client.restore(runtimeId), HELPER_NOT_READY),
+    toggle: (runtimeId: RuntimeWindowId) => withClient((client) => client.toggle(runtimeId), HELPER_NOT_READY),
     cloak: (runtimeId) => withClient((client) => client.cloak(runtimeId), HELPER_NOT_READY),
     uncloak: (runtimeId) => withClient((client) => client.uncloak(runtimeId), HELPER_NOT_READY),
     cloakMany: (runtimeIds) => withClient((client) => client.cloakMany(runtimeIds), HELPER_NOT_READY),

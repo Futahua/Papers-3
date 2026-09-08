@@ -36,6 +36,8 @@ export interface WindowCapabilityClient {
   observe(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   minimize(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  /** One request: read the live state, then minimize or restore accordingly. */
+  toggle(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   cloak(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   uncloak(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   cloakMany(runtimeIds: RuntimeWindowId[]): Promise<WindowCapabilityResult>;
@@ -157,6 +159,7 @@ export function createWindowCapabilityClient({
       ...(response.observation !== undefined ? { observation: response.observation } : {}),
       ...(response.window !== undefined ? { window: response.window } : {}),
       ...(response.thumbnail !== undefined ? { thumbnail: response.thumbnail } : {}),
+      ...(response.action !== undefined ? { action: response.action } : {}),
       ...(response.error !== undefined ? { error: response.error } : {}),
     });
   }
@@ -182,6 +185,7 @@ export function createWindowCapabilityClient({
     observe: (runtimeId) => request('observe', { target: runtimeId }),
     minimize: (runtimeId) => request('minimize', { target: runtimeId }),
     restore: (runtimeId) => request('restore', { target: runtimeId }),
+    toggle: (runtimeId) => request('toggle', { target: runtimeId }),
     cloak: (runtimeId) => request('cloak', { target: runtimeId }),
     uncloak: (runtimeId) => request('uncloak', { target: runtimeId }),
     cloakMany: (runtimeIds) => request('cloak-many', { targets: runtimeIds }),

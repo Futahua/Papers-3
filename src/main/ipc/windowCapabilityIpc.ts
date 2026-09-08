@@ -205,6 +205,10 @@ export function registerWindowCapabilityIpc({
   handle('papers:window-capability:bind', (raw) => parseBoundedString(raw, 'candidateId'), (candidateId) => service.bindCandidate(candidateId));
   handle('papers:window-capability:observe', parseRuntimeCapability, (capability) => service.observeCapability(capability));
   handle('papers:window-capability:minimize', parseRuntimeCapability, (capability) => service.minimizeCapability(capability));
+  // One request instead of observe-then-mutate: the helper reads the live state
+  // and acts on it, so no renderer round trip sits between the decision and the
+  // mutation. Same opaque capability parsing as every other mutation.
+  handle('papers:window-capability:toggle', parseRuntimeCapability, (capability) => service.toggleCapability(capability));
   handle('papers:window-capability:restore', parseRuntimeCapability, (capability) => service.restoreCapability(capability));
   handle('papers:window-capability:close', parseRuntimeCapability, (capability) => service.closeCapability(capability));
   handle('papers:window-capability:peek-begin', parseRuntimeCapability, async (capability, event) => {

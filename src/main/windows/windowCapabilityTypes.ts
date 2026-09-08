@@ -17,6 +17,11 @@ export const WINDOW_CAPABILITY_METHODS = [
   'observe',
   'minimize',
   'restore',
+  // One request that reads the window's live state and minimizes or restores it
+  // accordingly. The two-request observe-then-mutate shape it replaces put a
+  // renderer round trip between deciding and acting, which both cost latency
+  // and let two fast clicks decide from the same pre-mutation state.
+  'toggle',
   'cloak',
   'uncloak',
   'cloak-many',
@@ -121,6 +126,11 @@ export interface WindowResponseMessage {
   window?: WindowObservation | null;
   thumbnail?: WindowThumbnail;
   target?: RuntimeWindowId;
+  /** `toggle` only: which direction the helper actually took, decided from the
+   * live state it read. The caller cannot infer this, which is the whole point
+   * of the method. Its `observation` is the state BEFORE the mutation, so the
+   * existing restore-bounds contract is preserved unchanged. */
+  action?: WindowToggleAction;
   error?: string;
 }
 
@@ -157,8 +167,13 @@ export interface WindowCapabilityResult {
   observation?: WindowObservation;
   window?: WindowObservation | null;
   thumbnail?: WindowThumbnail;
+  action?: WindowToggleAction;
   error?: string;
 }
+
+export type WindowToggleAction = 'minimize' | 'restore';
+
+const WINDOW_TOGGLE_ACTIONS: readonly string[] = ['minimize', 'restore'];
 
 const WINDOW_OUTCOMES: readonly string[] = [
   'success', 'missing', 'ambiguous', 'denied', 'malformed',
@@ -301,6 +316,9 @@ export function parseWindowResponse(raw: unknown): WindowResponseMessage | null 
 
   const hasExtraPayload = raw['windows'] !== undefined || raw['observation'] !== undefined
     || raw['window'] !== undefined || raw['thumbnail'] !== undefined;
+  // `action` belongs to `toggle` alone; on any other method it is an unknown
+  // key and invalidates the envelope.
+  if (method !== 'toggle' && raw['action'] !== undefined) return null;
 
   if (method === 'close' || method === 'cloak-many' || method === 'uncloak-many' || method === 'live-preview') {
     // Documented close shape: envelope only, no payload.
@@ -349,6 +367,30 @@ export function parseWindowResponse(raw: unknown): WindowResponseMessage | null 
       return { requestId, method: methodName, outcome, thumbnail, target: responseTarget, ...(error !== undefined ? { error } : {}) };
     }
     return { requestId, method: methodName, outcome: outcome as WindowOutcome, target: responseTarget, ...(error !== undefined ? { error } : {}) };
+  }
+
+  if (method === 'toggle') {
+    // Success must carry the pre-mutation observation AND the direction taken;
+    // an action without an observation (or vice versa) is malformed, because a
+    // caller would then have to guess either the new state or the restore
+    // bounds. Non-success stays envelope-only like the other mutations.
+    if (outcome === 'success') {
+      const observation = parseWindowObservation(raw['observation']);
+      if (observation === undefined) return null;
+      const action = raw['action'];
+      if (typeof action !== 'string' || !WINDOW_TOGGLE_ACTIONS.includes(action)) return null;
+      if (raw['windows'] !== undefined || raw['window'] !== undefined || raw['thumbnail'] !== undefined) return null;
+      return {
+        requestId,
+        method: methodName,
+        outcome,
+        observation,
+        action: action as WindowToggleAction,
+        ...(error !== undefined ? { error } : {}),
+      };
+    }
+    if (hasExtraPayload || raw['action'] !== undefined) return null;
+    return { requestId, method: methodName, outcome: outcome as WindowOutcome, ...(error !== undefined ? { error } : {}) };
   }
 
   if (outcome === 'success' && method === 'list') {

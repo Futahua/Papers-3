@@ -408,7 +408,7 @@ describe('windowHelperFactory composition', () => {
     const h = harness();
     const surface = Object.keys(h.factory).sort();
     expect(surface).toEqual([
-      'apply', 'cloak', 'cloakMany', 'close', 'hover', 'isReady', 'list', 'livePreview', 'minimize', 'observe', 'restore', 'revision', 'start', 'stop', 'thumbnail', 'uncloak', 'uncloakMany',
+      'apply', 'cloak', 'cloakMany', 'close', 'hover', 'isReady', 'list', 'livePreview', 'minimize', 'observe', 'restore', 'revision', 'start', 'stop', 'thumbnail', 'toggle', 'uncloak', 'uncloakMany',
     ]);
     const raw = h.factory as unknown as Record<string, unknown>;
     for (const forbidden of ['spawn', 'send', 'transport', 'child', 'createProcess', 'resolvePaths', 'getClient', 'supervisor']) {

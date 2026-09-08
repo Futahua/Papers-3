@@ -144,6 +144,12 @@ export interface WindowCapabilityService {
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   restoreCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  /** One helper request that reads the live state and minimizes or restores
+   * accordingly, returning the direction taken plus the PRE-mutation
+   * observation. Deliberately does NOT seed a preview frame the way
+   * observeCapability does: putting a capture on this path would reintroduce
+   * exactly the latency this method exists to remove. */
+  toggleCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   /** Explicit Ctrl+middle-click action. Closes only the exact verified window;
    * sibling windows owned by the same process remain untouched. */
   closeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
@@ -623,6 +629,24 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return factory.minimize(token);
   }
 
+  async function toggleCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const token = tokenFor(capability);
+    if (!token) return { outcome: 'missing', error: 'binding is not issued' };
+    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    if (factory.toggle) return factory.toggle(token);
+    // An older helper has no atomic toggle. Fall back to the two-request shape
+    // rather than failing: the caller gets the same typed answer, just without
+    // the latency win. Optional capabilities fail closed everywhere else here,
+    // but this one has an exact, already-proven equivalent.
+    const observed = await factory.observe(token);
+    if (observed.outcome !== 'success' || !observed.observation) return observed;
+    const action = observed.observation.state === 'minimized' ? 'restore' : 'minimize';
+    const mutated = action === 'restore' ? await factory.restore(token) : await factory.minimize(token);
+    if (mutated.outcome !== 'success') return mutated;
+    return { outcome: 'success', observation: observed.observation, action };
+  }
+
   async function restoreCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const token = tokenFor(capability);
@@ -1017,6 +1041,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     observeCapability,
     minimizeCapability,
     restoreCapability,
+    toggleCapability,
     closeCapability,
     beginPeekCapability,
     endPeek,

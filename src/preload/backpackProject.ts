@@ -223,6 +223,10 @@ window.addEventListener('message', (event) => {
     const capability = parseCapability(request.capability);
     task = ipcRenderer.invoke('papers:window-capability:observe', capability);
   }
+  if (request.type === 'papers:project:window-toggle-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:toggle', capability);
+  }
   if (request.type === 'papers:project:window-minimize-capability') {
     const capability = parseCapability(request.capability);
     task = ipcRenderer.invoke('papers:window-capability:minimize', capability);

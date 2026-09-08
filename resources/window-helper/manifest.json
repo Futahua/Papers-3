@@ -1,6 +1,6 @@
 {
   "protocolVersion": "017",
-  "description": "Papers-owned window helper resource. Protocol, session tokens, identity revalidation, capacity limits and native behavior are locked to the accepted Assignment 013 (013R..013R5F) probe snapshot, extended by the reviewed Assignment 016 additions (task-worthy list filter, hover, apply clamping) and the reviewed Assignment 019G thumbnail method. The hashes below must equal the compiled expected hashes in src/main/windows/windowHelperResource.ts and the actual resource bytes; a deliberate helper edit requires an explicit reviewed code+manifest update.",
+  "description": "Papers-owned window helper resource. Protocol, session tokens, identity revalidation, capacity limits and native behavior are locked to the accepted Assignment 013 (013R..013R5F) probe snapshot, extended by the reviewed Assignment 016 additions (task-worthy list filter, hover, apply clamping) the reviewed Assignment 019G thumbnail method, and the atomic `toggle` method that reads a window’s live state and minimizes or restores it in ONE request. The hashes below must equal the compiled expected hashes in src/main/windows/windowHelperResource.ts and the actual resource bytes; a deliberate helper edit requires an explicit reviewed code+manifest update.",
   "executable": "powershell.exe",
   "spawnArguments": [
     "-NoProfile",
@@ -12,7 +12,7 @@
     "window-capability.ps1"
   ],
   "hashes": {
-    "window-helper.ps1": "d1e69c080ca46d7a399612932e38e4c5a82dc66d1aaa178777ba2560a8e35c0a",
+    "window-helper.ps1": "f5b35e23f82b1e90f03d3a8961f9ebc31ecf71fb251814c7375ccf87ed0f6515",
     "window-capability.ps1": "50b8efb59b6074dd9d860136013bcff726036bd9a78a047a81fe0fb827359d31"
   }
 }
