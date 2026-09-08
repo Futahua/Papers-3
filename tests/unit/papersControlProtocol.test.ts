@@ -497,7 +497,7 @@ describe('Papers developer control protocol', () => {
 });
 
 describe('workspace mutation hardening', () => {
-  const requestMutation = (method: 'layout.restore' | 'layout.split', params: unknown) => controlRequestSchema.parse({
+  const requestMutation = (method: 'layout.restore' | 'layout.split' | 'workspace.activate', params: unknown) => controlRequestSchema.parse({
     id: 'mutation', token: 'secret', protocolVersion: PAPERS_CONTROL_PROTOCOL_VERSION, method, params,
   });
   const one = openWorkspaceSurface(createWorkspaceTopology(), { surfaceId: 'sf-a', projectId: 'bp-a', title: 'A' });
@@ -536,6 +536,28 @@ describe('workspace mutation hardening', () => {
     const restoreWorkspace = vi.fn((_windowId, topology) => topology);
     await expect(dispatchPapersControl({ ...base, workspace: () => ({ topology: collapsed }), restoreWorkspace }, requestMutation('layout.split', { windowId: 1, surfaceId: 'sf-b', direction: 'right' })))
       .resolves.toMatchObject({ topology: { groups: expect.arrayContaining([expect.objectContaining({ groupId: 'group-sf-b-2' })]) } });
+  });
+
+  it('focuses the exact surface before committing workspace activation', async () => {
+    const focusWorkspace = vi.fn(() => true);
+    const restoreWorkspace = vi.fn((_windowId, topology) => topology);
+    await expect(dispatchPapersControl({
+      ...base, focusWorkspace, restoreWorkspace,
+    }, requestMutation('workspace.activate', { windowId: 1, surfaceId: 'sf-a' })))
+      .resolves.toMatchObject({ topology: { focusedGroupId: 'group-main' } });
+    expect(focusWorkspace).toHaveBeenCalledWith(1, 'sf-a');
+    expect(restoreWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed without committing when native focus fails', async () => {
+    const focusWorkspace = vi.fn(() => false);
+    const restoreWorkspace = vi.fn((_windowId, topology) => topology);
+    await expect(dispatchPapersControl({
+      ...base, focusWorkspace, restoreWorkspace,
+    }, requestMutation('workspace.activate', { windowId: 1, surfaceId: 'sf-a' })))
+      .rejects.toThrow(/cannot be focused/);
+    expect(focusWorkspace).toHaveBeenCalledWith(1, 'sf-a');
+    expect(restoreWorkspace).not.toHaveBeenCalled();
   });
 });
 

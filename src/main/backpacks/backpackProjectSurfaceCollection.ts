@@ -176,6 +176,11 @@ export class BackpackProjectSurfaceCollection {
     this.runtimes.get(surfaceId)?.conceal();
   }
 
+  /** Focus an existing native presentation by logical surface identity. */
+  focus(surfaceId: string): boolean {
+    return this.runtimes.get(surfaceId)?.focus() ?? false;
+  }
+
   hideAll(): Promise<void> {
     // Window teardown is terminal, unlike hiding one inactive tab.
     return Promise.all([...this.runtimes.values()].map((runtime) => {

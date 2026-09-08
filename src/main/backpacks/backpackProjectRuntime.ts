@@ -75,6 +75,22 @@ export class BackpackProjectRuntime {
     return this.presented;
   }
 
+  /** Focus the existing native project presentation without inventing a
+   * surface or changing its URL. Callers must have already authorized the
+   * logical surface identity. */
+  focus(): boolean {
+    if (!this.view || this.view.webContents.isDestroyed() || this.window.isDestroyed()) return false;
+    try {
+      this.window.focus();
+      this.view.webContents.focus();
+      return true;
+    } catch {
+      // The parent window may already have accepted focus. The control-side
+      // contract only commits logical activation after this returns true.
+      return false;
+    }
+  }
+
   /** Ask the already-installed predefined project observer to resend its
    * current fixed semantic-key set after a renderer becomes canonical. */
   refreshVisualSemanticKeys(): void {

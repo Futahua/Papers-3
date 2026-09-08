@@ -556,6 +556,7 @@ export interface PapersControlDependencies {
   surface(target: { windowId: number; surfaceId: string }): unknown;
   workspace?(windowId: number): unknown;
   restoreWorkspace?(windowId: number, topology: z.infer<typeof workspaceTopologySchema>): unknown;
+  focusWorkspace?(windowId: number, surfaceId: string): boolean;
   closeWorkspace?(windowId: number, surfaceId: string, topology: z.infer<typeof workspaceTopologySchema>): unknown | Promise<unknown>;
   openWorkspace?(windowId: number, projectId: string): Promise<unknown>;
   listWorkspaceLayouts?(): Promise<unknown>;
@@ -876,6 +877,10 @@ export async function dispatchPapersControl(
       }
       const workspace = dependencies.workspace?.(params.windowId) as { topology?: z.infer<typeof workspaceTopologySchema> } | null;
       if (!workspace?.topology) throw new Error('That Papers window has not committed workspace topology.');
+      if (request.method === 'workspace.activate' && dependencies.focusWorkspace
+        && !dependencies.focusWorkspace(params.windowId, params.surfaceId)) {
+        throw new Error('That Papers workspace surface cannot be focused.');
+      }
       let topology = workspace.topology;
       if (request.method === 'workspace.activate') {
         topology = activateWorkspaceSurface(topology, params.surfaceId);

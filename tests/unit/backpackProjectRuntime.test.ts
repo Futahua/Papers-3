@@ -21,6 +21,7 @@ type FakeWebContents = {
   loadURL: ReturnType<typeof vi.fn>;
   executeJavaScript: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
+  focus: ReturnType<typeof vi.fn>;
   isDestroyed: () => boolean;
 };
 
@@ -35,6 +36,7 @@ const harness = vi.hoisted(() => ({
     destroyed: false,
     addChildView: vi.fn(),
     removeChildView: vi.fn(),
+    focus: vi.fn(),
   },
   views: [] as FakeView[],
 }));
@@ -47,6 +49,9 @@ vi.mock('electron', () => ({
     };
     isDestroyed() {
       return harness.window.destroyed;
+    }
+    focus() {
+      return harness.window.focus();
     }
     getContentBounds() {
       return { width: 800, height: 600 };
@@ -66,6 +71,7 @@ vi.mock('electron', () => ({
         loadURL: vi.fn().mockResolvedValue(undefined),
         executeJavaScript: vi.fn().mockResolvedValue(undefined),
         close: vi.fn(),
+        focus: vi.fn(),
         isDestroyed() {
           return webContents.destroyed;
         },
@@ -82,6 +88,7 @@ beforeEach(() => {
   harness.window.destroyed = false;
   harness.window.addChildView.mockClear();
   harness.window.removeChildView.mockClear();
+  harness.window.focus.mockReset();
   harness.views.length = 0;
 });
 
@@ -98,6 +105,29 @@ function soleView(): FakeView {
   expect(view).toBeDefined();
   return view as FakeView;
 }
+
+describe('BackpackProjectRuntime.focus', () => {
+  it('focuses the exact live native presentation', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+
+    expect(runtime.focus()).toBe(true);
+    expect(harness.window.focus).toHaveBeenCalledTimes(1);
+    expect(view.webContents.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns false after a second-stage native focus failure', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    view.webContents.focus.mockImplementation(() => { throw new Error('focus failed'); });
+
+    expect(runtime.focus()).toBe(false);
+    // Native parent focus can be a partial side effect, but callers must not
+    // commit logical workspace activation when focus() reports failure.
+    expect(harness.window.focus).toHaveBeenCalledTimes(1);
+    expect(view.webContents.focus).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('BackpackProjectRuntime.hide', () => {
   it('forwards project loading lifecycle events from the live sender', async () => {

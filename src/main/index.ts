@@ -2222,6 +2222,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           facade.restoreWorkspaceTopology(windowId, topology);
           return topology;
         },
+        focusWorkspace: (windowId, surfaceId) => {
+          if (!papersWindows.has(windowId) || !logicalSurfaces.isLiveIn(surfaceId, windowId)) return false;
+          return papersWindows.get(windowId)?.owned.projectSurfaces.focus(surfaceId) ?? false;
+        },
         closeWorkspace: (windowId, surfaceId, topology) =>
           facade.closeWorkspaceSurfaceFromControl(windowId, surfaceId, topology),
         openWorkspace: (windowId, projectId) => facade.openWorkspaceSurfaceFromControl(windowId, projectId),
