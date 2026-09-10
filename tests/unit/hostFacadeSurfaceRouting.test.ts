@@ -60,6 +60,14 @@ function createFacade() {
     discard: vi.fn(),
   }));
   const refreshVisualSemanticKeys = vi.fn();
+  const delegateWaveCall = vi.fn(async (
+    backpackId: string,
+    operation: string,
+    params: Record<string, unknown>,
+  ) => ({
+    ok: true,
+    result: { backpackId, operation, params },
+  }));
   const markLeft = vi.fn(async () => {});
   const markEntered = vi.fn(async () => {});
   const workspaceLayouts = {
@@ -147,6 +155,9 @@ function createFacade() {
     hideBackpackProjectSurface,
     // Present only so the guard is what refuses, not a missing service.
     backpackProjects: { open: openProject, saveState: vi.fn(async () => ({ ok: true, revision: 'r1' })) },
+    // Gate 10.2 stops at host truth. The real relay is deliberately not
+    // exercised here; this mock records only what identity crosses the seam.
+    delegateWave: { call: delegateWaveCall },
   } as unknown as FacadeDeps);
   return {
     facade, surfaces, logicalSurfaces, hideBackpackProjectSurface,
@@ -154,7 +165,7 @@ function createFacade() {
     closeBackpackProjectSurface, sendToWindow, setActiveSurfaceId,
     setEnteredBackpack, setWorkspaceTopology, workspaceTopologies, openProject, archivedProjects, markLeft,
     removedProjects, setArchived, remove, markEntered, workspaceLayouts, workspaceIds, workspaceRevisions, closingWindows,
-    commitPair, restorePair, prepareProjectSurface, refreshVisualSemanticKeys, rename, projectNames,
+    commitPair, restorePair, prepareProjectSurface, refreshVisualSemanticKeys, delegateWaveCall, rename, projectNames,
   };
 }
 
@@ -251,6 +262,66 @@ describe('surface routing in the host facade', () => {
     expect(openedUrl.searchParams.get('papers-surface-key')).toBeTruthy();
     await expect(facade.openBackpackProjectNewSurface(FRAME, `papers-backpack://${OTHER}/open/one/public/workspace.js`))
       .rejects.toThrow(/own Papers tab/);
+  });
+
+  it('uses the bound live project surface as Gate 10.2 host truth', async () => {
+    const { facade, surfaces, logicalSurfaces, delegateWaveCall } = createFacade();
+
+    // A caller cannot manufacture Backpack authority merely by naming one.
+    await expect(
+      facade.callDelegateWave(FRAME, PROJECT, 'overview', {}),
+    ).rejects.toThrow(/Enter a Backpack project/);
+    expect(delegateWaveCall).not.toHaveBeenCalled();
+
+    const surface = logicalSurfaces.create({
+      windowId: 1,
+      projectId: PROJECT,
+      kind: 'project',
+    });
+    surfaces.bind(FRAME, {
+      surfaceId: surface.surfaceId,
+      projectId: PROJECT,
+      windowId: 1,
+      kind: 'project',
+    });
+
+    // The claimed Backpack id is not authority. A disagreement with the
+    // sender's live host binding fails closed and never reaches the relay seam.
+    await expect(
+      facade.callDelegateWave(FRAME, OTHER, 'overview', { probe: 'mismatch' }),
+    ).resolves.toEqual({
+      ok: false,
+      code: 'NOT_PERMITTED',
+      message: 'This Backpack may not use Delegate Wave.',
+    });
+    expect(delegateWaveCall).not.toHaveBeenCalled();
+
+    // Agreement permits only the host-resolved project identity across the
+    // seam. Gate 10.3 will prove the relay itself; this test stops before it.
+    const params = { probe: 'host-truth' };
+    await expect(
+      facade.callDelegateWave(FRAME, PROJECT, 'overview', params),
+    ).resolves.toEqual({
+      ok: true,
+      result: {
+        backpackId: PROJECT,
+        operation: 'overview',
+        params,
+      },
+    });
+    expect(delegateWaveCall).toHaveBeenCalledTimes(1);
+    expect(delegateWaveCall).toHaveBeenCalledWith(
+      PROJECT,
+      'overview',
+      params,
+    );
+
+    // A stale sender binding is not host truth after its logical surface dies.
+    logicalSurfaces.retire(surface.surfaceId);
+    await expect(
+      facade.callDelegateWave(FRAME, PROJECT, 'overview', {}),
+    ).rejects.toThrow(/surface is no longer open/);
+    expect(delegateWaveCall).toHaveBeenCalledTimes(1);
   });
 
   it('refuses unavailable project without creating a surface', async () => {
