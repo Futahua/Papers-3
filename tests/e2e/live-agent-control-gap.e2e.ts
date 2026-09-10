@@ -21,12 +21,17 @@ async function call<T>(
     arguments: { method, params },
   });
 
-  expect(response.isError).not.toBe(true);
-
   const content = response.content as Array<{
     type: string;
     text?: string;
   }>;
+
+  expect(
+    response.isError,
+    `papers_control ${method} failed: ${content
+      .map((entry) => entry.text ?? `<${entry.type}>`)
+      .join('\n')}`,
+  ).not.toBe(true);
 
   expect(content).toHaveLength(1);
   expect(content[0]).toEqual(expect.objectContaining({
