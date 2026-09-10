@@ -8,6 +8,7 @@ import type { WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 import type { NamedWorkspaceLayout } from '../../src/main/persistence/workspaceLayoutStore';
 import { controlRequestSchema, dispatchPapersControl, PAPERS_CONTROL_PROTOCOL_VERSION } from '../../src/main/control/papersControlProtocol';
 import { createPapersControlConfirmationBroker } from '../../src/main/control/papersControlConfirmation';
+import { DelegateWaveRelay } from '../../src/main/delegateWave/delegateWaveRelay';
 
 const PROJECT = 'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
 const OTHER = 'bp-a5d07080-7210-45e6-b3f1-93978873a2fe';
@@ -17,7 +18,7 @@ const OTHER = 'bp-a5d07080-7210-45e6-b3f1-93978873a2fe';
  * has a large surface; casting keeps the test about routing rather than about
  * constructing every unrelated service.
  */
-function createFacade() {
+function createFacade(delegateWave?: FacadeDeps['delegateWave']) {
   const surfaces = createSurfaceContextRegistry();
   let n = 0;
   const logicalSurfaces = createLogicalSurfaceRegistry(() => `sf-${++n}`);
@@ -155,9 +156,9 @@ function createFacade() {
     hideBackpackProjectSurface,
     // Present only so the guard is what refuses, not a missing service.
     backpackProjects: { open: openProject, saveState: vi.fn(async () => ({ ok: true, revision: 'r1' })) },
-    // Gate 10.2 stops at host truth. The real relay is deliberately not
-    // exercised here; this mock records only what identity crosses the seam.
-    delegateWave: { call: delegateWaveCall },
+    // Gate 10.2's default remains a terminal seam recorder. Gate 10.3 may
+    // inject the real bounded relay without changing production composition.
+    delegateWave: delegateWave ?? { call: delegateWaveCall },
   } as unknown as FacadeDeps);
   return {
     facade, surfaces, logicalSurfaces, hideBackpackProjectSurface,
@@ -322,6 +323,71 @@ describe('surface routing in the host facade', () => {
       facade.callDelegateWave(FRAME, PROJECT, 'overview', {}),
     ).rejects.toThrow(/surface is no longer open/);
     expect(delegateWaveCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries Gate 10.3 host truth through the real bounded Delegate Wave relay', async () => {
+    const captured: Array<{
+      url: string;
+      method: string;
+      headers: Record<string, string>;
+      body?: string;
+    }> = [];
+    const relay = new DelegateWaveRelay(
+      {
+        url: 'http://127.0.0.1:47321',
+        token: 'operator-secret-token',
+        backpackId: PROJECT,
+      },
+      async (url, init) => {
+        captured.push({
+          url,
+          method: init.method,
+          headers: init.headers,
+          ...(init.body ? { body: init.body } : {}),
+        });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            result: { totals: { projects: 2 } },
+          }),
+        };
+      },
+      () => 'req-gate10-3',
+    );
+    const { facade, surfaces, logicalSurfaces } = createFacade(relay);
+    const surface = logicalSurfaces.create({
+      windowId: 1,
+      projectId: PROJECT,
+      kind: 'project',
+    });
+    surfaces.bind(FRAME, {
+      surfaceId: surface.surfaceId,
+      projectId: PROJECT,
+      windowId: 1,
+      kind: 'project',
+    });
+
+    await expect(
+      facade.callDelegateWave(FRAME, PROJECT, 'overview', {
+        path: '/v1/anything',
+        token: 'forged-page-token',
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      result: { totals: { projects: 2 } },
+    });
+
+    expect(captured).toEqual([
+      {
+        url: 'http://127.0.0.1:47321/v1/overview',
+        method: 'GET',
+        headers: {
+          authorization: 'Bearer operator-secret-token',
+        },
+      },
+    ]);
   });
 
   it('refuses unavailable project without creating a surface', async () => {
