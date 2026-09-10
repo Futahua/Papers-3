@@ -330,7 +330,10 @@ function projectSurfaceControlSnapshot(surface: {
 } {
   const runtime = papersWindows.get(surface.windowId)?.owned.projectSurfaces.get(surface.surfaceId);
   return {
-    ...surface,
+    surfaceId: surface.surfaceId,
+    windowId: surface.windowId,
+    projectId: surface.projectId,
+    kind: surface.kind,
     presentation: !runtime
       ? 'not-created'
       : runtime.liveProjectId === surface.projectId && runtime.isPresented ? 'visible' : 'hidden',
