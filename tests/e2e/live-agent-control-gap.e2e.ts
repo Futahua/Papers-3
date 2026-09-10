@@ -728,29 +728,10 @@ it('proves the Gate 10.1 live-agent-control gap without renderer evaluation', as
       'Gate 10.1 both canonical native presentations visible',
     );
 
-    await waitFor(
-      async () => {
-        try {
-          const surface = await call<{
-            windowId: number;
-            surfaceId: string;
-            projectId: string;
-            kind: string;
-            presentation: string;
-          }>(client!, 'inspect.surface', target);
-
-          return surface.windowId === windowId
-            && surface.surfaceId === opened.surfaceId
-            && surface.projectId === PROJECT
-            && surface.kind === 'project'
-            && surface.presentation === 'visible';
-        } catch {
-          return false;
-        }
-      },
-      10_000,
-      'Gate 10.1 live controlled surface',
-    );
+    // The DOM fork and strict two-surface presentation proof above have already
+    // converged. Do not hide the exact singular papers_control result behind a
+    // polling catch: the direct inspect.surface equality below must either prove
+    // the same exact target visible or expose the real control/state failure.
 
     const surface = await call<{
       windowId: number;
