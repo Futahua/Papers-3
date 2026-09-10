@@ -728,7 +728,7 @@ export function WorkspaceDock(props: {
         id: project.surfaceId,
         component: 'workspace',
         title: project.title,
-        renderer: 'onlyWhenVisible',
+        renderer: 'always',
         params: {
           surfaceId: project.surfaceId,
           url: project.url,
