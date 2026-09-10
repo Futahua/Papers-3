@@ -58,6 +58,9 @@ export interface HostFacade {
   backpackProjectShortcutIcon(senderId: number, shortcutId: string): Promise<string | null>;
   launchBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void>;
   revealBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void>;
+  grantBackpackProjectNativeSource(senderId: number, target: string): Promise<string>;
+  openBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
+  revealBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
   openBackpackProjectWebLink(senderId: number, url: string): Promise<void>;
   resolveBackpackProjectDroppedTargets(
     senderId: number,
@@ -138,6 +141,10 @@ const surfaceIdSchema = z.string().min(1).max(128);
 const backpackProjectRevisionSchema = z.union([z.literal('absent'), z.string().regex(/^[0-9a-f]{64}$/)]);
 const backpackProjectTextSchema = z.string().min(1).max(50_000);
 const backpackProjectWebUrlSchema = z.string().min(8).max(2_048);
+const backpackProjectNativeSourcePathSchema = z.string().min(1).max(32_768);
+const backpackProjectNativeSourceRefSchema = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 export const hostWorkspaceSurfaceMoveTargetSchema = z.object({
   surfaceId: surfaceIdSchema,
   targetWindowId: z.number().int().nonnegative(),
@@ -291,6 +298,24 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpack-project:reveal-shortcut', (event, shortcutId) =>
     facade.revealBackpackProjectShortcut(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId)),
+  );
+  handle('host:backpack-project:native-source-grant', (event, target) =>
+    facade.grantBackpackProjectNativeSource(
+      event.sender.id,
+      backpackProjectNativeSourcePathSchema.parse(target),
+    ),
+  );
+  handle('host:backpack-project:native-source-open-granted', (event, sourceRef) =>
+    facade.openBackpackProjectNativeSource(
+      event.sender.id,
+      backpackProjectNativeSourceRefSchema.parse(sourceRef),
+    ),
+  );
+  handle('host:backpack-project:native-source-reveal-granted', (event, sourceRef) =>
+    facade.revealBackpackProjectNativeSource(
+      event.sender.id,
+      backpackProjectNativeSourceRefSchema.parse(sourceRef),
+    ),
   );
   handle('host:backpack-project:open-web-link', (event, url) =>
     facade.openBackpackProjectWebLink(event.sender.id, backpackProjectWebUrlSchema.parse(url)),

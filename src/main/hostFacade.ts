@@ -1033,6 +1033,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async revealBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void> {
     await this.deps.backpackProjects.revealShortcut(this.requireProjectForSender(senderId), shortcutId);
   }
+  async grantBackpackProjectNativeSource(senderId: number, target: string): Promise<string> {
+    return this.deps.backpackProjects.grantNativeSource(this.requireProjectForSender(senderId), target);
+  }
+  async openBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void> {
+    await this.deps.backpackProjects.openNativeSource(this.requireProjectForSender(senderId), sourceRef);
+  }
+  async revealBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void> {
+    await this.deps.backpackProjects.revealNativeSource(this.requireProjectForSender(senderId), sourceRef);
+  }
 
   async openBackpackProjectWebLink(senderId: number, url: string): Promise<void> {
     this.requireProjectForSender(senderId);

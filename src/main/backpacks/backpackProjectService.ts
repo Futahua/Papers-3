@@ -123,8 +123,17 @@ export interface DroppedBackpackProjectTarget {
   kind: 'file' | 'folder';
 }
 
+interface NativeSourceGrant {
+  backpackId: string;
+  target: string;
+  dev: bigint;
+  ino: bigint;
+}
+
 const backpackIdPattern =
   /^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const nativeSourceRefPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const actionIdPattern = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const publicDirectory = 'public';
 const openNamespace = '_papers-open';
@@ -222,6 +231,7 @@ async function containedPublicPath(root: string, requested: string): Promise<str
 
 export class BackpackProjectService {
   private readonly stateSaveQueues = new Map<string, Promise<SaveStateResult>>();
+  private readonly nativeSourceGrants = new Map<string, NativeSourceGrant>();
 
   constructor(
     private readonly bindingsFile: string,
@@ -547,6 +557,81 @@ export class BackpackProjectService {
       });
     }
     return targets;
+  }
+
+  async grantNativeSource(backpackId: string, target: string): Promise<string> {
+    if (!backpackIdPattern.test(backpackId)) {
+      throw new Error('Invalid Backpack project ID.');
+    }
+    if (!path.isAbsolute(target)) {
+      throw new Error('Native source grants require an absolute machine path.');
+    }
+
+    const canonicalTarget = await fs.realpath(target).catch(() => {
+      throw new Error('Native source is unavailable on this machine.');
+    });
+    const details = await fs.stat(canonicalTarget, { bigint: true }).catch(() => {
+      throw new Error('Native source is unavailable on this machine.');
+    });
+
+    if (!details.isFile()) {
+      throw new Error('Native source grant requires a file.');
+    }
+
+    const sourceRef = randomUUID();
+    this.nativeSourceGrants.set(sourceRef, {
+      backpackId,
+      target: canonicalTarget,
+      dev: details.dev,
+      ino: details.ino,
+    });
+    return sourceRef;
+  }
+
+  private async nativeSourceTarget(backpackId: string, sourceRef: string): Promise<string> {
+    if (!nativeSourceRefPattern.test(sourceRef)) {
+      throw new Error('Native source is not granted.');
+    }
+
+    const grant = this.nativeSourceGrants.get(sourceRef);
+    if (!grant || grant.backpackId !== backpackId) {
+      throw new Error('Native source is not granted for this Backpack.');
+    }
+
+    try {
+      const details = await fs.stat(grant.target, { bigint: true });
+      if (!details.isFile() || details.dev !== grant.dev || details.ino !== grant.ino) {
+        this.nativeSourceGrants.delete(sourceRef);
+        throw new Error('Native source grant is stale.');
+      }
+    } catch (error) {
+      this.nativeSourceGrants.delete(sourceRef);
+      if (error instanceof Error && error.message === 'Native source grant is stale.') {
+        throw error;
+      }
+      throw new Error('Native source grant is stale.');
+    }
+
+    return grant.target;
+  }
+
+  async openNativeSource(backpackId: string, sourceRef: string): Promise<void> {
+    const target = await this.nativeSourceTarget(backpackId, sourceRef);
+    if (!this.openTarget) {
+      throw new Error('Native source opening is unavailable.');
+    }
+    const detail = await this.openTarget(target);
+    if (detail) {
+      throw new Error(detail);
+    }
+  }
+
+  async revealNativeSource(backpackId: string, sourceRef: string): Promise<void> {
+    const target = await this.nativeSourceTarget(backpackId, sourceRef);
+    if (!this.revealTarget) {
+      throw new Error('Native source reveal is unavailable.');
+    }
+    await this.revealTarget(target);
   }
 
   async shortcutIcon(backpackId: string, shortcutId: string): Promise<string | null> {
