@@ -629,6 +629,78 @@ it('proves the Gate 10.1 live-agent-control gap without renderer evaluation', as
       'Gate 10.1 semantic split host convergence',
     );
 
+    // Resolve the remaining host/native fork using ordinary Playwright DOM
+    // inspection only. Papers itself stamps each Dockview tab with the exact
+    // canonical surface id in data-tab-panel-id, while aria-selected is the
+    // established active-tab signal. If this assertion fails, Dockview did not
+    // reconcile both canonical active surfaces into separate visible groups.
+    // If it passes and the unchanged native-presentation wait below still
+    // fails, the defect is downstream in WorkspacePanel/BackpackProjectFrame
+    // visibility intent rather than recursive Dockview topology reconciliation.
+    const postSplitGroups = hostPage.locator('.dv-groupview');
+    const openedTabSelector =
+      `.dv-tab[data-tab-panel-id="${opened.surfaceId}"]`;
+    const companionTabSelector =
+      `.dv-tab[data-tab-panel-id="${companion.surfaceId}"]`;
+    const openedTab = hostPage.locator(openedTabSelector);
+    const companionTab = hostPage.locator(companionTabSelector);
+
+    const groupIndexesFor = async (selector: string): Promise<number[]> => {
+      const indexes: number[] = [];
+      const groupCount = await postSplitGroups.count();
+      for (let index = 0; index < groupCount; index += 1) {
+        if (await postSplitGroups.nth(index).locator(selector).count() === 1) {
+          indexes.push(index);
+        }
+      }
+      return indexes;
+    };
+
+    const [
+      groupCount,
+      openedTabCount,
+      companionTabCount,
+      openedGroupIndexes,
+      companionGroupIndexes,
+    ] = await Promise.all([
+      postSplitGroups.count(),
+      openedTab.count(),
+      companionTab.count(),
+      groupIndexesFor(openedTabSelector),
+      groupIndexesFor(companionTabSelector),
+    ]);
+
+    const postSplitDomDiagnostic = {
+      groupCount,
+      openedTabCount,
+      companionTabCount,
+      openedSelected:
+        openedTabCount === 1
+          ? await openedTab.getAttribute('aria-selected')
+          : null,
+      companionSelected:
+        companionTabCount === 1
+          ? await companionTab.getAttribute('aria-selected')
+          : null,
+      openedGroupIndexes,
+      companionGroupIndexes,
+      separateGroups:
+        openedGroupIndexes.length === 1
+        && companionGroupIndexes.length === 1
+        && openedGroupIndexes[0] !== companionGroupIndexes[0],
+    };
+
+    expect(postSplitDomDiagnostic).toEqual({
+      groupCount: 2,
+      openedTabCount: 1,
+      companionTabCount: 1,
+      openedSelected: 'true',
+      companionSelected: 'true',
+      openedGroupIndexes: [expect.any(Number)],
+      companionGroupIndexes: [expect.any(Number)],
+      separateGroups: true,
+    });
+
     await waitFor(
       async () => {
         const surfaces = await call<Array<{
