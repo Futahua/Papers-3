@@ -642,7 +642,7 @@ it('proves the Gate 10.1 live-agent-control gap without renderer evaluation', as
       `.dv-tab[data-tab-panel-id="${opened.surfaceId}"]`;
     const companionTabSelector =
       `.dv-tab[data-tab-panel-id="${companion.surfaceId}"]`;
-    const openedTab = hostPage.locator(openedTabSelector);
+    const diagnosticOpenedTab = hostPage.locator(openedTabSelector);
     const companionTab = hostPage.locator(companionTabSelector);
 
     const groupIndexesFor = async (selector: string): Promise<number[]> => {
@@ -664,7 +664,7 @@ it('proves the Gate 10.1 live-agent-control gap without renderer evaluation', as
       companionGroupIndexes,
     ] = await Promise.all([
       postSplitGroups.count(),
-      openedTab.count(),
+      diagnosticOpenedTab.count(),
       companionTab.count(),
       groupIndexesFor(openedTabSelector),
       groupIndexesFor(companionTabSelector),
@@ -676,7 +676,7 @@ it('proves the Gate 10.1 live-agent-control gap without renderer evaluation', as
       companionTabCount,
       openedSelected:
         openedTabCount === 1
-          ? await openedTab.getAttribute('aria-selected')
+          ? await diagnosticOpenedTab.getAttribute('aria-selected')
           : null,
       companionSelected:
         companionTabCount === 1
