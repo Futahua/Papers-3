@@ -86,6 +86,7 @@ describe('Papers developer control protocol', () => {
       build: { version: '1.3.10', commit: 'abc1234', branch: 'main', builtAt: 'unknown', packaged: false },
       windows: [window],
       hermes: { placement: 'closed' as const, status: 'idle' as const, ownerWindowId: null },
+      globalShortcuts: { registered: ['Alt+Shift+A', 'Alt+A'], failures: [] },
     };
     const processIdentity = {
       pid: 321,

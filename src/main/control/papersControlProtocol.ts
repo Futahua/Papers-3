@@ -331,6 +331,19 @@ const snapshotSchema = z.object({
     status: z.enum(['idle', 'starting', 'ready', 'error']),
     ownerWindowId: z.number().int().nullable(),
   }).strict(),
+  // The two system-wide invocation chords and whether Papers actually holds
+  // them. Registration can fail because another application owns the chord, and
+  // a silent failure would leave the creator pressing a key that does nothing.
+  // Reporting the claim here makes it inspectable instead of invisible.
+  // Chords and reasons only: no paths, no project records, no Backpack names.
+  globalShortcuts: z.object({
+    registered: z.array(z.string()),
+    failures: z.array(z.object({
+      accelerator: z.string(),
+      chord: z.enum(['invoke', 'bringToFront']),
+      reason: z.string(),
+    }).strict()),
+  }).strict(),
 }).strict();
 
 export const papersControlCommands = {

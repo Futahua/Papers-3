@@ -1,7 +1,7 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, ipcMain, nativeImage, screen, session, shell, webContents, type WebContents } from 'electron';
+import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, globalShortcut, ipcMain, nativeImage, screen, session, shell, webContents, type WebContents } from 'electron';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -61,6 +61,8 @@ import { evaluateVisualAssertions, type VisualAssertion } from './visual/visualA
 import { createVisualWaitService } from './visual/visualWait';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
+import { createGlobalInvoke, type GlobalInvoke, type GlobalInvokeRegistrationReport } from './windows/globalInvoke';
+import { bringWindowToFront } from './windows/windowFront';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
@@ -382,6 +384,18 @@ function bindOwnedProjectSurface(
 }
 
 let hostView: WebContentsView | null = null;
+
+/**
+ * The two system-wide invocation chords. Application-level, not per-window:
+ * there is one keyboard claim for the whole process, and a second Papers
+ * instance cannot make a second claim because Electron holds the chords
+ * process-wide (and `second-instance` already routes a second launch into the
+ * running window).
+ */
+let globalInvoke: GlobalInvoke | null = null;
+/** The outcome of the one registration attempt, kept so the control snapshot
+ * can report a refused chord instead of leaving it invisible. */
+let globalShortcutReport: GlobalInvokeRegistrationReport | null = null;
 
 // A second launch belongs to the existing Papers window. Auxiliary Backpack
 // surfaces must never be allowed to become an unreachable single-instance
@@ -2063,6 +2077,16 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             status: hermesSurface.state.status,
             ownerWindowId: papersWindows.hermesDockOwner(),
           },
+          // What Papers actually holds of the two invocation chords. A refusal
+          // here is the honest record that a shortcut is unavailable.
+          globalShortcuts: {
+            registered: [...(globalShortcutReport?.registered ?? [])],
+            failures: (globalShortcutReport?.failures ?? []).map((failure) => ({
+              accelerator: failure.accelerator,
+              chord: failure.chord,
+              reason: failure.reason,
+            })),
+          },
         }),
         processIdentity: () => processInstanceIdentity,
         visualDiagnostics: ({ windowId, surfaceId }) => {
@@ -2266,6 +2290,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     if (capabilityQuitComplete) return;
     event.preventDefault();
     if (!capabilityQuitPromise) {
+      // Release the global chords FIRST. They are a claim on every other
+      // application's keyboard, and nothing may be left captured after Papers
+      // exits - not even while the rest of teardown is still draining.
+      globalInvoke?.release();
+      globalInvoke = null;
       visualResourceMonitor?.detach();
       visualResourceMonitor = null;
       windowPickSession.cancel().catch(() => undefined);
@@ -2377,6 +2406,122 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // auto-discover this PC on the LAN and run tasks on the same Hermes. Best
   // effort, own single-instance, decoupled from the Hermes Desktop surface.
   startPhoneConnector();
+
+  // ------------------------------------------------- global invocation chords
+  // Two system-wide chords, live while Papers runs, working from inside any
+  // other application: one brings Papers forward, the other brings it forward
+  // and asks the focused project's command surface to open.
+  //
+  // The host stays generic. It does not know what any Backpack's command
+  // surface is called, what it does, or that "Quick Run" exists. It delivers a
+  // neutral event to the focused project's surfaces and the project decides.
+  //
+  // Registration CAN fail - another application may already own the chord - and
+  // a silent failure here is the bug this codebase keeps repeating: the creator
+  // presses the key, nothing happens, and nothing says why. Every failure is
+  // therefore surfaced through the same host-error channel the rest of the app
+  // uses, naming the chord and saying it is taken. No substitute chord is
+  // chosen, ever.
+  const bringPapersWindowForward = (windowId: number): { ok: boolean; detail: string } => {
+    const context = papersWindows.get(windowId);
+    const result = bringWindowToFront(context?.owned.window);
+    return { ok: result.ok, detail: result.detail };
+  };
+
+  globalInvoke = createGlobalInvoke({
+    shortcut: globalShortcut,
+    currentWindowId: () => {
+      // Prefer an actually visible window, so a hidden or auxiliary surface is
+      // not what answers the chord; then any live window; then nothing.
+      const windows = papersWindows.windowIds;
+      const visible = windows.find((id) => {
+        const owned = papersWindows.get(id)?.owned.window;
+        return owned !== undefined && !owned.isDestroyed() && owned.isVisible();
+      });
+      if (visible !== undefined) return visible;
+      const live = windows.find((id) => {
+        const owned = papersWindows.get(id)?.owned.window;
+        return owned !== undefined && !owned.isDestroyed();
+      });
+      return live ?? null;
+    },
+    bringToFront: bringPapersWindowForward,
+    resolveCommandSurface: () => {
+      const windowId = papersWindows.windowIds.find((id) => {
+        const owned = papersWindows.get(id)?.owned.window;
+        return owned !== undefined && !owned.isDestroyed() && owned.isVisible();
+      });
+      if (windowId === undefined) return null;
+      const surfaceId = papersWindows.activeSurfaceId(windowId);
+      if (surfaceId === null) return null;
+      // The host resolves the surface to its project through the sender
+      // binding. It never reads a project's private records to guess this.
+      for (const senderId of surfaceContexts.sendersForSurface(surfaceId)) {
+        const projectId = surfaceContexts.projectForSender(senderId);
+        if (projectId) return { projectId, surfaceId };
+      }
+      return null;
+    },
+    invokeCommandSurface: (projectId, surfaceId) => {
+      const senders = surfaceContexts.sendersForProject(projectId);
+      let delivered = 0;
+      for (const senderId of senders) {
+        const contents = webContents.fromId(senderId);
+        if (!contents || contents.isDestroyed()) continue;
+        contents.send('papers:backpack:global-invoke', {
+          projectId,
+          surfaceId,
+          chord: 'invoke',
+          reason: 'global-accelerator',
+        });
+        delivered += 1;
+      }
+      if (delivered === 0) {
+        return { ok: false, detail: 'the focused project has no live surface to receive the invoke' };
+      }
+      return { ok: true, detail: `delivered to ${delivered} surface(s)` };
+    },
+    report: (report) => {
+      // Only failures reach the creator. A successful chord is its own feedback.
+      if (report.outcome === 'brought-forward-invoked') return;
+      hostView?.webContents.send('host:event:host-error', {
+        component: 'Global shortcut',
+        what: report.outcome === 'window-unavailable'
+          ? 'Papers could not be brought to the front.'
+          : 'The command surface shortcut brought Papers forward, but there was nothing to open.',
+        known: report.detail,
+        intact: 'Nothing was changed, and no other application was affected.',
+        retryUseful: report.outcome === 'window-unavailable',
+        inspect: 'Shortcuts: bring Papers forward is Alt+Shift+A, open the command surface is Alt+A.',
+        recover: report.outcome === 'window-unavailable'
+          ? 'Open a Papers window, then press the shortcut again.'
+          : 'Open a Backpack in Papers, then press the shortcut again.',
+      });
+    },
+  });
+
+  const shortcutReport = globalInvoke.register();
+  globalShortcutReport = shortcutReport;
+  if (!shortcutReport.ok) {
+    for (const failure of shortcutReport.failures) {
+      console.error(`[papers] global shortcut refused: ${failure.message}`);
+    }
+    hostView.webContents.once('did-finish-load', () => {
+      for (const failure of shortcutReport.failures) {
+        hostView?.webContents.send('host:event:host-error', {
+          component: 'Global shortcut',
+          what: failure.reason === 'already-registered-by-another-application'
+            ? 'A shortcut key is already taken by another application.'
+            : 'A shortcut key could not be registered.',
+          known: failure.message,
+          intact: 'Papers is running normally; only this shortcut is unavailable.',
+          retryUseful: failure.reason === 'already-registered-by-another-application',
+          inspect: `Requested key: ${failure.accelerator}`,
+          recover: 'Close whichever application owns that key combination, then restart Papers. Papers deliberately does not choose a different key on its own.',
+        });
+      }
+    });
+  }
 
   // Per-window close/finalize ownership is installed by preparePapersWindow;
   // bootstrap only retains these aliases for primary/fixture compatibility.
