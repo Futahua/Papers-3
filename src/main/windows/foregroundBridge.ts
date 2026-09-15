@@ -34,6 +34,16 @@ export interface ForegroundBridge {
   /** Try to put the foreground back on that exact window. Resolves true only
    * when the foreground genuinely moved. */
   setForegroundWindow(handle: number): Promise<boolean>;
+  /** Whether that exact window currently owns the foreground. Lets the toggle
+   * answer "is the window the creator is looking at a Papers window" instead of
+   * guessing from visibility. */
+  isForegroundWindow(handle: number): Promise<boolean>;
+  /**
+   * The next window BELOW that one in the z-order that a creator could
+   * plausibly be looking at - the window that was underneath. Null when there
+   * is nothing usable there.
+   */
+  nextWindowInZOrder(handle: number): Promise<number | null>;
 }
 
 export interface ForegroundBridgeOptions {
@@ -204,6 +214,25 @@ export function createForegroundBridge(options: ForegroundBridgeOptions): Foregr
       // became the target. A `set=1` alone is the false success this whole
       // module exists to avoid.
       return /(?:^|\s)moved=1(?:\s|$)/.test(out);
+    },
+
+    async isForegroundWindow(handle: number): Promise<boolean> {
+      if (!Number.isSafeInteger(handle) || handle <= 0) return false;
+      const out = await run(['get']);
+      if (!out) return false;
+      const current = /(?:^|\s)handle=(\d+)/.exec(out);
+      if (!current) return false;
+      return Number(current[1]) === handle;
+    },
+
+    async nextWindowInZOrder(handle: number): Promise<number | null> {
+      if (!Number.isSafeInteger(handle) || handle <= 0) return null;
+      const out = await run(['next', String(handle)]);
+      if (!out || out === 'none') return null;
+      const found = /(?:^|\s)handle=(\d+)/.exec(out);
+      if (!found) return null;
+      const value = Number(found[1]);
+      return Number.isSafeInteger(value) && value > 0 ? value : null;
     },
   };
 }

@@ -51,6 +51,8 @@ export interface GlobalInvokeAccelerators {
   bringToFront: string;
 }
 
+import type { WindowToggle } from './windowToggle';
+
 /** Why the overlay closed. It decides whether focus is handed back. */
 export type OverlayCloseReason =
   /** Escape, or the chord pressed again. */
@@ -92,8 +94,10 @@ export type GlobalInvokeOutcome =
   | 'overlay-opened'
   /** The overlay could not open, and the reason is known and reported. */
   | 'overlay-unavailable'
-  /** Papers came forward (the bring-to-front chord). */
+  /** Papers came forward (the bring-to-front chord, when it was not in front). */
   | 'brought-forward'
+  /** Papers was already the window in front, so the toggle hid it. */
+  | 'minimized'
   /** Papers could not be brought forward at all. */
   | 'window-unavailable';
 
@@ -125,6 +129,13 @@ export interface GlobalInvokeDependencies {
   /** The focused Papers window, or null when there is none to bring forward. */
   currentWindowId(): number | null;
   bringToFront(windowId: number): { ok: boolean; detail: string };
+  /**
+   * The bring-to-front chord as a toggle: raise when the creator is elsewhere,
+   * hide when Papers is already the window they are looking at.
+   */
+  toggle?: WindowToggle;
+  /** Refresh whatever reading the toggle decides from, immediately before it decides. */
+  beforeToggle?(): Promise<void>;
   /**
    * Ask the focused project's command surface to receive the neutral invoke.
    * `surfaceId` is whatever the project declared; the host never interprets it.
@@ -258,7 +269,39 @@ export function createGlobalInvoke(dependencies: GlobalInvokeDependencies): Glob
     dependencies.report?.(report);
   };
 
+  /**
+   * Alt+Shift+A is a TOGGLE, not a raise: it brings Papers forward when the
+   * creator is elsewhere, and minimises it when Papers is already the window
+   * they are looking at. Otherwise the only way to undo a keyboard summon is
+   * with the mouse, which is the friction this chord exists to remove.
+   *
+   * The judgement lives in `windowToggle`; this only delegates. When no toggle
+   * is wired the chord keeps its original raise-only behaviour rather than
+   * silently doing nothing.
+   */
   const onBringToFront = (): void => {
+    if (dependencies.toggle) {
+      // The decision is made from a foreground reading taken immediately before
+      // it, so a stale handle cannot make the chord hide a window the creator
+      // has just switched away from.
+      void (async () => {
+        try {
+          await dependencies.beforeToggle?.();
+        } catch {
+          /* a failed refresh keeps the previous handle, and every uncertain
+             path in the toggle errs towards raising */
+        }
+        const result = await dependencies.toggle!.invoke();
+        emit({
+          chord: 'bringToFront',
+          outcome: result.outcome === 'minimized' ? 'minimized'
+            : result.outcome === 'brought-forward' ? 'brought-forward'
+              : 'window-unavailable',
+          detail: result.detail,
+        });
+      })();
+      return;
+    }
     const result = handleBringToFront();
     emit({
       chord: 'bringToFront',

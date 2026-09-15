@@ -120,4 +120,54 @@ describe('createForegroundBridge', () => {
     // A handle that is not a window must never read as success.
     expect(await bridge.setForegroundWindow(1)).toBe(false);
   });
+
+  it('setting focus on a window that ALREADY has it answers promptly instead of hanging', async () => {
+    // Measured: SetForegroundWindow on the window that already owns the
+    // foreground can block indefinitely, which turned a real verification run
+    // into a timeout. The bridge short-circuits that case.
+    const bridge = createForegroundBridge({ cacheDirectory: cacheDir(), sourcePath: BRIDGE_SOURCE });
+    if (bridge === null) return;
+
+    const foreground = await bridge.foregroundWindow();
+    if (foreground === null) return; // the shell owns it: nothing to assert
+
+    expect(await bridge.isForegroundWindow(foreground)).toBe(true);
+    const started = Date.now();
+    const result = await bridge.setForegroundWindow(foreground);
+    const elapsed = Date.now() - started;
+    expect(result).toBe(true);
+    // The timeout is 8s; a genuine hang would sit there until it fired.
+    expect(elapsed).toBeLessThan(4000);
+  });
+
+  it('reports whether an arbitrary handle owns the foreground rather than guessing', async () => {
+    const bridge = createForegroundBridge({ cacheDirectory: cacheDir(), sourcePath: BRIDGE_SOURCE });
+    if (bridge === null) return;
+
+    expect(await bridge.isForegroundWindow(0)).toBe(false);
+    expect(await bridge.isForegroundWindow(1)).toBe(false);
+
+    const foreground = await bridge.foregroundWindow();
+    if (foreground !== null) {
+      expect(await bridge.isForegroundWindow(foreground)).toBe(true);
+    }
+  });
+
+  it('finds the next window in the z-order, or reports none', async () => {
+    const bridge = createForegroundBridge({ cacheDirectory: cacheDir(), sourcePath: BRIDGE_SOURCE });
+    if (bridge === null) return;
+
+    expect(await bridge.nextWindowInZOrder(0)).toBeNull();
+    expect(await bridge.nextWindowInZOrder(1)).toBeNull();
+
+    const foreground = await bridge.foregroundWindow();
+    if (foreground === null) return;
+    // There is always a desktop behind the foreground window, so this either
+    // finds a real window or honestly reports none. It must never hang.
+    const next = await bridge.nextWindowInZOrder(foreground);
+    if (next !== null) {
+      expect(next).toBeGreaterThan(0);
+      expect(next).not.toBe(foreground);
+    }
+  });
 });

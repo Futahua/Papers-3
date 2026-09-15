@@ -61,7 +61,17 @@ public class FgBridge
     [DllImport("user32.dll")]
     public static extern IntPtr GetDesktopWindow();
 
+    /** Walk the z-order. GW_HWNDNEXT gives the window BELOW this one, which is
+     * exactly what "what was underneath" means. */
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
     private const int SW_RESTORE = 9;
+    private const uint GW_HWNDNEXT = 2;
+    private const uint GW_OWNER = 4;
 
     private static string TitleOf(IntPtr h)
     {
@@ -139,12 +149,59 @@ public class FgBridge
                 return 0;
             }
 
+            if (command == "next")
+            {
+                // The next window BELOW `target` in the z-order that a creator
+                // could plausibly be looking at: visible, not minimized, not
+                // owned by another window (owned windows travel with their
+                // owner), and not the shell or desktop. This answers "what was
+                // underneath the window I am about to hide", which is the
+                // sensible place for focus to land.
+                IntPtr candidate = GetWindow(target, GW_HWNDNEXT);
+                int guard = 0;
+                while (candidate != IntPtr.Zero && guard < 2000)
+                {
+                    guard++;
+                    bool usable = candidate != target
+                        && candidate != GetShellWindow()
+                        && candidate != GetDesktopWindow()
+                        && IsWindow(candidate)
+                        && IsWindowVisible(candidate)
+                        && !IsIconic(candidate)
+                        && GetWindow(candidate, GW_OWNER) == IntPtr.Zero;
+                    if (usable)
+                    {
+                        Console.WriteLine(
+                            "handle=" + candidate.ToInt64()
+                            + " class=" + ClassOf(candidate)
+                            + " title=" + TitleOf(candidate));
+                        return 0;
+                    }
+                    candidate = GetWindow(candidate, GW_HWNDNEXT);
+                }
+                Console.WriteLine("none");
+                return 5;
+            }
+
             if (command == "set")
             {
                 if (!IsWindow(target))
                 {
                     Console.WriteLine("gone");
                     return 3;
+                }
+                // If it is ALREADY the foreground, say so and stop. Measured: a
+                // SetForegroundWindow call on the window that already owns the
+                // foreground can BLOCK indefinitely, and this bridge has a
+                // timeout, so a caller would see a timeout instead of an answer.
+                // Windows already gives such a process the right to take the
+                // foreground, which is exactly why the real hand-back succeeds
+                // moments after the caller took focus - and why this guard costs
+                // nothing in the case that matters.
+                if (GetForegroundWindow() == target)
+                {
+                    Console.WriteLine("already=1 moved=1 fg=" + target.ToInt64());
+                    return 0;
                 }
                 if (IsIconic(target)) ShowWindow(target, SW_RESTORE);
                 bool raised = BringWindowToTop(target);

@@ -71,6 +71,7 @@ import {
   type CommandSurfaceOverlaySession,
 } from './windows/commandSurfaceOverlay';
 import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './windows/foregroundBridge';
+import { createWindowToggle, type WindowToggle } from './windows/windowToggle';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
@@ -410,6 +411,12 @@ let globalShortcutReport: GlobalInvokeRegistrationReport | null = null;
  * one launcher for the process, and pressing the chord again dismisses it.
  */
 let commandSurfaceOverlay: CommandSurfaceOverlaySession | null = null;
+
+/**
+ * Alt+Shift+A as a toggle: raise when the creator is elsewhere, hide when
+ * Papers is already the window they are looking at.
+ */
+let windowToggle: WindowToggle | null = null;
 
 // A second launch belongs to the existing Papers window. Auxiliary Backpack
 // surfaces must never be allowed to become an unreachable single-instance
@@ -2576,8 +2583,110 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     },
   });
 
+  // Alt+Shift+A as a TOGGLE. The rule that decides it:
+  //   "If the window you are looking at is Papers, the chord minimises it;
+  //    otherwise the chord brings Papers forward."
+  //
+  // Foreground is decided by native identity, never by visibility: a visible but
+  // unfocused Papers must be raised, not hidden, or the chord fights the creator
+  // who is in the middle of summoning it. Every uncertain path raises rather than
+  // minimises, because an unwanted raise costs one more keypress while an
+  // unwanted minimise hides work they were looking at.
+  //
+  // The foreground handle is cached because reading it is a child process. It is
+  // refreshed before each toggle decides, and the decision is made from the
+  // handle read immediately beforehand.
+  let foregroundHandle: number | null = null;
+  const refreshForeground = async (): Promise<void> => {
+    foregroundHandle = foregroundBridge ? await foregroundBridge.foregroundWindow().catch(() => null) : null;
+  };
+  const nativeHandleOf = (window: BaseWindow): number | null => {
+    try {
+      const buffer = window.getNativeWindowHandle();
+      if (buffer.length >= 8) {
+        const value = buffer.readBigUInt64LE(0);
+        return value > 0n && value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+      }
+      if (buffer.length >= 4) {
+        const value = buffer.readUInt32LE(0);
+        return value > 0 ? value : null;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+  const foregroundPapersWindowId = (): number | null => {
+    if (foregroundHandle === null) return null;
+    for (const windowId of papersWindows.windowIds) {
+      const owned = papersWindows.get(windowId)?.owned.window;
+      if (!owned || owned.isDestroyed()) continue;
+      const handle = nativeHandleOf(owned);
+      if (handle !== null && handle === foregroundHandle) return windowId;
+    }
+    return null;
+  };
+
+  windowToggle = createWindowToggle({
+    foregroundPapersWindowId,
+    currentWindowId: () => {
+      const windows = papersWindows.windowIds;
+      const visible = windows.find((id) => {
+        const owned = papersWindows.get(id)?.owned.window;
+        return owned !== undefined && !owned.isDestroyed() && owned.isVisible();
+      });
+      if (visible !== undefined) return visible;
+      const live = windows.find((id) => {
+        const owned = papersWindows.get(id)?.owned.window;
+        return owned !== undefined && !owned.isDestroyed();
+      });
+      return live ?? null;
+    },
+    // Deliberately NOT reading a cache: the answer must be as fresh as the
+    // handle it is compared against, so the caller refreshes it first.
+    isForeground: () => foregroundPapersWindowId() !== null,
+    minimize: (windowId) => {
+      const owned = papersWindows.get(windowId)?.owned.window;
+      if (!owned || owned.isDestroyed()) return false;
+      // The launcher is not a Papers window the creator manages. If it is up,
+      // it comes down with the window rather than floating over whatever they
+      // moved on to.
+      void commandSurfaceOverlay?.close('dismissed').catch(() => undefined);
+      try {
+        owned.minimize();
+      } catch {
+        return false;
+      }
+      // Electron's minimize() returns void, so reporting true without checking
+      // would be a claim rather than an observation - and a failed minimise that
+      // reported success is the worst outcome here. Verify it, so the toggle
+      // falls back to raising when the hide did not actually happen.
+      return owned.isMinimized();
+    },
+    bringToFront: bringPapersWindowForward,
+    nextWindowInZOrder: async () => {
+      if (!foregroundBridge) return null;
+      const windowId = foregroundPapersWindowId();
+      const owned = windowId === null ? undefined : papersWindows.get(windowId)?.owned.window;
+      const handle = owned ? nativeHandleOf(owned) : null;
+      if (handle === null) return null;
+      // "The window underneath the one being hidden" - the sensible place for
+      // focus to land, and the reason the bridge walks the z-order.
+      return foregroundBridge.nextWindowInZOrder(handle).catch(() => null);
+    },
+    focusWindow: async (handle) => {
+      if (!foregroundBridge) return false;
+      return foregroundBridge.setForegroundWindow(handle).catch(() => false);
+    },
+    report: (report) => {
+      if (report.outcome !== 'minimized') return;
+      console.error(`[papers] bring-to-front toggle: ${report.detail}`);
+    },
+  });
   globalInvoke = createGlobalInvoke({
     shortcut: globalShortcut,
+    toggle: windowToggle ?? undefined,
+    beforeToggle: refreshForeground,
     currentWindowId: () => {
       // Prefer an actually visible window, so a hidden or auxiliary surface is
       // not what answers the chord; then any live window; then nothing.
