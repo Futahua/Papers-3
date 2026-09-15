@@ -330,13 +330,11 @@ export function createGlobalInvoke(dependencies: GlobalInvokeDependencies): Glob
       return;
     }
 
-    // Pressing the chord while the overlay is already open dismisses it, so the
-    // chord is a toggle rather than a way to stack overlays.
-    if (overlay.isOpen()) {
-      void overlay.close('dismissed').catch(() => undefined);
-      return;
-    }
-
+    // The chord is NOT a toggle. Pressing it again while the overlay is open
+    // re-invokes the surface, so the creator lands on an empty, focused line;
+    // dismissing is Escape's job. Closing here instead would leave the project
+    // with no event to clear on, and merely refocusing the window - which is
+    // what the overlay used to do - leaves it with no event at all.
     void overlay.open().then((opened) => {
       emit({
         chord: 'invoke',

@@ -20,18 +20,23 @@
 /**
  * Several senders act for one project, and they are not interchangeable. The
  * `host` surface is the Papers renderer that opened the project; `project` is
- * the Backpack's own frame inside it; `detached` and `widget` are the surfaces
- * the 018 detach and compact-widget paths create. All four are authorized
- * project senders, so all four must be bound -- an authorized sender with no
- * context would be refused by every request that resolves through its own
- * sender.
+ * the Backpack's own frame inside it; `detached`, `widget` and `launcher` are
+ * the surfaces the 018 detach, compact-widget and command-surface paths create.
+ * All of them are authorized project senders, so all of them must be bound -- an
+ * authorized sender with no context would be refused by every request that
+ * resolves through its own sender.
  *
  * Without this distinction "every sender for project X" is the only question
  * the registry can answer, and that is the wrong question whenever the right
  * one is "which window did this come from" -- two windows may legitimately
  * show the same project.
+ *
+ * The kind is also what decides WHICH channels a surface may use (see
+ * `projectCapabilityDecision`), so a surface that no kind describes cannot be
+ * granted anything: adding one here is a deliberate act with a capability
+ * consequence, not a label.
  */
-export type SurfaceKind = 'host' | 'project' | 'detached' | 'widget';
+export type SurfaceKind = 'host' | 'project' | 'detached' | 'widget' | 'launcher';
 
 export interface SurfaceContext {
   /**

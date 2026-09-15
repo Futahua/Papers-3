@@ -144,6 +144,18 @@ export interface FacadeDeps {
   backpackProjects: BackpackProjectService;
   delegateWave: DelegateWaveRelay;
   isBackpackProjectSender: (sender: WebContents) => boolean;
+  /**
+   * May this sender use THIS channel?
+   *
+   * The trust question ("is this an owned project surface for the project it is
+   * showing") and the authorization question ("and may a surface of its kind use
+   * this channel") are different questions. The launcher answers yes to the
+   * first and no to window enumeration, native dialogs and state writes.
+   */
+  decideProjectSurfaceRequest?: (
+    sender: WebContents,
+    channel: string,
+  ) => 'allow' | 'not-a-project-sender' | 'capability-not-granted';
   /** Phase 1B: both take the asking sender, so they act on THAT window's
    * project runtime instead of implicitly meaning "the one runtime". */
   showBackpackProjectSurface: (senderId: number, surfaceId: string, url: string) => Promise<void>;
@@ -407,6 +419,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   isBackpackProjectSender(sender: WebContents): boolean {
     return this.deps.isBackpackProjectSender(sender);
+  }
+
+  decideProjectSurfaceRequest(
+    sender: WebContents,
+    channel: string,
+  ): 'allow' | 'not-a-project-sender' | 'capability-not-granted' {
+    return this.deps.decideProjectSurfaceRequest?.(sender, channel)
+      // A composition without the decision keeps the older, coarser behaviour:
+      // a project surface may use project channels. Named so it is visible that
+      // this is a fallback and not a decision.
+      ?? (this.deps.isBackpackProjectSender(sender) ? 'allow' : 'not-a-project-sender');
   }
 
   waitForBackpackProjectAuthority(senderId: number): Promise<void> {

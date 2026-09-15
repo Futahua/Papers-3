@@ -73,13 +73,28 @@ export interface DisplayWorkArea {
   height: number;
 }
 
+export interface CommandSurfaceTarget {
+  projectId: string;
+  surfaceId: string;
+}
+
+/** What the host decided the launcher targets, including why it refused. */
+export type CommandSurfaceResolution =
+  | { ok: true; target: CommandSurfaceTarget }
+  | { ok: false; detail: string };
+
 export interface CommandSurfaceOverlayDependencies {
   /** The focused project's entry URL for that project, or null. Owner-scoped:
    * two Papers windows may show one project with different runtimes. */
   resolveEntryUrl(projectId: string): string | null;
-  /** Which project's command surface belongs to the focused surface, or null
-   * when no project is open. */
-  resolveCommandSurface(): { projectId: string; surfaceId: string } | null;
+  /**
+   * Which project's command surface the launcher targets.
+   *
+   * NOT "the focused surface" - see commandSurfaceRegistry. When it refuses, the
+   * detail is carried out unchanged so the creator is told what was actually
+   * looked at, rather than a generic "no project is open".
+   */
+  resolveCommandSurface(): Promise<CommandSurfaceResolution> | CommandSurfaceResolution;
   createWindow(options: { projectId: string; preloadPath: string }): OverlayNativeWindow;
   preloadPath: string;
   /**
@@ -107,6 +122,17 @@ export interface CommandSurfaceOverlayDependencies {
   onClosed?(reason: OverlayCloseReason): void;
   /** Reports what happened to focus, so a failure is visible rather than felt. */
   report?(report: { outcome: 'focus-restored' | 'focus-not-restored' | 'focus-unknown'; detail: string }): void;
+  /**
+   * Whether losing focus dismisses the overlay. Defaults to true, which is the
+   * creator's behaviour: they moved on, so the launcher goes away.
+   *
+   * Set false ONLY by an automated test. On an unattended machine nothing holds
+   * focus, so the overlay blurs and closes the instant it opens - correct host
+   * behaviour, and impossible to observe. The real launcher stays up because the
+   * creator is looking at it and typing in it. Nothing else changes: it still
+   * shows, still focuses, still delivers.
+   */
+  dismissOnBlur?: boolean;
 }
 
 export interface CommandSurfaceOverlaySession {
@@ -192,6 +218,24 @@ export function createCommandSurfaceOverlay(
     }
   };
 
+  /**
+   * Deliver the neutral invoke into the overlay window.
+   *
+   * Sent on the first open AND on every repeat press. The creator presses the
+   * chord again to get back to an empty line; the host cannot clear a project's
+   * input (it does not know what one is), so what it must do is say "invoked"
+   * again and let the project clear itself. A repeat that only refocused the
+   * window left the project with no event at all - the reported defect.
+   */
+  const deliverInvoke = (target: OverlayNativeWindow, project: string, surface: string): void => {
+    dependencies.deliver?.(target.webContents.id, {
+      projectId: project,
+      surfaceId: surface,
+      chord: 'invoke',
+      reason: 'global-accelerator',
+    });
+  };
+
   const teardown = async (reason: OverlayCloseReason): Promise<void> => {
     if (closing) return;
     closing = true;
@@ -217,10 +261,13 @@ export function createCommandSurfaceOverlay(
   };
 
   const open = async (): Promise<{ ok: boolean; detail: string }> => {
-    const surface = dependencies.resolveCommandSurface();
-    if (surface === null) {
-      return { ok: false, detail: 'no project is open in Papers, so there is no command surface to show' };
+    const resolution = await dependencies.resolveCommandSurface();
+    if (!resolution.ok) {
+      // The refusal's own words, not a summary of them. The creator needs to
+      // know which Backpack was looked at, because they cannot see the front tab.
+      return { ok: false, detail: resolution.detail };
     }
+    const surface = resolution.target;
 
     const entryUrl = dependencies.resolveEntryUrl(surface.projectId);
     if (entryUrl === null) {
@@ -255,6 +302,7 @@ export function createCommandSurfaceOverlay(
     created.on('blur', () => {
       // Losing focus means the creator moved on. Tear down without fighting to
       // take focus back from whatever they chose instead.
+      if (dependencies.dismissOnBlur === false) return;
       if (window === created) void teardown('focus-lost');
     });
     created.on('closed', () => {
@@ -282,12 +330,7 @@ export function createCommandSurfaceOverlay(
     created.show();
     created.focus();
 
-    dependencies.deliver?.(created.webContents.id, {
-      projectId: surface.projectId,
-      surfaceId: surface.surfaceId,
-      chord: 'invoke',
-      reason: 'global-accelerator',
-    });
+    deliverInvoke(created, surface.projectId, surface.surfaceId);
 
     return { ok: true, detail: 'the command surface is open over the current application' };
   };
@@ -296,8 +339,15 @@ export function createCommandSurfaceOverlay(
     async open() {
       if (window && !window.isDestroyed()) {
         // Already open: bring it forward within its own layer rather than
-        // stacking a second one.
+        // stacking a second one, and RE-DELIVER the invoke. The creator pressed
+        // the chord again to get back to an empty, focused line, and the project
+        // is the only side that can clear its own input - so it must be told.
+        // The surface is deliberately NOT reloaded and NOT re-placed: rebuilding
+        // it would discard whatever the creator had already typed.
         window.focus();
+        if (projectId !== null && surfaceId !== null) {
+          deliverInvoke(window, projectId, surfaceId);
+        }
         return { ok: true, detail: 'the command surface was already open' };
       }
       return open();

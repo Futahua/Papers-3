@@ -44,7 +44,7 @@ function harness(overrides: Partial<CommandSurfaceOverlayDependencies> = {}) {
   let setSucceeds = true;
 
   const deps: CommandSurfaceOverlayDependencies = {
-    resolveCommandSurface: () => ({ projectId: 'project-a', surfaceId: 'surface-1' }),
+    resolveCommandSurface: () => ({ ok: true, target: { projectId: 'project-a', surfaceId: 'surface-1' } }),
     resolveEntryUrl: () => 'papers-backpack://project-a/public/index.html',
     createWindow: () => created.window,
     preloadPath: 'C:\\papers\\backpackProject.cjs',
@@ -100,12 +100,29 @@ describe('commandSurfaceOverlay opening', () => {
   });
 
   it('refuses visibly when no project is open', async () => {
-    const h = harness({ resolveCommandSurface: () => null });
+    const h = harness({ resolveCommandSurface: () => ({ ok: false, detail: 'no Backpack project is open in Papers, so there is nothing for the command surface shortcut to launch.' }) });
     const overlay = createCommandSurfaceOverlay(h.deps);
     const result = await overlay.open();
 
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain('no project is open');
+    expect(result.detail).toContain('no Backpack project is open');
+  });
+
+  it('repeats the registry\'s refusal verbatim, naming the project it looked at', async () => {
+    // The creator cannot see which tab is in front, so a summary that dropped
+    // the project ID would remove the only checkable thing in the message.
+    const h = harness({
+      resolveCommandSurface: () => ({
+        ok: false,
+        detail: 'the Backpack bp-11111111-1111-4111-8111-111111111111 is open, but it does not declare a command surface.',
+      }),
+    });
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    const result = await overlay.open();
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('bp-11111111-1111-4111-8111-111111111111');
+    expect(result.detail).toContain('does not declare a command surface');
   });
 
   it('refuses visibly when the focused project has no surface', async () => {
@@ -257,17 +274,40 @@ describe('commandSurfaceOverlay focus return', () => {
     expect(h.reports.at(-1)?.outcome).toBe('focus-unknown');
   });
 
-  it('toggling the chord while open closes it rather than stacking a second overlay', async () => {
+  it('delivers a second invoke when the chord is pressed again, so the page can clear', async () => {
+    // The reported defect: the second press only refocused the window and
+    // delivered nothing, so the project had no event to clear its input on. The
+    // creator should land on an empty, focused line - which is the project's
+    // half of the bargain, and it cannot happen without this event.
     const h = harness();
     const overlay = createCommandSurfaceOverlay(h.deps);
     await overlay.open();
-    expect(overlay.isOpen()).toBe(true);
+    expect(h.delivered).toHaveLength(1);
 
     const again = await overlay.open();
+
     expect(again.ok).toBe(true);
     expect(again.detail).toContain('already open');
-    // Only one window was ever created.
+    // Only one window, and a second invoke into it.
     expect(h.created.calls.filter((c) => c.startsWith('loadURL:')).length).toBe(1);
+    expect(h.delivered).toHaveLength(2);
+    expect(h.delivered[1]!.senderId).toBe(h.delivered[0]!.senderId);
+    expect(h.delivered[1]!.payload).toEqual(h.delivered[0]!.payload);
+    expect(h.created.calls.filter((c) => c === 'focus').length).toBeGreaterThan(1);
+  });
+
+  it('does not re-load or re-place the overlay on a second press', async () => {
+    const h = harness();
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    await overlay.open();
+    const boundsCalls = h.created.calls.filter((c) => c.startsWith('setBounds:')).length;
+
+    await overlay.open();
+
+    // Re-opening must not rebuild the surface: the creator's typed text would be
+    // lost, which is the opposite of what the second press is for.
+    expect(h.created.calls.filter((c) => c.startsWith('loadURL:')).length).toBe(1);
+    expect(h.created.calls.filter((c) => c.startsWith('setBounds:')).length).toBe(boundsCalls);
   });
 
   it('close is safe when nothing is open', async () => {

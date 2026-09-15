@@ -8,6 +8,7 @@ import {
   MAX_REGISTERED_SURFACES,
   WORKSPACE_SURFACE_KIND,
 } from '../../src/main/backpacks/backpackSurfaceRegistry';
+import { createSurfaceContextRegistry } from '../../src/main/windows/surfaceContextRegistry';
 
 describe('backpack surface registry', () => {
   it('registers a surface with a unique opaque token and returns it', () => {
@@ -38,10 +39,13 @@ describe('backpack surface registry', () => {
   it('allows generic project capabilities from exact workspace, detached and compact-widget surfaces only', () => {
     const detachRegistry = new BackpackSurfaceRegistry();
     const widgetRegistry = new BackpackSurfaceRegistry();
+    const surfaces = createSurfaceContextRegistry();
     detachRegistry.register(102, 'bp-a', DETACHED_SURFACE_KIND);
     widgetRegistry.register(103, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    surfaces.bind(102, { projectId: 'bp-a', windowId: 1, kind: DETACHED_SURFACE_KIND });
+    surfaces.bind(103, { projectId: 'bp-a', windowId: 1, kind: 'widget' });
     const allowed = (senderId: number, url: string, isWorkspaceSender = false) =>
-      isAllowedProjectSurfaceSender({ senderId, url, isWorkspaceSender, detachRegistry, widgetRegistry });
+      isAllowedProjectSurfaceSender({ senderId, url, isWorkspaceSender, surfaces, detachRegistry, widgetRegistry });
 
     expect(allowed(101, 'papers-backpack://bp-a/entry', true)).toBe(true);
     expect(allowed(102, 'papers-backpack://bp-a/entry?detach=1')).toBe(true);

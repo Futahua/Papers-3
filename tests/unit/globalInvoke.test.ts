@@ -260,15 +260,19 @@ describe('globalInvoke behaviour', () => {
     expect(brought).toHaveLength(0);
   });
 
-  it('toggling the chord while the overlay is open closes it', () => {
+  it('asks the overlay to open again when the chord is pressed again, instead of closing it', () => {
+    // The creator pressed Alt+A a second time expecting an empty, focused line.
+    // Closing the overlay here (or merely refocusing the window) leaves the
+    // project with no event to clear on, which is the reported defect. The
+    // chord re-invokes; the overlay decides what "already open" means.
     const { shortcut, overlay, deps } = harness();
     overlay.isOpenValue = true;
     createGlobalInvoke(deps).register();
 
     shortcut.callbacks.get('Alt+A')?.();
 
-    expect(overlay.opened).toBe(0);
-    expect(overlay.closed).toEqual(['dismissed']);
+    expect(overlay.closed).toEqual([]);
+    expect(overlay.opened).toBe(1);
   });
 
   it('reports an overlay that throws instead of leaving the creator guessing', async () => {
