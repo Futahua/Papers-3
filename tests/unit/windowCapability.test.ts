@@ -524,6 +524,96 @@ describe('window capability contract types', () => {
     expect(parseWindowResponse({ requestId: 1, method: 'list', outcome: 'success', windows: [good, 'junk'] })).toBeNull();
   });
 
+  // 018 identity revision: every observation carries the window CLASS, which is
+  // the title-independent corroborator the session token is now keyed by.
+  describe('018 windowClass identity corroborator', () => {
+    const base = { runtimeId: 'A', title: 'A', processId: null, processPath: null, state: 'normal', bounds: null };
+
+    it('accepts an observation carrying windowClass and preserves the exact string', () => {
+      const parsed = parseWindowResponse({
+        requestId: 1, method: 'observe', outcome: 'success',
+        observation: { ...base, windowClass: 'Chrome_WidgetWin_1' },
+      });
+      expect(parsed).not.toBeNull();
+      const observation = parsed && 'observation' in parsed ? parsed.observation : undefined;
+      expect(observation?.windowClass).toBe('Chrome_WidgetWin_1');
+    });
+
+    it('treats windowClass as OPTIONAL so an older helper or a test fake stays valid', () => {
+      // Absence must parse. It means "not corroborated", which the gate must
+      // treat as unverified - never as a mismatch and never as agreement.
+      const parsed = parseWindowResponse({
+        requestId: 1, method: 'observe', outcome: 'success', observation: { ...base },
+      });
+      expect(parsed).not.toBeNull();
+      const observation = parsed && 'observation' in parsed ? parsed.observation : undefined;
+      expect(observation).toBeDefined();
+      expect(observation?.windowClass).toBeUndefined();
+    });
+
+    it('accepts an EMPTY class string without inventing a value', () => {
+      // A window whose class cannot be read reports an empty string. That is a
+      // real observation and must survive the parser unchanged; widening it to
+      // undefined would erase the difference between "unread" and "absent".
+      const parsed = parseWindowResponse({
+        requestId: 1, method: 'observe', outcome: 'success',
+        observation: { ...base, windowClass: '' },
+      });
+      expect(parsed).not.toBeNull();
+      const observation = parsed && 'observation' in parsed ? parsed.observation : undefined;
+      expect(observation?.windowClass).toBe('');
+    });
+
+    it('rejects a non-string windowClass rather than silently dropping it', () => {
+      // Dropping a malformed class would turn "cannot be corroborated" into
+      // "corroborated by nothing", which is the failure mode this field exists
+      // to prevent.
+      for (const windowClass of [42, null, {}, [], true]) {
+        expect(
+          parseWindowResponse({ requestId: 1, method: 'observe', outcome: 'success', observation: { ...base, windowClass } }),
+          `windowClass rejected: ${JSON.stringify(windowClass)}`,
+        ).toBeNull();
+      }
+    });
+
+    it('carries windowClass through a list payload for every entry', () => {
+      const parsed = parseWindowResponse({
+        requestId: 1, method: 'list', outcome: 'success',
+        windows: [
+          { ...base, runtimeId: 'A', windowClass: 'Notepad' },
+          { ...base, runtimeId: 'B', windowClass: 'Chrome_WidgetWin_1' },
+        ],
+      });
+      expect(parsed).not.toBeNull();
+      const windows = parsed && 'windows' in parsed ? parsed.windows : undefined;
+      expect(windows?.map((entry) => entry.windowClass)).toEqual(['Notepad', 'Chrome_WidgetWin_1']);
+    });
+
+    it('one bad windowClass invalidates the whole windows array', () => {
+      expect(parseWindowResponse({
+        requestId: 1, method: 'list', outcome: 'success',
+        windows: [{ ...base, windowClass: 'Notepad' }, { ...base, runtimeId: 'B', windowClass: 7 }],
+      })).toBeNull();
+    });
+
+    it('two windows of one process may share a class and still be distinct observations', () => {
+      // The measured reality this design has to survive: class names are unique
+      // per PROCESS, so they separate nothing. Distinctness lives in runtimeId.
+      const parsed = parseWindowResponse({
+        requestId: 1, method: 'list', outcome: 'success',
+        windows: [
+          { ...base, runtimeId: 'TA', windowClass: 'Notepad' },
+          { ...base, runtimeId: 'TB', windowClass: 'Notepad' },
+        ],
+      });
+      expect(parsed).not.toBeNull();
+      const windows = parsed && 'windows' in parsed ? parsed.windows : undefined;
+      expect(windows).toHaveLength(2);
+      expect(windows?.[0]?.windowClass).toBe(windows?.[1]?.windowClass);
+      expect(windows?.[0]?.runtimeId).not.toBe(windows?.[1]?.runtimeId);
+    });
+  });
+
   it('enforces strict per-method/outcome payload shapes', () => {
     // Successful list must carry a valid list.
     expect(parseWindowResponse({ requestId: 1, method: 'list', outcome: 'success' })).toBeNull();

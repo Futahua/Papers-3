@@ -9,7 +9,10 @@
 #     prove command routing without any live window.
 #
 # Behavior is LOCKED to the accepted protocol snapshot 013R5F (see
-# manifest.json in this directory): do not drift without a reviewed
+# manifest.json in this directory) plus the reviewed 018 identity revision:
+# every observation now carries `ClassName` alongside the mutable title, so
+# identity can be corroborated by something that does not change when a
+# document or browser tab does. do not drift without a reviewed
 # protocol change.
 #
 # Safety invariants:
@@ -488,6 +491,8 @@ $script:WhOps = @{
 function Get-WhWindowObservation([IntPtr]$hWnd) {
   $title = New-Object System.Text.StringBuilder 512
   [void][WH.Win32]::GetWindowText($hWnd, $title, $title.Capacity)
+  $className = New-Object System.Text.StringBuilder 256
+  [void][WH.Win32]::GetClassName($hWnd, $className, $className.Capacity)
   $pidValue = [uint32]0
   [void][WH.Win32]::GetWindowThreadProcessId($hWnd, [ref]$pidValue)
   $rect = New-Object WH.Rect
@@ -504,6 +509,11 @@ function Get-WhWindowObservation([IntPtr]$hWnd) {
     ProcessId = [int]$pidValue
     ProcessPath = $processPath
     Title = $title.ToString()
+    # 018: the window CLASS is identity-bearing corroboration. A title changes
+    # constantly; a class does not. It is NOT a discriminator on its own - class
+    # names are unique per process and back every window of that process - so it
+    # corroborates and never replaces the runtime id.
+    ClassName = $className.ToString()
     Bounds = if ($hasRect) { @{ Left = $rect.Left; Top = $rect.Top; Right = $rect.Right; Bottom = $rect.Bottom; Width = $rect.Right - $rect.Left; Height = $rect.Bottom - $rect.Top } } else { $null }
     State = $state
   }

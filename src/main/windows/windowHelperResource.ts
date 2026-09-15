@@ -28,17 +28,32 @@ import * as path from 'node:path';
 
 import { WINDOW_HELPER_ARGUMENT_PREFIX, WINDOW_HELPER_EXECUTABLE } from './windowHelperSpawn';
 
-export const WINDOW_HELPER_PROTOCOL_VERSION = '017';
+export const WINDOW_HELPER_PROTOCOL_VERSION = '018';
 export const WINDOW_HELPER_RESOURCE_DIRECTORY_NAME = 'window-helper';
 export const WINDOW_HELPER_MANIFEST_FILE = 'manifest.json';
 export const WINDOW_HELPER_SCRIPT_FILE = 'window-helper.ps1';
 export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
 
 /** Compiled pin of the accepted resource bytes. A future reviewed helper
- * edit updates these hashes AND manifest.json together. */
+ * edit updates these hashes AND manifest.json together.
+ *
+ * 018 identity revision: the session-token identity key drops the mutable exact
+ * title in favour of the window class, and every observation carries
+ * `windowClass`. Both pins below moved with that revision, together with
+ * `WINDOW_HELPER_PROTOCOL_VERSION` and manifest.json.
+ *
+ * EOL DEFECT FIXED HERE: these pins are SHA-256 over exact BYTES, and
+ * `.gitattributes` declares `* text=auto eol=lf`, so a git checkout always
+ * delivers LF. The adapter script was nevertheless stored in the working tree
+ * with CRLF, which meant its pinned hash described a byte sequence that only
+ * existed in one developer's working copy - a fresh clone received LF and
+ * provenance validation failed before any spawn. Both pinned scripts are now
+ * LF in the working tree AND in the index, so the pinned hash is a hash of what
+ * every checkout receives. `tests/unit/windowHelperResource.test.ts` guards
+ * this by validating the committed blob, not the working copy. */
 export const WINDOW_HELPER_EXPECTED_HASHES: Record<string, string> = {
-  [WINDOW_HELPER_SCRIPT_FILE]: 'f5b35e23f82b1e90f03d3a8961f9ebc31ecf71fb251814c7375ccf87ed0f6515',
-  [WINDOW_HELPER_ADAPTER_FILE]: '50b8efb59b6074dd9d860136013bcff726036bd9a78a047a81fe0fb827359d31',
+  [WINDOW_HELPER_SCRIPT_FILE]: 'c4057656e0f7ccb0f535143a85dd39bcb6a80a06c0126fe07777b7519d3721dc',
+  [WINDOW_HELPER_ADAPTER_FILE]: 'd9f6ca87e572520e824e71e6eb8880f49137096fe81a903f757c5494212a6b31',
 };
 
 export interface WindowHelperResourcePaths {

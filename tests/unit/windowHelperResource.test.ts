@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -99,6 +100,76 @@ describe('windowHelperResource provenance validation', () => {
   it('accepts the real Papers-owned resource in the dev layout', () => {
     const result = validateWindowHelperResource(realPaths());
     expect(result.ok).toBe(true);
+  });
+
+  // The pins are SHA-256 over exact BYTES, so they are only meaningful if the
+  // bytes they describe are the bytes every checkout receives. `.gitattributes`
+  // declares `* text=auto eol=lf`, and a working tree that holds CRLF therefore
+  // pins a byte sequence that exists on exactly one machine: a fresh clone gets
+  // LF, provenance validation fails before any spawn, and the helper never runs.
+  // This was a real defect (window-capability.ps1 was CRLF while its pin was
+  // computed from an LF blob). Asserting against the COMMITTED BLOB is what
+  // makes the class of defect impossible rather than merely absent today.
+  it('pins bytes that a fresh checkout actually receives (committed blob, not this working tree)', () => {
+    for (const [file, expected] of Object.entries(WINDOW_HELPER_EXPECTED_HASHES)) {
+      // Prefer the STAGED blob so the guard is meaningful before the commit is
+      // made; fall back to HEAD when nothing is staged. Both are what a
+      // checkout receives, and after a commit they are the same object.
+      let blob: Buffer | null = null;
+      try {
+        blob = execFileSync('git', ['cat-file', 'blob', `:0:resources/window-helper/${file}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
+      } catch {
+        blob = null;
+      }
+      if (blob === null) {
+        blob = execFileSync('git', ['cat-file', 'blob', `HEAD:resources/window-helper/${file}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
+      }
+      // A CRLF blob means the pin cannot be reproduced by an `eol=lf` checkout.
+      expect(blob.toString('binary').includes('\r\n'), `${file} blob must be LF-only`).toBe(false);
+      expect(
+        crypto.createHash('sha256').update(blob).digest('hex'),
+        `${file}: committed blob must match the compiled pin`,
+      ).toBe(expected);
+    }
+  });
+
+  it('resource provenance validates on a FRESH CHECKOUT (git-delivered bytes only)', () => {
+    // The end-to-end proof for the EOL defect: build a directory containing
+    // nothing but the git-delivered bytes of the three resource files, and run
+    // the product's own validator against it. This is the situation a clone,
+    // a CI runner or a packaged build is in, and it is the situation the
+    // working-tree test above cannot see.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-fresh-checkout-'));
+    const readBlob = (file: string): Buffer => {
+      try {
+        return execFileSync('git', ['cat-file', 'blob', `:0:resources/window-helper/${file}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
+      } catch {
+        return execFileSync('git', ['cat-file', 'blob', `HEAD:resources/window-helper/${file}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
+      }
+    };
+    for (const file of [WINDOW_HELPER_SCRIPT_FILE, WINDOW_HELPER_ADAPTER_FILE, WINDOW_HELPER_MANIFEST_FILE]) {
+      fs.writeFileSync(path.join(dir, file), readBlob(file));
+    }
+    const result = validateWindowHelperResource({
+      directory: dir,
+      helperPath: path.join(dir, WINDOW_HELPER_SCRIPT_FILE),
+      adapterPath: path.join(dir, WINDOW_HELPER_ADAPTER_FILE),
+      manifestPath: path.join(dir, WINDOW_HELPER_MANIFEST_FILE),
+    });
+    expect(result.ok, `fresh-checkout validation failed: ${result.reason ?? 'no reason'}`).toBe(true);
+  });
+
+  it('the manifest on disk pins the same bytes as the compiled constants', () => {
+    const manifest = JSON.parse(fs.readFileSync(realPaths().manifestPath, 'utf8')) as { hashes: Record<string, string> };
+    expect(manifest.hashes).toEqual(WINDOW_HELPER_EXPECTED_HASHES);
+    // And the working tree must agree with itself, so a local edit is caught too.
+    for (const [file, expected] of Object.entries(WINDOW_HELPER_EXPECTED_HASHES)) {
+      const bytes = fs.readFileSync(path.join(realPaths().directory, file));
+      expect(
+        crypto.createHash('sha256').update(bytes).digest('hex'),
+        `${file}: working-tree bytes must match the pin`,
+      ).toBe(expected);
+    }
   });
 
   it('rejects a missing manifest before any spawn', () => {

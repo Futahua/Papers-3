@@ -2,14 +2,17 @@
 #
 # Behavior is LOCKED to the accepted protocol snapshot 013R5F plus the
 # reviewed Assignment 016 additions (protocolVersion '016' in manifest.json)
-# plus the reviewed Assignment 019G thumbnail method (protocolVersion '017'):
-# protocol, session tokens, identity revalidation, capacity limits and native
-# behavior are preserved exactly; 016 adds the task-worthy eligibility filter
-# to list, the hover method (task-worthy window at a point, for direct
-# onscreen pick), and offscreen-safe bounds clamping in apply; 019G adds the
-# thumbnail method (bounded PrintWindow full-content capture). This file is
-# the packaged runtime asset; do not drift from the manifest hash without a
-# reviewed protocol change.
+# plus the reviewed Assignment 019G thumbnail method, plus the reviewed
+# Assignment 018 identity revision (protocolVersion '018'): the session-token
+# identity key drops the exact title in favour of the window class, and every
+# window observation carries `windowClass`. Protocol shape, capacity limits,
+# outcome vocabulary and native behavior are otherwise preserved exactly; 016
+# adds the task-worthy eligibility filter to list, the hover method
+# (task-worthy window at a point, for direct onscreen pick), and offscreen-safe
+# bounds clamping in apply; 019G adds the thumbnail method (bounded PrintWindow
+# full-content capture); 018 makes identity independent of a mutable title.
+# This file is the packaged runtime asset; do not drift from the manifest hash
+# without a reviewed protocol change.
 #
 # Reads UTF-8 JSON request lines from stdin, validates against the typed
 # schema, routes through the reused native adapter (window-capability.ps1)
@@ -80,10 +83,24 @@
 # Session tokens:
 # - The wire id is a high-entropy helper-session TOKEN ('T'+32 hex GUID),
 #   never a raw HWND. Tokens are issued on list, keyed by the full
-#   (HWND, PID, exact title) identity: an unchanged identity keeps its
+#   (HWND, PID, window CLASS) identity: an unchanged identity keeps its
 #   token across repeated list calls; an HWND reused with a different
-#   PID/title gets a NEW token while the old token stays bound to the old
+#   PID/class gets a NEW token while the old token stays bound to the old
 #   identity and fails closed. Tokens are never overwritten or rebound.
+#
+#   018 IDENTITY REVISION: the exact TITLE is no longer part of this key. A
+#   title is mutable display metadata - it changes on every browser tab switch
+#   and on every document edit - and keying identity by it made an ordinary
+#   title change look like native-window invalidation. The window CLASS takes
+#   its place as the stable corroborator.
+#
+#   What the key proves, and what it does not: it proves the handle still
+#   belongs to the same process and the same class of window, which survives
+#   title changes, helper restarts and Papers restarts. It does NOT prove the
+#   same window OBJECT - Windows may recycle a handle value, and a replacement
+#   in the same process with the same class would satisfy every clause. A
+#   failed check is therefore UNVERIFIED, never "gone"; no consumer may treat
+#   this refusal as terminal evidence that the instance ceased to exist.
 # - The session registry is BOUNDED: a fixed limit of 4096 issued
 #   tokens per helper session. The list path preflights the FULL list
 #   atomically BEFORE issuing anything: if existing token count + distinct
@@ -95,7 +112,7 @@
 #   unknown, guessed, raw numeric HWND or previous-session tokens are
 #   typed 'missing' with no native observation/mutation.
 # - Before EVERY observe and mutation, the token is resolved and IsWindow
-#   plus exact PID/title are rechecked in the SAME request handler:
+#   plus PID/class are rechecked in the SAME request handler:
 #   mismatch => typed 'denied'; vanished => typed 'missing'. Observe NEVER
 #   re-registers or repairs a mismatched token.
 #
@@ -210,9 +227,23 @@ function Get-WhWireBounds {
   }
 }
 
+# 018 identity: the session token is keyed by the EXACT LIVE WINDOW INSTANCE as
+# the native layer can corroborate it - the runtime handle, the owning process
+# and the window class. The TITLE IS NOT PART OF IDENTITY. It is display
+# metadata: it changes on every browser tab switch and on every document edit,
+# and keying identity by it made an ordinary title change look like window
+# invalidation. That is the defect this revision removes.
+#
+# What this key does and does not prove. It proves "this handle still belongs to
+# the same process and the same class of window", which is stable across title
+# changes, helper restarts and Papers restarts. It does NOT prove "this is the
+# same window object": Windows may recycle a handle value, and a replacement in
+# the SAME process with the SAME class would satisfy every clause here. Consumers
+# must therefore treat this as strong corroboration and never as terminal
+# evidence of anything - a failed check means UNVERIFIED, never "gone".
 function Get-WhIdentityKey {
-  param([long]$Hwnd, [int]$PidValue, [string]$Title)
-  return "$Hwnd|$PidValue|$Title"
+  param([long]$Hwnd, [int]$PidValue, [string]$ClassName)
+  return "$Hwnd|$PidValue|$ClassName"
 }
 
 function Get-WhResponseObservation {
@@ -224,23 +255,25 @@ function Get-WhResponseObservation {
     title = $obs.Title
     processId = $obs.ProcessId
     processPath = $obs.ProcessPath
+    windowClass = $obs.ClassName
     state = $obs.State
     bounds = (Get-WhWireBounds $obs.Bounds)
   }
 }
 
-# Issue or reuse the session token for one (HWND, PID, exact title) identity.
+# Issue or reuse the session token for one (HWND, PID, window class) identity.
 # A changed identity under the same HWND yields a NEW token; tokens are never
-# overwritten or rebound.
+# overwritten or rebound. A title change does NOT change the identity and
+# therefore does NOT yield a new token.
 function New-WhSessionToken {
-  param([long]$Hwnd, [int]$PidValue, [string]$Title)
-  $key = Get-WhIdentityKey $Hwnd $PidValue $Title
+  param([long]$Hwnd, [int]$PidValue, [string]$ClassName)
+  $key = Get-WhIdentityKey $Hwnd $PidValue $ClassName
   if ($script:WhSession.byKey.ContainsKey($key)) {
     return $script:WhSession.byKey[$key]
   }
   $token = 'T' + [guid]::NewGuid().ToString('N')
   $script:WhSession.byKey[$key] = $token
-  $script:WhSession.byToken[$token] = @{ hwnd = $Hwnd; pid = $PidValue; title = $Title }
+  $script:WhSession.byToken[$token] = @{ hwnd = $Hwnd; pid = $PidValue; className = $ClassName }
   return $token
 }
 
@@ -256,7 +289,7 @@ function Test-WhListCapacity {
   param([object[]]$Observations)
   $newCount = 0
   foreach ($observation in $Observations) {
-    $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.Title)
+    $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
     if (-not $script:WhSession.byKey.ContainsKey($key)) { $newCount += 1 }
   }
   return ($script:WhSession.byToken.Count + $newCount) -le $script:WhSession.maxTokens
@@ -264,6 +297,15 @@ function Test-WhListCapacity {
 
 # Fail-closed identity gate executed in the SAME request handler, immediately
 # before EVERY observe and mutation. Never re-registers or repairs.
+#
+# 018: the exact TITLE is deliberately NOT compared. A title is mutable display
+# metadata, not identity; requiring it to be unchanged made an ordinary Chrome
+# tab switch invalidate a healthy capability. The window class replaces it as
+# the stable corroborator.
+#
+# The outcome vocabulary is unchanged so every existing consumer keeps working,
+# but consumers MUST NOT read this refusal as proof of death: a failure here means
+# the identity could not be corroborated, which is UNVERIFIED, not "gone".
 # Returns @{ ok; outcome; error }.
 function Test-WhTokenIdentity {
   param([string]$Token)
@@ -279,7 +321,7 @@ function Test-WhTokenIdentity {
   } catch {
     return @{ ok = $false; outcome = 'denied'; error = (Get-BoundedErrorText $_) }
   }
-  if ([int]$live.ProcessId -ne [int]$entry.pid -or [string]$live.Title -ne [string]$entry.title) {
+  if ([int]$live.ProcessId -ne [int]$entry.pid -or [string]$live.ClassName -ne [string]$entry.className) {
     return @{ ok = $false; outcome = 'denied'; error = 'window identity changed since the token was issued' }
   }
   return @{ ok = $true }
@@ -421,12 +463,13 @@ function Invoke-WhRequest {
       }
       $windows = @()
       foreach ($observation in $observations) {
-        $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.Title)
+        $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
         $windows += [ordered]@{
           runtimeId = $token
           title = $observation.Title
           processId = $observation.ProcessId
           processPath = $observation.ProcessPath
+          windowClass = $observation.ClassName
           state = $observation.State
           bounds = (Get-WhWireBounds $observation.Bounds)
         }
@@ -438,17 +481,18 @@ function Invoke-WhRequest {
       if ($null -eq $observation) {
         return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = $null } $null)
       }
-      $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.Title)
+      $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
       $atCapacity = -not $script:WhSession.byKey.ContainsKey($key) -and $script:WhSession.byToken.Count -ge $script:WhSession.maxTokens
       if ($atCapacity) {
         return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'session token capacity reached')
       }
-      $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.Title)
+      $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = [ordered]@{
         runtimeId = $token
         title = $observation.Title
         processId = $observation.ProcessId
         processPath = $observation.ProcessPath
+        windowClass = $observation.ClassName
         state = $observation.State
         bounds = (Get-WhWireBounds $observation.Bounds)
       } } $null)

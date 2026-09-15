@@ -69,6 +69,21 @@ export interface WindowObservation {
   title: string;
   processId: number | null;
   processPath: string | null;
+  /**
+   * 018 identity revision: the window CLASS, as corroboration for the live
+   * instance behind `runtimeId`.
+   *
+   * Identity-bearing and TITLE-INDEPENDENT: the class does not change when a
+   * document or browser tab changes, which is precisely the failure the title
+   * caused. It is corroboration and NOT a discriminator - class names are
+   * unique per process and back every window of that process, so two windows of
+   * one application share it and only the runtime id separates them.
+   *
+   * `undefined` when the helper did not report it (an older helper, or a fake
+   * in a test). Callers must treat a missing class as "not corroborated"
+   * rather than as a mismatch.
+   */
+  windowClass?: string;
   state: WindowState;
   bounds: WindowBounds | null;
 }
@@ -277,6 +292,11 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
     && !(typeof processId === 'number' && Number.isSafeInteger(processId) && processId >= 0)) return undefined;
   const processPath = raw['processPath'];
   if (processPath !== null && typeof processPath !== 'string') return undefined;
+  // 018: optional, so an older helper or a test fake stays valid. Present but
+  // the wrong type is still malformed, because a silently-dropped class would
+  // turn "not corroborated" into "corroborated by nothing".
+  const windowClass = raw['windowClass'];
+  if (windowClass !== undefined && typeof windowClass !== 'string') return undefined;
   const state = raw['state'];
   if (typeof state !== 'string' || !WINDOW_STATES.includes(state)) return undefined;
   const bounds = parseWindowBounds(raw['bounds']);
@@ -286,6 +306,7 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
     title: raw['title'],
     processId,
     processPath,
+    ...(windowClass !== undefined ? { windowClass } : {}),
     state: state as WindowState,
     bounds,
   };
