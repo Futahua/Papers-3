@@ -36,6 +36,7 @@
  */
 
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 /** The file a project ships to declare the local services it may reach. */
 export const LOCAL_SERVICE_DECLARATION_FILE = 'local-service.json';
@@ -107,6 +108,16 @@ export interface LocalServiceBridgeDependencies {
   secretRoots: readonly string[];
   /** Read a declared credential file. Returns null when it cannot be read. */
   readSecretFile(file: string): string | null;
+  /**
+   * The filesystem identity a declared path is judged by. Defaults to the real
+   * `realpathSync.native` + `statSync`, and is injectable so the reparse-point
+   * regression can be exercised deterministically rather than only on a machine
+   * where creating a junction happens to be permitted.
+   */
+  resolveIdentity?: {
+    canonicalize: (path: string) => string | null;
+    isRegularFile: (path: string) => boolean;
+  };
   /**
    * Perform ONE request and hand back its response WHATEVER it is, including a
    * redirect. The redirect policy lives in this bridge, so the transport must not
@@ -185,29 +196,68 @@ function hopDropsBody(status: number, method: string): boolean {
   return false;
 }
 
-/** Does this path name a FILE inside one of the approved roots? */
-function isInsideAnyRoot(file: string, roots: readonly string[]): boolean {
+/**
+ * Does this path name a FILE inside one of the approved roots?
+ *
+ * CANONICAL, not lexical. A purely lexical check answers "does this string look
+ * like it is under the root", which a reparse point defeats: a junction or symlink
+ * created INSIDE the project's own tree resolves to anywhere, and the string still
+ * reads as in-scope. So both sides are resolved to their real filesystem identity
+ * first, and containment is then a `path.relative` that cannot leave the root.
+ *
+ * An unresolvable path is refused rather than assumed: a candidate that does not
+ * exist has no identity to approve, and a root that does not resolve approves
+ * nothing.
+ */
+function isInsideAnyRoot(
+  file: string,
+  roots: readonly string[],
+  canonicalize: (path: string) => string | null,
+  isRegularFile: (path: string) => boolean,
+): boolean {
+  // Lexical pre-check, BEFORE any filesystem call: a declaration naming an
+  // absolute path outside the roots is refused without resolving anything, so the
+  // check cannot be used as a probe for which paths exist on this machine.
+  if (!lexicallyPlausible(file, roots)) return false;
+
+  const canonicalFile = canonicalize(file);
+  if (canonicalFile === null) return false;
+  // A credential is a FILE. A directory, device or other special target is not a
+  // credential, and `file` naming a directory must not become a read of the tree.
+  if (!isRegularFile(canonicalFile)) return false;
+
+  return roots.some((root) => {
+    const canonicalRoot = canonicalize(root);
+    if (canonicalRoot === null) return false;
+    const relative = path.relative(canonicalRoot, canonicalFile);
+    // An empty relative means the file IS the root - a directory, already refused
+    // above - and `..` or an absolute result means it is outside.
+    if (relative.length === 0) return false;
+    if (relative.startsWith(`..${path.sep}`) || relative === '..') return false;
+    if (path.isAbsolute(relative)) return false;
+    return true;
+  });
+}
+
+/**
+ * Would this path be inside a root if nothing were a reparse point?
+ *
+ * Used ONLY as a cheap refusal before touching the filesystem. It is not the
+ * security boundary - `isInsideAnyRoot` is - and it is deliberately allowed to be
+ * wrong in the permissive direction, because a path it lets through is then
+ * canonicalized and judged properly.
+ */
+function lexicallyPlausible(file: string, roots: readonly string[]): boolean {
   const normalized = normalizeForComparison(file);
   if (normalized.length === 0) return false;
   return roots.some((root) => {
     const candidate = normalizeForComparison(root);
     if (candidate.length === 0) return false;
-    // Strictly INSIDE: the root itself is a directory, and a credential is a
-    // file. Equal paths are not a file in the scope, they are the scope.
     return normalized.startsWith(`${candidate}/`);
   });
 }
 
-/**
- * Fold separators and `.`/`..` segments so the comparison is about where the path
- * actually points.
- *
- * Deliberately LEXICAL: it does not touch the filesystem. The threat here is a
- * declaration naming a path OUTSIDE the project's scope - an absolute path to
- * somebody's credentials file - and string containment answers that. Following
- * symlinks would add filesystem races to a check whose whole job is to be decided
- * before any file is touched.
- */
+/** Fold separators and `.`/`..` segments for the cheap lexical pre-check. */
 function normalizeForComparison(input: string): string {
   if (typeof input !== 'string') return '';
   const unified = input.replace(/\\/g, '/');
@@ -234,6 +284,27 @@ function normalizeForComparison(input: string): string {
   return (isAbsolute ? `/${body}` : body).toLowerCase();
 }
 
+/** The real filesystem identity of a path, or null when it cannot be resolved. */
+export function canonicalizePath(candidate: string): string | null {
+  try {
+    // `native` asks the OS, so it resolves junctions and symlinks exactly as the
+    // filesystem does - including the 8.3 short names and case-insensitivity a
+    // hand-rolled walk gets wrong on Windows.
+    return fs.realpathSync.native(candidate);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a canonical path is a regular file, following the OS's own answer. */
+export function isRegularFile(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Read a declared credential ONLY from inside an approved root.
  *
@@ -250,12 +321,19 @@ export function readSecretWithinRoots(
   file: string,
   roots: readonly string[],
   read: (file: string) => string | null,
+  resolveIdentity: {
+    canonicalize: (path: string) => string | null;
+    isRegularFile: (path: string) => boolean;
+  },
 ): SecretReadOutcome {
   if (typeof file !== 'string' || file.length === 0) return { ok: false, reason: 'outside-approved-scope' };
   if (!Array.isArray(roots) || roots.length === 0) return { ok: false, reason: 'outside-approved-scope' };
-  // Decided on the PATH, before any file is touched, so a refusal is not a probe
-  // for which paths exist.
-  if (!isInsideAnyRoot(file, roots)) return { ok: false, reason: 'outside-approved-scope' };
+  // The refusal is decided BEFORE `read` is called, and before anything outside the
+  // approved roots is opened: a reparse point that leaves the scope is refused on
+  // its canonical identity, not on its name.
+  if (!isInsideAnyRoot(file, roots, resolveIdentity.canonicalize, resolveIdentity.isRegularFile)) {
+    return { ok: false, reason: 'outside-approved-scope' };
+  }
   const secret = read(file);
   if (secret === null || secret.length === 0) return { ok: false, reason: 'unreadable' };
   return { ok: true, secret };
@@ -376,9 +454,16 @@ export function createLocalServiceBridge(
         if (!declared) {
           return fail(`the service needs the credential "${service.secret}", which this project does not declare`);
         }
-        // Confined to the roots the host approves. A declaration that names a path
-        // outside them is refused WITHOUT reading it.
-        const outcome = readSecretWithinRoots(declared.file, dependencies.secretRoots, dependencies.readSecretFile);
+        // Confined to the roots the host approves, judged on the CANONICAL
+        // identity so a reparse point inside the project's own tree cannot resolve
+        // out of it. A declaration that names a path outside them is refused
+        // WITHOUT reading it.
+        const outcome = readSecretWithinRoots(
+          declared.file,
+          dependencies.secretRoots,
+          dependencies.readSecretFile,
+          dependencies.resolveIdentity ?? { canonicalize: canonicalizePath, isRegularFile },
+        );
         if (!outcome.ok) {
           // Two different facts, said differently. A path outside the approved
           // scope means the DECLARATION is wrong and the creator can fix it; an

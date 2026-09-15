@@ -1,9 +1,15 @@
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   LOCAL_SERVICE_DECLARATION_FILE,
+  canonicalizePath,
   createLocalServiceBridge,
   isLoopbackHost,
+  isRegularFile,
   type LocalServiceBridgeDependencies,
 } from '../../src/main/backpacks/localServiceBridge';
 
@@ -40,6 +46,13 @@ function harness(overrides: Partial<LocalServiceBridgeDependencies> = {}) {
     // The scopes the host approves for credential files. `C:\data` here so the
     // default declaration's credential is inside one; the scope tests replace it.
     secretRoots: ['C:\\data'],
+    // Filesystem identity, faked so these paths need not exist. Paths with no
+    // mapping are UNRESOLVABLE, which is what the real canonicalizer reports for a
+    // path that does not exist - and an unresolvable path is refused.
+    resolveIdentity: {
+      canonicalize: (candidate) => (candidate.includes('unresolvable') ? null : candidate),
+      isRegularFile: (candidate) => !candidate.includes('directory'),
+    },
     readSecretFile: (file) => { reads.push(file); return 'THE-TOKEN'; },
     performRequest: async (request) => {
       requests.push(request);
@@ -416,5 +429,178 @@ describe('a declared credential file must live in an approved scope', () => {
 
     expect(result.ok).toBe(false);
     expect(h.reads).toHaveLength(0);
+  });
+});
+
+/**
+ * THE REPARSE-POINT ESCAPE, which lexical containment could not see.
+ *
+ * A junction or symlink created INSIDE the project's own tree resolves anywhere,
+ * while its NAME still reads as in-scope. String containment therefore approved
+ * it and the external file was read. The path is now judged on the identity the
+ * filesystem gives it, so an in-root name that resolves out of the root is
+ * refused - and refused BEFORE `readSecretFile` is called.
+ */
+describe('an in-root path that RESOLVES out of the root is refused', () => {
+  const PROJECT = 'C:\\projects\\demo';
+  const roots = [PROJECT, 'C:\\PapersData\\backpacks\\bp-1'];
+
+  /** Canonical identity for the escape fixtures, standing in for the real FS. */
+  const identity = {
+    canonicalize: (candidate: string): string | null => {
+      if (candidate.includes('unresolvable')) return null;
+      // The junction sits in the project tree but points at a file elsewhere.
+      if (candidate === 'C:\\projects\\demo\\linked-token') return 'C:\\Users\\someone\\.ssh\\id_rsa';
+      // A junction pointing at ANOTHER project's config area is still outside.
+      if (candidate === 'C:\\projects\\demo\\config-link') return 'C:\\PapersData\\backpacks\\bp-2\\token';
+      // A junction that stays inside the project is legitimate and must work.
+      if (candidate === 'C:\\projects\\demo\\alias-token') return 'C:\\projects\\demo\\real\\token';
+      return candidate;
+    },
+    isRegularFile: (candidate: string) => !candidate.includes('directory'),
+  };
+
+  function attempt(file: string) {
+    const h = harness({
+      secretRoots: roots,
+      resolveIdentity: identity,
+      declaration: {
+        schemaVersion: 1,
+        services: [{ origin: 'http://127.0.0.1:4181', secret: 'operator' }],
+        secrets: [{ id: 'operator', file, scheme: 'Bearer' }],
+      },
+    });
+    return { h, bridge: createLocalServiceBridge(h.deps) };
+  }
+
+  it('refuses an in-root junction that resolves to an external file, before reading it', async () => {
+    const { h, bridge } = attempt('C:\\projects\\demo\\linked-token');
+    const result = await bridge.fetch({ url: 'http://127.0.0.1:4181/v1/snapshot' });
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain('approved scope');
+    // THE TWO ASSERTIONS THAT MATTER: the external file was never read, and no
+    // request was dispatched carrying anything from it.
+    expect(h.reads).toHaveLength(0);
+    expect(h.requests).toHaveLength(0);
+  });
+
+  it('refuses an in-root junction that resolves into ANOTHER project config area', async () => {
+    // Escaping to a sibling's approved scope is still escaping this project's.
+    const { h, bridge } = attempt('C:\\projects\\demo\\config-link');
+    const result = await bridge.fetch({ url: 'http://127.0.0.1:4181/v1/snapshot' });
+
+    expect(result.ok).toBe(false);
+    expect(h.reads).toHaveLength(0);
+    expect(h.requests).toHaveLength(0);
+  });
+
+  it('still allows an in-root junction that resolves INSIDE the root', async () => {
+    // The rule must not become "refuse anything linked": an alias within the
+    // project's own tree is ordinary and must keep working.
+    const { h, bridge } = attempt('C:\\projects\\demo\\alias-token');
+    const result = await bridge.fetch({ url: 'http://127.0.0.1:4181/v1/snapshot' });
+
+    expect(result.ok).toBe(true);
+    expect(h.reads).toHaveLength(1);
+  });
+
+  it('refuses a path that cannot be resolved at all, rather than assuming it is fine', async () => {
+    const { h, bridge } = attempt('C:\\projects\\demo\\unresolvable-token');
+    const result = await bridge.fetch({ url: 'http://127.0.0.1:4181/v1/snapshot' });
+
+    expect(result.ok).toBe(false);
+    expect(h.reads).toHaveLength(0);
+    expect(h.requests).toHaveLength(0);
+  });
+
+  it('refuses a candidate that resolves to a DIRECTORY, not a credential file', async () => {
+    const h = harness({
+      secretRoots: roots,
+      resolveIdentity: {
+        canonicalize: (candidate) => candidate,
+        isRegularFile: () => false,
+      },
+      declaration: {
+        schemaVersion: 1,
+        services: [{ origin: 'http://127.0.0.1:4181', secret: 'operator' }],
+        secrets: [{ id: 'operator', file: 'C:\\projects\\demo\\directory', scheme: 'Bearer' }],
+      },
+    });
+    const bridge = createLocalServiceBridge(h.deps);
+    const result = await bridge.fetch({ url: 'http://127.0.0.1:4181/v1/snapshot' });
+
+    expect(result.ok).toBe(false);
+    expect(h.reads).toHaveLength(0);
+  });
+});
+
+/**
+ * The same escape against the REAL filesystem, with the REAL canonicalizer.
+ *
+ * The tests above inject the identity so the refusal is exercised
+ * deterministically. This one creates an actual junction and lets
+ * `realpathSync.native` be the judge, which is what the shipping build does.
+ * Junction creation needs no elevation on Windows; the symlink fallback does, so
+ * this skips rather than failing on a machine that forbids it.
+ */
+describe('the real canonicalizer refuses a real re-rooted path', () => {
+  it('refuses an in-root junction pointing at an external sentinel, reading nothing', async () => {
+    const base = mkdtempSync(path.join(os.tmpdir(), 'papers-reparse-'));
+    const projectRoot = path.join(base, 'project');
+    const outside = path.join(base, 'outside');
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    const sentinel = path.join(outside, 'sentinel.txt');
+    writeFileSync(sentinel, 'EXTERNAL-SENTINEL-CONTENTS');
+
+    // A junction INSIDE the project tree, pointing outside it.
+    const linked = path.join(projectRoot, 'linked-token');
+    let created = false;
+    try {
+      symlinkSync(outside, linked, 'junction');
+      created = lstatSync(linked).isSymbolicLink();
+    } catch {
+      created = false;
+    }
+    if (!created) {
+      // Not a failure of the code: this machine forbids creating the reparse
+      // point, so there is nothing to prove here. Recorded, not silently skipped.
+      expect(existsSync(linked)).toBe(false);
+      return;
+    }
+
+    try {
+      // The REAL identity resolver, and a reader that would succeed if reached.
+      const reads: string[] = [];
+      const h = harness({
+        secretRoots: [projectRoot],
+        resolveIdentity: { canonicalize: canonicalizePath, isRegularFile },
+        readSecretFile: (file) => { reads.push(file); return 'EXTERNAL-SENTINEL-CONTENTS'; },
+        declaration: {
+          schemaVersion: 1,
+          services: [{ origin: 'http://127.0.0.1:4181', secret: 'operator' }],
+          secrets: [{
+            id: 'operator',
+            // Names a path inside the project that RESOLVES outside it.
+            file: path.join(linked, 'sentinel.txt'),
+            scheme: 'Bearer',
+          }],
+        },
+      });
+      const bridge = createLocalServiceBridge(h.deps);
+      const result = await bridge.fetch({ url: 'http://127.0.0.1:4181/v1/snapshot' });
+
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('approved scope');
+      // Refused BEFORE the reader, and before anything was dispatched.
+      expect(reads).toHaveLength(0);
+      expect(h.requests).toHaveLength(0);
+      // The sentinel is still there and still unread by this path.
+      expect(readFileSync(sentinel, 'utf8')).toBe('EXTERNAL-SENTINEL-CONTENTS');
+    } finally {
+      try { rmSync(linked, { recursive: true, force: true }); } catch { /* best effort */ }
+      try { rmSync(base, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
   });
 });
