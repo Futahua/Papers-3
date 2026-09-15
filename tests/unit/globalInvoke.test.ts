@@ -57,6 +57,16 @@ function harness(overrides: Partial<GlobalInvokeDependencies> = {}) {
   const shortcut = fakeShortcut();
   const brought: Array<{ windowId: number; reason: string }> = [];
   const invoked: Array<{ projectId: string; surfaceId: string; reason: string }> = [];
+  // The launcher overlay: a fake that records open/close calls. The invoke chord
+  // must reach THIS and must never reach `bringToFront`.
+  const overlay = {
+    opened: 0,
+    closed: [] as string[],
+    isOpenValue: false,
+    open: async () => { overlay.opened += 1; overlay.isOpenValue = true; return { ok: true, detail: 'opened' }; },
+    close: async (reason: string) => { overlay.closed.push(reason); overlay.isOpenValue = false; },
+    isOpen: () => overlay.isOpenValue,
+  };
   const deps: GlobalInvokeDependencies = {
     shortcut: shortcut.api,
     currentWindowId: () => 7,
@@ -68,12 +78,11 @@ function harness(overrides: Partial<GlobalInvokeDependencies> = {}) {
       invoked.push({ projectId, surfaceId, reason });
       return { ok: true, detail: 'delivered' };
     },
-    // A focused project that declares a command surface. This is the shape the
-    // host resolves; the ids are opaque to the host and belong to the project.
     resolveCommandSurface: () => ({ projectId: 'project-a', surfaceId: 'surface-1' }),
+    overlay,
     ...overrides,
   };
-  return { shortcut, brought, invoked, deps };
+  return { shortcut, brought, invoked, overlay, deps };
 }
 
 describe('globalInvoke registration', () => {
@@ -206,72 +215,104 @@ describe('globalInvoke behaviour', () => {
     expect(invoked).toHaveLength(0);
   });
 
-  it('invoke chord brings the window forward AND asks for the command surface', () => {
-    const { shortcut, brought, invoked, deps } = harness();
+  it('THE CORRECTION: the invoke chord opens the overlay and NEVER brings Papers forward', () => {
+    const { shortcut, brought, overlay, deps } = harness();
     createGlobalInvoke(deps).register();
 
     shortcut.callbacks.get('Alt+A')?.();
 
-    expect(brought).toHaveLength(1);
-    expect(invoked).toHaveLength(1);
-    expect(invoked[0]?.reason).toBe('global-accelerator');
+    expect(overlay.opened).toBe(1);
+    // Papers keeps its place in the z-order. This is a launcher, not a switcher.
+    expect(brought).toHaveLength(0);
   });
 
-  it('reports honestly when there is nothing to open, and still brings Papers forward', () => {
-    const calls: GlobalInvokeReport[] = [];
-    const { shortcut, brought, deps } = harness({
-      invokeCommandSurface: () => ({ ok: false, detail: 'no command surface is declared' }),
-      report: (r) => calls.push(r),
-    });
-    createGlobalInvoke(deps).register();
-
-    shortcut.callbacks.get('Alt+A')?.();
-
-    // It must not appear to do nothing: Papers came forward, and the reason is reported.
-    expect(brought).toHaveLength(1);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.outcome).toBe('brought-forward-nothing-to-open');
-    expect(calls[0]?.detail).toBe('no command surface is declared');
-  });
-
-  it('reports when the window itself could not be brought forward', () => {
-    const calls: GlobalInvokeReport[] = [];
-    const { shortcut, invoked, deps } = harness({
-      bringToFront: () => ({ ok: false, detail: 'window is gone' }),
-      report: (r) => calls.push(r),
-    });
-    createGlobalInvoke(deps).register();
-
-    shortcut.callbacks.get('Alt+A')?.();
-
-    expect(calls[0]?.outcome).toBe('window-unavailable');
-    // Nothing to deliver to a window that is not there.
-    expect(invoked).toHaveLength(0);
-  });
-
-  it('reports a successful invoke distinctly', () => {
+  it('reports the overlay as opened over the current application', async () => {
     const calls: GlobalInvokeReport[] = [];
     const { shortcut, deps } = harness({ report: (r) => calls.push(r) });
     createGlobalInvoke(deps).register();
 
     shortcut.callbacks.get('Alt+A')?.();
+    await new Promise((r) => setTimeout(r, 0));
 
-    expect(calls[0]?.outcome).toBe('brought-forward-invoked');
+    expect(calls.at(-1)?.outcome).toBe('overlay-opened');
+    expect(calls.at(-1)?.chord).toBe('invoke');
   });
 
-  it('does nothing when no window exists to bring forward', () => {
+  it('reports a refusal visibly and still does not raise Papers', async () => {
     const calls: GlobalInvokeReport[] = [];
-    const { shortcut, brought, invoked, deps } = harness({
-      currentWindowId: () => null,
+    const { shortcut, brought, deps } = harness({
+      overlay: {
+        open: async () => ({ ok: false, detail: 'no project is open in Papers' }),
+        close: async () => undefined,
+        isOpen: () => false,
+      },
       report: (r) => calls.push(r),
     });
     createGlobalInvoke(deps).register();
 
     shortcut.callbacks.get('Alt+A')?.();
+    await new Promise((r) => setTimeout(r, 0));
+
+    // It must not appear to do nothing: the reason is reported...
+    expect(calls.at(-1)?.outcome).toBe('overlay-unavailable');
+    expect(calls.at(-1)?.detail).toBe('no project is open in Papers');
+    // ...and Papers was still not brought forward.
+    expect(brought).toHaveLength(0);
+  });
+
+  it('toggling the chord while the overlay is open closes it', () => {
+    const { shortcut, overlay, deps } = harness();
+    overlay.isOpenValue = true;
+    createGlobalInvoke(deps).register();
+
+    shortcut.callbacks.get('Alt+A')?.();
+
+    expect(overlay.opened).toBe(0);
+    expect(overlay.closed).toEqual(['dismissed']);
+  });
+
+  it('reports an overlay that throws instead of leaving the creator guessing', async () => {
+    const calls: GlobalInvokeReport[] = [];
+    const { shortcut, deps } = harness({
+      overlay: {
+        open: async () => { throw new Error('renderer refused'); },
+        close: async () => undefined,
+        isOpen: () => false,
+      },
+      report: (r) => calls.push(r),
+    });
+    createGlobalInvoke(deps).register();
+
+    shortcut.callbacks.get('Alt+A')?.();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls.at(-1)?.outcome).toBe('overlay-unavailable');
+    expect(calls.at(-1)?.detail).toContain('renderer refused');
+  });
+
+  it('reports the overlay as unavailable when this build has none, without raising Papers', () => {
+    const calls: GlobalInvokeReport[] = [];
+    const { shortcut, brought, deps } = harness({ overlay: undefined, report: (r) => calls.push(r) });
+    createGlobalInvoke(deps).register();
+
+    shortcut.callbacks.get('Alt+A')?.();
+
+    expect(calls.at(-1)?.outcome).toBe('overlay-unavailable');
+    expect(brought).toHaveLength(0);
+  });
+
+  it('does nothing when no window exists to bring forward', () => {
+    const calls: GlobalInvokeReport[] = [];
+    const { shortcut, brought, deps } = harness({
+      currentWindowId: () => null,
+      report: (r) => calls.push(r),
+    });
+    createGlobalInvoke(deps).register();
+
+    shortcut.callbacks.get('Alt+Shift+A')?.();
 
     expect(brought).toHaveLength(0);
-    expect(invoked).toHaveLength(0);
-    expect(calls[0]?.outcome).toBe('window-unavailable');
+    expect(calls.at(-1)?.outcome).toBe('window-unavailable');
   });
 });
 
