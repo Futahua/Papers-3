@@ -1,6 +1,12 @@
 import { ipcRenderer, webUtils } from 'electron';
 
-interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
+interface ProjectMessage {
+  /** The local-service capability adds `method`, `headers` and `body` to the
+   * request shape. `url` already exists below, and a page never supplies the
+   * credential. */
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -218,6 +224,22 @@ window.addEventListener('message', (event) => {
   }
   if (request.type === 'papers:project:run-action' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:run-action', request.actionId);
   if (request.type === 'papers:project:copy-text' && typeof request.text === 'string') task = ipcRenderer.invoke('host:backpack-project:copy-text', request.text);
+  // The local-service capability: this page asking Papers to reach an HTTP
+  // service the creator runs on this machine. The page supplies an address, a
+  // method, headers and a body; it never supplies a credential, and the answer
+  // it receives is the service's own - including a refusal.
+  //
+  // Wrapped under `localService`, like every other nested result here: a bridge
+  // failure carries its own `ok: false`, and unwrapped the transport envelope
+  // would turn that into a failed request instead of the typed answer it is.
+  if (request.type === 'papers:project:local-service-fetch' && typeof request.url === 'string') {
+    task = ipcRenderer.invoke('host:backpack-project:local-service-fetch', {
+      url: request.url,
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+    }).then((result) => ({ localService: result }));
+  }
   if (request.type === 'papers:project:as-you-go-load') task = ipcRenderer.invoke('host:backpack-project:state-load').then((state) => ({ state: JSON.stringify(state) }));
   if (request.type === 'papers:project:as-you-go-save' && typeof request.state === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save', request.state);
   // Versioned pair, named without any Backpack's identity: a project asks for

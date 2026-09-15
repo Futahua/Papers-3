@@ -38,14 +38,39 @@ export function registerBackpackProjectSchemePrivileges(): void {
   ]);
 }
 
-function contentSecurityPolicy(origin: string): string {
+/**
+ * `connect-src` is the ONE relaxation, and it is deliberately narrow.
+ *
+ * Every other directive stays as tight as it was: no remote scripts, no remote
+ * styles, no frames, no forms, no base. What changes is that a project page may
+ * open a connection to a service on THIS MACHINE.
+ *
+ * Why loopback rather than 'none': a Backpack that talks to a service the
+ * creator runs is a legitimate shape, and the alternative - a bespoke hole per
+ * project - is exactly what this avoids. Why not remote origins: a project page
+ * reaching the network at large is a different capability with different risk,
+ * and nothing has asked for it.
+ *
+ * Measured before this change, with a listener on loopback: with
+ * `connect-src 'none'` the listener received ZERO requests and the page saw
+ * `TypeError: Failed to fetch` - refused before the network layer was reached.
+ * Chrome additionally IGNORES a directive carrying the `'none'` keyword
+ * alongside source expressions, so `'none'` is removed rather than merely
+ * outnumbered.
+ *
+ * This alone does NOT let a project page use a loopback service: the request
+ * then carries `Origin: papers-backpack://<projectId>`, which an ordinary
+ * service refuses, and a page cannot read a credential file. The credential and
+ * the request itself travel through `localServiceBridge` in the main process.
+ */
+export function contentSecurityPolicy(origin: string): string {
   return [
     `default-src 'none'`,
     `script-src ${origin}`,
     `style-src ${origin} 'unsafe-inline'`,
     `img-src ${origin} data:`,
     `font-src ${origin}`,
-    `connect-src 'none'`,
+    `connect-src http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*`,
     `object-src 'none'`,
     `base-uri 'none'`,
     `form-action 'none'`,

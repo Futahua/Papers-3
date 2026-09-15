@@ -300,6 +300,19 @@ export class BackpackProjectService {
     }
   }
 
+  /**
+   * The project's root directory, or null when it is not bound here.
+   *
+   * Exposed for capabilities that need to read something the project ships
+   * beside its `public/` assets - the local-service declaration is the first.
+   * The root never leaves the main process: a renderer is told about a
+   * capability, never about a path.
+   */
+  async root(backpackId: string): Promise<string | null> {
+    const manifest = await this.manifest(backpackId);
+    return manifest ? manifest.root : null;
+  }
+
   async open(backpackId: string): Promise<OpenBackpackProject | null> {
     const manifest = await this.manifest(backpackId);
     if (!manifest) return null;
