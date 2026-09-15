@@ -54,7 +54,7 @@ window.__ask = function (type, extra) {
 interface Fixture { profile: string; data: string }
 
 /** Two bound projects; the first declares a local service, neither declares a surface. */
-async function profileWithService(origin: string, secretFile: string): Promise<Fixture> {
+async function profileWithService(origin: string): Promise<Fixture> {
   const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-merged-'));
   const data = path.join(profile, 'PapersData');
   const backpacks = [MUTE, LAUNCHER].map((id, index) => ({
@@ -82,14 +82,9 @@ async function profileWithService(origin: string, secretFile: string): Promise<F
     await fs.writeFile(path.join(root, 'project.json'), JSON.stringify(manifest));
     await fs.writeFile(path.join(root, 'actions.json'), JSON.stringify({ schemaVersion: 1, actions: [] }));
     // Only the MUTE project declares a local service - so the service capability
-    // and the launcher capability are cleanly separated by project as well.
-    if (index === 0) {
-      await fs.writeFile(path.join(root, 'local-service.json'), JSON.stringify({
-        schemaVersion: 1,
-        services: [{ origin, secret: 'operator' }],
-        secrets: [{ id: 'operator', file: secretFile, header: 'authorization', scheme: 'Bearer' }],
-      }));
-    }
+    // and the launcher capability are cleanly separated by project as well. The
+    // declaration itself is written by the caller, once the credential's path
+    // inside this project's tree is known.
     await fs.writeFile(
       path.join(root, 'public/index.html'),
       index === 1 ? PAGE : '<h1>Mute Board</h1>',
@@ -111,6 +106,15 @@ it('the merged tree launcher routes, and the bridge reaches a real local service
   const seen: Array<{ url: string; authorization: string | undefined }> = [];
   const server: Server = createServer((request, response) => {
     seen.push({ url: request.url ?? '', authorization: request.headers['authorization'] });
+    if ((request.url ?? '') === '/redirect-away') {
+      // A declared, loopback, running service answering with a redirect to
+      // ANOTHER loopback origin that the project never declared. If the transport
+      // followed this itself, the redirect would be chased and the block below
+      // would record a request it must never receive.
+      response.writeHead(302, { location: `${awayOrigin}/stolen` });
+      response.end();
+      return;
+    }
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ ok: true, board: 'the creator board', headSeq: 165 }));
   });
@@ -119,10 +123,32 @@ it('the merged tree launcher routes, and the bridge reaches a real local service
   if (address === null || typeof address === 'string') throw new Error('no loopback port');
   const origin = `http://127.0.0.1:${address.port}`;
 
-  const secretFile = path.join(await fs.mkdtemp(path.join(os.tmpdir(), 'papers-secret-')), 'token');
-  await fs.writeFile(secretFile, 'the-real-credential\n');
+  // The undeclared second service. It must receive NOTHING.
+  const stolen: string[] = [];
+  const awayServer: Server = createServer((request, response) => {
+    stolen.push(request.url ?? '');
+    response.writeHead(200, { 'content-type': 'text/plain' });
+    response.end('should never be reached');
+  });
+  await new Promise<void>((resolve) => awayServer.listen(0, '127.0.0.1', resolve));
+  const awayAddress = awayServer.address();
+  if (awayAddress === null || typeof awayAddress === 'string') throw new Error('no loopback port');
+  const awayOrigin = `http://127.0.0.1:${awayAddress.port}`;
 
-  const { profile } = await profileWithService(origin, secretFile);
+  // The credential lives INSIDE the project's own tree, which is the scope the
+  // host approves. A declared path outside the approved roots is now refused
+  // before anything is read, so a fixture secret in a temp directory would be
+  // testing the refusal rather than the bridge.
+  const { profile, data } = await profileWithService(origin);
+  const secretFile = path.join(profile, MUTE, 'token');
+  await fs.writeFile(secretFile, 'the-real-credential\n');
+  // The declaration is written now that the path is known.
+  await fs.writeFile(path.join(profile, MUTE, 'local-service.json'), JSON.stringify({
+    schemaVersion: 1,
+    services: [{ origin, secret: 'operator' }],
+    secrets: [{ id: 'operator', file: secretFile, header: 'authorization', scheme: 'Bearer' }],
+  }));
+  void data;
   const launched = await launchPapers(profile, { fixtures: false, testInvokeChannel: true });
   try {
     const page = await launched.app.firstWindow();
@@ -165,6 +191,42 @@ it('the merged tree launcher routes, and the bridge reaches a real local service
     // declared - never one the page supplied.
     expect(seen).toHaveLength(1);
     expect(seen[0]!.authorization).toBe('Bearer the-real-credential');
+
+    // --- THE REDIRECT, against a REAL Electron transport -----------------------
+    // The unit tests prove the bridge's policy; this proves the transport does not
+    // defeat it. `net.fetch` follows redirects by default, so if the bridge's
+    // `redirect: 'manual'` were ignored the hop below would be CHASED and the
+    // undeclared second service would record a request.
+    const redirected = await evalInBackpackProject(launched.app, `
+      (async () => {
+        const url = ${JSON.stringify(`${origin}/redirect-away`)};
+        const requestId = 'redir-' + Math.random().toString(36).slice(2);
+        return await new Promise((resolve) => {
+          function onResult(event) {
+            if (!event.data || event.data.type !== 'papers:host:result') return;
+            if (event.data.requestId !== requestId) return;
+            window.removeEventListener('message', onResult);
+            resolve(event.data);
+          }
+          window.addEventListener('message', onResult);
+          window.postMessage({ type: 'papers:project:local-service-fetch', requestId, url }, location.origin);
+          setTimeout(() => resolve({ type: 'timeout' }), 8000);
+        });
+      })()
+    `) as { ok?: boolean; error?: string; type?: string; localService?: { ok: boolean; status?: number; detail?: string } };
+
+    expect(redirected.error).toBeUndefined();
+    // Refused, as a service the bridge could not complete a request against:
+    // MEASURED, Electron's `net.fetch` throws "Redirect was cancelled" instead of
+    // handing back the 3xx, so the hop is never chased and its Location is never
+    // acted on.
+    expect(redirected.localService?.ok).toBe(false);
+    expect(redirected.localService?.detail).toContain('could not be reached');
+    // THE ASSERTION THAT MATTERS: the transport did NOT follow it. The undeclared
+    // loopback service received nothing at all - which is the property the
+    // initial-URL-only check could not give: this machine never goes where the
+    // project did not declare.
+    expect(stolen).toEqual([]);
 
     // --- THE LAUNCHER, which must NOT reach a service --------------------------
     await page.locator('.titlebar-left > button').click();
@@ -223,5 +285,6 @@ it('the merged tree launcher routes, and the bridge reaches a real local service
   } finally {
     await launched.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await new Promise<void>((resolve) => awayServer.close(() => resolve()));
   }
 }, 180_000);

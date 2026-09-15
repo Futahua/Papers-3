@@ -971,6 +971,15 @@ async function bootstrap(): Promise<void> {
     }
     const bridge = createLocalServiceBridge({
       declaration,
+      // THE SCOPE A DECLARED CREDENTIAL MAY BE READ FROM. Both are locations the
+      // host itself decides: the project's own tree, and the host's per-project
+      // config directory (where `backpack.json` already lives). A declaration is
+      // project-authored input, so without this it could name any readable file on
+      // the machine and have it attached to a request.
+      secretRoots: [
+        root,
+        path.join(app.getPath('userData'), 'PapersData', 'backpacks', projectId),
+      ],
       readSecretFile: (file) => {
         // The top-level `readFileSync` import, not a fresh `require`: the merge
         // brought the bridge in beside code that already imports it, and two
@@ -981,10 +990,19 @@ async function bootstrap(): Promise<void> {
           return null;
         }
       },
-      performRequest: async ({ url, method, headers, body }) => {
+      performRequest: async ({ url, method, headers, body, redirect }) => {
         const response = await net.fetch(url, {
           method,
           headers,
+          // THE REDIRECT FIX. `net.fetch` follows redirects by default, which
+          // would send this machine to a destination nothing validated - the
+          // declaration and the loopback check only ever saw the FIRST url.
+          // MEASURED against a real Electron: with `manual`, a 3xx makes
+          // `net.fetch` throw "Redirect was cancelled" rather than handing the
+          // response back. So the hop is refused and never chased, which is the
+          // property that matters; the bridge's own hop checks still apply to any
+          // Location that does reach it.
+          redirect,
           ...(body === null ? {} : { body }),
         });
         return {
