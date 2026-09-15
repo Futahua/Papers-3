@@ -356,6 +356,8 @@ namespace Stage0Tools
         private static string leasePath, controlDir, hostSpec;
         private static long targetHwnd, hostHwnd;
         private static bool asyncPos;
+        /// <summary>Self-test only: treat authority as granted so the recorder can be validated. Never set by Papers.</summary>
+        private static bool selftestForceAuthority;
         private static string lastCommand = "";
 
         private static void Main(string[] args)
@@ -378,6 +380,7 @@ namespace Stage0Tools
             if (a.ContainsKey("target")) long.TryParse(a["target"], out targetHwnd);
             if (a.ContainsKey("hostid")) long.TryParse(a["hostid"], out hostHwnd);
             asyncPos = a.ContainsKey("async");
+            selftestForceAuthority = a.ContainsKey("selftest-force-authority");
 
             switch (role)
             {
@@ -476,6 +479,11 @@ namespace Stage0Tools
             // foreground rule a condition inside the thing it is meant to stop.
             var zStop = new ManualResetEventSlim(false);
             bool zOrderEnabled = false;
+            // Counted rather than inferred: 'the controller made no z-order write' is
+            // only checkable if the controller says how many it made.
+            int zWrites = 0;
+            int zWithheld = 0;
+            uint lastFgPid = 0;
             var zThread = new Thread(() =>
             {
                 while (!zStop.IsSet)
@@ -494,17 +502,55 @@ namespace Stage0Tools
                         IntPtr fg = N.GetForegroundWindow();
                         uint fgPid; N.GetWindowThreadProcessId(fg, out fgPid);
                         uint hostPid; N.GetWindowThreadProcessId(host, out hostPid);
-                        bool papersFamilyForeground = fgPid == hostPid;
+                        // selftestForceAuthority exists ONLY so the recording
+                        // instrument can be validated without a human and without
+                        // touching a window the creator uses. It is what lets the
+                        // self-test show the counter can move, and the control case
+                        // show it does not move when authority is withheld. It is
+                        // never reachable from Papers: this binary is a disposable
+                        // STAGE 0 fixture, and nothing in the product spawns it.
+                        bool papersFamilyForeground = fgPid == hostPid || selftestForceAuthority;
 
-                        WriteZState(papersFamilyForeground, fgPid, hostPid);
-                        if (!papersFamilyForeground) continue;
+                        // A transcript, not only a snapshot. A reader of the latest
+                        // state can never tell what was true at the moment of a click:
+                        // the file is rewritten every tick, so a test that samples it
+                        // after any delay is sampling the wrong instant and cannot
+                        // distinguish 'the rule held' from 'the rule was not exercised'.
+                        // Recording the transitions means the assertion is about what
+                        // happened, not about when the test looked.
+                        if (fgPid != lastFgPid)
+                        {
+                            lastFgPid = fgPid;
+                            ZEvent("foreground", fgPid, hostPid, papersFamilyForeground, zWrites, zWithheld);
+                        }
+
+                        if (!papersFamilyForeground)
+                        {
+                            zWithheld++;
+                            WriteZState(false, fgPid, hostPid, zWrites, zWithheld);
+                            continue;
+                        }
+                        WriteZState(true, fgPid, hostPid, zWrites, zWithheld);
 
                         IntPtr target = N.H(lease.Hwnd);
                         if (Revalidate(lease, target) != null) continue;
                         // Immediately above the host, in the ordinary band. No
-                        // HWND_TOPMOST, no activation — nothing that could take
+                        // HWND_TOPMOST, no activation - nothing that could take
                         // focus from whatever the creator is using.
-                        N.SetWindowPos(target, host, 0, 0, 0, 0,
+                        //
+                        // THE ARGUMENTS ARE THE OTHER WAY ROUND ON PURPOSE.
+                        // SetWindowPos(hwnd, hWndInsertAfter, ...) places `hwnd`
+                        // BEHIND hWndInsertAfter. So SetWindowPos(target, host, ...)
+                        // - the obvious reading of "put the target above the host" -
+                        // puts it UNDERNEATH instead. The instrument self-test caught
+                        // that after nine writes had failed to lift the fixture. To
+                        // land the foreign window directly above the host, the host is
+                        // the window that moves: it moves behind the target. That is a
+                        // z-order change to Papers' own window, which Papers is
+                        // entitled to make, and it activates nothing.
+                        zWrites++;
+                        ZEvent("write", fgPid, hostPid, true, zWrites, zWithheld);
+                        N.SetWindowPos(host, target, 0, 0, 0, 0,
                             N.SWP_NOMOVE | N.SWP_NOSIZE | N.SWP_NOACTIVATE);
                     }
                     catch { }
@@ -525,7 +571,7 @@ namespace Stage0Tools
                         break;
                     case "zorder":
                         zOrderEnabled = cmd.EndsWith("on", StringComparison.OrdinalIgnoreCase);
-                        WriteZState(false, 0, 0);
+                        WriteZState(false, 0, 0, zWrites, zWithheld);
                         break;
                     case "release":
                         zStop.Set();
@@ -549,12 +595,33 @@ namespace Stage0Tools
             }
         }
 
-        private static void WriteZState(bool authority, uint fgPid, uint hostPid)
+        /// <summary>Append one z-order decision to the transcript.</summary>
+        private static void ZEvent(string kind, uint fgPid, uint hostPid, bool authority, int zWrites, int zWithheld)
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                sb.Append("{\"at\":\"").Append(DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture)).Append('"');
+                sb.Append(",\"event\":\"").Append(kind).Append('"');
+                sb.Append(",\"foregroundPid\":").Append(fgPid);
+                sb.Append(",\"hostPid\":").Append(hostPid);
+                sb.Append(",\"authority\":").Append(authority ? "true" : "false");
+                sb.Append(",\"writes\":").Append(zWrites);
+                sb.Append(",\"withheld\":").Append(zWithheld);
+                sb.Append('}');
+                File.AppendAllText(Path.Combine(controlDir, "zorder-log.jsonl"), sb.ToString() + Environment.NewLine);
+            }
+            catch { }
+        }
+
+        private static void WriteZState(bool authority, uint fgPid, uint hostPid, int zWrites, int zWithheld)
         {
             try
             {
                 var sb = new StringBuilder();
                 sb.Append("{\"zOrderAuthority\":").Append(authority ? "true" : "false");
+                sb.Append(",\"zOrderWrites\":").Append(zWrites);
+                sb.Append(",\"zOrderWithheld\":").Append(zWithheld);
                 sb.Append(",\"foregroundPid\":").Append(fgPid);
                 sb.Append(",\"hostPid\":").Append(hostPid);
                 sb.Append(",\"rule\":\"no z-order authority while an unrelated application is foreground\"");

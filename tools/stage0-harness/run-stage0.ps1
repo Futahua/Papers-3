@@ -27,7 +27,7 @@ $results = New-Object System.Collections.ArrayList
 $unproven = New-Object System.Collections.ArrayList
 # Some preconditions this rig cannot create for itself. Windows will not let a
 # background process take the foreground, which is precisely the protection the
-# feature has to respect — so "the user brought Papers forward" cannot be
+# feature has to respect - so "the user brought Papers forward" cannot be
 # simulated here without using the focus coercion the implementation is
 # forbidden to use. Those checks are recorded as not proven, never as passes.
 function CannotProve([string]$name, [string]$why) {
@@ -118,7 +118,7 @@ StopAll
 Write-Host "`n=== STAGE 0 evidence run $stamp ===" -ForegroundColor Cyan
 Write-Host "convention: GetWindowRect, physical pixels, PMv2 measurer; DWM frame is diagnostic only`n"
 
-# ── T1: what the harness actually looks like ────────────────────────────────
+# --- T1: what the harness actually looks like ------------------------------------
 $foreign = StartHarness "$Root\foreign" 'Stage 0 Harness' 200 200 640 420 '380x260'
 $hostw = StartHarness "$Root\host" 'Papers Stand-in' 900 120 700 500
 $pf = Probe $foreign.proc.Id
@@ -142,7 +142,7 @@ Record 'the adopted target is not topmost, not elevated, not a child, restored' 
     topmost = $selfW.topmost; elevated = $selfW.elevated; child = $selfW.child; showCmd = $selfW.showCmd
 }
 
-# ── T2: owned modal sits above its owner, by measurement ────────────────────
+# --- T2: owned modal sits above its owner, by measurement ------------------------
 Send $foreign.ctl 'modal'
 $pm = Probe $foreign.proc.Id
 $owner = $pm.windows | Where-Object { $_.hwnd -eq $foreign.hwnd }
@@ -157,7 +157,7 @@ if (@($modal).Count -eq 1) {
     }
 }
 
-# ── T3: acquire the lease ───────────────────────────────────────────────────
+# --- T3: acquire the lease -------------------------------------------------------
 $lease = "$Root\lease.json"
 $fctl = "$Root\follower"
 New-Item -ItemType Directory -Force -Path $fctl | Out-Null
@@ -177,7 +177,7 @@ Record 'an independent watchdog process is running for the lease' (
     note = 'a different process from the follower, sharing only the lease file'
 }
 
-# ── T4: placement without activation ────────────────────────────────────────
+# --- T4: placement without activation --------------------------------------------
 $fgBefore = FgInfo
 $target = @{ x = 120; y = 160; w = 700; h = 460 }
 Send $fctl ("place:{0},{1},{2},{3}" -f $target.x, $target.y, $target.w, $target.h)
@@ -194,7 +194,7 @@ Record 'and the foreign target is not the foreground window after placement' ($f
     foreignHwnd = $foreign.hwnd; foreground = $fgAfter
 }
 
-# ── T5: a rectangle the application refuses ─────────────────────────────────
+# --- T5: a rectangle the application refuses -------------------------------------
 Send $fctl 'place:120,160,200,120'
 $clamped = SettleRect $foreign.proc.Id $foreign.hwnd
 Record 'a below-minimum request is UNREPRESENTABLE TARGET, reported not tolerated' (
@@ -203,7 +203,7 @@ Record 'a below-minimum request is UNREPRESENTABLE TARGET, reported not tolerate
     verdict = 'UNREPRESENTABLE TARGET'; note = 'the application refused; the tolerance was not widened'
 }
 
-# ── T6: explicit release restores ───────────────────────────────────────────
+# --- T6: explicit release restores -----------------------------------------------
 Send $fctl 'release'
 Start-Sleep -Milliseconds 800
 $restored = SettleRect $foreign.proc.Id $foreign.hwnd
@@ -213,7 +213,7 @@ Record 'release restores the original rectangle exactly' ((MaxDelta $dr) -eq 0) 
 Record 'release is recorded on the lease' ($lr.state -eq 'released') @{ state = $lr.state; note = $lr.note }
 Stop-Process -Id $follower.Id -Force -ErrorAction SilentlyContinue
 
-# ── T7: the dead-man. Kill the experimenter mid-lease. ──────────────────────
+# --- T7: the dead-man. Kill the experimenter mid-lease. --------------------------
 $lease2 = "$Root\lease-deadman.json"
 $fctl2 = "$Root\follower-deadman"
 New-Item -ItemType Directory -Force -Path $fctl2 | Out-Null
@@ -249,7 +249,7 @@ if ($restoredBy) {
     Record 'the watchdog left a log naming what it did' ($wdLog -match 'restoring') @{ log = $wdLog }
 }
 
-# ── T8: the harm model. The application remembers where it was. ─────────────
+# --- T8: the harm model. The application remembers where it was. -----------------
 Send $foreign.ctl 'quit'
 Wait-Process -Id $foreign.proc.Id -Timeout 5 -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
@@ -261,9 +261,9 @@ $reopened = SettleRect $foreign2.proc.Id $foreign2.hwnd
 Record 'and reopening it puts it back where the watchdog left it, not where Papers put it' (
     $reopened.x -eq $orig.x -and $reopened.y -eq $orig.y) @{ reopened = $reopened; original = $orig }
 
-# ── T9: refusals ────────────────────────────────────────────────────────────
+# --- T9: refusals ----------------------------------------------------------------
 # Every refusal invocation is bounded. A follower that *accepts* a target sits in
-# its command loop forever by design — an unbounded wait on a refusal test
+# its command loop forever by design - an unbounded wait on a refusal test
 # therefore hangs the whole run instead of failing it, which is exactly what
 # happened the first time this was run.
 function TryAdopt([string]$leaseFile, [string]$ctlDir, [long]$targetHwnd, [int]$timeoutSec = 8) {
@@ -297,7 +297,7 @@ $r2 = TryAdopt "$Root\lease-nowindow.json" "$Root\refuse2" 0
 Record 'a target that is not a window is refused, and no lease is created' (
     -not $r2.accepted -and $null -ne $r2.lease -and $r2.lease.state -eq 'refused') @{ lease = $r2.lease }
 
-# ── T10: foreground authority over z-order — the central architectural test ──
+# --- T10: foreground authority over z-order - the central architectural test -----
 # "PAPERS HAS NO Z-ORDER AUTHORITY WHILE AN UNRELATED APPLICATION IS FOREGROUND."
 # Nothing here coerces focus. An unrelated window becomes foreground because a
 # new window is created and shown, which is what happens when the creator raises
@@ -399,7 +399,7 @@ Record 'and while it is foreground the controller makes NO z-order write' ($held
 }
 
 # Foreground returns to Papers. Closing the unrelated window does not hand the
-# foreground back on its own — measured, it went to the adopted window — so the
+# foreground back on its own - measured, it went to the adopted window - so the
 # foreground is handed back the only way this rig may: by showing a host window.
 Send $unrelated.ctl 'quit'
 Start-Sleep -Milliseconds 700
@@ -437,7 +437,7 @@ Send $zctl 'release'
 Start-Sleep -Milliseconds 500
 Stop-Process -Id $zf.Id -Force -ErrorAction SilentlyContinue
 
-# ── T11: a hung foreign window must not hang the experimenter ───────────────
+# --- T11: a hung foreign window must not hang the experimenter -------------------
 # SWP_ASYNCWINDOWPOS exists for callers on a different input queue. The
 # measurement is the time from writing the placement command to the follower
 # reporting it handled it: synchronously, that time contains the whole hang.
@@ -478,7 +478,7 @@ Record 'without it the experimenter is blocked for the whole hang' (
 Send $foreign2.ctl 'report'
 Start-Sleep -Milliseconds 600
 
-# ── evidence written out ────────────────────────────────────────────────────
+# --- evidence written out --------------------------------------------------------
 $summary = [pscustomobject]@{
     run = $stamp
     convention = 'GetWindowRect, physical pixels, PMv2 measurer; DWMM extended frame bounds diagnostic only'
