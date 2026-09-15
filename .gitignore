@@ -26,3 +26,9 @@ err.txt
 electron.vite.config.*.mjs
 # Python bytecode from the companion connector
 __pycache__/
+
+# STAGE 0 disposable harness: compiled fixtures and per-run evidence
+tools/stage0-harness/*.exe
+tools/stage0-harness/evidence/
+tools/stage0-harness/last-run.json
+
