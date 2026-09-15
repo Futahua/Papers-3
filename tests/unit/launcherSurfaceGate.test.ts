@@ -22,6 +22,8 @@
  *      window enumeration, native dialogs, or the ability to write shared state.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -229,5 +231,59 @@ describe('the launcher kind is its own kind', () => {
     expect(LAUNCHER_SURFACE_KIND).not.toBe(COMPACT_WIDGET_SURFACE_KIND);
     expect(LAUNCHER_SURFACE_KIND).not.toBe(WORKSPACE_SURFACE_KIND);
     expect(LAUNCHER_SURFACE_KIND).not.toBe(DETACHED_SURFACE_KIND);
+  });
+});
+
+describe('every channel a project page can reach is classified', () => {
+  /**
+   * The list is EXTRACTED FROM THE PRELOAD, not hand-maintained.
+   *
+   * This exists because two real channels were missing from the map, and the
+   * consequence was silent in the worst way: the capability check answers "not
+   * granted" for an unclassified channel, so a missing entry REFUSES a channel a
+   * project is entitled to. `local-service-fetch` arrived from a merge and
+   * `open-new-surface` from the capability work itself; neither was caught by
+   * tests that only checked the channels someone remembered to list.
+   */
+  const preload = readFileSync(
+    new URL('../../src/preload/backpackProject.ts', import.meta.url),
+    'utf8',
+  );
+  const invoked = [...preload.matchAll(/ipcRenderer\.invoke\('(host:backpack-project:[a-z-]+)'/g)]
+    .map((match) => match[1]!)
+    .filter((channel, index, all) => all.indexOf(channel) === index)
+    .sort();
+
+  it('found the project channels in the preload at all', () => {
+    // A guard on the guard: if the preload changes shape this test must fail
+    // rather than silently check an empty list.
+    expect(invoked.length).toBeGreaterThan(15);
+    expect(invoked).toContain('host:backpack-project:state-load');
+    expect(invoked).toContain('host:backpack-project:local-service-fetch');
+  });
+
+  it('classifies every one of them, so none is refused for being unclassified', () => {
+    expect(invoked.filter((channel) => capabilityForChannel(channel) === null)).toEqual([]);
+  });
+
+  it('gives the local-service bridge its own capability, and the launcher does not get it', () => {
+    // The bridge reaches a service on this machine with a credential the project
+    // declared. That is its own kind of reach: not the project's document, and
+    // not the creator's desktop.
+    expect(capabilityForChannel('host:backpack-project:local-service-fetch')).toBe('service');
+    expect(projectCapabilityDecision(LAUNCHER_SURFACE_KIND, 'service')).toBe(false);
+    // The surfaces the bridge was built for keep it.
+    for (const kind of ['project', DETACHED_SURFACE_KIND, 'widget']) {
+      expect(projectCapabilityDecision(kind, 'service')).toBe(true);
+    }
+  });
+
+  it('distinguishes opening a surface from writing the project document', () => {
+    // Both change the workspace; only one is a launcher writing state it cannot
+    // take back.
+    expect(capabilityForChannel('host:backpack-project:open-new-surface')).toBe('surface');
+    expect(projectCapabilityDecision(LAUNCHER_SURFACE_KIND, 'surface')).toBe(true);
+    expect(capabilityForChannel('host:backpack-project:state-save-checked')).toBe('mutate');
+    expect(projectCapabilityDecision(LAUNCHER_SURFACE_KIND, 'mutate')).toBe(false);
   });
 });

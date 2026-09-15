@@ -28,6 +28,7 @@ import type {
   SaveStateResult,
 } from './backpacks/backpackProjectService';
 import { parseBackpackProjectWebUrl } from './backpacks/backpackProjectWebLink';
+import type { LocalServiceResponse } from './backpacks/localServiceBridge';
 import type { LogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import type { SurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { BACKPACK_PROJECT_SCHEME } from './backpacks/backpackProjectService';
@@ -73,6 +74,13 @@ export interface FacadeDeps {
    * `sendersForProject` -- project membership is a different question from
    * window membership.
    */
+  /**
+   * The local-service capability: a project page reaching an HTTP service the
+   * creator runs on this machine. The host knows only the project's ROOT - the
+   * request, the declaration and the credential all live in
+   * `localServiceBridge`, and no project's name appears anywhere.
+   */
+  localServiceFetch?: (projectId: string, request: unknown) => Promise<LocalServiceResponse>;
   broadcastToHosts: (channel: string, payload: unknown) => void;
   sendToWindow: (windowId: number, channel: string, payload: unknown) => void;
   /** Exact host delivery for transactions that cannot succeed headlessly. */
@@ -972,6 +980,22 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async loadBackpackProjectState(senderId: number): Promise<unknown> {
     return this.deps.backpackProjects.loadState(this.requireProjectForSender(senderId));
+  }
+
+  /**
+   * Run one local-service request for the project this sender belongs to.
+   *
+   * The sender is resolved to a project exactly as every other project-scoped
+   * capability does, so a surface cannot act for a project it is not showing.
+   * What the request may reach, and which credential it carries, come from the
+   * project's own declaration.
+   */
+  async fetchLocalService(senderId: number, request: unknown): Promise<LocalServiceResponse> {
+    const projectId = this.requireProjectForSender(senderId);
+    if (!this.deps.localServiceFetch) {
+      return { ok: false, detail: 'this build has no local-service capability' };
+    }
+    return this.deps.localServiceFetch(projectId, request);
   }
 
   /**

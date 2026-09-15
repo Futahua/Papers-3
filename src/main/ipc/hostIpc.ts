@@ -11,6 +11,12 @@ import type { HostWorkspaceSurfaceMoveTarget } from '../hostFacade';
 import { parseWorkspaceTopology, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 export interface HostFacade {
+  /**
+   * One local-service request for the project a sender belongs to. Optional so a
+   * build without the capability answers with a typed refusal rather than
+   * failing to start.
+   */
+  fetchLocalService?(senderId: number, request: unknown): Promise<unknown>;
   isHostSender(sender: WebContents): boolean;
   isBackpackProjectSender(sender: WebContents): boolean;
   /**
@@ -267,6 +273,15 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpack-project:run-action', (event, actionId) =>
     facade.runBackpackProjectAction(event.sender.id, backpackProjectActionIdSchema.parse(actionId)),
+  );
+  // The local-service capability. `projectAllowed` because a project surface is
+  // exactly who may use it, and the facade resolves that sender to its project
+  // before anything is reached. The payload is passed through untyped here and
+  // validated where it is used: the bridge refuses anything malformed, and a
+  // second schema in this file would be a second place to keep in step.
+  handle('host:backpack-project:local-service-fetch', (event, request) =>
+    facade.fetchLocalService?.(event.sender.id, request) ?? Promise.resolve({ ok: false, detail: 'this build has no local-service capability' }),
+    true,
   );
   handle('host:backpack-project:copy-text', (event, text) =>
     facade.copyBackpackProjectText(event.sender.id, backpackProjectTextSchema.parse(text)),

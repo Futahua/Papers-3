@@ -42,7 +42,16 @@ export type SurfaceKind = typeof WORKSPACE_SURFACE_KIND | typeof DETACHED_SURFAC
  * for it, so a new channel lands in a group by its nature and every kind's
  * answer follows from that group.
  */
-export type ProjectCapability = 'read' | 'invoke' | 'clipboard' | 'reveal' | 'mutate' | 'native' | 'delegate';
+export type ProjectCapability =
+  | 'read'
+  | 'invoke'
+  | 'clipboard'
+  | 'reveal'
+  | 'mutate'
+  | 'native'
+  | 'delegate'
+  | 'surface'
+  | 'service';
 
 /** Channels, by what they do. Anything not listed is not a project channel. */
 const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.freeze({
@@ -73,6 +82,17 @@ const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.f
   'host:backpack-project:resolve-dropped-targets': 'native',
 
   'host:backpack-project:delegate-wave': 'delegate',
+
+  // Opening a NEW project surface in the workspace. Its own capability, not
+  // `mutate`: this changes the workspace's shape, not the project's document, and
+  // conflating the two would make "a launcher must not write project state" also
+  // mean "a launcher must not open what it found", which is not the same claim.
+  'host:backpack-project:open-new-surface': 'surface',
+
+  // Reaching a service ON THIS MACHINE through the host, which attaches a
+  // credential the project declared. Its own capability because it is its own
+  // kind of reach: not the project's document, and not the creator's desktop.
+  'host:backpack-project:local-service-fetch': 'service',
 });
 
 /** What each kind of owned surface is granted. Not listed means nothing. */
@@ -83,9 +103,10 @@ const KIND_CAPABILITIES: Readonly<Record<string, readonly ProjectCapability[] | 
   detached: 'all',
   widget: 'all',
   // The launcher reads the project so it has something to search, runs the item
-  // the creator chooses, and copies the text of one. It cannot write, reveal or
-  // reach the desktop: see the mutate and reveal decisions below.
-  launcher: ['read', 'invoke', 'clipboard'] as const,
+  // the creator chooses, copies the text of one, and may open a full surface for
+  // a result that needs one. It cannot write the document, reveal anything on the
+  // desktop, or reach a service: see the mutate, reveal and service decisions.
+  launcher: ['read', 'invoke', 'clipboard', 'surface'] as const,
 });
 
 /** The capability a channel belongs to, or null when it is not a project channel. */

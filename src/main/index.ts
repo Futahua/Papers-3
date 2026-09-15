@@ -1,12 +1,13 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, globalShortcut, ipcMain, nativeImage, screen, session, shell, webContents, type WebContents } from 'electron';
+import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, globalShortcut, ipcMain, nativeImage, net, screen, session, shell, webContents, type WebContents } from 'electron';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
+import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
 import { BackpackProjectSurfaceCollection } from './backpacks/backpackProjectSurfaceCollection';
 import { withProjectSurfaceKey } from './backpacks/projectSurfaceUrl';
@@ -947,7 +948,69 @@ async function bootstrap(): Promise<void> {
       channel,
     });
 
+  /**
+   * The local-service capability, assembled from the project's own declaration.
+   *
+   * The host contributes only mechanics: the request is made from the MAIN
+   * process, where there is no page origin for CORS to police and no CSP, and the
+   * credential is a file the project names. Nothing here knows any project's
+   * name, port or protocol, and the declaration is re-read on every request so
+   * an edited `local-service.json` takes effect without restarting Papers - the
+   * same property project files already have.
+   *
+   * The service still authenticates. A 401 comes back as a 401; the bridge only
+   * ever reports its OWN failures, so a caller's honest "the service is not
+   * reachable" banner keeps meaning exactly that.
+   */
+  const fetchLocalServiceFor = async (projectId: string, request: unknown): Promise<LocalServiceResponse> => {
+    const root = await backpackProjects.root(projectId);
+    if (!root) return { ok: false, detail: 'this project is not bound on this machine' };
+    const declaration = loadLocalServiceDeclaration(root);
+    if (!declaration) {
+      return { ok: false, detail: 'this project declares no local service (no readable local-service.json)' };
+    }
+    const bridge = createLocalServiceBridge({
+      declaration,
+      readSecretFile: (file) => {
+        // The top-level `readFileSync` import, not a fresh `require`: the merge
+        // brought the bridge in beside code that already imports it, and two
+        // spellings of one dependency drift.
+        try {
+          return readFileSync(file, 'utf8').trim();
+        } catch {
+          return null;
+        }
+      },
+      performRequest: async ({ url, method, headers, body }) => {
+        const response = await net.fetch(url, {
+          method,
+          headers,
+          ...(body === null ? {} : { body }),
+        });
+        return {
+          status: response.status,
+          headers: Object.fromEntries(response.headers.entries()),
+          body: await response.text(),
+        };
+      },
+      report: (report) => {
+        if (report.outcome === 'proxied') return;
+        console.error(`[papers] local service: ${report.detail}`);
+      },
+    });
+    const shape = (request ?? {}) as Record<string, unknown>;
+    return bridge.fetch({
+      url: typeof shape['url'] === 'string' ? shape['url'] : '',
+      ...(typeof shape['method'] === 'string' ? { method: shape['method'] } : {}),
+      ...(shape['headers'] !== undefined && shape['headers'] !== null && typeof shape['headers'] === 'object'
+        ? { headers: shape['headers'] as Record<string, string> }
+        : {}),
+      ...(typeof shape['body'] === 'string' ? { body: shape['body'] } : {}),
+    });
+  };
+
   const facade = new PapersHostFacade({
+    localServiceFetch: fetchLocalServiceFor,
     // Phase 1B.3: delivery with explicit semantics. Broadcast reaches every
     // live host renderer; sendToWindow reaches exactly one.
     broadcastToHosts: (channel, payload) => {

@@ -308,12 +308,19 @@ export class BackpackProjectService {
   }
 
   /**
-   * A project's root directory, or null when it is not bound on this machine.
+   * The project's root directory, or null when it is not bound on this machine.
    *
    * Exposed so a caller can read the project's OWN private control records from
    * the same validated location the host uses, rather than re-deriving the path
-   * from a guessed convention. It grants nothing: the records were already
-   * private to the main process.
+   * from a guessed convention. It grants nothing: those records were already
+   * private to the main process, and a renderer is told about a capability, never
+   * about a path.
+   *
+   * Two independent capabilities needed this and each added it: the launcher,
+   * which reads a project's declared command surface, and the local-service
+   * bridge, which reads its declared services. They are the same read, so they
+   * are the same method - and the merge that joined those branches found exactly
+   * that, two identical additions with different prose.
    */
   async root(backpackId: string): Promise<string | null> {
     const manifest = await this.manifest(backpackId);
