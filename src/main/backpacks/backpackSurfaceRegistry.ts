@@ -63,15 +63,17 @@ const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.f
   'host:backpack-project:launch-shortcut': 'invoke',
   'host:backpack-project:run-action': 'invoke',
 
-  // Putting TEXT on the clipboard, and nothing else. Kept separate from `reveal`
-  // because a launcher legitimately copies an item and has no business opening
-  // the creator's file manager or a browser.
+  // Putting TEXT on the clipboard, and nothing else. Kept separate from
+  // external activation because a launcher legitimately copies an item and
+  // has no business opening the creator's file manager on its own.
   'host:backpack-project:copy-text': 'clipboard',
 
-  // Activating something OUTSIDE Papers, on the creator's desktop.
+  // Revealing a local target in the creator's file manager. Opening a web link
+  // is an activation like launching a shortcut, so it deliberately belongs to
+  // `invoke` and remains available to the transient launcher.
   'host:backpack-project:pick-target': 'reveal',
   'host:backpack-project:reveal-shortcut': 'reveal',
-  'host:backpack-project:open-web-link': 'reveal',
+  'host:backpack-project:open-web-link': 'invoke',
 
   'host:backpack-project:state-save': 'mutate',
   'host:backpack-project:state-save-checked': 'mutate',
@@ -103,9 +105,9 @@ const KIND_CAPABILITIES: Readonly<Record<string, readonly ProjectCapability[] | 
   detached: 'all',
   widget: 'all',
   // The launcher reads the project so it has something to search, runs the item
-  // the creator chooses, copies the text of one, and may open a full surface for
-  // a result that needs one. It cannot write the document, reveal anything on the
-  // desktop, or reach a service: see the mutate, reveal and service decisions.
+  // the creator chooses, copies the text of one, opens web links, and may open
+  // a full surface for a folder result. It cannot write the document, reveal a
+  // local target in the file manager, or reach a service.
   launcher: ['read', 'invoke', 'clipboard', 'surface'] as const,
 });
 

@@ -163,19 +163,19 @@ describe('what each kind of owned surface may do', () => {
     expect(full(LAUNCHER_SURFACE_KIND, 'mutate')).toBe(false);
   });
 
-  it('does not let the launcher pick windows, reach the desktop, or join the delegate wave', () => {
-    // A launcher is a text box. These are the capabilities that would let a
-    // transient overlay reach outside the project.
+  it('does not let the launcher pick windows, reveal local targets, or join the delegate wave', () => {
+    // A launcher is a text box. Local file-manager reveal and native/delegate
+    // capabilities would let a transient overlay reach arbitrary desktop data.
     for (const kind of ['reveal', 'native', 'delegate']) {
       expect(full(LAUNCHER_SURFACE_KIND, kind)).toBe(false);
     }
-    // Copying TEXT is granted; activating something on the creator's desktop is
-    // not. They were one group until this change, and grouping them would have
-    // handed the launcher a file manager.
+    // Copying TEXT and opening a web URL are launcher actions; revealing a local
+    // target is not. They are deliberately separate capabilities.
     expect(full(LAUNCHER_SURFACE_KIND, 'clipboard')).toBe(true);
     expect(capabilityForChannel('host:backpack-project:reveal-shortcut')).toBe('reveal');
     expect(capabilityForChannel('host:backpack-project:pick-target')).toBe('reveal');
-    expect(capabilityForChannel('host:backpack-project:open-web-link')).toBe('reveal');
+    expect(capabilityForChannel('host:backpack-project:open-web-link')).toBe('invoke');
+    expect(full(LAUNCHER_SURFACE_KIND, 'invoke')).toBe(true);
     expect(capabilityForChannel('host:backpack-project:copy-text')).toBe('clipboard');
   });
 
