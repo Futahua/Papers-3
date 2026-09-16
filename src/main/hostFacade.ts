@@ -62,6 +62,8 @@ interface CanvasPersistedState {
 }
 
 export interface FacadeDeps {
+  /** Raise the owning Papers window after a project-created surface opens. */
+  bringWindowToFront?: (windowId: number) => void;
   /**
    * Phase 1B.3 delivery. Two primitives with explicit semantics, replacing a
    * single "the host" target:
@@ -740,8 +742,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || parsed.host !== projectId) {
       throw new Error('This project may open only its own Papers tab.');
     }
-    return this.runProjectOwnership(projectId, () =>
-      this.openWorkspaceSurfaceFromControlUngated(context.windowId, projectId, parsed.toString()));
+    return this.runProjectOwnership(projectId, async () => {
+      const opened = await this.openWorkspaceSurfaceFromControlUngated(context.windowId, projectId, parsed.toString());
+      // A global launcher is its own always-on-top window. Opening the folder
+      // surface must therefore explicitly return focus to Papers after the
+      // new tab is adopted, otherwise the launcher remains in front.
+      this.deps.bringWindowToFront?.(opened.windowId);
+      return opened;
+    });
   }
 
   private async openBackpackProjectUngated(senderId: number, id: string): Promise<OpenBackpackProject | null> {

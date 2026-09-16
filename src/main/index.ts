@@ -1029,6 +1029,10 @@ async function bootstrap(): Promise<void> {
 
   const facade = new PapersHostFacade({
     localServiceFetch: fetchLocalServiceFor,
+    bringWindowToFront: (windowId) => {
+      const context = papersWindows.get(windowId);
+      if (context) bringWindowToFront(context.owned.window);
+    },
     // Phase 1B.3: delivery with explicit semantics. Broadcast reaches every
     // live host renderer; sendToWindow reaches exactly one.
     broadcastToHosts: (channel, payload) => {
