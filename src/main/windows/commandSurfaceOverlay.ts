@@ -86,7 +86,7 @@ export type CommandSurfaceResolution =
 export interface CommandSurfaceOverlayDependencies {
   /** The focused project's entry URL for that project, or null. Owner-scoped:
    * two Papers windows may show one project with different runtimes. */
-  resolveEntryUrl(projectId: string): string | null;
+  resolveEntryUrl(projectId: string): Promise<string | null> | string | null;
   /**
    * Which project's command surface the launcher targets.
    *
@@ -269,9 +269,9 @@ export function createCommandSurfaceOverlay(
     }
     const surface = resolution.target;
 
-    const entryUrl = dependencies.resolveEntryUrl(surface.projectId);
+    const entryUrl = await dependencies.resolveEntryUrl(surface.projectId);
     if (entryUrl === null) {
-      return { ok: false, detail: 'the focused project has no surface to show the command surface in' };
+      return { ok: false, detail: 'the selected project has no surface to show the command surface in' };
     }
 
     let url: string;

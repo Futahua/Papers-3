@@ -2621,19 +2621,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   );
 
   const commandSurfaceRegistry: CommandSurfaceRegistry = createCommandSurfaceRegistry({
-    openProjects: () => {
-      const seen = new Set<string>();
-      const open: Array<{ projectId: string; root: string }> = [];
-      for (const windowId of papersWindows.windowIds) {
-        for (const runtime of papersWindows.get(windowId)?.owned.projectSurfaces.all() ?? []) {
-          const projectId = runtime.liveProjectId;
-          if (!projectId || seen.has(projectId)) continue;
-          seen.add(projectId);
-          open.push({ projectId, root: '' });
-        }
-      }
-      return open;
-    },
+    availableProjects: () => registry.list()
+      .filter((backpack) => !backpack.archived)
+      .map((backpack) => ({ projectId: backpack.id, root: '' })),
     readDeclaration: readLauncherDeclaration,
     nominatedProjectId: () => launcherNomination.nominatedProjectId(),
     nominate: (projectId) => launcherNomination.set(projectId),
@@ -2643,13 +2633,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     // The registry's refusal is carried out verbatim: it names the Backpacks it
     // looked at, which is the only thing the creator cannot check for themselves.
     resolveCommandSurface: () => commandSurfaceRegistry.resolve(),
-    resolveEntryUrl: (projectId) => {
-      for (const windowId of papersWindows.windowIds) {
-        const url = papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null;
-        if (url) return url;
-      }
-      return null;
-    },
+    resolveEntryUrl: async (projectId) => (await backpackProjects.open(projectId))?.url ?? null,
     preloadPath: path.join(preloadDir, 'backpackProject.cjs'),
     // An automated test cannot hold focus, so the real behaviour would close the
     // overlay before it could be observed. Only PAPERS_TEST_INVOKE_CHANNEL

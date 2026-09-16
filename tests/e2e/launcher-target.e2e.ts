@@ -387,7 +387,7 @@ async function setOverlayText(
   }, value);
 }
 
-it('Alt+A launches the project that declares a command surface, never the front tab', async () => {
+it('Alt+A launches the declared command surface even when that project is not open', async () => {
   const { profile } = await twoProjectProfile('papers-launcher-target-');
   const launched = await launchPapers(profile, { fixtures: false, testInvokeChannel: true });
   try {
@@ -396,31 +396,22 @@ it('Alt+A launches the project that declares a command surface, never the front 
       page.locator('.backpack-card').filter({ has: page.locator('.name', { hasText: name }) })
         .getByRole('button', { name: 'Enter', exact: true });
 
-    // --- 1. The reported defect: the front tab declares NOTHING ---------------
-    // Both projects are open as tabs and the MUTE one is left active - the
-    // creator's actual arrangement when they reported this.
+    // The only open tab declares NOTHING. The launcher project is bound in the
+    // registry but has never been opened in this process.
     await waitFor(async () => await enter('Mute Board').count() === 1, 15000, 'main picker');
     await enter('Mute Board').click();
     await waitFor(async () => await page.getByRole('tab', { name: 'Mute Board' }).count() === 1, 15000, 'mute open');
-    // Back returns to the picker with the tab still open; the second project is
-    // then added as a second tab.
-    await page.locator('.titlebar-left > button').click();
-    await waitFor(async () => await enter('Launcher Board').count() === 1, 15000, 'picker again');
-    await enter('Launcher Board').click({ button: 'middle' });
-    await waitFor(async () => await page.getByRole('tab').count() === 2, 15000, 'both tabs open');
-    await page.getByRole('tab', { name: 'Mute Board' }).click();
     await page.waitForTimeout(500);
     await focusAppWindow(launched.app);
 
     const opened = await press(launched.app);
-    expect(opened.ok).toBe(true);
+    expect(opened.ok, opened.detail).toBe(true);
 
     await waitForLauncherListener(launched.app);
     const ready = await overlayInfo(launched.app);
     expect(ready).not.toBeNull();
-    // THE ASSERTION THE OLD CODE FAILED: the launcher must not be showing the
-    // front tab's project. It used to load `papers-backpack://<mute>/...`, which
-    // is how Proxima's task board ended up inside the 640x220 letterbox.
+    // THE ASSERTION THE OLD CODE FAILED: the closed launcher project is opened
+    // on demand, instead of resolving only among already-open tab runtimes.
     expect(ready!.url).toContain(LAUNCHER);
     expect(ready!.url).not.toContain(MUTE);
     expect(ready!.url).toContain('papers-surface=command-surface');

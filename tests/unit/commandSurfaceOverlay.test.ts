@@ -88,6 +88,16 @@ describe('commandSurfaceOverlay opening', () => {
     expect(url.searchParams.get(COMMAND_SURFACE_MARKER)).toBe(COMMAND_SURFACE_MODE);
   });
 
+  it('awaits a project entry that is opened on demand', async () => {
+    const h = harness({
+      resolveEntryUrl: async () => 'papers-backpack://project-a/_papers-open/fresh/public/index.html',
+    });
+    const result = await createCommandSurfaceOverlay(h.deps).open();
+
+    expect(result.ok).toBe(true);
+    expect(h.created.calls.some((call) => call.includes('/_papers-open/fresh/public/index.html'))).toBe(true);
+  });
+
   it('refuses a URL that is not the bound project surface', async () => {
     const h = harness({ resolveEntryUrl: () => 'https://example.com/index.html' });
     const overlay = createCommandSurfaceOverlay(h.deps);

@@ -18,7 +18,7 @@ import {
   LAUNCHER_SURFACE_FIELD,
   createCommandSurfaceRegistry,
   type CommandSurfaceRegistryDependencies,
-  type OpenProject,
+  type AvailableProject,
   type ProjectLauncherDeclaration,
 } from '../../src/main/backpacks/commandSurfaceRegistry';
 
@@ -31,14 +31,14 @@ function declared(surface = 'command-surface'): ProjectLauncherDeclaration {
 }
 
 function harness(options: {
-  open: OpenProject[];
+  available: AvailableProject[];
   declarations?: Record<string, ProjectLauncherDeclaration>;
   nominated?: string | null;
 }) {
   const reads: string[] = [];
   const nominations: Array<string | null> = [];
   const deps: CommandSurfaceRegistryDependencies = {
-    openProjects: () => options.open,
+    availableProjects: () => options.available,
     readDeclaration: async (projectId) => {
       reads.push(projectId);
       return options.declarations?.[projectId] ?? null;
@@ -53,7 +53,7 @@ describe('the launcher target is the project that declares one', () => {
   it('ignores the front project when it declares nothing and another project does', async () => {
     // The exact reported defect. Proxima is in front; Papers-3 declares.
     const h = harness({
-      open: [
+      available: [
         { projectId: PROXIMA, root: 'C:\\proxima' },
         { projectId: PAPERS3, root: 'C:\\papers3' },
       ],
@@ -72,15 +72,15 @@ describe('the launcher target is the project that declares one', () => {
     // The rule must be stable when the creator switches tabs. Two declared
     // projects is ambiguous, so the answer is a refusal - the same answer no
     // matter which of them is in front.
-    const open = [
+    const available = [
       { projectId: PAPERS3, root: 'C:\\papers3' },
       { projectId: THIRD, root: 'C:\\third' },
     ];
     const declarations = { [PAPERS3]: declared(), [THIRD]: declared('quick-run') };
 
-    const first = await createCommandSurfaceRegistry(harness({ open, declarations }).deps).resolve();
+    const first = await createCommandSurfaceRegistry(harness({ available, declarations }).deps).resolve();
     const second = await createCommandSurfaceRegistry(
-      harness({ open: [...open].reverse(), declarations }).deps,
+      harness({ available: [...available].reverse(), declarations }).deps,
     ).resolve();
 
     expect(first.ok).toBe(false);
@@ -93,7 +93,7 @@ describe('the launcher target is the project that declares one', () => {
 
   it('answers a nominated project even when several declare one', async () => {
     const h = harness({
-      open: [
+      available: [
         { projectId: PAPERS3, root: 'C:\\papers3' },
         { projectId: THIRD, root: 'C:\\third' },
       ],
@@ -110,7 +110,7 @@ describe('the launcher target is the project that declares one', () => {
 
   it('lets the nomination outrank a sole declared project, so it means one thing', async () => {
     const h = harness({
-      open: [
+      available: [
         { projectId: PAPERS3, root: 'C:\\papers3' },
         { projectId: THIRD, root: 'C:\\third' },
       ],
@@ -129,7 +129,7 @@ describe('the launcher refuses visibly rather than rendering something else', ()
   it('refuses when the only open project declares no command surface', async () => {
     // Proxima alone. It must NOT be rendered into a launcher-shaped window.
     const h = harness({
-      open: [{ projectId: PROXIMA, root: 'C:\\proxima' }],
+      available: [{ projectId: PROXIMA, root: 'C:\\proxima' }],
       declarations: {},
     });
     const result = await createCommandSurfaceRegistry(h.deps).resolve();
@@ -143,19 +143,19 @@ describe('the launcher refuses visibly rather than rendering something else', ()
     expect(result.detail).not.toContain('not reachable');
   });
 
-  it('refuses when no project is open at all', async () => {
-    const h = harness({ open: [], declarations: {} });
+  it('refuses when no project is available at all', async () => {
+    const h = harness({ available: [], declarations: {} });
     const result = await createCommandSurfaceRegistry(h.deps).resolve();
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
-    expect(result.reason).toBe('no-project-open');
-    expect(result.detail).toContain('no Backpack project is open');
+    expect(result.reason).toBe('no-project-available');
+    expect(result.detail).toContain('no Backpack project is available');
   });
 
   it('refuses when two projects declare one and says how to settle it', async () => {
     const h = harness({
-      open: [
+      available: [
         { projectId: PAPERS3, root: 'C:\\papers3' },
         { projectId: THIRD, root: 'C:\\third' },
       ],
@@ -172,9 +172,9 @@ describe('the launcher refuses visibly rather than rendering something else', ()
     expect(result.candidates).toEqual([PAPERS3, THIRD]);
   });
 
-  it('refuses when the nominated project is not open, rather than launching another', async () => {
+  it('refuses when the nominated project is not available, rather than launching another', async () => {
     const h = harness({
-      open: [{ projectId: PROXIMA, root: 'C:\\proxima' }],
+      available: [{ projectId: PROXIMA, root: 'C:\\proxima' }],
       declarations: {},
       nominated: PAPERS3,
     });
@@ -182,7 +182,7 @@ describe('the launcher refuses visibly rather than rendering something else', ()
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
-    expect(result.reason).toBe('nominated-project-not-open');
+    expect(result.reason).toBe('nominated-project-not-available');
     expect(result.detail).toContain(PAPERS3);
     expect(result.detail).not.toContain(PROXIMA);
   });
@@ -191,7 +191,7 @@ describe('the launcher refuses visibly rather than rendering something else', ()
     // A nomination left pointing at a project whose surface was removed must
     // not silently fall back to rendering a project with no command surface.
     const h = harness({
-      open: [
+      available: [
         { projectId: PROXIMA, root: 'C:\\proxima' },
         { projectId: PAPERS3, root: 'C:\\papers3' },
       ],
@@ -211,7 +211,7 @@ describe('the launcher refuses visibly rather than rendering something else', ()
 
   it('treats an unreadable declaration as no declaration, never as a command surface', async () => {
     const h = harness({
-      open: [{ projectId: PAPERS3, root: 'C:\\papers3' }],
+      available: [{ projectId: PAPERS3, root: 'C:\\papers3' }],
       declarations: {},
     });
     const deps = { ...h.deps, readDeclaration: vi.fn(async () => { throw new Error('EACCES'); }) };
@@ -224,7 +224,7 @@ describe('the launcher refuses visibly rather than rendering something else', ()
 
   it('deduplicates a project presented in two windows so it is not counted as two', async () => {
     const h = harness({
-      open: [
+      available: [
         { projectId: PAPERS3, root: 'C:\\papers3' },
         { projectId: PAPERS3, root: 'C:\\papers3' },
       ],
@@ -240,7 +240,7 @@ describe('the launcher refuses visibly rather than rendering something else', ()
 
 describe('the nomination is the creator\'s, not the host\'s guess', () => {
   it('writes the nomination through to whoever owns it, and reads it back', async () => {
-    const h = harness({ open: [], declarations: {} });
+    const h = harness({ available: [], declarations: {} });
     const registry = createCommandSurfaceRegistry(h.deps);
 
     registry.nominate(PAPERS3);

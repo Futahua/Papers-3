@@ -13,10 +13,10 @@
  * depended on an invisible tab could not hold one.
  *
  * THE RULE
- *   1. If the creator has NOMINATED a project, and it is open and declares a
+ *   1. If the creator has NOMINATED an available project, and it declares a
  *      command surface, that one. The nomination outranks everything, so the
  *      chord means the same thing every time it is pressed.
- *   2. Otherwise, if exactly ONE open project declares one, that one. With a
+ *   2. Otherwise, if exactly ONE available project declares one, that one. With a
  *      single candidate the rule needs no explaining and no configuring.
  *   3. Otherwise, REFUSE - visibly, naming what it looked at. Never render a
  *      project that does not declare a command surface, and never silently do
@@ -67,7 +67,7 @@ export interface ProjectLauncherDeclaration {
 }
 
 /** A project currently presented in some Papers window. */
-export interface OpenProject {
+export interface AvailableProject {
   projectId: string;
   /** The project root, where its private control records live. */
   root: string;
@@ -80,13 +80,13 @@ export interface LauncherTarget {
 
 export type LauncherRefusalReason =
   /** Nothing is open, so there is nothing that could have declared one. */
-  | 'no-project-open'
+  | 'no-project-available'
   /** Projects are open; none of them states it has a command surface. */
   | 'none-declare-a-command-surface'
   /** More than one does, so any pick would be a rule the creator must know. */
   | 'several-declare-a-command-surface'
   /** The creator nominated one, and it is not currently open. */
-  | 'nominated-project-not-open'
+  | 'nominated-project-not-available'
   /** The creator nominated one, and it no longer declares a command surface. */
   | 'nominated-project-declares-nothing';
 
@@ -101,8 +101,8 @@ export type LauncherRefusal = {
 export type LauncherResolution = { ok: true; target: LauncherTarget } | LauncherRefusal;
 
 export interface CommandSurfaceRegistryDependencies {
-  /** Every project currently presented, in any window. May repeat one project. */
-  openProjects(): OpenProject[];
+  /** Every non-archived Backpack project available to Papers. */
+  availableProjects(): AvailableProject[];
   /** Read a project's own declaration from its control record, or null. */
   readDeclaration(projectId: string, root: string): Promise<ProjectLauncherDeclaration | null>;
   /** The project the creator nominated, or null. */
@@ -193,10 +193,10 @@ export function createCommandSurfaceRegistry(
    * Read every open project's declaration. A project presented in two windows is
    * one project, so it is counted once.
    */
-  const declaredProjects = async (): Promise<Array<OpenProject & { declaration: ProjectLauncherDeclaration }>> => {
+  const declaredProjects = async (): Promise<Array<AvailableProject & { declaration: ProjectLauncherDeclaration }>> => {
     const seen = new Set<string>();
-    const found: Array<OpenProject & { declaration: ProjectLauncherDeclaration }> = [];
-    for (const project of dependencies.openProjects()) {
+    const found: Array<AvailableProject & { declaration: ProjectLauncherDeclaration }> = [];
+    for (const project of dependencies.availableProjects()) {
       if (seen.has(project.projectId)) continue;
       seen.add(project.projectId);
       // A declaration that cannot be read is no declaration. It must never make
@@ -215,16 +215,16 @@ export function createCommandSurfaceRegistry(
 
   return {
     async resolve(): Promise<LauncherResolution> {
-      const open = dependencies.openProjects();
+      const available = dependencies.availableProjects();
 
-      if (open.length === 0) {
+      if (available.length === 0) {
         return {
           ok: false,
-          reason: 'no-project-open',
+          reason: 'no-project-available',
           candidates: [],
           detail:
-            'no Backpack project is open in Papers, so there is nothing for the command surface '
-            + 'shortcut to launch. Open a Backpack, then press it again.',
+            'no Backpack project is available in Papers, so there is nothing for the command surface '
+            + 'shortcut to launch. Bind a Backpack project, then press it again.',
         };
       }
 
@@ -239,24 +239,24 @@ export function createCommandSurfaceRegistry(
         // A nomination is a statement about the creator's setup, so it is not
         // quietly ignored: falling through to a different project would make the
         // chord mean something they did not choose.
-        const isOpen = open.some((project) => project.projectId === nominated);
-        return isOpen
+        const isAvailable = available.some((project) => project.projectId === nominated);
+        return isAvailable
           ? {
             ok: false,
             reason: 'nominated-project-declares-nothing',
             candidates: declared.map((project) => project.projectId),
             detail:
-              `the project you nominated for the command surface shortcut (${nominated}) is open but `
+              `the project you nominated for the command surface shortcut (${nominated}) is available but `
               + 'does not declare a command surface, so the shortcut will not launch it or anything else. '
               + 'Nominate a project that declares one.',
           }
           : {
             ok: false,
-            reason: 'nominated-project-not-open',
+            reason: 'nominated-project-not-available',
             candidates: declared.map((project) => project.projectId),
             detail:
-              `the project you nominated for the command surface shortcut (${nominated}) is not open in `
-              + 'Papers. Open it, or nominate a project that is open.',
+              `the project you nominated for the command surface shortcut (${nominated}) is not available in `
+              + 'Papers. Bind it, or nominate an available project.',
           };
       }
 
@@ -266,12 +266,12 @@ export function createCommandSurfaceRegistry(
       }
 
       if (declared.length === 0) {
-        const names = open.map((project) => project.projectId).sort();
+        const names = available.map((project) => project.projectId).sort();
         // Named rather than counted: the creator cannot see the front tab, so
         // "which Backpack is it talking about" is exactly what they cannot check.
         const subject = names.length === 1
-          ? `the Backpack ${names[0]} is open, but it does not`
-          : `the Backpacks ${listed(names)} are open, but none of them`;
+          ? `the Backpack ${names[0]} is available, but it does not`
+          : `the Backpacks ${listed(names)} are available, but none of them`;
         return {
           ok: false,
           reason: 'none-declare-a-command-surface',
@@ -287,7 +287,7 @@ export function createCommandSurfaceRegistry(
         reason: 'several-declare-a-command-surface',
         candidates: declared.map((project) => project.projectId),
         detail:
-          `${declared.length} open projects declare a command surface (${listed(declared.map((project) => project.projectId))}), `
+          `${declared.length} available projects declare a command surface (${listed(declared.map((project) => project.projectId))}), `
           + 'so the shortcut cannot tell which one you mean. Nominate one and this chord will always launch it.',
       };
     },
