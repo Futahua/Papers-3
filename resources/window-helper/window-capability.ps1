@@ -95,6 +95,7 @@ namespace WH
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr GetProp(IntPtr hWnd, string lpString);
         [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr RemoveProp(IntPtr hWnd, string lpString);
         [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+        [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
         [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT pt);
@@ -452,6 +453,7 @@ $script:WhOps = @{
     return [long][WH.Win32]::GetWindowLong($id, [WH.Win32]::GWL_EXSTYLE)
   }
   OwnerHwnd = { param([IntPtr]$id) [WH.Win32]::GetWindow($id, [WH.Win32]::GW_OWNER) }
+  ParentHwnd = { param([IntPtr]$id) [WH.Win32]::GetParent($id) }
   RootAncestor = { param([IntPtr]$id) [WH.Win32]::GetAncestor($id, [WH.Win32]::GA_ROOT) }
   LastActivePopup = { param([IntPtr]$id) [WH.Win32]::GetLastActivePopup($id) }
   ProcessName = { param([IntPtr]$id)
@@ -802,6 +804,7 @@ function Test-WhTaskWorthy {
   if (($exStyle -band [WH.Win32]::WS_EX_TOOLWINDOW) -ne 0L -or
       ($exStyle -band [WH.Win32]::WS_EX_NOACTIVATE) -ne 0L) { return $false }
   $className = [string](& $script:WhOps['ClassName'] $id)
+  if ($script:WhOps.ContainsKey('ParentHwnd') -and (& $script:WhOps['ParentHwnd'] $id) -ne [IntPtr]::Zero) { return $false }
   if ($className -eq 'Progman' -or $className -eq 'WorkerW' -or
       $className -eq 'Microsoft.UI.Content.DesktopChildSiteBridge' -or
       $className -eq 'InputNonClientPointerSource') { return $false }
