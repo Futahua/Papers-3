@@ -63,6 +63,7 @@ import { createVisualWaitService } from './visual/visualWait';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createGlobalInvoke, type GlobalInvoke, type GlobalInvokeRegistrationReport } from './windows/globalInvoke';
+import { createAdoptedWindowDock } from './windows/adoptedWindowDockSession';
 import { bringWindowToFront } from './windows/windowFront';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
@@ -2581,6 +2582,49 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         });
       }
     });
+  }
+
+  // Window-dock: hover any ordinary application window and press the chord
+  // to tile it right of the focused Papers window, following moves/resizes
+  // until the chord is pressed again. Geometry only (no hide, no Z-order
+  // write), so a crash leaves a visible window behind, never a stranded one.
+  const adoptedDock = createAdoptedWindowDock({
+    service: windowCapabilityService,
+    screen,
+    shortcut: globalShortcut,
+  });
+  const adoptedDockReport = adoptedDock.register({
+    focusedWindow: () => {
+      const windows = papersWindows.windowIds;
+      const visible = windows.find((id) => {
+        const owned = papersWindows.get(id)?.owned.window;
+        return owned !== undefined && !owned.isDestroyed() && owned.isVisible();
+      });
+      const target = visible ?? windows.find((id) => {
+        const owned = papersWindows.get(id)?.owned.window;
+        return owned !== undefined && !owned.isDestroyed();
+      });
+      if (target === undefined) return null;
+      return papersWindows.get(target)?.owned.window ?? null;
+    },
+    notify: (outcome) => {
+      // Docking and release are their own visible feedback: the window
+      // moves. Only a refusal must speak, so a dead chord never looks like
+      // nothing happened.
+      if (outcome.outcome !== 'refused') return;
+      hostView?.webContents.send('host:event:host-error', {
+        component: 'Window dock',
+        what: 'The window under the cursor could not be docked.',
+        known: outcome.detail,
+        intact: 'Nothing was changed, and no other application was affected.',
+        retryUseful: true,
+        inspect: 'Shortcut: hover an ordinary application window, then press CommandOrControl+Alt+D.',
+        recover: 'Hover the window and press the shortcut again.',
+      });
+    },
+  });
+  if (!adoptedDockReport.registered) {
+    console.error(`[papers] window-dock unavailable: ${adoptedDockReport.detail}`);
   }
 
   // Per-window close/finalize ownership is installed by preparePapersWindow;
