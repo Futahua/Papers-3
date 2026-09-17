@@ -22,6 +22,8 @@ export function createWindowLifecycleWatcher(options: {
   let snapshotValue: WindowLifecycleBaseline | null = null;
   let sessionId: string | null = null;
   let stopping: Promise<void> | null = null;
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  let restartAttempts = 0;
   const listeners = new Set<(event: WindowLifecycleEvent) => void>();
   let lineReader: readline.Interface | null = null;
 
@@ -41,6 +43,13 @@ export function createWindowLifecycleWatcher(options: {
       lineReader?.close();
       lineReader = null;
       child = null;
+      if (!stopping && restartAttempts < 3) {
+        restartAttempts += 1;
+        restartTimer = setTimeout(() => {
+          restartTimer = null;
+          void start().catch(() => undefined);
+        }, 250 * restartAttempts);
+      }
     });
   }
 
@@ -48,6 +57,7 @@ export function createWindowLifecycleWatcher(options: {
     sessionId = message.trackerSessionId;
     if (message.type === 'baseline') {
       snapshotValue = message;
+      restartAttempts = 0;
       return;
     }
     for (const listener of [...listeners]) {
@@ -57,6 +67,7 @@ export function createWindowLifecycleWatcher(options: {
 
   function stop(): Promise<void> {
     if (stopping) return stopping;
+    if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
     const current = child;
     if (!current) return Promise.resolve();
     const pending = new Promise<void>((resolve) => {
