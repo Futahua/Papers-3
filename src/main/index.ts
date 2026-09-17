@@ -2997,16 +2997,20 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // Docking and release are their own visible feedback: the window
       // moves. Only a refusal must speak, so a dead chord never looks like
       // nothing happened.
-      if (outcome.outcome !== 'refused') return;
-      hostView?.webContents.send('host:event:host-error', {
-        component: 'Window dock',
-        what: 'The window under the cursor could not be docked.',
-        known: outcome.detail,
-        intact: 'Nothing was changed, and no other application was affected.',
-        retryUseful: true,
-        inspect: 'Shortcut: hover an ordinary application window, then press CommandOrControl+Alt+D.',
-        recover: 'Hover the window and press the shortcut again.',
-      });
+      if (outcome.outcome === 'refused') {
+        console.error(`[papers] window-dock refused: ${outcome.detail}`);
+        hostView?.webContents.send('host:event:host-error', {
+          component: 'Window dock',
+          what: 'The window under the cursor could not be docked.',
+          known: outcome.detail,
+          intact: 'Nothing was changed, and no other application was affected.',
+          retryUseful: true,
+          inspect: 'Shortcut: hover an ordinary application window, then press CommandOrControl+Alt+D.',
+          recover: 'Hover the window and press the shortcut again.',
+        });
+        return;
+      }
+      console.error(`[papers] window-dock ${outcome.outcome}: ${outcome.detail}`);
     },
   });
   if (!adoptedDockReport.registered) {
