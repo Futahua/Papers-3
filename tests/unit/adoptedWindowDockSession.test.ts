@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createAdoptedWindowDock,
   tileRightOf,
+  tileRightOfMany,
   toPhysical,
   type DockCapabilityService,
   type DockPapersWindow,
@@ -147,6 +148,15 @@ describe('tileRightOf', () => {
   });
 });
 
+describe('tileRightOfMany', () => {
+  it('keeps the first tile geometry and stacks later tiles below it', () => {
+    const papers = { x: 100, y: 100, width: 1200, height: 800 };
+    const area = { x: 0, y: 0, width: 3840, height: 1080 };
+    expect(tileRightOfMany(papers, 960, 0, 2, area)).toEqual({ x: 1308, y: 100, width: 960, height: 396 });
+    expect(tileRightOfMany(papers, 960, 1, 2, area)).toEqual({ x: 1308, y: 504, width: 960, height: 396 });
+  });
+});
+
 describe('toPhysical', () => {
   it('scales DIP by the display factor and falls back to 1', () => {
     expect(toPhysical({ x: 1308, y: 100, width: 960, height: 800 }, 1.5))
@@ -202,6 +212,31 @@ describe('adoptedWindowDockSession', () => {
     expect(dock.active).toBe(false);
     // Last write is the restore of the pre-adoption rectangle.
     expect(service.appliedBounds.at(-1)).toEqual({ x: 2000, y: 200, width: 960, height: 600 });
+  });
+
+  it('keeps two distinct Chrome windows adopted at the same time', async () => {
+    const service = fakeService({
+      observations: Array.from({ length: 20 }, () => success(observation())),
+    });
+    const dock = createAdoptedWindowDock({ service, screen: fakeScreen(), shortcut: fakeShortcut() });
+    const window = fakeWindow();
+    expect((await dock.toggle(window)).outcome).toBe('docked');
+
+    // The capability service identifies a window by its stable candidate id.
+    // Change that id in-place to model hovering a second Chrome top-level HWND.
+    (service.hover as Extract<WindowHoverResult, { outcome: 'success' }>).candidate!.id = 'chrome-2';
+    ((service.pick as Extract<WindowBindResult, { outcome: 'success' }>).capability as WindowRuntimeCapability).bindingId = 'binding-2';
+    expect((await dock.toggle(window)).outcome).toBe('docked');
+    expect(dock.active).toBe(true);
+    expect(service.appliedBounds).toContainEqual({ x: 1308, y: 100, width: 960, height: 396 });
+    expect(service.appliedBounds).toContainEqual({ x: 1308, y: 504, width: 960, height: 396 });
+
+    // Hovering the first identity again releases only that window; the second
+    // remains active and is retiled into the full-height slot.
+    (service.hover as Extract<WindowHoverResult, { outcome: 'success' }>).candidate!.id = 'cand-1';
+    ((service.pick as Extract<WindowBindResult, { outcome: 'success' }>).capability as WindowRuntimeCapability).bindingId = 'binding-1';
+    expect((await dock.toggle(window)).outcome).toBe('released');
+    expect(dock.active).toBe(true);
   });
 
   it('follows Papers moves and stops after release', async () => {
