@@ -11,6 +11,7 @@
  */
 
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
+import type { WindowLifecycleBaseline } from '../windows/windowLifecycleTypes';
 
 import {
   type PersistedWindowMemberDescriptor,
@@ -49,6 +50,7 @@ export interface WindowCapabilityIpcDependencies {
   /** Resolves only the trusted native host that owns this already-authorized
    * Backpack surface. The raw HWND never crosses the renderer boundary. */
   resolveCallerHwnd?: (sender: WebContents) => string | null;
+  lifecycleSnapshot?: () => WindowLifecycleBaseline | null;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -190,6 +192,8 @@ export function registerWindowCapabilityIpc({
   isSender,
   waitForAuthority,
   resolveCallerHwnd,
+  lifecycleSnapshot,
+  
 }: WindowCapabilityIpcDependencies): void {
   let nativePeekActive = false;
   function handle<TInput>(
@@ -261,6 +265,14 @@ export function registerWindowCapabilityIpc({
     (input) => service.applyCapability(input.capability, input.bounds),
   );
   handle('papers:window-capability:resolve', parsePersistedDescriptor, (descriptor) => service.resolvePersisted(descriptor));
+  handle('papers:window-capability:resolve-instance', (raw) => parseBoundedString(raw, 'windowInstanceId'), (instanceId) =>
+    service.resolveWindowInstance
+      ? service.resolveWindowInstance(instanceId)
+      : Promise.resolve({ outcome: 'helper-unavailable', error: 'window instance resolution is unavailable' }));
+  handle('papers:window-lifecycle:snapshot', (raw) => {
+    if (raw !== undefined && (!isPlainObject(raw) || Object.keys(raw).length !== 0)) throw new Error('lifecycle snapshot payload must be empty');
+    return undefined;
+  }, () => Promise.resolve({ outcome: 'success', snapshot: lifecycleSnapshot?.() ?? null } as WindowCapabilityResult));
   handle(
     'papers:window-capability:thumbnail',
     (raw) => {
