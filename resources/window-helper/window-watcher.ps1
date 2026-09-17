@@ -54,6 +54,11 @@ function SafeObservation([IntPtr]$hwnd) {
   try {
     $observation = Get-WhWindowObservation $hwnd
     if (-not (Test-WhTaskWorthy $observation)) { return $null }
+    # Never feed Papers-owned surfaces back into an As-you-Go tracker.  The
+    # host shell, packaged Papers, and the isolated foreign-window harness all
+    # use trusted Papers-owned paths; this path check is deliberately
+    # structural and independent of mutable window titles.
+    if ([string]$observation.ProcessPath -match '(?i)\\Papers(?:\\|\.exe)|papers-foreign-windows') { return $null }
     return [pscustomobject]@{
       windowInstanceId = $observation.WindowInstanceId
       title = [string]$observation.Title

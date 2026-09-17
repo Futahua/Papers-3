@@ -802,7 +802,9 @@ function Test-WhTaskWorthy {
   if (($exStyle -band [WH.Win32]::WS_EX_TOOLWINDOW) -ne 0L -or
       ($exStyle -band [WH.Win32]::WS_EX_NOACTIVATE) -ne 0L) { return $false }
   $className = [string](& $script:WhOps['ClassName'] $id)
-  if ($className -eq 'Progman' -or $className -eq 'WorkerW') { return $false }
+  if ($className -eq 'Progman' -or $className -eq 'WorkerW' -or
+      $className -eq 'Microsoft.UI.Content.DesktopChildSiteBridge' -or
+      $className -eq 'InputNonClientPointerSource') { return $false }
   $processName = [string](& $script:WhOps['ProcessName'] $id)
   if ($processName -eq 'TextInputHost') { return $false }
   # Same-process Papers surfaces are deliberately left in LIST enumeration so
