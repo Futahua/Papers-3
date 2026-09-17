@@ -178,6 +178,7 @@ export interface WindowCapabilityService {
     options?: { maxWidth?: number; maxHeight?: number },
   ): Promise<WindowCapabilityResult>;
   resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<WindowResolveResult>;
+  resolveWindowInstance?(windowInstanceId: string): Promise<WindowResolveResult>;
   /** 016 direct pick: resolve the topmost task-worthy candidate at a screen
    * point. Candidate ids are stable per window identity. */
   hoverAt(x: number, y: number): Promise<WindowHoverResult>;
@@ -921,6 +922,16 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return { outcome: 'success', capability: bound.capability, descriptor: bound.descriptor };
   }
 
+  async function resolveWindowInstance(windowInstanceId: string): Promise<WindowResolveResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    if (!/^W[0-9a-f]{16}$/i.test(windowInstanceId)) return { outcome: 'missing', error: 'window instance id is malformed' };
+    const listed = await listCandidates();
+    if (listed.outcome !== 'success') return { outcome: 'helper-unavailable', error: listed.error };
+    const match = [...candidatesByListedId.entries()].find(([, entry]) => entry.descriptor.windowInstanceId === windowInstanceId);
+    if (!match) return { outcome: 'missing', error: 'window instance is not currently eligible' };
+    return bindCandidate(match[0]);
+  }
+
   async function nativePickerSnapshot(): Promise<
     | { outcome: 'success'; observations: WindowObservation[] }
     | { outcome: 'helper-unavailable' | 'timeout'; error?: string }
@@ -1072,6 +1083,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     applyCapability,
     thumbnailCapability,
     resolvePersisted,
+    resolveWindowInstance,
     hoverAt,
     pickAt,
     prepareNativePicker,

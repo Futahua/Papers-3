@@ -85,6 +85,8 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:peek-end',
       'papers:window-capability:apply',
       'papers:window-capability:resolve',
+      'papers:window-capability:resolve-instance',
+      'papers:window-lifecycle:snapshot',
       'papers:window-capability:thumbnail',
     ]);
   });

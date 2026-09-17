@@ -82,6 +82,9 @@ import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './win
 import { createWindowToggle, type WindowToggle } from './windows/windowToggle';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
+import { createWindowLifecycleWatcher } from './windows/windowLifecycleWatcherSpawn';
+import { resolveWindowHelperResourcePaths } from './windows/windowHelperResource';
+import { resolveWindowsPowerShellRuntime } from './windows/windowHelperSpawn';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
 import { createWindowDetachSession, isAllowedDetachedNavigation, type WindowDetachSession } from './windows/windowDetachSession';
 import {
@@ -1408,6 +1411,27 @@ async function bootstrap(): Promise<void> {
     // overlay utility windows retain empty/data titles and remain ineligible.
     allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
   });
+  let windowLifecycleWatcher: ReturnType<typeof createWindowLifecycleWatcher> | null = null;
+  try {
+    const runtime = resolveWindowsPowerShellRuntime({
+      systemRoot: process.env.SystemRoot ?? process.env.WINDIR ?? '',
+      platform: process.platform,
+    });
+    if (runtime.ok) {
+      const paths = resolveWindowHelperResourcePaths({
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+        packaged: app.isPackaged,
+      });
+      windowLifecycleWatcher = createWindowLifecycleWatcher({ runtimePath: runtime.path, paths });
+      void windowLifecycleWatcher.start().catch((error) => {
+        console.error('[papers] window lifecycle watcher unavailable', error);
+        windowLifecycleWatcher = null;
+      });
+    }
+  } catch (error) {
+    console.error('[papers] window lifecycle watcher setup failed', error);
+  }
   registerWindowCapabilityIpc({
     ipcMain,
     service: windowCapabilityService,
@@ -1419,7 +1443,16 @@ async function bootstrap(): Promise<void> {
       const handle = owner.getNativeWindowHandle();
       return handle.length >= 8 ? handle.readBigUInt64LE(0).toString() : String(handle.readUInt32LE(0));
     },
+    lifecycleSnapshot: () => windowLifecycleWatcher?.snapshot() ?? null,
   });
+  const forwardLifecycleEvent = (event: unknown): void => {
+    for (const contents of webContents.getAllWebContents()) {
+      try {
+        if (isProjectSurfaceSender(contents)) contents.send('papers:project:window-lifecycle-event', { event });
+      } catch { /* surface may have closed */ }
+    }
+  };
+  windowLifecycleWatcher?.onEvent(forwardLifecycleEvent);
   // One global direct-onscreen pick session. Papers sends one authenticated
   // initial-member snapshot to the creator's already-running SlopTop AHK. AHK
   // owns hover/click/rendering locally and returns one final green-set snapshot
@@ -2462,6 +2495,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           detachSession!.closeAll().catch(() => undefined),
           widgetSession!.closeAll().catch(() => undefined),
           windowCapabilityService.stop().catch(() => undefined),
+          windowLifecycleWatcher?.stop().catch(() => undefined) ?? Promise.resolve(),
         ]))
         .then(() => {
         hermesSurface.shutdown();
