@@ -26,6 +26,10 @@ ipcRenderer.on('papers:project:window-lifecycle-event', (_event, payload) => {
   if (!payload || typeof payload !== 'object') return;
   window.postMessage({ type: 'papers:project:window-lifecycle-event', event: (payload as { event?: unknown }).event }, window.location.origin);
 });
+ipcRenderer.on('papers:project:window-lifecycle-baseline', (_event, payload) => {
+  if (!payload || typeof payload !== 'object') return;
+  window.postMessage({ type: 'papers:project:window-lifecycle-baseline', baseline: (payload as { baseline?: unknown }).baseline }, window.location.origin);
+});
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);

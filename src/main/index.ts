@@ -1452,7 +1452,15 @@ async function bootstrap(): Promise<void> {
       } catch { /* surface may have closed */ }
     }
   };
+  const forwardLifecycleBaseline = (baseline: unknown): void => {
+    for (const contents of webContents.getAllWebContents()) {
+      try {
+        if (isProjectSurfaceSender(contents)) contents.send('papers:project:window-lifecycle-baseline', { baseline });
+      } catch { /* surface may have closed */ }
+    }
+  };
   windowLifecycleWatcher?.onEvent(forwardLifecycleEvent);
+  windowLifecycleWatcher?.onBaseline(forwardLifecycleBaseline);
   // One global direct-onscreen pick session. Papers sends one authenticated
   // initial-member snapshot to the creator's already-running SlopTop AHK. AHK
   // owns hover/click/rendering locally and returns one final green-set snapshot
