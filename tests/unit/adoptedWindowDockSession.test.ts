@@ -236,6 +236,19 @@ describe('adoptedWindowDockSession', () => {
     expect(service.appliedBounds.at(-1)).toEqual({ x: 2000, y: 200, width: 960, height: 600 });
   });
 
+  it('adopts again after a release: the follower is not single-use', async () => {
+    const service = fakeService({
+      observations: [success(observation()), success(observation()), success(observation()), success(observation()), success(observation())],
+    });
+    const dock = createAdoptedWindowDock({ service, screen: fakeScreen(), shortcut: fakeShortcut() });
+    const window = fakeWindow();
+    expect((await dock.toggle(window)).outcome).toBe('docked');
+    expect((await dock.toggle(window)).outcome).toBe('released');
+    const second = await dock.toggle(window);
+    expect(second.outcome).toBe('docked');
+    expect(dock.active).toBe(true);
+  });
+
   it('registers the chord and routes it to toggle', async () => {
     const service = fakeService();
     const shortcut = fakeShortcut();

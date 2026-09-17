@@ -140,7 +140,17 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     followDelayMs = ADOPT_DOCK_FOLLOW_DELAY_MS,
   } = dependencies;
 
-  const follower = createAdoptedWindowFollower(service);
+  const followerHolder: { current: ReturnType<typeof createAdoptedWindowFollower> } = {
+    current: createAdoptedWindowFollower(service),
+  };
+  // The follower is single-adoption: after a terminal state a fresh one is
+  // needed, or the next adoption refuses as "already adopted".
+  function freshFollower(): void {
+    const state = followerHolder.current.state;
+    if (state === 'released' || state === 'identity-lost') {
+      followerHolder.current = createAdoptedWindowFollower(service);
+    }
+  }
   let papersWindow: DockPapersWindow | null = null;
   let adoptedTitle: string | null = null;
   let adoptedWidthDip = 0;
@@ -157,7 +167,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
 
   async function followNow(): Promise<void> {
     const window = papersWindow;
-    if (!window || window.isDestroyed() || follower.state !== 'following') return;
+    if (!window || window.isDestroyed() || followerHolder.current.state !== 'following') return;
     let papers: DockRect;
     try {
       papers = window.getBounds();
@@ -167,7 +177,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     const display = displayFor(window);
     const target = tileRightOf(papers, adoptedWidthDip, display.workArea);
     if (!target) return;
-    await follower.follow(toPhysical(target, display.scaleFactor)).catch(() => undefined);
+    await followerHolder.current.follow(toPhysical(target, display.scaleFactor)).catch(() => undefined);
   }
 
   function scheduleFollow(): void {
@@ -208,7 +218,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     adoptedTitle = null;
     const window = papersWindow;
     papersWindow = null;
-    void follower.release().catch(() => undefined).finally(() => {
+    void followerHolder.current.release().catch(() => undefined).finally(() => {
       if (window && !window.isDestroyed()) {
         try {
           window.removeListener('move', scheduleFollow);
@@ -228,7 +238,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     detach();
     adoptedTitle = null;
     adoptedWidthDip = 0;
-    const released = await follower.release().catch(() => ({ outcome: 'helper-unavailable' as const }));
+    const released = await followerHolder.current.release().catch(() => ({ outcome: 'helper-unavailable' as const }));
     if (released.outcome === 'released') {
       return { outcome: 'released', title, detail: `'${title}' is back where it was.` };
     }
@@ -236,6 +246,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
   }
 
   async function adopt(focused: DockPapersWindow): Promise<DockToggleOutcome> {
+    freshFollower();
     let point: DockPoint;
     try {
       point = screen.getCursorScreenPoint();
@@ -262,7 +273,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     if (current.state !== 'normal') {
       return { outcome: 'refused', detail: `that window is ${current.state}. Restore it to a normal window first.` };
     }
-    const adopted = await follower.adopt(capability);
+    const adopted = await followerHolder.current.adopt(capability);
     if (adopted.outcome !== 'adopted') {
       const reason = 'error' in adopted && adopted.error ? ` ${adopted.error}` : '';
       return { outcome: 'refused', detail: `adoption failed (${adopted.outcome}).${reason}` };
@@ -271,20 +282,20 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     try {
       papers = focused.getBounds();
     } catch {
-      await follower.release().catch(() => undefined);
+      await followerHolder.current.release().catch(() => undefined);
       return { outcome: 'refused', detail: 'the Papers window could not be read.' };
     }
     const display = displayFor(focused);
     adoptedWidthDip = Math.max(ADOPT_DOCK_MIN_WIDTH_DIP, Math.round(current.bounds.width / (display.scaleFactor || 1)));
     const target = tileRightOf(papers, adoptedWidthDip, display.workArea);
     if (!target) {
-      await follower.release().catch(() => undefined);
+      await followerHolder.current.release().catch(() => undefined);
       adoptedWidthDip = 0;
       return { outcome: 'refused', detail: 'there is no room beside Papers on this display.' };
     }
-    const placed = await follower.follow(toPhysical(target, display.scaleFactor));
+    const placed = await followerHolder.current.follow(toPhysical(target, display.scaleFactor));
     if (placed.outcome !== 'applied') {
-      await follower.release().catch(() => undefined);
+      await followerHolder.current.release().catch(() => undefined);
       adoptedWidthDip = 0;
       const reason = 'error' in placed && placed.error ? ` ${placed.error}` : '';
       return { outcome: 'refused', detail: `the window would not move (${placed.outcome}).${reason} Nothing was changed.` };
@@ -310,7 +321,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     if (toggling) return { outcome: 'refused', detail: 'a dock action is already running.' };
     toggling = true;
     try {
-      if (papersWindow || follower.state === 'following') {
+      if (papersWindow || followerHolder.current.state === 'following') {
         return await releaseSession();
       }
       if (!focused || focused.isDestroyed()) {
@@ -357,7 +368,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     toggle,
 
     get active() {
-      return papersWindow !== null || follower.state === 'following';
+      return papersWindow !== null || followerHolder.current.state === 'following';
     },
 
     get adoptedTitle() {

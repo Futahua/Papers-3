@@ -3010,7 +3010,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         });
         return;
       }
-      console.error(`[papers] window-dock ${outcome.outcome}: ${outcome.detail}`);
+      console.error(`[papers] window-dock ${outcome.outcome} @${new Date().toISOString()}: ${outcome.detail}`);
     },
   });
   if (!adoptedDockReport.registered) {
