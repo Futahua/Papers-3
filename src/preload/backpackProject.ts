@@ -20,6 +20,13 @@ let widgetToken: string | null = null;
 let widgetPageReady = false;
 let widgetReadySent = false;
 
+// Main-process lifecycle watcher push.  The native HWND never crosses this
+// boundary; only the already-sanitized instance event is relayed to the page.
+ipcRenderer.on('papers:project:window-lifecycle-event', (_event, payload) => {
+  if (!payload || typeof payload !== 'object') return;
+  window.postMessage({ type: 'papers:project:window-lifecycle-event', event: (payload as { event?: unknown }).event }, window.location.origin);
+});
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
