@@ -71,6 +71,10 @@ export type RuntimeWindowId = string & { [runtimeWindowIdBrand]: true };
 
 export interface WindowObservation {
   runtimeId: RuntimeWindowId;
+  /** Opaque Papers-owned identity attached to the native HWND. Unlike the
+   * helper-session runtimeId, this survives helper/Papers restarts and changes
+   * in mutable title metadata, while disappearing with the HWND. */
+  windowInstanceId?: string;
   title: string;
   processId: number | null;
   processPath: string | null;
@@ -302,12 +306,16 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
   // turn "not corroborated" into "corroborated by nothing".
   const windowClass = raw['windowClass'];
   if (windowClass !== undefined && typeof windowClass !== 'string') return undefined;
+  const windowInstanceId = raw['windowInstanceId'];
+  if (windowInstanceId !== undefined
+    && (typeof windowInstanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(windowInstanceId))) return undefined;
   const state = raw['state'];
   if (typeof state !== 'string' || !WINDOW_STATES.includes(state)) return undefined;
   const bounds = parseWindowBounds(raw['bounds']);
   if (bounds === undefined) return undefined;
   return {
     runtimeId,
+    ...(windowInstanceId !== undefined ? { windowInstanceId } : {}),
     title: raw['title'],
     processId,
     processPath,

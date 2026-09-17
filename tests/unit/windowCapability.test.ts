@@ -614,6 +614,27 @@ describe('window capability contract types', () => {
     });
   });
 
+  describe('windowInstanceId exact native identity', () => {
+    const base = { runtimeId: 'A', title: 'A', processId: 12, processPath: 'C:\\app.exe', state: 'normal', bounds: null };
+
+    it('accepts and preserves the opaque Papers-owned instance id', () => {
+      const parsed = parseWindowResponse({
+        requestId: 1, method: 'observe', outcome: 'success',
+        observation: { ...base, windowInstanceId: 'W0123456789abcdef' },
+      });
+      expect(parsed && 'observation' in parsed ? parsed.observation?.windowInstanceId : undefined)
+        .toBe('W0123456789abcdef');
+    });
+
+    it('rejects malformed instance ids rather than treating them as exact identity', () => {
+      for (const value of ['', '0123456789abcdef', 'Wxyz', 42, null]) {
+        expect(parseWindowResponse({
+          requestId: 1, method: 'observe', outcome: 'success', observation: { ...base, windowInstanceId: value },
+        })).toBeNull();
+      }
+    });
+  });
+
   it('enforces strict per-method/outcome payload shapes', () => {
     // Successful list must carry a valid list.
     expect(parseWindowResponse({ requestId: 1, method: 'list', outcome: 'success' })).toBeNull();

@@ -10,10 +10,10 @@
 #
 # Behavior is LOCKED to the accepted protocol snapshot 013R5F (see
 # manifest.json in this directory) plus the reviewed 018 identity revision:
-# every observation now carries `ClassName` alongside the mutable title, so
-# identity can be corroborated by something that does not change when a
-# document or browser tab does. do not drift without a reviewed
-# protocol change.
+# every observation now carries `ClassName` alongside the mutable title, and a
+# Papers-owned `WindowInstanceId` tag that survives helper/Papers restarts and
+# dies with the HWND. The tag is stored as the value of one fixed Win32 window
+# property; it is never a persisted HWND or process-local pointer.
 #
 # Safety invariants:
 # - The adapter never executes arbitrary commands; it exposes only typed
@@ -91,6 +91,9 @@ namespace WH
         [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hWnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
         [DllImport("dwmapi.dll", EntryPoint = "#113", SetLastError = true)] public static extern uint DwmActivateLivePreview(uint enable, IntPtr targetHwnd, IntPtr callingHwnd, uint type, IntPtr unknown);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern bool SetProp(IntPtr hWnd, string lpString, IntPtr hData);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr GetProp(IntPtr hWnd, string lpString);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr RemoveProp(IntPtr hWnd, string lpString);
         [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
         [DllImport("user32.dll")] public static extern IntPtr GetLastActivePopup(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
@@ -488,7 +491,44 @@ $script:WhOps = @{
   }
 }
 
+# A single fixed property name avoids atom-table growth. The property value is
+# the opaque instance id itself (not a pointer to helper-owned memory), so a
+# fresh helper can read it after the writer exits and Windows removes it when
+# the HWND is destroyed.
+$script:WhWindowInstanceProperty = 'Papers.WindowInstanceId.v1'
+
+function New-WhWindowInstanceId {
+  $bytes = New-Object byte[] 8
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+  $value = [BitConverter]::ToUInt64($bytes, 0) -band [uint64]0x7FFFFFFFFFFFFFFF
+  if ($value -eq 0) { $value = [uint64]1 }
+  return ('W' + $value.ToString('x16'))
+}
+
+function Convert-WhInstanceIdToNativeValue {
+  param([string]$InstanceId)
+  if ($InstanceId -notmatch '^W([0-9a-fA-F]{16})$') { return [IntPtr]::Zero }
+  $value = [Convert]::ToInt64($Matches[1], 16)
+  return [IntPtr]::new($value)
+}
+
+function Get-WhWindowInstanceId([IntPtr]$hWnd) {
+  if ($hWnd -eq [IntPtr]::Zero -or -not [WH.Win32]::IsWindow($hWnd)) { return $null }
+  $raw = [WH.Win32]::GetProp($hWnd, $script:WhWindowInstanceProperty)
+  if ($raw -ne [IntPtr]::Zero) {
+    $value = $raw.ToInt64()
+    if ($value -gt 0) { return ('W' + $value.ToString('x16')) }
+  }
+  $instanceId = New-WhWindowInstanceId
+  $nativeValue = Convert-WhInstanceIdToNativeValue $instanceId
+  if ($nativeValue -eq [IntPtr]::Zero -or -not [WH.Win32]::SetProp($hWnd, $script:WhWindowInstanceProperty, $nativeValue)) {
+    return $null
+  }
+  return $instanceId
+}
+
 function Get-WhWindowObservation([IntPtr]$hWnd) {
+  $instanceId = Get-WhWindowInstanceId $hWnd
   $title = New-Object System.Text.StringBuilder 512
   [void][WH.Win32]::GetWindowText($hWnd, $title, $title.Capacity)
   $className = New-Object System.Text.StringBuilder 256
@@ -514,6 +554,7 @@ function Get-WhWindowObservation([IntPtr]$hWnd) {
     # names are unique per process and back every window of that process - so it
     # corroborates and never replaces the runtime id.
     ClassName = $className.ToString()
+    WindowInstanceId = $instanceId
     Bounds = if ($hasRect) { @{ Left = $rect.Left; Top = $rect.Top; Right = $rect.Right; Bottom = $rect.Bottom; Width = $rect.Right - $rect.Left; Height = $rect.Bottom - $rect.Top } } else { $null }
     State = $state
   }
