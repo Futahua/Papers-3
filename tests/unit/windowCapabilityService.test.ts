@@ -376,6 +376,26 @@ describe('windowCapabilityService bind and capabilities', () => {
 });
 
 describe('windowCapabilityService persisted re-resolution', () => {
+  it('prefers the exact windowInstanceId over mutable title metadata', async () => {
+    const windows: WindowObservation[] = [
+      observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Current tab', windowInstanceId: 'W0123456789abcdef' }),
+      observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Other tab', windowInstanceId: 'Wfedcba9876543210' }),
+    ];
+    const factory = fakeFactory({ list: async () => ({ outcome: 'success', windows }) });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    const resolved = await service.resolvePersisted({
+      version: 1,
+      title: 'Old tab title',
+      executableFingerprint: '6a992db418ddfbdab5743ccd05f2eb7822b6c6d25e294987bebd5969f8143609',
+      windowInstanceId: 'W0123456789abcdef',
+    });
+    expect(resolved.outcome).toBe('success');
+  });
+
   it('resolves a visible window by exact pid+title into a fresh capability', async () => {
     const { service } = harness();
     const resolved = await service.resolvePersisted({ version: 1, title: 'Window A', executableFingerprint: '6a992db418ddfbdab5743ccd05f2eb7822b6c6d25e294987bebd5969f8143609' });

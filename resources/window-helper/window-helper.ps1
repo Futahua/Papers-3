@@ -101,6 +101,10 @@
 #   in the same process with the same class would satisfy every clause. A
 #   failed check is therefore UNVERIFIED, never "gone"; no consumer may treat
 #   this refusal as terminal evidence that the instance ceased to exist.
+# - Every successful observation also carries `windowInstanceId`, an opaque
+#   Papers-owned value attached to the HWND. It survives helper/Papers restart,
+#   changes in title, and dies with the native window. It is the durable member
+#   identity; the session token remains ephemeral transport authority.
 # - The session registry is BOUNDED: a fixed limit of 4096 issued
 #   tokens per helper session. The list path preflights the FULL list
 #   atomically BEFORE issuing anything: if existing token count + distinct
@@ -242,23 +246,53 @@ function Get-WhWireBounds {
 # must therefore treat this as strong corroboration and never as terminal
 # evidence of anything - a failed check means UNVERIFIED, never "gone".
 function Get-WhIdentityKey {
-  param([long]$Hwnd, [int]$PidValue, [string]$ClassName)
-  return "$Hwnd|$PidValue|$ClassName"
+  param([string]$InstanceId, [int]$PidValue, [string]$ClassName)
+  return "$InstanceId|$PidValue|$ClassName"
+}
+
+function Get-WhObservationIdentityKey {
+  param([object]$Observation)
+  $property = $Observation.PSObject.Properties['WindowInstanceId']
+  $instanceId = if ($null -eq $property) { '' } else { [string]$property.Value }
+  if ([string]::IsNullOrWhiteSpace($instanceId)) {
+    # Test seams and an older helper may omit the tag. Keep their historical
+    # session behavior, while production observations always carry the exact
+    # Papers-owned instance id.
+    return "hwnd:$([long]$Observation.RuntimeId)|$([int]$Observation.ProcessId)|$(Get-WhObservationClassName $Observation)"
+  }
+  return Get-WhIdentityKey $instanceId ([int]$Observation.ProcessId) (Get-WhObservationClassName $Observation)
+}
+
+function Get-WhObservationInstanceId {
+  param([object]$Observation)
+  $property = $Observation.PSObject.Properties['WindowInstanceId']
+  if ($null -eq $property) { return $null }
+  return [string]$property.Value
+}
+
+function Get-WhObservationClassName {
+  param([object]$Observation)
+  $property = $Observation.PSObject.Properties['ClassName']
+  if ($null -eq $property) { return '' }
+  return [string]$property.Value
 }
 
 function Get-WhResponseObservation {
   param([string]$Token)
   $entry = Resolve-WhSessionToken $Token
   $obs = Get-WhWindowObservation ([IntPtr]$entry.hwnd)
-  return [ordered]@{
+  $wire = [ordered]@{
     runtimeId = $Token
     title = $obs.Title
     processId = $obs.ProcessId
     processPath = $obs.ProcessPath
-    windowClass = $obs.ClassName
+    windowClass = (Get-WhObservationClassName $obs)
     state = $obs.State
     bounds = (Get-WhWireBounds $obs.Bounds)
   }
+  $instanceId = Get-WhObservationInstanceId $obs
+  if ($instanceId) { $wire['windowInstanceId'] = $instanceId }
+  return $wire
 }
 
 # Issue or reuse the session token for one (HWND, PID, window class) identity.
@@ -266,14 +300,18 @@ function Get-WhResponseObservation {
 # overwritten or rebound. A title change does NOT change the identity and
 # therefore does NOT yield a new token.
 function New-WhSessionToken {
-  param([long]$Hwnd, [int]$PidValue, [string]$ClassName)
-  $key = Get-WhIdentityKey $Hwnd $PidValue $ClassName
+  param([long]$Hwnd, [int]$PidValue, [string]$ClassName, [string]$InstanceId)
+  $key = if ([string]::IsNullOrWhiteSpace($InstanceId)) {
+    "hwnd:$Hwnd|$PidValue|$ClassName"
+  } else {
+    Get-WhIdentityKey $InstanceId $PidValue $ClassName
+  }
   if ($script:WhSession.byKey.ContainsKey($key)) {
     return $script:WhSession.byKey[$key]
   }
   $token = 'T' + [guid]::NewGuid().ToString('N')
   $script:WhSession.byKey[$key] = $token
-  $script:WhSession.byToken[$token] = @{ hwnd = $Hwnd; pid = $PidValue; className = $ClassName }
+  $script:WhSession.byToken[$token] = @{ hwnd = $Hwnd; pid = $PidValue; className = $ClassName; instanceId = $InstanceId }
   return $token
 }
 
@@ -289,7 +327,7 @@ function Test-WhListCapacity {
   param([object[]]$Observations)
   $newCount = 0
   foreach ($observation in $Observations) {
-    $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
+    $key = Get-WhObservationIdentityKey $observation
     if (-not $script:WhSession.byKey.ContainsKey($key)) { $newCount += 1 }
   }
   return ($script:WhSession.byToken.Count + $newCount) -le $script:WhSession.maxTokens
@@ -321,7 +359,8 @@ function Test-WhTokenIdentity {
   } catch {
     return @{ ok = $false; outcome = 'denied'; error = (Get-BoundedErrorText $_) }
   }
-  if ([int]$live.ProcessId -ne [int]$entry.pid -or [string]$live.ClassName -ne [string]$entry.className) {
+  if ([int]$live.ProcessId -ne [int]$entry.pid -or (Get-WhObservationClassName $live) -ne [string]$entry.className -or
+      [string](Get-WhObservationInstanceId $live) -ne [string]$entry.instanceId) {
     return @{ ok = $false; outcome = 'denied'; error = 'window identity changed since the token was issued' }
   }
   return @{ ok = $true }
@@ -463,16 +502,19 @@ function Invoke-WhRequest {
       }
       $windows = @()
       foreach ($observation in $observations) {
-        $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
-        $windows += [ordered]@{
+        $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) (Get-WhObservationClassName $observation) (Get-WhObservationInstanceId $observation)
+        $wire = [ordered]@{
           runtimeId = $token
           title = $observation.Title
           processId = $observation.ProcessId
           processPath = $observation.ProcessPath
-          windowClass = $observation.ClassName
+          windowClass = (Get-WhObservationClassName $observation)
           state = $observation.State
           bounds = (Get-WhWireBounds $observation.Bounds)
         }
+        $instanceId = Get-WhObservationInstanceId $observation
+        if ($instanceId) { $wire['windowInstanceId'] = $instanceId }
+        $windows += $wire
       }
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ windows = $windows } $null)
     }
@@ -481,21 +523,24 @@ function Invoke-WhRequest {
       if ($null -eq $observation) {
         return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = $null } $null)
       }
-      $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
+      $key = Get-WhObservationIdentityKey $observation
       $atCapacity = -not $script:WhSession.byKey.ContainsKey($key) -and $script:WhSession.byToken.Count -ge $script:WhSession.maxTokens
       if ($atCapacity) {
         return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'session token capacity reached')
       }
-      $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
-      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = [ordered]@{
+      $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) (Get-WhObservationClassName $observation) (Get-WhObservationInstanceId $observation)
+      $wire = [ordered]@{
         runtimeId = $token
         title = $observation.Title
         processId = $observation.ProcessId
         processPath = $observation.ProcessPath
-        windowClass = $observation.ClassName
+        windowClass = (Get-WhObservationClassName $observation)
         state = $observation.State
         bounds = (Get-WhWireBounds $observation.Bounds)
-      } } $null)
+      }
+      $instanceId = Get-WhObservationInstanceId $observation
+      if ($instanceId) { $wire['windowInstanceId'] = $instanceId }
+      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = $wire } $null)
     }
     if ($Method -eq 'cloak-many' -or $Method -eq 'uncloak-many') {
       $runtimeIds = New-Object System.Collections.Generic.List[System.IntPtr]

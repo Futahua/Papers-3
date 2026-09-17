@@ -82,6 +82,9 @@ export interface WindowCandidate {
  * HWND or executable authority. */
 export interface PersistedWindowMemberDescriptor {
   version: 1;
+  /** Exact native instance identity when supplied by the tagged helper. Older
+   * records omit it and continue through the legacy title/fingerprint hint. */
+  windowInstanceId?: string;
   executableFingerprint?: string;
   title: string;
 }
@@ -503,6 +506,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const id = `wl-candidate-${helperToken}`;
     const descriptor: PersistedWindowMemberDescriptor = {
       version: 1,
+      ...(observation.windowInstanceId ? { windowInstanceId: observation.windowInstanceId } : {}),
       executableFingerprint: fingerprint(observation.processPath ?? ''),
       title: boundedTitle(observation.title),
     };
@@ -901,9 +905,13 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const listed = await listCandidates();
     if (listed.outcome !== 'success') return { outcome: 'helper-unavailable', error: listed.error };
-    const matches = [...candidatesByListedId.entries()].filter(([, entry]) =>
-      entry.descriptor.executableFingerprint === descriptor.executableFingerprint
-      && entry.descriptor.title === descriptor.title);
+    const matches = [...candidatesByListedId.entries()].filter(([, entry]) => {
+      if (descriptor.windowInstanceId) {
+        return entry.descriptor.windowInstanceId === descriptor.windowInstanceId;
+      }
+      return entry.descriptor.executableFingerprint === descriptor.executableFingerprint
+        && entry.descriptor.title === descriptor.title;
+    });
     if (matches.length === 0) return { outcome: 'missing', error: 'no visible window matches the descriptor' };
     if (matches.length > 1) return { outcome: 'ambiguous', error: 'more than one visible window matches the descriptor' };
     const bound = await bindCandidate(matches[0]![0]);
