@@ -34,6 +34,9 @@ interface PendingEntry {
 export interface WindowCapabilityClient {
   list(): Promise<WindowCapabilityResult>;
   observe(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  /** Restore an iconic window if needed and raise/focus it without changing
+   * normal/maximized placement. Older helper clients may omit this method. */
+  activate?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   minimize(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** One request: read the live state, then minimize or restore accordingly. */
@@ -183,6 +186,7 @@ export function createWindowCapabilityClient({
   return {
     list: () => request('list'),
     observe: (runtimeId) => request('observe', { target: runtimeId }),
+    activate: (runtimeId) => request('activate', { target: runtimeId }),
     minimize: (runtimeId) => request('minimize', { target: runtimeId }),
     restore: (runtimeId) => request('restore', { target: runtimeId }),
     toggle: (runtimeId) => request('toggle', { target: runtimeId }),

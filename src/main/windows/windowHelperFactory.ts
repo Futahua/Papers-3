@@ -60,6 +60,7 @@ export interface WindowHelperFactory {
   isReady(): boolean;
   list(): Promise<WindowCapabilityResult>;
   observe(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
+  activate?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   minimize(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   restore(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** Optional, like the other later capabilities: an older helper binary does
@@ -242,6 +243,10 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
     isReady: () => supervisor.getState() === 'ready',
     list: () => withClient((client) => client.list(), HELPER_NOT_READY),
     observe: (runtimeId) => withClient((client) => client.observe(runtimeId), HELPER_NOT_READY),
+    activate: (runtimeId) => withClient(
+      (client) => client.activate ? client.activate(runtimeId) : Promise.resolve(HELPER_NOT_READY),
+      HELPER_NOT_READY,
+    ),
     minimize: (runtimeId) => withClient((client) => client.minimize(runtimeId), HELPER_NOT_READY),
     restore: (runtimeId) => withClient((client) => client.restore(runtimeId), HELPER_NOT_READY),
     toggle: (runtimeId: RuntimeWindowId) => withClient((client) => client.toggle(runtimeId), HELPER_NOT_READY),

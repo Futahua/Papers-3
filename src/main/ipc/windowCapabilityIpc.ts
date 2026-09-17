@@ -204,6 +204,10 @@ export function registerWindowCapabilityIpc({
   }, () => service.listCandidates({ includeNativeIcons: true }));
   handle('papers:window-capability:bind', (raw) => parseBoundedString(raw, 'candidateId'), (candidateId) => service.bindCandidate(candidateId));
   handle('papers:window-capability:observe', parseRuntimeCapability, (capability) => service.observeCapability(capability));
+  handle('papers:window-capability:activate', parseRuntimeCapability, (capability) =>
+    service.activateCapability
+      ? service.activateCapability(capability)
+      : Promise.resolve({ outcome: 'helper-unavailable', error: 'window activation is unavailable' }));
   handle('papers:window-capability:minimize', parseRuntimeCapability, (capability) => service.minimizeCapability(capability));
   // One request instead of observe-then-mutate: the helper reads the live state
   // and acts on it, so no renderer round trip sits between the decision and the
