@@ -9,6 +9,7 @@ export interface WindowLifecycleWatcher {
   stop(): Promise<void>;
   snapshot(): WindowLifecycleBaseline | null;
   onEvent(callback: (event: WindowLifecycleEvent) => void): () => void;
+  onBaseline(callback: (baseline: WindowLifecycleBaseline) => void): () => void;
   getSessionId(): string | null;
 }
 
@@ -25,6 +26,7 @@ export function createWindowLifecycleWatcher(options: {
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let restartAttempts = 0;
   const listeners = new Set<(event: WindowLifecycleEvent) => void>();
+  const baselineListeners = new Set<(baseline: WindowLifecycleBaseline) => void>();
   let lineReader: readline.Interface | null = null;
 
   async function start(): Promise<void> {
@@ -58,6 +60,9 @@ export function createWindowLifecycleWatcher(options: {
     if (message.type === 'baseline') {
       snapshotValue = message;
       restartAttempts = 0;
+      for (const listener of [...baselineListeners]) {
+        try { listener(message); } catch { /* listeners are isolated */ }
+      }
       return;
     }
     for (const listener of [...listeners]) {
@@ -83,6 +88,7 @@ export function createWindowLifecycleWatcher(options: {
     stop,
     snapshot: () => snapshotValue,
     onEvent: (callback) => { listeners.add(callback); return () => listeners.delete(callback); },
+    onBaseline: (callback) => { baselineListeners.add(callback); return () => baselineListeners.delete(callback); },
     getSessionId: () => sessionId,
   };
 }
