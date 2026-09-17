@@ -15,6 +15,11 @@
 export const WINDOW_CAPABILITY_METHODS = [
   'list',
   'observe',
+  // Restore a minimized member (when necessary) and raise/focus that exact
+  // live window in one host request. This is the activation path used by
+  // Quick Run and deliberately remains separate from minimize/restore state
+  // toggling.
+  'activate',
   'minimize',
   'restore',
   // One request that reads the window's live state and minimizes or restores it

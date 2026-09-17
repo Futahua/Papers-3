@@ -142,6 +142,7 @@ export interface WindowCapabilityService {
   listCandidates(options?: { includeNativeIcons?: boolean }): Promise<WindowCandidateListResult>;
   bindCandidate(candidateId: string): Promise<WindowBindResult>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  activateCapability?(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   restoreCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   /** One helper request that reads the live state and minimizes or restores
@@ -621,6 +622,18 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return request;
   }
 
+  /** Restore a minimized member and raise/focus the exact capability in one
+   * helper request. The helper revalidates the opaque token immediately before
+   * acting, so a stale binding can only produce a typed failure. */
+  async function activateCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const token = tokenFor(capability);
+    if (!token) return { outcome: 'missing', error: 'binding is not issued' };
+    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    if (!factory.activate) return { outcome: 'helper-unavailable', error: 'window activation is unavailable' };
+    return factory.activate(token);
+  }
+
   async function minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const token = tokenFor(capability);
@@ -1039,6 +1052,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     listCandidates,
     bindCandidate,
     observeCapability,
+    activateCapability,
     minimizeCapability,
     restoreCapability,
     toggleCapability,

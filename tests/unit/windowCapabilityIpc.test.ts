@@ -76,6 +76,7 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:list',
       'papers:window-capability:bind',
       'papers:window-capability:observe',
+      'papers:window-capability:activate',
       'papers:window-capability:minimize',
       'papers:window-capability:toggle',
       'papers:window-capability:restore',

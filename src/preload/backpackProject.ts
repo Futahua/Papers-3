@@ -287,6 +287,10 @@ window.addEventListener('message', (event) => {
     const candidateId = parseBoundedString(request.candidateId);
     task = ipcRenderer.invoke('papers:window-capability:bind', candidateId);
   }
+  if (request.type === 'papers:project:window-activate-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:activate', capability);
+  }
   if (request.type === 'papers:project:window-observe-capability') {
     const capability = parseCapability(request.capability);
     task = ipcRenderer.invoke('papers:window-capability:observe', capability);

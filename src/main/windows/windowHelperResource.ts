@@ -52,7 +52,7 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
  * every checkout receives. `tests/unit/windowHelperResource.test.ts` guards
  * this by validating the committed blob, not the working copy. */
 export const WINDOW_HELPER_EXPECTED_HASHES: Record<string, string> = {
-  [WINDOW_HELPER_SCRIPT_FILE]: 'c4057656e0f7ccb0f535143a85dd39bcb6a80a06c0126fe07777b7519d3721dc',
+  [WINDOW_HELPER_SCRIPT_FILE]: 'ba7564c8c7cda91f9c1f6f6a5937cc2f030b3901d83a43bc9b2613e3e22bd5ff',
   [WINDOW_HELPER_ADAPTER_FILE]: 'd9f6ca87e572520e824e71e6eb8880f49137096fe81a903f757c5494212a6b31',
 };
 

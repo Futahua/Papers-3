@@ -136,7 +136,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot/window-capability.ps1"
 
-$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail')
+$VALID_METHODS = @('list', 'observe', 'activate', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail')
 $FORBIDDEN_KEYS = @('exec', 'command', 'script', 'path', 'handle', 'env', 'args', 'cmd', 'powershell', 'invoke', 'shell')
 $MAX_SAFE_REQUEST_ID = 9007199254740991L
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
@@ -614,6 +614,13 @@ function Invoke-WhRequest {
     $runtimeId = [IntPtr]$entry.hwnd
     if ($Method -eq 'minimize') {
       Minimize-WhWindow $runtimeId
+      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
+    }
+    if ($Method -eq 'activate') {
+      # Activation preserves maximized/normal placement. Only an iconic window
+      # needs SW_RESTORE; a normal or maximized window is raised/focused as-is.
+      if (& $script:WhOps['IsIconic'] $runtimeId) { Restore-WhWindow $runtimeId }
+      else { & $script:WhOps['Raise'] $runtimeId }
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
     }
     if ($Method -eq 'toggle') {
