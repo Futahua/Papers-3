@@ -2989,7 +2989,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // an arbitrary host while the shortcut was pressed in the other one.
       // Electron's focused-window identity is already native/main-owned, so
       // prefer it and only fall back when focus is genuinely unavailable.
-      const focused = BrowserWindow.getFocusedWindow();
+      // Papers owns BaseWindow instances (not BrowserWindow instances), so
+      // use the BaseWindow focus authority here.  BrowserWindow focus alone
+      // would always be null and make the shortcut inert in normal use.
+      const focused = BaseWindow.getFocusedWindow();
       if (focused) {
         for (const id of papersWindows.windowIds) {
           const owned = papersWindows.get(id)?.owned.window;
