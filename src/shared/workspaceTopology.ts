@@ -553,3 +553,205 @@ export function remapWorkspaceTopologySurfaceIds(
   return next;
 }
 import { z } from 'zod';
+
+import type { PersistedWindowMemberDescriptor } from './windowMemberDescriptor';
+
+/** Schema v2 adds foreign native windows without changing group/layout
+ * geometry. v1 remains accepted through the deterministic migration below. */
+export const WORKSPACE_TOPOLOGY_SCHEMA_VERSION_V2 = 2 as const;
+
+export interface WorkspaceProjectSurfaceV2 {
+  kind: 'project';
+  surfaceId: string;
+  surfaceKey?: string;
+  projectId: string;
+  title: string;
+}
+
+export interface WorkspaceForeignWindowSurfaceV2 {
+  kind: 'foreign-window';
+  surfaceId: string;
+  surfaceKey?: string;
+  title: string;
+  descriptor: PersistedWindowMemberDescriptor;
+}
+
+export type WorkspaceSurfaceV2 = WorkspaceProjectSurfaceV2 | WorkspaceForeignWindowSurfaceV2;
+
+export interface WorkspaceTopologyV2 {
+  schemaVersion: typeof WORKSPACE_TOPOLOGY_SCHEMA_VERSION_V2;
+  surfaces: WorkspaceSurfaceV2[];
+  groups: WorkspaceTabGroup[];
+  root: WorkspaceLayoutNode;
+  focusedGroupId: string;
+}
+
+const workspaceSurfaceV2Schema = z.union([
+  z.object({
+    kind: z.literal('project'),
+    surfaceId: z.string().min(1),
+    surfaceKey: z.string().min(1).max(128).optional(),
+    projectId: z.string().min(1),
+    title: z.string(),
+  }).strict(),
+  z.object({
+    kind: z.literal('foreign-window'),
+    surfaceId: z.string().min(1),
+    surfaceKey: z.string().min(1).max(128).optional(),
+    title: z.string(),
+    descriptor: z.object({
+      version: z.literal(1),
+      windowInstanceId: z.string().min(1).optional(),
+      executableFingerprint: z.string().min(1).optional(),
+      title: z.string().max(256),
+    }).strict(),
+  }).strict(),
+]);
+
+export const workspaceTopologyV2Schema = z.object({
+  schemaVersion: z.literal(WORKSPACE_TOPOLOGY_SCHEMA_VERSION_V2),
+  surfaces: z.array(workspaceSurfaceV2Schema),
+  groups: z.array(z.object({
+    groupId: z.string().min(1),
+    surfaceIds: z.array(z.string().min(1)),
+    activeSurfaceId: z.string().min(1).nullable(),
+  }).strict()).min(1),
+  root: workspaceLayoutNodeSchema,
+  focusedGroupId: z.string().min(1),
+}).strict();
+
+function assertValidWorkspaceTopologyV2(topology: WorkspaceTopologyV2): void {
+  if (topology.schemaVersion !== WORKSPACE_TOPOLOGY_SCHEMA_VERSION_V2) throw new Error('unsupported workspace topology version');
+  const ids = new Set<string>();
+  const keys = new Set<string>();
+  for (const surface of topology.surfaces) {
+    assertIdentity(surface.surfaceId, 'surfaceId');
+    if (ids.has(surface.surfaceId)) throw new Error(`duplicate surface ${surface.surfaceId}`);
+    ids.add(surface.surfaceId);
+    if (surface.surfaceKey !== undefined) {
+      if (surface.surfaceKey.length === 0 || surface.surfaceKey.length > 128 || keys.has(surface.surfaceKey)) {
+        throw new Error(`invalid or duplicate surface key ${surface.surfaceKey}`);
+      }
+      keys.add(surface.surfaceKey);
+    }
+    if (surface.kind === 'project') assertIdentity(surface.projectId, 'projectId');
+    else if (!validWorkspaceDescriptor(surface.descriptor)) throw new Error(`descriptor for ${surface.surfaceId} is invalid`);
+  }
+  const groupIds = new Set<string>();
+  const assigned = new Set<string>();
+  for (const group of topology.groups) {
+    assertIdentity(group.groupId, 'groupId');
+    if (groupIds.has(group.groupId)) throw new Error(`duplicate group ${group.groupId}`);
+    groupIds.add(group.groupId);
+    for (const surfaceId of group.surfaceIds) {
+      if (!ids.has(surfaceId)) throw new Error(`unknown surface ${surfaceId}`);
+      if (assigned.has(surfaceId)) throw new Error(`surface ${surfaceId} belongs to multiple groups`);
+      assigned.add(surfaceId);
+    }
+    if (group.activeSurfaceId !== null && !group.surfaceIds.includes(group.activeSurfaceId)) {
+      throw new Error(`active surface is not in group ${group.groupId}`);
+    }
+  }
+  if (assigned.size !== ids.size) throw new Error('every surface must belong to one group');
+  if (!groupIds.has(topology.focusedGroupId)) throw new Error('focused group does not exist');
+  const layoutGroups = new Set<string>();
+  const visit = (node: WorkspaceLayoutNode): void => {
+    if (node.kind === 'group') {
+      if (!groupIds.has(node.groupId)) throw new Error(`layout references unknown group ${node.groupId}`);
+      if (layoutGroups.has(node.groupId)) throw new Error(`layout repeats group ${node.groupId}`);
+      layoutGroups.add(node.groupId);
+      return;
+    }
+    if (node.children.length < 2 || node.weights.length !== node.children.length) throw new Error('split shape is invalid');
+    if (node.weights.some((weight) => !Number.isFinite(weight) || weight <= 0)) throw new Error('split weights must be positive');
+    node.children.forEach(visit);
+  };
+  visit(topology.root);
+  if (layoutGroups.size !== groupIds.size) throw new Error('every group must occur once in the layout');
+}
+
+function validWorkspaceDescriptor(descriptor: PersistedWindowMemberDescriptor): boolean {
+  return descriptor.version === 1
+    && typeof descriptor.title === 'string'
+    && descriptor.title.length <= 256
+    && (descriptor.windowInstanceId === undefined || descriptor.windowInstanceId.length > 0)
+    && (descriptor.executableFingerprint === undefined || descriptor.executableFingerprint.length > 0);
+}
+
+export function parseWorkspaceTopologyV2(value: unknown): WorkspaceTopologyV2 {
+  const parsed = workspaceTopologyV2Schema.parse(value);
+  assertValidWorkspaceTopologyV2(parsed);
+  return parsed;
+}
+
+export function migrateWorkspaceTopologyV1(topology: WorkspaceTopologyV1): WorkspaceTopologyV2 {
+  assertValidWorkspaceTopology(topology);
+  const migrated: WorkspaceTopologyV2 = {
+    schemaVersion: WORKSPACE_TOPOLOGY_SCHEMA_VERSION_V2,
+    surfaces: topology.surfaces.map((surface) => ({ kind: 'project' as const, ...surface })),
+    groups: topology.groups.map((group) => ({ ...group, surfaceIds: [...group.surfaceIds] })),
+    root: topology.root,
+    focusedGroupId: topology.focusedGroupId,
+  };
+  assertValidWorkspaceTopologyV2(migrated);
+  return migrated;
+}
+
+export function openWorkspaceSurfaceV2(
+  topology: WorkspaceTopologyV2,
+  surface: WorkspaceSurfaceV2,
+  groupId = topology.focusedGroupId,
+): WorkspaceTopologyV2 {
+  assertValidWorkspaceTopologyV2(topology);
+  if (topology.surfaces.some((candidate) => candidate.surfaceId === surface.surfaceId)) throw new Error(`surface ${surface.surfaceId} already exists`);
+  const group = topology.groups.find((candidate) => candidate.groupId === groupId);
+  if (!group) throw new Error(`group ${groupId} does not exist`);
+  const next: WorkspaceTopologyV2 = {
+    ...topology,
+    surfaces: [...topology.surfaces, { ...surface }],
+    groups: topology.groups.map((candidate) => candidate.groupId === groupId
+      ? { ...candidate, surfaceIds: [...candidate.surfaceIds, surface.surfaceId], activeSurfaceId: surface.surfaceId }
+      : { ...candidate, surfaceIds: [...candidate.surfaceIds] }),
+    focusedGroupId: groupId,
+  };
+  assertValidWorkspaceTopologyV2(next);
+  return next;
+}
+
+export function activateWorkspaceSurfaceV2(topology: WorkspaceTopologyV2, surfaceId: string): WorkspaceTopologyV2 {
+  assertValidWorkspaceTopologyV2(topology);
+  const group = topology.groups.find((candidate) => candidate.surfaceIds.includes(surfaceId));
+  if (!group) throw new Error(`surface ${surfaceId} does not exist`);
+  const next: WorkspaceTopologyV2 = {
+    ...topology,
+    groups: topology.groups.map((candidate) => candidate.groupId === group.groupId
+      ? { ...candidate, surfaceIds: [...candidate.surfaceIds], activeSurfaceId: surfaceId }
+      : { ...candidate, surfaceIds: [...candidate.surfaceIds] }),
+    focusedGroupId: group.groupId,
+  };
+  assertValidWorkspaceTopologyV2(next);
+  return next;
+}
+
+export function closeWorkspaceSurfaceV2(topology: WorkspaceTopologyV2, surfaceId: string): WorkspaceTopologyV2 {
+  assertValidWorkspaceTopologyV2(topology);
+  const source = topology.groups.find((group) => group.surfaceIds.includes(surfaceId));
+  if (!source) throw new Error(`surface ${surfaceId} does not exist`);
+  const remaining = source.surfaceIds.filter((candidate) => candidate !== surfaceId);
+  const removeEmpty = remaining.length === 0 && topology.groups.length > 1;
+  const groups = topology.groups.filter((group) => !removeEmpty || group.groupId !== source.groupId).map((group) => {
+    if (group.groupId !== source.groupId) return { ...group, surfaceIds: [...group.surfaceIds] };
+    return { ...group, surfaceIds: remaining, activeSurfaceId: group.activeSurfaceId === surfaceId ? remaining[0] ?? null : group.activeSurfaceId };
+  });
+  const root = removeEmpty ? normalizeWorkspaceLayout(removeGroupNode(topology.root, source.groupId)!) : topology.root;
+  if (!root || groups.length === 0) throw new Error('workspace must retain one group');
+  const next: WorkspaceTopologyV2 = {
+    ...topology,
+    surfaces: topology.surfaces.filter((surface) => surface.surfaceId !== surfaceId),
+    groups,
+    root,
+    focusedGroupId: groups.some((group) => group.groupId === topology.focusedGroupId) ? topology.focusedGroupId : groups[0]!.groupId,
+  };
+  assertValidWorkspaceTopologyV2(next);
+  return next;
+}

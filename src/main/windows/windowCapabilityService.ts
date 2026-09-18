@@ -45,6 +45,8 @@ import {
   type WindowObservation,
   type WindowState,
 } from './windowCapabilityTypes';
+import type { PersistedWindowMemberDescriptor } from '@shared/windowMemberDescriptor';
+export type { PersistedWindowMemberDescriptor } from '@shared/windowMemberDescriptor';
 
 export const WINDOW_CAPABILITY_MAX_CANDIDATES = 64;
 export const WINDOW_CAPABILITY_MAX_ICON_CACHE = 64;
@@ -75,18 +77,6 @@ export interface WindowCandidate {
   applicationLabel: string;
   icon: string | null;
   state: WindowState;
-}
-
-/** Stable, persisted-safe member identity for fail-closed re-resolution of
- * an ALREADY VISIBLE window. Deliberately contains no runtime id, token,
- * HWND or executable authority. */
-export interface PersistedWindowMemberDescriptor {
-  version: 1;
-  /** Exact native instance identity when supplied by the tagged helper. Older
-   * records omit it and continue through the legacy title/fingerprint hint. */
-  windowInstanceId?: string;
-  executableFingerprint?: string;
-  title: string;
 }
 
 /** Ephemeral runtime capability: never persisted, never reconstructed from

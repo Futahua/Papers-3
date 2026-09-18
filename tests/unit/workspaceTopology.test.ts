@@ -14,6 +14,11 @@ import {
   normalizeWorkspaceLayout,
   splitWorkspaceGroup,
   splitWorkspaceSurfaceAtTarget,
+  activateWorkspaceSurfaceV2,
+  closeWorkspaceSurfaceV2,
+  migrateWorkspaceTopologyV1,
+  openWorkspaceSurfaceV2,
+  parseWorkspaceTopologyV2,
 } from '../../src/shared/workspaceTopology';
 import type { WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 
@@ -36,6 +41,47 @@ describe('workspace topology', () => {
     expect(() => insertWorkspaceSurface(inserted, {
       surfaceId: 'sf-moved', projectId: 'bp-other', title: 'Other',
     })).toThrow(/already exists/);
+  });
+
+  it('migrates v1 project topology losslessly and round-trips a foreign surface', () => {
+    let v1 = createWorkspaceTopology();
+    v1 = openWorkspaceSurface(v1, { surfaceId: 'project-a', surfaceKey: 'key-a', projectId: 'bp-a', title: 'A' });
+    const migrated = migrateWorkspaceTopologyV1(v1);
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.groups).toEqual(v1.groups);
+    expect(migrated.root).toEqual(v1.root);
+    expect(migrated.focusedGroupId).toBe(v1.focusedGroupId);
+    expect(migrated.surfaces).toEqual([{ kind: 'project', ...v1.surfaces[0] }]);
+
+    const foreign = openWorkspaceSurfaceV2(migrated, {
+      kind: 'foreign-window',
+      surfaceId: 'foreign-notepad',
+      surfaceKey: 'foreign-key',
+      title: 'Notepad',
+      descriptor: { version: 1, title: 'Untitled - Notepad', executableFingerprint: 'abc' },
+    });
+    const parsed = parseWorkspaceTopologyV2(JSON.parse(JSON.stringify(foreign)));
+    expect(parsed.surfaces.find((surface) => surface.surfaceId === 'foreign-notepad')).toMatchObject({
+      kind: 'foreign-window',
+      title: 'Notepad',
+    });
+    expect(parsed.groups[0]?.surfaceIds).toEqual(['project-a', 'foreign-notepad']);
+    expect(parsed.groups[0]?.activeSurfaceId).toBe('foreign-notepad');
+  });
+
+  it('activates and closes foreign surfaces using the same group geometry operations', () => {
+    const base = migrateWorkspaceTopologyV1(createWorkspaceTopology());
+    const withForeign = openWorkspaceSurfaceV2(base, {
+      kind: 'foreign-window',
+      surfaceId: 'foreign-a',
+      title: 'Calculator',
+      descriptor: { version: 1, title: 'Calculator' },
+    });
+    const activated = activateWorkspaceSurfaceV2(withForeign, 'foreign-a');
+    expect(activated.groups[0]?.activeSurfaceId).toBe('foreign-a');
+    const closed = closeWorkspaceSurfaceV2(activated, 'foreign-a');
+    expect(closed.surfaces).toEqual([]);
+    expect(closed.groups[0]?.surfaceIds).toEqual([]);
   });
 
   it('owns stable product identities without Dockview state', () => {
