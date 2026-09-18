@@ -62,6 +62,7 @@ import {
   ensureWorkspaceTopologyV2,
   parseWorkspaceTopologyAny,
   parseWorkspaceTopologyV2,
+  remapWorkspaceTopologyV2ProjectSurfaceIds,
   openWorkspaceSurfaceV2,
   closeWorkspaceSurfaceV2,
   activateWorkspaceSurfaceV2,
@@ -817,7 +818,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   private async setForeignVisibilityForWindow(windowId: number, activeSurfaceId: string | null): Promise<void> {
-    const controller = this.foreignController();
+    const controller = this.deps.foreignSurfaceController?.();
+    if (!controller) return;
     for (const surface of controller.snapshot().filter((candidate) => candidate.hostWindowId === windowId && candidate.state === 'live-visible')) {
       await controller.setVisible(surface.surfaceId, surface.surfaceId === activeSurfaceId).catch(() => undefined);
     }
@@ -1470,11 +1472,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.requireLiveWorkspaceWindow(windowId);
     const layout = await this.deps.workspaceLayouts.get(layoutId);
     if (!layout) throw new Error('That named workspace layout does not exist.');
-    // Foreign-window layout hydration is handled by the dedicated foreign
-    // surface coordinator. Keep the legacy project transaction fail-closed
-    // until that coordinator has resolved every descriptor.
     if (layout.topology.schemaVersion !== 1) {
-      throw new Error('This layout contains foreign windows and must be opened through the foreign-surface coordinator.');
+      const projectIds = layout.topology.surfaces
+        .filter((surface): surface is Extract<WorkspaceSurfaceV2, { kind: 'project' }> => surface.kind === 'project')
+        .map((surface) => surface.projectId);
+      return this.withProjectOwnershipGates(projectIds, () => this.loadWorkspaceLayoutWithForeign(
+        windowId,
+        layout as NamedWorkspaceLayout & { topology: WorkspaceTopologyV2 },
+      )) as unknown as Promise<{ windowId: number; layoutId: string; topology: WorkspaceTopologyV1 }>;
     }
     const projectLayout = layout as NamedWorkspaceLayout & { topology: WorkspaceTopologyV1 };
 
@@ -1482,6 +1487,108 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       projectLayout.topology.surfaces.map((surface) => surface.projectId),
       () => this.loadWorkspaceLayoutFromControlLoaded(windowId, projectLayout),
     );
+  }
+
+  private async loadWorkspaceLayoutWithForeign(windowId: number, layout: NamedWorkspaceLayout & { topology: WorkspaceTopologyV2 }): Promise<{
+    windowId: number;
+    layoutId: string;
+    topology: WorkspaceTopologyV2;
+  }> {
+    this.requireLiveWorkspaceWindow(windowId);
+    const savedTopology = parseWorkspaceTopologyV2(layout.topology);
+    const currentTopology = this.deps.workspaceTopologyAny?.(windowId)
+      ?? this.deps.workspaceTopology?.(windowId)
+      ?? createWorkspaceTopology();
+    this.validateWorkspaceTopologyAny(windowId, currentTopology);
+    const resolvedProjects = await Promise.all(savedTopology.surfaces
+      .filter((surface): surface is Extract<WorkspaceSurfaceV2, { kind: 'project' }> => surface.kind === 'project')
+      .map(async (savedSurface) => {
+        const backpack = this.deps.registry.find(savedSurface.projectId);
+        if (!backpack || backpack.archived) throw new Error(`Backpack ${savedSurface.projectId} is not available.`);
+        const project = await this.deps.backpackProjects.open(savedSurface.projectId);
+        if (!project) throw new Error(`Backpack ${savedSurface.projectId} has no usable project surface.`);
+        return { savedSurface, url: project.url };
+      }));
+    for (const { savedSurface } of resolvedProjects) {
+      const backpack = this.deps.registry.find(savedSurface.projectId);
+      if (!backpack || backpack.archived) throw new Error(`Backpack ${savedSurface.projectId} is not available.`);
+    }
+    this.assertWorkspaceMutationAvailable(windowId);
+    const controller = this.foreignController();
+    const existingForeign = controller.snapshot().filter((surface) => surface.hostWindowId === windowId);
+    const createdForeign: string[] = [];
+    const allocatedProjects: string[] = [];
+    try {
+      for (const savedForeign of savedTopology.surfaces.filter((surface): surface is Extract<WorkspaceSurfaceV2, { kind: 'foreign-window' }> => surface.kind === 'foreign-window')) {
+        const existing = existingForeign.find((surface) => surface.surfaceId === savedForeign.surfaceId);
+        if (existing) {
+          const sameDescriptor = existing.descriptor.version === savedForeign.descriptor.version
+            && existing.descriptor.windowInstanceId === savedForeign.descriptor.windowInstanceId
+            && existing.descriptor.executableFingerprint === savedForeign.descriptor.executableFingerprint;
+          if (!sameDescriptor) throw new Error(`Foreign surface ${savedForeign.surfaceId} is bound to a different window.`);
+          continue;
+        }
+        const created = controller.create({
+          surfaceId: savedForeign.surfaceId,
+          descriptor: savedForeign.descriptor,
+          title: savedForeign.title,
+          hostWindowId: windowId,
+        });
+        const resolved = await controller.resolve(created.surfaceId);
+        if (resolved.outcome !== 'success') {
+          controller.markDisconnected(created.surfaceId);
+          controller.retire(created.surfaceId);
+          throw new Error(resolved.error ?? `Foreign window ${savedForeign.surfaceId} could not be resolved.`);
+        }
+        createdForeign.push(created.surfaceId);
+      }
+      const freshBySavedId = new Map<string, string>();
+      for (const { savedSurface } of resolvedProjects) {
+        const fresh = this.deps.logicalSurfaces.create({ windowId, projectId: savedSurface.projectId, kind: 'project' });
+        allocatedProjects.push(fresh.surfaceId);
+        freshBySavedId.set(savedSurface.surfaceId, fresh.surfaceId);
+      }
+      const next = remapWorkspaceTopologyV2ProjectSurfaceIds(savedTopology, freshBySavedId);
+      const projects = resolvedProjects.map(({ savedSurface, url }) => {
+        const surface = next.surfaces.find((candidate) => candidate.surfaceId === freshBySavedId.get(savedSurface.surfaceId));
+        if (!surface || surface.kind !== 'project') throw new Error(`Workspace layout lost project ${savedSurface.projectId}.`);
+        return {
+          surfaceId: surface.surfaceId,
+          projectId: savedSurface.projectId,
+          title: savedSurface.title,
+          url: withProjectSurfaceKey(url, surface.surfaceKey ?? surface.surfaceId),
+        };
+      });
+      this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-layout-loaded', { layoutId: layout.layoutId, projects, topology: next });
+      // The renderer has received the replacement as one atomic projection;
+      // native cleanup now removes only the prior window-owned surfaces.
+      for (const old of this.currentProjectSurfaceSet(windowId)) {
+        try { this.deps.closeAttachedProjectSurface(windowId, old.surfaceId); } catch { /* cleanup is best effort */ }
+        this.retireLogicalSurface(old.surfaceId);
+        for (const senderId of this.deps.surfaces.sendersForSurface(old.surfaceId)) this.deps.surfaces.unbind(senderId);
+      }
+      const targetForeignIds = new Set(next.surfaces.filter((surface) => surface.kind === 'foreign-window').map((surface) => surface.surfaceId));
+      for (const old of existingForeign.filter((surface) => !targetForeignIds.has(surface.surfaceId))) {
+        const released = await controller.release(old.surfaceId, this.deps.foreignHostHandleForWindow?.(windowId));
+        if (released.outcome === 'success') controller.retire(old.surfaceId);
+      }
+      this.validateWorkspaceTopologyAny(windowId, next);
+      const activeSurfaceId = next.groups.find((group) => group.groupId === next.focusedGroupId)?.activeSurfaceId ?? null;
+      const active = next.surfaces.find((surface) => surface.surfaceId === activeSurfaceId);
+      this.deps.setActiveSurfaceId(windowId, activeSurfaceId);
+      this.deps.setEnteredBackpack(windowId, active?.kind === 'project' ? active.projectId : null);
+      this.setCanonicalTopology(windowId, next);
+      await this.setForeignVisibilityForWindow(windowId, active?.kind === 'foreign-window' ? activeSurfaceId : null);
+      return { windowId, layoutId: layout.layoutId, topology: next };
+    } catch (caught) {
+      for (const surfaceId of allocatedProjects) this.retireLogicalSurface(surfaceId);
+      for (const surfaceId of createdForeign.reverse()) {
+        const current = controller.snapshot().find((surface) => surface.surfaceId === surfaceId);
+        if (current?.state === 'live-visible') await controller.release(surfaceId, this.deps.foreignHostHandleForWindow?.(windowId)).catch(() => undefined);
+        controller.retire(surfaceId);
+      }
+      throw caught;
+    }
   }
 
   private async loadWorkspaceLayoutFromControlLoaded(windowId: number, layout: NamedWorkspaceLayout & { topology: WorkspaceTopologyV1 }): Promise<{
