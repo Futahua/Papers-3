@@ -234,6 +234,18 @@ describe('adoptedWindowDockSession', () => {
     const secondRelease = await dock.toggle(window);
     expect(secondRelease.outcome).toBe('released');
     expect(dock.active).toBe(false);
+    expect(service.applyCalls).toBe(3);
+    expect(service.appliedBounds.at(-1)).toEqual({ x: 2000, y: 200, width: 960, height: 600 });
+  });
+
+  it('releaseAll restores active windows before teardown', async () => {
+    const service = fakeService();
+    const dock = createAdoptedWindowDock({ service, screen: fakeScreen(), shortcut: fakeShortcut() });
+    const window = fakeWindow();
+    await dock.toggle(window);
+    await dock.releaseAll();
+    expect(dock.active).toBe(false);
+    expect(service.appliedBounds.at(-1)).toEqual({ x: 2000, y: 200, width: 960, height: 600 });
   });
 
   it('keeps two distinct Chrome windows adopted at the same time', async () => {

@@ -114,6 +114,24 @@ describe('adoptedWindowFollower', () => {
     expect(follower.state).toBe('released');
   });
 
+  it('keeps a transient restore failure retryable and restores on the next attempt', async () => {
+    const service = fakeService({
+      observations: [success(observation()), success(observation()), success(observation())],
+      applies: [{ outcome: 'helper-unavailable' }, { outcome: 'success' }],
+    });
+    const follower = createAdoptedWindowFollower(service);
+    await follower.adopt(capability());
+    const first = await follower.release();
+    expect(first).toMatchObject({ outcome: 'helper-unavailable' });
+    expect(follower.state).toBe('following');
+    expect(service.applyCalls).toBe(1);
+    const second = await follower.release();
+    expect(second).toEqual({ outcome: 'released', restored: true });
+    expect(service.applyCalls).toBe(2);
+    expect(service.appliedBounds.at(-1)).toEqual({ x: 10, y: 20, width: 640, height: 420 });
+    expect(follower.state).toBe('released');
+  });
+
   it('release after doubt performs no mutation', async () => {
     const service = fakeService({
       observations: [success(observation()), success(observation({ processId: 7777 }))],

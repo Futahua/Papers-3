@@ -158,6 +158,10 @@ export interface AdoptedWindowDock {
     notify(outcome: DockToggleOutcome): void;
   }): { registered: boolean; accelerator: string; detail: string };
   release(): void;
+  /** Await restoration of every active foreign window before its capability
+   * service is torn down. Transient failures deliberately remain in the
+   * adoption map so a later retry still has authority to restore them. */
+  releaseAll(): Promise<void>;
   toggle(focused: DockPapersWindow | null): Promise<DockToggleOutcome>;
   readonly active: boolean;
   readonly adoptedTitle: string | null;
@@ -244,8 +248,10 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
   async function releaseForPapers(window: DockPapersWindow): Promise<void> {
     const entries = [...adoptions.values()].filter((entry) => entry.papersWindow.id === window.id);
     for (const entry of entries) {
-      adoptions.delete(entry.key);
-      await entry.follower.release().catch(() => undefined);
+      const released = await entry.follower.release().catch(() => ({ outcome: 'helper-unavailable' as const }));
+      if (released.outcome === 'released' || released.outcome === 'missing') {
+        adoptions.delete(entry.key);
+      }
     }
     detachUnusedPapersListeners();
   }
@@ -428,6 +434,21 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     }
   }
 
+  async function releaseAll(): Promise<void> {
+    if (followTimer !== null) {
+      clearTimeout(followTimer);
+      followTimer = null;
+    }
+    const entries = [...adoptions.values()];
+    for (const entry of entries) {
+      const released = await entry.follower.release().catch(() => ({ outcome: 'helper-unavailable' as const }));
+      if (released.outcome === 'released' || released.outcome === 'missing') {
+        adoptions.delete(entry.key);
+      }
+    }
+    detach();
+  }
+
   return {
     register(hooks) {
       let registered = false;
@@ -447,16 +468,15 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       };
     },
 
+    releaseAll,
+
     release() {
       try {
         shortcut.unregister(accelerator);
       } catch {
         /* releasing must never throw */
       }
-      const entries = [...adoptions.values()];
-      adoptions.clear();
-      detach();
-      for (const entry of entries) void entry.follower.release().catch(() => undefined);
+      void releaseAll();
     },
 
     toggle,

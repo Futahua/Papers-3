@@ -2476,6 +2476,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // Best-effort owned shutdown before app exit; the helper factory stop
   // owns stdin close, termination escalation and exactly-once terminal
   // reporting (Assignment 015).
+  let adoptedDock: ReturnType<typeof createAdoptedWindowDock> | null = null;
   let capabilityQuitComplete = false;
   let capabilityQuitPromise: Promise<void> | null = null;
   app.on('before-quit', (event) => {
@@ -2498,6 +2499,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // the developer command plane is fully quiet before global shutdown
       // begins.
       capabilityQuitPromise = (papersControlServer?.close().catch(() => undefined) ?? Promise.resolve())
+        .then(() => adoptedDock?.releaseAll().catch(() => undefined) ?? Promise.resolve())
         .then(() => Promise.all([
           workspaceTopologyStore.flush().catch((error) => console.error('[workspace-topology] shutdown flush failed', error)),
           workspaceLayoutStore.flush().catch((error) => console.error('[workspace-layout] shutdown flush failed', error)),
@@ -2974,7 +2976,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // to tile it right of the focused Papers window, following moves/resizes
   // until the chord is pressed again. Geometry only (no hide, no Z-order
   // write), so a crash leaves a visible window behind, never a stranded one.
-  const adoptedDock = createAdoptedWindowDock({
+  adoptedDock = createAdoptedWindowDock({
     service: windowCapabilityService,
     screen,
     shortcut: globalShortcut,
@@ -2994,17 +2996,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (owned === focused && !owned.isDestroyed()) return owned;
         }
       }
-      const windows = papersWindows.windowIds;
-      const visible = windows.find((id) => {
-        const owned = papersWindows.get(id)?.owned.window;
-        return owned !== undefined && !owned.isDestroyed() && owned.isVisible();
-      });
-      const target = visible ?? windows.find((id) => {
-        const owned = papersWindows.get(id)?.owned.window;
-        return owned !== undefined && !owned.isDestroyed();
-      });
-      if (target === undefined) return null;
-      return papersWindows.get(target)?.owned.window ?? null;
+      // Never guess a host when Electron reports that no Papers window is
+      // focused.  Guessing the first visible window can dock beside the wrong
+      // workspace when multiple Papers windows are open.
+      return null;
     },
     notify: (outcome) => {
       // Docking and release are their own visible feedback: the window

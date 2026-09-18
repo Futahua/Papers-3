@@ -172,11 +172,15 @@ export function createAdoptedWindowFollower(service: AdoptedWindowFollowerServic
       return { outcome: observed.outcome as FailureOutcome, ...(observed.error !== undefined ? { error: observed.error } : {}) };
     }
     const restored = await service.applyCapability(capability, originalBounds);
-    state = 'released';
-    capability = null;
     if (restored.outcome !== 'success') {
+      // Keep the verified capability and original rectangle alive when the
+      // helper has a transient failure.  The caller can retry the restore;
+      // clearing authority here would strand the foreign window at its dock
+      // rectangle with no safe way back.
       return { outcome: restored.outcome as FailureOutcome, ...(restored.error !== undefined ? { error: restored.error } : {}) };
     }
+    state = 'released';
+    capability = null;
     return { outcome: 'released', restored: true };
   }
 
