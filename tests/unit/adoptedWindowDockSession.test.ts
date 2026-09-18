@@ -208,6 +208,44 @@ describe('adoptedWindowDockSession', () => {
     expect(controller.snapshot()[0]?.state).toBe('released');
   });
 
+  it('reconnects the foreign surface before restoring after a helper restart', async () => {
+    const service = fakeService({
+      // resolve/adopt, dock follow, first release, reconnect/adopt, retry release
+      observations: [
+        success(observation()),
+        success(observation()),
+        success(observation()),
+        success(observation()),
+        success(observation()),
+      ],
+      applyResults: [
+        { outcome: 'success' },
+        { outcome: 'helper-unavailable', error: 'helper restarted' },
+        { outcome: 'success' },
+      ],
+    });
+    const controller = createForeignWindowSurfaceController({
+      ...service,
+      resolvePersisted: async (requested) => ({
+        outcome: 'success' as const,
+        capability: capability(),
+        descriptor: requested,
+      }),
+    });
+    const dock = createAdoptedWindowDock({
+      service,
+      surfaceController: controller,
+      screen: fakeScreen(),
+      shortcut: fakeShortcut(),
+    });
+    const window = fakeWindow();
+
+    expect((await dock.toggle(window)).outcome).toBe('docked');
+    expect((await dock.toggle(window)).outcome).toBe('released');
+    expect(service.appliedBounds.at(-1)).toEqual({ x: 2000, y: 200, width: 960, height: 600 });
+    expect(controller.snapshot()[0]?.state).toBe('released');
+  });
+
   it('refuses before moving when durable recovery cannot be armed', async () => {
     const service = fakeService();
     const dock = createAdoptedWindowDock({

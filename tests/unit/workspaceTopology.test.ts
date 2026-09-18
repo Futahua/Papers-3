@@ -19,6 +19,11 @@ import {
   migrateWorkspaceTopologyV1,
   openWorkspaceSurfaceV2,
   parseWorkspaceTopologyV2,
+  insertWorkspaceSurfaceV2,
+  moveWorkspaceSurfaceV2,
+  reorderWorkspaceGroupV2,
+  splitWorkspaceGroupV2,
+  setWorkspaceLayoutRootV2,
 } from '../../src/shared/workspaceTopology';
 import type { WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 
@@ -82,6 +87,34 @@ describe('workspace topology', () => {
     const closed = closeWorkspaceSurfaceV2(activated, 'foreign-a');
     expect(closed.surfaces).toEqual([]);
     expect(closed.groups[0]?.surfaceIds).toEqual([]);
+  });
+
+  it('moves, reorders, splits, and preserves foreign surfaces without project ids', () => {
+    let topology = migrateWorkspaceTopologyV1(createWorkspaceTopology());
+    topology = openWorkspaceSurfaceV2(topology, {
+      kind: 'foreign-window', surfaceId: 'foreign-a', title: 'Calculator',
+      descriptor: { version: 1, title: 'Calculator' },
+    });
+    topology = insertWorkspaceSurfaceV2(topology, {
+      kind: 'foreign-window', surfaceId: 'foreign-b', title: 'Notepad',
+      descriptor: { version: 1, title: 'Untitled - Notepad' },
+    });
+    topology = reorderWorkspaceGroupV2(topology, 'group-main', ['foreign-b', 'foreign-a']);
+    expect(topology.groups[0]?.surfaceIds).toEqual(['foreign-b', 'foreign-a']);
+
+    topology = splitWorkspaceGroupV2(topology, {
+      groupId: 'group-main', newGroupId: 'group-right', surfaceId: 'foreign-a',
+      orientation: 'horizontal', position: 'after',
+    });
+    topology = moveWorkspaceSurfaceV2(topology, 'foreign-a', 'group-main', 0);
+    expect(topology.groups).toEqual([
+      { groupId: 'group-main', surfaceIds: ['foreign-a', 'foreign-b'], activeSurfaceId: 'foreign-a' },
+    ]);
+    expect(topology.surfaces.every((surface) => surface.kind === 'foreign-window')).toBe(true);
+
+    const laidOut = setWorkspaceLayoutRootV2(topology, { kind: 'group', groupId: 'group-main' });
+    expect(laidOut.root).toEqual({ kind: 'group', groupId: 'group-main' });
+    expect(laidOut.surfaces).toEqual(topology.surfaces);
   });
 
   it('owns stable product identities without Dockview state', () => {
