@@ -9,6 +9,7 @@ import type {
   WindowRuntimeCapability,
 } from '../../src/main/windows/windowCapabilityService';
 import type { WindowCapabilityResult, WindowObservation } from '../../src/main/windows/windowCapabilityTypes';
+import type { WindowLayoutBroker } from '../../src/main/windows/windowLayoutBroker';
 
 const descriptor: PersistedWindowMemberDescriptor = {
   version: 1,
@@ -76,6 +77,33 @@ describe('foreignWindowSurfaceController', () => {
     expect((await controller.release('foreign-1', '77')).outcome).toBe('success');
     expect(controller.snapshot()[0]?.state).toBe('released');
     expect(deps.placed.at(-1)?.bounds).toEqual(bounds);
+  });
+
+  it('uses the native broker for host-relative hot placement and keeps the follower as fallback', async () => {
+    const calls: string[] = [];
+    const broker: WindowLayoutBroker = {
+      setHost: async (hwnd) => { calls.push(`host:${hwnd}`); return true; },
+      bind: async (surfaceId, instanceId) => { calls.push(`bind:${surfaceId}:${instanceId}`); return true; },
+      layout: (items) => calls.push(`layout:${items.map((item) => `${item.id}:${item.x}`).join(',')}`),
+      release: async (surfaceId) => { calls.push(`release:${surfaceId}`); return true; },
+      releaseAll: async () => true,
+      stop: async () => undefined,
+    };
+    const member = { ...descriptor, windowInstanceId: 'W0123456789abcdef' };
+    const deps = service({});
+    deps.resolvePersisted = async () => ({ outcome: 'success' as const, capability, descriptor: member });
+    const controller = createForeignWindowSurfaceController(deps, undefined, broker);
+    controller.create({ surfaceId: 'foreign-1', descriptor: member, hostWindowId: 7 });
+    await controller.resolve('foreign-1');
+    expect((await controller.follow('foreign-1', { x: 100, y: 110, width: 800, height: 600 }, '77')).outcome).toBe('success');
+    expect(deps.placed).toHaveLength(0);
+    expect(calls).toEqual([
+      'host:77',
+      'bind:foreign-1:W0123456789abcdef',
+      'layout:foreign-1:100',
+    ]);
+    expect((await controller.release('foreign-1', '77')).outcome).toBe('success');
+    expect(calls.at(-1)).toBe('release:foreign-1');
   });
 
   it('failed resolution returns to disconnected without a native placement', async () => {

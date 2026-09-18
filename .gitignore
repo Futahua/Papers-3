@@ -31,4 +31,5 @@ __pycache__/
 tools/stage0-harness/*.exe
 tools/stage0-harness/evidence/
 tools/stage0-harness/last-run.json
-
+# The foreign-window broker is compiled once into Papers userData at runtime.
+resources/window-layout-broker/*.exe

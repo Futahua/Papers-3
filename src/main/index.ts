@@ -73,6 +73,10 @@ import { createLauncherNominationStore } from './backpacks/launcherNominationSto
 import { createAdoptedWindowDock } from './windows/adoptedWindowDockSession';
 import { createAdoptedWindowRecoveryJournal, recoverAdoptedWindows } from './windows/adoptedWindowRecoveryJournal';
 import { createForeignWindowSurfaceController } from './windows/foreignWindowSurfaceController';
+import {
+  createWindowLayoutBroker,
+  resolveWindowLayoutBrokerSourcePath,
+} from './windows/windowLayoutBroker';
 import { bringWindowToFront } from './windows/windowFront';
 import {
   COMMAND_SURFACE_HEIGHT as COMMAND_SURFACE_OVERLAY_HEIGHT,
@@ -1504,7 +1508,15 @@ async function bootstrap(): Promise<void> {
   const adoptedWindowRecoveryJournal = createAdoptedWindowRecoveryJournal(
     path.join(app.getPath('userData'), 'adopted-window-recovery.json'),
   );
-  const foreignWindowSurfaceController = createForeignWindowSurfaceController(windowCapabilityService);
+  const nativeLayoutBroker = createWindowLayoutBroker({
+    cacheDirectory: path.join(app.getPath('userData'), 'window-layout-broker'),
+    sourcePath: resolveWindowLayoutBrokerSourcePath({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
+    }),
+  });
+  const foreignWindowSurfaceController = createForeignWindowSurfaceController(windowCapabilityService, undefined, nativeLayoutBroker);
   foreignWindowSurfaceControllerRef = foreignWindowSurfaceController;
   const recoveryReport = await recoverAdoptedWindows(adoptedWindowRecoveryJournal, windowCapabilityService);
   if (recoveryReport.restored > 0 || recoveryReport.missing > 0 || recoveryReport.deferred > 0) {
@@ -2598,6 +2610,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // begins.
       capabilityQuitPromise = (papersControlServer?.close().catch(() => undefined) ?? Promise.resolve())
         .then(() => adoptedDock?.releaseAll().catch(() => undefined) ?? Promise.resolve())
+        .then(() => nativeLayoutBroker?.releaseAll().then(() => undefined).catch(() => undefined) ?? Promise.resolve())
         .then(() => Promise.all([
           workspaceTopologyStore.flush().catch((error) => console.error('[workspace-topology] shutdown flush failed', error)),
           workspaceLayoutStore.flush().catch((error) => console.error('[workspace-layout] shutdown flush failed', error)),
@@ -2605,6 +2618,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           widgetSession!.closeAll().catch(() => undefined),
           windowCapabilityService.stop().catch(() => undefined),
           windowLifecycleWatcher?.stop().catch(() => undefined) ?? Promise.resolve(),
+          nativeLayoutBroker?.stop().catch(() => undefined) ?? Promise.resolve(),
         ]))
         .then(() => {
         hermesSurface.shutdown();

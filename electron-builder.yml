@@ -27,6 +27,8 @@ extraResources:
   # overlay still opens, but it cannot hand focus back - and it says so.
   - from: resources/native
     to: native
+  - from: resources/window-layout-broker
+    to: window-layout-broker
 
 asar: true
 

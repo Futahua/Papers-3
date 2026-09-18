@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { createAdoptedWindowFollower } from './adoptedWindowFollower';
+import type { WindowLayoutBroker, WindowLayoutBrokerItem } from './windowLayoutBroker';
 import {
   createForeignWindowSurfaceCollection,
   type ForeignWindowSurfaceCollection,
@@ -60,8 +61,58 @@ function failure(result: { outcome: string; error?: string }, surface?: ForeignW
 export function createForeignWindowSurfaceController(
   service: ForeignWindowSurfaceControllerService,
   collection = createForeignWindowSurfaceCollection(),
+  nativeBroker?: WindowLayoutBroker | null,
 ): ForeignWindowSurfaceController {
   const followers = new Map<string, ReturnType<typeof createAdoptedWindowFollower>>();
+  const brokerBound = new Set<string>();
+  const brokerRejected = new Set<string>();
+  let brokerHost: string | null = null;
+  let brokerActive = nativeBroker !== null && nativeBroker !== undefined;
+
+  async function tryNativeFollow(surfaceId: string, bounds: WindowBounds, hostWindow?: string): Promise<boolean> {
+    if (!brokerActive || !nativeBroker || !hostWindow || brokerRejected.has(surfaceId)) return false;
+    const record = collection.get(surfaceId);
+    const instanceId = record?.descriptor.windowInstanceId;
+    if (!record || !instanceId) return false;
+    try {
+      // The afternoon-tool broker intentionally owns one Papers host at a time.
+      // Switching hosts is rare; release its native bindings before adopting
+      // the new host rather than allowing two independent coordinate spaces.
+      if (brokerHost !== hostWindow) {
+        if (brokerHost !== null) {
+          await nativeBroker.releaseAll();
+          brokerBound.clear();
+        }
+        if (!await nativeBroker.setHost(hostWindow)) {
+          brokerActive = false;
+          return false;
+        }
+        brokerHost = hostWindow;
+      }
+      if (!brokerBound.has(surfaceId)) {
+        if (!await nativeBroker.bind(surfaceId, instanceId)) {
+          brokerRejected.add(surfaceId);
+          return false;
+        }
+        brokerBound.add(surfaceId);
+      }
+      record.paneBounds = { ...bounds };
+      const items: WindowLayoutBrokerItem[] = collection.snapshot()
+        .filter((candidate) => candidate.hostWindowId === record.hostWindowId && candidate.state === 'live-visible' && candidate.paneBounds)
+        .map((candidate) => ({
+          id: candidate.surfaceId,
+          x: candidate.paneBounds!.x,
+          y: candidate.paneBounds!.y,
+          width: candidate.paneBounds!.width,
+          height: candidate.paneBounds!.height,
+        }));
+      nativeBroker.layout(items);
+      return true;
+    } catch {
+      brokerActive = false;
+      return false;
+    }
+  }
 
   function recordFor(surfaceId: string) {
     const record = collection.get(surfaceId);
@@ -135,6 +186,9 @@ export function createForeignWindowSurfaceController(
       if (record.state !== 'live-visible' || !follower) {
         return { outcome: 'malformed', error: `surface is ${record.state}`, surface: snapshotOf(surfaceId) };
       }
+      if (await tryNativeFollow(surfaceId, bounds, hostWindow)) {
+        return { outcome: 'success', surface: snapshotOf(surfaceId) };
+      }
       const moved = await follower.follow(bounds, hostWindow);
       if (moved.outcome === 'applied' || moved.outcome === 'unchanged') {
         record.paneBounds = { ...bounds };
@@ -174,6 +228,16 @@ export function createForeignWindowSurfaceController(
         return { outcome: 'malformed', error: `surface is ${record.state}`, surface: snapshotOf(surfaceId) };
       }
       record.state = 'releasing';
+      if (brokerBound.has(surfaceId) && nativeBroker) {
+        const releasedByBroker = await nativeBroker.release(surfaceId).catch(() => false);
+        brokerBound.delete(surfaceId);
+        if (releasedByBroker) {
+          record.state = 'released';
+          record.capability = null;
+          followers.delete(surfaceId);
+          return { outcome: 'success', surface: snapshotOf(surfaceId) };
+        }
+      }
       const released = await follower.release(hostWindow);
       if (released.outcome === 'released' || released.outcome === 'missing') {
         record.state = 'released';
