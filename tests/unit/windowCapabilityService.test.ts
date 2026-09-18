@@ -76,6 +76,10 @@ function fakeFactory(overrides: Partial<WindowHelperFactory> = {}): WindowHelper
       const found = windows.find((entry) => entry.runtimeId === runtimeId);
       return found ? { outcome: 'success', observation: { ...found, bounds } } : { outcome: 'missing' as const, error: 'gone' };
     },
+    placeAdopted: async (runtimeId, bounds) => {
+      const found = windows.find((entry) => entry.runtimeId === runtimeId);
+      return found ? { outcome: 'success', observation: { ...found, bounds } } : { outcome: 'missing' as const, error: 'gone' };
+    },
     close: async () => ({ outcome: 'success' }),
     hover: async (x, y) => {
       if (x === -999 && y === -999) return { outcome: 'success', window: null };
@@ -337,7 +341,7 @@ describe('windowCapabilityService bind and capabilities', () => {
     expect(bound.outcome).toBe('missing');
   });
 
-  it('observe/minimize/restore/apply route to the issued capability only', async () => {
+  it('observe/minimize/restore/apply/place-adopted route to the issued capability only', async () => {
     const { service } = harness();
     const listed = await service.listCandidates();
     if (listed.outcome !== 'success' || listed.candidates.length < 2) throw new Error('no candidates');
@@ -352,6 +356,9 @@ describe('windowCapabilityService bind and capabilities', () => {
     const applied = await service.applyCapability(bound.capability, { x: 1, y: 2, width: 400, height: 300 });
     expect(applied.outcome).toBe('success');
     if (applied.outcome === 'success') expect(applied.observation?.bounds).toEqual({ x: 1, y: 2, width: 400, height: 300 });
+    const placed = await service.placeAdoptedCapability(bound.capability, { x: 3, y: 4, width: 500, height: 350 });
+    expect(placed.outcome).toBe('success');
+    if (placed.outcome === 'success') expect(placed.observation?.bounds).toEqual({ x: 3, y: 4, width: 500, height: 350 });
   });
 
   it('closes only the exact foreign window behind an issued capability', async () => {
@@ -505,6 +512,7 @@ describe('windowCapabilityService thumbnail (019G)', () => {
       minimize: async () => ({ outcome: 'missing', error: 'gone' }),
       restore: async () => ({ outcome: 'missing', error: 'gone' }),
       apply: async () => ({ outcome: 'missing', error: 'gone' }),
+      placeAdopted: async () => ({ outcome: 'missing', error: 'gone' }),
       close: async () => ({ outcome: 'success' }),
       hover: async () => ({ outcome: 'success', window: null }),
       thumbnail: async (runtimeId, maxWidth = 240, maxHeight = 135) => {
@@ -824,6 +832,7 @@ describe('windowCapabilityService thumbnail (019G)', () => {
       minimize: async () => ({ outcome: 'missing', error: 'gone' }),
       restore: async () => ({ outcome: 'missing', error: 'gone' }),
       apply: async () => ({ outcome: 'missing', error: 'gone' }),
+      placeAdopted: async () => ({ outcome: 'missing', error: 'gone' }),
       close: async () => ({ outcome: 'success' }),
       hover: async () => ({ outcome: 'success', window: null }),
       thumbnail: async (runtimeId, maxWidth = 240, maxHeight = 135) => {
@@ -879,6 +888,7 @@ describe('windowCapabilityService thumbnail (019G)', () => {
       minimize: async () => ({ outcome: 'missing', error: 'gone' }),
       restore: async () => ({ outcome: 'missing', error: 'gone' }),
       apply: async () => ({ outcome: 'missing', error: 'gone' }),
+      placeAdopted: async () => ({ outcome: 'missing', error: 'gone' }),
       close: async () => ({ outcome: 'success' }),
       hover: async () => ({ outcome: 'success', window: null }),
       thumbnail: async (runtimeId, maxWidth = 240, maxHeight = 135) => {

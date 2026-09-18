@@ -398,6 +398,10 @@ Assert-Outcome (Invoke-Line '{"requestId":1,"method":"apply","target":"A","bound
 Assert-Outcome (Invoke-Line '{"requestId":1,"method":"apply","target":"A","bounds":{"x":0,"y":0,"width":"10","height":10}}') 'malformed' 'non-numeric bounds are malformed'
 Assert-Outcome (Invoke-Line '{"requestId":1,"method":"apply","target":"A","bounds":{"x":0,"y":0,"width":3e10,"height":10}}') 'malformed' 'overflowing width is malformed'
 Assert-Outcome (Invoke-Line '{"requestId":1,"method":"apply","target":"A","bounds":{"x":0,"y":0,"width":300,"height":260},"state":"normal"}') 'malformed' 'apply.state is not silently ignored'
+Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A","bounds":{"x":0,"y":0,"width":0,"height":10}}') 'malformed' 'place-adopted zero width is malformed'
+Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A","bounds":{"x":0,"y":0,"width":10}}') 'malformed' 'place-adopted missing height is malformed'
+Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A","bounds":{"x":0,"y":0,"width":"10","height":10}}') 'malformed' 'place-adopted non-numeric bounds are malformed'
+Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A","bounds":{"x":0,"y":0,"width":300,"height":260},"state":"normal"}') 'malformed' 'place-adopted.state is not silently ignored'
 
 # ---- negative validator fixtures (010R predicates demonstrably reject) ------
 function New-WireObservation {
@@ -496,6 +500,11 @@ $apply = Invoke-Line ('{"requestId":14,"method":"apply","target":"' + $tokenA + 
 Assert-True ($apply.outcome -eq 'success' -and $apply.observation.bounds.width -eq 301 -and $apply.observation.bounds.height -eq 151) 'fractional bounds are deterministically rounded away from zero'
 Assert-True ($apply.observation.bounds.x -eq 50 -and $apply.observation.bounds.y -eq 61) 'fractional position is rounded away from zero'
 Assert-True ($script:fakeRegistry[0].touched -contains 'foreground-once') 'apply foregrounds the activated member once without persistent topmost state'
+ $foregroundCountBeforeAdopted = @($script:fakeRegistry[0].touched | Where-Object { $_ -eq 'foreground-once' }).Count
+ $placeAdopted = Invoke-Line ('{"requestId":141,"method":"place-adopted","target":"' + $tokenA + '","bounds":{"x":70.4,"y":80.6,"width":320.5,"height":170.5}}')
+Assert-True ($placeAdopted.outcome -eq 'success' -and $placeAdopted.observation.bounds.width -eq 321 -and $placeAdopted.observation.bounds.height -eq 171) 'place-adopted rounds and places the verified member'
+Assert-True ($placeAdopted.observation.bounds.x -eq 70 -and $placeAdopted.observation.bounds.y -eq 81) 'place-adopted rounds position away from zero'
+Assert-True (@($script:fakeRegistry[0].touched | Where-Object { $_ -eq 'foreground-once' }).Count -eq $foregroundCountBeforeAdopted) 'place-adopted remains non-activating and does not foreground again'
 $restored = Invoke-Line ('{"requestId":140,"method":"restore","target":"' + $tokenA + '"}')
 Assert-Outcome $restored 'success' 'restore succeeds on an issued token'
 Assert-True ($script:fakeRegistry[0].touched -contains 'restore' -and $script:fakeRegistry[0].touched -contains 'foreground-once') 'restore foregrounds the member once without persistent topmost state'

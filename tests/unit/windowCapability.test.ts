@@ -171,6 +171,7 @@ describe('window capability client', () => {
       minimizeA: client.minimize(a),
       restoreB: client.restore(b),
       applyB: client.apply(b, { x: 1, y: 2, width: 300, height: 200 }, 'maximized'),
+      placeAdoptedB: client.placeAdopted(b, { x: 5, y: 6, width: 320, height: 210 }),
       closeA: client.close(a),
     };
 
@@ -183,7 +184,8 @@ describe('window capability client', () => {
     fake.deliver(successWithObservation(2, 'observe', 'AAAA'));
     fake.deliver(successWithObservation(4, 'restore', 'BBBB'));
     fake.deliver({ ...response(5, 'apply', 'success'), observation: observationFor('BBBB', 'maximized') });
-    fake.deliver(response(6, 'close', 'success'));
+    fake.deliver({ ...response(6, 'place-adopted', 'success'), observation: observationFor('BBBB') });
+    fake.deliver(response(7, 'close', 'success'));
 
     for (const result of Object.values(results)) {
       await expect(result).resolves.toMatchObject({ outcome: 'success' });
@@ -195,6 +197,8 @@ describe('window capability client', () => {
     expect(byMethod('apply')[0]?.target).toBe('BBBB');
     expect(byMethod('apply')[0]?.bounds).toEqual({ x: 1, y: 2, width: 300, height: 200 });
     expect(byMethod('apply')[0]?.state).toBe('maximized');
+    expect(byMethod('place-adopted')[0]?.target).toBe('BBBB');
+    expect(byMethod('place-adopted')[0]?.bounds).toEqual({ x: 5, y: 6, width: 320, height: 210 });
     expect(byMethod('close')[0]?.target).toBe('AAAA');
     expect(fake.sent.filter((m) => m.method === 'list').length).toBe(1);
   });
@@ -254,12 +258,12 @@ describe('window capability client', () => {
     const client = createWindowCapabilityClient({ transport: fake.transport });
     const surface = Object.keys(client);
     expect(surface.sort()).toEqual(
-      ['activate', 'apply', 'cloak', 'cloakMany', 'close', 'handleMessage', 'hover', 'list', 'livePreview', 'minimize', 'observe', 'pendingCount', 'rejectAllPending', 'restore', 'stop', 'thumbnail', 'toggle', 'uncloak', 'uncloakMany'].sort(),
+      ['activate', 'apply', 'cloak', 'cloakMany', 'close', 'handleMessage', 'hover', 'list', 'livePreview', 'minimize', 'observe', 'pendingCount', 'placeAdopted', 'rejectAllPending', 'restore', 'stop', 'thumbnail', 'toggle', 'uncloak', 'uncloakMany'].sort(),
     );
     for (const name of surface) {
       expect(name.toLowerCase()).not.toMatch(/send|exec|invoke|shell|spawn|launch|eval/);
     }
-    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'activate', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail']);
+    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'activate', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'place-adopted', 'close', 'hover', 'thumbnail']);
   });
 
   it('routes bounded batched visibility through one correlated request', async () => {

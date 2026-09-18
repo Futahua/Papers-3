@@ -72,7 +72,7 @@ export interface DockCapabilityService {
   hoverAt(x: number, y: number): Promise<WindowHoverResult>;
   pickAt(x: number, y: number, candidateId: string): Promise<WindowBindResult & { candidate?: unknown }>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
-  applyCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult>;
+  placeAdoptedCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult>;
 }
 
 export interface AdoptedWindowDockDependencies {

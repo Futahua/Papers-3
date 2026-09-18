@@ -613,6 +613,13 @@ function Set-WhWindowBounds([IntPtr]$RuntimeId, [int]$X, [int]$Y, [int]$Width, [
   & $script:WhOps['Raise'] $RuntimeId
 }
 
+# Adopted foreign windows must move without changing focus or z-order. The
+# native SetBounds seam already uses SWP_NOZORDER|SWP_NOACTIVATE; unlike the
+# ordinary layout apply path, this wrapper deliberately does not raise.
+function Set-WhAdoptedWindowBounds([IntPtr]$RuntimeId, [int]$X, [int]$Y, [int]$Width, [int]$Height) {
+  & $script:WhOps['SetBounds'] $RuntimeId $X $Y $Width $Height
+}
+
 function Minimize-WhWindow([IntPtr]$RuntimeId) {
   & $script:WhOps['Minimize'] $RuntimeId
 }

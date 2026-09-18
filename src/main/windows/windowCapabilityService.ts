@@ -166,6 +166,8 @@ export interface WindowCapabilityService {
   beginLivePreviewCapability?(capability: WindowRuntimeCapability, caller: string): Promise<WindowCapabilityResult>;
   endLivePreview?(): Promise<WindowCapabilityResult>;
   applyCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult>;
+  /** Dedicated non-activating placement for an adopted foreign window. */
+  placeAdoptedCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult>;
   /** 019G real-window thumbnail for one issued capability. Dimensions default
    * to 240x135, must be positive integers within 320x180 (malformed
    * otherwise); the helper rechecks exact token identity immediately before
@@ -787,6 +789,14 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return factory.apply(token, bounds);
   }
 
+  async function placeAdoptedCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const token = tokenFor(capability);
+    if (!token) return { outcome: 'missing', error: 'binding is not issued' };
+    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    return factory.placeAdopted(token, bounds);
+  }
+
   /** Strictly validates one thumbnail dimension: absent -> the contract
    * default, present but not a positive safe integer within the max -> typed
    * malformed (fail closed, never clamped to a guessed value). */
@@ -1081,6 +1091,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     beginLivePreviewCapability,
     endLivePreview,
     applyCapability,
+    placeAdoptedCapability,
     thumbnailCapability,
     resolvePersisted,
     resolveWindowInstance,

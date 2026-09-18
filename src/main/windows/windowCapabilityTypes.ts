@@ -33,6 +33,8 @@ export const WINDOW_CAPABILITY_METHODS = [
   'uncloak-many',
   'live-preview',
   'apply',
+  /** Dedicated non-activating placement for a verified adopted window. */
+  'place-adopted',
   'close',
   'hover',
   'thumbnail',

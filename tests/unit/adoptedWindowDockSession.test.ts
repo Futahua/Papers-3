@@ -68,7 +68,7 @@ function fakeService(state: Partial<FakeServiceState> = {}): DockCapabilityServi
     hoverAt: async () => full.hover,
     pickAt: async () => full.pick,
     observeCapability: async () => full.observations[Math.min(observed++, full.observations.length - 1)] as WindowCapabilityResult,
-    applyCapability: async (_cap, bounds) => {
+    placeAdoptedCapability: async (_cap, bounds) => {
       applyCalls += 1;
       full.appliedBounds.push({ ...bounds });
       const result = full.applyResults[Math.min(applied++, full.applyResults.length - 1)] ?? { outcome: 'success' };

@@ -2,7 +2,7 @@
  * Adopted-window geometry follower: identity-fenced follow and release.
  *
  * Every test drives the follower through a scripted fake of the two service
- * methods it uses (observe/apply). Nothing here spawns a process or touches
+ * methods it uses (observe/place-adopted). Nothing here spawns a process or touches
  * a real window.
  */
 import { describe, expect, it } from 'vitest';
@@ -41,7 +41,7 @@ function fakeService(script: {
       return applyCalls;
     },
     observeCapability: async () => script.observations[Math.min(observed++, script.observations.length - 1)] as WindowCapabilityResult,
-    applyCapability: async (_cap, bounds) => {
+    placeAdoptedCapability: async (_cap, bounds) => {
       applyCalls += 1;
       appliedBounds.push({ ...bounds });
       return applies[Math.min(applyCalls - 1, applies.length - 1)] ?? { outcome: 'success' };

@@ -1,6 +1,6 @@
 {
   "protocolVersion": "018",
-  "description": "Papers-owned window helper resource. Protocol, session tokens, identity revalidation, capacity limits and native behavior are locked to the accepted Assignment 013 (013R..013R5F) probe snapshot, extended by the reviewed Assignment 016 additions (task-worthy list filter, hover, apply clamping) the reviewed Assignment 019G thumbnail method, the atomic `toggle` method that reads a window’s live state and minimizes or restores it in ONE request, and the reviewed Assignment 018 identity revision (session-token identity drops the mutable exact title in favour of the window class, and every observation carries windowClass). The hashes below must equal the compiled expected hashes in src/main/windows/windowHelperResource.ts and the actual resource bytes; a deliberate helper edit requires an explicit reviewed code+manifest update.",
+  "description": "Papers-owned window helper resource. Protocol, session tokens, identity revalidation, capacity limits and native behavior are locked to the accepted Assignment 013 (013R..013R5F) probe snapshot, extended by the reviewed Assignment 016 additions (task-worthy list filter, hover, apply clamping), the reviewed Assignment 019G thumbnail method, the atomic toggle method, the reviewed Assignment 018 identity revision, and the dedicated non-activating place-adopted placement method. The hashes below must equal the compiled expected hashes in src/main/windows/windowHelperResource.ts and the actual resource bytes; a deliberate helper edit requires an explicit reviewed code+manifest update.",
   "executable": "powershell.exe",
   "spawnArguments": [
     "-NoProfile",
@@ -12,7 +12,7 @@
     "window-capability.ps1"
   ],
   "hashes": {
-    "window-helper.ps1": "30540db10520bb160ca0b4164cad10645893833f5dcb49ab379f48d24ad30b7f",
-    "window-capability.ps1": "1ebec16bf7fdc220bd3964c178b14e518e024807f9c632fe996ec198749613e3"
+    "window-helper.ps1": "cd4e9c7c7a7e5e09c5751c99a47a43a24be06991e3c6ab6520b673a67d22b6a2",
+    "window-capability.ps1": "cee37bcfd59cdf438213dcc8af0b16f8f08811b16b165c26a1ee1ca8692044ce"
   }
 }

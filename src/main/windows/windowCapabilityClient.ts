@@ -47,6 +47,8 @@ export interface WindowCapabilityClient {
   uncloakMany(runtimeIds: RuntimeWindowId[]): Promise<WindowCapabilityResult>;
   livePreview(runtimeId: RuntimeWindowId, caller: string, enabled: boolean): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
+  /** Dedicated non-activating placement boundary for adopted foreign windows. */
+  placeAdopted(runtimeId: RuntimeWindowId, bounds: WindowBounds): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** 016 direct pick: resolve the topmost task-worthy window at a screen
    * point (helper-owned eligibility). No target - the helper resolves. */
@@ -196,6 +198,7 @@ export function createWindowCapabilityClient({
     uncloakMany: (runtimeIds) => request('uncloak-many', { targets: runtimeIds }),
     livePreview: (runtimeId, caller, enabled) => request('live-preview', { target: runtimeId, caller, enabled }),
     apply: (runtimeId, bounds, state) => request('apply', { target: runtimeId, bounds, state }),
+    placeAdopted: (runtimeId, bounds) => request('place-adopted', { target: runtimeId, bounds }),
     close: (runtimeId) => request('close', { target: runtimeId }),
     hover: (x, y) => request('hover', { x, y }),
     thumbnail: (runtimeId, maxWidth, maxHeight) => request('thumbnail', { target: runtimeId, maxWidth, maxHeight }),

@@ -140,7 +140,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot/window-capability.ps1"
 
-$VALID_METHODS = @('list', 'observe', 'activate', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail')
+$VALID_METHODS = @('list', 'observe', 'activate', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'place-adopted', 'close', 'hover', 'thumbnail')
 $FORBIDDEN_KEYS = @('exec', 'command', 'script', 'path', 'handle', 'env', 'args', 'cmd', 'powershell', 'invoke', 'shell')
 $MAX_SAFE_REQUEST_ID = 9007199254740991L
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
@@ -449,12 +449,12 @@ function Test-WhRequestShape {
       return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'target must be a non-empty string') }
     }
   }
-  if ($method -eq 'apply') {
+  if ($method -eq 'apply' -or $method -eq 'place-adopted') {
     if ($Request.ContainsKey('state')) {
-      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'apply.state is not supported') }
+      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null "$method.state is not supported") }
     }
     if (-not (Test-PlatformBounds $Request['bounds'])) {
-      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'apply requires platform-representable bounds (finite, within Int32; width/height at least 1 after rounding away from zero)') }
+      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null "$method requires platform-representable bounds (finite, within Int32; width/height at least 1 after rounding away from zero)") }
     }
   }
   if ($method -eq 'thumbnail') {
@@ -693,7 +693,7 @@ function Invoke-WhRequest {
       Cloak-WhWindow $runtimeId
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
     }
-    if ($Method -eq 'apply') {
+    if ($Method -eq 'apply' -or $Method -eq 'place-adopted') {
       $b = $Request['bounds']
       $x = [Math]::Round([double]$b['x'], 0, [MidpointRounding]::AwayFromZero)
       $y = [Math]::Round([double]$b['y'], 0, [MidpointRounding]::AwayFromZero)
@@ -702,7 +702,14 @@ function Invoke-WhRequest {
       # 016: never move a window offscreen - clamp into a visible monitor
       # work area (minimum usable size) before applying.
       $clamped = ConvertTo-WhClampedBounds ([int]$x) ([int]$y) ([int]$w) ([int]$h) (Get-WhMonitorWorkAreas)
-      Set-WhWindowBounds $runtimeId $clamped.x $clamped.y $clamped.width $clamped.height
+      # `place-adopted` is deliberately a distinct capability method. It uses
+      # the same native non-activating SetWindowPos primitive as bounds writes,
+      # but never raises or focuses a foreign window.
+      if ($Method -eq 'place-adopted') {
+        Set-WhAdoptedWindowBounds $runtimeId $clamped.x $clamped.y $clamped.width $clamped.height
+      } else {
+        Set-WhWindowBounds $runtimeId $clamped.x $clamped.y $clamped.width $clamped.height
+      }
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
     }
     if ($Method -eq 'close') {
