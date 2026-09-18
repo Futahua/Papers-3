@@ -194,8 +194,8 @@ $script:WhOps = @{
       throw "WH-COMMAND-ROUTING: SetWindowPos failed for runtime id $id."
     }
   }
-  SetAdoptedBounds = { param([IntPtr]$id, [IntPtr]$host, [int]$x, [int]$y, [int]$w, [int]$h)
-    if (-not [WH.Win32]::SetWindowPos($id, $host, $x, $y, $w, $h, [WH.Win32]::SWP_NOACTIVATE)) {
+  SetAdoptedBounds = { param([IntPtr]$id, [IntPtr]$hostPtr, [int]$x, [int]$y, [int]$w, [int]$h)
+    if (-not [WH.Win32]::SetWindowPos($id, $hostPtr, $x, $y, $w, $h, [WH.Win32]::SWP_NOACTIVATE)) {
       throw "WH-COMMAND-ROUTING: adopted SetWindowPos failed for runtime id $id."
     }
   }
