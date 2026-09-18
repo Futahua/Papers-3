@@ -42,6 +42,7 @@ function validDescriptor(value: unknown): value is PersistedWindowMemberDescript
 
 function parseEntries(value: unknown): AdoptedWindowRecoveryEntry[] {
   if (!value || typeof value !== 'object') return [];
+  if ((value as { version?: unknown }).version !== JOURNAL_VERSION) return [];
   const entries = (value as { entries?: unknown }).entries;
   if (!Array.isArray(entries)) return [];
   const parsed: AdoptedWindowRecoveryEntry[] = [];
@@ -109,7 +110,9 @@ export function createAdoptedWindowRecoveryJournal(filePath: string): AdoptedWin
   }
 
   function scheduleWrite(): Promise<void> {
-    writeTail = writeTail.then(writeSnapshot);
+    // A failed disk write must not poison every later arm/clear operation;
+    // the next mutation gets a fresh atomic attempt.
+    writeTail = writeTail.catch(() => undefined).then(writeSnapshot);
     return writeTail;
   }
 

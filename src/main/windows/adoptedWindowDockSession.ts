@@ -193,6 +193,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     currentPid = process.pid,
     accelerator = 'CommandOrControl+Alt+D',
     followDelayMs = ADOPT_DOCK_FOLLOW_DELAY_MS,
+    now = Date.now,
   } = dependencies;
 
   interface Adoption {
@@ -442,7 +443,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
         recoveryId: entry.recoveryId,
         descriptor: entry.descriptor,
         originalBounds: adopted.originalBounds,
-        recordedAt: Date.now(),
+        recordedAt: now(),
       });
     } catch {
       follower.abandon();
