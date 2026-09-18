@@ -71,6 +71,7 @@ export function createForeignWindowSurfaceController(
   service: ForeignWindowSurfaceControllerService,
   collection = createForeignWindowSurfaceCollection(),
   nativeBroker?: WindowLayoutBroker | null,
+  options: { allowLegacyPlacement?: boolean } = {},
 ): ForeignWindowSurfaceController {
   const hosted = new Set<string>();
   // Only the separate Alt+D dock tool may use this legacy placement path. The
@@ -78,6 +79,7 @@ export function createForeignWindowSurfaceController(
   // to teleporting a top-level window.
   const legacyPlaced = new Set<string>();
   let brokerActive = nativeBroker !== null && nativeBroker !== undefined;
+  const allowLegacyPlacement = options.allowLegacyPlacement === true;
 
   function recordFor(surfaceId: string) {
     const record = collection.get(surfaceId);
@@ -158,7 +160,7 @@ export function createForeignWindowSurfaceController(
       if (!validBounds(bounds)) {
         return { outcome: 'helper-unavailable', error: 'this window cannot be hosted inside Papers', surface: snapshotOf(surfaceId) };
       }
-      if (!nativeBroker) {
+      if (!nativeBroker && allowLegacyPlacement) {
         if (!service.placeAdoptedCapability || !record.capability) {
           return { outcome: 'helper-unavailable', error: 'native hosting is unavailable', surface: snapshotOf(surfaceId) };
         }
@@ -167,6 +169,9 @@ export function createForeignWindowSurfaceController(
         legacyPlaced.add(surfaceId);
         record.paneBounds = { ...bounds };
         return { outcome: 'success', surface: snapshotOf(surfaceId) };
+      }
+      if (!nativeBroker) {
+        return { outcome: 'helper-unavailable', error: 'native hosting is unavailable', surface: snapshotOf(surfaceId) };
       }
       if (!brokerActive || !hostWindow || !record.descriptor.windowInstanceId) {
         return { outcome: 'helper-unavailable', error: 'this window cannot be hosted inside Papers', surface: snapshotOf(surfaceId) };

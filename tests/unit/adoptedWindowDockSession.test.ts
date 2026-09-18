@@ -198,7 +198,7 @@ describe('adoptedWindowDockSession', () => {
     const controller = createForeignWindowSurfaceController({
       ...service,
       resolvePersisted: async (requested) => ({ outcome: 'success' as const, capability: capability(), descriptor: requested }),
-    });
+    }, undefined, null, { allowLegacyPlacement: true });
     const dock = createAdoptedWindowDock({ service, surfaceController: controller, screen: fakeScreen(), shortcut: fakeShortcut() });
     const window = fakeWindow();
     expect((await dock.toggle(window)).outcome).toBe('docked');
@@ -231,7 +231,7 @@ describe('adoptedWindowDockSession', () => {
         capability: capability(),
         descriptor: requested,
       }),
-    });
+    }, undefined, null, { allowLegacyPlacement: true });
     const dock = createAdoptedWindowDock({
       service,
       surfaceController: controller,

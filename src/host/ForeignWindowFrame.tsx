@@ -28,8 +28,11 @@ export function ForeignWindowFrame(props: { surfaceId: string; visible?: boolean
     sync();
     const observer = new ResizeObserver(sync);
     observer.observe(frame);
+    const onWorkspaceGeometryCommit = (): void => sync();
+    window.addEventListener('papers-workspace-geometry-commit', onWorkspaceGeometryCommit);
     return () => {
       observer.disconnect();
+      window.removeEventListener('papers-workspace-geometry-commit', onWorkspaceGeometryCommit);
       syncRef.current = null;
     };
   }, [surfaceId, visible]);

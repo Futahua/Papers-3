@@ -168,6 +168,14 @@ public static class WindowLayoutBroker
             ShowWindow(target, SwShow);
             return false;
         }
+        long adoptedStyle = GetWindowLongPtr(target, GwlStyle).ToInt64();
+        if ((adoptedStyle & WsChild) == 0 || (adoptedStyle & WsPopup) != 0 || GetParent(target) != binding.Host) {
+            SetParent(target, originalParent);
+            SetWindowLongPtr(target, GwlStyle, new IntPtr(style));
+            SetWindowLongPtr(target, GwlExStyle, new IntPtr(exStyle));
+            ShowWindow(target, SwShow);
+            return false;
+        }
         binding.InstanceId = instanceId;
         binding.Target = target;
         binding.OriginalParent = originalParent;
@@ -189,6 +197,8 @@ public static class WindowLayoutBroker
         if (GetParent(binding.Target) != binding.OriginalParent) return false;
         SetWindowLongPtr(binding.Target, GwlStyle, new IntPtr(binding.OriginalStyle));
         SetWindowLongPtr(binding.Target, GwlExStyle, new IntPtr(binding.OriginalExStyle));
+        if (GetWindowLongPtr(binding.Target, GwlStyle).ToInt64() != binding.OriginalStyle
+            || GetWindowLongPtr(binding.Target, GwlExStyle).ToInt64() != binding.OriginalExStyle) return false;
         int x = binding.OriginalRect.Left, y = binding.OriginalRect.Top;
         if (binding.OriginalParent != IntPtr.Zero)
         {

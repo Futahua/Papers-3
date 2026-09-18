@@ -219,6 +219,15 @@ export function WorkspaceDock(props: {
   const dragActive = useRef(false);
   const structuralTokenRef = useRef(workspaceStructuralToken(topology));
   const pointerDragCleanup = useRef<(() => void) | null>(null);
+  const geometrySyncFrame = useRef<number | null>(null);
+
+  const scheduleForeignGeometrySync = useCallback((): void => {
+    if (geometrySyncFrame.current !== null) return;
+    geometrySyncFrame.current = window.requestAnimationFrame(() => {
+      geometrySyncFrame.current = null;
+      window.dispatchEvent(new Event('papers-workspace-geometry-commit'));
+    });
+  }, []);
   const dragSessionGeneration = useRef(0);
   const hostRaised = useRef(false);
   const statusTimer = useRef<number | null>(null);
@@ -410,6 +419,10 @@ export function WorkspaceDock(props: {
     return () => {
       disposing.current = true;
       apiSubscriptions.current.splice(0).forEach((subscription) => subscription.dispose());
+      if (geometrySyncFrame.current !== null) {
+        window.cancelAnimationFrame(geometrySyncFrame.current);
+        geometrySyncFrame.current = null;
+      }
     };
   }, []);
 
@@ -446,7 +459,8 @@ export function WorkspaceDock(props: {
       }
     }
     onCommitLayout({ groups, ...(root ? { root } : {}), ...(rootWeights ? { rootWeights } : {}) });
-  }, [onCommitLayout, refreshGroupIds]);
+    scheduleForeignGeometrySync();
+  }, [onCommitLayout, refreshGroupIds, scheduleForeignGeometrySync]);
 
   const reconcileFromTopology = useCallback((api: DockviewApi): void => {
     refreshGroupIds(api);
@@ -495,6 +509,7 @@ export function WorkspaceDock(props: {
         // serialized shape; the canonical topology remains authoritative and
         // the next external reconciliation will retry.
       }
+      scheduleForeignGeometrySync();
       return;
     }
     const firstSplitGroupId = splitRoot && splitRoot.children[0]?.kind === 'group'
@@ -553,8 +568,8 @@ export function WorkspaceDock(props: {
           : { height: Math.round(targetSize) }));
       }
     }
-
-  }, [refreshGroupIds]);
+    scheduleForeignGeometrySync();
+  }, [refreshGroupIds, scheduleForeignGeometrySync]);
 
   useEffect(() => {
     const finishResize = (cancelled = false): void => {

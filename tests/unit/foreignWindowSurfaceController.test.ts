@@ -104,6 +104,18 @@ describe('foreignWindowSurfaceController', () => {
     expect(native.calls).toEqual(['create:foreign-1:77', 'adopt:foreign-1:W0123456789abcdef', 'release:foreign-1']);
   });
 
+  it('fails closed when the native host is unavailable instead of using desktop placement', async () => {
+    const controller = createForeignWindowSurfaceController({
+      ...service(),
+      placeAdoptedCapability: async () => ({ outcome: 'success' as const }),
+    });
+    controller.create({ surfaceId: 'foreign-1', descriptor });
+    await controller.resolve('foreign-1');
+    const result = await controller.follow('foreign-1', bounds, '77');
+    expect(result.outcome).toBe('helper-unavailable');
+    expect('error' in result && result.error).toContain('native hosting is unavailable');
+  });
+
   it('supports multiple surfaces without switching or ejecting a Papers host', async () => {
     const native = broker();
     const second = { ...descriptor, windowInstanceId: 'Wfedcba9876543210' };
