@@ -882,6 +882,75 @@ export function splitWorkspaceGroupV2(
   return next;
 }
 
+export function splitWorkspaceSurfaceAtTargetV2(
+  topology: WorkspaceTopologyV2,
+  options: {
+    sourceGroupId: string;
+    targetGroupId: string;
+    newGroupId: string;
+    surfaceId: string;
+    orientation: WorkspaceSplitOrientation;
+    position: 'before' | 'after';
+  },
+): WorkspaceTopologyV2 {
+  assertValidWorkspaceTopologyV2(topology);
+  if (options.sourceGroupId === options.targetGroupId) {
+    return splitWorkspaceGroupV2(topology, {
+      groupId: options.targetGroupId,
+      newGroupId: options.newGroupId,
+      surfaceId: options.surfaceId,
+      orientation: options.orientation,
+      position: options.position,
+    });
+  }
+  assertIdentity(options.newGroupId, 'newGroupId');
+  if (topology.groups.some((group) => group.groupId === options.newGroupId)) throw new Error('new group already exists');
+  const source = topology.groups.find((group) => group.groupId === options.sourceGroupId);
+  const target = topology.groups.find((group) => group.groupId === options.targetGroupId);
+  if (!source?.surfaceIds.includes(options.surfaceId)) throw new Error('surface is not in the source group');
+  if (!target) throw new Error('target group does not exist');
+  const removeEmptySource = source.surfaceIds.length === 1;
+  const groups = topology.groups
+    .filter((group) => !removeEmptySource || group.groupId !== source.groupId)
+    .map((group) => {
+      if (group.groupId !== source.groupId) return { ...group, surfaceIds: [...group.surfaceIds] };
+      const surfaceIds = group.surfaceIds.filter((candidate) => candidate !== options.surfaceId);
+      return {
+        ...group,
+        surfaceIds,
+        activeSurfaceId: group.activeSurfaceId === options.surfaceId ? surfaceIds[0] ?? null : group.activeSurfaceId,
+      };
+    });
+  const withoutSource = removeEmptySource ? normalizeWorkspaceLayout(removeGroupNode(topology.root, source.groupId)!) : topology.root;
+  const groupNodes: WorkspaceLayoutNode[] = [
+    { kind: 'group', groupId: options.targetGroupId },
+    { kind: 'group', groupId: options.newGroupId },
+  ];
+  if (options.position === 'before') groupNodes.reverse();
+  const next: WorkspaceTopologyV2 = {
+    ...topology,
+    groups: [...groups, { groupId: options.newGroupId, surfaceIds: [options.surfaceId], activeSurfaceId: options.surfaceId }],
+    root: normalizeWorkspaceLayout(replaceGroupNode(withoutSource, options.targetGroupId, {
+      kind: 'split', orientation: options.orientation, weights: [0.5, 0.5], children: groupNodes,
+    })),
+    focusedGroupId: options.newGroupId,
+  };
+  assertValidWorkspaceTopologyV2(next);
+  return next;
+}
+
+export function setRootWorkspaceSplitWeightsV2(topology: WorkspaceTopologyV2, weights: number[]): WorkspaceTopologyV2 {
+  assertValidWorkspaceTopologyV2(topology);
+  if (topology.root.kind !== 'split') return topology;
+  if (weights.length !== topology.root.children.length || weights.some((weight) => !Number.isFinite(weight) || weight <= 0)) {
+    throw new Error('split weights must match the root children');
+  }
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  const next: WorkspaceTopologyV2 = { ...topology, root: { ...topology.root, weights: weights.map((weight) => weight / total) } };
+  assertValidWorkspaceTopologyV2(next);
+  return next;
+}
+
 export function setWorkspaceLayoutRootV2(topology: WorkspaceTopologyV2, root: WorkspaceLayoutNode): WorkspaceTopologyV2 {
   assertValidWorkspaceTopologyV2(topology);
   const normalized = normalizeWorkspaceLayout(root);

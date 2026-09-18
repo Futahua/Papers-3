@@ -24,6 +24,8 @@ import {
   reorderWorkspaceGroupV2,
   splitWorkspaceGroupV2,
   setWorkspaceLayoutRootV2,
+  splitWorkspaceSurfaceAtTargetV2,
+  setRootWorkspaceSplitWeightsV2,
 } from '../../src/shared/workspaceTopology';
 import type { WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 
@@ -115,6 +117,26 @@ describe('workspace topology', () => {
     const laidOut = setWorkspaceLayoutRootV2(topology, { kind: 'group', groupId: 'group-main' });
     expect(laidOut.root).toEqual({ kind: 'group', groupId: 'group-main' });
     expect(laidOut.surfaces).toEqual(topology.surfaces);
+  });
+
+  it('supports direct foreign-tab splits and durable root weights', () => {
+    let topology = migrateWorkspaceTopologyV1(createWorkspaceTopology());
+    topology = openWorkspaceSurfaceV2(topology, {
+      kind: 'foreign-window', surfaceId: 'foreign-a', title: 'A', descriptor: { version: 1, title: 'A' },
+    });
+    topology = openWorkspaceSurfaceV2(topology, {
+      kind: 'foreign-window', surfaceId: 'foreign-b', title: 'B', descriptor: { version: 1, title: 'B' },
+    });
+    topology = splitWorkspaceGroupV2(topology, {
+      groupId: 'group-main', newGroupId: 'group-right', surfaceId: 'foreign-b', orientation: 'horizontal', position: 'after',
+    });
+    const split = splitWorkspaceSurfaceAtTargetV2(topology, {
+      sourceGroupId: 'group-main', targetGroupId: 'group-right', newGroupId: 'group-bottom',
+      surfaceId: 'foreign-a', orientation: 'vertical', position: 'after',
+    });
+    const weighted = setRootWorkspaceSplitWeightsV2(split, [2, 1]);
+    expect(weighted.root).toMatchObject({ orientation: 'vertical', weights: [2 / 3, 1 / 3] });
+    expect(weighted.surfaces.every((surface) => surface.kind === 'foreign-window')).toBe(true);
   });
 
   it('owns stable product identities without Dockview state', () => {
