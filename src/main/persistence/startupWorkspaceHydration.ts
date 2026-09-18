@@ -1,7 +1,10 @@
 import {
   remapWorkspaceTopologySurfaceIds,
+  remapWorkspaceTopologyV2ProjectSurfaceIds,
   type WorkspaceTopologyV1,
   type WorkspaceSurface,
+  type WorkspaceTopologyV2,
+  type WorkspaceForeignWindowSurfaceV2,
 } from '@shared/workspaceTopology';
 import type { SelectedWorkspaceSnapshot } from './workspaceTopologyStore';
 
@@ -27,6 +30,72 @@ export interface StartupWorkspaceHydrationDeps {
   assertWorkspaceMutationAvailable?: (windowId: number) => void;
 }
 
+export interface StartupWorkspaceForeignHydrationDeps {
+  snapshot: SelectedWorkspaceSnapshot | null;
+  findAvailableBackpack: (projectId: string) => { name: string } | null;
+  openProject: (projectId: string) => Promise<{ url: string } | null>;
+  createSurface: (project: { projectId: string; windowId: number }) => { surfaceId: string };
+  retireSurface: (surfaceId: string) => void;
+  /** Recreate and resolve one persisted foreign surface using its durable id. */
+  resolveForeign: (surface: WorkspaceForeignWindowSurfaceV2, windowId: number) => Promise<void>;
+  retireForeign?: (surfaceId: string) => Promise<void> | void;
+  validate: (topology: WorkspaceTopologyV2) => void;
+  deliver: (projects: HydratedWorkspaceProject[], topology: WorkspaceTopologyV2) => void;
+  commit: (workspaceId: string, topology: WorkspaceTopologyV2) => void;
+  runWithProjectOwnershipGates?: <T>(projectIds: readonly string[], operation: () => Promise<T>) => Promise<T>;
+  assertWorkspaceMutationAvailable?: (windowId: number) => void;
+}
+
+export async function hydrateStartupWorkspaceWithForeign(
+  windowId: number,
+  deps: StartupWorkspaceForeignHydrationDeps,
+): Promise<{ workspaceId: string; projects: HydratedWorkspaceProject[]; topology: WorkspaceTopologyV2 } | null> {
+  const snapshot = deps.snapshot;
+  if (!snapshot) return null;
+  if (snapshot.topology.schemaVersion !== 2) throw new Error('Foreign startup hydration requires a v2 workspace topology.');
+  const topologySnapshot = snapshot.topology as WorkspaceTopologyV2;
+  const projectSurfaces = topologySnapshot.surfaces.filter((surface) => surface.kind === 'project');
+  const projectIds = [...new Set(projectSurfaces.map((surface) => surface.projectId))];
+  const run = deps.runWithProjectOwnershipGates ?? (<T>(_: readonly string[], operation: () => Promise<T>) => operation());
+  return run(projectIds, async () => {
+    const opened: Array<{ old: Extract<WorkspaceTopologyV2['surfaces'][number], { kind: 'project' }>; fresh: HydratedWorkspaceProject }> = [];
+    const allocated: string[] = [];
+    const resolvedForeign: string[] = [];
+    try {
+      for (const oldSurface of projectSurfaces) {
+        const backpack = deps.findAvailableBackpack(oldSurface.projectId);
+        if (!backpack) throw new Error(`Backpack ${oldSurface.projectId} is not available.`);
+        const project = await deps.openProject(oldSurface.projectId);
+        if (!project) throw new Error(`Backpack ${oldSurface.projectId} has no usable project surface.`);
+        opened.push({ old: oldSurface, fresh: { ...oldSurface, url: project.url } });
+      }
+      for (const oldSurface of projectSurfaces) {
+        if (!deps.findAvailableBackpack(oldSurface.projectId)) throw new Error(`Backpack ${oldSurface.projectId} is not available.`);
+      }
+      deps.assertWorkspaceMutationAvailable?.(windowId);
+      for (const foreign of topologySnapshot.surfaces.filter((surface): surface is WorkspaceForeignWindowSurfaceV2 => surface.kind === 'foreign-window')) {
+        await deps.resolveForeign(foreign, windowId);
+        resolvedForeign.push(foreign.surfaceId);
+      }
+      for (const { old, fresh } of opened) {
+        const surface = deps.createSurface({ windowId, projectId: old.projectId });
+        allocated.push(surface.surfaceId);
+        fresh.surfaceId = surface.surfaceId;
+      }
+      const oldToFresh = new Map(opened.map(({ old, fresh }) => [old.surfaceId, fresh.surfaceId]));
+      const topology = remapWorkspaceTopologyV2ProjectSurfaceIds(topologySnapshot, oldToFresh);
+      deps.validate(topology);
+      deps.deliver(opened.map(({ fresh }) => fresh), topology);
+      deps.commit(snapshot.workspaceId, topology);
+      return { workspaceId: snapshot.workspaceId, projects: opened.map(({ fresh }) => fresh), topology };
+    } catch (error) {
+      for (const surfaceId of allocated) deps.retireSurface(surfaceId);
+      for (const surfaceId of resolvedForeign.reverse()) await deps.retireForeign?.(surfaceId);
+      throw error;
+    }
+  });
+}
+
 /**
  * Resolve-first, all-or-nothing startup hydration. This function deliberately
  * has no UI/window lookup and never reads or writes persistence itself. The
@@ -38,6 +107,9 @@ export async function hydrateStartupWorkspace(
 ): Promise<{ workspaceId: string; projects: HydratedWorkspaceProject[]; topology: WorkspaceTopologyV1 } | null> {
   const snapshot = deps.snapshot;
   if (!snapshot) return null;
+  if (snapshot.topology.schemaVersion !== 1) {
+    throw new Error('Startup workspace contains foreign windows and requires foreign-surface hydration.');
+  }
   const projectIds = [...new Set(snapshot.topology.surfaces.map((surface) => surface.projectId))];
   const run = deps.runWithProjectOwnershipGates
     ?? (<T>(_: readonly string[], operation: () => Promise<T>) => operation());
@@ -49,6 +121,9 @@ async function hydrateStartupWorkspaceUngated(
   deps: StartupWorkspaceHydrationDeps,
   snapshot: SelectedWorkspaceSnapshot,
 ): Promise<{ workspaceId: string; projects: HydratedWorkspaceProject[]; topology: WorkspaceTopologyV1 }> {
+  if (snapshot.topology.schemaVersion !== 1) {
+    throw new Error('Startup workspace contains foreign windows and requires foreign-surface hydration.');
+  }
   const opened: Array<{ old: WorkspaceSurface; fresh: HydratedWorkspaceProject }> = [];
   const allocated: string[] = [];
   try {

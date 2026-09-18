@@ -105,8 +105,8 @@ import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { WorkspaceTopologyStore } from './persistence/workspaceTopologyStore';
 import { WorkspaceLayoutStore } from './persistence/workspaceLayoutStore';
-import { hydrateStartupWorkspace } from './persistence/startupWorkspaceHydration';
-import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { hydrateStartupWorkspace, hydrateStartupWorkspaceWithForeign } from './persistence/startupWorkspaceHydration';
+import type { WorkspaceTopologyV1, WorkspaceTopologyV2, WorkspaceForeignWindowSurfaceV2 } from '@shared/workspaceTopology';
 import {
   OPAQUE_SURFACE_COLOR,
   TRANSPARENT_CHILD_SURFACE_COLOR,
@@ -183,6 +183,9 @@ interface PapersWindowOwned {
   const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
   const hostOverlayOwners = new Map<number, Set<'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy'>>();
 const workspaceTopologies = new Map<number, WorkspaceTopologyV1>();
+/** V2 projection once a foreign surface is present. Project-only windows keep
+ * the legacy map/format until the first foreign surface is added. */
+const workspaceTopologiesAny = new Map<number, import('@shared/workspaceTopology').WorkspaceTopologyAny>();
 const workspaceTopologyRevisions = new Map<number, number>();
 /** Live-only association. Durable workspace IDs persist; native window IDs do not. */
 const workspaceIds = new Map<number, string>();
@@ -211,6 +214,8 @@ interface VisualSemanticKeySurfaceState {
 const visualSemanticKeysBySurface = new Map<string, VisualSemanticKeySurfaceState>();
 const visualSurfaceObservationState = createVisualSurfaceObservationStore();
 let visualResourceMonitor: VisualResourceMonitor | null = null;
+let foreignWindowSurfaceControllerRef: ReturnType<typeof createForeignWindowSurfaceController> | null = null;
+let windowCapabilityServiceRef: ReturnType<typeof createWindowCapabilityService> | null = null;
 
 function visualSemanticKeyMapKey(windowId: number, surfaceId: string): string {
   return `${windowId}\0${surfaceId}`;
@@ -792,6 +797,20 @@ async function bootstrap(): Promise<void> {
     onClose: async (instance: Parameters<typeof preparePapersWindow>[0]) => {
       closingPapersWindows.add(instance.window.id);
       await instance.projectSurfaces.hideAll();
+      const controller = foreignWindowSurfaceControllerRef;
+      if (controller) {
+        let hostHandle: string | undefined;
+        try {
+          const raw = instance.window.getNativeWindowHandle();
+          if (raw && raw.byteLength > 0) hostHandle = raw.byteLength >= 8 ? raw.readBigUInt64LE(0).toString() : String(raw.readUInt32LE(0));
+        } catch { /* the Papers window may already be tearing down */ }
+        for (const surface of controller.snapshot().filter((candidate) => candidate.hostWindowId === instance.window.id)) {
+          const released = surface.state === 'live-visible'
+            ? await controller.release(surface.surfaceId, hostHandle).catch(() => null)
+            : null;
+          if (released?.outcome === 'success' || surface.state === 'disconnected') controller.retire(surface.surfaceId);
+        }
+      }
     },
     finalize: async (windowId: number) => {
       await facade.waitForWorkspaceMutation(windowId);
@@ -803,6 +822,7 @@ async function bootstrap(): Promise<void> {
           retireLogicalSurfaces: (id) => { retireLogicalSurfacesInWindow(id); },
           clearWorkspaceTopology: (id) => {
             workspaceTopologies.delete(id);
+            workspaceTopologiesAny.delete(id);
             workspaceTopologyRevisions.delete(id);
             workspaceIds.delete(id);
           },
@@ -1033,7 +1053,7 @@ async function bootstrap(): Promise<void> {
     });
   };
 
-  const facade = new PapersHostFacade({
+  const facade: PapersHostFacade = new PapersHostFacade({
     localServiceFetch: fetchLocalServiceFor,
     bringWindowToFront: (windowId) => {
       const context = papersWindows.get(windowId);
@@ -1062,21 +1082,53 @@ async function bootstrap(): Promise<void> {
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
     workspaceTopology: (windowId) => workspaceTopologies.get(windowId) ?? null,
+    workspaceTopologyAny: (windowId) => workspaceTopologiesAny.get(windowId) ?? workspaceTopologies.get(windowId) ?? null,
+    setWorkspaceTopologyAny: (windowId, topology) => {
+      workspaceTopologiesAny.set(windowId, topology);
+      workspaceTopologyRevisions.set(windowId, (workspaceTopologyRevisions.get(windowId) ?? 0) + 1);
+      let workspaceId = workspaceIds.get(windowId);
+      if (!workspaceId) {
+        workspaceId = randomUUID();
+        workspaceIds.set(windowId, workspaceId);
+      }
+      void workspaceTopologyStore.commit(workspaceId, topology).catch((error) => {
+        console.error('[workspace-topology] foreign durable commit failed', error);
+      });
+    },
+    foreignSurfaceController: () => foreignWindowSurfaceControllerRef,
+    windowCapabilityService: () => windowCapabilityServiceRef,
+    foreignBoundsForWindow: (windowId, bounds) => {
+      const owned = papersWindows.get(windowId)?.owned.window;
+      if (!owned || owned.isDestroyed()) return bounds;
+      const content = owned.getContentBounds();
+      return { x: content.x + bounds.x, y: content.y + bounds.y, width: bounds.width, height: bounds.height };
+    },
+    foreignHostHandleForWindow: (windowId) => {
+      const owned = papersWindows.get(windowId)?.owned.window;
+      if (!owned || owned.isDestroyed()) return undefined;
+      try {
+        const raw = owned.getNativeWindowHandle();
+        if (!raw || raw.byteLength === 0) return undefined;
+        return raw.byteLength >= 8 ? raw.readBigUInt64LE(0).toString() : String(raw.readUInt32LE(0));
+      } catch {
+        return undefined;
+      }
+    },
     hydrateStartupWorkspace: (windowId) => {
       if (windowId !== primaryWindowIdForHydration) return Promise.resolve({ hydrated: false });
       if (primaryHydrationPromise) return primaryHydrationPromise;
       primaryHydrationPromise = (async () => {
-        const result = await hydrateStartupWorkspace(windowId, {
-        snapshot: await workspaceTopologyStore.selectedSnapshot(),
-        findAvailableBackpack: (projectId) => {
+        const snapshot = await workspaceTopologyStore.selectedSnapshot();
+        const common = {
+        findAvailableBackpack: (projectId: string): { name: string } | null => {
           const backpack = registry.find(projectId);
           return backpack && !backpack.archived ? { name: backpack.name } : null;
         },
-        openProject: (projectId) => backpackProjects.open(projectId),
-        createSurface: ({ windowId: targetWindowId, projectId }) => logicalSurfaces.create({ windowId: targetWindowId, projectId, kind: 'project' }),
-        retireSurface: (surfaceId) => retireLogicalSurface(surfaceId),
-        validate: (topology) => facade.validateWorkspaceTopologyForStartup(windowId, topology),
-        deliver: (projects, topology) => {
+        openProject: (projectId: string) => backpackProjects.open(projectId),
+        createSurface: ({ windowId: targetWindowId, projectId }: { windowId: number; projectId: string }) => logicalSurfaces.create({ windowId: targetWindowId, projectId, kind: 'project' }),
+        retireSurface: (surfaceId: string) => retireLogicalSurface(surfaceId),
+        validate: (topology: WorkspaceTopologyV1 | WorkspaceTopologyV2) => facade.validateWorkspaceTopologyForStartup(windowId, topology),
+        deliver: (projects: Array<{ surfaceId: string; projectId: string; title: string; url: string }>, topology: WorkspaceTopologyV1 | WorkspaceTopologyV2) => {
           const contents = papersWindows.get(windowId)?.owned.hostView.webContents;
           if (!contents || contents.isDestroyed()) throw new Error('That Papers window host is unavailable.');
           const keyedProjects = projects.map((project) => {
@@ -1087,23 +1139,53 @@ async function bootstrap(): Promise<void> {
           });
           contents.send('host:event:workspace-hydrated', { projects: keyedProjects, topology });
         },
-        commit: (workspaceId, topology) => {
+        commit: (workspaceId: string, topology: WorkspaceTopologyV1 | WorkspaceTopologyV2) => {
           workspaceIds.set(windowId, workspaceId);
           papersWindows.setActiveSurfaceId(windowId, topology.groups.find((group) => group.groupId === topology.focusedGroupId)?.activeSurfaceId ?? null);
           const active = topology.groups.find((group) => group.groupId === topology.focusedGroupId)?.activeSurfaceId;
-          const projectId = topology.surfaces.find((surface) => surface.surfaceId === active)?.projectId ?? null;
+          const projectId = topology.schemaVersion === 2
+            ? (((topology as WorkspaceTopologyV2).surfaces.find((surface) => surface.surfaceId === active)?.kind === 'project')
+              ? ((topology as WorkspaceTopologyV2).surfaces.find((surface) => surface.surfaceId === active) as Extract<WorkspaceTopologyV2['surfaces'][number], { kind: 'project' }> | undefined)?.projectId ?? null
+              : null)
+            : ((topology as WorkspaceTopologyV1).surfaces.find((surface) => surface.surfaceId === active)?.projectId ?? null);
           papersWindows.setEnteredBackpack(windowId, projectId);
-          workspaceTopologies.set(windowId, topology);
+          workspaceTopologiesAny.set(windowId, topology);
+          if (topology.schemaVersion === 1) workspaceTopologies.set(windowId, topology);
           workspaceTopologyRevisions.set(windowId, (workspaceTopologyRevisions.get(windowId) ?? 0) + 1);
           void workspaceTopologyStore.commit(workspaceId, topology).catch((error) => {
             console.error('[workspace-topology] hydration durable commit failed', error);
           });
         },
-        runWithProjectOwnershipGates: (projectIds, operation) =>
+        runWithProjectOwnershipGates: <T>(projectIds: readonly string[], operation: () => Promise<T>): Promise<T> =>
           facade.withProjectOwnershipGates(projectIds, operation),
-        assertWorkspaceMutationAvailable: (targetWindowId) =>
+        assertWorkspaceMutationAvailable: (targetWindowId: number) =>
           facade.assertWorkspaceMutationAvailable(targetWindowId),
-        });
+        };
+        const result = snapshot?.topology.schemaVersion === 2
+          ? await hydrateStartupWorkspaceWithForeign(windowId, {
+            ...common,
+            snapshot,
+            resolveForeign: async (surface: WorkspaceForeignWindowSurfaceV2, targetWindowId: number) => {
+              const controller = foreignWindowSurfaceControllerRef;
+              if (!controller) throw new Error('Foreign-window support is not ready.');
+              const created = controller.create({ surfaceId: surface.surfaceId, descriptor: surface.descriptor, title: surface.title, hostWindowId: targetWindowId });
+              const resolved = await controller.resolve(created.surfaceId);
+              if (resolved.outcome !== 'success') {
+                controller.markDisconnected(created.surfaceId);
+                controller.retire(created.surfaceId);
+                throw new Error(resolved.error ?? `Foreign window ${surface.surfaceId} could not be resolved.`);
+              }
+            },
+            retireForeign: async (surfaceId: string) => {
+              const controller = foreignWindowSurfaceControllerRef;
+              if (!controller) return;
+              const current = controller.snapshot().find((surface) => surface.surfaceId === surfaceId);
+              if (!current) return;
+              if (current.state === 'live-visible') await controller.release(surfaceId);
+              controller.retire(surfaceId);
+            },
+          })
+          : await hydrateStartupWorkspace(windowId, { ...common, snapshot });
         return { hydrated: Boolean(result) };
       })();
       return primaryHydrationPromise;
@@ -1414,6 +1496,7 @@ async function bootstrap(): Promise<void> {
     // overlay utility windows retain empty/data titles and remain ineligible.
     allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
   });
+  windowCapabilityServiceRef = windowCapabilityService;
   // A hard Papers exit can occur after an adopted window has moved but before
   // normal shutdown restoration.  Recover descriptor-bound windows before a
   // new dock action is exposed; runtime capabilities are always re-issued by
@@ -1422,6 +1505,7 @@ async function bootstrap(): Promise<void> {
     path.join(app.getPath('userData'), 'adopted-window-recovery.json'),
   );
   const foreignWindowSurfaceController = createForeignWindowSurfaceController(windowCapabilityService);
+  foreignWindowSurfaceControllerRef = foreignWindowSurfaceController;
   const recoveryReport = await recoverAdoptedWindows(adoptedWindowRecoveryJournal, windowCapabilityService);
   if (recoveryReport.restored > 0 || recoveryReport.missing > 0 || recoveryReport.deferred > 0) {
     console.error(`[papers] adopted-window recovery: restored=${recoveryReport.restored}, missing=${recoveryReport.missing}, deferred=${recoveryReport.deferred}`);

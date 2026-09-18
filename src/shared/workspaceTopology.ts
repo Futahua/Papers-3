@@ -552,6 +552,39 @@ export function remapWorkspaceTopologySurfaceIds(
   assertValidWorkspaceTopology(next);
   return next;
 }
+
+/** Startup identity rewrite for mixed project/foreign workspaces. Foreign
+ * native windows keep their persisted logical ids; only freshly-created
+ * project surfaces are remapped. */
+export function remapWorkspaceTopologyV2ProjectSurfaceIds(
+  topology: WorkspaceTopologyV2,
+  oldToFresh: ReadonlyMap<string, string>,
+): WorkspaceTopologyV2 {
+  const parsed = parseWorkspaceTopologyV2(topology);
+  const projectIds = parsed.surfaces.filter((surface) => surface.kind === 'project').map((surface) => surface.surfaceId);
+  if (oldToFresh.size !== projectIds.length || projectIds.some((id) => !oldToFresh.has(id))) {
+    throw new Error('project surface identity mapping must contain every persisted project surface exactly once');
+  }
+  const freshIds = [...oldToFresh.values()];
+  if (freshIds.some((id) => typeof id !== 'string' || id.length === 0) || new Set(freshIds).size !== freshIds.length) {
+    throw new Error('fresh project surface identities must be non-empty and unique');
+  }
+  const remap = (surfaceId: string): string => oldToFresh.get(surfaceId) ?? surfaceId;
+  const next: WorkspaceTopologyV2 = {
+    ...parsed,
+    surfaces: parsed.surfaces.map((surface) => ({
+      ...surface,
+      surfaceId: remap(surface.surfaceId),
+      ...(surface.kind === 'project' ? { surfaceKey: surface.surfaceKey ?? surface.surfaceId } : {}),
+    })),
+    groups: parsed.groups.map((group) => ({
+      ...group,
+      surfaceIds: group.surfaceIds.map(remap),
+      activeSurfaceId: group.activeSurfaceId === null ? null : remap(group.activeSurfaceId),
+    })),
+  };
+  return parseWorkspaceTopologyV2(next);
+}
 import { z } from 'zod';
 
 import type { PersistedWindowMemberDescriptor } from './windowMemberDescriptor';
@@ -949,6 +982,34 @@ export function setRootWorkspaceSplitWeightsV2(topology: WorkspaceTopologyV2, we
   const next: WorkspaceTopologyV2 = { ...topology, root: { ...topology.root, weights: weights.map((weight) => weight / total) } };
   assertValidWorkspaceTopologyV2(next);
   return next;
+}
+
+/** Runtime/persistence boundary used while older project-only workspaces are
+ * still in circulation. V1 is accepted losslessly and upgraded only at the
+ * point a caller needs foreign-window surfaces. */
+export type WorkspaceTopologyAny = WorkspaceTopologyV1 | WorkspaceTopologyV2;
+
+export const workspaceTopologyAnySchema = z.union([
+  validatedWorkspaceTopologySchema,
+  workspaceTopologyV2Schema,
+]);
+
+export function parseWorkspaceTopologyAny(value: unknown): WorkspaceTopologyAny {
+  const parsed = workspaceTopologyAnySchema.parse(value);
+  return parsed.schemaVersion === WORKSPACE_TOPOLOGY_SCHEMA_VERSION_V2
+    ? parseWorkspaceTopologyV2(parsed)
+    : parseWorkspaceTopology(parsed);
+}
+
+export function ensureWorkspaceTopologyV2(topology: WorkspaceTopologyAny): WorkspaceTopologyV2 {
+  return topology.schemaVersion === WORKSPACE_TOPOLOGY_SCHEMA_VERSION_V2
+    ? parseWorkspaceTopologyV2(topology)
+    : migrateWorkspaceTopologyV1(topology);
+}
+
+export function hasForeignWorkspaceSurface(topology: WorkspaceTopologyAny): topology is WorkspaceTopologyV2 {
+  return topology.schemaVersion === WORKSPACE_TOPOLOGY_SCHEMA_VERSION_V2
+    && topology.surfaces.some((surface) => surface.kind === 'foreign-window');
 }
 
 export function setWorkspaceLayoutRootV2(topology: WorkspaceTopologyV2, root: WorkspaceLayoutNode): WorkspaceTopologyV2 {

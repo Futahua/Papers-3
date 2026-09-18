@@ -6,6 +6,7 @@ import {
   type ForeignWindowSurfaceCollection,
   type ForeignWindowSurfaceSnapshot,
 } from './foreignWindowSurfaceCollection';
+export type { ForeignWindowSurfaceSnapshot } from './foreignWindowSurfaceCollection';
 import type {
   PersistedWindowMemberDescriptor,
   WindowResolveResult,

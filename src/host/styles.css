@@ -695,6 +695,63 @@ input:focus-visible {
   --dv-active-sash-color: var(--green);
 }
 
+.foreign-window-toolbar {
+  position: absolute;
+  z-index: 20;
+  top: 8px;
+  right: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.workspace-add-foreign {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-surface);
+  color: var(--ink);
+  padding: 5px 9px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.foreign-window-picker {
+  display: grid;
+  gap: 4px;
+  min-width: 250px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+}
+
+.foreign-window-picker-title,
+.foreign-window-picker-empty {
+  padding: 4px 6px;
+  color: var(--muted-ink);
+  font-size: 12px;
+}
+
+.foreign-window-candidate {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  padding: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.foreign-window-candidate:hover { background: var(--line); }
+.foreign-window-candidate img { width: 18px; height: 18px; object-fit: contain; }
+.foreign-window-candidate-icon { width: 18px; text-align: center; }
+
 .workspace-dock > .dockview-react {
   width: 100%;
   height: 100%;
@@ -890,6 +947,14 @@ input:focus-visible {
   height: 100%;
   z-index: 1;
   background: var(--paper);
+}
+
+.foreign-window-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  pointer-events: none;
 }
 
 .backpack-project-frame iframe {

@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
-import { parseWorkspaceTopology, validatedWorkspaceTopologySchema, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { parseWorkspaceTopologyAny, workspaceTopologyAnySchema, type WorkspaceTopologyAny } from '@shared/workspaceTopology';
 import { AtomicJsonStore } from './atomicStore';
 import type { PapersPaths } from './paths';
 
 const legacySchema = z.object({
   schemaVersion: z.literal(1),
-  workspaces: z.array(z.object({ workspaceKey: z.string().uuid(), topology: validatedWorkspaceTopologySchema }).strict()),
+  workspaces: z.array(z.object({ workspaceKey: z.string().uuid(), topology: workspaceTopologyAnySchema }).strict()),
 }).strict().superRefine((value, context) => {
   const keys = value.workspaces.map((entry) => entry.workspaceKey);
   if (new Set(keys).size !== keys.length) {
@@ -18,7 +18,7 @@ const durableSchema = z.object({
   schemaVersion: z.literal(2),
   lastWorkspaceId: z.string().uuid().nullable(),
   workspaces: z.array(z.object({
-    workspaceId: z.string().uuid(), topology: validatedWorkspaceTopologySchema, updatedAt: z.string().datetime(),
+    workspaceId: z.string().uuid(), topology: workspaceTopologyAnySchema, updatedAt: z.string().datetime(),
   }).strict()),
 }).strict().superRefine((value, context) => {
   const ids = value.workspaces.map((entry) => entry.workspaceId);
@@ -35,8 +35,8 @@ type DurableRecord = z.infer<typeof durableSchema>['workspaces'][number];
 export type SelectedWorkspaceSnapshot = Readonly<DurableRecord>;
 
 export interface WorkspacePairCommit {
-  source: { workspaceId: string; topology: WorkspaceTopologyV1 };
-  target: { workspaceId: string; topology: WorkspaceTopologyV1 };
+  source: { workspaceId: string; topology: WorkspaceTopologyAny };
+  target: { workspaceId: string; topology: WorkspaceTopologyAny };
   /** Cross-window moves must not change startup selection as a side effect. */
   lastWorkspaceId: string | null;
 }
@@ -101,11 +101,11 @@ export class WorkspaceTopologyStore {
     return this.initialized;
   }
 
-  async commit(workspaceId: string, topology: WorkspaceTopologyV1): Promise<void> {
+  async commit(workspaceId: string, topology: WorkspaceTopologyAny): Promise<void> {
     return this.enqueue(async () => {
       await this.initialize();
       this.workspaces.set(workspaceId, {
-        workspaceId, topology: parseWorkspaceTopology(topology), updatedAt: this.now(),
+        workspaceId, topology: parseWorkspaceTopologyAny(topology), updatedAt: this.now(),
       });
       this.lastWorkspaceId = workspaceId;
       await this.persistDirty();
@@ -124,8 +124,8 @@ export class WorkspaceTopologyStore {
     }
     return this.enqueue(async () => {
       await this.initialize();
-      const sourceTopology = parseWorkspaceTopology(pair.source.topology);
-      const targetTopology = parseWorkspaceTopology(pair.target.topology);
+      const sourceTopology = parseWorkspaceTopologyAny(pair.source.topology);
+      const targetTopology = parseWorkspaceTopologyAny(pair.target.topology);
       if (pair.lastWorkspaceId !== null
         && pair.lastWorkspaceId !== pair.source.workspaceId
         && pair.lastWorkspaceId !== pair.target.workspaceId

@@ -1,5 +1,5 @@
 import type { DockviewApi } from 'dockview-core';
-import type { WorkspaceLayoutNode, WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import type { WorkspaceLayoutNode, WorkspaceTopologyAny } from '@shared/workspaceTopology';
 import { normalizeWorkspaceLayout } from '@shared/workspaceTopology';
 
 type SerializedGridObject = {
@@ -25,7 +25,7 @@ function groupDockviewId(api: DockviewApi, papersGroupId: string, surfaceIds: re
 
 export function serializedRootForTopology(
   api: DockviewApi,
-  topology: WorkspaceTopologyV1,
+  topology: WorkspaceTopologyAny,
   mapping: ReadonlyMap<string, string>,
   existing: ReturnType<DockviewApi['toJSON']>,
 ): ReturnType<DockviewApi['toJSON']>['grid']['root'] {
@@ -56,7 +56,7 @@ export function serializedRootForTopology(
 /** Convert Dockview's alternating grid tree back to Papers' explicit geometry tree. */
 export function workspaceRootFromDockview(
   api: DockviewApi,
-  topology: WorkspaceTopologyV1,
+  topology: WorkspaceTopologyAny,
   mapping: ReadonlyMap<string, string>,
 ): WorkspaceLayoutNode {
   const serialized = api.toJSON();

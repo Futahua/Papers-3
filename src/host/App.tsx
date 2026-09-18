@@ -7,7 +7,7 @@ import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
 import { EmptyBackpackWarning } from './EmptyBackpackWarning';
 import { HermesControls } from './HermesControls';
-import { WorkspaceDock, type OpenWorkspaceProject } from './WorkspaceDock';
+import { WorkspaceDock, type OpenWorkspaceForeignSurface, type OpenWorkspaceProject } from './WorkspaceDock';
 import {
   activateWorkspaceSurface,
   closeWorkspaceSurface,
@@ -18,6 +18,14 @@ import {
   workspaceLayoutEqual,
   splitWorkspaceGroup,
   splitWorkspaceSurfaceAtTarget,
+  activateWorkspaceSurfaceV2,
+  closeWorkspaceSurfaceV2,
+  moveWorkspaceSurfaceV2,
+  reorderWorkspaceGroupV2,
+  setWorkspaceLayoutRootV2,
+  splitWorkspaceGroupV2,
+  splitWorkspaceSurfaceAtTargetV2,
+  type WorkspaceTopologyAny,
 } from '@shared/workspaceTopology';
 
 /** Papers content-relative docked-Hermes rectangle. Must match the main
@@ -42,10 +50,38 @@ const VIEW_LABEL: Record<BasicView, string> = {
   settings: 'Settings',
 };
 
-function closeTopologySurface(topology: ReturnType<typeof createWorkspaceTopology>, surfaceId: string) {
+function closeTopologySurface(topology: WorkspaceTopologyAny, surfaceId: string): WorkspaceTopologyAny {
+  if (topology.schemaVersion === 2) {
+    return topology.surfaces.some((surface) => surface.surfaceId === surfaceId)
+      ? closeWorkspaceSurfaceV2(topology, surfaceId)
+      : topology;
+  }
   return topology.surfaces.some((surface) => surface.surfaceId === surfaceId)
     ? closeWorkspaceSurface(topology, surfaceId)
     : topology;
+}
+
+function projectForSurface(projects: OpenWorkspaceProject[], topology: WorkspaceTopologyAny, surfaceId: string | null): OpenWorkspaceProject | null {
+  if (!surfaceId) return null;
+  return projects.find((project) => project.surfaceId === surfaceId)
+    ?? (topology.schemaVersion === 2 && topology.surfaces.find((surface) => surface.surfaceId === surfaceId)?.kind === 'project'
+      ? projects.find((project) => project.surfaceId === surfaceId) ?? null
+      : null);
+}
+
+function foreignProjectionsForTopology(topology: WorkspaceTopologyAny): OpenWorkspaceForeignSurface[] {
+  if (topology.schemaVersion !== 2) return [];
+  return topology.surfaces
+    .filter((surface): surface is Extract<WorkspaceTopologyAny['surfaces'][number], { kind: 'foreign-window' }> => surface.kind === 'foreign-window')
+    .map((surface) => ({
+      surfaceId: surface.surfaceId,
+      title: surface.title,
+      descriptor: { ...surface.descriptor },
+      state: 'live-visible',
+      paneBounds: null,
+      originalBounds: null,
+      hostWindowId: null,
+    }));
 }
 
 /**
@@ -87,15 +123,18 @@ export function App(): React.JSX.Element {
   const [entered, setEntered] = useState<string | null>(null);
   const [projectUrl, setProjectUrl] = useState<string | null>(null);
   const [openProjects, setOpenProjects] = useState<OpenWorkspaceProject[]>([]);
+  const [foreignSurfaces, setForeignSurfaces] = useState<OpenWorkspaceForeignSurface[]>([]);
+  const foreignSurfacesRef = useRef<OpenWorkspaceForeignSurface[]>([]);
+  foreignSurfacesRef.current = foreignSurfaces;
   const openProjectsRef = useRef<OpenWorkspaceProject[]>([]);
   openProjectsRef.current = openProjects;
-  const [workspaceTopology, setWorkspaceTopology] = useState(createWorkspaceTopology);
+  const [workspaceTopology, setWorkspaceTopology] = useState<WorkspaceTopologyAny>(createWorkspaceTopology);
   const [hydrationReady, setHydrationReady] = useState(false);
   const topologyCommitArmed = useRef(false);
   // Track the exact object supplied by main. If a local interaction is
   // batched with an external update, the newer local topology must still be
   // persisted rather than being mistaken for the restore itself.
-  const externallyRestoredTopology = useRef<ReturnType<typeof createWorkspaceTopology> | null>(null);
+  const externallyRestoredTopology = useRef<WorkspaceTopologyAny | null>(null);
   /**
    * The logical surface this window is showing.
    *
@@ -164,7 +203,35 @@ export function App(): React.JSX.Element {
         setWorkspaceTopology(topology);
         const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
         const nextSurfaceId = focused?.activeSurfaceId ?? null;
-        const activeProject = openProjectsRef.current.find((project) => project.surfaceId === nextSurfaceId) ?? null;
+        const activeProject = projectForSurface(openProjectsRef.current, topology, nextSurfaceId);
+        setSurfaceId(nextSurfaceId);
+        setProjectUrl(activeProject?.url ?? null);
+        setEntered(activeProject?.projectId ?? null);
+      }),
+      bridge.events.onWorkspaceForeignOpened(({ surface, topology }) => {
+        topologyCommitArmed.current = true;
+        const nextForeign = [
+          ...foreignSurfacesRef.current.filter((candidate) => candidate.surfaceId !== surface.surfaceId),
+          surface,
+        ];
+        foreignSurfacesRef.current = nextForeign;
+        setForeignSurfaces(nextForeign);
+        externallyRestoredTopology.current = topology;
+        setWorkspaceTopology(topology);
+        setSurfaceId(surface.surfaceId);
+        setProjectUrl(null);
+        setEntered(null);
+      }),
+      bridge.events.onWorkspaceForeignClosed(({ surfaceId: closedSurfaceId, topology }) => {
+        topologyCommitArmed.current = true;
+        const nextForeign = foreignSurfacesRef.current.filter((candidate) => candidate.surfaceId !== closedSurfaceId);
+        foreignSurfacesRef.current = nextForeign;
+        setForeignSurfaces(nextForeign);
+        externallyRestoredTopology.current = topology;
+        setWorkspaceTopology(topology);
+        const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
+        const nextSurfaceId = focused?.activeSurfaceId ?? null;
+        const activeProject = projectForSurface(openProjectsRef.current, topology, nextSurfaceId);
         setSurfaceId(nextSurfaceId);
         setProjectUrl(activeProject?.url ?? null);
         setEntered(activeProject?.projectId ?? null);
@@ -198,10 +265,13 @@ export function App(): React.JSX.Element {
         topologyCommitArmed.current = true;
         openProjectsRef.current = projects;
         setOpenProjects(projects);
+        const restoredForeign = foreignProjectionsForTopology(topology);
+        foreignSurfacesRef.current = restoredForeign;
+        setForeignSurfaces(restoredForeign);
         externallyRestoredTopology.current = topology;
         setWorkspaceTopology(topology);
         const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
-        const active = projects.find((project) => project.surfaceId === focused?.activeSurfaceId) ?? null;
+        const active = projectForSurface(projects, topology, focused?.activeSurfaceId ?? null);
         setSurfaceId(active?.surfaceId ?? null);
         setProjectUrl(active?.url ?? null);
         setEntered(active?.projectId ?? null);
@@ -214,10 +284,13 @@ export function App(): React.JSX.Element {
         topologyCommitArmed.current = true;
         openProjectsRef.current = projects;
         setOpenProjects(projects);
+        const restoredForeign = foreignProjectionsForTopology(topology);
+        foreignSurfacesRef.current = restoredForeign;
+        setForeignSurfaces(restoredForeign);
         externallyRestoredTopology.current = topology;
         setWorkspaceTopology(topology);
         const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
-        const active = projects.find((project) => project.surfaceId === focused?.activeSurfaceId) ?? null;
+        const active = projectForSurface(projects, topology, focused?.activeSurfaceId ?? null);
         setSurfaceId(active?.surfaceId ?? null);
         setProjectUrl(active?.url ?? null);
         setEntered(active?.projectId ?? null);
@@ -229,10 +302,13 @@ export function App(): React.JSX.Element {
         topologyCommitArmed.current = true;
         openProjectsRef.current = projects;
         setOpenProjects(projects);
+        const restoredForeign = foreignProjectionsForTopology(topology);
+        foreignSurfacesRef.current = restoredForeign;
+        setForeignSurfaces(restoredForeign);
         externallyRestoredTopology.current = topology;
         setWorkspaceTopology(topology);
         const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
-        const active = projects.find((project) => project.surfaceId === focused?.activeSurfaceId) ?? null;
+        const active = projectForSurface(projects, topology, focused?.activeSurfaceId ?? null);
         setSurfaceId(active?.surfaceId ?? null);
         setProjectUrl(active?.url ?? null);
         setEntered(active?.projectId ?? null);
@@ -241,12 +317,19 @@ export function App(): React.JSX.Element {
         setOpenProjects((projects) => projects.map((project) => project.surfaceId === changedSurfaceId
           ? { ...project, title }
           : project));
-        setWorkspaceTopology((topology) => ({
-          ...topology,
-          surfaces: topology.surfaces.map((surface) => surface.surfaceId === changedSurfaceId
-            ? { ...surface, title }
-            : surface),
-        }));
+        setWorkspaceTopology((topology) => topology.schemaVersion === 2
+          ? {
+              ...topology,
+              surfaces: topology.surfaces.map((surface) => surface.surfaceId === changedSurfaceId
+                ? { ...surface, title }
+                : surface),
+            }
+          : {
+              ...topology,
+              surfaces: topology.surfaces.map((surface) => surface.surfaceId === changedSurfaceId
+                ? { ...surface, title }
+                : surface),
+            });
       }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),
@@ -423,18 +506,26 @@ export function App(): React.JSX.Element {
 
   const activateWorkspaceProject = useCallback((nextSurfaceId: string): void => {
     const project = openProjects.find((candidate) => candidate.surfaceId === nextSurfaceId);
-    if (!project) return;
-    setSurfaceId(project.surfaceId);
-    setProjectUrl(project.url);
-    setEntered(project.projectId);
-    setWorkspaceTopology((topology) => activateWorkspaceSurface(topology, project.surfaceId));
-    void host().backpackProject.activateSurface(project.surfaceId).catch(() => undefined);
-  }, [openProjects]);
+    const foreign = foreignSurfaces.find((candidate) => candidate.surfaceId === nextSurfaceId);
+    if (!project && !foreign) return;
+    setSurfaceId(nextSurfaceId);
+    setProjectUrl(project?.url ?? null);
+    setEntered(project?.projectId ?? null);
+    setWorkspaceTopology((topology) => topology.schemaVersion === 2
+      ? activateWorkspaceSurfaceV2(topology, nextSurfaceId)
+      : activateWorkspaceSurface(topology, nextSurfaceId));
+    if (project) void host().backpackProject.activateSurface(project.surfaceId).catch(() => undefined);
+    else void host().foreignWindow.activate(nextSurfaceId).catch(() => undefined);
+  }, [foreignSurfaces, openProjects]);
 
   const closeWorkspaceProject = useCallback((closingSurfaceId: string): void => {
     // Main owns the complete terminal-close transaction and emits canonical
     // topology before the cleanup event; the renderer must not pick a second
     // successor or locally commit a competing topology.
+    if (foreignSurfacesRef.current.some((surface) => surface.surfaceId === closingSurfaceId)) {
+      void host().foreignWindow.close(closingSurfaceId).catch(() => undefined);
+      return;
+    }
     void host().backpackProject.close(closingSurfaceId).catch(() => undefined);
   }, []);
 
@@ -443,6 +534,24 @@ export function App(): React.JSX.Element {
     setWorkspaceTopology((topology) => {
       const source = topology.groups.find((group) => group.surfaceIds.includes(splitSurfaceId));
       if (!source || (source.surfaceIds.length < 2 && !targetGroupId)) return topology;
+      if (topology.schemaVersion === 2) {
+        return targetGroupId && targetGroupId !== source.groupId
+          ? splitWorkspaceSurfaceAtTargetV2(topology, {
+            sourceGroupId: source.groupId,
+            targetGroupId,
+            newGroupId,
+            surfaceId: splitSurfaceId,
+            orientation: direction === 'right' ? 'horizontal' : 'vertical',
+            position,
+          })
+          : splitWorkspaceGroupV2(topology, {
+            groupId: source.groupId,
+            newGroupId,
+            surfaceId: splitSurfaceId,
+            orientation: direction === 'right' ? 'horizontal' : 'vertical',
+            position,
+          });
+      }
       return targetGroupId && targetGroupId !== source.groupId
         ? splitWorkspaceSurfaceAtTarget(topology, {
             sourceGroupId: source.groupId,
@@ -464,7 +573,9 @@ export function App(): React.JSX.Element {
   }, []);
 
   const moveWorkspaceProject = useCallback((movedSurfaceId: string, targetGroupId: string, targetIndex: number): void => {
-    setWorkspaceTopology((topology) => moveWorkspaceSurface(topology, movedSurfaceId, targetGroupId, targetIndex));
+    setWorkspaceTopology((topology) => topology.schemaVersion === 2
+      ? moveWorkspaceSurfaceV2(topology, movedSurfaceId, targetGroupId, targetIndex)
+      : moveWorkspaceSurface(topology, movedSurfaceId, targetGroupId, targetIndex));
   }, []);
 
   const commitWorkspaceLayout = useCallback((snapshot: {
@@ -478,12 +589,19 @@ export function App(): React.JSX.Element {
         const existing = next.groups.find((candidate) => candidate.groupId === group.groupId);
         if (!existing || existing.surfaceIds.length !== group.surfaceIds.length) continue;
         if (existing.surfaceIds.every((surface, index) => surface === group.surfaceIds[index])) continue;
-        next = reorderWorkspaceGroup(next, group.groupId, group.surfaceIds);
+        next = next.schemaVersion === 2
+          ? reorderWorkspaceGroupV2(next, group.groupId, group.surfaceIds)
+          : reorderWorkspaceGroup(next, group.groupId, group.surfaceIds);
       }
       let rootApplied = false;
       if (snapshot.root) {
         if (!workspaceLayoutEqual(next.root, snapshot.root)) {
-          try { next = setWorkspaceLayoutRoot(next, snapshot.root); rootApplied = true; } catch { /* use the direct two-pane fallback below */ }
+          try {
+            next = next.schemaVersion === 2
+              ? setWorkspaceLayoutRootV2(next, snapshot.root)
+              : setWorkspaceLayoutRoot(next, snapshot.root);
+            rootApplied = true;
+          } catch { /* use the direct two-pane fallback below */ }
         } else {
           rootApplied = true;
         }
@@ -618,9 +736,10 @@ export function App(): React.JSX.Element {
       {view === 'tools' && <ToolsPane />}
       {view === 'settings' && <SettingsPane />}
 
-      {openProjects.length > 0 && entered !== null && projectUrl !== null && (
+      {workspaceTopology.surfaces.length > 0 && (
         <WorkspaceDock
           projects={openProjects}
+          foreignSurfaces={foreignSurfaces}
           topology={workspaceTopology}
           activeSurfaceId={surfaceId}
           onActivate={activateWorkspaceProject}

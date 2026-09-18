@@ -31,6 +31,9 @@ import { parseBackpackProjectWebUrl } from './backpacks/backpackProjectWebLink';
 import type { LocalServiceResponse } from './backpacks/localServiceBridge';
 import type { LogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import type { SurfaceContextRegistry } from './windows/surfaceContextRegistry';
+import type { ForeignWindowSurfaceController, ForeignWindowSurfaceSnapshot, ForeignSurfaceActionResult } from './windows/foreignWindowSurfaceController';
+import type { WindowCandidate, WindowCapabilityService, PersistedWindowMemberDescriptor } from './windows/windowCapabilityService';
+import type { WindowBounds } from './windows/windowCapabilityTypes';
 import { BACKPACK_PROJECT_SCHEME } from './backpacks/backpackProjectService';
 import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
@@ -53,6 +56,15 @@ import {
   openWorkspaceSurface,
   remapWorkspaceTopologySurfaceIds,
   type WorkspaceTopologyV1,
+  type WorkspaceTopologyAny,
+  type WorkspaceTopologyV2,
+  type WorkspaceSurfaceV2,
+  ensureWorkspaceTopologyV2,
+  parseWorkspaceTopologyAny,
+  parseWorkspaceTopologyV2,
+  openWorkspaceSurfaceV2,
+  closeWorkspaceSurfaceV2,
+  activateWorkspaceSurfaceV2,
 } from '@shared/workspaceTopology';
 import { normalizeWorkspaceSurfaceTitle } from '@shared/workspaceSurfaceTitle';
 
@@ -197,6 +209,14 @@ export interface FacadeDeps {
   workspaceTopology?: (windowId: number) => WorkspaceTopologyV1 | null;
   hydrateStartupWorkspace?: (windowId: number) => Promise<{ hydrated: boolean }>;
   setWorkspaceTopology: (windowId: number, topology: WorkspaceTopologyV1) => void;
+  workspaceTopologyAny?: (windowId: number) => WorkspaceTopologyAny | null;
+  setWorkspaceTopologyAny?: (windowId: number, topology: WorkspaceTopologyAny) => void;
+  /** Main-owned foreign-window surface authority. It is installed after the
+   * facade is composed; the accessor keeps bootstrap ordering explicit. */
+  foreignSurfaceController?: () => ForeignWindowSurfaceController | null;
+  windowCapabilityService?: () => WindowCapabilityService | null;
+  foreignBoundsForWindow?: (windowId: number, bounds: { x: number; y: number; width: number; height: number }) => WindowBounds;
+  foreignHostHandleForWindow?: (windowId: number) => string | undefined;
   workspaceLayouts: WorkspaceLayoutStore;
   workspaceMove?: {
     workspaceId(windowId: number): string | null;
@@ -237,6 +257,22 @@ export interface HostWorkspaceSurfaceMoveTarget {
   targetWindowId: number;
   targetGroupId: string;
   targetIndex: number;
+}
+
+export interface OpenForeignWorkspaceSurface {
+  surfaceId: string;
+  surfaceKey?: string;
+  title: string;
+  descriptor: PersistedWindowMemberDescriptor;
+  state: string;
+  paneBounds: WindowBounds | null;
+  originalBounds: WindowBounds | null;
+  hostWindowId: number | null;
+}
+
+export interface ForeignWorkspaceProjection {
+  surface: OpenForeignWorkspaceSurface;
+  topology: WorkspaceTopologyAny;
 }
 
 export interface PreparedProjectSurface {
@@ -728,6 +764,173 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    */
   async openBackpackProject(senderId: number, id: string): Promise<OpenBackpackProject | null> {
     return this.runProjectOwnership(id, () => this.openBackpackProjectUngated(senderId, id));
+  }
+
+  private foreignController(): ForeignWindowSurfaceController {
+    const controller = this.deps.foreignSurfaceController?.();
+    if (!controller) throw new Error('Foreign-window support is not ready.');
+    return controller;
+  }
+
+  private foreignCapabilityService(): WindowCapabilityService {
+    const service = this.deps.windowCapabilityService?.();
+    if (!service) throw new Error('Foreign-window support is not ready.');
+    return service;
+  }
+
+  private requireForeignSurfaceTarget(senderId: number, surfaceId: string): { windowId: number; surface: ForeignWindowSurfaceSnapshot } {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may act on a foreign surface.');
+    const surface = this.foreignController().snapshot().find((candidate) =>
+      candidate.surfaceId === surfaceId && candidate.hostWindowId === windowId);
+    if (!surface) throw new Error('That foreign surface is not open in this Papers window.');
+    return { windowId, surface };
+  }
+
+  private foreignTopology(windowId: number): WorkspaceTopologyV2 {
+    return ensureWorkspaceTopologyV2(this.deps.workspaceTopologyAny?.(windowId)
+      ?? this.deps.workspaceTopology?.(windowId)
+      ?? createWorkspaceTopology());
+  }
+
+  private setCanonicalTopology(windowId: number, topology: WorkspaceTopologyAny): void {
+    if (topology.schemaVersion === 2) {
+      if (!this.deps.setWorkspaceTopologyAny) {
+        throw new Error('Foreign-window workspace persistence is not ready.');
+      }
+      this.deps.setWorkspaceTopologyAny(windowId, topology);
+      return;
+    }
+    this.deps.setWorkspaceTopology(windowId, topology);
+  }
+
+  private foreignSnapshot(snapshot: ForeignWindowSurfaceSnapshot): OpenForeignWorkspaceSurface {
+    return {
+      surfaceId: snapshot.surfaceId,
+      title: snapshot.title,
+      descriptor: { ...snapshot.descriptor },
+      state: snapshot.state,
+      paneBounds: snapshot.paneBounds ? { ...snapshot.paneBounds } : null,
+      originalBounds: snapshot.originalBounds ? { ...snapshot.originalBounds } : null,
+      hostWindowId: snapshot.hostWindowId,
+    };
+  }
+
+  /** Enumerate ordinary native windows for the trusted Papers host. Runtime
+   * ids and HWNDs never leave the main process; the candidate id is an
+   * ephemeral Papers-issued handle accepted only by openForeignWindow. */
+  async listForeignWindowCandidates(senderId: number): Promise<unknown> {
+    if (this.deps.hostWindowForSender(senderId) === null) throw new Error('Only a Papers window may list foreign windows.');
+    return this.foreignCapabilityService().listCandidates({ includeNativeIcons: true });
+  }
+
+  async openForeignWindow(senderId: number, candidateId: string): Promise<ForeignWorkspaceProjection> {
+    const windowId = this.deps.hostWindowForSender(senderId);
+    if (windowId === null) throw new Error('Only a Papers window may open a foreign window.');
+    const service = this.foreignCapabilityService();
+    const bound = await service.bindCandidate(candidateId);
+    if (bound.outcome !== 'success') throw new Error(bound.error ?? `Foreign window could not be bound (${bound.outcome}).`);
+    const observed = await service.observeCapability(bound.capability);
+    if (observed.outcome !== 'success' || !observed.observation?.bounds) {
+      throw new Error('Foreign window could not be observed.');
+    }
+    if (observed.observation.processId !== null && observed.observation.processId === process.pid) {
+      throw new Error('That is a Papers window, not a foreign window.');
+    }
+    if (observed.observation.state !== 'normal') throw new Error('Only a normal, visible foreign window can be added.');
+
+    const controller = this.foreignController();
+    const created = controller.create({
+      descriptor: bound.descriptor,
+      title: observed.observation.title || bound.descriptor.title,
+      hostWindowId: windowId,
+    });
+    const resolved = await controller.resolve(created.surfaceId);
+    if (resolved.outcome !== 'success') {
+      controller.markDisconnected(created.surfaceId);
+      controller.retire(created.surfaceId);
+      throw new Error(resolved.error ?? `Foreign window could not be resolved (${resolved.outcome}).`);
+    }
+
+    const current = this.foreignTopology(windowId);
+    // Foreign windows are opened in their own group. This avoids placing a
+    // still-top-level window over an inactive project tab; the user can then
+    // split/reorder the pane with the same workspace gestures as projects.
+    const groupId = `group-foreign-${randomUUID()}`;
+    const next: WorkspaceTopologyV2 = {
+      ...current,
+      surfaces: [...current.surfaces, {
+        kind: 'foreign-window',
+        surfaceId: created.surfaceId,
+        surfaceKey: randomUUID(),
+        title: resolved.surface?.title ?? created.title,
+        descriptor: { ...bound.descriptor },
+      }],
+      groups: [...current.groups, { groupId, surfaceIds: [created.surfaceId], activeSurfaceId: created.surfaceId }],
+      root: {
+        kind: 'split',
+        orientation: 'horizontal',
+        weights: [0.5, 0.5],
+        children: [current.root, { kind: 'group', groupId }],
+      },
+      focusedGroupId: groupId,
+    };
+    // Empty-root topologies already have one group; the split above is valid
+    // for both empty and populated workspaces and keeps existing geometry
+    // intact as the first foreign pane is introduced.
+    const canonical = parseWorkspaceTopologyAny(next);
+    const surface = this.foreignSnapshot(controller.snapshot().find((item) => item.surfaceId === created.surfaceId)!);
+    try {
+      this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-foreign-opened', { surface, topology: canonical });
+      this.setCanonicalTopology(windowId, canonical);
+      this.deps.setActiveSurfaceId(windowId, created.surfaceId);
+      this.deps.setEnteredBackpack(windowId, null);
+    } catch (caught) {
+      const released = await controller.release(created.surfaceId, this.deps.foreignHostHandleForWindow?.(windowId)).catch(() => null);
+      if (released?.outcome === 'success') controller.retire(created.surfaceId);
+      else controller.markDisconnected(created.surfaceId);
+      throw caught;
+    }
+    this.deps.bringWindowToFront?.(windowId);
+    return { surface, topology: canonical };
+  }
+
+  async setForeignWindowSurfaceBounds(senderId: number, surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void> {
+    const { windowId } = this.requireForeignSurfaceTarget(senderId, surfaceId);
+    const screenBounds = this.deps.foreignBoundsForWindow?.(windowId, bounds) ?? bounds;
+    const hostHandle = this.deps.foreignHostHandleForWindow?.(windowId);
+    let result = await this.foreignController().follow(surfaceId, screenBounds, hostHandle);
+    if (result.outcome === 'helper-unavailable' || result.outcome === 'timeout') {
+      const reconnected = await this.foreignController().reconnect(surfaceId);
+      if (reconnected.outcome === 'success') result = await this.foreignController().follow(surfaceId, screenBounds, hostHandle);
+    }
+    if (result.outcome !== 'success') throw new Error(result.error ?? `Foreign window could not follow its pane (${result.outcome}).`);
+  }
+
+  async activateForeignWindowSurface(senderId: number, surfaceId: string): Promise<void> {
+    const { windowId, surface } = this.requireForeignSurfaceTarget(senderId, surfaceId);
+    const topology = this.foreignTopology(windowId);
+    if (!topology.surfaces.some((candidate) => candidate.surfaceId === surfaceId)) throw new Error('That foreign surface is not in the workspace.');
+    const next = activateWorkspaceSurfaceV2(topology, surfaceId);
+    this.deps.setActiveSurfaceId(windowId, surfaceId);
+    this.deps.setEnteredBackpack(windowId, null);
+    this.setCanonicalTopology(windowId, next);
+    this.deps.sendToWindow(windowId, 'host:event:workspace-topology', next);
+    if (surface.paneBounds) await this.setForeignWindowSurfaceBounds(senderId, surfaceId, surface.paneBounds);
+  }
+
+  async closeForeignWindowSurface(senderId: number, surfaceId: string): Promise<void> {
+    const { windowId } = this.requireForeignSurfaceTarget(senderId, surfaceId);
+    const controller = this.foreignController();
+    const released = await controller.release(surfaceId, this.deps.foreignHostHandleForWindow?.(windowId));
+    if (released.outcome !== 'success') throw new Error(released.error ?? `Foreign window could not be released (${released.outcome}).`);
+    const topology = this.foreignTopology(windowId);
+    const next = closeWorkspaceSurfaceV2(topology, surfaceId);
+    controller.retire(surfaceId);
+    this.setCanonicalTopology(windowId, next);
+    const focused = next.groups.find((group) => group.groupId === next.focusedGroupId)?.activeSurfaceId ?? null;
+    this.deps.setActiveSurfaceId(windowId, focused);
+    this.deps.sendToWindow(windowId, 'host:event:workspace-foreign-closed', { surfaceId, topology: next });
   }
 
   /** Project-owned request for another Papers tab. The project may choose only
@@ -1243,9 +1446,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async saveWorkspaceLayoutFromControl(windowId: number, name: string): Promise<NamedWorkspaceLayout> {
     this.requireLiveWorkspaceWindow(windowId);
-    const topology = this.deps.workspaceTopology?.(windowId) ?? null;
+    const topology = this.deps.workspaceTopologyAny?.(windowId) ?? this.deps.workspaceTopology?.(windowId) ?? null;
     if (!topology) throw new Error('That Papers window has no workspace topology.');
-    this.validateWorkspaceTopology(windowId, topology);
+    this.validateWorkspaceTopologyAny(windowId, topology);
     return this.deps.workspaceLayouts.create(name, topology);
   }
 
@@ -1257,14 +1460,21 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.requireLiveWorkspaceWindow(windowId);
     const layout = await this.deps.workspaceLayouts.get(layoutId);
     if (!layout) throw new Error('That named workspace layout does not exist.');
+    // Foreign-window layout hydration is handled by the dedicated foreign
+    // surface coordinator. Keep the legacy project transaction fail-closed
+    // until that coordinator has resolved every descriptor.
+    if (layout.topology.schemaVersion !== 1) {
+      throw new Error('This layout contains foreign windows and must be opened through the foreign-surface coordinator.');
+    }
+    const projectLayout = layout as NamedWorkspaceLayout & { topology: WorkspaceTopologyV1 };
 
     return this.withProjectOwnershipGates(
-      layout.topology.surfaces.map((surface) => surface.projectId),
-      () => this.loadWorkspaceLayoutFromControlLoaded(windowId, layout),
+      projectLayout.topology.surfaces.map((surface) => surface.projectId),
+      () => this.loadWorkspaceLayoutFromControlLoaded(windowId, projectLayout),
     );
   }
 
-  private async loadWorkspaceLayoutFromControlLoaded(windowId: number, layout: NamedWorkspaceLayout): Promise<{
+  private async loadWorkspaceLayoutFromControlLoaded(windowId: number, layout: NamedWorkspaceLayout & { topology: WorkspaceTopologyV1 }): Promise<{
     windowId: number;
     layoutId: string;
     topology: WorkspaceTopologyV1;
@@ -1756,12 +1966,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     });
   }
 
-  commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void {
+  commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyAny): void {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may commit workspace topology.');
     this.assertWorkspaceMutationAvailable(windowId);
-    this.validateWorkspaceTopology(windowId, topology);
-    this.deps.setWorkspaceTopology(windowId, topology);
+    this.validateWorkspaceTopologyAny(windowId, topology);
+    this.setCanonicalTopology(windowId, topology);
   }
 
   /** Relay one embedded document's authoritative title to its exact host tab. */
@@ -1779,19 +1989,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (this.deps.workspaceMove?.isWindowClosing?.(windowId)) return;
     const context = this.deps.surfaces.contextForSender(senderId);
     if (!context || context.kind !== 'project' || context.windowId !== windowId || context.surfaceId !== surfaceId) return;
-    const topology = this.deps.workspaceTopology?.(windowId);
+    const topology = this.deps.workspaceTopologyAny?.(windowId) ?? this.deps.workspaceTopology?.(windowId);
     const surface = topology?.surfaces.find((candidate) => candidate.surfaceId === surfaceId);
     if (!topology || !surface) return;
+    if (topology.schemaVersion === 2 && (surface as WorkspaceSurfaceV2).kind !== 'project') return;
     const title = normalizeWorkspaceSurfaceTitle(rawTitle, surface.title);
     if (title === surface.title) return;
     if (this.deps.workspaceMove?.isWindowClosing?.(windowId)) return;
-    const next: WorkspaceTopologyV1 = {
-      ...topology,
-      surfaces: topology.surfaces.map((candidate) => candidate.surfaceId === surfaceId
-        ? { ...candidate, title }
-        : candidate),
-    };
-    this.deps.setWorkspaceTopology(windowId, next);
+    const next: WorkspaceTopologyAny = topology.schemaVersion === 2
+      ? { ...topology, surfaces: (topology as WorkspaceTopologyV2).surfaces.map((candidate) => candidate.surfaceId === surfaceId ? { ...candidate, title } : candidate) }
+      : { ...topology, surfaces: (topology as WorkspaceTopologyV1).surfaces.map((candidate) => candidate.surfaceId === surfaceId ? { ...candidate, title } : candidate) };
+    this.setCanonicalTopology(windowId, next);
     this.deps.sendToWindow(windowId, 'host:event:workspace-project-title', { surfaceId, title });
   }
 
@@ -1801,21 +2009,24 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   refreshWorkspaceTopology(senderId: number): void {
     const windowId = this.deps.hostWindowForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may refresh workspace topology.');
-    const topology = this.deps.workspaceTopology?.(windowId);
+    const topology = this.deps.workspaceTopologyAny?.(windowId) ?? this.deps.workspaceTopology?.(windowId);
     if (topology) this.deps.sendToWindow(windowId, 'host:event:workspace-topology', topology);
   }
 
-  restoreWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1, mutationAlreadyHeld = false): void {
+  restoreWorkspaceTopology(windowId: number, topology: WorkspaceTopologyAny, mutationAlreadyHeld = false): void {
     if (!mutationAlreadyHeld) this.assertWorkspaceMutationAvailable(windowId);
-    this.validateWorkspaceTopology(windowId, topology);
+    this.validateWorkspaceTopologyAny(windowId, topology);
     const focused = topology.groups.find((group) => group.groupId === topology.focusedGroupId);
     const activeSurfaceId = focused?.activeSurfaceId ?? null;
-    const activeProject = activeSurfaceId
-      ? topology.surfaces.find((surface) => surface.surfaceId === activeSurfaceId)?.projectId ?? null
-      : null;
+    const activeProject = topology.schemaVersion === 2
+      ? (() => {
+        const activeSurface = (topology as WorkspaceTopologyV2).surfaces.find((surface) => surface.surfaceId === activeSurfaceId);
+        return activeSurface?.kind === 'project' ? activeSurface.projectId : null;
+      })()
+      : ((topology as WorkspaceTopologyV1).surfaces.find((surface) => surface.surfaceId === activeSurfaceId)?.projectId ?? null);
     this.deps.setActiveSurfaceId(windowId, activeSurfaceId);
     this.deps.setEnteredBackpack(windowId, activeProject);
-    this.deps.setWorkspaceTopology(windowId, topology);
+    this.setCanonicalTopology(windowId, topology);
     this.deps.sendToWindow(windowId, 'host:event:workspace-topology', topology);
   }
 
@@ -1834,35 +2045,36 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (!project) throw new Error('That Backpack has no usable project surface.');
     // The project lookup awaited filesystem work. Re-resolve every authority
     // fact after that boundary so a concurrent close/layout/archive wins.
-    let topology = this.deps.workspaceTopology?.(windowId) ?? null;
+    let topology: WorkspaceTopologyAny | null = this.deps.workspaceTopologyAny?.(windowId)
+      ?? this.deps.workspaceTopology?.(windowId)
+      ?? null;
     if (!topology) {
       // The first picker click may arrive while startup hydration is still
       // resolving. Join that promise, then create an empty canonical root for
       // a new installation with no saved workspace.
       await this.deps.hydrateStartupWorkspace?.(windowId);
-      topology = this.deps.workspaceTopology?.(windowId) ?? createWorkspaceTopology();
+      topology = this.deps.workspaceTopologyAny?.(windowId)
+        ?? this.deps.workspaceTopology?.(windowId)
+        ?? createWorkspaceTopology();
     }
-    this.validateWorkspaceTopology(windowId, topology);
+    this.validateWorkspaceTopologyAny(windowId, topology);
     const backpack = this.deps.registry.find(projectId);
     if (!backpack || backpack.archived) throw new Error('That Backpack is not available.');
     const releaseMutation = this.acquireWorkspaceMutation([windowId]);
     let surfaceId: string | null = null;
     let prepared: PreparedProjectSurface | null = null;
     try {
-      const latest = this.deps.workspaceTopology?.(windowId) ?? topology;
-      this.validateWorkspaceTopology(windowId, latest);
+      const latest = this.deps.workspaceTopologyAny?.(windowId) ?? topology;
+      this.validateWorkspaceTopologyAny(windowId, latest);
       const surface = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
       surfaceId = surface.surfaceId;
       const surfaceKey = randomUUID();
       const keyedUrl = withProjectSurfaceKey(requestedUrl ?? project.url, surfaceKey);
       prepared = await this.deps.workspaceMove!.prepareProjectSurface(windowId, surface.surfaceId, keyedUrl);
-      const next = openWorkspaceSurface(latest, {
-        surfaceId: surface.surfaceId,
-        surfaceKey,
-        projectId,
-        title: backpack.name,
-      });
-      this.validateWorkspaceTopologyAgainst(windowId, next, this.currentProjectSurfaceSet(windowId));
+      const next: WorkspaceTopologyAny = latest.schemaVersion === 2
+        ? openWorkspaceSurfaceV2(latest, { kind: 'project', surfaceId: surface.surfaceId, surfaceKey, projectId, title: backpack.name })
+        : openWorkspaceSurface(latest, { surfaceId: surface.surfaceId, surfaceKey, projectId, title: backpack.name });
+      this.validateWorkspaceTopologyAny(windowId, next);
       // Adopt the prepared native view only after the topology is validated.
       // It is still hidden from the renderer until this event is delivered;
       // any delivery failure can discard it without an orphaned logical tab.
@@ -1873,8 +2085,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       });
       this.deps.setActiveSurfaceId(windowId, surface.surfaceId);
       this.deps.setEnteredBackpack(windowId, projectId);
-      this.deps.setWorkspaceTopology(windowId, next);
-      return { windowId, surfaceId: surface.surfaceId, projectId, topology: next };
+      this.setCanonicalTopology(windowId, next);
+      return { windowId, surfaceId: surface.surfaceId, projectId, topology: next as WorkspaceTopologyV1 };
     } catch (caught) {
       if (prepared) prepared.discard();
       if (surfaceId) this.retireLogicalSurface(surfaceId);
@@ -1884,34 +2096,68 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     }
   }
 
-  async closeWorkspaceSurfaceFromControl(windowId: number, surfaceId: string, topology: WorkspaceTopologyV1): Promise<WorkspaceTopologyV1> {
+  async closeWorkspaceSurfaceFromControl(windowId: number, surfaceId: string, topology: WorkspaceTopologyAny): Promise<WorkspaceTopologyV1> {
     const surface = this.deps.logicalSurfaces.get(surfaceId);
     if (!surface || surface.windowId !== windowId || surface.kind !== 'project') {
       throw new Error('That surface is not open in that Papers window.');
     }
-    return this.closeLogicalProjectSurface(windowId, surfaceId, topology);
+    return this.closeLogicalProjectSurface(windowId, surfaceId, topology) as Promise<WorkspaceTopologyV1>;
   }
 
   /** One main-owned terminal close transaction for every close producer. */
   private async closeLogicalProjectSurface(
     windowId: number,
     surfaceId: string,
-    topology = this.deps.workspaceTopology?.(windowId) ?? null,
+    topology = this.deps.workspaceTopologyAny?.(windowId) ?? this.deps.workspaceTopology?.(windowId) ?? null,
     mutationAlreadyHeld = false,
-  ): Promise<WorkspaceTopologyV1> {
+  ): Promise<WorkspaceTopologyAny> {
     if (!topology) throw new Error('That Papers window has not committed workspace topology.');
     const releaseMutation = mutationAlreadyHeld ? null : this.acquireWorkspaceMutation([windowId]);
     try {
-      this.validateWorkspaceTopology(windowId, topology);
+      this.validateWorkspaceTopologyAny(windowId, topology);
       await this.deps.closeAttachedProjectSurface(windowId, surfaceId);
       this.retireLogicalSurface(surfaceId);
       for (const senderId of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(senderId);
-      const next = closeWorkspaceSurface(topology, surfaceId);
+      const next = topology.schemaVersion === 2
+        ? closeWorkspaceSurfaceV2(topology, surfaceId)
+        : closeWorkspaceSurface(topology, surfaceId);
       this.restoreWorkspaceTopology(windowId, next, true);
       this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', { surfaceId });
       return next;
     } finally {
       releaseMutation?.();
+    }
+  }
+
+  private validateWorkspaceTopologyAny(windowId: number, topology: WorkspaceTopologyAny): void {
+    if (topology.schemaVersion === 1) {
+      this.validateWorkspaceTopology(windowId, topology);
+      return;
+    }
+    if (!this.deps.hostWindowIds().includes(windowId)) throw new Error('That Papers window is not live.');
+    const parsed = parseWorkspaceTopologyV2(topology);
+    const expectedProjects = this.currentProjectSurfaceSet(windowId);
+    const actualProjects = parsed.surfaces
+      .filter((surface): surface is Extract<WorkspaceSurfaceV2, { kind: 'project' }> => surface.kind === 'project')
+      .map((surface) => ({ surfaceId: surface.surfaceId, projectId: surface.projectId }));
+    const expectedProjectKeys = expectedProjects.map((surface) => `${surface.surfaceId}\u0000${surface.projectId}`).sort();
+    const actualProjectKeys = actualProjects.map((surface) => `${surface.surfaceId}\u0000${surface.projectId}`).sort();
+    if (expectedProjectKeys.length !== actualProjectKeys.length
+      || expectedProjectKeys.some((key, index) => key !== actualProjectKeys[index])) {
+      throw new Error('Workspace topology project surfaces do not match the live project surface set.');
+    }
+    const expectedForeign = this.foreignController().snapshot().filter((surface) => surface.hostWindowId === windowId);
+    const actualForeign = parsed.surfaces
+      .filter((surface): surface is Extract<WorkspaceSurfaceV2, { kind: 'foreign-window' }> => surface.kind === 'foreign-window');
+    const expectedForeignById = new Map(expectedForeign.map((surface) => [surface.surfaceId, surface]));
+    if (actualForeign.length !== expectedForeign.length || actualForeign.some((surface) => {
+      const expected = expectedForeignById.get(surface.surfaceId);
+      return !expected
+        || expected.descriptor.version !== surface.descriptor.version
+        || expected.descriptor.windowInstanceId !== surface.descriptor.windowInstanceId
+        || expected.descriptor.executableFingerprint !== surface.descriptor.executableFingerprint;
+    })) {
+      throw new Error('Workspace topology foreign surfaces do not match the live foreign surface set.');
     }
   }
 
@@ -2004,8 +2250,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     assertValidWorkspaceTopology(topology);
   }
 
-  validateWorkspaceTopologyForStartup(windowId: number, topology: WorkspaceTopologyV1): void {
-    this.validateWorkspaceTopology(windowId, topology);
+  validateWorkspaceTopologyForStartup(windowId: number, topology: WorkspaceTopologyAny): void {
+    this.validateWorkspaceTopologyAny(windowId, topology);
   }
 
   // ----------------------------------------------------------- permissions

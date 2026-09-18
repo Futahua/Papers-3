@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
 import {
-  parseWorkspaceTopology,
-  validatedWorkspaceTopologySchema,
-  type WorkspaceTopologyV1,
+  parseWorkspaceTopologyAny,
+  workspaceTopologyAnySchema,
+  type WorkspaceTopologyAny,
 } from '@shared/workspaceTopology';
 import { AtomicJsonStore, type LoadReport } from './atomicStore';
 import type { PapersPaths } from './paths';
@@ -14,7 +14,7 @@ const MAX_LAYOUT_NAME_LENGTH = 120;
 const namedLayoutSchema = z.object({
   layoutId: z.string().uuid(),
   name: z.string().min(1).max(MAX_LAYOUT_NAME_LENGTH),
-  topology: validatedWorkspaceTopologySchema,
+  topology: workspaceTopologyAnySchema,
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).strict();
@@ -41,7 +41,7 @@ const envelopeSchema = z.object({
 export interface NamedWorkspaceLayout {
   layoutId: string;
   name: string;
-  topology: WorkspaceTopologyV1;
+  topology: WorkspaceTopologyAny;
   createdAt: string;
   updatedAt: string;
 }
@@ -104,7 +104,7 @@ export class WorkspaceLayoutStore {
 
   /** Create-only named layout persistence. Memory is updated only after the
    * atomic durable write succeeds, so failed saves cannot create phantoms. */
-  create(name: string, topology: WorkspaceTopologyV1): Promise<NamedWorkspaceLayout> {
+  create(name: string, topology: WorkspaceTopologyAny): Promise<NamedWorkspaceLayout> {
     return this.enqueue(async () => {
       await this.initialize();
       const trimmed = name.trim();
@@ -114,7 +114,7 @@ export class WorkspaceLayoutStore {
       if ([...this.layouts.values()].some((layout) => normalizeLayoutName(layout.name) === normalized)) {
         throw new Error(`A layout named "${trimmed}" already exists.`);
       }
-      const parsedTopology = parseWorkspaceTopology(topology);
+      const parsedTopology = parseWorkspaceTopologyAny(topology);
       const timestamp = this.now();
       const layout: NamedWorkspaceLayout = {
         layoutId: randomUUID(),

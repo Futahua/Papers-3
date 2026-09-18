@@ -10,8 +10,9 @@ import { Orientation } from 'dockview-core';
 import 'dockview-react/dist/styles/dockview.css';
 
 import { BackpackProjectFrame } from './BackpackProjectFrame';
-import type { HostOverlayOwner } from './bridge';
-import type { WorkspaceLayoutNode, WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { ForeignWindowFrame } from './ForeignWindowFrame';
+import { host, type HostOverlayOwner } from './bridge';
+import type { WorkspaceLayoutNode, WorkspaceTopologyAny } from '@shared/workspaceTopology';
 import { rebuildWorkspaceGroupMap } from './workspaceGroupMapping';
 import { createWorkspaceReconciliationFeedbackGate } from './workspaceReconciliationFeedback';
 import { serializedRootForTopology, workspaceRootFromDockview } from './workspaceDockLayout';
@@ -29,9 +30,30 @@ export interface OpenWorkspaceProject {
   url: string;
 }
 
+export interface OpenWorkspaceForeignSurface {
+  surfaceId: string;
+  title: string;
+  descriptor: import('@shared/windowMemberDescriptor').PersistedWindowMemberDescriptor;
+  state: string;
+  paneBounds: { x: number; y: number; width: number; height: number } | null;
+  originalBounds: { x: number; y: number; width: number; height: number } | null;
+  hostWindowId: number | null;
+}
+
+export type OpenWorkspaceSurface = OpenWorkspaceProject | OpenWorkspaceForeignSurface;
+
+interface ForeignCandidateRow {
+  id: string;
+  title: string;
+  applicationLabel: string;
+  icon: string | null;
+  state: string;
+}
+
 interface WorkspacePanelParams {
   surfaceId: string;
-  url: string;
+  kind: 'project' | 'foreign-window';
+  url?: string;
 }
 
 type SplitEdge = 'top' | 'bottom' | 'left' | 'right';
@@ -66,7 +88,7 @@ type SideDropIntent = {
   dragSessionGeneration: number;
 };
 
-function workspaceStructuralToken(topology: WorkspaceTopologyV1): string {
+function workspaceStructuralToken(topology: WorkspaceTopologyAny): string {
   return JSON.stringify({
     groups: topology.groups.map((group) => ({ groupId: group.groupId, surfaceIds: group.surfaceIds })),
     root: topology.root,
@@ -140,18 +162,15 @@ function WorkspacePanel(props: IDockviewPanelProps<WorkspacePanelParams>): React
     const disposable = api.onDidVisibilityChange((event) => setVisible(event.isVisible));
     return () => disposable.dispose();
   }, [api]);
-  return (
-    <BackpackProjectFrame
-      url={params.url}
-      surfaceId={params.surfaceId}
-      visible={visible}
-    />
-  );
+  return params.kind === 'foreign-window'
+    ? <ForeignWindowFrame surfaceId={params.surfaceId} visible={visible} />
+    : <BackpackProjectFrame url={params.url ?? ''} surfaceId={params.surfaceId} visible={visible} />;
 }
 
 export function WorkspaceDock(props: {
   projects: OpenWorkspaceProject[];
-  topology: WorkspaceTopologyV1;
+  foreignSurfaces?: OpenWorkspaceForeignSurface[];
+  topology: WorkspaceTopologyAny;
   activeSurfaceId: string | null;
   onActivate: (surfaceId: string) => void;
   onClose: (surfaceId: string) => void;
@@ -166,10 +185,11 @@ export function WorkspaceDock(props: {
     rootWeights?: number[];
   }) => void;
 }): React.JSX.Element {
-  const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onOverlayActiveChange, splitNotice, onCommitLayout,
+  const { projects, foreignSurfaces = [], topology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onOverlayActiveChange, splitNotice, onCommitLayout,
     interactionDisabled = false } = props;
   const apiRef = useRef<DockviewApi | null>(null);
-  const projectsRef = useRef(projects);
+  const surfaces = useMemo<OpenWorkspaceSurface[]>(() => [...projects, ...foreignSurfaces], [foreignSurfaces, projects]);
+  const projectsRef = useRef<OpenWorkspaceSurface[]>(surfaces);
   const topologyRef = useRef(topology);
   const synchronizingRemovals = useRef(new Set<string>());
   const disposing = useRef(false);
@@ -206,8 +226,11 @@ export function WorkspaceDock(props: {
   const statusGeneration = useRef(0);
   const [preview, setPreview] = useState<SplitPreview | null>(null);
   const [dragStatus, setDragStatus] = useState<string | null>(null);
+  const [foreignPickerOpen, setForeignPickerOpen] = useState(false);
+  const [foreignCandidates, setForeignCandidates] = useState<ForeignCandidateRow[]>([]);
+  const [foreignPickerBusy, setForeignPickerBusy] = useState(false);
   const interactionDisabledRef = useRef(false);
-  projectsRef.current = projects;
+  projectsRef.current = surfaces;
   topologyRef.current = topology;
   const structuralToken = workspaceStructuralToken(topology);
   interactionDisabledRef.current = interactionDisabled;
@@ -731,7 +754,8 @@ export function WorkspaceDock(props: {
         renderer: 'always',
         params: {
           surfaceId: project.surfaceId,
-          url: project.url,
+          kind: 'projectId' in project ? 'project' : 'foreign-window',
+          ...('projectId' in project ? { url: project.url } : {}),
         },
       });
     }
@@ -1222,7 +1246,7 @@ export function WorkspaceDock(props: {
     reconciliationFeedback.current.apply(() => {
       addMissingPanels(api);
       syncPanelTitles(api);
-      const desired = new Set(projects.map((project) => project.surfaceId));
+      const desired = new Set(surfaces.map((project) => project.surfaceId));
       for (const panel of [...api.panels]) {
         if (desired.has(panel.id)) continue;
         synchronizingRemovals.current.add(panel.id);
@@ -1232,7 +1256,7 @@ export function WorkspaceDock(props: {
       if (active && api.activePanel?.id !== active.id) active.api.setActive();
       reconcileFromTopology(api);
     });
-  }, [activeSurfaceId, addMissingPanels, projects, reconcileFromTopology, syncPanelTitles, topology]);
+  }, [activeSurfaceId, addMissingPanels, reconcileFromTopology, syncPanelTitles, surfaces, topology]);
 
   const splitActive = useCallback((direction: 'right' | 'down', position: 'before' | 'after' = 'after'): void => {
     if (interactionDisabled) return;
@@ -1254,6 +1278,22 @@ export function WorkspaceDock(props: {
   const canSplit = Boolean(
     !interactionDisabled && activeSurfaceId && activeGroup && activeGroup.surfaceIds.length > 1,
   );
+
+  const refreshForeignCandidates = useCallback((): void => {
+    setForeignPickerBusy(true);
+    void host().foreignWindow.listCandidates()
+      .then((result) => {
+        setForeignCandidates(result.outcome === 'success' ? result.candidates : []);
+      })
+      .catch(() => setForeignCandidates([]))
+      .finally(() => setForeignPickerBusy(false));
+  }, []);
+
+  const openForeignPicker = useCallback((): void => {
+    const next = !foreignPickerOpen;
+    setForeignPickerOpen(next);
+    if (next) refreshForeignCandidates();
+  }, [foreignPickerOpen, refreshForeignCandidates]);
 
   return (
     <section ref={workspaceRef} className="workspace-dock" aria-label="Workspace tabs"
@@ -1393,6 +1433,29 @@ export function WorkspaceDock(props: {
           {dragStatus}
         </div>
       )}
+      <div className="foreign-window-toolbar">
+        <button type="button" className="workspace-add-foreign" onClick={openForeignPicker} disabled={foreignPickerBusy || interactionDisabled}>
+          {foreignPickerBusy ? 'Finding windows…' : 'Add window'}
+        </button>
+        {foreignPickerOpen && (
+          <div className="foreign-window-picker" role="dialog" aria-label="Add foreign window">
+            <div className="foreign-window-picker-title">Add a window to this workspace</div>
+            {foreignCandidates.length === 0 && <div className="foreign-window-picker-empty">No eligible windows found.</div>}
+            {foreignCandidates.map((candidate) => (
+              <button key={candidate.id} type="button" className="foreign-window-candidate" onClick={() => {
+                setForeignPickerBusy(true);
+                void host().foreignWindow.open(candidate.id)
+                  .then(() => setForeignPickerOpen(false))
+                  .catch(() => undefined)
+                  .finally(() => setForeignPickerBusy(false));
+              }}>
+                {candidate.icon ? <img src={candidate.icon} alt="" /> : <span className="foreign-window-candidate-icon">□</span>}
+                <span>{candidate.title || candidate.applicationLabel}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <DockviewReact
         className="dockview-theme-light"
         components={components}

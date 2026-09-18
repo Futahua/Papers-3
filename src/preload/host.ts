@@ -66,6 +66,15 @@ const api = {
     // gets an explicitly targeted variant, not this.
   },
 
+  foreignWindow: {
+    listCandidates: () => ipcRenderer.invoke('host:foreign-window:list-candidates'),
+    open: (candidateId: string) => ipcRenderer.invoke('host:foreign-window:open', candidateId),
+    setBounds: (surfaceId: string, bounds: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke('host:foreign-window:set-bounds', surfaceId, bounds),
+    activate: (surfaceId: string) => ipcRenderer.invoke('host:foreign-window:activate', surfaceId),
+    close: (surfaceId: string) => ipcRenderer.invoke('host:foreign-window:close', surfaceId),
+  },
+
   programs: {
     catalog: () => ipcRenderer.invoke('host:programs:catalog'),
     start: (programId: string) => ipcRenderer.invoke('host:programs:start', programId),
@@ -154,6 +163,8 @@ const api = {
     onWorkspaceLayoutLoaded: subscribe('host:event:workspace-layout-loaded'),
     onWorkspaceSurfaceMoved: subscribe('host:event:workspace-surface-moved'),
     onWorkspaceProjectTitle: subscribe('host:event:workspace-project-title'),
+    onWorkspaceForeignOpened: subscribe('host:event:workspace-foreign-opened'),
+    onWorkspaceForeignClosed: subscribe('host:event:workspace-foreign-closed'),
     onProgramStatus: subscribe('host:event:program-status'),
     onShelfChanged: subscribe('host:event:shelf-changed'),
     onSaveStatus: subscribe('host:event:save-status'),

@@ -10,7 +10,8 @@ import type {
   ProgramStatus,
   ShelfContribution,
 } from '@shared/types';
-import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import type { WorkspaceTopologyAny, WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import type { WindowCandidate, WindowCandidateListResult } from '../main/windows/windowCapabilityService';
 
 export interface BackpacksList {
   backpacks: BackpackSummary[];
@@ -137,6 +138,20 @@ interface HostBridge {
     // Project-scoped operations live on the project frame's own bridge; the
     // host renderer cannot act on a project without naming a surface.
   };
+  foreignWindow: {
+    listCandidates(): Promise<WindowCandidateListResult>;
+    open(candidateId: string): Promise<{
+      surface: {
+        surfaceId: string; title: string; descriptor: import('../main/windows/windowCapabilityService').PersistedWindowMemberDescriptor;
+        state: string; paneBounds: { x: number; y: number; width: number; height: number } | null;
+        originalBounds: { x: number; y: number; width: number; height: number } | null; hostWindowId: number | null;
+      };
+      topology: WorkspaceTopologyAny;
+    }>;
+    setBounds(surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+    activate(surfaceId: string): Promise<void>;
+    close(surfaceId: string): Promise<void>;
+  };
   programs: {
     catalog(): Promise<CatalogInfo>;
     start(programId: string): Promise<void>;
@@ -158,7 +173,7 @@ interface HostBridge {
     setOverlayActive(active: boolean): Promise<void>;
     setHostOverlayActive(active: boolean, owner?: HostOverlayOwner): Promise<void>;
     setTitleBarOverlay(color: string, symbolColor: string): Promise<void>;
-    commitWorkspaceTopology(topology: WorkspaceTopologyV1): Promise<void>;
+    commitWorkspaceTopology(topology: WorkspaceTopologyAny): Promise<void>;
     refreshWorkspaceTopology(): Promise<void>;
     moveSurfaceToWindow(target: {
       surfaceId: string;
@@ -241,6 +256,8 @@ interface HostBridge {
       compensating?: boolean;
     }) => void): () => void;
     onWorkspaceProjectTitle(cb: (payload: { surfaceId: string; title: string }) => void): () => void;
+    onWorkspaceForeignOpened(cb: (payload: { surface: { surfaceId: string; title: string; descriptor: import('../main/windows/windowCapabilityService').PersistedWindowMemberDescriptor; state: string; paneBounds: { x: number; y: number; width: number; height: number } | null; originalBounds: { x: number; y: number; width: number; height: number } | null; hostWindowId: number | null }; topology: WorkspaceTopologyAny }) => void): () => void;
+    onWorkspaceForeignClosed(cb: (payload: { surfaceId: string; topology: WorkspaceTopologyAny }) => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;

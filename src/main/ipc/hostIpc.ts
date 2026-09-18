@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { backpackNameSchema } from '@shared/schemas';
 import type { PermissionDecision } from '@shared/types';
 import type { HostWorkspaceSurfaceMoveTarget } from '../hostFacade';
-import { parseWorkspaceTopology, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { parseWorkspaceTopologyAny, type WorkspaceTopologyAny, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 
 export interface HostFacade {
   /**
@@ -105,12 +105,17 @@ export interface HostFacade {
   setTransparentWindow(enabled: boolean): Promise<void>;
   saveWindowBounds(senderId: number): Promise<{ x: number; y: number; width: number; height: number } | null>;
   clearWindowBounds(): Promise<void>;
-  commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void;
+  commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyAny): void;
   refreshWorkspaceTopology(senderId: number): void;
   listWorkspaceLayouts(): Promise<unknown>;
   saveWorkspaceLayout(senderId: number, name: string): Promise<unknown>;
   loadWorkspaceLayout(senderId: number, layoutId: string): Promise<unknown>;
   moveWorkspaceSurfaceFromHost(senderId: number, target: HostWorkspaceSurfaceMoveTarget): Promise<unknown>;
+  listForeignWindowCandidates(senderId: number): Promise<unknown>;
+  openForeignWindow(senderId: number, candidateId: string): Promise<unknown>;
+  setForeignWindowSurfaceBounds(senderId: number, surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
+  activateForeignWindowSurface(senderId: number, surfaceId: string): Promise<void>;
+  closeForeignWindowSurface(senderId: number, surfaceId: string): Promise<void>;
 
   listPermissions(): unknown;
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
@@ -407,7 +412,7 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:settings:save-window-bounds', (event) => facade.saveWindowBounds(event.sender.id));
   handle('host:settings:clear-window-bounds', () => facade.clearWindowBounds());
   handle('host:workspace:commit-topology', (event, topology) =>
-    facade.commitWorkspaceTopology(event.sender.id, parseWorkspaceTopology(topology)),
+    facade.commitWorkspaceTopology(event.sender.id, parseWorkspaceTopologyAny(topology)),
   );
   handle('host:workspace:refresh-topology', (event) =>
     facade.refreshWorkspaceTopology(event.sender.id),
@@ -417,6 +422,19 @@ export function registerHostIpc(facade: HostFacade): void {
       event.sender.id,
       hostWorkspaceSurfaceMoveTargetSchema.parse(rawTarget),
     ),
+  );
+  handle('host:foreign-window:list-candidates', (event) => facade.listForeignWindowCandidates(event.sender.id));
+  handle('host:foreign-window:open', (event, candidateId) =>
+    facade.openForeignWindow(event.sender.id, idSchema.parse(candidateId)),
+  );
+  handle('host:foreign-window:set-bounds', (event, surfaceId, bounds) =>
+    facade.setForeignWindowSurfaceBounds(event.sender.id, surfaceIdSchema.parse(surfaceId), boundsSchema.parse(bounds)),
+  );
+  handle('host:foreign-window:activate', (event, surfaceId) =>
+    facade.activateForeignWindowSurface(event.sender.id, surfaceIdSchema.parse(surfaceId)),
+  );
+  handle('host:foreign-window:close', (event, surfaceId) =>
+    facade.closeForeignWindowSurface(event.sender.id, surfaceIdSchema.parse(surfaceId)),
   );
   handle('host:layout:list', () => facade.listWorkspaceLayouts());
   handle('host:layout:save', (event, name) =>
