@@ -9,10 +9,10 @@ or separate runtime is required.
 The process speaks JSON Lines on stdin/stdout:
 
 ```json
-{"cmd":"host","hwnd":"123456","id":"1"}
-{"cmd":"bind","id":"foreign-1","windowInstanceId":"W0123456789abcdef"}
-{"cmd":"layout","id":"2","items":[{"id":"foreign-1","x":20,"y":80,"w":900,"h":700}]}
-{"cmd":"release","id":"foreign-1"}
+{"cmd":"host","hwnd":"123456","requestId":"1"}
+{"cmd":"bind","surfaceId":"foreign-1","windowInstanceId":"W0123456789abcdef","requestId":"2"}
+{"cmd":"layout","items":[{"surfaceId":"foreign-1","x":20,"y":80,"w":900,"h":700}],"requestId":"3"}
+{"cmd":"release","surfaceId":"foreign-1","requestId":"4"}
 ```
 
 The broker discovers a bound foreign HWND from Papers' existing

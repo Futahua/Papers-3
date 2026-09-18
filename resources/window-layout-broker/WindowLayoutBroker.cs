@@ -206,12 +206,6 @@ public static class WindowLayoutBroker
         return m.Success ? Regex.Unescape(m.Groups[1].Value) : null;
     }
 
-    private static long? LongValue(string json, string key)
-    {
-        Match m = Regex.Match(json, "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*(\\-?[0-9]+)");
-        long value; return m.Success && long.TryParse(m.Groups[1].Value, out value) ? value : (long?)null;
-    }
-
     private static double? NumberValue(string json, string key)
     {
         Match m = Regex.Match(json, "\\\"" + Regex.Escape(key) + "\\\"\\s*:\\s*(\\-?[0-9]+(?:\\.[0-9]+)?)");
@@ -235,56 +229,58 @@ public static class WindowLayoutBroker
     }
 
     private static string Escape(string value) { return value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n"); }
-    private static void Reply(string id, bool ok, string error = null) { Console.WriteLine("{\"ok\":" + (ok ? "true" : "false") + ",\"id\":\"" + Escape(id) + "\"" + (error == null ? "" : ",\"error\":\"" + Escape(error) + "\"") + "}"); Console.Out.Flush(); }
+    private static void Reply(string requestId, bool ok, string error = null) { Console.WriteLine("{\"ok\":" + (ok ? "true" : "false") + ",\"requestId\":\"" + Escape(requestId) + "\"" + (error == null ? "" : ",\"error\":\"" + Escape(error) + "\"") + "}"); Console.Out.Flush(); }
 
     private static void Command(string json)
     {
         string cmd = StringValue(json, "cmd") ?? "";
-        string id = StringValue(json, "id") ?? "";
+        string requestId = StringValue(json, "requestId") ?? "";
         if (cmd == "host")
         {
-            long? handle = LongValue(json, "hwnd");
-            if (!handle.HasValue || !IsWindow(new IntPtr(handle.Value))) { Reply(id, false, "invalid host"); return; }
-            Host = new IntPtr(handle.Value); Reply(id, true); return;
+            string hwndText = StringValue(json, "hwnd") ?? "";
+            long handle; bool parsed = long.TryParse(hwndText, out handle);
+            if (!parsed || !IsWindow(new IntPtr(handle))) { Reply(requestId, false, "invalid host"); return; }
+            Host = new IntPtr(handle); Reply(requestId, true); return;
         }
         if (cmd == "bind")
         {
-            string surface = id; string instance = StringValue(json, "windowInstanceId") ?? "";
+            string surface = StringValue(json, "surfaceId") ?? ""; string instance = StringValue(json, "windowInstanceId") ?? "";
             IntPtr hwnd = FindWindowByInstance(instance); Rect original;
-            if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out original)) { Reply(id, false, "window not found"); return; }
+            if (surface == "" || hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out original)) { Reply(requestId, false, "window not found"); return; }
             lock (Gate) Items[surface] = new Item { Id = surface, InstanceId = instance, Hwnd = hwnd, Original = original };
-            Reply(id, true); return;
+            Reply(requestId, true); return;
         }
         if (cmd == "layout")
         {
             Point origin;
-            if (!HostClientOrigin(out origin)) { Reply(id, false, "host is unavailable"); return; }
+            if (!HostClientOrigin(out origin)) { Reply(requestId, false, "host is unavailable"); return; }
             List<Tuple<string, Rect>> updates = new List<Tuple<string, Rect>>();
             foreach (string itemJson in ObjectArray(json, "items"))
             {
-                string itemId = StringValue(itemJson, "id") ?? "";
+                string itemId = StringValue(itemJson, "surfaceId") ?? "";
                 double? x = NumberValue(itemJson, "x"), y = NumberValue(itemJson, "y"), w = NumberValue(itemJson, "w"), h = NumberValue(itemJson, "h");
                 if (itemId == "" || !x.HasValue || !y.HasValue || !w.HasValue || !h.HasValue || w <= 0 || h <= 0) continue;
                 updates.Add(Tuple.Create(itemId, MakeRect((int)Math.Round(x.Value) - origin.X, (int)Math.Round(y.Value) - origin.Y, (int)Math.Round(w.Value), (int)Math.Round(h.Value))));
             }
             lock (Gate) foreach (Tuple<string, Rect> update in updates) { Item item; if (Items.TryGetValue(update.Item1, out item)) { item.Relative = update.Item2; item.HasTarget = true; } }
-            QueueApply(); Reply(id, true); return;
+            QueueApply(); Reply(requestId, true); return;
         }
         if (cmd == "release")
         {
             bool released = false;
             Item item = null;
-            lock (Gate) { if (Items.TryGetValue(id, out item)) { } else released = true; }
+            string surface = StringValue(json, "surfaceId") ?? "";
+            lock (Gate) { if (Items.TryGetValue(surface, out item)) { } else released = true; }
             if (item != null)
             {
                 released = RestoreOne(item);
-                if (released) lock (Gate) Items.Remove(id);
+                if (released) lock (Gate) Items.Remove(surface);
             }
-            Reply(id, released, released ? null : "native restore failed"); return;
+            Reply(requestId, released, released ? null : "native restore failed"); return;
         }
-        if (cmd == "releaseAll") { bool released = RestoreAll(); Reply(id, released, released ? null : "one or more native restores failed"); return; }
-        if (cmd == "ping") { Reply(id, true); return; }
-        Reply(id, false, "unknown command");
+        if (cmd == "releaseAll") { bool released = RestoreAll(); Reply(requestId, released, released ? null : "one or more native restores failed"); return; }
+        if (cmd == "ping") { Reply(requestId, true); return; }
+        Reply(requestId, false, "unknown command");
     }
 
     private static bool RestoreOne(Item item)

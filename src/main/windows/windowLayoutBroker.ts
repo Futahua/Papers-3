@@ -110,11 +110,11 @@ export function createWindowLayoutBroker(options: WindowLayoutBrokerOptions): Wi
     let raw: unknown;
     try { raw = JSON.parse(line); } catch { return; }
     if (!raw || typeof raw !== 'object') return;
-    const id = (raw as { id?: unknown }).id;
-    if (typeof id !== 'string') return;
-    const waiter = pending.get(id);
+    const requestId = (raw as { requestId?: unknown }).requestId;
+    if (typeof requestId !== 'string') return;
+    const waiter = pending.get(requestId);
     if (!waiter) return;
-    pending.delete(id);
+    pending.delete(requestId);
     clearTimeout(waiter.timer);
     waiter.resolve((raw as { ok?: unknown }).ok === true);
   });
@@ -129,31 +129,31 @@ export function createWindowLayoutBroker(options: WindowLayoutBrokerOptions): Wi
 
   function send(command: Record<string, unknown>, wait: boolean): Promise<boolean> {
     if (stopped || child.stdin.destroyed || !child.stdin.writable) return Promise.resolve(false);
-    const id = `${++sequence}`;
-    const payload = JSON.stringify({ ...command, id });
+    const requestId = `${++sequence}`;
+    const payload = JSON.stringify({ ...command, requestId });
     if (!wait) {
       try { child.stdin.write(`${payload}\n`); return Promise.resolve(true); } catch { return Promise.resolve(false); }
     }
     return new Promise<boolean>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (!pending.delete(id)) return;
+        if (!pending.delete(requestId)) return;
         resolve(false);
       }, 1000);
-      pending.set(id, { resolve, reject, timer });
-      try { child.stdin.write(`${payload}\n`); } catch (error) { clearTimeout(timer); pending.delete(id); reject(error instanceof Error ? error : new Error(String(error))); }
+      pending.set(requestId, { resolve, reject, timer });
+      try { child.stdin.write(`${payload}\n`); } catch (error) { clearTimeout(timer); pending.delete(requestId); reject(error instanceof Error ? error : new Error(String(error))); }
     });
   }
 
   return {
     setHost: (hwnd) => send({ cmd: 'host', hwnd }, true).catch(() => false),
-    bind: (surfaceId, windowInstanceId) => send({ cmd: 'bind', id: surfaceId, windowInstanceId }, true).catch(() => false),
+    bind: (surfaceId, windowInstanceId) => send({ cmd: 'bind', surfaceId, windowInstanceId }, true).catch(() => false),
     layout(items) {
       if (stopped || child.stdin.destroyed || !child.stdin.writable) return false;
-      const id = `${++sequence}`;
-      const payload = JSON.stringify({ cmd: 'layout', items: items.map(({ id: itemId, x, y, width, height }) => ({ id: itemId, x, y, w: width, h: height })), id });
+      const requestId = `${++sequence}`;
+      const payload = JSON.stringify({ cmd: 'layout', items: items.map(({ id: surfaceId, x, y, width, height }) => ({ surfaceId, x, y, w: width, h: height })), requestId });
       try { child.stdin.write(`${payload}\n`); return true; } catch { return false; }
     },
-    release: (surfaceId) => send({ cmd: 'release', id: surfaceId }, true).catch(() => false),
+    release: (surfaceId) => send({ cmd: 'release', surfaceId }, true).catch(() => false),
     releaseAll: () => send({ cmd: 'releaseAll' }, true).catch(() => false),
     async stop() {
       if (stopped) return;
