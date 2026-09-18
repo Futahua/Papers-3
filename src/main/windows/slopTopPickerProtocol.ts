@@ -122,6 +122,16 @@ function descriptorKey(descriptor: PersistedWindowMemberDescriptor): string {
   return `${descriptor.executableFingerprint ?? ''}|${descriptor.title}`;
 }
 
+function nativeResultReadLog(parsed: SlopTopPickerResult | null): string {
+  if (!parsed) return 'malformed unknown 0';
+  return `valid ${parsed.outcome} ${parsed.outcome === 'committed' ? parsed.windows.length : 0}`;
+}
+
+function resultCountLog(result: WindowPickResult): string {
+  if (result.outcome !== 'committed') return '0 0';
+  return `${result.adds.length} ${result.removes.length}`;
+}
+
 export function createSlopTopPickerSession(
   service: WindowCapabilityService,
   transport: SlopTopPickerTransport,
@@ -135,6 +145,7 @@ export function createSlopTopPickerSession(
   let onResult: ((result: WindowPickResult) => void) | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let resultInFlight = false;
+  let lastNativeResultLog = '';
 
   function clearPoll(): void {
     if (pollTimer) clearInterval(pollTimer);
@@ -144,6 +155,7 @@ export function createSlopTopPickerSession(
 
   function finish(result: WindowPickResult): void {
     if (!active) return;
+    console.info('[045-direct-pick] session-finish', result.outcome, resultCountLog(result));
     const callback = onResult;
     const finishedToken = token;
     active = false;
@@ -151,6 +163,7 @@ export function createSlopTopPickerSession(
     memberDescriptors = [];
     onResult = null;
     clearPoll();
+    lastNativeResultLog = '';
     void Promise.resolve(transport.cleanup(finishedToken)).catch(() => undefined);
     callback?.(result);
   }
@@ -160,13 +173,21 @@ export function createSlopTopPickerSession(
     resultInFlight = true;
     const expectedToken = token;
     try {
-      const parsed = parseResult(await transport.readResult(expectedToken), expectedToken);
+      const raw = await transport.readResult(expectedToken);
+      const parsed = parseResult(raw, expectedToken);
+      const readLog = nativeResultReadLog(parsed);
+      if (readLog !== lastNativeResultLog) {
+        lastNativeResultLog = readLog;
+        console.info('[045-direct-pick] native-result-read', readLog);
+      }
       if (!active || token !== expectedToken || !parsed) return;
       if (parsed.outcome === 'cancelled') {
         finish({ outcome: 'cancelled' });
         return;
       }
       const bound = await service.bindNativePickerSelection(parsed.windows);
+      console.info('[045-direct-pick] native-bind-result', bound.outcome,
+        'error' in bound && bound.error ? 'present' : 'none');
       if (!active || token !== expectedToken) return;
       if (bound.outcome !== 'success') {
         finish({ outcome: 'failed', error: bound.error ?? 'the final native picker set could not be resolved' });
@@ -221,6 +242,7 @@ export function createSlopTopPickerSession(
       }
       active = true;
       token = randomUUID();
+      lastNativeResultLog = '';
       memberDescriptors = [...request.memberDescriptors];
       onResult = request.onResult;
       const beginToken = token;

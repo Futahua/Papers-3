@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   createSlopTopPickerSession,
@@ -62,6 +62,7 @@ function harness() {
 
 describe('SlopTop local picker protocol', () => {
   it('sends one seed snapshot and consumes one final green-set snapshot', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     const test = harness();
     const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });
     let delivered: unknown = null;
@@ -78,6 +79,12 @@ describe('SlopTop local picker protocol', () => {
     });
     expect(session.active).toBe(false);
     expect(test.cleanedToken()).toBe(activation!.token);
+    expect(info.mock.calls).toEqual(expect.arrayContaining([
+      ['[045-direct-pick] native-result-read', 'valid committed 1'],
+      ['[045-direct-pick] native-bind-result', 'success', 'none'],
+      ['[045-direct-pick] session-finish', 'committed', '1 0'],
+    ]));
+    info.mockRestore();
   });
 
   it('derives removals from the final complete set instead of click events', async () => {

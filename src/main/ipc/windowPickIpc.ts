@@ -107,7 +107,9 @@ export function registerWindowPickIpc({
       memberDescriptors: members,
       onResult: (result: WindowPickResult) => {
         if (stillOwns(claim)) owner = null;
-        if (!sender.isDestroyed()) {
+        const senderDestroyed = sender.isDestroyed();
+        console.info('[045-direct-pick] ipc-result-delivery', result.outcome, sender.id, senderDestroyed);
+        if (!senderDestroyed) {
           sender.send('papers:window-pick:result', result);
         }
       },
