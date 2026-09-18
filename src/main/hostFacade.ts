@@ -216,7 +216,6 @@ export interface FacadeDeps {
    * facade is composed; the accessor keeps bootstrap ordering explicit. */
   foreignSurfaceController?: () => ForeignWindowSurfaceController | null;
   windowCapabilityService?: () => WindowCapabilityService | null;
-  foreignBoundsForWindow?: (windowId: number, bounds: { x: number; y: number; width: number; height: number }) => WindowBounds;
   foreignHostHandleForWindow?: (windowId: number) => string | undefined;
   workspaceLayouts: WorkspaceLayoutStore;
   workspaceMove?: {
@@ -907,12 +906,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async setForeignWindowSurfaceBounds(senderId: number, surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void> {
     const { windowId } = this.requireForeignSurfaceTarget(senderId, surfaceId);
-    const screenBounds = this.deps.foreignBoundsForWindow?.(windowId, bounds) ?? bounds;
     const hostHandle = this.deps.foreignHostHandleForWindow?.(windowId);
-    let result = await this.foreignController().follow(surfaceId, screenBounds, hostHandle);
+    let result = await this.foreignController().follow(surfaceId, bounds, hostHandle);
     if (result.outcome === 'helper-unavailable' || result.outcome === 'timeout') {
       const reconnected = await this.foreignController().reconnect(surfaceId);
-      if (reconnected.outcome === 'success') result = await this.foreignController().follow(surfaceId, screenBounds, hostHandle);
+      if (reconnected.outcome === 'success') result = await this.foreignController().follow(surfaceId, bounds, hostHandle);
     }
     if (result.outcome !== 'success') throw new Error(result.error ?? `Foreign window could not follow its pane (${result.outcome}).`);
   }

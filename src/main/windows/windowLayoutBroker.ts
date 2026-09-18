@@ -5,18 +5,19 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { createHash } from 'node:crypto';
 
-export interface WindowLayoutBrokerItem {
-  id: string;
+export interface WindowLayoutHostBounds {
   x: number;
   y: number;
   width: number;
   height: number;
 }
 
+/** Native child-host companion for the personal foreign-window feature. */
 export interface WindowLayoutBroker {
-  setHost(hwnd: string): Promise<boolean>;
-  bind(surfaceId: string, windowInstanceId: string): Promise<boolean>;
-  layout(items: WindowLayoutBrokerItem[]): boolean;
+  createHost(surfaceId: string, papersHwnd: string): Promise<boolean>;
+  adopt(surfaceId: string, windowInstanceId: string): Promise<boolean>;
+  setBounds(surfaceId: string, bounds: WindowLayoutHostBounds): Promise<boolean>;
+  setVisible(surfaceId: string, visible: boolean): Promise<boolean>;
   release(surfaceId: string): Promise<boolean>;
   releaseAll(): Promise<boolean>;
   stop(): Promise<void>;
@@ -61,12 +62,9 @@ function stampFor(source: Buffer): string {
   return createHash('sha256').update(source).digest('hex');
 }
 
-/**
- * Starts the deliberately tiny native companion. Compilation is cached in
- * Papers' user-data directory, following the existing foreground bridge
- * pattern. If Windows cannot compile or launch it, callers keep the existing
- * PowerShell follower instead of turning foreign windows into a hard failure.
- */
+/** Compiles and starts the tiny native child-host companion. If Windows cannot
+ * compile or launch it, callers fail closed instead of moving a top-level
+ * application window around the desktop. */
 export function createWindowLayoutBroker(options: WindowLayoutBrokerOptions): WindowLayoutBroker | null {
   if (process.env.PAPERS_DISABLE_NATIVE_LAYOUT_BROKER === '1') return null;
   let source: Buffer;
@@ -120,41 +118,38 @@ export function createWindowLayoutBroker(options: WindowLayoutBrokerOptions): Wi
   });
   const terminal = (reason: unknown): void => {
     stopped = true;
-    const error = new Error(`window layout broker stopped: ${errorText(reason)}`);
+    const error = new Error(`window layout host stopped: ${errorText(reason)}`);
     for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.reject(error); }
     pending.clear();
   };
   child.once('error', terminal);
   child.once('exit', (code, signal) => terminal(`exit=${code ?? 'null'} signal=${signal ?? 'null'}`));
 
-  function send(command: Record<string, unknown>, wait: boolean): Promise<boolean> {
+  function send(command: Record<string, unknown>): Promise<boolean> {
     if (stopped || child.stdin.destroyed || !child.stdin.writable) return Promise.resolve(false);
     const requestId = `${++sequence}`;
     const payload = JSON.stringify({ ...command, requestId });
-    if (!wait) {
-      try { child.stdin.write(`${payload}\n`); return Promise.resolve(true); } catch { return Promise.resolve(false); }
-    }
     return new Promise<boolean>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!pending.delete(requestId)) return;
         resolve(false);
-      }, 1000);
+      }, options.timeoutMs ?? 1000);
       pending.set(requestId, { resolve, reject, timer });
-      try { child.stdin.write(`${payload}\n`); } catch (error) { clearTimeout(timer); pending.delete(requestId); reject(error instanceof Error ? error : new Error(String(error))); }
+      try { child.stdin.write(`${payload}\n`); } catch (error) {
+        clearTimeout(timer);
+        pending.delete(requestId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
   return {
-    setHost: (hwnd) => send({ cmd: 'host', hwnd }, true).catch(() => false),
-    bind: (surfaceId, windowInstanceId) => send({ cmd: 'bind', surfaceId, windowInstanceId }, true).catch(() => false),
-    layout(items) {
-      if (stopped || child.stdin.destroyed || !child.stdin.writable) return false;
-      const requestId = `${++sequence}`;
-      const payload = JSON.stringify({ cmd: 'layout', items: items.map(({ id: surfaceId, x, y, width, height }) => ({ surfaceId, x, y, w: width, h: height })), requestId });
-      try { child.stdin.write(`${payload}\n`); return true; } catch { return false; }
-    },
-    release: (surfaceId) => send({ cmd: 'release', surfaceId }, true).catch(() => false),
-    releaseAll: () => send({ cmd: 'releaseAll' }, true).catch(() => false),
+    createHost: (surfaceId, papersHwnd) => send({ cmd: 'host-create', surfaceId, papersHwnd }).catch(() => false),
+    adopt: (surfaceId, windowInstanceId) => send({ cmd: 'adopt', surfaceId, windowInstanceId }).catch(() => false),
+    setBounds: (surfaceId, bounds) => send({ cmd: 'host-bounds', surfaceId, x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height }).catch(() => false),
+    setVisible: (surfaceId, visible) => send({ cmd: 'host-visible', surfaceId, visible }).catch(() => false),
+    release: (surfaceId) => send({ cmd: 'release', surfaceId }).catch(() => false),
+    releaseAll: () => send({ cmd: 'releaseAll' }).catch(() => false),
     async stop() {
       if (stopped) return;
       stopped = true;

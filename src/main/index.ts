@@ -1101,12 +1101,6 @@ async function bootstrap(): Promise<void> {
     },
     foreignSurfaceController: () => foreignWindowSurfaceControllerRef,
     windowCapabilityService: () => windowCapabilityServiceRef,
-    foreignBoundsForWindow: (windowId, bounds) => {
-      const owned = papersWindows.get(windowId)?.owned.window;
-      if (!owned || owned.isDestroyed()) return bounds;
-      const content = owned.getContentBounds();
-      return { x: content.x + bounds.x, y: content.y + bounds.y, width: bounds.width, height: bounds.height };
-    },
     foreignHostHandleForWindow: (windowId) => {
       const owned = papersWindows.get(windowId)?.owned.window;
       if (!owned || owned.isDestroyed()) return undefined;
@@ -1889,14 +1883,16 @@ async function bootstrap(): Promise<void> {
       const height = Math.min(440, area.height);
       const x = Math.max(area.x, Math.min(area.x + area.width - width, cursor.x - Math.round(width / 2)));
       const y = Math.max(area.y, Math.min(area.y + area.height - height, cursor.y - 36));
+      const ownerWindowId = papersWindows.windowForSender(sender.id);
+      const ownerWindow = ownerWindowId === null ? null : papersWindows.get(ownerWindowId)?.owned.window ?? null;
       const picker = new BrowserWindow({
         title: 'Papers Window Chooser',
         x, y, width, height,
+        parent: ownerWindow ?? undefined,
         frame: false,
         resizable: true,
         minimizable: false,
         maximizable: false,
-        alwaysOnTop: true,
         skipTaskbar: true,
         show: false,
         backgroundColor: '#161b22',
@@ -1907,7 +1903,6 @@ async function bootstrap(): Promise<void> {
           preload: path.join(preloadDir, 'candidatePicker.cjs'),
         },
       });
-      picker.setAlwaysOnTop(true, 'pop-up-menu');
       const encoded = JSON.stringify(candidates).replace(/</g, '\\u003c');
       const html = `<!doctype html><meta charset="utf-8"><title>Papers Window Chooser</title><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
@@ -3092,7 +3087,6 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     service: windowCapabilityService,
     screen,
     shortcut: globalShortcut,
-    surfaceController: foreignWindowSurfaceController,
     recovery: adoptedWindowRecoveryJournal,
   });
   const adoptedDockReport = adoptedDock.register({

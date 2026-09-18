@@ -2,9 +2,9 @@ import React, { useLayoutEffect, useRef } from 'react';
 
 import { host } from './bridge';
 
-/** Renderer-side geometry anchor for a top-level adopted application window.
- * The native window remains owned by its application; this element contributes
- * only the pane rectangle and forwards it to the main-process controller. */
+/** Renderer-side geometry anchor for a native child-hosted application window.
+ * The actual external HWND is parented by Papers; this element contributes
+ * only the pane rectangle in Papers client coordinates. */
 export function ForeignWindowFrame(props: { surfaceId: string; visible?: boolean }): React.JSX.Element {
   const { surfaceId, visible = true } = props;
   const frameRef = useRef<HTMLElement | null>(null);
