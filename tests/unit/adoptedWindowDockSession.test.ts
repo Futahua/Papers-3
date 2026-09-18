@@ -316,6 +316,21 @@ describe('adoptedWindowDockSession', () => {
     expect(dock.active).toBe(true);
   });
 
+  it('uses the durable window instance id when helper candidate ids change', async () => {
+    const descriptor = { version: 1 as const, title: 'Chrome', windowInstanceId: 'Wabcdef0123456789' };
+    const service = fakeService({
+      hover: { outcome: 'success', candidate: { id: 'session-token-1', title: 'Chrome', applicationLabel: 'chrome', icon: null, state: 'normal' }, bounds: null, descriptor },
+      pick: { outcome: 'success', capability: capability(), descriptor },
+      observations: [success(observation({ title: 'Chrome' })), success(observation({ title: 'Chrome' })), success(observation({ title: 'Chrome' }))],
+    });
+    const dock = createAdoptedWindowDock({ service, screen: fakeScreen(), shortcut: fakeShortcut() });
+    const window = fakeWindow();
+    expect((await dock.toggle(window)).outcome).toBe('docked');
+    (service.hover as Extract<WindowHoverResult, { outcome: 'success' }>).candidate!.id = 'fresh-helper-token';
+    expect((await dock.toggle(window)).outcome).toBe('released');
+    expect(dock.active).toBe(false);
+  });
+
   it('follows Papers moves and stops after release', async () => {
     const service = fakeService({
       observations: [success(observation()), success(observation()), success(observation()), success(observation())],

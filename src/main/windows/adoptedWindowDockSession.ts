@@ -224,6 +224,17 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     }
   }
 
+  function stableAdoptionKey(candidateId: string, descriptor: PersistedWindowMemberDescriptor): string {
+    return descriptor.windowInstanceId ? `window-instance:${descriptor.windowInstanceId}` : candidateId;
+  }
+
+  function existingAdoption(candidateId: string, descriptor: PersistedWindowMemberDescriptor | null): Adoption | null {
+    if (adoptions.has(candidateId)) return adoptions.get(candidateId) ?? null;
+    const instanceId = descriptor?.windowInstanceId;
+    if (!instanceId) return null;
+    return [...adoptions.values()].find((entry) => entry.descriptor.windowInstanceId === instanceId) ?? null;
+  }
+
   const adoptions = new Map<string, Adoption>();
   const watchedPapers = new Map<number, { window: DockPapersWindow; onFollow: () => void; onClosed: () => void }>();
   let followTimer: ReturnType<typeof setTimeout> | null = null;
@@ -490,7 +501,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       return { outcome: 'refused', detail: 'the Papers window could not be read.' };
     }
     const display = displayFor(focused);
-    const key = hovered.candidate.id;
+    const key = stableAdoptionKey(hovered.candidate.id, picked.descriptor);
     if (adoptions.has(key)) {
       if (surfaceId && surfaceController) {
         surfaceController.markDisconnected(surfaceId);
@@ -561,7 +572,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       if (!hovered || hovered.outcome !== 'success' || !hovered.candidate) {
         return { outcome: 'refused', detail: 'no adoptable window is under the cursor. Hover an ordinary application window and try again.' };
       }
-      const existing = adoptions.get(hovered.candidate.id);
+      const existing = existingAdoption(hovered.candidate.id, hovered.descriptor);
       if (existing) return await releaseSession(existing.key);
       return await adopt(focused, hovered);
     } finally {
