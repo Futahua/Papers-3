@@ -23,6 +23,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { createAdoptedWindowFollower } from './adoptedWindowFollower';
+import type { ForeignWindowSurfaceController } from './foreignWindowSurfaceController';
 import type { WindowBounds } from './windowCapabilityTypes';
 import type {
   WindowBindResult,
@@ -84,6 +85,7 @@ export interface AdoptedWindowDockDependencies {
   service: DockCapabilityService;
   screen: DockScreen;
   shortcut: DockShortcut;
+  surfaceController?: ForeignWindowSurfaceController;
   /** Durable recovery is armed before the first native placement. */
   recovery?: AdoptedWindowRecovery;
   currentPid?: number;
@@ -189,6 +191,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     service,
     screen,
     shortcut,
+    surfaceController,
     recovery,
     currentPid = process.pid,
     accelerator = 'CommandOrControl+Alt+D',
@@ -205,7 +208,8 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     descriptor: PersistedWindowMemberDescriptor;
     recoveryId: string;
     papersWindow: DockPapersWindow;
-    follower: ReturnType<typeof createAdoptedWindowFollower>;
+    follower: ReturnType<typeof createAdoptedWindowFollower> | null;
+    surfaceId: string | null;
   }
 
   function nativeHandleFor(window: DockPapersWindow): string | null {
@@ -230,6 +234,38 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       return screen.getDisplayMatching(window.getBounds());
     } catch {
       return { scaleFactor: 1, workArea: { x: 0, y: 0, width: 4096, height: 4096 } };
+    }
+  }
+
+  async function followAdoption(
+    adoption: Adoption,
+    bounds: WindowBounds,
+  ): Promise<{ outcome: string; error?: string }> {
+    if (adoption.surfaceId && surfaceController) {
+      const followed = await surfaceController.follow(adoption.surfaceId, bounds, adoption.hostWindow ?? undefined);
+      return followed.outcome === 'success' ? { outcome: 'applied' } : { outcome: followed.outcome, ...(followed.error ? { error: followed.error } : {}) };
+    }
+    if (!adoption.follower) return { outcome: 'missing', error: 'adoption has no runtime controller' };
+    return adoption.follower.follow(bounds, adoption.hostWindow ?? undefined);
+  }
+
+  async function releaseAdoption(adoption: Adoption): Promise<{ outcome: string; error?: string }> {
+    if (adoption.surfaceId && surfaceController) {
+      const released = await surfaceController.release(adoption.surfaceId, adoption.hostWindow ?? undefined);
+      return released.outcome === 'success'
+        ? { outcome: 'released' }
+        : { outcome: released.outcome, ...(released.error ? { error: released.error } : {}) };
+    }
+    if (!adoption.follower) return { outcome: 'missing', error: 'adoption has no runtime controller' };
+    return adoption.follower.release(adoption.hostWindow ?? undefined);
+  }
+
+  function abandonAdoption(adoption: Adoption): void {
+    if (adoption.surfaceId && surfaceController) {
+      surfaceController.markDisconnected(adoption.surfaceId);
+      surfaceController.retire(adoption.surfaceId);
+    } else {
+      adoption.follower?.abandon();
     }
   }
 
@@ -259,7 +295,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
           results.set(adoption.key, { outcome: 'malformed', error: 'there is no room beside Papers on this display.' });
           continue;
         }
-        const result = await adoption.follower.follow(toPhysical(target, display.scaleFactor), adoption.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
+        const result = await followAdoption(adoption, toPhysical(target, display.scaleFactor)).catch(() => ({ outcome: 'helper-unavailable' as const }));
         results.set(adoption.key, result);
         if (result.outcome === 'missing') {
           // Identity loss is terminal. Do not leave a dead capability or a
@@ -289,7 +325,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
   async function releaseForPapers(window: DockPapersWindow): Promise<void> {
     const entries = [...adoptions.values()].filter((entry) => entry.papersWindow.id === window.id);
     for (const entry of entries) {
-      const released = await entry.follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
+      const released = await releaseAdoption(entry).catch(() => ({ outcome: 'helper-unavailable' as const }));
       if (released.outcome === 'released' || released.outcome === 'missing') {
         adoptions.delete(entry.key);
         await recovery?.clear(entry.recoveryId).catch(() => undefined);
@@ -356,7 +392,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
   async function releaseSession(key: string): Promise<DockToggleOutcome> {
     const entry = adoptions.get(key);
     if (!entry) return { outcome: 'refused', detail: 'that window is no longer adopted.' };
-    const released = await entry.follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
+    const released = await releaseAdoption(entry).catch(() => ({ outcome: 'helper-unavailable' as const }));
     const title = entry.title || 'window';
     if (released.outcome === 'released') {
       // Retire the logical adoption only after the verified restore succeeds.
@@ -409,22 +445,53 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     if (current.state !== 'normal') {
       return { outcome: 'refused', detail: `that window is ${current.state}. Restore it to a normal window first.` };
     }
-    const follower = createAdoptedWindowFollower(service);
-    const adopted = await follower.adopt(capability);
-    if (adopted.outcome !== 'adopted') {
-      const reason = 'error' in adopted && adopted.error ? ` ${adopted.error}` : '';
-      return { outcome: 'refused', detail: `adoption failed (${adopted.outcome}).${reason}` };
+    let follower: ReturnType<typeof createAdoptedWindowFollower> | null = null;
+    let surfaceId: string | null = null;
+    let originalBounds = { ...current.bounds };
+    if (surfaceController) {
+      const created = surfaceController.create({
+        descriptor: { ...picked.descriptor },
+        title: current.title || hovered.candidate.title || 'window',
+        hostWindowId: focused.id,
+      });
+      const resolved = await surfaceController.resolve(created.surfaceId).catch(() => ({ outcome: 'helper-unavailable' as const }));
+      if (resolved.outcome !== 'success') {
+        surfaceController.markDisconnected(created.surfaceId);
+        surfaceController.retire(created.surfaceId);
+        const reason = 'error' in resolved && resolved.error ? ` ${resolved.error}` : '';
+        return { outcome: 'refused', detail: `adoption failed (${resolved.outcome}).${reason}` };
+      }
+      surfaceId = created.surfaceId;
+      originalBounds = { ...(resolved.surface?.originalBounds ?? current.bounds) };
+    } else {
+      follower = createAdoptedWindowFollower(service);
+      const adopted = await follower.adopt(capability);
+      if (adopted.outcome !== 'adopted') {
+        const reason = 'error' in adopted && adopted.error ? ` ${adopted.error}` : '';
+        return { outcome: 'refused', detail: `adoption failed (${adopted.outcome}).${reason}` };
+      }
+      originalBounds = { ...adopted.originalBounds };
     }
     try {
       focused.getBounds();
     } catch {
-      await follower.release().catch(() => undefined);
+      if (surfaceId && surfaceController) {
+        surfaceController.markDisconnected(surfaceId);
+        surfaceController.retire(surfaceId);
+      } else {
+        follower?.abandon();
+      }
       return { outcome: 'refused', detail: 'the Papers window could not be read.' };
     }
     const display = displayFor(focused);
     const key = hovered.candidate.id;
     if (adoptions.has(key)) {
-      await follower.release().catch(() => undefined);
+      if (surfaceId && surfaceController) {
+        surfaceController.markDisconnected(surfaceId);
+        surfaceController.retire(surfaceId);
+      } else {
+        follower?.abandon();
+      }
       return { outcome: 'refused', detail: 'that window is already adopted. Hover it again to release it.' };
     }
     const entry: Adoption = {
@@ -437,16 +504,17 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       recoveryId: randomUUID(),
       papersWindow: focused,
       follower,
+      surfaceId,
     };
     try {
       await recovery?.arm({
         recoveryId: entry.recoveryId,
         descriptor: entry.descriptor,
-        originalBounds: adopted.originalBounds,
+        originalBounds,
         recordedAt: now(),
       });
     } catch {
-      follower.abandon();
+      abandonAdoption(entry);
       return { outcome: 'refused', detail: 'recovery could not be armed, so the foreign window was not moved.' };
     }
     adoptions.set(key, entry);
@@ -454,7 +522,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     const placed = (await followNow()).get(key);
     if (!placed || placed.outcome !== 'applied') {
       adoptions.delete(key);
-      const released = await follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
+      const released = await releaseAdoption(entry).catch(() => ({ outcome: 'helper-unavailable' as const }));
       if (released.outcome === 'released' || released.outcome === 'missing') {
         await recovery?.clear(entry.recoveryId).catch(() => undefined);
       }
@@ -502,7 +570,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     }
     const entries = [...adoptions.values()];
     for (const entry of entries) {
-      const released = await entry.follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
+      const released = await releaseAdoption(entry).catch(() => ({ outcome: 'helper-unavailable' as const }));
       if (released.outcome === 'released' || released.outcome === 'missing') {
         adoptions.delete(entry.key);
         await recovery?.clear(entry.recoveryId).catch(() => undefined);

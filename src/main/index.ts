@@ -72,6 +72,7 @@ import {
 import { createLauncherNominationStore } from './backpacks/launcherNominationStore';
 import { createAdoptedWindowDock } from './windows/adoptedWindowDockSession';
 import { createAdoptedWindowRecoveryJournal, recoverAdoptedWindows } from './windows/adoptedWindowRecoveryJournal';
+import { createForeignWindowSurfaceController } from './windows/foreignWindowSurfaceController';
 import { bringWindowToFront } from './windows/windowFront';
 import {
   COMMAND_SURFACE_HEIGHT as COMMAND_SURFACE_OVERLAY_HEIGHT,
@@ -1420,6 +1421,7 @@ async function bootstrap(): Promise<void> {
   const adoptedWindowRecoveryJournal = createAdoptedWindowRecoveryJournal(
     path.join(app.getPath('userData'), 'adopted-window-recovery.json'),
   );
+  const foreignWindowSurfaceController = createForeignWindowSurfaceController(windowCapabilityService);
   const recoveryReport = await recoverAdoptedWindows(adoptedWindowRecoveryJournal, windowCapabilityService);
   if (recoveryReport.restored > 0 || recoveryReport.missing > 0 || recoveryReport.deferred > 0) {
     console.error(`[papers] adopted-window recovery: restored=${recoveryReport.restored}, missing=${recoveryReport.missing}, deferred=${recoveryReport.deferred}`);
@@ -2992,6 +2994,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     service: windowCapabilityService,
     screen,
     shortcut: globalShortcut,
+    surfaceController: foreignWindowSurfaceController,
     recovery: adoptedWindowRecoveryJournal,
   });
   const adoptedDockReport = adoptedDock.register({

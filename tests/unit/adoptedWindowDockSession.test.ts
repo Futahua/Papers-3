@@ -15,6 +15,7 @@ import {
   type DockScreen,
   type DockShortcut,
 } from '../../src/main/windows/adoptedWindowDockSession';
+import { createForeignWindowSurfaceController } from '../../src/main/windows/foreignWindowSurfaceController';
 import type {
   RuntimeWindowId,
   WindowCapabilityResult,
@@ -190,6 +191,21 @@ describe('adoptedWindowDockSession', () => {
     // Papers at x=100 w=1200, gap 8, adopted width 960 (scale 1).
     expect(service.appliedBounds).toEqual([{ x: 1308, y: 100, width: 960, height: 800 }]);
     expect(service.appliedHosts).toEqual(['77']);
+  });
+
+  it('uses the Papers-owned foreign surface controller when supplied', async () => {
+    const service = fakeService({ observations: [success(observation()), success(observation()), success(observation()), success(observation())] });
+    const controller = createForeignWindowSurfaceController({
+      ...service,
+      resolvePersisted: async (requested) => ({ outcome: 'success' as const, capability: capability(), descriptor: requested }),
+    });
+    const dock = createAdoptedWindowDock({ service, surfaceController: controller, screen: fakeScreen(), shortcut: fakeShortcut() });
+    const window = fakeWindow();
+    expect((await dock.toggle(window)).outcome).toBe('docked');
+    expect(controller.snapshot()).toHaveLength(1);
+    expect(controller.snapshot()[0]?.state).toBe('live-visible');
+    expect((await dock.toggle(window)).outcome).toBe('released');
+    expect(controller.snapshot()[0]?.state).toBe('released');
   });
 
   it('refuses before moving when durable recovery cannot be armed', async () => {
