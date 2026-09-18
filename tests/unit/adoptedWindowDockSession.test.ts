@@ -192,6 +192,24 @@ describe('adoptedWindowDockSession', () => {
     expect(service.appliedHosts).toEqual(['77']);
   });
 
+  it('refuses before moving when durable recovery cannot be armed', async () => {
+    const service = fakeService();
+    const dock = createAdoptedWindowDock({
+      service,
+      screen: fakeScreen(),
+      shortcut: fakeShortcut(),
+      recovery: {
+        arm: async () => { throw new Error('disk unavailable'); },
+        clear: async () => undefined,
+      },
+    });
+    const result = await dock.toggle(fakeWindow());
+    expect(result).toMatchObject({ outcome: 'refused' });
+    expect(result.detail).toMatch(/recovery could not be armed/);
+    expect(service.applyCalls).toBe(0);
+    expect(dock.active).toBe(false);
+  });
+
   it('refuses a Papers window: never adopts itself', async () => {
     const service = fakeService({ observations: [success(observation({ processId: process.pid, processPath: 'C:\\papers.exe' }))] });
     const dock = createAdoptedWindowDock({ service, screen: fakeScreen(), shortcut: fakeShortcut() });

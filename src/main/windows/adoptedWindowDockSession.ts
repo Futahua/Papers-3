@@ -21,11 +21,13 @@
  *   trigger, so a cross-monitor drag cannot accumulate drift.
  */
 
+import { randomUUID } from 'node:crypto';
 import { createAdoptedWindowFollower } from './adoptedWindowFollower';
 import type { WindowBounds } from './windowCapabilityTypes';
 import type {
   WindowBindResult,
   WindowHoverResult,
+  PersistedWindowMemberDescriptor,
   WindowRuntimeCapability,
 } from './windowCapabilityService';
 import type { WindowCapabilityResult } from './windowCapabilityTypes';
@@ -82,10 +84,22 @@ export interface AdoptedWindowDockDependencies {
   service: DockCapabilityService;
   screen: DockScreen;
   shortcut: DockShortcut;
+  /** Durable recovery is armed before the first native placement. */
+  recovery?: AdoptedWindowRecovery;
   currentPid?: number;
   accelerator?: string;
   followDelayMs?: number;
   now?: () => number;
+}
+
+export interface AdoptedWindowRecovery {
+  arm(entry: {
+    recoveryId: string;
+    descriptor: PersistedWindowMemberDescriptor;
+    originalBounds: WindowBounds;
+    recordedAt: number;
+  }): Promise<void>;
+  clear(recoveryId: string): Promise<void>;
 }
 
 export type DockToggleOutcome =
@@ -175,6 +189,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     service,
     screen,
     shortcut,
+    recovery,
     currentPid = process.pid,
     accelerator = 'CommandOrControl+Alt+D',
     followDelayMs = ADOPT_DOCK_FOLLOW_DELAY_MS,
@@ -186,6 +201,8 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     title: string;
     widthDip: number;
     hostWindow: string | null;
+    descriptor: PersistedWindowMemberDescriptor;
+    recoveryId: string;
     papersWindow: DockPapersWindow;
     follower: ReturnType<typeof createAdoptedWindowFollower>;
   }
@@ -267,6 +284,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       const released = await entry.follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
       if (released.outcome === 'released' || released.outcome === 'missing') {
         adoptions.delete(entry.key);
+        await recovery?.clear(entry.recoveryId).catch(() => undefined);
       }
     }
     detachUnusedPapersListeners();
@@ -338,6 +356,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       // deleting it here would strand the foreign window at its docked bounds
       // with no supported way to restore it from Papers.
       adoptions.delete(key);
+      await recovery?.clear(entry.recoveryId).catch(() => undefined);
       detachUnusedPapersListeners();
       if (adoptions.size > 0) await followNow();
       return { outcome: 'released', title, detail: `'${title}' is back where it was.` };
@@ -346,6 +365,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       // Identity loss is terminal by design: the follower has already refused
       // any unsafe restoration, so forgetting this dead adoption is correct.
       adoptions.delete(key);
+      await recovery?.clear(entry.recoveryId).catch(() => undefined);
       detachUnusedPapersListeners();
       if (adoptions.size > 0) await followNow();
       return { outcome: 'released', title, detail: `'${title}' was no longer verifiable, so Papers stopped managing it.` };
@@ -405,15 +425,31 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       title: current.title || hovered.candidate.title || 'window',
       widthDip: Math.max(ADOPT_DOCK_MIN_WIDTH_DIP, Math.round(current.bounds.width / (display.scaleFactor || 1))),
       hostWindow: nativeHandleFor(focused),
+      descriptor: { ...picked.descriptor },
+      recoveryId: randomUUID(),
       papersWindow: focused,
       follower,
     };
+    try {
+      await recovery?.arm({
+        recoveryId: entry.recoveryId,
+        descriptor: entry.descriptor,
+        originalBounds: adopted.originalBounds,
+        recordedAt: Date.now(),
+      });
+    } catch {
+      follower.abandon();
+      return { outcome: 'refused', detail: 'recovery could not be armed, so the foreign window was not moved.' };
+    }
     adoptions.set(key, entry);
     watchPapersWindow(focused);
     const placed = (await followNow()).get(key);
     if (!placed || placed.outcome !== 'applied') {
       adoptions.delete(key);
-      await follower.release().catch(() => undefined);
+      const released = await follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
+      if (released.outcome === 'released' || released.outcome === 'missing') {
+        await recovery?.clear(entry.recoveryId).catch(() => undefined);
+      }
       detachUnusedPapersListeners();
       await followNow();
       const reason = placed && placed.error ? ` ${placed.error}` : '';
@@ -461,6 +497,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       const released = await entry.follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
       if (released.outcome === 'released' || released.outcome === 'missing') {
         adoptions.delete(entry.key);
+        await recovery?.clear(entry.recoveryId).catch(() => undefined);
       }
     }
     detach();

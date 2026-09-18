@@ -71,6 +71,7 @@ import {
 } from './backpacks/commandSurfaceRegistry';
 import { createLauncherNominationStore } from './backpacks/launcherNominationStore';
 import { createAdoptedWindowDock } from './windows/adoptedWindowDockSession';
+import { createAdoptedWindowRecoveryJournal, recoverAdoptedWindows } from './windows/adoptedWindowRecoveryJournal';
 import { bringWindowToFront } from './windows/windowFront';
 import {
   COMMAND_SURFACE_HEIGHT as COMMAND_SURFACE_OVERLAY_HEIGHT,
@@ -1412,6 +1413,17 @@ async function bootstrap(): Promise<void> {
     // overlay utility windows retain empty/data titles and remain ineligible.
     allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
   });
+  // A hard Papers exit can occur after an adopted window has moved but before
+  // normal shutdown restoration.  Recover descriptor-bound windows before a
+  // new dock action is exposed; runtime capabilities are always re-issued by
+  // the fresh helper session and never read from disk.
+  const adoptedWindowRecoveryJournal = createAdoptedWindowRecoveryJournal(
+    path.join(app.getPath('userData'), 'adopted-window-recovery.json'),
+  );
+  const recoveryReport = await recoverAdoptedWindows(adoptedWindowRecoveryJournal, windowCapabilityService);
+  if (recoveryReport.restored > 0 || recoveryReport.missing > 0 || recoveryReport.deferred > 0) {
+    console.error(`[papers] adopted-window recovery: restored=${recoveryReport.restored}, missing=${recoveryReport.missing}, deferred=${recoveryReport.deferred}`);
+  }
   let windowLifecycleWatcher: ReturnType<typeof createWindowLifecycleWatcher> | null = null;
   try {
     const runtime = resolveWindowsPowerShellRuntime({
@@ -2980,6 +2992,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     service: windowCapabilityService,
     screen,
     shortcut: globalShortcut,
+    recovery: adoptedWindowRecoveryJournal,
   });
   const adoptedDockReport = adoptedDock.register({
     focusedWindow: () => {

@@ -184,10 +184,22 @@ export function createAdoptedWindowFollower(service: AdoptedWindowFollowerServic
     return { outcome: 'released', restored: true };
   }
 
+  /** Discard an adopted capability before any presentation mutation. This is
+   * used when durable recovery could not be armed; unlike release(), it never
+   * sends a native placement request. */
+  function abandon(): void {
+    state = 'released';
+    capability = null;
+    identity = null;
+    originalBounds = null;
+    lastApplied = null;
+  }
+
   return {
     adopt,
     follow,
     release,
+    abandon,
     get state(): AdoptedWindowFollowerState {
       return state;
     },
