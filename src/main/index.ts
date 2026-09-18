@@ -1838,6 +1838,7 @@ async function bootstrap(): Promise<void> {
     registry: widgetRegistry,
     session: widgetSession,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
+    isHostSender: (sender) => facade.isHostSender(sender),
     windowIdForWorkspaceSender: windowIdForProjectSender,
     hidePreview: hideWidgetPreview,
     dismissCandidatePicker: (sender) => {

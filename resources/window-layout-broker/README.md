@@ -26,7 +26,9 @@ The broker discovers a foreign HWND from Papers' existing
 `Papers.WindowInstanceId.v1` property, changes its top-level style to a child
 style, and uses `SetParent` to place it under the native pane host. Bounds are
 Papers client coordinates, so moving Papers moves the entire child hierarchy
-without a renderer loop or WinEvent follower. EOF on stdin restores every
+without a renderer loop or WinEvent follower. Native window operations run on
+the broker's dedicated GUI thread, which pumps a normal Win32 message loop so
+the hosted child remains interactive. EOF on stdin restores every
 still-verifiable original parent/style/rectangle and exits.
 
 If compilation or launch is unavailable, Papers refuses native hosting for that

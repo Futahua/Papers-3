@@ -10,6 +10,7 @@ export interface CompactWidgetIpcDependencies {
   registry: BackpackSurfaceRegistry;
   session: CompactWidgetSession;
   isWorkspaceSender: (sender: WebContents, projectId: string) => boolean;
+  isHostSender?: (sender: WebContents) => boolean;
   waitForAuthority?: (sender: WebContents) => Promise<void>;
   /**
    * The Papers window a genuine workspace sender belongs to; null denies.
@@ -65,7 +66,7 @@ function ensureWorkspaceSurface(
   registry.register(senderId, projectId, WORKSPACE_SURFACE_KIND);
 }
 
-export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
+export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, isHostSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
   ipcMain.handle('papers:backpack:widget-open', async (event, raw) => {
     await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget open payload is malformed');
@@ -209,6 +210,8 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
       const token = key(raw.token, 'token');
       authorized = !!surface && isWidgetSender(event.sender, surface.projectId)
         && registry.validSender(event.sender.id, surface.projectId, token);
+    } else if (exact(raw, ['host', 'candidates'])) {
+      authorized = raw.host === true && (isHostSender?.(event.sender) ?? false);
     }
     if (!authorized) throw new Error('denied: sender is not a registered project surface');
     const candidates = raw.candidates.map((value) => {

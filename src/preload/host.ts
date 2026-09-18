@@ -68,6 +68,7 @@ const api = {
 
   foreignWindow: {
     listCandidates: () => ipcRenderer.invoke('host:foreign-window:list-candidates'),
+    pick: (candidates: unknown[]) => ipcRenderer.invoke('papers:backpack:window-candidate-picker', { host: true, candidates }),
     open: (candidateId: string) => ipcRenderer.invoke('host:foreign-window:open', candidateId),
     setBounds: (surfaceId: string, bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke('host:foreign-window:set-bounds', surfaceId, bounds),

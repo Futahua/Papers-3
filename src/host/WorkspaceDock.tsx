@@ -42,14 +42,6 @@ export interface OpenWorkspaceForeignSurface {
 
 export type OpenWorkspaceSurface = OpenWorkspaceProject | OpenWorkspaceForeignSurface;
 
-interface ForeignCandidateRow {
-  id: string;
-  title: string;
-  applicationLabel: string;
-  icon: string | null;
-  state: string;
-}
-
 interface WorkspacePanelParams {
   surfaceId: string;
   kind: 'project' | 'foreign-window';
@@ -235,8 +227,6 @@ export function WorkspaceDock(props: {
   const statusGeneration = useRef(0);
   const [preview, setPreview] = useState<SplitPreview | null>(null);
   const [dragStatus, setDragStatus] = useState<string | null>(null);
-  const [foreignPickerOpen, setForeignPickerOpen] = useState(false);
-  const [foreignCandidates, setForeignCandidates] = useState<ForeignCandidateRow[]>([]);
   const [foreignPickerBusy, setForeignPickerBusy] = useState(false);
   const interactionDisabledRef = useRef(false);
   projectsRef.current = surfaces;
@@ -1294,21 +1284,18 @@ export function WorkspaceDock(props: {
     !interactionDisabled && activeSurfaceId && activeGroup && activeGroup.surfaceIds.length > 1,
   );
 
-  const refreshForeignCandidates = useCallback((): void => {
+  const openForeignPicker = useCallback((): void => {
     setForeignPickerBusy(true);
     void host().foreignWindow.listCandidates()
-      .then((result) => {
-        setForeignCandidates(result.outcome === 'success' ? result.candidates : []);
+      .then(async (result) => {
+        if (result.outcome !== 'success') return;
+        const picked = await host().foreignWindow.pick(result.candidates);
+        if (picked.action !== 'select' || !picked.candidateId) return;
+        await host().foreignWindow.open(picked.candidateId);
       })
-      .catch(() => setForeignCandidates([]))
+      .catch(() => undefined)
       .finally(() => setForeignPickerBusy(false));
   }, []);
-
-  const openForeignPicker = useCallback((): void => {
-    const next = !foreignPickerOpen;
-    setForeignPickerOpen(next);
-    if (next) refreshForeignCandidates();
-  }, [foreignPickerOpen, refreshForeignCandidates]);
 
   return (
     <section ref={workspaceRef} className="workspace-dock" aria-label="Workspace tabs"
@@ -1452,24 +1439,6 @@ export function WorkspaceDock(props: {
         <button type="button" className="workspace-add-foreign" onClick={openForeignPicker} disabled={foreignPickerBusy || interactionDisabled}>
           {foreignPickerBusy ? 'Finding windows…' : 'Add window'}
         </button>
-        {foreignPickerOpen && (
-          <div className="foreign-window-picker" role="dialog" aria-label="Add foreign window">
-            <div className="foreign-window-picker-title">Add a window to this workspace</div>
-            {foreignCandidates.length === 0 && <div className="foreign-window-picker-empty">No eligible windows found.</div>}
-            {foreignCandidates.map((candidate) => (
-              <button key={candidate.id} type="button" className="foreign-window-candidate" onClick={() => {
-                setForeignPickerBusy(true);
-                void host().foreignWindow.open(candidate.id)
-                  .then(() => setForeignPickerOpen(false))
-                  .catch(() => undefined)
-                  .finally(() => setForeignPickerBusy(false));
-              }}>
-                {candidate.icon ? <img src={candidate.icon} alt="" /> : <span className="foreign-window-candidate-icon">□</span>}
-                <span>{candidate.title || candidate.applicationLabel}</span>
-              </button>
-            ))}
-          </div>
-        )}
       </div>
       <DockviewReact
         className="dockview-theme-light"

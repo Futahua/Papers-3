@@ -31,9 +31,14 @@ public static class WindowLayoutBroker
     private const uint WaitObject0 = 0;
     private const uint WaitFailed = 0xffffffff;
     private const int StdInputHandle = -10;
+    private const uint WmApp = 0x8000;
+    private const uint GuiWorkMessage = WmApp + 1;
+    private const uint WmQuit = 0x0012;
+    private const uint PmRemove = 0x0001;
 
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
+    [StructLayout(LayoutKind.Sequential)] private struct Message { public IntPtr Hwnd; public uint MessageId; public UIntPtr WParam; public IntPtr LParam; public uint Time; public Point Point; }
     [UnmanagedFunctionPointer(CallingConvention.Winapi)] private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr CreateWindowEx(uint exStyle, string className, string windowName, uint style, int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
@@ -54,6 +59,12 @@ public static class WindowLayoutBroker
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr GetStdHandle(int handle);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool ReadFile(IntPtr handle, byte[] buffer, uint count, out uint read, IntPtr overlapped);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool PostThreadMessage(uint threadId, uint message, UIntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool PeekMessage(out Message message, IntPtr hwnd, uint min, uint max, uint remove);
+    [DllImport("user32.dll", SetLastError = true)] private static extern int GetMessage(out Message message, IntPtr hwnd, uint min, uint max);
+    [DllImport("user32.dll")] private static extern bool TranslateMessage(ref Message message);
+    [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref Message message);
 
     private sealed class Binding
     {
@@ -72,6 +83,19 @@ public static class WindowLayoutBroker
     private static readonly object Gate = new object();
     private static readonly Dictionary<string, Binding> Bindings = new Dictionary<string, Binding>(StringComparer.Ordinal);
     private static readonly StringBuilder PipeBuffer = new StringBuilder();
+    private sealed class GuiWork
+    {
+        public Func<bool> Action;
+        public readonly AutoResetEvent Done = new AutoResetEvent(false);
+        public bool Result;
+    }
+    private static readonly object GuiGate = new object();
+    private static readonly Queue<GuiWork> GuiQueue = new Queue<GuiWork>();
+    private static readonly AutoResetEvent GuiReady = new AutoResetEvent(false);
+    private static Thread GuiThread;
+    private static uint GuiThreadId;
+    private static int GuiManagedThreadId;
+    private static volatile bool GuiStopping;
 
     private static int Width(Rect r) { return Math.Max(1, r.Right - r.Left); }
     private static int Height(Rect r) { return Math.Max(1, r.Bottom - r.Top); }
@@ -241,6 +265,63 @@ public static class WindowLayoutBroker
         return all;
     }
 
+    private static void DrainGuiQueue()
+    {
+        while (true)
+        {
+            GuiWork work;
+            lock (GuiGate) { if (GuiQueue.Count == 0) return; work = GuiQueue.Dequeue(); }
+            try { work.Result = work.Action(); } catch { work.Result = false; }
+            work.Done.Set();
+        }
+    }
+
+    private static void GuiLoop()
+    {
+        GuiManagedThreadId = Thread.CurrentThread.ManagedThreadId;
+        GuiThreadId = GetCurrentThreadId();
+        // Force creation of this thread's message queue before the main reader
+        // can post work to it.
+        Message ignored;
+        PeekMessage(out ignored, IntPtr.Zero, 0, 0, PmRemove);
+        GuiReady.Set();
+        while (true)
+        {
+            Message message;
+            int result = GetMessage(out message, IntPtr.Zero, 0, 0);
+            if (result <= 0) break;
+            if (message.MessageId == GuiWorkMessage) DrainGuiQueue();
+            else { TranslateMessage(ref message); DispatchMessage(ref message); }
+        }
+        DrainGuiQueue();
+    }
+
+    private static void StartGuiThread()
+    {
+        GuiStopping = false;
+        GuiThread = new Thread(GuiLoop) { IsBackground = true, Name = "Papers native host GUI" };
+        GuiThread.Start();
+        GuiReady.WaitOne(5000);
+    }
+
+    private static bool RunOnGui(Func<bool> action)
+    {
+        if (Thread.CurrentThread.ManagedThreadId == GuiManagedThreadId) return action();
+        if (GuiStopping || GuiThreadId == 0) return false;
+        GuiWork work = new GuiWork { Action = action };
+        lock (GuiGate) GuiQueue.Enqueue(work);
+        if (!PostThreadMessage(GuiThreadId, GuiWorkMessage, UIntPtr.Zero, IntPtr.Zero)) return false;
+        work.Done.WaitOne();
+        return work.Result;
+    }
+
+    private static void StopGuiThread()
+    {
+        GuiStopping = true;
+        if (GuiThreadId != 0) PostThreadMessage(GuiThreadId, WmQuit, UIntPtr.Zero, IntPtr.Zero);
+        if (GuiThread != null && GuiThread.IsAlive && Thread.CurrentThread != GuiThread) GuiThread.Join(1000);
+    }
+
     // .NET's Console.ReadLine can treat a Node stdio pipe's interval between
     // sequential writes as EOF on Windows. ReadFile blocks until the next
     // byte or an actual pipe close, which is the JSONL contract we need.
@@ -266,7 +347,7 @@ public static class WindowLayoutBroker
         }
     }
 
-    private static void Command(string json)
+    private static void CommandOnGui(string json)
     {
         string requestId = StringValue(json, "requestId") ?? "";
         string cmd = StringValue(json, "cmd") ?? "";
@@ -300,17 +381,24 @@ public static class WindowLayoutBroker
         Reply(requestId, false, "unknown command");
     }
 
+    private static void DispatchCommand(string json)
+    {
+        if (!RunOnGui(() => { try { CommandOnGui(json); return true; } catch { Reply(StringValue(json, "requestId") ?? "", false, "command failed"); return false; } }))
+            Reply(StringValue(json, "requestId") ?? "", false, "native host GUI unavailable");
+    }
+
     private static void WatchParent(uint parentPid)
     {
         IntPtr handle = OpenProcess(Synchronize, false, parentPid);
         if (handle == IntPtr.Zero) return;
         uint result = WaitForSingleObject(handle, 0xffffffff);
         CloseHandle(handle);
-        if (result == WaitObject0 || result == WaitFailed) { RestoreAll(); Environment.Exit(0); }
+        if (result == WaitObject0 || result == WaitFailed) { RunOnGui(RestoreAll); StopGuiThread(); Environment.Exit(0); }
     }
 
     public static void Main(string[] args)
     {
+        StartGuiThread();
         uint parentPid = 0;
         for (int i = 0; i + 1 < args.Length; i++) if (args[i] == "--parent-pid") uint.TryParse(args[i + 1], out parentPid);
         if (parentPid != 0) { Thread monitor = new Thread(() => WatchParent(parentPid)); monitor.IsBackground = true; monitor.Start(); }
@@ -318,8 +406,9 @@ public static class WindowLayoutBroker
         while ((line = ReadPipeLine()) != null)
         {
             if (line.Trim().Length == 0) continue;
-            try { Command(line); } catch { Reply(StringValue(line, "requestId") ?? "", false, "command failed"); }
+            DispatchCommand(line);
         }
-        RestoreAll();
+        RunOnGui(RestoreAll);
+        StopGuiThread();
     }
 }

@@ -140,6 +140,7 @@ interface HostBridge {
   };
   foreignWindow: {
     listCandidates(): Promise<WindowCandidateListResult>;
+    pick(candidates: WindowCandidate[]): Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
     open(candidateId: string): Promise<{
       surface: {
         surfaceId: string; title: string; descriptor: import('../main/windows/windowCapabilityService').PersistedWindowMemberDescriptor;
