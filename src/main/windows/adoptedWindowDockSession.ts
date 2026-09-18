@@ -9,7 +9,7 @@
  * where it was. Multiple independent windows may be adopted at once.
  *
  * Safety properties, all covered by unit tests:
- * - geometry only, through the existing non-activating `apply` path. No
+ * - geometry only, through the dedicated non-activating `place-adopted` path. No
  *   Z-order write, no hide, no minimize, no close. A crash leaves a visible,
  *   draggable window behind, never a stranded one.
  * - Papers never adopts itself: a pick resolving to our own PID is refused.

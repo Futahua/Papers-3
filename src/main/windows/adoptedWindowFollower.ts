@@ -5,8 +5,8 @@
  * top-level window to a caller-supplied screen rectangle and restores its
  * original rectangle on release. Deliberately narrow:
  *
- * - geometry only (`applyCapability`, which the helper already performs with
- *   SWP_NOZORDER | SWP_NOACTIVATE). No Z-order write, no hide/cloak, no
+ * - geometry only (`placeAdoptedCapability`, a dedicated helper method that
+ *   performs SWP_NOZORDER | SWP_NOACTIVATE without raising). No Z-order write, no hide/cloak, no
  *   minimize/restore, no close, no style change. The worst case a crash
  *   leaves behind is a window sitting at its last pane rectangle, which the
  *   creator can drag away; nothing is hidden or stranded.
