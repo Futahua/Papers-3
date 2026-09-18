@@ -268,7 +268,13 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
 
   async function releaseAdoption(adoption: Adoption): Promise<{ outcome: string; error?: string }> {
     if (adoption.surfaceId && surfaceController) {
-      const released = await surfaceController.release(adoption.surfaceId, adoption.hostWindow ?? undefined);
+      let released = await surfaceController.release(adoption.surfaceId, adoption.hostWindow ?? undefined);
+      if (released.outcome === 'helper-unavailable' || released.outcome === 'timeout') {
+        const reconnected = await surfaceController.reconnect(adoption.surfaceId);
+        if (reconnected.outcome === 'success') {
+          released = await surfaceController.release(adoption.surfaceId, adoption.hostWindow ?? undefined);
+        }
+      }
       return released.outcome === 'success'
         ? { outcome: 'released' }
         : { outcome: released.outcome, ...(released.error ? { error: released.error } : {}) };
