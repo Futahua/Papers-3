@@ -118,6 +118,25 @@ describe('foreignWindowSurfaceController', () => {
     expect(controller.snapshot()[0]?.state).toBe('released');
   });
 
+  it('reconnects after helper restart without replacing the original restore rectangle', async () => {
+    const deps = service();
+    let resolutions = 0;
+    deps.resolvePersisted = async () => {
+      resolutions += 1;
+      return { outcome: 'success' as const, capability: { version: 1, bindingId: `binding-${resolutions}` }, descriptor };
+    };
+    const controller = createForeignWindowSurfaceController(deps);
+    controller.create({ surfaceId: 'foreign-1', descriptor });
+    await controller.resolve('foreign-1');
+    await controller.follow('foreign-1', { x: 100, y: 110, width: 800, height: 600 });
+    const before = controller.snapshot()[0];
+    expect(before?.originalBounds).toEqual(bounds);
+    expect((await controller.reconnect('foreign-1')).outcome).toBe('success');
+    expect(resolutions).toBe(2);
+    expect(controller.snapshot()[0]?.originalBounds).toEqual(bounds);
+    expect(controller.snapshot()[0]?.state).toBe('live-visible');
+  });
+
   it('only released or disconnected surfaces can be retired', async () => {
     const controller = createForeignWindowSurfaceController(service());
     controller.create({ surfaceId: 'foreign-1', descriptor });

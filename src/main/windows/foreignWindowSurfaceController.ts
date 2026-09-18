@@ -26,6 +26,9 @@ export type ForeignSurfaceActionResult =
 export interface ForeignWindowSurfaceController {
   create(input: { surfaceId?: string; descriptor: PersistedWindowMemberDescriptor; title?: string; hostWindowId?: number }): ForeignWindowSurfaceSnapshot;
   resolve(surfaceId: string): Promise<ForeignSurfaceActionResult>;
+  /** Re-issue a fresh capability after helper restart without replacing the
+   * captured pre-adoption rectangle. */
+  reconnect(surfaceId: string): Promise<ForeignSurfaceActionResult>;
   follow(surfaceId: string, bounds: WindowBounds, hostWindow?: string): Promise<ForeignSurfaceActionResult>;
   release(surfaceId: string, hostWindow?: string): Promise<ForeignSurfaceActionResult>;
   markDisconnected(surfaceId: string): ForeignWindowSurfaceSnapshot | null;
@@ -103,10 +106,23 @@ export function createForeignWindowSurfaceController(
       }
       record.descriptor = { ...resolved.descriptor };
       record.capability = resolved.capability;
-      record.originalBounds = { ...adopted.originalBounds };
+      if (!record.originalBounds) record.originalBounds = { ...adopted.originalBounds };
       record.state = 'live-visible';
       followers.set(surfaceId, follower);
       return { outcome: 'success', surface: snapshotOf(surfaceId) };
+    },
+
+    async reconnect(surfaceId) {
+      const record = recordFor(surfaceId);
+      if (record.state === 'live-visible') {
+        record.state = 'disconnected';
+        record.capability = null;
+        followers.delete(surfaceId);
+      }
+      if (record.state !== 'disconnected') {
+        return { outcome: 'malformed', error: `surface is ${record.state}`, surface: snapshotOf(surfaceId) };
+      }
+      return this.resolve(surfaceId);
     },
 
     async follow(surfaceId, bounds, hostWindow) {

@@ -242,7 +242,13 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     bounds: WindowBounds,
   ): Promise<{ outcome: string; error?: string }> {
     if (adoption.surfaceId && surfaceController) {
-      const followed = await surfaceController.follow(adoption.surfaceId, bounds, adoption.hostWindow ?? undefined);
+      let followed = await surfaceController.follow(adoption.surfaceId, bounds, adoption.hostWindow ?? undefined);
+      if (followed.outcome === 'helper-unavailable' || followed.outcome === 'timeout') {
+        const reconnected = await surfaceController.reconnect(adoption.surfaceId);
+        if (reconnected.outcome === 'success') {
+          followed = await surfaceController.follow(adoption.surfaceId, bounds, adoption.hostWindow ?? undefined);
+        }
+      }
       return followed.outcome === 'success' ? { outcome: 'applied' } : { outcome: followed.outcome, ...(followed.error ? { error: followed.error } : {}) };
     }
     if (!adoption.follower) return { outcome: 'missing', error: 'adoption has no runtime controller' };
