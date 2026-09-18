@@ -15,6 +15,7 @@ public static class WindowLayoutBroker
     private const int GwlStyle = -16;
     private const int GwlExStyle = -20;
     private const long WsChild = 0x40000000L;
+    private const uint WsChildWindow = 0x40000000;
     private const long WsPopup = unchecked((long)0x80000000);
     private const uint WsClipChildren = 0x02000000;
     private const uint WsClipSiblings = 0x04000000;
@@ -141,7 +142,7 @@ public static class WindowLayoutBroker
         if (!long.TryParse(papersText ?? "", out papersValue)) return false;
         binding.Papers = new IntPtr(papersValue);
         if (!IsWindow(binding.Papers)) return false;
-        binding.Host = CreateWindowEx(WsExNoActivate, "STATIC", "", WsClipChildren | WsClipSiblings, 0, 0, 1, 1, binding.Papers, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        binding.Host = CreateWindowEx(WsExNoActivate, "STATIC", "", WsChildWindow | WsClipChildren | WsClipSiblings, 0, 0, 1, 1, binding.Papers, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
         if (binding.Host == IntPtr.Zero) return false;
         ShowWindow(binding.Host, SwHide);
         return true;
