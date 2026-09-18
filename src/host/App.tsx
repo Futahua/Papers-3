@@ -84,6 +84,55 @@ function foreignProjectionsForTopology(topology: WorkspaceTopologyAny): OpenWork
     }));
 }
 
+interface EmptyWorkspaceForeignCandidate {
+  id: string;
+  title: string;
+  applicationLabel: string;
+  icon: string | null;
+}
+
+function EmptyWorkspaceForeignPicker(): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [candidates, setCandidates] = useState<EmptyWorkspaceForeignCandidate[]>([]);
+  const toggle = useCallback((): void => {
+    const next = !open;
+    setOpen(next);
+    if (!next) return;
+    setBusy(true);
+    void host().foreignWindow.listCandidates()
+      .then((result) => setCandidates(result.outcome === 'success' ? result.candidates : []))
+      .catch(() => setCandidates([]))
+      .finally(() => setBusy(false));
+  }, [open]);
+  const pick = useCallback((candidateId: string): void => {
+    setBusy(true);
+    void host().foreignWindow.open(candidateId)
+      .then(() => setOpen(false))
+      .catch(() => undefined)
+      .finally(() => setBusy(false));
+  }, []);
+  return (
+    <div className="foreign-window-toolbar empty-foreign-window-toolbar">
+      <button type="button" className="workspace-add-foreign" onClick={toggle} disabled={busy}>
+        {busy ? 'Finding windows…' : 'Add window'}
+      </button>
+      {open && (
+        <div className="foreign-window-picker" role="dialog" aria-label="Add foreign window">
+          <div className="foreign-window-picker-title">Add a window to this workspace</div>
+          {candidates.length === 0 && <div className="foreign-window-picker-empty">No eligible windows found.</div>}
+          {candidates.map((candidate) => (
+            <button key={candidate.id} type="button" className="foreign-window-candidate" onClick={() => pick(candidate.id)}>
+              {candidate.icon ? <img src={candidate.icon} alt="" /> : <span className="foreign-window-candidate-icon">□</span>}
+              <span>{candidate.title || candidate.applicationLabel}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Papers production shell.
  *
@@ -725,6 +774,7 @@ export function App(): React.JSX.Element {
             onToggleDock={toggleDock}
             onToggleWindow={toggleWindow}
           />
+          {workspaceTopology.surfaces.length === 0 && <EmptyWorkspaceForeignPicker />}
           {/* Reserved inset the OS paints the native min/maximize/close over. */}
           <div className="titlebar-window-controls" aria-hidden="true" />
         </div>

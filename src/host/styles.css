@@ -705,6 +705,19 @@ input:focus-visible {
   gap: 8px;
 }
 
+.empty-foreign-window-toolbar {
+  position: relative;
+  top: auto;
+  right: auto;
+  margin-left: 8px;
+}
+
+.empty-foreign-window-toolbar .foreign-window-picker {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+}
+
 .workspace-add-foreign {
   border: 1px solid var(--line);
   border-radius: 8px;
