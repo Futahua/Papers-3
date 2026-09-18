@@ -1289,7 +1289,12 @@ export function WorkspaceDock(props: {
     void host().foreignWindow.listCandidates()
       .then(async (result) => {
         if (result.outcome !== 'success') return;
-        const picked = await host().foreignWindow.pick(result.candidates);
+        const picked = await host().foreignWindow.pick(result.candidates.map((candidate) => ({
+          id: candidate.id,
+          title: candidate.title || candidate.applicationLabel,
+          icon: candidate.icon,
+          current: false,
+        })));
         if (picked.action !== 'select' || !picked.candidateId) return;
         await host().foreignWindow.open(picked.candidateId);
       })
