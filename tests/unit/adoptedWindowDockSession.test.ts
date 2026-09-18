@@ -320,6 +320,32 @@ describe('adoptedWindowDockSession', () => {
     expect(service.applyCalls).toBe(callsAfterRelease);
   });
 
+  it('retires an adoption when identity disappears during a follow', async () => {
+    const service = fakeService({
+      observations: [
+        success(observation()),
+        success(observation()),
+        success(observation()),
+        { outcome: 'missing', error: 'window closed' },
+      ],
+    });
+    const cleared: string[] = [];
+    const dock = createAdoptedWindowDock({
+      service,
+      screen: fakeScreen(),
+      shortcut: fakeShortcut(),
+      followDelayMs: 5,
+      recovery: { arm: async () => undefined, clear: async (id) => { cleared.push(id); } },
+    });
+    const window = fakeWindow();
+    expect((await dock.toggle(window)).outcome).toBe('docked');
+    window.setBounds({ x: 300, y: 120, width: 1200, height: 800 });
+    window.emit('move');
+    await sleep(30);
+    expect(dock.active).toBe(false);
+    expect(cleared).toHaveLength(1);
+  });
+
   it('closing the Papers window restores the adopted window', async () => {
     const service = fakeService({
       observations: [success(observation()), success(observation()), success(observation())],

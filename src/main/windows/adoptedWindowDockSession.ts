@@ -260,8 +260,15 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
         }
         const result = await adoption.follower.follow(toPhysical(target, display.scaleFactor), adoption.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
         results.set(adoption.key, result);
+        if (result.outcome === 'missing') {
+          // Identity loss is terminal. Do not leave a dead capability or a
+          // stale recovery record claiming ownership of a replacement window.
+          adoptions.delete(adoption.key);
+          await recovery?.clear(adoption.recoveryId).catch(() => undefined);
+        }
       }
     }
+    detachUnusedPapersListeners();
     return results;
   }
 
