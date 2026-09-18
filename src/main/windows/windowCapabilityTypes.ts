@@ -103,6 +103,8 @@ export interface WindowObservation {
  * carries the geometry/state to apply; `hover` carries a screen point;
  * `thumbnail` carries the bounded max capture dimensions (positive integers,
  * maxWidth <= 320 and maxHeight <= 180; absent -> 240x135 helper default).
+ * `place-adopted` may carry a main-owned decimal native host handle; it is
+ * never accepted from renderer IPC.
  * The client never synthesizes targets. */
 export interface WindowRequestMessage {
   requestId: number;
@@ -112,6 +114,7 @@ export interface WindowRequestMessage {
   caller?: string;
   enabled?: boolean;
   bounds?: WindowBounds;
+  host?: string;
   state?: WindowState;
   x?: number;
   y?: number;

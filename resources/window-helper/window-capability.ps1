@@ -194,6 +194,11 @@ $script:WhOps = @{
       throw "WH-COMMAND-ROUTING: SetWindowPos failed for runtime id $id."
     }
   }
+  SetAdoptedBounds = { param([IntPtr]$id, [IntPtr]$host, [int]$x, [int]$y, [int]$w, [int]$h)
+    if (-not [WH.Win32]::SetWindowPos($id, $host, $x, $y, $w, $h, [WH.Win32]::SWP_NOACTIVATE)) {
+      throw "WH-COMMAND-ROUTING: adopted SetWindowPos failed for runtime id $id."
+    }
+  }
   Minimize = { param([IntPtr]$id) [void][WH.Win32]::ShowWindow($id, [WH.Win32]::SW_MINIMIZE) }
   Restore = { param([IntPtr]$id) [void][WH.Win32]::ShowWindow($id, [WH.Win32]::SW_RESTORE) }
   # Activate once and raise inside the ordinary z-order. This is deliberately
@@ -618,6 +623,12 @@ function Set-WhWindowBounds([IntPtr]$RuntimeId, [int]$X, [int]$Y, [int]$Width, [
 # ordinary layout apply path, this wrapper deliberately does not raise.
 function Set-WhAdoptedWindowBounds([IntPtr]$RuntimeId, [int]$X, [int]$Y, [int]$Width, [int]$Height) {
   & $script:WhOps['SetBounds'] $RuntimeId $X $Y $Width $Height
+}
+
+function Set-WhAdoptedWindowBoundsAfterHost([IntPtr]$RuntimeId, [string]$HostHandle, [int]$X, [int]$Y, [int]$Width, [int]$Height) {
+  $host = [IntPtr]::new([long]$HostHandle)
+  if ($host -eq [IntPtr]::Zero) { throw 'WH-COMMAND-ROUTING: adopted host handle is zero.' }
+  & $script:WhOps['SetAdoptedBounds'] $RuntimeId $host $X $Y $Width $Height
 }
 
 function Minimize-WhWindow([IntPtr]$RuntimeId) {

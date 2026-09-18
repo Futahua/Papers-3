@@ -73,7 +73,7 @@ export interface WindowHelperFactory {
   livePreview?(runtimeId: RuntimeWindowId, caller: string, enabled: boolean): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   /** Dedicated non-activating placement for a verified adopted window. */
-  placeAdopted(runtimeId: RuntimeWindowId, bounds: WindowBounds): Promise<WindowCapabilityResult>;
+  placeAdopted(runtimeId: RuntimeWindowId, bounds: WindowBounds, hostWindow?: string): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** 016 direct pick: topmost task-worthy window at a screen point. */
   hover(x: number, y: number): Promise<WindowCapabilityResult>;
@@ -258,7 +258,7 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
     uncloakMany: (runtimeIds) => withClient((client) => client.uncloakMany(runtimeIds), HELPER_NOT_READY),
     livePreview: (runtimeId, caller, enabled) => withClient((client) => client.livePreview(runtimeId, caller, enabled), HELPER_NOT_READY),
     apply: (runtimeId, bounds, state) => withClient((client) => client.apply(runtimeId, bounds, state), HELPER_NOT_READY),
-    placeAdopted: (runtimeId, bounds) => withClient((client) => client.placeAdopted(runtimeId, bounds), HELPER_NOT_READY),
+    placeAdopted: (runtimeId, bounds, hostWindow) => withClient((client) => client.placeAdopted(runtimeId, bounds, hostWindow), HELPER_NOT_READY),
     close: (runtimeId) => withClient((client) => client.close(runtimeId), HELPER_NOT_READY),
     hover: (x, y) => withClient((client) => client.hover(x, y), HELPER_NOT_READY),
     thumbnail: (runtimeId, maxWidth, maxHeight) => withClient((client) => client.thumbnail(runtimeId, maxWidth, maxHeight), HELPER_NOT_READY),

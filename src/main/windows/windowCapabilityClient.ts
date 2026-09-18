@@ -48,7 +48,7 @@ export interface WindowCapabilityClient {
   livePreview(runtimeId: RuntimeWindowId, caller: string, enabled: boolean): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   /** Dedicated non-activating placement boundary for adopted foreign windows. */
-  placeAdopted(runtimeId: RuntimeWindowId, bounds: WindowBounds): Promise<WindowCapabilityResult>;
+  placeAdopted(runtimeId: RuntimeWindowId, bounds: WindowBounds, hostWindow?: string): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** 016 direct pick: resolve the topmost task-worthy window at a screen
    * point (helper-owned eligibility). No target - the helper resolves. */
@@ -87,6 +87,7 @@ export function createWindowCapabilityClient({
       caller?: string;
       enabled?: boolean;
       bounds?: WindowBounds;
+      host?: string;
       state?: WindowState;
       x?: number;
       y?: number;
@@ -110,6 +111,7 @@ export function createWindowCapabilityClient({
       ...(detail.caller !== undefined ? { caller: detail.caller } : {}),
       ...(detail.enabled !== undefined ? { enabled: detail.enabled } : {}),
       ...(detail.bounds !== undefined ? { bounds: detail.bounds } : {}),
+      ...(detail.host !== undefined ? { host: detail.host } : {}),
       ...(detail.state !== undefined ? { state: detail.state } : {}),
       ...(detail.x !== undefined ? { x: detail.x } : {}),
       ...(detail.y !== undefined ? { y: detail.y } : {}),
@@ -198,7 +200,7 @@ export function createWindowCapabilityClient({
     uncloakMany: (runtimeIds) => request('uncloak-many', { targets: runtimeIds }),
     livePreview: (runtimeId, caller, enabled) => request('live-preview', { target: runtimeId, caller, enabled }),
     apply: (runtimeId, bounds, state) => request('apply', { target: runtimeId, bounds, state }),
-    placeAdopted: (runtimeId, bounds) => request('place-adopted', { target: runtimeId, bounds }),
+    placeAdopted: (runtimeId, bounds, hostWindow) => request('place-adopted', { target: runtimeId, bounds, ...(hostWindow ? { host: hostWindow } : {}) }),
     close: (runtimeId) => request('close', { target: runtimeId }),
     hover: (x, y) => request('hover', { x, y }),
     thumbnail: (runtimeId, maxWidth, maxHeight) => request('thumbnail', { target: runtimeId, maxWidth, maxHeight }),

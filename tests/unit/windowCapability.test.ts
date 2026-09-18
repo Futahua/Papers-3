@@ -171,7 +171,7 @@ describe('window capability client', () => {
       minimizeA: client.minimize(a),
       restoreB: client.restore(b),
       applyB: client.apply(b, { x: 1, y: 2, width: 300, height: 200 }, 'maximized'),
-      placeAdoptedB: client.placeAdopted(b, { x: 5, y: 6, width: 320, height: 210 }),
+      placeAdoptedB: client.placeAdopted(b, { x: 5, y: 6, width: 320, height: 210 }, '12345'),
       closeA: client.close(a),
     };
 
@@ -199,6 +199,7 @@ describe('window capability client', () => {
     expect(byMethod('apply')[0]?.state).toBe('maximized');
     expect(byMethod('place-adopted')[0]?.target).toBe('BBBB');
     expect(byMethod('place-adopted')[0]?.bounds).toEqual({ x: 5, y: 6, width: 320, height: 210 });
+    expect(byMethod('place-adopted')[0]?.host).toBe('12345');
     expect(byMethod('close')[0]?.target).toBe('AAAA');
     expect(fake.sent.filter((m) => m.method === 'list').length).toBe(1);
   });

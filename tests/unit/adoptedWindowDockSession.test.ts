@@ -46,6 +46,7 @@ interface FakeServiceState {
   observations: WindowCapabilityResult[];
   applyResults: WindowCapabilityResult[];
   appliedBounds: Array<{ x: number; y: number; width: number; height: number }>;
+  appliedHosts: Array<string | undefined>;
 }
 
 function fakeService(state: Partial<FakeServiceState> = {}): DockCapabilityService & FakeServiceState & { applyCalls: number } {
@@ -56,6 +57,7 @@ function fakeService(state: Partial<FakeServiceState> = {}): DockCapabilityServi
     observations: [success(observation())],
     applyResults: [{ outcome: 'success' }],
     appliedBounds: [],
+    appliedHosts: [],
     ...state,
   };
   let applyCalls = 0;
@@ -68,9 +70,10 @@ function fakeService(state: Partial<FakeServiceState> = {}): DockCapabilityServi
     hoverAt: async () => full.hover,
     pickAt: async () => full.pick,
     observeCapability: async () => full.observations[Math.min(observed++, full.observations.length - 1)] as WindowCapabilityResult,
-    placeAdoptedCapability: async (_cap, bounds) => {
+    placeAdoptedCapability: async (_cap, bounds, hostWindow) => {
       applyCalls += 1;
       full.appliedBounds.push({ ...bounds });
+      full.appliedHosts.push(hostWindow);
       const result = full.applyResults[Math.min(applied++, full.applyResults.length - 1)] ?? { outcome: 'success' };
       return result;
     },
@@ -86,6 +89,11 @@ function fakeWindow(bounds = { x: 100, y: 100, width: 1200, height: 800 }): Dock
   return {
     id: 7,
     getBounds: () => ({ ...current }),
+    getNativeWindowHandle: () => {
+      const handle = Buffer.alloc(8);
+      handle.writeBigUInt64LE(77n);
+      return handle;
+    },
     isDestroyed: () => false,
     on: (event, callback) => {
       let set = listeners.get(event);
@@ -181,6 +189,7 @@ describe('adoptedWindowDockSession', () => {
     expect(dock.adoptedTitle).toBe('Victim App');
     // Papers at x=100 w=1200, gap 8, adopted width 960 (scale 1).
     expect(service.appliedBounds).toEqual([{ x: 1308, y: 100, width: 960, height: 800 }]);
+    expect(service.appliedHosts).toEqual(['77']);
   });
 
   it('refuses a Papers window: never adopts itself', async () => {

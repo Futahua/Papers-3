@@ -456,6 +456,11 @@ function Test-WhRequestShape {
     if (-not (Test-PlatformBounds $Request['bounds'])) {
       return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null "$method requires platform-representable bounds (finite, within Int32; width/height at least 1 after rounding away from zero)") }
     }
+    if ($method -eq 'place-adopted' -and $Request.ContainsKey('host')) {
+      if ($Request['host'] -isnot [string] -or [string]$Request['host'] -notmatch '^[1-9][0-9]{0,19}$') {
+        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'place-adopted.host must be a positive decimal native handle') }
+      }
+    }
   }
   if ($method -eq 'thumbnail') {
     # 019GR3: every thumbnail fallback echoes the accepted target so the strict
@@ -705,7 +710,9 @@ function Invoke-WhRequest {
       # `place-adopted` is deliberately a distinct capability method. It uses
       # the same native non-activating SetWindowPos primitive as bounds writes,
       # but never raises or focuses a foreign window.
-      if ($Method -eq 'place-adopted') {
+      if ($Method -eq 'place-adopted' -and $Request.ContainsKey('host')) {
+        Set-WhAdoptedWindowBoundsAfterHost $runtimeId ([string]$Request['host']) $clamped.x $clamped.y $clamped.width $clamped.height
+      } elseif ($Method -eq 'place-adopted') {
         Set-WhAdoptedWindowBounds $runtimeId $clamped.x $clamped.y $clamped.width $clamped.height
       } else {
         Set-WhWindowBounds $runtimeId $clamped.x $clamped.y $clamped.width $clamped.height

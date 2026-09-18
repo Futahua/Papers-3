@@ -37,7 +37,7 @@ import type { WindowRuntimeCapability } from './windowCapabilityService';
  * `WindowCapabilityService` satisfies this structurally. */
 export interface AdoptedWindowFollowerService {
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
-  placeAdoptedCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult>;
+  placeAdoptedCapability(capability: WindowRuntimeCapability, bounds: WindowBounds, hostWindow?: string): Promise<WindowCapabilityResult>;
 }
 
 export type AdoptedWindowFollowerState = 'idle' | 'following' | 'identity-lost' | 'released';
@@ -120,7 +120,7 @@ export function createAdoptedWindowFollower(service: AdoptedWindowFollowerServic
 
   /** Move the adopted window to `bounds` after revalidating identity.
    * Identical-to-last-applied bounds dedupe to zero helper traffic. */
-  async function follow(bounds: WindowBounds): Promise<AdoptedWindowFollowOutcome> {
+  async function follow(bounds: WindowBounds, hostWindow?: string): Promise<AdoptedWindowFollowOutcome> {
     if (state !== 'following' || !capability || !identity) {
       if (state === 'identity-lost' || state === 'released') {
         return { outcome: 'missing', error: 'adoption is terminal; no further mutation' };
@@ -145,7 +145,7 @@ export function createAdoptedWindowFollower(service: AdoptedWindowFollowerServic
       capability = null;
       return { outcome: 'missing', error: mismatch };
     }
-    const applied = await service.placeAdoptedCapability(capability, bounds);
+    const applied = await service.placeAdoptedCapability(capability, bounds, hostWindow);
     if (applied.outcome !== 'success') return { outcome: applied.outcome as FailureOutcome, ...(applied.error !== undefined ? { error: applied.error } : {}) };
     lastApplied = { ...bounds };
     return { outcome: 'applied' };
@@ -154,7 +154,7 @@ export function createAdoptedWindowFollower(service: AdoptedWindowFollowerServic
   /** Restore the pre-adoption rectangle and retire. After doubt
    * (`identity-lost`) this performs NO mutation: the token no longer names a
    * verified window. */
-  async function release(): Promise<AdoptedWindowReleaseOutcome> {
+  async function release(hostWindow?: string): Promise<AdoptedWindowReleaseOutcome> {
     if (state === 'identity-lost' || capability === null || originalBounds === null) {
       state = 'released';
       return { outcome: 'missing', error: 'nothing verified left to restore' };
@@ -171,7 +171,7 @@ export function createAdoptedWindowFollower(service: AdoptedWindowFollowerServic
     } else if (observed.outcome !== 'success') {
       return { outcome: observed.outcome as FailureOutcome, ...(observed.error !== undefined ? { error: observed.error } : {}) };
     }
-    const restored = await service.placeAdoptedCapability(capability, originalBounds);
+    const restored = await service.placeAdoptedCapability(capability, originalBounds, hostWindow);
     if (restored.outcome !== 'success') {
       // Keep the verified capability and original rectangle alive when the
       // helper has a transient failure.  The caller can retry the restore;

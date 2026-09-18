@@ -12,7 +12,7 @@
     "window-capability.ps1"
   ],
   "hashes": {
-    "window-helper.ps1": "cd4e9c7c7a7e5e09c5751c99a47a43a24be06991e3c6ab6520b673a67d22b6a2",
-    "window-capability.ps1": "cee37bcfd59cdf438213dcc8af0b16f8f08811b16b165c26a1ee1ca8692044ce"
+    "window-helper.ps1": "9c5f1a24c28c387e3dbe801c4bc0c431b2908e0ce638ab081a34be1df4ad334a",
+    "window-capability.ps1": "8fa361d272eaf8864fe244ded750e88bc5c7f3a6481d44bfe5bcf54123c22abc"
   }
 }

@@ -47,6 +47,9 @@ export interface DockRect extends DockPoint {
 export interface DockPapersWindow {
   readonly id: number;
   getBounds(): DockRect;
+  /** Main-owned native host handle, encoded as a decimal string for the
+   * helper. Optional keeps geometry-only test hosts and old embedders valid. */
+  getNativeWindowHandle?(): Uint8Array;
   isDestroyed(): boolean;
   on(event: 'move' | 'resize' | 'restore' | 'closed', callback: () => void): void;
   removeListener(event: 'move' | 'resize' | 'restore' | 'closed', callback: () => void): void;
@@ -72,7 +75,7 @@ export interface DockCapabilityService {
   hoverAt(x: number, y: number): Promise<WindowHoverResult>;
   pickAt(x: number, y: number, candidateId: string): Promise<WindowBindResult & { candidate?: unknown }>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
-  placeAdoptedCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult>;
+  placeAdoptedCapability(capability: WindowRuntimeCapability, bounds: WindowBounds, hostWindow?: string): Promise<WindowCapabilityResult>;
 }
 
 export interface AdoptedWindowDockDependencies {
@@ -182,8 +185,21 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     candidateId: string;
     title: string;
     widthDip: number;
+    hostWindow: string | null;
     papersWindow: DockPapersWindow;
     follower: ReturnType<typeof createAdoptedWindowFollower>;
+  }
+
+  function nativeHandleFor(window: DockPapersWindow): string | null {
+    try {
+      const raw = window.getNativeWindowHandle?.();
+      if (!raw || raw.byteLength === 0) return null;
+      const bytes = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
+      const value = bytes.byteLength >= 8 ? bytes.readBigUInt64LE(0) : BigInt(bytes.readUInt32LE(0));
+      return value > 0n ? value.toString(10) : null;
+    } catch {
+      return null;
+    }
   }
 
   const adoptions = new Map<string, Adoption>();
@@ -225,7 +241,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
           results.set(adoption.key, { outcome: 'malformed', error: 'there is no room beside Papers on this display.' });
           continue;
         }
-        const result = await adoption.follower.follow(toPhysical(target, display.scaleFactor)).catch(() => ({ outcome: 'helper-unavailable' as const }));
+        const result = await adoption.follower.follow(toPhysical(target, display.scaleFactor), adoption.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
         results.set(adoption.key, result);
       }
     }
@@ -248,7 +264,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
   async function releaseForPapers(window: DockPapersWindow): Promise<void> {
     const entries = [...adoptions.values()].filter((entry) => entry.papersWindow.id === window.id);
     for (const entry of entries) {
-      const released = await entry.follower.release().catch(() => ({ outcome: 'helper-unavailable' as const }));
+      const released = await entry.follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
       if (released.outcome === 'released' || released.outcome === 'missing') {
         adoptions.delete(entry.key);
       }
@@ -314,7 +330,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
   async function releaseSession(key: string): Promise<DockToggleOutcome> {
     const entry = adoptions.get(key);
     if (!entry) return { outcome: 'refused', detail: 'that window is no longer adopted.' };
-    const released = await entry.follower.release().catch(() => ({ outcome: 'helper-unavailable' as const }));
+    const released = await entry.follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
     const title = entry.title || 'window';
     if (released.outcome === 'released') {
       // Retire the logical adoption only after the verified restore succeeds.
@@ -388,6 +404,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
       candidateId: key,
       title: current.title || hovered.candidate.title || 'window',
       widthDip: Math.max(ADOPT_DOCK_MIN_WIDTH_DIP, Math.round(current.bounds.width / (display.scaleFactor || 1))),
+      hostWindow: nativeHandleFor(focused),
       papersWindow: focused,
       follower,
     };
@@ -441,7 +458,7 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
     }
     const entries = [...adoptions.values()];
     for (const entry of entries) {
-      const released = await entry.follower.release().catch(() => ({ outcome: 'helper-unavailable' as const }));
+      const released = await entry.follower.release(entry.hostWindow ?? undefined).catch(() => ({ outcome: 'helper-unavailable' as const }));
       if (released.outcome === 'released' || released.outcome === 'missing') {
         adoptions.delete(entry.key);
       }

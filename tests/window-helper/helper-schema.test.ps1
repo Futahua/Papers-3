@@ -402,6 +402,8 @@ Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A
 Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A","bounds":{"x":0,"y":0,"width":10}}') 'malformed' 'place-adopted missing height is malformed'
 Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A","bounds":{"x":0,"y":0,"width":"10","height":10}}') 'malformed' 'place-adopted non-numeric bounds are malformed'
 Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A","bounds":{"x":0,"y":0,"width":300,"height":260},"state":"normal"}') 'malformed' 'place-adopted.state is not silently ignored'
+Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A","host":"0","bounds":{"x":0,"y":0,"width":300,"height":260}}') 'malformed' 'place-adopted zero host is malformed'
+Assert-Outcome (Invoke-Line '{"requestId":1,"method":"place-adopted","target":"A","host":123,"bounds":{"x":0,"y":0,"width":300,"height":260}}') 'malformed' 'place-adopted non-string host is malformed'
 
 # ---- negative validator fixtures (010R predicates demonstrably reject) ------
 function New-WireObservation {
