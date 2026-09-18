@@ -927,7 +927,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.setCanonicalTopology(windowId, next);
     this.deps.sendToWindow(windowId, 'host:event:workspace-topology', next);
     await this.setForeignVisibilityForWindow(windowId, surfaceId);
-    if (surface.paneBounds) await this.setForeignWindowSurfaceBounds(senderId, surfaceId, surface.paneBounds);
+    // The visible ForeignWindowFrame publishes its current relative pane
+    // rectangle when activation commits. Re-feeding the stored paneBounds here
+    // would treat the already-screen-space value as relative and add the Papers
+    // content origin a second time.
   }
 
   async closeForeignWindowSurface(senderId: number, surfaceId: string): Promise<void> {

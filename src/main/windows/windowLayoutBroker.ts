@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
+import { createHash } from 'node:crypto';
 
 export interface WindowLayoutBrokerItem {
   id: string;
@@ -15,7 +16,7 @@ export interface WindowLayoutBrokerItem {
 export interface WindowLayoutBroker {
   setHost(hwnd: string): Promise<boolean>;
   bind(surfaceId: string, windowInstanceId: string): Promise<boolean>;
-  layout(items: WindowLayoutBrokerItem[]): void;
+  layout(items: WindowLayoutBrokerItem[]): boolean;
   release(surfaceId: string): Promise<boolean>;
   releaseAll(): Promise<boolean>;
   stop(): Promise<void>;
@@ -26,7 +27,7 @@ export interface WindowLayoutBrokerOptions {
   sourcePath: string;
   compilerPath?: string;
   timeoutMs?: number;
-  spawnProcess?: (executable: string) => ChildProcessWithoutNullStreams;
+  spawnProcess?: (executable: string, args: string[]) => ChildProcessWithoutNullStreams;
 }
 
 export const WINDOW_LAYOUT_BROKER_EXECUTABLE = 'papers-window-layout-broker.exe';
@@ -57,7 +58,7 @@ function errorText(error: unknown): string {
 }
 
 function stampFor(source: Buffer): string {
-  return `${source.length}:${source.subarray(0, 128).toString('base64')}`;
+  return createHash('sha256').update(source).digest('hex');
 }
 
 /**
@@ -93,15 +94,15 @@ export function createWindowLayoutBroker(options: WindowLayoutBrokerOptions): Wi
     }
   }
 
-  const spawnProcess = options.spawnProcess ?? ((file) => spawn(file, [], {
+  const spawnProcess = options.spawnProcess ?? ((file, args) => spawn(file, args, {
     windowsHide: true,
     shell: false,
     stdio: ['pipe', 'pipe', 'pipe'],
   }));
   let child: ChildProcessWithoutNullStreams;
-  try { child = spawnProcess(executable); } catch { return null; }
+  try { child = spawnProcess(executable, ['--parent-pid', String(process.pid)]); } catch { return null; }
 
-  const pending = new Map<string, { resolve: (value: boolean) => void; reject: (error: Error) => void }>();
+  const pending = new Map<string, { resolve: (value: boolean) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
   let sequence = 0;
   let stopped = false;
   const lines = readline.createInterface({ input: child.stdout });
@@ -114,11 +115,13 @@ export function createWindowLayoutBroker(options: WindowLayoutBrokerOptions): Wi
     const waiter = pending.get(id);
     if (!waiter) return;
     pending.delete(id);
+    clearTimeout(waiter.timer);
     waiter.resolve((raw as { ok?: unknown }).ok === true);
   });
   const terminal = (reason: unknown): void => {
+    stopped = true;
     const error = new Error(`window layout broker stopped: ${errorText(reason)}`);
-    for (const waiter of pending.values()) waiter.reject(error);
+    for (const waiter of pending.values()) { clearTimeout(waiter.timer); waiter.reject(error); }
     pending.clear();
   };
   child.once('error', terminal);
@@ -132,8 +135,12 @@ export function createWindowLayoutBroker(options: WindowLayoutBrokerOptions): Wi
       try { child.stdin.write(`${payload}\n`); return Promise.resolve(true); } catch { return Promise.resolve(false); }
     }
     return new Promise<boolean>((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      try { child.stdin.write(`${payload}\n`); } catch (error) { pending.delete(id); reject(error instanceof Error ? error : new Error(String(error))); }
+      const timer = setTimeout(() => {
+        if (!pending.delete(id)) return;
+        resolve(false);
+      }, 1000);
+      pending.set(id, { resolve, reject, timer });
+      try { child.stdin.write(`${payload}\n`); } catch (error) { clearTimeout(timer); pending.delete(id); reject(error instanceof Error ? error : new Error(String(error))); }
     });
   }
 
@@ -141,7 +148,10 @@ export function createWindowLayoutBroker(options: WindowLayoutBrokerOptions): Wi
     setHost: (hwnd) => send({ cmd: 'host', hwnd }, true).catch(() => false),
     bind: (surfaceId, windowInstanceId) => send({ cmd: 'bind', id: surfaceId, windowInstanceId }, true).catch(() => false),
     layout(items) {
-      void send({ cmd: 'layout', items: items.map(({ id, x, y, width, height }) => ({ id, x, y, w: width, h: height })) }, false);
+      if (stopped || child.stdin.destroyed || !child.stdin.writable) return false;
+      const id = `${++sequence}`;
+      const payload = JSON.stringify({ cmd: 'layout', items: items.map(({ id: itemId, x, y, width, height }) => ({ id: itemId, x, y, w: width, h: height })), id });
+      try { child.stdin.write(`${payload}\n`); return true; } catch { return false; }
     },
     release: (surfaceId) => send({ cmd: 'release', id: surfaceId }, true).catch(() => false),
     releaseAll: () => send({ cmd: 'releaseAll' }, true).catch(() => false),

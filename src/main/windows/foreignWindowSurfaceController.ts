@@ -76,18 +76,16 @@ export function createForeignWindowSurfaceController(
     if (!record || !instanceId) return false;
     try {
       // The afternoon-tool broker intentionally owns one Papers host at a time.
-      // Switching hosts is rare; release its native bindings before adopting
-      // the new host rather than allowing two independent coordinate spaces.
+      // A second Papers host uses the verified PowerShell fallback instead of
+      // ejecting the first host's accelerated windows from their panes.
       if (brokerHost !== hostWindow) {
-        if (brokerHost !== null) {
-          await nativeBroker.releaseAll();
-          brokerBound.clear();
-        }
+        if (brokerBound.size > 0) return false;
         if (!await nativeBroker.setHost(hostWindow)) {
           brokerActive = false;
           return false;
         }
         brokerHost = hostWindow;
+        brokerRejected.clear();
       }
       if (!brokerBound.has(surfaceId)) {
         if (!await nativeBroker.bind(surfaceId, instanceId)) {
@@ -106,7 +104,10 @@ export function createForeignWindowSurfaceController(
           width: candidate.paneBounds!.width,
           height: candidate.paneBounds!.height,
         }));
-      nativeBroker.layout(items);
+      if (!nativeBroker.layout(items)) {
+        brokerActive = false;
+        return false;
+      }
       return true;
     } catch {
       brokerActive = false;
@@ -231,10 +232,12 @@ export function createForeignWindowSurfaceController(
       if (brokerBound.has(surfaceId) && nativeBroker) {
         const releasedByBroker = await nativeBroker.release(surfaceId).catch(() => false);
         brokerBound.delete(surfaceId);
+        if (!releasedByBroker) brokerActive = false;
         if (releasedByBroker) {
           record.state = 'released';
           record.capability = null;
           followers.delete(surfaceId);
+          if (brokerBound.size === 0) { brokerHost = null; brokerRejected.clear(); }
           return { outcome: 'success', surface: snapshotOf(surfaceId) };
         }
       }

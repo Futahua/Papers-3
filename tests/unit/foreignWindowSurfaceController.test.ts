@@ -84,7 +84,7 @@ describe('foreignWindowSurfaceController', () => {
     const broker: WindowLayoutBroker = {
       setHost: async (hwnd) => { calls.push(`host:${hwnd}`); return true; },
       bind: async (surfaceId, instanceId) => { calls.push(`bind:${surfaceId}:${instanceId}`); return true; },
-      layout: (items) => calls.push(`layout:${items.map((item) => `${item.id}:${item.x}`).join(',')}`),
+      layout: (items) => { calls.push(`layout:${items.map((item) => `${item.id}:${item.x}`).join(',')}`); return true; },
       release: async (surfaceId) => { calls.push(`release:${surfaceId}`); return true; },
       releaseAll: async () => true,
       stop: async () => undefined,
@@ -104,6 +104,31 @@ describe('foreignWindowSurfaceController', () => {
     ]);
     expect((await controller.release('foreign-1', '77')).outcome).toBe('success');
     expect(calls.at(-1)).toBe('release:foreign-1');
+  });
+
+  it('does not eject an accelerated surface when a second Papers host follows', async () => {
+    const calls: string[] = [];
+    const broker: WindowLayoutBroker = {
+      setHost: async (hwnd) => { calls.push(`host:${hwnd}`); return true; },
+      bind: async (surfaceId) => { calls.push(`bind:${surfaceId}`); return true; },
+      layout: (items) => { calls.push(`layout:${items.map((item) => item.id).join(',')}`); return true; },
+      release: async (surfaceId) => { calls.push(`release:${surfaceId}`); return true; },
+      releaseAll: async () => { calls.push('releaseAll'); return true; },
+      stop: async () => undefined,
+    };
+    const first = { ...descriptor, windowInstanceId: 'W0123456789abcdef' };
+    const second = { ...descriptor, windowInstanceId: 'Wfedcba9876543210' };
+    const deps = service({});
+    deps.resolvePersisted = async (candidate) => ({ outcome: 'success' as const, capability, descriptor: candidate });
+    const controller = createForeignWindowSurfaceController(deps, undefined, broker);
+    controller.create({ surfaceId: 'foreign-a', descriptor: first, hostWindowId: 1 });
+    controller.create({ surfaceId: 'foreign-b', descriptor: second, hostWindowId: 2 });
+    await controller.resolve('foreign-a');
+    await controller.resolve('foreign-b');
+    await controller.follow('foreign-a', { x: 1, y: 2, width: 300, height: 200 }, '101');
+    await controller.follow('foreign-b', { x: 3, y: 4, width: 300, height: 200 }, '202');
+    expect(calls).not.toContain('releaseAll');
+    expect(deps.placed.at(-1)?.bounds).toEqual({ x: 3, y: 4, width: 300, height: 200 });
   });
 
   it('failed resolution returns to disconnected without a native placement', async () => {
