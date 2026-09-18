@@ -18,6 +18,8 @@ export interface ForeignWindowSurfaceControllerService {
   resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<WindowResolveResult>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   placeAdoptedCapability(capability: WindowRuntimeCapability, bounds: WindowBounds, hostWindow?: string): Promise<WindowCapabilityResult>;
+  minimizeCapability?(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  restoreCapability?(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
 }
 
 export type ForeignSurfaceActionResult =
@@ -31,6 +33,7 @@ export interface ForeignWindowSurfaceController {
    * captured pre-adoption rectangle. */
   reconnect(surfaceId: string): Promise<ForeignSurfaceActionResult>;
   follow(surfaceId: string, bounds: WindowBounds, hostWindow?: string): Promise<ForeignSurfaceActionResult>;
+  setVisible(surfaceId: string, visible: boolean): Promise<ForeignSurfaceActionResult>;
   release(surfaceId: string, hostWindow?: string): Promise<ForeignSurfaceActionResult>;
   markDisconnected(surfaceId: string): ForeignWindowSurfaceSnapshot | null;
   retire(surfaceId: string): boolean;
@@ -143,6 +146,25 @@ export function createForeignWindowSurfaceController(
         followers.delete(surfaceId);
       }
       return failure(moved, snapshotOf(surfaceId));
+    },
+
+    async setVisible(surfaceId, visible) {
+      const record = recordFor(surfaceId);
+      if (record.state !== 'live-visible' || !record.capability) {
+        return { outcome: 'malformed', error: `surface is ${record.state}`, surface: snapshotOf(surfaceId) };
+      }
+      const action = visible ? service.restoreCapability : service.minimizeCapability;
+      if (!action) return { outcome: 'malformed', error: 'visibility control is unavailable', surface: snapshotOf(surfaceId) };
+      const result = await action.call(service, record.capability);
+      if (result.outcome === 'success') {
+        return { outcome: 'success', surface: snapshotOf(surfaceId) };
+      }
+      if (result.outcome === 'missing') {
+        record.state = 'disconnected';
+        record.capability = null;
+        followers.delete(surfaceId);
+      }
+      return failure(result, snapshotOf(surfaceId));
     },
 
     async release(surfaceId, hostWindow) {

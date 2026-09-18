@@ -816,6 +816,13 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     };
   }
 
+  private async setForeignVisibilityForWindow(windowId: number, activeSurfaceId: string | null): Promise<void> {
+    const controller = this.foreignController();
+    for (const surface of controller.snapshot().filter((candidate) => candidate.hostWindowId === windowId && candidate.state === 'live-visible')) {
+      await controller.setVisible(surface.surfaceId, surface.surfaceId === activeSurfaceId).catch(() => undefined);
+    }
+  }
+
   /** Enumerate ordinary native windows for the trusted Papers host. Runtime
    * ids and HWNDs never leave the main process; the candidate id is an
    * ephemeral Papers-issued handle accepted only by openForeignWindow. */
@@ -892,6 +899,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       throw caught;
     }
     this.deps.bringWindowToFront?.(windowId);
+    await this.setForeignVisibilityForWindow(windowId, created.surfaceId);
     return { surface, topology: canonical };
   }
 
@@ -916,6 +924,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.setEnteredBackpack(windowId, null);
     this.setCanonicalTopology(windowId, next);
     this.deps.sendToWindow(windowId, 'host:event:workspace-topology', next);
+    await this.setForeignVisibilityForWindow(windowId, surfaceId);
     if (surface.paneBounds) await this.setForeignWindowSurfaceBounds(senderId, surfaceId, surface.paneBounds);
   }
 
@@ -1085,6 +1094,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const { windowId, projectId } = this.requireHostSurfaceTarget(senderId, surfaceId);
     this.deps.setActiveSurfaceId(windowId, surfaceId);
     this.deps.setEnteredBackpack(windowId, projectId);
+    void this.setForeignVisibilityForWindow(windowId, null);
     this.emitBackpacksChanged();
   }
 
