@@ -44,6 +44,7 @@ interface FakeServiceState {
   hover: WindowHoverResult;
   pick: WindowBindResult;
   observations: WindowCapabilityResult[];
+  applyResults: WindowCapabilityResult[];
   appliedBounds: Array<{ x: number; y: number; width: number; height: number }>;
 }
 
@@ -53,10 +54,12 @@ function fakeService(state: Partial<FakeServiceState> = {}): DockCapabilityServi
     hover: { outcome: 'success', candidate: { id: 'cand-1', title: 'Victim App', applicationLabel: 'victim', icon: null, state: 'normal' }, bounds: null, descriptor: null },
     pick: { outcome: 'success', capability: capability(), descriptor: { version: 1, title: 'Victim App' } },
     observations: [success(observation())],
+    applyResults: [{ outcome: 'success' }],
     appliedBounds: [],
     ...state,
   };
   let applyCalls = 0;
+  let applied = 0;
   return {
     ...full,
     get applyCalls() {
@@ -68,7 +71,8 @@ function fakeService(state: Partial<FakeServiceState> = {}): DockCapabilityServi
     applyCapability: async (_cap, bounds) => {
       applyCalls += 1;
       full.appliedBounds.push({ ...bounds });
-      return { outcome: 'success' };
+      const result = full.applyResults[Math.min(applied++, full.applyResults.length - 1)] ?? { outcome: 'success' };
+      return result;
     },
   };
 }
@@ -212,6 +216,24 @@ describe('adoptedWindowDockSession', () => {
     expect(dock.active).toBe(false);
     // Last write is the restore of the pre-adoption rectangle.
     expect(service.appliedBounds.at(-1)).toEqual({ x: 2000, y: 200, width: 960, height: 600 });
+  });
+
+  it('keeps a failed restore retryable instead of forgetting the adoption', async () => {
+    const service = fakeService({
+      observations: [success(observation()), success(observation()), success(observation())],
+      // Initial dock succeeds; the first release attempt is unavailable; the
+      // second release attempt succeeds.
+      applyResults: [{ outcome: 'success' }, { outcome: 'helper-unavailable' }, { outcome: 'success' }],
+    });
+    const dock = createAdoptedWindowDock({ service, screen: fakeScreen(), shortcut: fakeShortcut() });
+    const window = fakeWindow();
+    await dock.toggle(window);
+    const firstRelease = await dock.toggle(window);
+    expect(firstRelease).toMatchObject({ outcome: 'refused' });
+    expect(dock.active).toBe(true);
+    const secondRelease = await dock.toggle(window);
+    expect(secondRelease.outcome).toBe('released');
+    expect(dock.active).toBe(false);
   });
 
   it('keeps two distinct Chrome windows adopted at the same time', async () => {

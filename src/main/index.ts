@@ -2981,6 +2981,19 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   });
   const adoptedDockReport = adoptedDock.register({
     focusedWindow: () => {
+      // The dock chord must follow the Papers window the creator is actually
+      // using.  Picking the first visible registry entry is wrong as soon as
+      // two Papers windows are open: the foreign window would be tiled beside
+      // an arbitrary host while the shortcut was pressed in the other one.
+      // Electron's focused-window identity is already native/main-owned, so
+      // prefer it and only fall back when focus is genuinely unavailable.
+      const focused = BrowserWindow.getFocusedWindow();
+      if (focused) {
+        for (const id of papersWindows.windowIds) {
+          const owned = papersWindows.get(id)?.owned.window;
+          if (owned === focused && !owned.isDestroyed()) return owned;
+        }
+      }
       const windows = papersWindows.windowIds;
       const visible = windows.find((id) => {
         const owned = papersWindows.get(id)?.owned.window;

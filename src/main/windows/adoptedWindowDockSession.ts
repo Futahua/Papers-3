@@ -308,15 +308,31 @@ export function createAdoptedWindowDock(dependencies: AdoptedWindowDockDependenc
   async function releaseSession(key: string): Promise<DockToggleOutcome> {
     const entry = adoptions.get(key);
     if (!entry) return { outcome: 'refused', detail: 'that window is no longer adopted.' };
-    adoptions.delete(key);
     const released = await entry.follower.release().catch(() => ({ outcome: 'helper-unavailable' as const }));
-    detachUnusedPapersListeners();
-    if (adoptions.size > 0) await followNow();
     const title = entry.title || 'window';
     if (released.outcome === 'released') {
+      // Retire the logical adoption only after the verified restore succeeds.
+      // A transient helper/permission failure must leave the entry retryable;
+      // deleting it here would strand the foreign window at its docked bounds
+      // with no supported way to restore it from Papers.
+      adoptions.delete(key);
+      detachUnusedPapersListeners();
+      if (adoptions.size > 0) await followNow();
       return { outcome: 'released', title, detail: `'${title}' is back where it was.` };
     }
-    return { outcome: 'released', title, detail: `'${title}' was forgotten, but its original position could not be restored (${released.outcome}). Drag it back by hand.` };
+    if (released.outcome === 'missing') {
+      // Identity loss is terminal by design: the follower has already refused
+      // any unsafe restoration, so forgetting this dead adoption is correct.
+      adoptions.delete(key);
+      detachUnusedPapersListeners();
+      if (adoptions.size > 0) await followNow();
+      return { outcome: 'released', title, detail: `'${title}' was no longer verifiable, so Papers stopped managing it.` };
+    }
+    const error = 'error' in released && released.error ? ` ${released.error}` : '';
+    return {
+      outcome: 'refused',
+      detail: `Papers could not restore '${title}' (${released.outcome}).${error} The adoption is still active; try the release again.`,
+    };
   }
 
   async function adopt(focused: DockPapersWindow, hovered: Extract<WindowHoverResult, { outcome: 'success' }>): Promise<DockToggleOutcome> {
