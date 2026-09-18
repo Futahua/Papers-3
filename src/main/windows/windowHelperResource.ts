@@ -53,7 +53,7 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
  * this by validating the committed blob, not the working copy. */
 export const WINDOW_HELPER_EXPECTED_HASHES: Record<string, string> = {
   [WINDOW_HELPER_SCRIPT_FILE]: '9c5f1a24c28c387e3dbe801c4bc0c431b2908e0ce638ab081a34be1df4ad334a',
-  [WINDOW_HELPER_ADAPTER_FILE]: '8fa361d272eaf8864fe244ded750e88bc5c7f3a6481d44bfe5bcf54123c22abc',
+  [WINDOW_HELPER_ADAPTER_FILE]: 'bab2f7818fd953e9bf4754ba6a36fd52689d0e8c69ff69405fa74103e0c86c68',
 };
 
 export interface WindowHelperResourcePaths {

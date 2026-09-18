@@ -293,6 +293,11 @@ $script:WhOps = @{
     $entry.Bounds = @{ Left = $x; Top = $y; Right = $x + $w; Bottom = $y + $h; Width = $w; Height = $h }
     $entry.touched += "set-bounds:$x,$y,$w,$h"
   }
+  SetAdoptedBounds = { param([IntPtr]$id, [IntPtr]$hostPtr, [int]$x, [int]$y, [int]$w, [int]$h)
+    $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
+    $entry.Bounds = @{ Left = $x; Top = $y; Right = $x + $w; Bottom = $y + $h; Width = $w; Height = $h }
+    $entry.touched += "set-adopted-bounds:$hostPtr,$x,$y,$w,$h"
+  }
   Minimize = { param([IntPtr]$id)
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).State = 'minimized'
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).touched += 'minimize'
@@ -503,10 +508,13 @@ Assert-True ($apply.outcome -eq 'success' -and $apply.observation.bounds.width -
 Assert-True ($apply.observation.bounds.x -eq 50 -and $apply.observation.bounds.y -eq 61) 'fractional position is rounded away from zero'
 Assert-True ($script:fakeRegistry[0].touched -contains 'foreground-once') 'apply foregrounds the activated member once without persistent topmost state'
  $foregroundCountBeforeAdopted = @($script:fakeRegistry[0].touched | Where-Object { $_ -eq 'foreground-once' }).Count
- $placeAdopted = Invoke-Line ('{"requestId":141,"method":"place-adopted","target":"' + $tokenA + '","bounds":{"x":70.4,"y":80.6,"width":320.5,"height":170.5}}')
+$placeAdopted = Invoke-Line ('{"requestId":141,"method":"place-adopted","target":"' + $tokenA + '","bounds":{"x":70.4,"y":80.6,"width":320.5,"height":170.5}}')
 Assert-True ($placeAdopted.outcome -eq 'success' -and $placeAdopted.observation.bounds.width -eq 321 -and $placeAdopted.observation.bounds.height -eq 171) 'place-adopted rounds and places the verified member'
 Assert-True ($placeAdopted.observation.bounds.x -eq 70 -and $placeAdopted.observation.bounds.y -eq 81) 'place-adopted rounds position away from zero'
 Assert-True (@($script:fakeRegistry[0].touched | Where-Object { $_ -eq 'foreground-once' }).Count -eq $foregroundCountBeforeAdopted) 'place-adopted remains non-activating and does not foreground again'
+$placeAdoptedAfterHost = Invoke-Line ('{"requestId":142,"method":"place-adopted","target":"' + $tokenA + '","host":"4242","bounds":{"x":90,"y":100,"width":320,"height":170}}')
+Assert-Outcome $placeAdoptedAfterHost 'success' 'place-adopted accepts a trusted host context'
+Assert-True (@($script:fakeRegistry[0].touched | Where-Object { $_ -like 'set-adopted-bounds:*' }).Count -eq 1) 'place-adopted routes host-aware placement through the non-activating seam'
 $restored = Invoke-Line ('{"requestId":140,"method":"restore","target":"' + $tokenA + '"}')
 Assert-Outcome $restored 'success' 'restore succeeds on an issued token'
 Assert-True ($script:fakeRegistry[0].touched -contains 'restore' -and $script:fakeRegistry[0].touched -contains 'foreground-once') 'restore foregrounds the member once without persistent topmost state'

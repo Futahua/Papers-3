@@ -626,9 +626,9 @@ function Set-WhAdoptedWindowBounds([IntPtr]$RuntimeId, [int]$X, [int]$Y, [int]$W
 }
 
 function Set-WhAdoptedWindowBoundsAfterHost([IntPtr]$RuntimeId, [string]$HostHandle, [int]$X, [int]$Y, [int]$Width, [int]$Height) {
-  $host = [IntPtr]::new([long]$HostHandle)
-  if ($host -eq [IntPtr]::Zero) { throw 'WH-COMMAND-ROUTING: adopted host handle is zero.' }
-  & $script:WhOps['SetAdoptedBounds'] $RuntimeId $host $X $Y $Width $Height
+  $hostPtr = [IntPtr]::new([long]$HostHandle)
+  if ($hostPtr -eq [IntPtr]::Zero) { throw 'WH-COMMAND-ROUTING: adopted host handle is zero.' }
+  & $script:WhOps['SetAdoptedBounds'] $RuntimeId $hostPtr $X $Y $Width $Height
 }
 
 function Minimize-WhWindow([IntPtr]$RuntimeId) {
