@@ -48,6 +48,7 @@ function broker(overrides: Partial<{
   adopt: boolean;
   setBounds: boolean;
   setVisible: boolean;
+  focus: boolean;
   release: boolean;
 }> = {}): WindowLayoutBroker & { calls: string[] } {
   const calls: string[] = [];
@@ -57,6 +58,7 @@ function broker(overrides: Partial<{
     adopt: async (surfaceId, instanceId) => { calls.push(`adopt:${surfaceId}:${instanceId}`); return overrides.adopt ?? true; },
     setBounds: async (surfaceId, next) => { calls.push(`bounds:${surfaceId}:${next.x}:${next.y}:${next.width}:${next.height}`); return overrides.setBounds ?? true; },
     setVisible: async (surfaceId, visible) => { calls.push(`visible:${surfaceId}:${visible}`); return overrides.setVisible ?? true; },
+    focus: async (surfaceId) => { calls.push(`focus:${surfaceId}`); return overrides.focus ?? true; },
     release: async (surfaceId) => { calls.push(`release:${surfaceId}`); return overrides.release ?? true; },
     releaseAll: async () => true,
     stop: async () => undefined,
@@ -84,12 +86,23 @@ describe('foreignWindowSurfaceController', () => {
       'create:foreign-1:77',
       'adopt:foreign-1:W0123456789abcdef',
       'bounds:foreign-1:100:110:800:600',
+      'focus:foreign-1',
     ]);
     expect(controller.snapshot()[0]?.paneBounds).toEqual({ x: 100, y: 110, width: 800, height: 600 });
     expect((await controller.setVisible('foreign-1', false)).outcome).toBe('success');
     expect((await controller.release('foreign-1')).outcome).toBe('success');
     expect(native.calls.at(-2)).toBe('visible:foreign-1:false');
     expect(native.calls.at(-1)).toBe('release:foreign-1');
+  });
+
+  it('focuses an already hosted surface without changing its geometry', async () => {
+    const native = broker();
+    const controller = createForeignWindowSurfaceController(service(), undefined, native);
+    controller.create({ surfaceId: 'foreign-1', descriptor });
+    await controller.resolve('foreign-1');
+    await controller.follow('foreign-1', bounds, '77');
+    expect((await controller.focus('foreign-1')).outcome).toBe('success');
+    expect(native.calls.at(-1)).toBe('focus:foreign-1');
   });
 
   it('fails closed when the application cannot be hosted instead of teleporting it', async () => {

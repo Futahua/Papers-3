@@ -36,6 +36,7 @@ export interface ForeignWindowSurfaceController {
    * host HWND; it never converts them to desktop coordinates. */
   follow(surfaceId: string, bounds: WindowBounds, hostWindow?: string): Promise<ForeignSurfaceActionResult>;
   setVisible(surfaceId: string, visible: boolean): Promise<ForeignSurfaceActionResult>;
+  focus(surfaceId: string): Promise<ForeignSurfaceActionResult>;
   release(surfaceId: string, hostWindow?: string): Promise<ForeignSurfaceActionResult>;
   markDisconnected(surfaceId: string): ForeignWindowSurfaceSnapshot | null;
   retire(surfaceId: string): boolean;
@@ -177,7 +178,8 @@ export function createForeignWindowSurfaceController(
         return { outcome: 'helper-unavailable', error: 'this window cannot be hosted inside Papers', surface: snapshotOf(surfaceId) };
       }
       try {
-        if (!hosted.has(surfaceId)) {
+        const wasHosted = hosted.has(surfaceId);
+        if (!wasHosted) {
           if (!await nativeBroker.createHost(surfaceId, hostWindow)) {
             brokerActive = false;
             return { outcome: 'helper-unavailable', error: 'Papers could not create a native pane host', surface: snapshotOf(surfaceId) };
@@ -192,6 +194,10 @@ export function createForeignWindowSurfaceController(
           return { outcome: 'helper-unavailable', error: 'the native pane host rejected its bounds', surface: snapshotOf(surfaceId) };
         }
         record.paneBounds = { ...bounds };
+        // The first bounds commit is the first moment the native child is
+        // actually visible above Chromium. Give it keyboard focus once for a
+        // newly opened surface; later geometry updates must not steal focus.
+        if (!wasHosted) await nativeBroker.focus(surfaceId).catch(() => false);
         return { outcome: 'success', surface: snapshotOf(surfaceId) };
       } catch {
         brokerActive = false;
@@ -207,6 +213,18 @@ export function createForeignWindowSurfaceController(
       if (!hosted.has(surfaceId)) return { outcome: 'success', surface: snapshotOf(surfaceId) };
       if (!nativeBroker || !await nativeBroker.setVisible(surfaceId, visible).catch(() => false)) {
         return { outcome: 'helper-unavailable', error: 'the native pane host could not change visibility', surface: snapshotOf(surfaceId) };
+      }
+      return { outcome: 'success', surface: snapshotOf(surfaceId) };
+    },
+
+    async focus(surfaceId) {
+      const record = recordFor(surfaceId);
+      if (record.state !== 'live-visible') {
+        return { outcome: 'malformed', error: `surface is ${record.state}`, surface: snapshotOf(surfaceId) };
+      }
+      if (!hosted.has(surfaceId)) return { outcome: 'helper-unavailable', error: 'the native pane host is not ready', surface: snapshotOf(surfaceId) };
+      if (!nativeBroker || !await nativeBroker.focus(surfaceId).catch(() => false)) {
+        return { outcome: 'helper-unavailable', error: 'the hosted window could not receive focus', surface: snapshotOf(surfaceId) };
       }
       return { outcome: 'success', surface: snapshotOf(surfaceId) };
     },

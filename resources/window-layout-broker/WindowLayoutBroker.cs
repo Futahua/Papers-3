@@ -19,7 +19,6 @@ public static class WindowLayoutBroker
     private const long WsPopup = unchecked((long)0x80000000);
     private const uint WsClipChildren = 0x02000000;
     private const uint WsClipSiblings = 0x04000000;
-    private const uint WsExNoActivate = 0x08000000;
     private const int SwHide = 0;
     private const int SwShow = 5;
     private const uint SwpNoActivate = 0x0010;
@@ -27,6 +26,7 @@ public static class WindowLayoutBroker
     private const uint SwpShowWindow = 0x0040;
     private const uint SwpHideWindow = 0x0080;
     private const uint SwpFrameChanged = 0x0020;
+    private static readonly IntPtr HwndTop = new IntPtr(0);
     private const uint Synchronize = 0x00100000;
     private const uint WaitObject0 = 0;
     private const uint WaitFailed = 0xffffffff;
@@ -52,6 +52,10 @@ public static class WindowLayoutBroker
     [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern IntPtr GetFocus();
+    [DllImport("user32.dll", SetLastError = true)] private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetPropW(IntPtr hwnd, string name);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
@@ -166,7 +170,9 @@ public static class WindowLayoutBroker
         if (!long.TryParse(papersText ?? "", out papersValue)) return false;
         binding.Papers = new IntPtr(papersValue);
         if (!IsWindow(binding.Papers)) return false;
-        binding.Host = CreateWindowEx(WsExNoActivate, "STATIC", "", WsChildWindow | WsClipChildren | WsClipSiblings, 0, 0, 1, 1, binding.Papers, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        // This pane is a real input surface.  WS_EX_NOACTIVATE would make the
+        // child visibly follow Papers while silently rejecting mouse activation.
+        binding.Host = CreateWindowEx(0, "STATIC", "", WsChildWindow | WsClipChildren | WsClipSiblings, 0, 0, 1, 1, binding.Papers, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
         if (binding.Host == IntPtr.Zero) return false;
         ShowWindow(binding.Host, SwHide);
         return true;
@@ -239,9 +245,36 @@ public static class WindowLayoutBroker
     {
         if (!ValidBounds(x, y, w, h) || !IsWindow(binding.Host)) return false;
         int left = (int)Math.Round(x.Value), top = (int)Math.Round(y.Value), width = (int)Math.Round(w.Value), height = (int)Math.Round(h.Value);
-        if (!SetWindowPos(binding.Host, IntPtr.Zero, left, top, width, height, SwpNoActivate | SwpNoZOrder | SwpShowWindow)) return false;
+        // Chromium's WebContentsView is another native child of Papers.  Keep
+        // this host above that sibling so Windows hit-tests the adopted app,
+        // while SWP_NOACTIVATE preserves the caller's current focus until the
+        // user actually clicks the foreign surface.
+        if (!SetWindowPos(binding.Host, HwndTop, left, top, width, height, SwpNoActivate | SwpShowWindow)) return false;
         if (binding.Adopted && IsWindow(binding.Target)) return SetWindowPos(binding.Target, IntPtr.Zero, 0, 0, width, height, SwpNoActivate | SwpNoZOrder | SwpShowWindow);
         return true;
+    }
+
+    private static bool Focus(Binding binding)
+    {
+        if (!binding.Adopted || !IsWindow(binding.Host) || !IsWindow(binding.Target) || GetParent(binding.Target) != binding.Host) return false;
+        uint currentThread = GetCurrentThreadId();
+        uint targetProcessId;
+        uint targetThread = GetWindowThreadProcessId(binding.Target, out targetProcessId);
+        bool attached = false;
+        try
+        {
+            if (targetThread != 0 && targetThread != currentThread)
+            {
+                attached = AttachThreadInput(currentThread, targetThread, true);
+                if (!attached) return false;
+            }
+            SetFocus(binding.Target);
+            return GetFocus() == binding.Target;
+        }
+        finally
+        {
+            if (attached) AttachThreadInput(currentThread, targetThread, false);
+        }
     }
 
     private static bool SetVisible(Binding binding, bool visible)
@@ -372,6 +405,7 @@ public static class WindowLayoutBroker
         if (cmd == "adopt") { bool ok = Adopt(item, StringValue(json, "windowInstanceId")); Reply(requestId, ok, ok ? null : "window cannot be hosted inside Papers"); return; }
         if (cmd == "host-bounds") { bool ok = SetHostBounds(item, NumberValue(json, "x"), NumberValue(json, "y"), NumberValue(json, "w"), NumberValue(json, "h")); Reply(requestId, ok, ok ? null : "host bounds rejected"); return; }
         if (cmd == "host-visible") { bool visible; bool ok = BoolValue(json, "visible", out visible) && SetVisible(item, visible); Reply(requestId, ok, ok ? null : "host visibility rejected"); return; }
+        if (cmd == "focus") { bool ok = Focus(item); Reply(requestId, ok, ok ? null : "host focus rejected"); return; }
         if (cmd == "release")
         {
             bool ok = Restore(item);

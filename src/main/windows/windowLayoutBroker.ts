@@ -18,6 +18,7 @@ export interface WindowLayoutBroker {
   adopt(surfaceId: string, windowInstanceId: string): Promise<boolean>;
   setBounds(surfaceId: string, bounds: WindowLayoutHostBounds): Promise<boolean>;
   setVisible(surfaceId: string, visible: boolean): Promise<boolean>;
+  focus(surfaceId: string): Promise<boolean>;
   release(surfaceId: string): Promise<boolean>;
   releaseAll(): Promise<boolean>;
   stop(): Promise<void>;
@@ -148,6 +149,7 @@ export function createWindowLayoutBroker(options: WindowLayoutBrokerOptions): Wi
     adopt: (surfaceId, windowInstanceId) => send({ cmd: 'adopt', surfaceId, windowInstanceId }).catch(() => false),
     setBounds: (surfaceId, bounds) => send({ cmd: 'host-bounds', surfaceId, x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height }).catch(() => false),
     setVisible: (surfaceId, visible) => send({ cmd: 'host-visible', surfaceId, visible }).catch(() => false),
+    focus: (surfaceId) => send({ cmd: 'focus', surfaceId }).catch(() => false),
     release: (surfaceId) => send({ cmd: 'release', surfaceId }).catch(() => false),
     releaseAll: () => send({ cmd: 'releaseAll' }).catch(() => false),
     async stop() {

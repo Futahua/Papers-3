@@ -901,6 +901,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     }
     this.deps.bringWindowToFront?.(windowId);
     await this.setForeignVisibilityForWindow(windowId, created.surfaceId);
+    // Once the first native bounds commit has created the child host, this is
+    // also retried by activation. It is intentionally best-effort here so an
+    // initial render cannot fail merely because geometry has not committed yet.
+    await controller.focus(created.surfaceId).catch(() => undefined);
     return { surface, topology: canonical };
   }
 
@@ -925,6 +929,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.setCanonicalTopology(windowId, next);
     this.deps.sendToWindow(windowId, 'host:event:workspace-topology', next);
     await this.setForeignVisibilityForWindow(windowId, surfaceId);
+    const focused = await this.foreignController().focus(surfaceId);
+    if (focused.outcome !== 'success' && focused.outcome !== 'helper-unavailable') {
+      throw new Error(focused.error ?? `Foreign window could not receive focus (${focused.outcome}).`);
+    }
     // The visible ForeignWindowFrame publishes its current relative pane
     // rectangle when activation commits. Re-feeding the stored paneBounds here
     // would treat the already-screen-space value as relative and add the Papers
