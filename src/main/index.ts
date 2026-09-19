@@ -1171,8 +1171,14 @@ async function bootstrap(): Promise<void> {
               if (resolved.outcome !== 'success') {
                 controller.markDisconnected(created.surfaceId);
                 controller.retire(created.surfaceId);
+                // Foreign windows belong to other processes. A window that
+                // was closed or renamed while Papers was away must not block
+                // unrelated Backpack startup; hydration will prune only this
+                // stale foreign member from the durable layout.
+                if (resolved.outcome === 'missing' || resolved.outcome === 'ambiguous') return false;
                 throw new Error(resolved.error ?? `Foreign window ${surface.surfaceId} could not be resolved.`);
               }
+              return true;
             },
             retireForeign: async (surfaceId: string) => {
               const controller = foreignWindowSurfaceControllerRef;

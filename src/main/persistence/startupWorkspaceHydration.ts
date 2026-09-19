@@ -1,6 +1,7 @@
 import {
   remapWorkspaceTopologySurfaceIds,
   remapWorkspaceTopologyV2ProjectSurfaceIds,
+  closeWorkspaceSurfaceV2,
   type WorkspaceTopologyV1,
   type WorkspaceSurface,
   type WorkspaceTopologyV2,
@@ -36,8 +37,10 @@ export interface StartupWorkspaceForeignHydrationDeps {
   openProject: (projectId: string) => Promise<{ url: string } | null>;
   createSurface: (project: { projectId: string; windowId: number }) => { surfaceId: string };
   retireSurface: (surfaceId: string) => void;
-  /** Recreate and resolve one persisted foreign surface using its durable id. */
-  resolveForeign: (surface: WorkspaceForeignWindowSurfaceV2, windowId: number) => Promise<void>;
+  /** Recreate and resolve one persisted foreign surface using its durable id.
+   * Returning false means the external window is no longer present; startup
+   * removes that stale layout member and continues with the remaining work. */
+  resolveForeign: (surface: WorkspaceForeignWindowSurfaceV2, windowId: number) => Promise<boolean | void>;
   retireForeign?: (surfaceId: string) => Promise<void> | void;
   validate: (topology: WorkspaceTopologyV2) => void;
   deliver: (projects: HydratedWorkspaceProject[], topology: WorkspaceTopologyV2) => void;
@@ -61,6 +64,7 @@ export async function hydrateStartupWorkspaceWithForeign(
     const opened: Array<{ old: Extract<WorkspaceTopologyV2['surfaces'][number], { kind: 'project' }>; fresh: HydratedWorkspaceProject }> = [];
     const allocated: string[] = [];
     const resolvedForeign: string[] = [];
+    const unavailableForeign: string[] = [];
     try {
       for (const oldSurface of projectSurfaces) {
         const backpack = deps.findAvailableBackpack(oldSurface.projectId);
@@ -74,8 +78,9 @@ export async function hydrateStartupWorkspaceWithForeign(
       }
       deps.assertWorkspaceMutationAvailable?.(windowId);
       for (const foreign of topologySnapshot.surfaces.filter((surface): surface is WorkspaceForeignWindowSurfaceV2 => surface.kind === 'foreign-window')) {
-        await deps.resolveForeign(foreign, windowId);
-        resolvedForeign.push(foreign.surfaceId);
+        const resolved = await deps.resolveForeign(foreign, windowId);
+        if (resolved === false) unavailableForeign.push(foreign.surfaceId);
+        else resolvedForeign.push(foreign.surfaceId);
       }
       for (const { old, fresh } of opened) {
         const surface = deps.createSurface({ windowId, projectId: old.projectId });
@@ -83,7 +88,14 @@ export async function hydrateStartupWorkspaceWithForeign(
         fresh.surfaceId = surface.surfaceId;
       }
       const oldToFresh = new Map(opened.map(({ old, fresh }) => [old.surfaceId, fresh.surfaceId]));
-      const topology = remapWorkspaceTopologyV2ProjectSurfaceIds(topologySnapshot, oldToFresh);
+      let topology = remapWorkspaceTopologyV2ProjectSurfaceIds(topologySnapshot, oldToFresh);
+      // A foreign window is an external process, not a prerequisite for
+      // opening Papers or its Backpacks. If it disappeared while Papers was
+      // closed, discard only that stale layout member and persist the repaired
+      // topology so every later startup is clean.
+      for (const surfaceId of unavailableForeign) {
+        topology = closeWorkspaceSurfaceV2(topology, surfaceId);
+      }
       deps.validate(topology);
       deps.deliver(opened.map(({ fresh }) => fresh), topology);
       deps.commit(snapshot.workspaceId, topology);

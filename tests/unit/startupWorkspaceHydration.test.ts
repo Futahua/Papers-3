@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { hydrateStartupWorkspace } from '../../src/main/persistence/startupWorkspaceHydration';
-import { createWorkspaceTopology, openWorkspaceSurface, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
+import { hydrateStartupWorkspace, hydrateStartupWorkspaceWithForeign } from '../../src/main/persistence/startupWorkspaceHydration';
+import { createWorkspaceTopology, migrateWorkspaceTopologyV1, openWorkspaceSurface, openWorkspaceSurfaceV2, splitWorkspaceGroup } from '../../src/shared/workspaceTopology';
 
 function snapshot() {
   let topology = createWorkspaceTopology();
@@ -106,5 +106,30 @@ describe('startup workspace hydration transaction', () => {
     expect(createSurface).not.toHaveBeenCalled();
     expect(deliver).not.toHaveBeenCalled();
     expect(commit).not.toHaveBeenCalled();
+  });
+
+  it('prunes a foreign window that disappeared while Papers was closed', async () => {
+    const project = migrateWorkspaceTopologyV1(createWorkspaceTopology());
+    const withProject = openWorkspaceSurfaceV2(project, {
+      kind: 'project', surfaceId: 'old-project', projectId: 'bp-a', title: 'A',
+    });
+    const topology = openWorkspaceSurfaceV2(withProject, {
+      kind: 'foreign-window', surfaceId: 'old-foreign', title: 'ChatGPT',
+      descriptor: { version: 1, windowInstanceId: 'W0123456789abcdef', title: 'ChatGPT' },
+    });
+    const commit = vi.fn();
+    const result = await hydrateStartupWorkspaceWithForeign(1, {
+      snapshot: { workspaceId: '11111111-1111-4111-8111-111111111111', topology, updatedAt: '2026-09-01T00:00:00.000Z' },
+      findAvailableBackpack: () => ({ name: 'A' }),
+      openProject: async () => ({ url: 'papers-backpack://bp-a/fresh' }),
+      createSurface: () => ({ surfaceId: 'fresh-project' }),
+      retireSurface: vi.fn(),
+      resolveForeign: async () => false,
+      retireForeign: vi.fn(),
+      validate: vi.fn(), deliver: vi.fn(), commit,
+    });
+    expect(result?.topology.surfaces.map((surface) => surface.surfaceId)).toEqual(['fresh-project']);
+    expect(result?.topology.surfaces.some((surface) => surface.kind === 'foreign-window')).toBe(false);
+    expect(commit).toHaveBeenCalledTimes(1);
   });
 });
