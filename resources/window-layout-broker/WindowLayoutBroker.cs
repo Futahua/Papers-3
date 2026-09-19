@@ -26,6 +26,11 @@ public static class WindowLayoutBroker
     private const uint SwpShowWindow = 0x0040;
     private const uint SwpHideWindow = 0x0080;
     private const uint SwpFrameChanged = 0x0020;
+    private const uint RdwInvalidate = 0x0001;
+    private const uint RdwErase = 0x0004;
+    private const uint RdwAllChildren = 0x0080;
+    private const uint RdwUpdateNow = 0x0100;
+    private const uint RdwFrame = 0x0400;
     private static readonly IntPtr HwndTop = new IntPtr(0);
     private const uint Synchronize = 0x00100000;
     private const uint WaitObject0 = 0;
@@ -50,6 +55,7 @@ public static class WindowLayoutBroker
     [DllImport("user32.dll", SetLastError = true)] private static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool ScreenToClient(IntPtr hwnd, ref Point point);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool RedrawWindow(IntPtr hwnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr hwnd);
@@ -82,6 +88,7 @@ public static class WindowLayoutBroker
         public long OriginalExStyle;
         public Rect OriginalRect;
         public bool Adopted;
+        public bool NeedsInitialPaint;
     }
 
     private static readonly object Gate = new object();
@@ -213,8 +220,8 @@ public static class WindowLayoutBroker
         binding.OriginalExStyle = exStyle;
         binding.OriginalRect = original;
         binding.Adopted = true;
+        binding.NeedsInitialPaint = true;
         SetWindowLongPtr(target, GwlExStyle, new IntPtr(exStyle));
-        SetWindowPos(target, IntPtr.Zero, 0, 0, 1, 1, SwpNoActivate | SwpNoZOrder | SwpFrameChanged | SwpHideWindow);
         return true;
     }
 
@@ -250,7 +257,22 @@ public static class WindowLayoutBroker
         // while SWP_NOACTIVATE preserves the caller's current focus until the
         // user actually clicks the foreign surface.
         if (!SetWindowPos(binding.Host, HwndTop, left, top, width, height, SwpNoActivate | SwpShowWindow)) return false;
-        if (binding.Adopted && IsWindow(binding.Target)) return SetWindowPos(binding.Target, IntPtr.Zero, 0, 0, width, height, SwpNoActivate | SwpNoZOrder | SwpShowWindow);
+        if (binding.Adopted && IsWindow(binding.Target))
+        {
+            uint targetFlags = SwpNoActivate | SwpNoZOrder | SwpShowWindow;
+            if (binding.NeedsInitialPaint) targetFlags |= SwpFrameChanged;
+            if (!SetWindowPos(binding.Target, IntPtr.Zero, 0, 0, width, height, targetFlags)) return false;
+            if (binding.NeedsInitialPaint)
+            {
+                // The target just crossed a top-level -> child boundary while
+                // hidden. Invalidate the target and all of its descendants at
+                // the real pane size so apps with nested client controls paint
+                // immediately instead of exposing the host behind them.
+                RedrawWindow(binding.Target, IntPtr.Zero, IntPtr.Zero,
+                    RdwInvalidate | RdwErase | RdwFrame | RdwAllChildren | RdwUpdateNow);
+                binding.NeedsInitialPaint = false;
+            }
+        }
         return true;
     }
 
@@ -281,7 +303,15 @@ public static class WindowLayoutBroker
     {
         if (!IsWindow(binding.Host)) return false;
         ShowWindow(binding.Host, visible ? SwShow : SwHide);
-        if (binding.Adopted && IsWindow(binding.Target)) ShowWindow(binding.Target, visible ? SwShow : SwHide);
+        if (binding.Adopted && IsWindow(binding.Target))
+        {
+            ShowWindow(binding.Target, visible ? SwShow : SwHide);
+            if (visible)
+            {
+                RedrawWindow(binding.Target, IntPtr.Zero, IntPtr.Zero,
+                    RdwInvalidate | RdwAllChildren | RdwUpdateNow);
+            }
+        }
         return true;
     }
 
