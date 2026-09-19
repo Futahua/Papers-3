@@ -31,6 +31,7 @@ public static class WindowLayoutBroker
     private const uint RdwAllChildren = 0x0080;
     private const uint RdwUpdateNow = 0x0100;
     private const uint RdwFrame = 0x0400;
+    private const int DpiHostingBehaviorMixed = 1;
     private static readonly IntPtr HwndTop = new IntPtr(0);
     private static readonly IntPtr DpiPerMonitorV2 = new IntPtr(-4);
     private const uint Synchronize = 0x00100000;
@@ -58,6 +59,9 @@ public static class WindowLayoutBroker
     [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool RedrawWindow(IntPtr hwnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindowDpiAwarenessContext(IntPtr hwnd);
+    [DllImport("user32.dll")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr value);
+    [DllImport("user32.dll")] private static extern int SetThreadDpiHostingBehavior(int value);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr hwnd);
@@ -181,7 +185,23 @@ public static class WindowLayoutBroker
         if (!IsWindow(binding.Papers)) return false;
         // This pane is a real input surface.  WS_EX_NOACTIVATE would make the
         // child visibly follow Papers while silently rejecting mouse activation.
-        binding.Host = CreateWindowEx(0, "STATIC", "", WsChildWindow | WsClipChildren | WsClipSiblings, 0, 0, 1, 1, binding.Papers, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        // The broker process is PMv2, while Papers may be PMv1. Match the
+        // thread to the actual parent while creating this child, and explicitly
+        // opt into mixed-DPI hosting so a PMv2 foreign child can remain intact.
+        IntPtr papersContext = GetWindowDpiAwarenessContext(binding.Papers);
+        IntPtr previousContext = papersContext == IntPtr.Zero
+            ? IntPtr.Zero
+            : SetThreadDpiAwarenessContext(papersContext);
+        int previousHosting = SetThreadDpiHostingBehavior(DpiHostingBehaviorMixed);
+        try
+        {
+            binding.Host = CreateWindowEx(0, "STATIC", "", WsChildWindow | WsClipChildren | WsClipSiblings, 0, 0, 1, 1, binding.Papers, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        }
+        finally
+        {
+            if (previousHosting >= 0) SetThreadDpiHostingBehavior(previousHosting);
+            if (previousContext != IntPtr.Zero) SetThreadDpiAwarenessContext(previousContext);
+        }
         if (binding.Host == IntPtr.Zero) return false;
         ShowWindow(binding.Host, SwHide);
         return true;
