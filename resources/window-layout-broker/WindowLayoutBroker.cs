@@ -17,6 +17,7 @@ public static class WindowLayoutBroker
     private const long WsChild = 0x40000000L;
     private const uint WsChildWindow = 0x40000000;
     private const long WsPopup = unchecked((long)0x80000000);
+    private const long WsExNoRedirectionBitmap = 0x00200000L;
     private const uint WsClipChildren = 0x02000000;
     private const uint WsClipSiblings = 0x04000000;
     private const int SwHide = 0;
@@ -205,8 +206,17 @@ public static class WindowLayoutBroker
             ShowWindow(target, SwShow);
             return false;
         }
+        // Modern Notepad uses a DWM/DirectComposition top-level surface. That
+        // top-level policy is not valid after the HWND becomes a child: keep
+        // the original value for release, but remove NOREDIRECTIONBITMAP from
+        // the adopted state so the child can acquire a normal client surface.
+        long adoptedExStyle = exStyle & ~WsExNoRedirectionBitmap;
+        SetWindowLongPtr(target, GwlExStyle, new IntPtr(adoptedExStyle));
         long adoptedStyle = GetWindowLongPtr(target, GwlStyle).ToInt64();
-        if ((adoptedStyle & WsChild) == 0 || (adoptedStyle & WsPopup) != 0 || GetParent(target) != binding.Host) {
+        long currentExStyle = GetWindowLongPtr(target, GwlExStyle).ToInt64();
+        if ((adoptedStyle & WsChild) == 0 || (adoptedStyle & WsPopup) != 0
+            || (currentExStyle & WsExNoRedirectionBitmap) != 0
+            || GetParent(target) != binding.Host) {
             SetParent(target, originalParent);
             SetWindowLongPtr(target, GwlStyle, new IntPtr(style));
             SetWindowLongPtr(target, GwlExStyle, new IntPtr(exStyle));
@@ -221,7 +231,6 @@ public static class WindowLayoutBroker
         binding.OriginalRect = original;
         binding.Adopted = true;
         binding.NeedsInitialPaint = true;
-        SetWindowLongPtr(target, GwlExStyle, new IntPtr(exStyle));
         return true;
     }
 
