@@ -17,7 +17,6 @@ public static class WindowLayoutBroker
     private const long WsChild = 0x40000000L;
     private const uint WsChildWindow = 0x40000000;
     private const long WsPopup = unchecked((long)0x80000000);
-    private const long WsExNoRedirectionBitmap = 0x00200000L;
     private const uint WsClipChildren = 0x02000000;
     private const uint WsClipSiblings = 0x04000000;
     private const int SwHide = 0;
@@ -33,6 +32,7 @@ public static class WindowLayoutBroker
     private const uint RdwUpdateNow = 0x0100;
     private const uint RdwFrame = 0x0400;
     private static readonly IntPtr HwndTop = new IntPtr(0);
+    private static readonly IntPtr DpiPerMonitorV2 = new IntPtr(-4);
     private const uint Synchronize = 0x00100000;
     private const uint WaitObject0 = 0;
     private const uint WaitFailed = 0xffffffff;
@@ -57,6 +57,7 @@ public static class WindowLayoutBroker
     [DllImport("user32.dll", SetLastError = true)] private static extern bool ScreenToClient(IntPtr hwnd, ref Point point);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll", SetLastError = true)] private static extern bool RedrawWindow(IntPtr hwnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hwnd, int command);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr hwnd);
@@ -206,17 +207,8 @@ public static class WindowLayoutBroker
             ShowWindow(target, SwShow);
             return false;
         }
-        // Modern Notepad uses a DWM/DirectComposition top-level surface. That
-        // top-level policy is not valid after the HWND becomes a child: keep
-        // the original value for release, but remove NOREDIRECTIONBITMAP from
-        // the adopted state so the child can acquire a normal client surface.
-        long adoptedExStyle = exStyle & ~WsExNoRedirectionBitmap;
-        SetWindowLongPtr(target, GwlExStyle, new IntPtr(adoptedExStyle));
         long adoptedStyle = GetWindowLongPtr(target, GwlStyle).ToInt64();
-        long currentExStyle = GetWindowLongPtr(target, GwlExStyle).ToInt64();
-        if ((adoptedStyle & WsChild) == 0 || (adoptedStyle & WsPopup) != 0
-            || (currentExStyle & WsExNoRedirectionBitmap) != 0
-            || GetParent(target) != binding.Host) {
+        if ((adoptedStyle & WsChild) == 0 || (adoptedStyle & WsPopup) != 0 || GetParent(target) != binding.Host) {
             SetParent(target, originalParent);
             SetWindowLongPtr(target, GwlStyle, new IntPtr(style));
             SetWindowLongPtr(target, GwlExStyle, new IntPtr(exStyle));
@@ -471,6 +463,10 @@ public static class WindowLayoutBroker
 
     public static void Main(string[] args)
     {
+        // Set the helper's DPI context before creating its GUI thread or any
+        // HWND. Cross-process SetParent otherwise lets Windows reset a hosted
+        // app's DPI context, which can break WinUI/DirectComposition islands.
+        SetProcessDpiAwarenessContext(DpiPerMonitorV2);
         StartGuiThread();
         uint parentPid = 0;
         for (int i = 0; i + 1 < args.Length; i++) if (args[i] == "--parent-pid") uint.TryParse(args[i + 1], out parentPid);
