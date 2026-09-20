@@ -137,6 +137,23 @@ ipcRenderer.on(VISUAL_FENCE_REQUEST_CHANNEL, (_event, payload) => {
 
 interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
+const SCOPED_WORKSPACE_REQUESTS = new Set([
+  'papers:project:as-you-go-load',
+  'papers:project:as-you-go-save',
+  'papers:project:state-load-versioned',
+  'papers:project:state-save-checked',
+  'papers:project:as-you-go-shortcut-icon',
+  'papers:project:as-you-go-launch',
+  'papers:project:as-you-go-reveal',
+  'papers:project:resolve-web-link-icon',
+]);
+
+function scopedWorkspaceOrigin(event: MessageEvent, request: ProjectMessage): string | undefined {
+  return event.source !== window && typeof request.type === 'string' && SCOPED_WORKSPACE_REQUESTS.has(request.type)
+    ? event.origin
+    : undefined;
+}
+
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
 const WINDOW_THUMBNAIL_MAX_WIDTH = 320;
@@ -274,9 +291,12 @@ function trySendWidgetReady(): void {
 }
 
 window.addEventListener('message', (event) => {
-  if (event.source !== window || event.origin !== window.location.origin) return;
   const request = event.data as ProjectMessage;
   if (!request || typeof request.type !== 'string') return;
+  const workspaceOrigin = scopedWorkspaceOrigin(event, request);
+  const workspaceOriginArgs = workspaceOrigin === undefined ? [] : [workspaceOrigin];
+  if (event.source !== window && workspaceOrigin === undefined) return;
+  if (event.source === window && event.origin !== window.location.origin) return;
   if (request.type === 'papers:project:widget-drag') {
     if (!widgetToken || !exactKeys(request as Record<string, unknown>, ['type', 'phase', 'x', 'y'])
       || !['begin', 'move', 'end'].includes(String(request.phase))
@@ -374,22 +394,26 @@ window.addEventListener('message', (event) => {
       request.projectName,
     ).then((workspaceScope) => ({ workspaceScope }));
   }
+  if (request.type === 'papers:project:workspace-scope-revoke' && event.source === window) {
+    void ipcRenderer.invoke('host:backpack-project:workspace-scope-revoke');
+    return;
+  }
   if (request.type === 'papers:project:copy-text' && typeof request.text === 'string') task = ipcRenderer.invoke('host:backpack-project:copy-text', request.text);
-  if (request.type === 'papers:project:as-you-go-load') task = ipcRenderer.invoke('host:backpack-project:state-load').then((state) => ({ state: JSON.stringify(state) }));
-  if (request.type === 'papers:project:as-you-go-save' && typeof request.state === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save', request.state);
+  if (request.type === 'papers:project:as-you-go-load') task = ipcRenderer.invoke('host:backpack-project:state-load', ...workspaceOriginArgs).then((state) => ({ state: JSON.stringify(state) }));
+  if (request.type === 'papers:project:as-you-go-save' && typeof request.state === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save', request.state, ...workspaceOriginArgs);
   // Versioned pair, named without any Backpack's identity: a project asks for
   // the document plus its revision, then offers a save that names the revision
   // it was built on. Papers refuses the save if that revision is stale.
-  if (request.type === 'papers:project:state-load-versioned') task = ipcRenderer.invoke('host:backpack-project:state-load-versioned').then((loaded) => ({ state: JSON.stringify((loaded as { state: unknown }).state), revision: (loaded as { revision: string }).revision }));
+  if (request.type === 'papers:project:state-load-versioned') task = ipcRenderer.invoke('host:backpack-project:state-load-versioned', ...workspaceOriginArgs).then((loaded) => ({ state: JSON.stringify((loaded as { state: unknown }).state), revision: (loaded as { revision: string }).revision }));
   // Wrapped under `stateSave`, like every other nested result here. A refused
   // save carries its own `ok: false`, and the transport envelope spreads the
   // payload over `ok: true` -- unwrapped, a stale revision would arrive at the
   // project as a failed request instead of the typed answer it is.
-  if (request.type === 'papers:project:state-save-checked' && typeof request.state === 'string' && typeof request.revision === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save-checked', request.state, request.revision).then((result) => ({ stateSave: result }));
+  if (request.type === 'papers:project:state-save-checked' && typeof request.state === 'string' && typeof request.revision === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save-checked', request.state, request.revision, ...workspaceOriginArgs).then((result) => ({ stateSave: result }));
   if (request.type === 'papers:project:as-you-go-pick-target' && (request.kind === 'file' || request.kind === 'folder')) task = ipcRenderer.invoke('host:backpack-project:pick-target', request.kind).then((selection) => ({ target: selection?.target ?? null, icon: selection?.icon ?? null }));
-  if (request.type === 'papers:project:as-you-go-shortcut-icon' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:shortcut-icon', request.actionId).then((icon) => ({ icon }));
-  if (request.type === 'papers:project:as-you-go-launch' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:launch-shortcut', request.actionId);
-  if (request.type === 'papers:project:as-you-go-reveal' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:reveal-shortcut', request.actionId);
+  if (request.type === 'papers:project:as-you-go-shortcut-icon' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:shortcut-icon', request.actionId, ...workspaceOriginArgs).then((icon) => ({ icon }));
+  if (request.type === 'papers:project:as-you-go-launch' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:launch-shortcut', request.actionId, ...workspaceOriginArgs);
+  if (request.type === 'papers:project:as-you-go-reveal' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:reveal-shortcut', request.actionId, ...workspaceOriginArgs);
   if (request.type === 'papers:project:delegate-wave') {
     // The Backpack names an OPERATION; it never names a URL, a method or a path.
     // Its identity is attached here from the page origin, exactly as projectId
@@ -413,7 +437,7 @@ window.addEventListener('message', (event) => {
     const paths = request.files.filter((file): file is File => file instanceof File).map((file) => webUtils.getPathForFile(file)).filter(Boolean);
     if (paths.length) task = ipcRenderer.invoke('host:backpack-project:resolve-dropped-targets', paths).then((targets) => ({ targets }));
   }
-  if (request.type === 'papers:project:resolve-web-link-icon' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:resolve-web-link-icon', request.url);
+  if (request.type === 'papers:project:resolve-web-link-icon' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:resolve-web-link-icon', request.url, ...workspaceOriginArgs);
   if (request.type === 'papers:project:window-candidates') {
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window candidate request contains unknown fields');
     task = ipcRenderer.invoke('papers:window-capability:list');

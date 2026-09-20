@@ -60,24 +60,26 @@ export interface HostFacade {
   requestCloseBackpackProject(senderId: number): Promise<void>;
   runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
   resolveBackpackProjectWorkspaceScope(senderId: number, projectKey: string, projectName: string): Promise<unknown>;
+  revokeBackpackProjectWorkspaceScope(senderId: number): void;
+  rebindBackpackProject(backpackId: string, newRoot: string): Promise<void>;
   copyBackpackProjectText(senderId: number, text: string): void;
-  loadBackpackProjectState(senderId: number): Promise<unknown>;
-  loadBackpackProjectStateVersioned(senderId: number): Promise<unknown>;
+  loadBackpackProjectState(senderId: number, workspaceOrigin?: string): Promise<unknown>;
+  loadBackpackProjectStateVersioned(senderId: number, workspaceOrigin?: string): Promise<unknown>;
   callDelegateWave(
     senderId: number,
     backpackId: string,
     operation: string,
     params: Record<string, unknown>,
   ): Promise<unknown>;
-  saveBackpackProjectState(senderId: number, rawState: string): Promise<void>;
-  saveBackpackProjectStateChecked(senderId: number, rawState: string, expectedRevision: string): Promise<unknown>;
+  saveBackpackProjectState(senderId: number, rawState: string, workspaceOrigin?: string): Promise<void>;
+  saveBackpackProjectStateChecked(senderId: number, rawState: string, expectedRevision: string, workspaceOrigin?: string): Promise<unknown>;
   pickBackpackProjectTarget(
     senderId: number,
     kind: 'file' | 'folder',
   ): Promise<{ target: string; icon: string | null } | null>;
-  backpackProjectShortcutIcon(senderId: number, shortcutId: string): Promise<string | null>;
-  launchBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void>;
-  revealBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void>;
+  backpackProjectShortcutIcon(senderId: number, shortcutId: string, workspaceOrigin?: string): Promise<string | null>;
+  launchBackpackProjectShortcut(senderId: number, shortcutId: string, workspaceOrigin?: string): Promise<void>;
+  revealBackpackProjectShortcut(senderId: number, shortcutId: string, workspaceOrigin?: string): Promise<void>;
   grantBackpackProjectNativeSource(senderId: number, target: string): Promise<string>;
   openBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
   revealBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
@@ -89,6 +91,7 @@ export interface HostFacade {
   resolveBackpackProjectWebLinkIcon(
     senderId: number,
     url: string,
+    workspaceOrigin?: string,
   ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }>;
 
   programCatalog(): unknown;
@@ -155,6 +158,7 @@ const backpackRemovalIdSchema = z
   .regex(/^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const backpackProjectActionIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/i);
 const backpackProjectStateSchema = z.string().min(2).max(5_000_000);
+const backpackProjectWorkspaceOriginSchema = z.string().url().max(2_048).optional();
 /** An opaque logical surface id. Never parsed for meaning. */
 const surfaceIdSchema = z.string().min(1).max(128);
 /** A sha256 hex digest, or the sentinel for "no state file yet". */
@@ -284,6 +288,15 @@ export function registerHostIpc(facade: HostFacade): void {
       backpackProjectWorkspaceNameSchema.parse(projectName),
     ),
   );
+  handle('host:backpack-project:workspace-scope-revoke', (event) =>
+    facade.revokeBackpackProjectWorkspaceScope(event.sender.id),
+  );
+  handle('host:backpack-project:rebind', (_event, backpackId, newRoot) =>
+    facade.rebindBackpackProject(
+      backpackRemovalIdSchema.parse(backpackId),
+      z.string().min(1).max(32_768).parse(newRoot),
+    ),
+  );
   // The local-service capability. `projectAllowed` because a project surface is
   // exactly who may use it, and the facade resolves that sender to its project
   // before anything is reached. The payload is passed through untyped here and
@@ -315,37 +328,38 @@ export function registerHostIpc(facade: HostFacade): void {
 
   // Phase 1A: the sender is the authority on which project a request is for.
   // These deliberately no longer resolve against application-global state.
-  handle('host:backpack-project:state-load', (event) =>
-    facade.loadBackpackProjectState(event.sender.id),
+  handle('host:backpack-project:state-load', (event, workspaceOrigin) =>
+    facade.loadBackpackProjectState(event.sender.id, backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
-  handle('host:backpack-project:state-save', (event, state) =>
-    facade.saveBackpackProjectState(event.sender.id, backpackProjectStateSchema.parse(state)),
+  handle('host:backpack-project:state-save', (event, state, workspaceOrigin) =>
+    facade.saveBackpackProjectState(event.sender.id, backpackProjectStateSchema.parse(state), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
   // Versioned pair. `state-load-versioned` returns the document plus the
   // revision observed, and `state-save-checked` refuses a save built on a
   // revision that is no longer current. The unversioned pair above remains for
   // the single-writer path until every surface has moved across.
-  handle('host:backpack-project:state-load-versioned', (event) =>
-    facade.loadBackpackProjectStateVersioned(event.sender.id),
+  handle('host:backpack-project:state-load-versioned', (event, workspaceOrigin) =>
+    facade.loadBackpackProjectStateVersioned(event.sender.id, backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
-  handle('host:backpack-project:state-save-checked', (event, state, revision) =>
+  handle('host:backpack-project:state-save-checked', (event, state, revision, workspaceOrigin) =>
     facade.saveBackpackProjectStateChecked(
       event.sender.id,
       backpackProjectStateSchema.parse(state),
       backpackProjectRevisionSchema.parse(revision),
+      backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
     ),
   );
   handle('host:backpack-project:pick-target', (event, kind) =>
     facade.pickBackpackProjectTarget(event.sender.id, z.enum(['file', 'folder']).parse(kind)),
   );
-  handle('host:backpack-project:shortcut-icon', (event, shortcutId) =>
-    facade.backpackProjectShortcutIcon(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId)),
+  handle('host:backpack-project:shortcut-icon', (event, shortcutId, workspaceOrigin) =>
+    facade.backpackProjectShortcutIcon(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
-  handle('host:backpack-project:launch-shortcut', (event, shortcutId) =>
-    facade.launchBackpackProjectShortcut(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId)),
+  handle('host:backpack-project:launch-shortcut', (event, shortcutId, workspaceOrigin) =>
+    facade.launchBackpackProjectShortcut(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
-  handle('host:backpack-project:reveal-shortcut', (event, shortcutId) =>
-    facade.revealBackpackProjectShortcut(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId)),
+  handle('host:backpack-project:reveal-shortcut', (event, shortcutId, workspaceOrigin) =>
+    facade.revealBackpackProjectShortcut(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
   handle('host:backpack-project:native-source-grant', (event, target) =>
     facade.grantBackpackProjectNativeSource(
@@ -371,8 +385,8 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:resolve-dropped-targets', (event, paths) =>
     facade.resolveBackpackProjectDroppedTargets(event.sender.id, backpackProjectDroppedPathsSchema.parse(paths)),
   );
-  handle('host:backpack-project:resolve-web-link-icon', (event, url) =>
-    facade.resolveBackpackProjectWebLinkIcon(event.sender.id, backpackProjectWebUrlSchema.parse(url)),
+  handle('host:backpack-project:resolve-web-link-icon', (event, url, workspaceOrigin) =>
+    facade.resolveBackpackProjectWebLinkIcon(event.sender.id, backpackProjectWebUrlSchema.parse(url), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
   ipcMain.on('host:backpack-project:request-close', (event) => {
     void facade.waitForBackpackProjectAuthority?.(event.sender.id).then(() => {

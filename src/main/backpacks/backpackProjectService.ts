@@ -85,7 +85,8 @@ export interface LoadedBackpackProjectState {
  */
 export type SaveStateResult =
   | { ok: true; revision: BackpackProjectStateRevision }
-  | { ok: false; code: 'STALE_REVISION'; revision: BackpackProjectStateRevision };
+  | { ok: false; code: 'STALE_REVISION'; revision: BackpackProjectStateRevision }
+  | { ok: false; code: 'SCOPE_VIOLATION'; revision: BackpackProjectStateRevision };
 
 /** Hash of the exact file bytes. */
 function revisionOfBytes(bytes: string): BackpackProjectStateRevision {
@@ -171,6 +172,63 @@ function isAllowedShortcutTarget(target: string): boolean {
   } catch {
     return false;
   }
+}
+
+function workspaceScopeGroupIds(state: Record<string, unknown>, rootGroupId: string): Set<string> {
+  const groups = Array.isArray(state['groups']) ? state['groups'].filter(isRecord) : [];
+  const ids = new Set<string>([rootGroupId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const group of groups) {
+      if (typeof group['id'] !== 'string' || typeof group['parentId'] !== 'string') continue;
+      if (ids.has(group['parentId']) && !ids.has(group['id'])) {
+        ids.add(group['id']);
+        changed = true;
+      }
+    }
+  }
+  return ids;
+}
+
+function scopeBoundaryProjection(state: Record<string, unknown>, rootGroupId: string): string {
+  const groups = Array.isArray(state['groups']) ? state['groups'].filter(isRecord) : [];
+  const shortcuts = Array.isArray(state['shortcuts']) ? state['shortcuts'].filter(isRecord) : [];
+  const windowLayouts = Array.isArray(state['windowLayouts']) ? state['windowLayouts'].filter(isRecord) : [];
+  const scopeIds = workspaceScopeGroupIds(state, rootGroupId);
+  const groupInside = (groupId: unknown): boolean => typeof groupId === 'string' && scopeIds.has(groupId);
+  const outsideShortcuts = shortcuts.filter((shortcut) => {
+    const placements = Array.isArray(shortcut['placements']) ? shortcut['placements'].filter(isRecord) : [];
+    return placements.some((placement) => placement['bin'] === true || !groupInside(placement['parentId']));
+  });
+  const outsideLayouts = windowLayouts.filter((layout) => layout['bin'] || !groupInside(layout['parentId']));
+  const topLevel = Object.fromEntries(Object.entries(state).filter(([key]) => !['groups', 'shortcuts', 'windowLayouts', 'view'].includes(key)));
+  const view = isRecord(state['view']) ? JSON.parse(JSON.stringify(state['view'])) as Record<string, unknown> : null;
+  if (view) {
+    for (const key of ['currentGroupId', 'selectedItemIds', 'expandedGroupIds', 'graphExpandedGroupIds', 'binMode', 'surfaceLocations', 'toolbarPositions', 'preferences', 'trailExpandedByContext']) delete view[key];
+    for (const key of ['graphPositions', 'graphRestPositions']) {
+      const contexts = isRecord(view[key]) ? { ...(view[key] as Record<string, unknown>) } : {};
+      delete contexts[rootGroupId];
+      view[key] = contexts;
+    }
+  }
+  return JSON.stringify({
+    topLevel,
+    groups: groups.filter((group) => typeof group['id'] !== 'string' || !scopeIds.has(group['id'])),
+    shortcuts: outsideShortcuts,
+    windowLayouts: outsideLayouts,
+    view,
+  });
+}
+
+function scopedStatePreservesBoundary(previous: BackpackProjectState, candidate: BackpackProjectState, rootGroupId: string): boolean {
+  const previousRecord = previous as unknown as Record<string, unknown>;
+  const candidateRecord = candidate as unknown as Record<string, unknown>;
+  const previousRoot = Array.isArray(previous.groups) ? previous.groups.find((group) => isRecord(group) && group['id'] === rootGroupId) : null;
+  const candidateRoot = Array.isArray(candidate.groups) ? candidate.groups.find((group) => isRecord(group) && group['id'] === rootGroupId) : null;
+  if (!isRecord(previousRoot) || !isRecord(candidateRoot)) return false;
+  if (candidateRoot['parentId'] !== 'root' || candidateRoot['bin'] === true) return false;
+  return scopeBoundaryProjection(previousRecord, rootGroupId) === scopeBoundaryProjection(candidateRecord, rootGroupId);
 }
 
 function safeProjectPath(root: string, requested: string): string {
@@ -337,6 +395,62 @@ export class BackpackProjectService {
   async root(backpackId: string): Promise<string | null> {
     const manifest = await this.manifest(backpackId);
     return manifest?.root ?? null;
+  }
+
+  async isProtectedRoot(backpackId: string): Promise<boolean> {
+    const manifest = await this.manifest(backpackId);
+    const policy = isRecord(manifest?.folderPolicy) ? manifest.folderPolicy : null;
+    return policy?.['deletion'] === 'protected-root';
+  }
+
+  /** Move the binding without changing the project's stable identity. */
+  async rebind(backpackId: string, requestedRoot: string): Promise<void> {
+    if (!path.isAbsolute(requestedRoot)) throw new Error('The Backpack project root must be absolute.');
+    const root = path.resolve(requestedRoot);
+    let manifest: Record<string, unknown>;
+    try {
+      await fs.realpath(root);
+      manifest = JSON.parse(await fs.readFile(path.join(root, 'project.json'), 'utf8')) as Record<string, unknown>;
+    } catch {
+      throw new Error('The new Backpack project root is not valid.');
+    }
+    if (manifest['schemaVersion'] !== 1 || manifest['backpackId'] !== backpackId || typeof manifest['entry'] !== 'string') {
+      throw new Error('The new Backpack project root has a different identity.');
+    }
+    const entry = manifest['entry'].replace(/\\/g, '/');
+    safeProjectPath(root, entry);
+    let raw: string;
+    try {
+      raw = await fs.readFile(this.bindingsFile, 'utf8');
+    } catch {
+      throw new Error('Backpack project bindings could not be read.');
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed) || parsed['schemaVersion'] !== 1 || !isRecord(parsed['projects'])) {
+      throw new Error('Backpack project bindings could not be read.');
+    }
+    const projects = parsed['projects'] as Record<string, unknown>;
+    if (!isRecord(projects[backpackId])) throw new Error('Backpack project is not bound on this machine.');
+    projects[backpackId] = { ...(projects[backpackId] as Record<string, unknown>), root };
+    const tempPath = `${this.bindingsFile}.tmp-${process.pid}-${randomUUID()}`;
+    try {
+      await fs.writeFile(tempPath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+      await replaceFileAtomically(tempPath, this.bindingsFile, this.replaceOptions);
+    } finally {
+      await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    }
+  }
+
+  async assertShortcutInScope(backpackId: string, shortcutId: string, rootGroupId: string): Promise<void> {
+    const state = await this.loadState(backpackId);
+    const scopeIds = workspaceScopeGroupIds(state as unknown as Record<string, unknown>, rootGroupId);
+    const shortcut = state?.shortcuts.find((candidate) => isRecord(candidate) && candidate['id'] === shortcutId);
+    const placements = isRecord(shortcut) && Array.isArray(shortcut['placements'])
+      ? shortcut['placements'].filter(isRecord)
+      : [];
+    if (!placements.some((placement) => placement['bin'] !== true && typeof placement['parentId'] === 'string' && scopeIds.has(placement['parentId']))) {
+      throw new Error('That shortcut is outside this project folder.');
+    }
   }
 
   async open(backpackId: string): Promise<OpenBackpackProject | null> {
@@ -553,11 +667,12 @@ export class BackpackProjectService {
     backpackId: string,
     rawState: string,
     expectedRevision?: BackpackProjectStateRevision,
+    scopeRootId?: string,
   ): Promise<SaveStateResult> {
     const previous = this.stateSaveQueues.get(backpackId) ?? Promise.resolve();
     const operation = previous
       .catch(() => undefined)
-      .then(() => this.saveStateNow(backpackId, rawState, expectedRevision));
+      .then(() => this.saveStateNow(backpackId, rawState, expectedRevision, scopeRootId));
     this.stateSaveQueues.set(backpackId, operation);
     try {
       return await operation;
@@ -572,6 +687,7 @@ export class BackpackProjectService {
     backpackId: string,
     rawState: string,
     expectedRevision?: BackpackProjectStateRevision,
+    scopeRootId?: string,
   ): Promise<SaveStateResult> {
     if (rawState.length > 5_000_000) throw new Error('Backpack project state is too large.');
     const manifest = await this.manifest(backpackId);
@@ -595,9 +711,30 @@ export class BackpackProjectService {
         throw new Error('Backpack project shortcut targets must be absolute paths or http(s) URLs.');
       }
     }
-    if (expectedRevision !== undefined) {
-      const current = await this.currentRevision(manifest.root);
-      if (current !== expectedRevision) return { ok: false, code: 'STALE_REVISION', revision: current };
+    let currentState: BackpackProjectState | null = null;
+    if (expectedRevision !== undefined || scopeRootId !== undefined) {
+      let currentBytes: string;
+      try {
+        currentBytes = await fs.readFile(path.join(manifest.root, 'state.json'), 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Backpack project state could not be read.');
+        currentBytes = '';
+      }
+      const current = currentBytes ? revisionOfBytes(currentBytes) : ABSENT_STATE_REVISION;
+      if (expectedRevision !== undefined && current !== expectedRevision) {
+        return { ok: false, code: 'STALE_REVISION', revision: current };
+      }
+      if (scopeRootId !== undefined) {
+        if (!currentBytes) return { ok: false, code: 'SCOPE_VIOLATION', revision: current };
+        try {
+          currentState = JSON.parse(currentBytes) as BackpackProjectState;
+        } catch {
+          throw new Error('Backpack project state could not be read.');
+        }
+        if (!scopedStatePreservesBoundary(currentState, parsed, scopeRootId)) {
+          return { ok: false, code: 'SCOPE_VIOLATION', revision: current };
+        }
+      }
     }
     const statePath = path.join(manifest.root, 'state.json');
     const tempPath = `${statePath}.tmp-${process.pid}-${randomUUID()}`;
