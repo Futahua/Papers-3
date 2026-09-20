@@ -86,15 +86,14 @@ function harness(overrides: Partial<GlobalInvokeDependencies> = {}) {
 }
 
 describe('globalInvoke registration', () => {
-  it('registers exactly the two requested chords and nothing else', () => {
+  it('registers only Alt+A; Alt+Shift+A belongs to the Windows shortcut', () => {
     const { shortcut, deps } = harness();
     const report = createGlobalInvoke(deps).register();
 
     expect(report.ok).toBe(true);
-    expect(report.registered).toEqual(['Alt+Shift+A', 'Alt+A']);
-    expect(shortcut.order).toEqual(['Alt+Shift+A', 'Alt+A']);
-    // Nothing beyond the two chords may be captured while Papers merely runs.
-    expect([...shortcut.held].sort()).toEqual(['Alt+A', 'Alt+Shift+A']);
+    expect(report.registered).toEqual(['Alt+A']);
+    expect(shortcut.order).toEqual(['Alt+A']);
+    expect([...shortcut.held]).toEqual(['Alt+A']);
   });
 
   it('reports a chord another application already owns as an explicit refusal naming the chord', () => {
@@ -113,9 +112,8 @@ describe('globalInvoke registration', () => {
     expect(failure?.reason).toBe('already-registered-by-another-application');
     // The creator must be able to see which chord, in the chord's own words.
     expect(failure?.message).toContain('Alt+A');
-    // The other chord still works: one failure must not take the feature down.
-    expect(report.registered).toEqual(['Alt+Shift+A']);
-    expect(shortcut.held.has('Alt+Shift+A')).toBe(true);
+    expect(report.registered).toEqual([]);
+    expect(shortcut.held.has('Alt+Shift+A')).toBe(false);
   });
 
   it('never falls back to a different chord when one is taken', () => {
@@ -128,11 +126,8 @@ describe('globalInvoke registration', () => {
     };
     createGlobalInvoke(deps).register();
 
-    // The exact requested set only. No substituted chord may appear.
-    for (const held of shortcut.held) {
-      expect(['Alt+Shift+A', 'Alt+A']).toContain(held);
-    }
-    expect(shortcut.order).toEqual(['Alt+Shift+A', 'Alt+A']);
+    expect([...shortcut.held]).toEqual([]);
+    expect(shortcut.order).toEqual(['Alt+A']);
   });
 
   it('turns an unparseable accelerator into a named refusal instead of throwing', () => {
@@ -175,7 +170,7 @@ describe('globalInvoke release', () => {
     const { shortcut, deps } = harness();
     const invoke = createGlobalInvoke(deps);
     invoke.register();
-    expect(shortcut.held.size).toBe(2);
+    expect(shortcut.held.size).toBe(1);
 
     invoke.release();
     expect(shortcut.held.size).toBe(0);
@@ -204,15 +199,11 @@ describe('globalInvoke release', () => {
 });
 
 describe('globalInvoke behaviour', () => {
-  it('bring-to-front chord brings the window forward and opens nothing', () => {
-    const { shortcut, brought, invoked, deps } = harness();
+  it('does not register an Alt+Shift+A callback; Windows launches Papers.lnk', () => {
+    const { shortcut, deps } = harness();
     createGlobalInvoke(deps).register();
 
-    shortcut.callbacks.get('Alt+Shift+A')?.();
-
-    expect(brought).toHaveLength(1);
-    expect(brought[0]?.windowId).toBe(7);
-    expect(invoked).toHaveLength(0);
+    expect(shortcut.callbacks.get('Alt+Shift+A')).toBeUndefined();
   });
 
   it('THE CORRECTION: the invoke chord opens the overlay and NEVER brings Papers forward', () => {
@@ -305,69 +296,18 @@ describe('globalInvoke behaviour', () => {
     expect(brought).toHaveLength(0);
   });
 
-  it('does nothing when no window exists to bring forward', async () => {
-    const calls: GlobalInvokeReport[] = [];
-    const { shortcut, brought, deps } = harness({
-      currentWindowId: () => null,
-      report: (r) => calls.push(r),
-    });
-    createGlobalInvoke(deps).register();
-
-    shortcut.callbacks.get('Alt+Shift+A')?.();
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(brought).toHaveLength(0);
-    expect(calls.at(-1)?.outcome).toBe('window-unavailable');
-  });
-
-  it('launches the configured Papers shortcut when no window is available', async () => {
-    const calls: GlobalInvokeReport[] = [];
-    const launched: string[] = [];
-    const { shortcut, deps } = harness({
-      currentWindowId: () => null,
-      launchIfUnavailable: async () => {
-        launched.push('Papers.lnk');
-        return { ok: true, detail: 'launched Papers from Papers.lnk' };
-      },
-      report: (r) => calls.push(r),
-    });
-    createGlobalInvoke(deps).register();
-
-    shortcut.callbacks.get('Alt+Shift+A')?.();
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(launched).toEqual(['Papers.lnk']);
-    expect(calls.at(-1)).toEqual({
-      chord: 'bringToFront',
-      outcome: 'launched',
-      detail: 'launched Papers from Papers.lnk',
-    });
-  });
-
-  it('never minimizes or toggles when Alt+Shift+A is pressed', () => {
-    const { shortcut, brought, deps } = harness();
-    createGlobalInvoke(deps).register();
-
-    shortcut.callbacks.get('Alt+Shift+A')?.();
-
-    expect(brought).toHaveLength(1);
-    expect(brought[0]?.windowId).toBe(7);
-  });
 });
 
 describe('globalInvoke defaults', () => {
   it('defaults are exactly the two chords the creator asked for', () => {
-    expect(DEFAULT_INVOKE_ACCELERATORS).toEqual({
-      invoke: 'Alt+A',
-      bringToFront: 'Alt+Shift+A',
-    });
+    expect(DEFAULT_INVOKE_ACCELERATORS).toEqual({ invoke: 'Alt+A' });
   });
 
   it('chords come from the injected configuration, not from hardcoded literals at the call site', () => {
     const { shortcut, deps } = harness({
-      accelerators: { invoke: 'Ctrl+Alt+J', bringToFront: 'Ctrl+Alt+K' },
+      accelerators: { invoke: 'Ctrl+Alt+J' },
     });
     const report = createGlobalInvoke(deps).register();
-    expect(report.registered).toEqual(['Ctrl+Alt+K', 'Ctrl+Alt+J']);
+    expect(report.registered).toEqual(['Ctrl+Alt+J']);
   });
 });

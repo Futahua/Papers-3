@@ -402,11 +402,10 @@ function bindOwnedProjectSurface(
 let hostView: WebContentsView | null = null;
 
 /**
- * The two system-wide invocation chords. Application-level, not per-window:
- * there is one keyboard claim for the whole process, and a second Papers
- * instance cannot make a second claim because Electron holds the chords
- * process-wide (and `second-instance` already routes a second launch into the
- * running window).
+ * The Papers-owned system-wide invocation chord. Alt+Shift+A is deliberately
+ * owned by the Windows Papers.lnk shortcut so it also works while this process
+ * is stopped; launching the shortcut routes through `second-instance` when a
+ * Papers process already exists.
  */
 let globalInvoke: GlobalInvoke | null = null;
 /** The outcome of the one registration attempt, kept so the control snapshot
@@ -437,14 +436,12 @@ export const TEST_OPEN_COMMAND_SURFACE_KEY = '__papersTestOpenCommandSurface';
 // the orphaned process so the next launch can start cleanly.
 app.on('second-instance', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
-    mainWindow.focus();
+    bringWindowToFront(mainWindow);
     return;
   }
   for (const context of papersWindows.all()) {
     if (!context.owned.window.isDestroyed()) {
-      context.owned.window.show();
-      context.owned.window.focus();
+      bringWindowToFront(context.owned.window);
       return;
     }
   }
@@ -2555,7 +2552,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // ------------------------------------------------- global invocation chords
   // Two system-wide chords, live while Papers runs, working from inside any
   // other application:
-  //   Alt+Shift+A  bring Papers to the front.
+  //   Alt+Shift+A  is owned by the Windows Papers.lnk shortcut and brings
+  //                Papers to the front through the single-instance path.
   //   Alt+A        pop the command surface OVER whatever the creator is doing.
   //                Papers does NOT come forward - this is a launcher, not a
   //                window switcher. The application they came from keeps its
@@ -2837,13 +2835,6 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       return live ?? null;
     },
     bringToFront: bringPapersWindowForward,
-    launchIfUnavailable: async () => {
-      const shortcutPath = 'C:\\Users\\admin\\Desktop\\Papers.lnk';
-      const error = await shell.openPath(shortcutPath);
-      return error
-        ? { ok: false, detail: `could not launch Papers from ${shortcutPath}: ${error}` }
-        : { ok: true, detail: `launched Papers from ${shortcutPath}` };
-    },
     resolveCommandSurface: () => {
       const windowId = papersWindows.windowIds.find((id) => {
         const owned = papersWindows.get(id)?.owned.window;
@@ -2873,7 +2864,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         known: report.detail,
         intact: 'Nothing was changed, and no other application was affected. Papers did not come forward.',
         retryUseful: true,
-        inspect: 'Shortcuts: bring Papers forward is Alt+Shift+A, open the command surface is Alt+A.',
+        inspect: 'Shortcuts: bring Papers forward is the Windows Papers.lnk hotkey Alt+Shift+A; open the command surface is Alt+A.',
         recover: report.outcome === 'window-unavailable'
           ? 'Open a Papers window, then press the shortcut again.'
           : 'Open a Backpack in Papers, then press the shortcut again.',

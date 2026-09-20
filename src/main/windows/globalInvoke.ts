@@ -33,7 +33,6 @@
  * `GlobalInvokeDependencies.accelerators`. */
 export const DEFAULT_INVOKE_ACCELERATORS: GlobalInvokeAccelerators = {
   invoke: 'Alt+A',
-  bringToFront: 'Alt+Shift+A',
 };
 
 export interface GlobalInvokeAccelerators {
@@ -48,7 +47,8 @@ export interface GlobalInvokeAccelerators {
    */
   invoke: string;
   /** Bring Papers to the front. Opens nothing. */
-  bringToFront: string;
+  /** Retained for compatibility with older injected settings; not registered. */
+  bringToFront?: string;
 }
 
 /** Why the overlay closed. It decides whether focus is handed back. */
@@ -383,7 +383,9 @@ export function createGlobalInvoke(dependencies: GlobalInvokeDependencies): Glob
       const report: GlobalInvokeRegistrationReport = { ok: true, registered: [], failures: [] };
       // Registration is attempted for both chords independently: one being taken
       // must not disarm the other.
-      registerOne('bringToFront', accelerators.bringToFront, onBringToFront, report);
+      // Alt+Shift+A belongs to the Windows Papers.lnk shortcut. Keeping it out
+      // of Electron is what lets the same chord launch Papers when this process
+      // is not running; a process-level globalShortcut cannot survive exit.
       registerOne('invoke', accelerators.invoke, onInvoke, report);
       report.ok = report.failures.length === 0;
       return report;
