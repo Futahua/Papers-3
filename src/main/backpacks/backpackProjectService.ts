@@ -524,7 +524,7 @@ async function containedPublicPath(root: string, requested: string): Promise<str
 }
 
 export class BackpackProjectService {
-  private readonly stateSaveQueues = new Map<string, Promise<SaveStateResult>>();
+  private readonly stateQueues = new Map<string, Promise<unknown>>();
   private readonly nativeSourceGrants = new Map<string, NativeSourceGrant>();
 
   constructor(
@@ -830,51 +830,47 @@ export class BackpackProjectService {
    * so the first save still has something exact to compare against.
    */
   async loadStateVersioned(backpackId: string, scopeRootId?: string): Promise<LoadedBackpackProjectState> {
-    const manifest = await this.manifest(backpackId);
-    if (!manifest) throw new Error('Backpack project is not bound on this machine.');
-    while (true) {
-      const pending = this.stateSaveQueues.get(backpackId);
-      if (!pending) break;
-      await pending.catch(() => undefined);
-      if (this.stateSaveQueues.get(backpackId) === pending) break;
-    }
-    const statePath = path.join(manifest.root, 'state.json');
-    let bytes: string;
-    try {
-      bytes = await fs.readFile(statePath, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Backpack project state could not be read.');
-      const actions = await this.actions(backpackId);
-      const state: LoadedBackpackProjectState = {
-        revision: ABSENT_STATE_REVISION,
-        state: {
-          schemaVersion: 1,
-          groups: [],
-          shortcuts: actions.map((action) => ({
-            id: `shortcut-${action.id}`,
-            parentId: 'root',
-            name: action.id === 'clips' ? 'CLIPS' : action.id === 'sloptop-mode' ? 'SLOPTOP MODE' : action.id === 'slop-engine' ? 'slop_engine' : action.id,
-            description: '',
-            target: action.target,
-            icon: null,
-          })),
-        },
-      };
-      return scopeRootId === undefined ? state : { ...state, state: scopedStateProjection(state.state, scopeRootId) };
-    }
-    let parsed: BackpackProjectState;
-    try {
-      parsed = JSON.parse(bytes) as BackpackProjectState;
-      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups) || !Array.isArray(parsed.shortcuts)) {
-        throw new Error('invalid state');
+    return this.enqueueStateOperation(backpackId, async () => {
+      const manifest = await this.manifest(backpackId);
+      if (!manifest) throw new Error('Backpack project is not bound on this machine.');
+      const statePath = path.join(manifest.root, 'state.json');
+      let bytes: string;
+      try {
+        bytes = await fs.readFile(statePath, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Backpack project state could not be read.');
+        const actions = await this.actions(backpackId);
+        const state: LoadedBackpackProjectState = {
+          revision: ABSENT_STATE_REVISION,
+          state: {
+            schemaVersion: 1,
+            groups: [],
+            shortcuts: actions.map((action) => ({
+              id: `shortcut-${action.id}`,
+              parentId: 'root',
+              name: action.id === 'clips' ? 'CLIPS' : action.id === 'sloptop-mode' ? 'SLOPTOP MODE' : action.id === 'slop-engine' ? 'slop_engine' : action.id,
+              description: '',
+              target: action.target,
+              icon: null,
+            })),
+          },
+        };
+        return scopeRootId === undefined ? state : { ...state, state: scopedStateProjection(state.state, scopeRootId) };
       }
-    } catch {
-      throw new Error('Backpack project state could not be read.');
-    }
-    return {
-      state: scopeRootId === undefined ? parsed : scopedStateProjection(parsed, scopeRootId),
-      revision: revisionOfBytes(bytes),
-    };
+      let parsed: BackpackProjectState;
+      try {
+        parsed = JSON.parse(bytes) as BackpackProjectState;
+        if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups) || !Array.isArray(parsed.shortcuts)) {
+          throw new Error('invalid state');
+        }
+      } catch {
+        throw new Error('Backpack project state could not be read.');
+      }
+      return {
+        state: scopeRootId === undefined ? parsed : scopedStateProjection(parsed, scopeRootId),
+        revision: revisionOfBytes(bytes),
+      };
+    });
   }
 
   /** The revision currently on disk, read inside the save queue so a
@@ -906,16 +902,32 @@ export class BackpackProjectService {
     expectedRevision?: BackpackProjectStateRevision,
     scopeRootId?: string,
   ): Promise<SaveStateResult> {
-    const previous = this.stateSaveQueues.get(backpackId) ?? Promise.resolve();
-    const operation = previous
+    return this.enqueueStateOperation(
+      backpackId,
+      () => this.saveStateNow(backpackId, rawState, expectedRevision, scopeRootId),
+    );
+  }
+
+  /**
+   * Serialize every state read and write for one Backpack. A read waits for
+   * operations already ahead of it, but later writes wait behind the read;
+   * this prevents a live writer from moving the queue tail forever.
+   */
+  private async enqueueStateOperation<T>(backpackId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.stateQueues.get(backpackId) ?? Promise.resolve();
+    const current = previous
       .catch(() => undefined)
-      .then(() => this.saveStateNow(backpackId, rawState, expectedRevision, scopeRootId));
-    this.stateSaveQueues.set(backpackId, operation);
+      .then(operation);
+    const tail = current.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.stateQueues.set(backpackId, tail);
     try {
-      return await operation;
+      return await current;
     } finally {
-      if (this.stateSaveQueues.get(backpackId) === operation) {
-        this.stateSaveQueues.delete(backpackId);
+      if (this.stateQueues.get(backpackId) === tail) {
+        this.stateQueues.delete(backpackId);
       }
     }
   }

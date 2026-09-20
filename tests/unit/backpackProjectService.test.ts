@@ -225,7 +225,7 @@ describe('BackpackProjectService', () => {
     await saving;
   });
 
-  it('018V6R2: load drains appended same-project saves before reading state', async () => {
+  it('018V6R2: load reads at its queue position before appended same-project saves', async () => {
     await writeProject();
     const states = [
       { schemaVersion: 1 as const, groups: [{ id: 'a1', parentId: 'root', name: 'A1' }], shortcuts: [] },
@@ -241,14 +241,10 @@ describe('BackpackProjectService', () => {
     const loading = service.loadState(backpackId);
     const savingA2 = service.saveState(backpackId, JSON.stringify(states[1]));
     releases[0]!();
+    await expect(loading).resolves.toEqual(states[0]);
     await vi.waitFor(() => expect(rename).toHaveBeenCalledTimes(2));
-    let loaded: BackpackProjectState | null | undefined;
-    void loading.then((state) => { loaded = state; });
-    await Promise.resolve();
-    expect(loaded).toBeUndefined();
     releases[1]!();
     await Promise.all([savingA1, savingA2]);
-    await expect(loading).resolves.toEqual(states[1]);
   });
 
   it('0A: a save built on a stale revision is refused instead of overwriting', async () => {
