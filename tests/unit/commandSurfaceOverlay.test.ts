@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
   COMMAND_SURFACE_MARKER,
@@ -217,58 +217,41 @@ describe('commandSurfaceOverlay focus return', () => {
     expect(h.closedReasons).toEqual(['dismissed']);
   });
 
-  it('hands focus back when an action is run, so the app keeps its place', async () => {
+  it('does not restore the old foreground after an action has run', async () => {
     const h = harness();
     const overlay = createCommandSurfaceOverlay(h.deps);
     await overlay.open();
     await overlay.close('action-run');
 
-    expect(h.setForegroundCalls).toHaveLength(1);
+    expect(h.setForegroundCalls).toHaveLength(0);
     expect(h.closedReasons).toEqual(['action-run']);
   });
 
-  it('does NOT steal focus back when the creator moved on by themselves', async () => {
-    vi.useFakeTimers();
-    try {
-      const h = harness();
-      const overlay = createCommandSurfaceOverlay(h.deps);
-      await overlay.open();
-      h.created.handlers.get('focus')?.();
-      vi.advanceTimersByTime(250);
-      // The overlay loses focus to something the creator chose.
-      h.created.handlers.get('blur')?.();
+  it('does not dismiss on native blur; only an explicit close command ends it', async () => {
+    const h = harness();
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    await overlay.open();
 
-      expect(h.setForegroundCalls).toHaveLength(0);
-      expect(h.closedReasons).toEqual(['focus-lost']);
-    } finally {
-      vi.useRealTimers();
-    }
+    h.created.handlers.get('blur')?.();
+    expect(overlay.isOpen()).toBe(true);
+    expect(h.closedReasons).toEqual([]);
+
+    await overlay.close('dismissed');
+    expect(overlay.isOpen()).toBe(false);
+    expect(h.closedReasons).toEqual(['dismissed']);
   });
 
-  it('ignores a transient startup blur before dismissing on settled focus loss', async () => {
-    vi.useFakeTimers();
-    try {
-      const h = harness();
-      const overlay = createCommandSurfaceOverlay(h.deps);
-      await overlay.open();
+  it('accepts an explicit dismissal only from the active overlay sender', async () => {
+    const h = harness();
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    await overlay.open();
 
-      h.created.handlers.get('blur')?.();
-      expect(overlay.isOpen()).toBe(true);
-      expect(h.closedReasons).toEqual([]);
+    await expect(overlay.dismissFromSender(9999)).rejects.toThrow('inactive surface');
+    expect(overlay.isOpen()).toBe(true);
 
-      vi.advanceTimersByTime(250);
-      h.created.handlers.get('blur')?.();
-      expect(overlay.isOpen()).toBe(true);
-      expect(h.closedReasons).toEqual([]);
-
-      h.created.handlers.get('focus')?.();
-      vi.advanceTimersByTime(250);
-      h.created.handlers.get('blur')?.();
-      expect(overlay.isOpen()).toBe(false);
-      expect(h.closedReasons).toEqual(['focus-lost']);
-    } finally {
-      vi.useRealTimers();
-    }
+    await overlay.dismissFromSender(4242);
+    expect(overlay.isOpen()).toBe(false);
+    expect(h.closedReasons).toEqual(['action-run']);
   });
 
   it('says so when the application that was in front has closed', async () => {

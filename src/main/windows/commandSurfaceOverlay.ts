@@ -41,10 +41,6 @@ export const COMMAND_SURFACE_MODE = 'command-surface';
 /** The overlay is a launcher: small, near the top of the display. */
 export const COMMAND_SURFACE_WIDTH = 640;
 export const COMMAND_SURFACE_HEIGHT = 220;
-/** Electron may report the show/focus handoff as a transient blur while the
- * renderer is still becoming the foreground window. It is not a user dismiss.
- */
-export const COMMAND_SURFACE_BLUR_GRACE_MS = 250;
 /** Fraction of the work area height used as the overlay's top offset, so a
  * launcher sits in the upper third rather than dead centre over content. */
 export const COMMAND_SURFACE_TOP_FRACTION = 0.22;
@@ -66,7 +62,7 @@ export interface OverlayNativeWindow {
   isVisible(): boolean;
   isFocused(): boolean;
   destroy(): void;
-  on(event: 'blur' | 'focus' | 'closed', callback: () => void): void;
+  on(event: 'closed', callback: () => void): void;
   loadURL(url: string): Promise<void>;
 }
 
@@ -126,22 +122,16 @@ export interface CommandSurfaceOverlayDependencies {
   onClosed?(reason: OverlayCloseReason): void;
   /** Reports what happened to focus, so a failure is visible rather than felt. */
   report?(report: { outcome: 'focus-restored' | 'focus-not-restored' | 'focus-unknown'; detail: string }): void;
-  /**
-   * Whether losing focus dismisses the overlay. Defaults to true, which is the
-   * creator's behaviour: they moved on, so the launcher goes away.
-   *
-   * Set false ONLY by an automated test. On an unattended machine nothing holds
-   * focus, so the overlay blurs and closes the instant it opens - correct host
-   * behaviour, and impossible to observe. The real launcher stays up because the
-   * creator is looking at it and typing in it. Nothing else changes: it still
-   * shows, still focuses, still delivers.
-   */
-  dismissOnBlur?: boolean;
+  ipcMain?: {
+    handle(channel: string, handler: (event: { sender: { id: number } }, ...args: unknown[]) => unknown): void;
+    removeHandler(channel: string): void;
+  };
 }
 
 export interface CommandSurfaceOverlaySession {
   open(): Promise<{ ok: boolean; detail: string }>;
   close(reason: OverlayCloseReason): Promise<void>;
+  dismissFromSender(senderId: number): Promise<void>;
   isOpen(): boolean;
   /** Exposed for the wiring and for tests. */
   registerIpc(): void;
@@ -169,10 +159,7 @@ export function createCommandSurfaceOverlay(
    * be read. */
   let previousForeground: NativeWindowHandle | null = null;
   let closing = false;
-  let ipcRegistered = false;
-  let blurDismissArmed = false;
-  let blurDismissTimer: ReturnType<typeof setTimeout> | null = null;
-  const ipcHandlers: Array<{ channel: string; handler: (...args: unknown[]) => void }> = [];
+  let dismissIpcRegistered = false;
 
   const place = (): { x: number; y: number; width: number; height: number } => {
     const area = dependencies.placeOn?.() ?? { x: 0, y: 0, width: 1920, height: 1080 };
@@ -245,11 +232,6 @@ export function createCommandSurfaceOverlay(
   const teardown = async (reason: OverlayCloseReason): Promise<void> => {
     if (closing) return;
     closing = true;
-    if (blurDismissTimer !== null) {
-      clearTimeout(blurDismissTimer);
-      blurDismissTimer = null;
-    }
-    blurDismissArmed = false;
     const doomed = window;
     window = null;
     projectId = null;
@@ -259,29 +241,14 @@ export function createCommandSurfaceOverlay(
     } catch {
       /* a destroyed window is the desired end state */
     }
-    if (reason !== 'focus-lost') {
+    if (reason === 'dismissed') {
       // Hand focus back BEFORE the caller continues, so the application the
       // creator came from owns the keyboard again by the time anything else
       // happens.
       await restoreFocus();
-    } else {
-      previousForeground = null; // the creator moved on; do not steal focus back
-    }
+    } else previousForeground = null;
     dependencies.onClosed?.(reason);
     closing = false;
-  };
-
-  const scheduleBlurDismissalAfterFocus = (created: OverlayNativeWindow): void => {
-    if (blurDismissTimer !== null) clearTimeout(blurDismissTimer);
-    blurDismissTimer = setTimeout(() => {
-      blurDismissTimer = null;
-      // Time passing is not evidence of focus. The native focus event is the
-      // authority, and the window must still report itself focused when the
-      // grace period ends.
-      if (window === created && !created.isDestroyed() && created.isFocused()) {
-        blurDismissArmed = true;
-      }
-    }, COMMAND_SURFACE_BLUR_GRACE_MS);
   };
 
   const open = async (): Promise<{ ok: boolean; detail: string }> => {
@@ -318,26 +285,10 @@ export function createCommandSurfaceOverlay(
 
     projectId = surface.projectId;
     surfaceId = surface.surfaceId;
-    blurDismissArmed = false;
-
     const created = dependencies.createWindow({ projectId: surface.projectId, preloadPath: dependencies.preloadPath });
     window = created;
     created.setBounds(place());
 
-    created.on('blur', () => {
-      // Losing focus means the creator moved on. Tear down without fighting to
-      // take focus back from whatever they chose instead.
-      if (dependencies.dismissOnBlur === false) return;
-      // Electron can emit a transient blur during the initial show/focus handoff.
-      // Ignore that startup transition; only a later, settled focus loss is a
-      // deliberate dismissal.
-      if (!blurDismissArmed) return;
-      if (window === created) void teardown('focus-lost');
-    });
-    created.on('focus', () => {
-      if (window !== created || created.isDestroyed() || !created.isFocused()) return;
-      scheduleBlurDismissalAfterFocus(created);
-    });
     created.on('closed', () => {
       if (window === created) void teardown('focus-lost');
     });
@@ -368,6 +319,14 @@ export function createCommandSurfaceOverlay(
     return { ok: true, detail: 'the command surface is open over the current application' };
   };
 
+  const dismissFromSender = async (senderId: number): Promise<void> => {
+    const active = window;
+    if (!active || active.isDestroyed() || active.webContents.id !== senderId) {
+      throw new Error('the command surface dismissal came from an inactive surface');
+    }
+    await teardown('action-run');
+  };
+
   return {
     async open() {
       if (window && !window.isDestroyed()) {
@@ -391,18 +350,24 @@ export function createCommandSurfaceOverlay(
       await teardown(reason);
     },
 
+    dismissFromSender,
+
     isOpen() {
       return window !== null && !window.isDestroyed();
     },
 
-    /** Channel used by the overlay page to dismiss itself. */
+    /** Channel used by the active overlay page to dismiss itself after success. */
     registerIpc() {
-      if (ipcRegistered) return;
-      ipcRegistered = true;
-      void ipcHandlers;
+      if (dismissIpcRegistered || !dependencies.ipcMain) return;
+      dismissIpcRegistered = true;
+      dependencies.ipcMain.handle(COMMAND_SURFACE_DISMISS_CHANNEL, (event) =>
+        dismissFromSender(event.sender.id),
+      );
     },
     unregisterIpc() {
-      ipcRegistered = false;
+      if (!dismissIpcRegistered || !dependencies.ipcMain) return;
+      dismissIpcRegistered = false;
+      dependencies.ipcMain.removeHandler(COMMAND_SURFACE_DISMISS_CHANNEL);
     },
   };
 }

@@ -2681,10 +2681,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     resolveCommandSurface: () => commandSurfaceRegistry.resolve(),
     resolveEntryUrl: async (projectId) => (await backpackProjects.open(projectId))?.url ?? null,
     preloadPath: path.join(preloadDir, 'backpackProject.cjs'),
-    // An automated test cannot hold focus, so the real behaviour would close the
-    // overlay before it could be observed. Only PAPERS_TEST_INVOKE_CHANNEL
-    // relaxes this, and only in a build launched for testing.
-    ...(TEST_INVOKE_ENABLED ? { dismissOnBlur: false } : {}),
+    ipcMain,
     focusBridge: foregroundBridge ?? undefined,
     // Where the creator is working, by cursor: the pointer is the best
     // cross-process signal for "the screen they are looking at", and it needs
@@ -2773,6 +2770,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       console.error(`[papers] command surface focus: ${report.detail}`);
     },
   });
+  commandSurfaceOverlay.registerIpc();
 
   // The chord's own open path, shared by the real accelerator and the test seam
   // below, so a test exercises exactly what a keypress does.

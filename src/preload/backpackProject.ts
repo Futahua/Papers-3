@@ -190,8 +190,14 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (request.type === 'papers:project:close') { ipcRenderer.send('host:backpack-project:request-close'); return; }
-
   let task: Promise<unknown> | null = null;
+  if (request.type === 'papers:project:command-surface-dismiss') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'command surface dismissal request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:command-surface-dismiss');
+  }
   if (request.type === 'papers:project:native-source-grant') {
     const files = Array.isArray(request.files) ? request.files : null;
     const file = files?.[0] ?? null;
