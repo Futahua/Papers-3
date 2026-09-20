@@ -1020,11 +1020,19 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   /** Load with the revision needed to save safely afterwards. */
   async loadBackpackProjectStateVersioned(senderId: number, workspaceOrigin?: string): Promise<LoadedBackpackProjectState> {
-    return this.deps.backpackProjects.loadStateVersioned(this.projectStateForWorkspaceRequest(senderId, workspaceOrigin));
+    const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    return this.deps.backpackProjects.loadStateVersioned(
+      scope?.backpackId ?? this.projectStateForSender(senderId),
+      scope?.rootGroupId,
+    );
   }
 
   async loadBackpackProjectState(senderId: number, workspaceOrigin?: string): Promise<unknown> {
-    return this.deps.backpackProjects.loadState(this.projectStateForWorkspaceRequest(senderId, workspaceOrigin));
+    const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    return this.deps.backpackProjects.loadState(
+      scope?.backpackId ?? this.projectStateForSender(senderId),
+      scope?.rootGroupId,
+    );
   }
 
   /**

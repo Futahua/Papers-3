@@ -208,7 +208,7 @@ function scopeBoundaryProjection(state: Record<string, unknown>, rootGroupId: st
     for (const key of ['currentGroupId', 'selectedItemIds', 'expandedGroupIds', 'graphExpandedGroupIds', 'binMode', 'surfaceLocations', 'toolbarPositions', 'preferences', 'trailExpandedByContext']) delete view[key];
     for (const key of ['graphPositions', 'graphRestPositions']) {
       const contexts = isRecord(view[key]) ? { ...(view[key] as Record<string, unknown>) } : {};
-      delete contexts[rootGroupId];
+      for (const scopeId of scopeIds) delete contexts[scopeId];
       view[key] = contexts;
     }
   }
@@ -229,6 +229,154 @@ function scopedStatePreservesBoundary(previous: BackpackProjectState, candidate:
   if (!isRecord(previousRoot) || !isRecord(candidateRoot)) return false;
   if (candidateRoot['parentId'] !== 'root' || candidateRoot['bin'] === true) return false;
   return scopeBoundaryProjection(previousRecord, rootGroupId) === scopeBoundaryProjection(candidateRecord, rootGroupId);
+}
+
+function scopedStateProjection(state: BackpackProjectState, rootGroupId: string): BackpackProjectState {
+  const source = state as unknown as Record<string, unknown>;
+  const groups = Array.isArray(source['groups']) ? source['groups'].filter(isRecord) : [];
+  const scopeIds = workspaceScopeGroupIds(source, rootGroupId);
+  const scopedGroups = groups.filter((group) => typeof group['id'] === 'string' && scopeIds.has(group['id']));
+  const scopedGroupIds = new Set(scopedGroups.map((group) => group['id']).filter((id): id is string => typeof id === 'string'));
+  const shortcuts = Array.isArray(source['shortcuts']) ? source['shortcuts'].filter(isRecord) : [];
+  const scopedShortcuts = shortcuts.flatMap((shortcut) => {
+    const placements = Array.isArray(shortcut['placements']) ? shortcut['placements'].filter(isRecord) : [];
+    const inside = placements.filter((placement) => placement['bin'] !== true
+      && typeof placement['parentId'] === 'string'
+      && scopedGroupIds.has(placement['parentId']));
+    return inside.length ? [{ ...shortcut, placements: inside }] : [];
+  });
+  const layouts = Array.isArray(source['windowLayouts']) ? source['windowLayouts'].filter(isRecord) : [];
+  const scopedLayouts = layouts.filter((layout) => layout['bin'] !== true
+    && typeof layout['parentId'] === 'string'
+    && scopedGroupIds.has(layout['parentId']));
+  const viewSource = isRecord(source['view']) ? source['view'] : {};
+  const view: Record<string, unknown> = {
+    iconSize: viewSource['iconSize'],
+    quickRunCardSize: viewSource['quickRunCardSize'],
+    currentGroupId: rootGroupId,
+    expandedGroupIds: Array.isArray(viewSource['expandedGroupIds'])
+      ? viewSource['expandedGroupIds'].filter((id): id is string => typeof id === 'string' && scopedGroupIds.has(id))
+      : [],
+    graphExpandedGroupIds: Array.isArray(viewSource['graphExpandedGroupIds'])
+      ? viewSource['graphExpandedGroupIds'].filter((id): id is string => typeof id === 'string' && scopedGroupIds.has(id))
+      : [],
+    selectedItemIds: Array.isArray(viewSource['selectedItemIds'])
+      ? viewSource['selectedItemIds'].filter((id): id is string => typeof id === 'string' && scopedGroupIds.has(id))
+      : [],
+    binMode: false,
+    layout: viewSource['layout'],
+    graphPositions: isRecord(viewSource['graphPositions'])
+      ? Object.fromEntries(Object.entries(viewSource['graphPositions']).filter(([id]) => scopedGroupIds.has(id)))
+      : {},
+    graphRestPositions: isRecord(viewSource['graphRestPositions'])
+      ? Object.fromEntries(Object.entries(viewSource['graphRestPositions']).filter(([id]) => scopedGroupIds.has(id)))
+      : {},
+    toolbarPositions: viewSource['toolbarPositions'],
+    preferences: viewSource['preferences'],
+    trailExpandedByContext: isRecord(viewSource['trailExpandedByContext'])
+      ? Object.fromEntries(Object.entries(viewSource['trailExpandedByContext']).filter(([id]) => scopedGroupIds.has(id)))
+      : {},
+  };
+  const activeLayoutId = source['activeWindowLayoutId'];
+  const startupLayoutId = source['startupWindowLayoutId'];
+  return {
+    schemaVersion: 1,
+    groups: scopedGroups,
+    shortcuts: scopedShortcuts,
+    windowLayouts: scopedLayouts,
+    ...(typeof activeLayoutId === 'string' && scopedLayouts.some((layout) => layout['id'] === activeLayoutId)
+      ? { activeWindowLayoutId: activeLayoutId }
+      : {}),
+    ...(typeof startupLayoutId === 'string' && scopedLayouts.some((layout) => layout['id'] === startupLayoutId)
+      ? { startupWindowLayoutId: startupLayoutId }
+      : {}),
+    view,
+  } as BackpackProjectState;
+}
+
+function mergeScopedState(previous: BackpackProjectState, candidate: BackpackProjectState, rootGroupId: string): BackpackProjectState | null {
+  const previousRecord = previous as unknown as Record<string, unknown>;
+  const candidateRecord = candidate as unknown as Record<string, unknown>;
+  const previousGroups = Array.isArray(previousRecord['groups']) ? previousRecord['groups'].filter(isRecord) : [];
+  const candidateGroups = Array.isArray(candidateRecord['groups']) ? candidateRecord['groups'].filter(isRecord) : [];
+  const scopeIds = workspaceScopeGroupIds(previousRecord, rootGroupId);
+  const candidateIds = new Set(candidateGroups.map((group) => group['id']).filter((id): id is string => typeof id === 'string'));
+  const candidateRoot = candidateGroups.find((group) => group['id'] === rootGroupId);
+  if (!candidateRoot || candidateRoot['parentId'] !== 'root' || candidateRoot['bin'] === true) return null;
+  if (candidateGroups.some((group) => typeof group['id'] !== 'string' || !scopeIds.has(group['id'])
+    || (group['id'] !== rootGroupId && (typeof group['parentId'] !== 'string' || !scopeIds.has(group['parentId']))))) return null;
+
+  const previousShortcuts = Array.isArray(previousRecord['shortcuts']) ? previousRecord['shortcuts'].filter(isRecord) : [];
+  const candidateShortcuts = Array.isArray(candidateRecord['shortcuts']) ? candidateRecord['shortcuts'].filter(isRecord) : [];
+  const candidateShortcutById = new Map(candidateShortcuts.map((shortcut) => [shortcut['id'], shortcut]));
+  const mergedShortcuts: Record<string, unknown>[] = [];
+  for (const previousShortcut of previousShortcuts) {
+    const placements = Array.isArray(previousShortcut['placements']) ? previousShortcut['placements'].filter(isRecord) : [];
+    const outside = placements.filter((placement) => placement['bin'] === true
+      || typeof placement['parentId'] !== 'string'
+      || !scopeIds.has(placement['parentId']));
+    const candidateShortcut = candidateShortcutById.get(previousShortcut['id']);
+    if (outside.length) {
+      if (candidateShortcut) {
+        const inside = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
+        if (inside.some((placement) => placement['bin'] === true
+          || typeof placement['parentId'] !== 'string'
+          || !scopeIds.has(placement['parentId']))) return null;
+        mergedShortcuts.push({ ...candidateShortcut, placements: [...inside, ...outside] });
+      } else {
+        mergedShortcuts.push(previousShortcut);
+      }
+    } else if (candidateShortcut) {
+      const inside = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
+      if (inside.some((placement) => placement['bin'] === true
+        || typeof placement['parentId'] !== 'string'
+        || !scopeIds.has(placement['parentId']))) return null;
+      mergedShortcuts.push({ ...candidateShortcut, placements: inside });
+    }
+  }
+  for (const candidateShortcut of candidateShortcuts) {
+    if (previousShortcuts.some((shortcut) => shortcut['id'] === candidateShortcut['id'])) continue;
+    const placements = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
+    if (placements.some((placement) => placement['bin'] === true
+      || typeof placement['parentId'] !== 'string'
+      || !scopeIds.has(placement['parentId']))) return null;
+    mergedShortcuts.push({ ...candidateShortcut, placements });
+  }
+
+  const previousLayouts = Array.isArray(previousRecord['windowLayouts']) ? previousRecord['windowLayouts'].filter(isRecord) : [];
+  const candidateLayouts = Array.isArray(candidateRecord['windowLayouts']) ? candidateRecord['windowLayouts'].filter(isRecord) : [];
+  if (candidateLayouts.some((layout) => layout['bin'] === true
+    || typeof layout['parentId'] !== 'string'
+    || !scopeIds.has(layout['parentId']))) return null;
+  const candidateLayoutIds = new Set(candidateLayouts.map((layout) => layout['id']));
+  const mergedLayouts = previousLayouts
+    .filter((layout) => typeof layout['parentId'] !== 'string' || !scopeIds.has(layout['parentId']))
+    .concat(candidateLayouts);
+  const candidateView = isRecord(candidateRecord['view']) ? candidateRecord['view'] : {};
+  const previousView = isRecord(previousRecord['view']) ? previousRecord['view'] : {};
+  const mergedView: Record<string, unknown> = { ...previousView, ...candidateView, currentGroupId: candidateView['currentGroupId'] === rootGroupId ? rootGroupId : previousView['currentGroupId'] };
+  for (const key of ['expandedGroupIds', 'graphExpandedGroupIds', 'selectedItemIds']) {
+    const previousIds = Array.isArray(previousView[key]) ? previousView[key].filter((id): id is string => typeof id === 'string' && !scopeIds.has(id)) : [];
+    const candidateIdsForKey = Array.isArray(candidateView[key]) ? candidateView[key].filter((id): id is string => typeof id === 'string' && scopeIds.has(id)) : [];
+    mergedView[key] = [...previousIds, ...candidateIdsForKey];
+  }
+  for (const key of ['graphPositions', 'graphRestPositions']) {
+    const previousPositions = isRecord(previousView[key]) ? Object.fromEntries(Object.entries(previousView[key]).filter(([id]) => !scopeIds.has(id))) : {};
+    const candidatePositions = isRecord(candidateView[key]) ? Object.fromEntries(Object.entries(candidateView[key]).filter(([id]) => scopeIds.has(id))) : {};
+    mergedView[key] = { ...previousPositions, ...candidatePositions };
+  }
+  const merged: Record<string, unknown> = {
+    ...previousRecord,
+    groups: previousGroups.filter((group) => typeof group['id'] !== 'string' || !scopeIds.has(group['id'])).concat(candidateGroups),
+    shortcuts: mergedShortcuts,
+    windowLayouts: mergedLayouts,
+    view: mergedView,
+  };
+  for (const key of ['activeWindowLayoutId', 'startupWindowLayoutId']) {
+    const candidateId = candidateRecord[key];
+    if (candidateLayoutIds.has(candidateId)) merged[key] = candidateId;
+  }
+  return merged as unknown as BackpackProjectState;
 }
 
 function safeProjectPath(root: string, requested: string): string {
@@ -587,8 +735,8 @@ export class BackpackProjectService {
   }
 
   /** Project-owned state for an independently maintained Backpack explorer. */
-  async loadState(backpackId: string): Promise<BackpackProjectState | null> {
-    return (await this.loadStateVersioned(backpackId)).state;
+  async loadState(backpackId: string, scopeRootId?: string): Promise<BackpackProjectState | null> {
+    return (await this.loadStateVersioned(backpackId, scopeRootId)).state;
   }
 
   /**
@@ -596,7 +744,7 @@ export class BackpackProjectService {
    * overwriting somebody else. A seeded default carries ABSENT_STATE_REVISION,
    * so the first save still has something exact to compare against.
    */
-  async loadStateVersioned(backpackId: string): Promise<LoadedBackpackProjectState> {
+  async loadStateVersioned(backpackId: string, scopeRootId?: string): Promise<LoadedBackpackProjectState> {
     const manifest = await this.manifest(backpackId);
     if (!manifest) throw new Error('Backpack project is not bound on this machine.');
     while (true) {
@@ -612,7 +760,7 @@ export class BackpackProjectService {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Backpack project state could not be read.');
       const actions = await this.actions(backpackId);
-      return {
+      const state: LoadedBackpackProjectState = {
         revision: ABSENT_STATE_REVISION,
         state: {
           schemaVersion: 1,
@@ -627,6 +775,7 @@ export class BackpackProjectService {
           })),
         },
       };
+      return scopeRootId === undefined ? state : { ...state, state: scopedStateProjection(state.state, scopeRootId) };
     }
     let parsed: BackpackProjectState;
     try {
@@ -637,7 +786,10 @@ export class BackpackProjectService {
     } catch {
       throw new Error('Backpack project state could not be read.');
     }
-    return { state: parsed, revision: revisionOfBytes(bytes) };
+    return {
+      state: scopeRootId === undefined ? parsed : scopedStateProjection(parsed, scopeRootId),
+      revision: revisionOfBytes(bytes),
+    };
   }
 
   /** The revision currently on disk, read inside the save queue so a
@@ -712,6 +864,7 @@ export class BackpackProjectService {
       }
     }
     let currentState: BackpackProjectState | null = null;
+    let stateToWrite = parsed;
     if (expectedRevision !== undefined || scopeRootId !== undefined) {
       let currentBytes: string;
       try {
@@ -731,14 +884,16 @@ export class BackpackProjectService {
         } catch {
           throw new Error('Backpack project state could not be read.');
         }
-        if (!scopedStatePreservesBoundary(currentState, parsed, scopeRootId)) {
+        const merged = mergeScopedState(currentState, parsed, scopeRootId);
+        if (!merged) {
           return { ok: false, code: 'SCOPE_VIOLATION', revision: current };
         }
+        stateToWrite = merged;
       }
     }
     const statePath = path.join(manifest.root, 'state.json');
     const tempPath = `${statePath}.tmp-${process.pid}-${randomUUID()}`;
-    const bytes = JSON.stringify(parsed, null, 2) + '\n';
+    const bytes = JSON.stringify(stateToWrite, null, 2) + '\n';
     try {
       await fs.writeFile(tempPath, bytes, {
         encoding: 'utf8',

@@ -104,12 +104,12 @@ function projectIdFromOrigin(): string {
 
 function immediateHostResult(requestId: unknown, origin: string): void {
   if (typeof requestId !== 'string') return;
-  window.postMessage({ type: 'papers:host:result', requestId, ok: true }, origin);
+  window.postMessage({ type: 'papers:host:result', requestId, ok: true }, window.location.origin);
 }
 
 function immediateHostError(requestId: unknown, origin: string, error: string): void {
   if (typeof requestId !== 'string') return;
-  window.postMessage({ type: 'papers:host:result', requestId, ok: false, error }, origin);
+  window.postMessage({ type: 'papers:host:result', requestId, ok: false, error }, window.location.origin);
 }
 
 function validTransferId(value: unknown): value is string {
@@ -565,8 +565,8 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (!task) return;
-  void task.then((payload) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: true, ...(payload && typeof payload === 'object' ? payload : {}) }, event.origin))
-    .catch((caught) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: false, error: String(caught instanceof Error ? caught.message : caught) }, event.origin));
+  void task.then((payload) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: true, ...(payload && typeof payload === 'object' ? payload : {}) }, window.location.origin))
+    .catch((caught) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: false, error: String(caught instanceof Error ? caught.message : caught) }, window.location.origin));
 });
 
 
