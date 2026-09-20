@@ -174,6 +174,13 @@ function isAllowedShortcutTarget(target: string): boolean {
   }
 }
 
+/** AYG persists an active placement without `bin`, but its binned form is an
+ * object (`{ parentId, order, binnedAt }`). Treat any non-false marker as bin
+ * state so malformed truthy values fail closed instead of becoming visible. */
+function hasBinMarker(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== false;
+}
+
 function workspaceScopeGroupIds(state: Record<string, unknown>, rootGroupId: string): Set<string> {
   const groups = Array.isArray(state['groups']) ? state['groups'].filter(isRecord) : [];
   const ids = new Set<string>([rootGroupId]);
@@ -199,7 +206,7 @@ function scopeBoundaryProjection(state: Record<string, unknown>, rootGroupId: st
   const groupInside = (groupId: unknown): boolean => typeof groupId === 'string' && scopeIds.has(groupId);
   const outsideShortcuts = shortcuts.filter((shortcut) => {
     const placements = Array.isArray(shortcut['placements']) ? shortcut['placements'].filter(isRecord) : [];
-    return placements.some((placement) => placement['bin'] === true || !groupInside(placement['parentId']));
+    return placements.some((placement) => hasBinMarker(placement['bin']) || !groupInside(placement['parentId']));
   });
   const outsideLayouts = windowLayouts.filter((layout) => layout['bin'] || !groupInside(layout['parentId']));
   const topLevel = Object.fromEntries(Object.entries(state).filter(([key]) => !['groups', 'shortcuts', 'windowLayouts', 'view'].includes(key)));
@@ -227,7 +234,7 @@ function scopedStatePreservesBoundary(previous: BackpackProjectState, candidate:
   const previousRoot = Array.isArray(previous.groups) ? previous.groups.find((group) => isRecord(group) && group['id'] === rootGroupId) : null;
   const candidateRoot = Array.isArray(candidate.groups) ? candidate.groups.find((group) => isRecord(group) && group['id'] === rootGroupId) : null;
   if (!isRecord(previousRoot) || !isRecord(candidateRoot)) return false;
-  if (candidateRoot['parentId'] !== 'root' || candidateRoot['bin'] === true) return false;
+  if (candidateRoot['parentId'] !== 'root' || hasBinMarker(candidateRoot['bin'])) return false;
   return scopeBoundaryProjection(previousRecord, rootGroupId) === scopeBoundaryProjection(candidateRecord, rootGroupId);
 }
 
@@ -240,7 +247,7 @@ function scopedStateProjection(state: BackpackProjectState, rootGroupId: string)
   const shortcuts = Array.isArray(source['shortcuts']) ? source['shortcuts'].filter(isRecord) : [];
   const scopedShortcuts: Record<string, unknown>[] = shortcuts.flatMap((shortcut) => {
     const placements = Array.isArray(shortcut['placements']) ? shortcut['placements'].filter(isRecord) : [];
-    const inside = placements.filter((placement) => placement['bin'] !== true
+    const inside = placements.filter((placement) => !hasBinMarker(placement['bin'])
       && typeof placement['parentId'] === 'string'
       && scopedGroupIds.has(placement['parentId']));
     return inside.length ? [{ ...shortcut, placements: inside } as Record<string, unknown>] : [];
@@ -330,6 +337,7 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
       parentId = parent['parentId'];
     }
   }
+  const candidateScopeIds = new Set(candidateGroupById.keys());
 
   const previousShortcuts = Array.isArray(previousRecord['shortcuts']) ? previousRecord['shortcuts'].filter(isRecord) : [];
   const candidateShortcuts = Array.isArray(candidateRecord['shortcuts']) ? candidateRecord['shortcuts'].filter(isRecord) : [];
@@ -337,43 +345,67 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
   const mergedShortcuts: Record<string, unknown>[] = [];
   for (const previousShortcut of previousShortcuts) {
     const placements = Array.isArray(previousShortcut['placements']) ? previousShortcut['placements'].filter(isRecord) : [];
-    const outside = placements.filter((placement) => placement['bin'] === true
+    const outside = placements.filter((placement) => hasBinMarker(placement['bin'])
       || typeof placement['parentId'] !== 'string'
       || !scopeIds.has(placement['parentId']));
+    const insideBefore = placements.some((placement) => !hasBinMarker(placement['bin'])
+      && typeof placement['parentId'] === 'string'
+      && scopeIds.has(placement['parentId']));
     const candidateShortcut = candidateShortcutById.get(previousShortcut['id']);
     if (outside.length) {
       if (candidateShortcut) {
+        if (!insideBefore) return null;
         const inside = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
-        if (inside.some((placement) => placement['bin'] === true
+        if (inside.some((placement) => hasBinMarker(placement['bin'])
           || typeof placement['parentId'] !== 'string'
-          || !scopeIds.has(placement['parentId']))) return null;
+          || !candidateScopeIds.has(placement['parentId']))) return null;
         mergedShortcuts.push({ ...candidateShortcut, placements: [...inside, ...outside] });
       } else {
         mergedShortcuts.push({ ...previousShortcut, placements: outside });
       }
     } else if (candidateShortcut) {
       const inside = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
-      if (inside.some((placement) => placement['bin'] === true
+      if (inside.some((placement) => hasBinMarker(placement['bin'])
         || typeof placement['parentId'] !== 'string'
-        || !scopeIds.has(placement['parentId']))) return null;
+        || !candidateScopeIds.has(placement['parentId']))) return null;
       mergedShortcuts.push({ ...candidateShortcut, placements: inside });
     }
   }
   for (const candidateShortcut of candidateShortcuts) {
     if (previousShortcuts.some((shortcut) => shortcut['id'] === candidateShortcut['id'])) continue;
     const placements = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
-    if (placements.some((placement) => placement['bin'] === true
+    if (placements.some((placement) => hasBinMarker(placement['bin'])
       || typeof placement['parentId'] !== 'string'
-      || !scopeIds.has(placement['parentId']))) return null;
+      || !candidateScopeIds.has(placement['parentId']))) return null;
     mergedShortcuts.push({ ...candidateShortcut, placements });
   }
 
   const previousLayouts = Array.isArray(previousRecord['windowLayouts']) ? previousRecord['windowLayouts'].filter(isRecord) : [];
   const candidateLayouts = Array.isArray(candidateRecord['windowLayouts']) ? candidateRecord['windowLayouts'].filter(isRecord) : [];
-  if (candidateLayouts.some((layout) => layout['bin'] === true
+  const previousLayoutById = new Map(previousLayouts.map((layout) => [layout['id'], layout]));
+  const candidateLayoutIdsSeen = new Set<unknown>();
+  if (candidateLayouts.some((layout) => {
+    if (candidateLayoutIdsSeen.has(layout['id'])) return true;
+    candidateLayoutIdsSeen.add(layout['id']);
+    const previousLayout = previousLayoutById.get(layout['id']);
+    const previousInside = previousLayout
+      && !hasBinMarker(previousLayout['bin'])
+      && typeof previousLayout['parentId'] === 'string'
+      && scopeIds.has(previousLayout['parentId']);
+    if (previousLayout && !previousInside) return true;
+    return hasBinMarker(layout['bin'])
     || typeof layout['parentId'] !== 'string'
-    || !scopeIds.has(layout['parentId']))) return null;
+    || !candidateScopeIds.has(layout['parentId']);
+  })) return null;
   const candidateLayoutIds = new Set(candidateLayouts.map((layout) => layout['id']));
+  const candidateItemIds = new Set<string>(candidateScopeIds);
+  for (const layout of candidateLayouts) if (typeof layout['id'] === 'string') candidateItemIds.add(layout['id']);
+  for (const shortcut of candidateShortcuts) {
+    if (typeof shortcut['id'] === 'string') candidateItemIds.add(shortcut['id']);
+    for (const placement of Array.isArray(shortcut['placements']) ? shortcut['placements'].filter(isRecord) : []) {
+      if (typeof placement['id'] === 'string') candidateItemIds.add(placement['id']);
+    }
+  }
   const mergedLayouts = previousLayouts
     .filter((layout) => typeof layout['parentId'] !== 'string' || !scopeIds.has(layout['parentId']))
     .concat(candidateLayouts);
@@ -384,17 +416,17 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
     if (Object.prototype.hasOwnProperty.call(candidateView, key)) mergedView[key] = candidateView[key];
   }
   const candidateCurrentGroup = candidateView['currentGroupId'];
-  mergedView.currentGroupId = typeof candidateCurrentGroup === 'string' && scopeIds.has(candidateCurrentGroup)
+  mergedView.currentGroupId = typeof candidateCurrentGroup === 'string' && candidateScopeIds.has(candidateCurrentGroup)
     ? candidateCurrentGroup
     : rootGroupId;
   for (const key of ['expandedGroupIds', 'graphExpandedGroupIds', 'selectedItemIds']) {
     const previousIds = Array.isArray(previousView[key]) ? previousView[key].filter((id): id is string => typeof id === 'string' && !scopeIds.has(id)) : [];
-    const candidateIdsForKey = Array.isArray(candidateView[key]) ? candidateView[key].filter((id): id is string => typeof id === 'string' && scopeIds.has(id)) : [];
+    const candidateIdsForKey = Array.isArray(candidateView[key]) ? candidateView[key].filter((id): id is string => typeof id === 'string' && candidateItemIds.has(id)) : [];
     mergedView[key] = [...previousIds, ...candidateIdsForKey];
   }
   for (const key of ['graphPositions', 'graphRestPositions']) {
     const previousPositions = isRecord(previousView[key]) ? Object.fromEntries(Object.entries(previousView[key]).filter(([id]) => !scopeIds.has(id))) : {};
-    const candidatePositions = isRecord(candidateView[key]) ? Object.fromEntries(Object.entries(candidateView[key]).filter(([id]) => scopeIds.has(id))) : {};
+    const candidatePositions = isRecord(candidateView[key]) ? Object.fromEntries(Object.entries(candidateView[key]).filter(([id]) => candidateScopeIds.has(id))) : {};
     mergedView[key] = { ...previousPositions, ...candidatePositions };
   }
   const previousTrail = isRecord(previousView['trailExpandedByContext']) ? previousView['trailExpandedByContext'] : {};
@@ -404,7 +436,7 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
     if (key.startsWith('folder:') && scopeIds.has(key.slice('folder:'.length))) delete mergedTrail[key];
   }
   for (const [key, value] of Object.entries(candidateTrail)) {
-    if (key.startsWith('folder:') && scopeIds.has(key.slice('folder:'.length))) mergedTrail[key] = value;
+    if (key.startsWith('folder:') && candidateScopeIds.has(key.slice('folder:'.length))) mergedTrail[key] = value;
   }
   mergedView.trailExpandedByContext = mergedTrail;
   const merged: Record<string, unknown> = {
@@ -640,7 +672,7 @@ export class BackpackProjectService {
     const placements = isRecord(shortcut) && Array.isArray(shortcut['placements'])
       ? shortcut['placements'].filter(isRecord)
       : [];
-    if (!placements.some((placement) => placement['bin'] !== true && typeof placement['parentId'] === 'string' && scopeIds.has(placement['parentId']))) {
+    if (!placements.some((placement) => !hasBinMarker(placement['bin']) && typeof placement['parentId'] === 'string' && scopeIds.has(placement['parentId']))) {
       throw new Error('That shortcut is outside this project folder.');
     }
   }
@@ -652,7 +684,7 @@ export class BackpackProjectService {
     const placements = isRecord(shortcut) && Array.isArray(shortcut['placements'])
       ? shortcut['placements'].filter(isRecord)
       : [];
-    if (!placements.some((placement) => placement['bin'] !== true
+    if (!placements.some((placement) => !hasBinMarker(placement['bin'])
       && typeof placement['parentId'] === 'string'
       && scopeIds.has(placement['parentId']))) {
       throw new Error('That web link is outside this project folder.');
