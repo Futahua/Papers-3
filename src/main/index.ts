@@ -86,6 +86,7 @@ import { WorkspaceTopologyStore } from './persistence/workspaceTopologyStore';
 import { WorkspaceLayoutStore } from './persistence/workspaceLayoutStore';
 import { hydrateStartupWorkspace } from './persistence/startupWorkspaceHydration';
 import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { workspaceTopologyMatchesSurfaceSet } from './workspaceTopologyAuthority';
 import {
   OPAQUE_SURFACE_COLOR,
   TRANSPARENT_CHILD_SURFACE_COLOR,
@@ -190,6 +191,15 @@ interface VisualSemanticKeySurfaceState {
 const visualSemanticKeysBySurface = new Map<string, VisualSemanticKeySurfaceState>();
 const visualSurfaceObservationState = createVisualSurfaceObservationStore();
 let visualResourceMonitor: VisualResourceMonitor | null = null;
+
+function currentWorkspaceTopology(windowId: number): WorkspaceTopologyV1 | null {
+  const topology = workspaceTopologies.get(windowId);
+  if (!topology || !papersWindows.has(windowId)) return null;
+  const liveProjectSurfaces = logicalSurfaces.listForWindow(windowId)
+    .filter((surface) => surface.kind === 'project')
+    .map(({ surfaceId, projectId }) => ({ surfaceId, projectId }));
+  return workspaceTopologyMatchesSurfaceSet(topology, liveProjectSurfaces) ? topology : null;
+}
 
 function visualSemanticKeyMapKey(windowId: number, surfaceId: string): string {
   return `${windowId}\0${surfaceId}`;
@@ -967,7 +977,7 @@ async function bootstrap(): Promise<void> {
     hermesDockOwner: () => papersWindows.hermesDockOwner(),
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
-    workspaceTopology: (windowId) => workspaceTopologies.get(windowId) ?? null,
+    workspaceTopology: (windowId) => currentWorkspaceTopology(windowId),
     hydrateStartupWorkspace: (windowId) => {
       if (windowId !== primaryWindowIdForHydration) return Promise.resolve({ hydrated: false });
       if (primaryHydrationPromise) return primaryHydrationPromise;
@@ -2303,9 +2313,12 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           }, target, undefined, signal)
           : undefined,
         surfaces: () => logicalSurfaces.project().map(projectSurfaceControlSnapshot),
-        workspace: (windowId) => papersWindows.has(windowId) && workspaceTopologies.has(windowId)
-          ? { topology: workspaceTopologies.get(windowId), revision: workspaceTopologyRevisions.get(windowId) ?? 0 }
-          : null,
+        workspace: (windowId) => {
+          const topology = currentWorkspaceTopology(windowId);
+          return topology
+            ? { topology, revision: workspaceTopologyRevisions.get(windowId) ?? 0 }
+            : null;
+        },
         restoreWorkspace: (windowId, topology) => {
           facade.restoreWorkspaceTopology(windowId, topology);
           return topology;
