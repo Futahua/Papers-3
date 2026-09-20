@@ -66,7 +66,7 @@ export interface OverlayNativeWindow {
   isVisible(): boolean;
   isFocused(): boolean;
   destroy(): void;
-  on(event: 'blur' | 'closed', callback: () => void): void;
+  on(event: 'blur' | 'focus' | 'closed', callback: () => void): void;
   loadURL(url: string): Promise<void>;
 }
 
@@ -271,6 +271,19 @@ export function createCommandSurfaceOverlay(
     closing = false;
   };
 
+  const scheduleBlurDismissalAfterFocus = (created: OverlayNativeWindow): void => {
+    if (blurDismissTimer !== null) clearTimeout(blurDismissTimer);
+    blurDismissTimer = setTimeout(() => {
+      blurDismissTimer = null;
+      // Time passing is not evidence of focus. The native focus event is the
+      // authority, and the window must still report itself focused when the
+      // grace period ends.
+      if (window === created && !created.isDestroyed() && created.isFocused()) {
+        blurDismissArmed = true;
+      }
+    }, COMMAND_SURFACE_BLUR_GRACE_MS);
+  };
+
   const open = async (): Promise<{ ok: boolean; detail: string }> => {
     const resolution = await dependencies.resolveCommandSurface();
     if (!resolution.ok) {
@@ -321,6 +334,10 @@ export function createCommandSurfaceOverlay(
       if (!blurDismissArmed) return;
       if (window === created) void teardown('focus-lost');
     });
+    created.on('focus', () => {
+      if (window !== created || created.isDestroyed() || !created.isFocused()) return;
+      scheduleBlurDismissalAfterFocus(created);
+    });
     created.on('closed', () => {
       if (window === created) void teardown('focus-lost');
     });
@@ -345,10 +362,6 @@ export function createCommandSurfaceOverlay(
     // owner and therefore what makes the hand-back possible later.
     created.show();
     created.focus();
-    blurDismissTimer = setTimeout(() => {
-      blurDismissTimer = null;
-      if (window === created && !created.isDestroyed()) blurDismissArmed = true;
-    }, COMMAND_SURFACE_BLUR_GRACE_MS);
 
     deliverInvoke(created, surface.projectId, surface.surfaceId);
 

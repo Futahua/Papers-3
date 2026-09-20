@@ -233,6 +233,7 @@ describe('commandSurfaceOverlay focus return', () => {
       const h = harness();
       const overlay = createCommandSurfaceOverlay(h.deps);
       await overlay.open();
+      h.created.handlers.get('focus')?.();
       vi.advanceTimersByTime(250);
       // The overlay loses focus to something the creator chose.
       h.created.handlers.get('blur')?.();
@@ -255,6 +256,12 @@ describe('commandSurfaceOverlay focus return', () => {
       expect(overlay.isOpen()).toBe(true);
       expect(h.closedReasons).toEqual([]);
 
+      vi.advanceTimersByTime(250);
+      h.created.handlers.get('blur')?.();
+      expect(overlay.isOpen()).toBe(true);
+      expect(h.closedReasons).toEqual([]);
+
+      h.created.handlers.get('focus')?.();
       vi.advanceTimersByTime(250);
       h.created.handlers.get('blur')?.();
       expect(overlay.isOpen()).toBe(false);
