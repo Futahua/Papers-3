@@ -62,6 +62,14 @@ interface CanvasPersistedState {
   lastActiveProgramId: string | null;
 }
 
+/** WHATWG URL reports `origin === "null"` for Papers' custom scheme. Keep the
+ * origin comparison bound to the exact Backpack host instead of treating that
+ * valid custom origin as absent. */
+function backpackProjectOrigin(rawUrl: string): string {
+  const parsed = new URL(rawUrl);
+  return parsed.origin === 'null' ? `${parsed.protocol}//${parsed.host}` : parsed.origin;
+}
+
 export interface FacadeDeps {
   /**
    * Phase 1B.3 delivery. Two primitives with explicit semantics, replacing a
@@ -706,7 +714,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private scopedWorkspaceForSender(senderId: number, origin: string | undefined): BackpackProjectWorkspaceScope | null {
     if (origin === undefined) return null;
     const scope = this.workspaceScopes.get(senderId);
-    if (!scope || new URL(scope.url).origin !== origin) {
+    const scopeOrigin = scope ? backpackProjectOrigin(scope.url) : null;
+    if (!scope || scopeOrigin !== origin) {
       throw new Error('This embedded workspace is no longer authorized.');
     }
     return scope;
