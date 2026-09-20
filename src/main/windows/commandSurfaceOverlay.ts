@@ -41,6 +41,10 @@ export const COMMAND_SURFACE_MODE = 'command-surface';
 /** The overlay is a launcher: small, near the top of the display. */
 export const COMMAND_SURFACE_WIDTH = 640;
 export const COMMAND_SURFACE_HEIGHT = 220;
+/** Electron may report the show/focus handoff as a transient blur while the
+ * renderer is still becoming the foreground window. It is not a user dismiss.
+ */
+export const COMMAND_SURFACE_BLUR_GRACE_MS = 250;
 /** Fraction of the work area height used as the overlay's top offset, so a
  * launcher sits in the upper third rather than dead centre over content. */
 export const COMMAND_SURFACE_TOP_FRACTION = 0.22;
@@ -166,6 +170,8 @@ export function createCommandSurfaceOverlay(
   let previousForeground: NativeWindowHandle | null = null;
   let closing = false;
   let ipcRegistered = false;
+  let blurDismissArmed = false;
+  let blurDismissTimer: ReturnType<typeof setTimeout> | null = null;
   const ipcHandlers: Array<{ channel: string; handler: (...args: unknown[]) => void }> = [];
 
   const place = (): { x: number; y: number; width: number; height: number } => {
@@ -239,6 +245,11 @@ export function createCommandSurfaceOverlay(
   const teardown = async (reason: OverlayCloseReason): Promise<void> => {
     if (closing) return;
     closing = true;
+    if (blurDismissTimer !== null) {
+      clearTimeout(blurDismissTimer);
+      blurDismissTimer = null;
+    }
+    blurDismissArmed = false;
     const doomed = window;
     window = null;
     projectId = null;
@@ -294,6 +305,7 @@ export function createCommandSurfaceOverlay(
 
     projectId = surface.projectId;
     surfaceId = surface.surfaceId;
+    blurDismissArmed = false;
 
     const created = dependencies.createWindow({ projectId: surface.projectId, preloadPath: dependencies.preloadPath });
     window = created;
@@ -303,6 +315,10 @@ export function createCommandSurfaceOverlay(
       // Losing focus means the creator moved on. Tear down without fighting to
       // take focus back from whatever they chose instead.
       if (dependencies.dismissOnBlur === false) return;
+      // Electron can emit a transient blur during the initial show/focus handoff.
+      // Ignore that startup transition; only a later, settled focus loss is a
+      // deliberate dismissal.
+      if (!blurDismissArmed) return;
       if (window === created) void teardown('focus-lost');
     });
     created.on('closed', () => {
@@ -329,6 +345,10 @@ export function createCommandSurfaceOverlay(
     // owner and therefore what makes the hand-back possible later.
     created.show();
     created.focus();
+    blurDismissTimer = setTimeout(() => {
+      blurDismissTimer = null;
+      if (window === created && !created.isDestroyed()) blurDismissArmed = true;
+    }, COMMAND_SURFACE_BLUR_GRACE_MS);
 
     deliverInvoke(created, surface.projectId, surface.surfaceId);
 

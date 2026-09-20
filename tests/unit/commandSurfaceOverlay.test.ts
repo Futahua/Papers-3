@@ -228,14 +228,40 @@ describe('commandSurfaceOverlay focus return', () => {
   });
 
   it('does NOT steal focus back when the creator moved on by themselves', async () => {
-    const h = harness();
-    const overlay = createCommandSurfaceOverlay(h.deps);
-    await overlay.open();
-    // The overlay loses focus to something the creator chose.
-    h.created.handlers.get('blur')?.();
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      const overlay = createCommandSurfaceOverlay(h.deps);
+      await overlay.open();
+      vi.advanceTimersByTime(250);
+      // The overlay loses focus to something the creator chose.
+      h.created.handlers.get('blur')?.();
 
-    expect(h.setForegroundCalls).toHaveLength(0);
-    expect(h.closedReasons).toEqual(['focus-lost']);
+      expect(h.setForegroundCalls).toHaveLength(0);
+      expect(h.closedReasons).toEqual(['focus-lost']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores a transient startup blur before dismissing on settled focus loss', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness();
+      const overlay = createCommandSurfaceOverlay(h.deps);
+      await overlay.open();
+
+      h.created.handlers.get('blur')?.();
+      expect(overlay.isOpen()).toBe(true);
+      expect(h.closedReasons).toEqual([]);
+
+      vi.advanceTimersByTime(250);
+      h.created.handlers.get('blur')?.();
+      expect(overlay.isOpen()).toBe(false);
+      expect(h.closedReasons).toEqual(['focus-lost']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('says so when the application that was in front has closed', async () => {
