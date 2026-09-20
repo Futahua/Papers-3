@@ -21,6 +21,12 @@ extraResources:
     to: hermes-integration/papers-theme-plugin.js
   - from: resources/window-helper
     to: window-helper
+  # The native foreground bridge source. Shipped as SOURCE and compiled once on
+  # first use with the csc.exe that ships with Windows, so no prebuilt binary is
+  # distributed and no node-gyp step is introduced. Without it the launcher
+  # overlay still opens, but it cannot hand focus back - and it says so.
+  - from: resources/native
+    to: native
 
 asar: true
 

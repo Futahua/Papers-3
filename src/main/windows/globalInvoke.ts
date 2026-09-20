@@ -33,15 +33,32 @@
  * `GlobalInvokeDependencies.accelerators`. */
 export const DEFAULT_INVOKE_ACCELERATORS: GlobalInvokeAccelerators = {
   invoke: 'Alt+A',
-  bringToFront: 'Alt+Shift+A',
 };
 
 export interface GlobalInvokeAccelerators {
-  /** Bring Papers to the front AND ask the focused project's command surface to open. */
+  /**
+   * Open the focused project's command surface as a TRANSIENT OVERLAY on top of
+   * whatever the creator is doing. **Papers does NOT come forward.**
+   *
+   * This is a launcher, not a window switcher. The creator's sentence was "pop
+   * the run anywhere even when im using a different program" - the popping is
+   * the request. The application they were in keeps its place in the z-order
+   * and gets focus back when the overlay closes.
+   */
   invoke: string;
   /** Bring Papers to the front. Opens nothing. */
-  bringToFront: string;
+  /** Retained for compatibility with older injected settings; not registered. */
+  bringToFront?: string;
 }
+
+/** Why the overlay closed. It decides whether focus is handed back. */
+export type OverlayCloseReason =
+  /** Escape, or the chord pressed again. */
+  | 'dismissed'
+  /** The creator ran something; the application they came from takes focus back while it runs. */
+  | 'action-run'
+  /** The overlay lost focus to something else. The creator has moved on. */
+  | 'focus-lost';
 
 /** The subset of Electron's `globalShortcut` this module needs. */
 export interface GlobalShortcutLike {
@@ -71,10 +88,14 @@ export interface GlobalInvokeRegistrationReport {
 }
 
 export type GlobalInvokeOutcome =
-  /** Papers came forward and the command surface was asked to open. */
-  | 'brought-forward-invoked'
-  /** Papers came forward, and there is nothing to open. Never a silent no-op. */
-  | 'brought-forward-nothing-to-open'
+  /** The command surface overlay opened over whatever the creator was doing. */
+  | 'overlay-opened'
+  /** The overlay could not open, and the reason is known and reported. */
+  | 'overlay-unavailable'
+  /** Papers came forward (the bring-to-front chord, when it was not in front). */
+  | 'brought-forward'
+  /** Papers was not running and its configured shortcut was launched. */
+  | 'launched'
   /** Papers could not be brought forward at all. */
   | 'window-unavailable';
 
@@ -85,11 +106,34 @@ export interface GlobalInvokeReport {
   detail: string;
 }
 
+/** The launcher overlay, as this module needs to see it. */
+export interface CommandSurfaceOverlay {
+  /**
+   * Show the overlay over the current foreground application and give it
+   * keyboard focus. MUST NOT bring Papers forward.
+   *
+   * Resolves with the outcome, including the refusal case: no project open, no
+   * command surface declared, or the surface failing to load. A refusal is
+   * reported, never silent.
+   */
+  open(): Promise<{ ok: boolean; detail: string }>;
+  /** Close it if it is open, handing focus back. Safe to call when closed. */
+  close(reason: OverlayCloseReason): Promise<void>;
+  isOpen(): boolean;
+}
+
 export interface GlobalInvokeDependencies {
   shortcut: GlobalShortcutLike;
   /** The focused Papers window, or null when there is none to bring forward. */
   currentWindowId(): number | null;
   bringToFront(windowId: number): { ok: boolean; detail: string };
+  /**
+   * Launch Papers when the host has no live window. This is necessarily a
+   * best-effort fallback: a process-level global shortcut cannot receive a
+   * keypress after the process has exited, but it can recover a live host that
+   * has not created its first window yet.
+   */
+  launchIfUnavailable?(): Promise<{ ok: boolean; detail: string }>;
   /**
    * Ask the focused project's command surface to receive the neutral invoke.
    * `surfaceId` is whatever the project declared; the host never interprets it.
@@ -101,6 +145,12 @@ export interface GlobalInvokeDependencies {
   ): { ok: boolean; detail: string };
   /** Where the host resolves the focused project's declared command surface. */
   resolveCommandSurface?(): { projectId: string; surfaceId: string } | null;
+  /**
+   * The launcher overlay. When present, the invoke chord opens THIS and never
+   * brings Papers forward. When absent the invoke chord reports that the
+   * overlay is unavailable rather than silently falling back to raising Papers.
+   */
+  overlay?: CommandSurfaceOverlay;
   accelerators?: GlobalInvokeAccelerators;
   report?(report: GlobalInvokeReport): void;
 }
@@ -217,39 +267,68 @@ export function createGlobalInvoke(dependencies: GlobalInvokeDependencies): Glob
     dependencies.report?.(report);
   };
 
+  /** Alt+Shift+A always raises Papers; it never minimizes it. */
   const onBringToFront = (): void => {
-    const result = handleBringToFront();
+    const windowId = dependencies.currentWindowId();
+    if (windowId === null) {
+      void (async () => {
+        const launched = await dependencies.launchIfUnavailable?.() ?? {
+          ok: false,
+          detail: 'no Papers window is open',
+        };
+        emit({
+          chord: 'bringToFront',
+          outcome: launched.ok ? 'launched' : 'window-unavailable',
+          detail: launched.detail,
+        });
+      })();
+      return;
+    }
+    const result = dependencies.bringToFront(windowId);
     emit({
       chord: 'bringToFront',
-      outcome: result.ok ? 'brought-forward-invoked' : 'window-unavailable',
+      outcome: result.ok ? 'brought-forward' : 'window-unavailable',
       detail: result.detail,
     });
   };
 
+  /**
+   * The invoke chord opens a TRANSIENT OVERLAY and does not touch the window
+   * order of Papers at all.
+   *
+   * Note what is deliberately absent: this path never calls `handleBringToFront`.
+   * An earlier revision brought Papers forward here, which was an interpolation
+   * of the request rather than the request itself. Papers stays exactly where it
+   * was - minimised if it was minimised, behind whatever is in front of it.
+   */
   const onInvoke = (): void => {
-    const front = handleBringToFront();
-    if (!front.ok) {
-      // Nothing to deliver to. Papers could not come forward, and saying so is
-      // the whole point: the creator must not be left guessing.
-      emit({ chord: 'invoke', outcome: 'window-unavailable', detail: front.detail });
-      return;
-    }
-
-    const surface = dependencies.resolveCommandSurface?.() ?? null;
-    if (surface === null) {
+    const overlay = dependencies.overlay;
+    if (!overlay) {
       emit({
         chord: 'invoke',
-        outcome: 'brought-forward-nothing-to-open',
-        detail: 'no command surface is declared for the focused project',
+        outcome: 'overlay-unavailable',
+        detail: 'the command surface overlay is not available in this build',
       });
       return;
     }
 
-    const delivered = dependencies.invokeCommandSurface(surface.projectId, surface.surfaceId, 'global-accelerator');
-    emit({
-      chord: 'invoke',
-      outcome: delivered.ok ? 'brought-forward-invoked' : 'brought-forward-nothing-to-open',
-      detail: delivered.detail,
+    // The chord is NOT a toggle. Pressing it again while the overlay is open
+    // re-invokes the surface, so the creator lands on an empty, focused line;
+    // dismissing is Escape's job. Closing here instead would leave the project
+    // with no event to clear on, and merely refocusing the window - which is
+    // what the overlay used to do - leaves it with no event at all.
+    void overlay.open().then((opened) => {
+      emit({
+        chord: 'invoke',
+        outcome: opened.ok ? 'overlay-opened' : 'overlay-unavailable',
+        detail: opened.detail,
+      });
+    }).catch((error: unknown) => {
+      emit({
+        chord: 'invoke',
+        outcome: 'overlay-unavailable',
+        detail: `the command surface overlay failed to open: ${error instanceof Error ? error.message : String(error)}`,
+      });
     });
   };
 
@@ -304,7 +383,9 @@ export function createGlobalInvoke(dependencies: GlobalInvokeDependencies): Glob
       const report: GlobalInvokeRegistrationReport = { ok: true, registered: [], failures: [] };
       // Registration is attempted for both chords independently: one being taken
       // must not disarm the other.
-      registerOne('bringToFront', accelerators.bringToFront, onBringToFront, report);
+      // Alt+Shift+A belongs to the Windows Papers.lnk shortcut. Keeping it out
+      // of Electron is what lets the same chord launch Papers when this process
+      // is not running; a process-level globalShortcut cannot survive exit.
       registerOne('invoke', accelerators.invoke, onInvoke, report);
       report.ok = report.failures.length === 0;
       return report;

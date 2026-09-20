@@ -4,11 +4,14 @@ import * as path from 'node:path';
 
 /**
  * Dependency-free package-configuration gate (Assignment 014R FINDING 4):
- * electron-builder.yml must include EXACTLY ONE intended
- * `resources/window-helper -> window-helper` extraResources mapping and no
- * broader `resources/` or `tests/` mapping that could ship this helper.
+ * electron-builder.yml must include EXACTLY the intended `extraResources`
+ * mappings and no broader `resources/` or `tests/` mapping that could ship more
+ * than the two directories that are deliberately packaged:
+ *   - `resources/window-helper -> window-helper`  the window helper scripts
+ *   - `resources/native -> native`                the foreground bridge source
  */
 
+const REPO_ROOT = path.join(__dirname, '../..');
 const BUILDER_YML = path.join(__dirname, '../../electron-builder.yml');
 
 interface ExtraResourceEntry {
@@ -56,10 +59,27 @@ describe('electron-builder window-helper resource inclusion', () => {
     expect(helperEntries[0]!.to).toBe('window-helper');
   });
 
-  it('ships no broader resources or tests mapping for this helper', () => {
-    const broader = entries.filter((entry) => entry.from !== 'resources/window-helper'
-      && (entry.from.startsWith('resources') || entry.from.startsWith('tests') || entry.from.includes('window-helper')));
+  it('ships exactly two resource mappings and no broader resources or tests mapping', () => {
+    // The intent is that resources are mapped one directory at a time, never by
+    // a glob that would sweep in tests, fixtures or the whole resources tree.
+    // The exact set is asserted so a new mapping has to be a deliberate edit
+    // here rather than an accident that silently widens what ships.
+    const resourceMappings = entries
+      .filter((entry) => entry.from.startsWith('resources'))
+      .map((entry) => `${entry.from}->${entry.to}`)
+      .sort();
+    expect(resourceMappings).toEqual(['resources/native->native', 'resources/window-helper->window-helper']);
+
+    const broader = entries.filter((entry) => entry.from.startsWith('tests')
+      || (entry.from.startsWith('resources') && !/^resources\/(window-helper|native)$/.test(entry.from)));
     expect(broader).toHaveLength(0);
+  });
+
+  it('ships the native foreground bridge SOURCE, so no prebuilt binary is distributed', () => {
+    const nativeEntries = entries.filter((entry) => entry.from === 'resources/native');
+    expect(nativeEntries).toHaveLength(1);
+    expect(nativeEntries[0]!.to).toBe('native');
+    expect(fs.existsSync(path.join(REPO_ROOT, 'resources', 'native', 'fg-bridge.cs'))).toBe(true);
   });
 
   it('keeps the helper out of the app bundle', () => {

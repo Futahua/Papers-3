@@ -41,7 +41,7 @@ import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
 import { registerVisualDiagnosticsIpc, resolveVisualDiagnosticTarget } from './ipc/visualDiagnosticsIpc';
 import { registerVisualSemanticKeysIpc } from './ipc/visualSemanticKeysIpc';
 import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
-import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender } from './backpacks/backpackSurfaceRegistry';
+import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender, decideProjectSurfaceRequest } from './backpacks/backpackSurfaceRegistry';
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
 import { controlBuildIdentity } from './buildIdentity';
 import { createProcessInstanceIdentity, currentProcessInstanceSeed, type ProcessInstanceIdentity } from './visual/processIdentity';
@@ -64,7 +64,22 @@ import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
 import { createGlobalInvoke, type GlobalInvoke, type GlobalInvokeRegistrationReport } from './windows/globalInvoke';
 import { createAdoptedWindowDock } from './windows/adoptedWindowDockSession';
+import {
+  createManifestDeclarationReader,
+  createCommandSurfaceRegistry,
+  readProjectControlRecord,
+  type CommandSurfaceRegistry,
+} from './backpacks/commandSurfaceRegistry';
+import { createLauncherNominationStore } from './backpacks/launcherNominationStore';
 import { bringWindowToFront } from './windows/windowFront';
+import {
+  COMMAND_SURFACE_HEIGHT as COMMAND_SURFACE_OVERLAY_HEIGHT,
+  COMMAND_SURFACE_INVOKE_CHANNEL,
+  COMMAND_SURFACE_WIDTH as COMMAND_SURFACE_OVERLAY_WIDTH,
+  createCommandSurfaceOverlay,
+  type CommandSurfaceOverlaySession,
+} from './windows/commandSurfaceOverlay';
+import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './windows/foregroundBridge';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
@@ -385,7 +400,7 @@ function windowIdForProjectSender(sender: WebContents): number | null {
 function bindOwnedProjectSurface(
   window: BrowserWindow,
   projectId: string,
-  kind: 'detached' | 'widget',
+  kind: 'detached' | 'widget' | 'launcher',
   owningWindowId: number,
 ): void {
   const senderId = window.webContents.id;
@@ -398,16 +413,33 @@ function bindOwnedProjectSurface(
 let hostView: WebContentsView | null = null;
 
 /**
- * The two system-wide invocation chords. Application-level, not per-window:
- * there is one keyboard claim for the whole process, and a second Papers
- * instance cannot make a second claim because Electron holds the chords
- * process-wide (and `second-instance` already routes a second launch into the
- * running window).
+ * The Papers-owned system-wide invocation chord. Alt+Shift+A is deliberately
+ * owned by the Windows Papers.lnk shortcut so it also works while this process
+ * is stopped; launching the shortcut routes through `second-instance` when a
+ * Papers process already exists.
  */
 let globalInvoke: GlobalInvoke | null = null;
 /** The outcome of the one registration attempt, kept so the control snapshot
  * can report a refused chord instead of leaving it invisible. */
 let globalShortcutReport: GlobalInvokeRegistrationReport | null = null;
+
+/**
+ * The launcher overlay. Application-level, like the chords themselves: there is
+ * one launcher for the process, and pressing the chord again dismisses it.
+ */
+let commandSurfaceOverlay: CommandSurfaceOverlaySession | null = null;
+/**
+ * Test-only seam for the invoke chord.
+ *
+ * Why it exists: the launcher is a real system-wide chord, and the only honest
+ * way to test "press it twice" is to press it again. Synthesising the global
+ * accelerator needs Windows SendInput, which would seize the keyboard of the
+ * machine the creator is sitting at. The seam publishes the SAME
+ * `openCommandSurface` the chord calls, and only when
+ * PAPERS_TEST_INVOKE_CHANNEL=1 - never in a normal build.
+ */
+const TEST_INVOKE_ENABLED = process.env['PAPERS_TEST_INVOKE_CHANNEL'] === '1';
+export const TEST_OPEN_COMMAND_SURFACE_KEY = '__papersTestOpenCommandSurface';
 
 // A second launch belongs to the existing Papers window. Auxiliary Backpack
 // surfaces must never be allowed to become an unreachable single-instance
@@ -415,14 +447,12 @@ let globalShortcutReport: GlobalInvokeRegistrationReport | null = null;
 // the orphaned process so the next launch can start cleanly.
 app.on('second-instance', () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show();
-    mainWindow.focus();
+    bringWindowToFront(mainWindow);
     return;
   }
   for (const context of papersWindows.all()) {
     if (!context.owned.window.isDestroyed()) {
-      context.owned.window.show();
-      context.owned.window.focus();
+      bringWindowToFront(context.owned.window);
       return;
     }
   }
@@ -774,6 +804,9 @@ async function bootstrap(): Promise<void> {
           removeWindow: (id) => {
             hostOverlayOwners.delete(id);
             papersWindows.remove(id);
+            if (papersWindows.windowIds.length === 0) {
+              void commandSurfaceOverlay?.destroy().catch(() => undefined);
+            }
           },
           emitHermesSurface: () => facade.emitHermesSurface(),
         });
@@ -891,8 +924,32 @@ async function bootstrap(): Promise<void> {
       senderId: sender.id,
       url: sender.mainFrame.url,
       isWorkspaceSender: runtimeForSender(sender.id)?.isSender(sender) ?? false,
+      // The registry that binds EVERY Papers-owned surface, so trust is asked of
+      // the authority rather than of a feature's lookup table.
+      surfaces: surfaceContexts,
       detachRegistry,
       widgetRegistry,
+    });
+
+  /**
+   * May this sender use THIS channel?
+   *
+   * Trust and authorization are separate questions, and the channel decides the
+   * second one. Without this, admitting a kind of surface to host project
+   * channels also hands it window enumeration and native dialogs.
+   */
+  const projectSurfaceRequestDecision = (
+    sender: WebContents,
+    channel: string,
+  ): 'allow' | 'not-a-project-sender' | 'capability-not-granted' =>
+    decideProjectSurfaceRequest({
+      senderId: sender.id,
+      url: sender.mainFrame.url,
+      isWorkspaceSender: runtimeForSender(sender.id)?.isSender(sender) ?? false,
+      surfaces: surfaceContexts,
+      detachRegistry,
+      widgetRegistry,
+      channel,
     });
 
   /**
@@ -918,17 +975,38 @@ async function bootstrap(): Promise<void> {
     }
     const bridge = createLocalServiceBridge({
       declaration,
+      // THE SCOPE A DECLARED CREDENTIAL MAY BE READ FROM. Both are locations the
+      // host itself decides: the project's own tree, and the host's per-project
+      // config directory (where `backpack.json` already lives). A declaration is
+      // project-authored input, so without this it could name any readable file on
+      // the machine and have it attached to a request.
+      secretRoots: [
+        root,
+        path.join(app.getPath('userData'), 'PapersData', 'backpacks', projectId),
+      ],
       readSecretFile: (file) => {
+        // The top-level `readFileSync` import, not a fresh `require`: the merge
+        // brought the bridge in beside code that already imports it, and two
+        // spellings of one dependency drift.
         try {
-          return require('node:fs').readFileSync(file, 'utf8').trim();
+          return readFileSync(file, 'utf8').trim();
         } catch {
           return null;
         }
       },
-      performRequest: async ({ url, method, headers, body }) => {
+      performRequest: async ({ url, method, headers, body, redirect }) => {
         const response = await net.fetch(url, {
           method,
           headers,
+          // THE REDIRECT FIX. `net.fetch` follows redirects by default, which
+          // would send this machine to a destination nothing validated - the
+          // declaration and the loopback check only ever saw the FIRST url.
+          // MEASURED against a real Electron: with `manual`, a 3xx makes
+          // `net.fetch` throw "Redirect was cancelled" rather than handing the
+          // response back. So the hop is refused and never chased, which is the
+          // property that matters; the bridge's own hop checks still apply to any
+          // Location that does reach it.
+          redirect,
           ...(body === null ? {} : { body }),
         });
         return {
@@ -1157,6 +1235,7 @@ async function bootstrap(): Promise<void> {
       () => randomUUID(),
     ),
     isBackpackProjectSender: isProjectSurfaceSender,
+    decideProjectSurfaceRequest: projectSurfaceRequestDecision,
     surfaces: surfaceContexts,
     waitForBackpackProjectAuthority: (senderId) => projectSurfaceAuthority.wait(senderId),
     logicalSurfaces,
@@ -2369,6 +2448,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // exits - not even while the rest of teardown is still draining.
       globalInvoke?.release();
       globalInvoke = null;
+      // A launcher left open would be a focus-holding window with no owner.
+      void commandSurfaceOverlay?.destroy().catch(() => undefined);
+      commandSurfaceOverlay = null;
       visualResourceMonitor?.detach();
       visualResourceMonitor = null;
       windowPickSession.cancel().catch(() => undefined);
@@ -2483,12 +2565,18 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
 
   // ------------------------------------------------- global invocation chords
   // Two system-wide chords, live while Papers runs, working from inside any
-  // other application: one brings Papers forward, the other brings it forward
-  // and asks the focused project's command surface to open.
+  // other application:
+  //   Alt+Shift+A  is owned by the Windows Papers.lnk shortcut and brings
+  //                Papers to the front through the single-instance path.
+  //   Alt+A        pop the command surface OVER whatever the creator is doing.
+  //                Papers does NOT come forward - this is a launcher, not a
+  //                window switcher. The application they came from keeps its
+  //                place and gets focus back when the overlay closes.
   //
   // The host stays generic. It does not know what any Backpack's command
-  // surface is called, what it does, or that "Quick Run" exists. It delivers a
-  // neutral event to the focused project's surfaces and the project decides.
+  // surface is called, what it does, or that "Quick Run" exists. It loads the
+  // focused project's own entry URL with an opaque mode marker and delivers a
+  // neutral event; the project decides what that means.
   //
   // Registration CAN fail - another application may already own the chord - and
   // a silent failure here is the bug this codebase keeps repeating: the creator
@@ -2502,6 +2590,247 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     return { ok: result.ok, detail: result.detail };
   };
 
+  // The launcher overlay has its OWN host window: a small borderless surface
+  // that appears over whatever the creator is doing. It does not raise Papers.
+  //
+  // Focus is the hard half. The foreground window is recorded BEFORE the
+  // overlay takes focus, because after that the original is unrecoverable. The
+  // native bridge is the only component that can hand focus back: a background
+  // process calling SetForegroundWindow is refused by the Windows foreground
+  // lock, which was measured rather than assumed.
+  const foregroundBridge = createForegroundBridge({
+    cacheDirectory: app.getPath('userData'),
+    sourcePath: resolveForegroundBridgeSourcePath({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
+    }),
+  });
+  if (!foregroundBridge) {
+    console.error('[papers] native foreground bridge unavailable: focus cannot be handed back to the previous application');
+  }
+
+  const launcherNomination = createLauncherNominationStore(app.getPath('userData'));
+  await launcherNomination.load();
+
+  /**
+   * WHICH PROJECT ALT+A LAUNCHES.
+   *
+   * Not the active tab. The creator presses this from outside Papers, so the
+   * front tab is invisible to them - it used to decide the target, and rendered
+   * Proxima's task board (a project with no command surface at all) into the
+   * launcher's letterbox. The rule is now: the project that DECLARES a command
+   * surface, the creator's nomination when there is one, and a visible refusal
+   * when the answer would otherwise be a guess. See commandSurfaceRegistry.
+   */
+  const readLauncherDeclaration = createManifestDeclarationReader(
+    (projectId) => backpackProjects.root(projectId),
+    readProjectControlRecord,
+  );
+
+  const commandSurfaceRegistry: CommandSurfaceRegistry = createCommandSurfaceRegistry({
+    openProjects: () => {
+      const seen = new Set<string>();
+      const open: Array<{ projectId: string; root: string }> = [];
+      for (const windowId of papersWindows.windowIds) {
+        for (const runtime of papersWindows.get(windowId)?.owned.projectSurfaces.all() ?? []) {
+          const projectId = runtime.liveProjectId;
+          if (!projectId || seen.has(projectId)) continue;
+          seen.add(projectId);
+          open.push({ projectId, root: '' });
+        }
+      }
+      return open;
+    },
+    readDeclaration: readLauncherDeclaration,
+    nominatedProjectId: () => launcherNomination.nominatedProjectId(),
+    nominate: (projectId) => launcherNomination.set(projectId),
+  });
+
+  commandSurfaceOverlay = createCommandSurfaceOverlay({
+    // The registry's refusal is carried out verbatim: it names the Backpacks it
+    // looked at, which is the only thing the creator cannot check for themselves.
+    resolveCommandSurface: () => commandSurfaceRegistry.resolve(),
+    resolveEntryUrl: (projectId) => {
+      for (const windowId of papersWindows.windowIds) {
+        const url = papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null;
+        if (url) return url;
+      }
+      return null;
+    },
+    preloadPath: path.join(preloadDir, 'backpackProject.cjs'),
+    // An automated test cannot hold focus, so the real behaviour would close the
+    // overlay before it could be observed. Only PAPERS_TEST_INVOKE_CHANNEL
+    // relaxes this, and only in a build launched for testing.
+    ...(TEST_INVOKE_ENABLED ? { dismissOnBlur: false } : {}),
+    focusBridge: foregroundBridge ?? undefined,
+    // Where the creator is working, by cursor: the pointer is the best
+    // cross-process signal for "the screen they are looking at", and it needs
+    // no native call to read.
+    placeOn: () => {
+      const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+      return { x: area.x, y: area.y, width: area.width, height: area.height };
+    },
+    createWindow: ({ projectId, preloadPath: overlayPreloadPath }) => {
+      const overlayWindow = new BrowserWindow({
+        width: COMMAND_SURFACE_OVERLAY_WIDTH,
+        height: COMMAND_SURFACE_OVERLAY_HEIGHT,
+        frame: false,
+        title: '',
+        transparent: true,
+        backgroundColor: '#00000000',
+        resizable: false,
+        // A launcher sits above ordinary windows, and is NOT taskbar or
+        // alt-tab material: the creator does not own it as a window.
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        minimizable: false,
+        maximizable: false,
+        // A launcher is not a window the creator manages: no fullscreen, no
+        // maximise, no minimise. Measured: Electron's default leaves a
+        // frameless window fullscreenable, which would let a stray F11 turn the
+        // launcher into a full-screen surface.
+        fullscreenable: false,
+        show: false,
+        webPreferences: {
+          preload: overlayPreloadPath,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          webviewTag: false,
+        },
+      });
+      overlayWindow.setMenuBarVisibility(false);
+      overlayWindow.setAlwaysOnTop(true, 'floating');
+      overlayWindow.setSkipTaskbar(true);
+      // Escape is handled by the HOST, not the project page: dismissing the
+      // launcher is host behaviour, and it must work even if the page is still
+      // loading or its own key handling never runs.
+      overlayWindow.webContents.on('before-input-event', (_event, input) => {
+        if (input.type === 'keyDown' && input.key === 'Escape') {
+          void commandSurfaceOverlay?.close('dismissed').catch(() => undefined);
+        }
+      });
+      overlayWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      // Fail-closed navigation guard: only the exact scheme and the exact
+      // bound project host, the same rule the compact widget uses.
+      overlayWindow.webContents.on('will-navigate', (event, targetUrl) => {
+        try {
+          const parsed = new URL(targetUrl);
+          if (parsed.protocol !== 'papers-backpack:' || parsed.host !== projectId) event.preventDefault();
+        } catch {
+          event.preventDefault();
+        }
+      });
+      // Bound as a Papers-owned project surface so the project's own IPC is
+      // allowed from it.
+      //
+      // This binding previously said `widget`, on the reasoning that "the gate
+      // treats every non-detached kind alike, so a third kind would change
+      // nothing". Both halves of that were wrong, and the launcher did not work
+      // at all because of it:
+      //   - the gate did NOT treat kinds alike. It asked the detach and widget
+      //     registries, which the launcher is in neither of, so every project
+      //     channel was refused with "host channel called from non-host sender";
+      //   - the kind is not cosmetic. It now decides which capabilities the
+      //     surface may use, so calling the launcher a widget would have granted
+      //     it a compact widget's window picking and state writing.
+      // It has its own kind because a reader of a kind is entitled to a
+      // different answer for a launcher.
+      bindOwnedProjectSurface(overlayWindow, projectId, 'launcher', papersWindows.windowIds[0] ?? 0);
+      return overlayWindow;
+    },
+    deliver: (senderId, payload) => {
+      const contents = webContents.fromId(senderId);
+      if (!contents || contents.isDestroyed()) return;
+      contents.send(COMMAND_SURFACE_INVOKE_CHANNEL, payload);
+    },
+    report: (report) => {
+      // Focus failures are reported; a clean hand-back is not news.
+      if (report.outcome === 'focus-restored') return;
+      console.error(`[papers] command surface focus: ${report.detail}`);
+    },
+  });
+  // Load the launcher renderer while Papers is settling, without showing it or
+  // touching foreground focus. Later Alt+A presses reuse this hidden surface.
+  void commandSurfaceOverlay.warm().catch((error) => {
+    console.error('[papers] command surface warm-up failed:', error);
+  });
+
+  // The chord's own open path, shared by the real accelerator and the test seam
+  // below, so a test exercises exactly what a keypress does.
+  const openCommandSurface = async (): Promise<{ ok: boolean; detail: string }> => {
+    if (!commandSurfaceOverlay) {
+      return { ok: false, detail: 'the command surface overlay is not available in this build' };
+    }
+    return commandSurfaceOverlay.open();
+  };
+  if (TEST_INVOKE_ENABLED) {
+    // Published ONLY under the test flag, so no shipping build carries it and no
+    // page can reach the launcher without a real keypress. It is the same
+    // function the accelerator calls, not a reimplementation of it.
+    (globalThis as Record<string, unknown>)['__papersTestOpenCommandSurface'] = openCommandSurface;
+  }
+
+  // Alt+Shift+A is raise-only. It never minimizes Papers.
+  /* Legacy toggle implementation retained below for historical tests; the
+     shipping Alt+Shift+A path is raise-only and does not wire it. */
+  /* windowToggle = createWindowToggle({
+    foregroundPapersWindowId,
+    currentWindowId: () => {
+      const windows = papersWindows.windowIds;
+      const visible = windows.find((id) => {
+        const owned = papersWindows.get(id)?.owned.window;
+        return owned !== undefined && !owned.isDestroyed() && owned.isVisible();
+      });
+      if (visible !== undefined) return visible;
+      const live = windows.find((id) => {
+        const owned = papersWindows.get(id)?.owned.window;
+        return owned !== undefined && !owned.isDestroyed();
+      });
+      return live ?? null;
+    },
+    // Deliberately NOT reading a cache: the answer must be as fresh as the
+    // handle it is compared against, so the caller refreshes it first.
+    isForeground: () => foregroundPapersWindowId() !== null,
+    minimize: (windowId) => {
+      const owned = papersWindows.get(windowId)?.owned.window;
+      if (!owned || owned.isDestroyed()) return false;
+      // The launcher is not a Papers window the creator manages. If it is up,
+      // it comes down with the window rather than floating over whatever they
+      // moved on to.
+      void commandSurfaceOverlay?.close('dismissed').catch(() => undefined);
+      try {
+        owned.minimize();
+      } catch {
+        return false;
+      }
+      // Electron's minimize() returns void, so reporting true without checking
+      // would be a claim rather than an observation - and a failed minimise that
+      // reported success is the worst outcome here. Verify it, so the toggle
+      // falls back to raising when the hide did not actually happen.
+      return owned.isMinimized();
+    },
+    bringToFront: bringPapersWindowForward,
+    nextWindowInZOrder: async () => {
+      if (!foregroundBridge) return null;
+      const windowId = foregroundPapersWindowId();
+      const owned = windowId === null ? undefined : papersWindows.get(windowId)?.owned.window;
+      const handle = owned ? nativeHandleOf(owned) : null;
+      if (handle === null) return null;
+      // "The window underneath the one being hidden" - the sensible place for
+      // focus to land, and the reason the bridge walks the z-order.
+      return foregroundBridge.nextWindowInZOrder(handle).catch(() => null);
+    },
+    focusWindow: async (handle) => {
+      if (!foregroundBridge) return false;
+      return foregroundBridge.setForegroundWindow(handle).catch(() => false);
+    },
+    report: (report) => {
+      if (report.outcome !== 'minimized') return;
+      console.error(`[papers] bring-to-front toggle: ${report.detail}`);
+    },
+  }); */
   globalInvoke = createGlobalInvoke({
     shortcut: globalShortcut,
     currentWindowId: () => {
@@ -2536,37 +2865,20 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       }
       return null;
     },
-    invokeCommandSurface: (projectId, surfaceId) => {
-      const senders = surfaceContexts.sendersForProject(projectId);
-      let delivered = 0;
-      for (const senderId of senders) {
-        const contents = webContents.fromId(senderId);
-        if (!contents || contents.isDestroyed()) continue;
-        contents.send('papers:backpack:global-invoke', {
-          projectId,
-          surfaceId,
-          chord: 'invoke',
-          reason: 'global-accelerator',
-        });
-        delivered += 1;
-      }
-      if (delivered === 0) {
-        return { ok: false, detail: 'the focused project has no live surface to receive the invoke' };
-      }
-      return { ok: true, detail: `delivered to ${delivered} surface(s)` };
-    },
+    invokeCommandSurface: () => ({ ok: true, detail: 'delivered by the overlay' }),
+    overlay: commandSurfaceOverlay ?? undefined,
     report: (report) => {
       // Only failures reach the creator. A successful chord is its own feedback.
-      if (report.outcome === 'brought-forward-invoked') return;
+      if (report.outcome === 'overlay-opened' || report.outcome === 'brought-forward' || report.outcome === 'launched') return;
       hostView?.webContents.send('host:event:host-error', {
         component: 'Global shortcut',
         what: report.outcome === 'window-unavailable'
           ? 'Papers could not be brought to the front.'
-          : 'The command surface shortcut brought Papers forward, but there was nothing to open.',
+          : 'The command surface shortcut could not open the launcher.',
         known: report.detail,
-        intact: 'Nothing was changed, and no other application was affected.',
-        retryUseful: report.outcome === 'window-unavailable',
-        inspect: 'Shortcuts: bring Papers forward is Alt+Shift+A, open the command surface is Alt+A.',
+        intact: 'Nothing was changed, and no other application was affected. Papers did not come forward.',
+        retryUseful: true,
+        inspect: 'Shortcuts: bring Papers forward is the Windows Papers.lnk hotkey Alt+Shift+A; open the command surface is Alt+A.',
         recover: report.outcome === 'window-unavailable'
           ? 'Open a Papers window, then press the shortcut again.'
           : 'Open a Backpack in Papers, then press the shortcut again.',

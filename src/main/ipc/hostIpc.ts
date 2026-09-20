@@ -19,6 +19,19 @@ export interface HostFacade {
   fetchLocalService?(senderId: number, request: unknown): Promise<unknown>;
   isHostSender(sender: WebContents): boolean;
   isBackpackProjectSender(sender: WebContents): boolean;
+  /**
+   * May this sender use THIS channel?
+   *
+   * Separate from `isBackpackProjectSender` on purpose. That answers "is this an
+   * owned project surface for the project it is showing"; this answers "and may
+   * a surface of its kind use this particular channel". Collapsing them is how
+   * admitting the launcher would also have granted it window enumeration, native
+   * dialogs and the ability to rewrite the project's shared state.
+   */
+  decideProjectSurfaceRequest?(
+    sender: WebContents,
+    channel: string,
+  ): 'allow' | 'not-a-project-sender' | 'capability-not-granted';
   waitForBackpackProjectAuthority?(senderId: number): Promise<void>;
 
   buildIdentity(): unknown;
@@ -170,10 +183,20 @@ const delegateWaveRequestSchema = z
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
 
 export function registerHostIpc(facade: HostFacade): void {
-  const guard = (event: IpcMainInvokeEvent, projectAllowed = false): void => {
-    if (!facade.isHostSender(event.sender) && !(projectAllowed && facade.isBackpackProjectSender(event.sender))) {
-      throw new Error('host channel called from non-host sender');
+  const guard = (event: IpcMainInvokeEvent, projectAllowed = false, channel = ''): void => {
+    if (facade.isHostSender(event.sender)) return;
+    if (!projectAllowed) throw new Error('host channel called from non-host sender');
+
+    // A project surface may drive project channels. WHICH ones depends on the
+    // kind of surface it is, so the channel travels with the question: a
+    // launcher reads and runs, and does not get to write the project's document.
+    const decision = facade.decideProjectSurfaceRequest?.(event.sender, channel);
+    if (decision === 'allow') return;
+    if (decision === 'capability-not-granted') {
+      throw new Error(`host channel ${channel} is not available to this kind of project surface`);
     }
+    if (facade.isBackpackProjectSender(event.sender)) return;
+    throw new Error('host channel called from non-host sender');
   };
 
   const handle = (
@@ -186,7 +209,7 @@ export function registerHostIpc(facade: HostFacade): void {
         !channel.endsWith(':open') && !channel.endsWith(':close') &&
         !channel.endsWith(':show-surface') && !channel.endsWith(':hide-surface');
       if (projectAction) await facade.waitForBackpackProjectAuthority?.(event.sender.id);
-      guard(event, projectAllowed || projectAction);
+      guard(event, projectAllowed || projectAction, channel);
       return handler(event, ...args);
     });
   };

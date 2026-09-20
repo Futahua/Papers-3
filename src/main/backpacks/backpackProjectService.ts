@@ -22,10 +22,17 @@ interface ProjectBinding {
   root: string;
 }
 
-interface ProjectManifest {
+/**
+ * A project's private control record. Only the fields the host itself needs are
+ * named: a project may state more (for example `launcherSurface`), and the host
+ * carries such a statement without interpreting it.
+ */
+export interface ProjectManifest {
   backpackId: string;
   entry: string;
   root: string;
+  /** The record is open: a project may state more than the host needs. */
+  [field: string]: unknown;
 }
 
 interface ProjectAction {
@@ -301,16 +308,23 @@ export class BackpackProjectService {
   }
 
   /**
-   * The project's root directory, or null when it is not bound here.
+   * The project's root directory, or null when it is not bound on this machine.
    *
-   * Exposed for capabilities that need to read something the project ships
-   * beside its `public/` assets - the local-service declaration is the first.
-   * The root never leaves the main process: a renderer is told about a
-   * capability, never about a path.
+   * Exposed so a caller can read the project's OWN private control records from
+   * the same validated location the host uses, rather than re-deriving the path
+   * from a guessed convention. It grants nothing: those records were already
+   * private to the main process, and a renderer is told about a capability, never
+   * about a path.
+   *
+   * Two independent capabilities needed this and each added it: the launcher,
+   * which reads a project's declared command surface, and the local-service
+   * bridge, which reads its declared services. They are the same read, so they
+   * are the same method - and the merge that joined those branches found exactly
+   * that, two identical additions with different prose.
    */
   async root(backpackId: string): Promise<string | null> {
     const manifest = await this.manifest(backpackId);
-    return manifest ? manifest.root : null;
+    return manifest?.root ?? null;
   }
 
   async open(backpackId: string): Promise<OpenBackpackProject | null> {

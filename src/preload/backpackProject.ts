@@ -570,11 +570,11 @@ for (const [channel, type] of [
   ['papers:backpack:detach-activate', 'papers:project:detach-activate'],
   ['papers:backpack:detach-flush-request', 'papers:project:detach-flush-request'],
   ['papers:backpack:detach-closed', 'papers:project:detach-closed'],
-  // The host's global invoke chord. The host does not know what this means to
-  // any particular Backpack: it reports that the creator pressed the key,
-  // which chord it was, and that the focused project's command surface is what
-  // should respond. The project decides the rest.
-  ['papers:backpack:global-invoke', 'papers:project:global-invoke'],
+  // The launcher overlay is open and this project should render its command
+  // surface in it. The host does not know what a command surface IS: it reports
+  // that the chord was pressed, which chord it was, and that this project's
+  // command surface is what should respond. The project decides the rest.
+  ['papers:backpack:command-surface-invoke', 'papers:project:command-surface-invoke'],
 ] as const) {
   ipcRenderer.on(channel, (_event, payload) => window.postMessage({ type, ...(payload ?? {}) }, window.location.origin));
 }
