@@ -305,7 +305,7 @@ describe('globalInvoke behaviour', () => {
     expect(brought).toHaveLength(0);
   });
 
-  it('does nothing when no window exists to bring forward', () => {
+  it('does nothing when no window exists to bring forward', async () => {
     const calls: GlobalInvokeReport[] = [];
     const { shortcut, brought, deps } = harness({
       currentWindowId: () => null,
@@ -314,9 +314,44 @@ describe('globalInvoke behaviour', () => {
     createGlobalInvoke(deps).register();
 
     shortcut.callbacks.get('Alt+Shift+A')?.();
+    await new Promise((r) => setTimeout(r, 0));
 
     expect(brought).toHaveLength(0);
     expect(calls.at(-1)?.outcome).toBe('window-unavailable');
+  });
+
+  it('launches the configured Papers shortcut when no window is available', async () => {
+    const calls: GlobalInvokeReport[] = [];
+    const launched: string[] = [];
+    const { shortcut, deps } = harness({
+      currentWindowId: () => null,
+      launchIfUnavailable: async () => {
+        launched.push('Papers.lnk');
+        return { ok: true, detail: 'launched Papers from Papers.lnk' };
+      },
+      report: (r) => calls.push(r),
+    });
+    createGlobalInvoke(deps).register();
+
+    shortcut.callbacks.get('Alt+Shift+A')?.();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(launched).toEqual(['Papers.lnk']);
+    expect(calls.at(-1)).toEqual({
+      chord: 'bringToFront',
+      outcome: 'launched',
+      detail: 'launched Papers from Papers.lnk',
+    });
+  });
+
+  it('never minimizes or toggles when Alt+Shift+A is pressed', () => {
+    const { shortcut, brought, deps } = harness();
+    createGlobalInvoke(deps).register();
+
+    shortcut.callbacks.get('Alt+Shift+A')?.();
+
+    expect(brought).toHaveLength(1);
+    expect(brought[0]?.windowId).toBe(7);
   });
 });
 

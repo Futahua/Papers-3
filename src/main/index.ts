@@ -79,7 +79,6 @@ import {
   type CommandSurfaceOverlaySession,
 } from './windows/commandSurfaceOverlay';
 import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './windows/foregroundBridge';
-import { createWindowToggle, type WindowToggle } from './windows/windowToggle';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
@@ -431,12 +430,6 @@ let commandSurfaceOverlay: CommandSurfaceOverlaySession | null = null;
  */
 const TEST_INVOKE_ENABLED = process.env['PAPERS_TEST_INVOKE_CHANNEL'] === '1';
 export const TEST_OPEN_COMMAND_SURFACE_KEY = '__papersTestOpenCommandSurface';
-
-/**
- * Alt+Shift+A as a toggle: raise when the creator is elsewhere, hide when
- * Papers is already the window they are looking at.
- */
-let windowToggle: WindowToggle | null = null;
 
 // A second launch belongs to the existing Papers window. Auxiliary Backpack
 // surfaces must never be allowed to become an unreachable single-instance
@@ -2767,51 +2760,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     (globalThis as Record<string, unknown>)['__papersTestOpenCommandSurface'] = openCommandSurface;
   }
 
-  // Alt+Shift+A as a TOGGLE. The rule that decides it:
-  //   "If the window you are looking at is Papers, the chord minimises it;
-  //    otherwise the chord brings Papers forward."
-  //
-  // Foreground is decided by native identity, never by visibility: a visible but
-  // unfocused Papers must be raised, not hidden, or the chord fights the creator
-  // who is in the middle of summoning it. Every uncertain path raises rather than
-  // minimises, because an unwanted raise costs one more keypress while an
-  // unwanted minimise hides work they were looking at.
-  //
-  // The foreground handle is cached because reading it is a child process. It is
-  // refreshed before each toggle decides, and the decision is made from the
-  // handle read immediately beforehand.
-  let foregroundHandle: number | null = null;
-  const refreshForeground = async (): Promise<void> => {
-    foregroundHandle = foregroundBridge ? await foregroundBridge.foregroundWindow().catch(() => null) : null;
-  };
-  const nativeHandleOf = (window: BaseWindow): number | null => {
-    try {
-      const buffer = window.getNativeWindowHandle();
-      if (buffer.length >= 8) {
-        const value = buffer.readBigUInt64LE(0);
-        return value > 0n && value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
-      }
-      if (buffer.length >= 4) {
-        const value = buffer.readUInt32LE(0);
-        return value > 0 ? value : null;
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  };
-  const foregroundPapersWindowId = (): number | null => {
-    if (foregroundHandle === null) return null;
-    for (const windowId of papersWindows.windowIds) {
-      const owned = papersWindows.get(windowId)?.owned.window;
-      if (!owned || owned.isDestroyed()) continue;
-      const handle = nativeHandleOf(owned);
-      if (handle !== null && handle === foregroundHandle) return windowId;
-    }
-    return null;
-  };
-
-  windowToggle = createWindowToggle({
+  // Alt+Shift+A is raise-only. It never minimizes Papers.
+  /* Legacy toggle implementation retained below for historical tests; the
+     shipping Alt+Shift+A path is raise-only and does not wire it. */
+  /* windowToggle = createWindowToggle({
     foregroundPapersWindowId,
     currentWindowId: () => {
       const windows = papersWindows.windowIds;
@@ -2866,11 +2818,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       if (report.outcome !== 'minimized') return;
       console.error(`[papers] bring-to-front toggle: ${report.detail}`);
     },
-  });
+  }); */
   globalInvoke = createGlobalInvoke({
     shortcut: globalShortcut,
-    toggle: windowToggle ?? undefined,
-    beforeToggle: refreshForeground,
     currentWindowId: () => {
       // Prefer an actually visible window, so a hidden or auxiliary surface is
       // not what answers the chord; then any live window; then nothing.
@@ -2887,6 +2837,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       return live ?? null;
     },
     bringToFront: bringPapersWindowForward,
+    launchIfUnavailable: async () => {
+      const shortcutPath = 'C:\\Users\\admin\\Desktop\\Papers.lnk';
+      const error = await shell.openPath(shortcutPath);
+      return error
+        ? { ok: false, detail: `could not launch Papers from ${shortcutPath}: ${error}` }
+        : { ok: true, detail: `launched Papers from ${shortcutPath}` };
+    },
     resolveCommandSurface: () => {
       const windowId = papersWindows.windowIds.find((id) => {
         const owned = papersWindows.get(id)?.owned.window;
@@ -2907,7 +2864,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     overlay: commandSurfaceOverlay ?? undefined,
     report: (report) => {
       // Only failures reach the creator. A successful chord is its own feedback.
-      if (report.outcome === 'overlay-opened' || report.outcome === 'brought-forward') return;
+      if (report.outcome === 'overlay-opened' || report.outcome === 'brought-forward' || report.outcome === 'launched') return;
       hostView?.webContents.send('host:event:host-error', {
         component: 'Global shortcut',
         what: report.outcome === 'window-unavailable'
