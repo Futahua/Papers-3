@@ -76,6 +76,7 @@ export interface HostFacade {
   pickBackpackProjectTarget(
     senderId: number,
     kind: 'file' | 'folder',
+    workspaceOrigin?: string,
   ): Promise<{ target: string; icon: string | null } | null>;
   backpackProjectShortcutIcon(senderId: number, shortcutId: string, workspaceOrigin?: string): Promise<string | null>;
   launchBackpackProjectShortcut(senderId: number, shortcutId: string, workspaceOrigin?: string): Promise<void>;
@@ -83,10 +84,11 @@ export interface HostFacade {
   grantBackpackProjectNativeSource(senderId: number, target: string): Promise<string>;
   openBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
   revealBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
-  openBackpackProjectWebLink(senderId: number, url: string): Promise<void>;
+  openBackpackProjectWebLink(senderId: number, url: string, workspaceOrigin?: string): Promise<void>;
   resolveBackpackProjectDroppedTargets(
     senderId: number,
     paths: string[],
+    workspaceOrigin?: string,
   ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>>;
   resolveBackpackProjectWebLinkIcon(
     senderId: number,
@@ -349,8 +351,8 @@ export function registerHostIpc(facade: HostFacade): void {
       backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
     ),
   );
-  handle('host:backpack-project:pick-target', (event, kind) =>
-    facade.pickBackpackProjectTarget(event.sender.id, z.enum(['file', 'folder']).parse(kind)),
+  handle('host:backpack-project:pick-target', (event, kind, workspaceOrigin) =>
+    facade.pickBackpackProjectTarget(event.sender.id, z.enum(['file', 'folder']).parse(kind), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
   handle('host:backpack-project:shortcut-icon', (event, shortcutId, workspaceOrigin) =>
     facade.backpackProjectShortcutIcon(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
@@ -379,11 +381,11 @@ export function registerHostIpc(facade: HostFacade): void {
       backpackProjectNativeSourceRefSchema.parse(sourceRef),
     ),
   );
-  handle('host:backpack-project:open-web-link', (event, url) =>
-    facade.openBackpackProjectWebLink(event.sender.id, backpackProjectWebUrlSchema.parse(url)),
+  handle('host:backpack-project:open-web-link', (event, url, workspaceOrigin) =>
+    facade.openBackpackProjectWebLink(event.sender.id, backpackProjectWebUrlSchema.parse(url), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
-  handle('host:backpack-project:resolve-dropped-targets', (event, paths) =>
-    facade.resolveBackpackProjectDroppedTargets(event.sender.id, backpackProjectDroppedPathsSchema.parse(paths)),
+  handle('host:backpack-project:resolve-dropped-targets', (event, paths, workspaceOrigin) =>
+    facade.resolveBackpackProjectDroppedTargets(event.sender.id, backpackProjectDroppedPathsSchema.parse(paths), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
   handle('host:backpack-project:resolve-web-link-icon', (event, url, workspaceOrigin) =>
     facade.resolveBackpackProjectWebLinkIcon(event.sender.id, backpackProjectWebUrlSchema.parse(url), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),

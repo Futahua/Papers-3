@@ -1114,8 +1114,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   async pickBackpackProjectTarget(
     senderId: number,
     kind: 'file' | 'folder',
+    workspaceOrigin?: string,
   ): Promise<{ target: string; icon: string | null } | null> {
-    this.requireProjectForSender(senderId);
+    this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    if (workspaceOrigin === undefined) this.requireProjectForSender(senderId);
     const result = await dialog.showOpenDialog({
       title: kind === 'file' ? 'Choose a shortcut, script, app, or file' : 'Choose a folder',
       properties: [kind === 'file' ? 'openFile' : 'openDirectory'],
@@ -1161,16 +1163,20 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     await this.deps.backpackProjects.revealNativeSource(this.requireProjectForSender(senderId), sourceRef);
   }
 
-  async openBackpackProjectWebLink(senderId: number, url: string): Promise<void> {
-    this.requireProjectForSender(senderId);
+  async openBackpackProjectWebLink(senderId: number, url: string, workspaceOrigin?: string): Promise<void> {
+    const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    const projectId = scope?.backpackId ?? this.requireProjectForSender(senderId);
+    if (scope) await this.deps.backpackProjects.assertWebLinkInScope(projectId, url, scope.rootGroupId);
     await shell.openExternal(parseBackpackProjectWebUrl(url));
   }
 
   async resolveBackpackProjectDroppedTargets(
     senderId: number,
     paths: string[],
+    workspaceOrigin?: string,
   ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>> {
-    this.projectStateForSender(senderId);
+    this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    if (workspaceOrigin === undefined) this.projectStateForSender(senderId);
     return this.deps.backpackProjects.describeDroppedTargets(paths);
   }
 

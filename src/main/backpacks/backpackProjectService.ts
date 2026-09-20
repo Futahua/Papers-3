@@ -238,13 +238,20 @@ function scopedStateProjection(state: BackpackProjectState, rootGroupId: string)
   const scopedGroups = groups.filter((group) => typeof group['id'] === 'string' && scopeIds.has(group['id']));
   const scopedGroupIds = new Set(scopedGroups.map((group) => group['id']).filter((id): id is string => typeof id === 'string'));
   const shortcuts = Array.isArray(source['shortcuts']) ? source['shortcuts'].filter(isRecord) : [];
-  const scopedShortcuts = shortcuts.flatMap((shortcut) => {
+  const scopedShortcuts: Record<string, unknown>[] = shortcuts.flatMap((shortcut) => {
     const placements = Array.isArray(shortcut['placements']) ? shortcut['placements'].filter(isRecord) : [];
     const inside = placements.filter((placement) => placement['bin'] !== true
       && typeof placement['parentId'] === 'string'
       && scopedGroupIds.has(placement['parentId']));
-    return inside.length ? [{ ...shortcut, placements: inside }] : [];
+    return inside.length ? [{ ...shortcut, placements: inside } as Record<string, unknown>] : [];
   });
+  const scopedItemIds = new Set<string>(scopedGroupIds);
+  for (const shortcut of scopedShortcuts) {
+    if (typeof shortcut['id'] === 'string') scopedItemIds.add(shortcut['id']);
+    for (const placement of Array.isArray(shortcut['placements']) ? shortcut['placements'].filter(isRecord) : []) {
+      if (typeof placement['id'] === 'string') scopedItemIds.add(placement['id']);
+    }
+  }
   const layouts = Array.isArray(source['windowLayouts']) ? source['windowLayouts'].filter(isRecord) : [];
   const scopedLayouts = layouts.filter((layout) => layout['bin'] !== true
     && typeof layout['parentId'] === 'string'
@@ -261,7 +268,7 @@ function scopedStateProjection(state: BackpackProjectState, rootGroupId: string)
       ? viewSource['graphExpandedGroupIds'].filter((id): id is string => typeof id === 'string' && scopedGroupIds.has(id))
       : [],
     selectedItemIds: Array.isArray(viewSource['selectedItemIds'])
-      ? viewSource['selectedItemIds'].filter((id): id is string => typeof id === 'string' && scopedGroupIds.has(id))
+      ? viewSource['selectedItemIds'].filter((id): id is string => typeof id === 'string' && scopedItemIds.has(id))
       : [],
     binMode: false,
     layout: viewSource['layout'],
@@ -274,7 +281,8 @@ function scopedStateProjection(state: BackpackProjectState, rootGroupId: string)
     toolbarPositions: viewSource['toolbarPositions'],
     preferences: viewSource['preferences'],
     trailExpandedByContext: isRecord(viewSource['trailExpandedByContext'])
-      ? Object.fromEntries(Object.entries(viewSource['trailExpandedByContext']).filter(([id]) => scopedGroupIds.has(id)))
+      ? Object.fromEntries(Object.entries(viewSource['trailExpandedByContext'])
+        .filter(([key]) => key.startsWith('folder:') && scopedGroupIds.has(key.slice('folder:'.length))))
       : {},
   };
   const activeLayoutId = source['activeWindowLayoutId'];
@@ -300,11 +308,28 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
   const previousGroups = Array.isArray(previousRecord['groups']) ? previousRecord['groups'].filter(isRecord) : [];
   const candidateGroups = Array.isArray(candidateRecord['groups']) ? candidateRecord['groups'].filter(isRecord) : [];
   const scopeIds = workspaceScopeGroupIds(previousRecord, rootGroupId);
-  const candidateIds = new Set(candidateGroups.map((group) => group['id']).filter((id): id is string => typeof id === 'string'));
   const candidateRoot = candidateGroups.find((group) => group['id'] === rootGroupId);
   if (!candidateRoot || candidateRoot['parentId'] !== 'root' || candidateRoot['bin'] === true) return null;
-  if (candidateGroups.some((group) => typeof group['id'] !== 'string' || !scopeIds.has(group['id'])
-    || (group['id'] !== rootGroupId && (typeof group['parentId'] !== 'string' || !scopeIds.has(group['parentId']))))) return null;
+  const previousGroupIds = new Set(previousGroups.map((group) => group['id']).filter((id): id is string => typeof id === 'string'));
+  const candidateGroupById = new Map<string, Record<string, unknown>>();
+  for (const group of candidateGroups) {
+    const id = group['id'];
+    if (typeof id !== 'string' || candidateGroupById.has(id) || (previousGroupIds.has(id) && !scopeIds.has(id))) return null;
+    candidateGroupById.set(id, group);
+  }
+  for (const group of candidateGroups) {
+    const id = group['id'];
+    if (id === rootGroupId) continue;
+    let parentId = group['parentId'];
+    const seen = new Set<string>([id as string]);
+    while (parentId !== rootGroupId) {
+      if (typeof parentId !== 'string' || seen.has(parentId)) return null;
+      seen.add(parentId);
+      const parent = candidateGroupById.get(parentId);
+      if (!parent) return null;
+      parentId = parent['parentId'];
+    }
+  }
 
   const previousShortcuts = Array.isArray(previousRecord['shortcuts']) ? previousRecord['shortcuts'].filter(isRecord) : [];
   const candidateShortcuts = Array.isArray(candidateRecord['shortcuts']) ? candidateRecord['shortcuts'].filter(isRecord) : [];
@@ -324,7 +349,7 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
           || !scopeIds.has(placement['parentId']))) return null;
         mergedShortcuts.push({ ...candidateShortcut, placements: [...inside, ...outside] });
       } else {
-        mergedShortcuts.push(previousShortcut);
+        mergedShortcuts.push({ ...previousShortcut, placements: outside });
       }
     } else if (candidateShortcut) {
       const inside = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
@@ -354,7 +379,14 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
     .concat(candidateLayouts);
   const candidateView = isRecord(candidateRecord['view']) ? candidateRecord['view'] : {};
   const previousView = isRecord(previousRecord['view']) ? previousRecord['view'] : {};
-  const mergedView: Record<string, unknown> = { ...previousView, ...candidateView, currentGroupId: candidateView['currentGroupId'] === rootGroupId ? rootGroupId : previousView['currentGroupId'] };
+  const mergedView: Record<string, unknown> = { ...previousView };
+  for (const key of ['iconSize', 'quickRunCardSize', 'layout', 'preferences', 'toolbarPositions']) {
+    if (Object.prototype.hasOwnProperty.call(candidateView, key)) mergedView[key] = candidateView[key];
+  }
+  const candidateCurrentGroup = candidateView['currentGroupId'];
+  mergedView.currentGroupId = typeof candidateCurrentGroup === 'string' && scopeIds.has(candidateCurrentGroup)
+    ? candidateCurrentGroup
+    : rootGroupId;
   for (const key of ['expandedGroupIds', 'graphExpandedGroupIds', 'selectedItemIds']) {
     const previousIds = Array.isArray(previousView[key]) ? previousView[key].filter((id): id is string => typeof id === 'string' && !scopeIds.has(id)) : [];
     const candidateIdsForKey = Array.isArray(candidateView[key]) ? candidateView[key].filter((id): id is string => typeof id === 'string' && scopeIds.has(id)) : [];
@@ -365,6 +397,16 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
     const candidatePositions = isRecord(candidateView[key]) ? Object.fromEntries(Object.entries(candidateView[key]).filter(([id]) => scopeIds.has(id))) : {};
     mergedView[key] = { ...previousPositions, ...candidatePositions };
   }
+  const previousTrail = isRecord(previousView['trailExpandedByContext']) ? previousView['trailExpandedByContext'] : {};
+  const candidateTrail = isRecord(candidateView['trailExpandedByContext']) ? candidateView['trailExpandedByContext'] : {};
+  const mergedTrail = { ...previousTrail };
+  for (const key of Object.keys(mergedTrail)) {
+    if (key.startsWith('folder:') && scopeIds.has(key.slice('folder:'.length))) delete mergedTrail[key];
+  }
+  for (const [key, value] of Object.entries(candidateTrail)) {
+    if (key.startsWith('folder:') && scopeIds.has(key.slice('folder:'.length))) mergedTrail[key] = value;
+  }
+  mergedView.trailExpandedByContext = mergedTrail;
   const merged: Record<string, unknown> = {
     ...previousRecord,
     groups: previousGroups.filter((group) => typeof group['id'] !== 'string' || !scopeIds.has(group['id'])).concat(candidateGroups),
@@ -554,10 +596,11 @@ export class BackpackProjectService {
   /** Move the binding without changing the project's stable identity. */
   async rebind(backpackId: string, requestedRoot: string): Promise<void> {
     if (!path.isAbsolute(requestedRoot)) throw new Error('The Backpack project root must be absolute.');
-    const root = path.resolve(requestedRoot);
+    const requestedRootPath = path.resolve(requestedRoot);
+    let root: string;
     let manifest: Record<string, unknown>;
     try {
-      await fs.realpath(root);
+      root = await fs.realpath(requestedRootPath);
       manifest = JSON.parse(await fs.readFile(path.join(root, 'project.json'), 'utf8')) as Record<string, unknown>;
     } catch {
       throw new Error('The new Backpack project root is not valid.');
@@ -566,7 +609,8 @@ export class BackpackProjectService {
       throw new Error('The new Backpack project root has a different identity.');
     }
     const entry = manifest['entry'].replace(/\\/g, '/');
-    safeProjectPath(root, entry);
+    if (!entry.startsWith(`${publicDirectory}/`)) throw new Error('The new Backpack project entry is not public.');
+    await containedExistingPath(root, entry);
     let raw: string;
     try {
       raw = await fs.readFile(this.bindingsFile, 'utf8');
@@ -598,6 +642,20 @@ export class BackpackProjectService {
       : [];
     if (!placements.some((placement) => placement['bin'] !== true && typeof placement['parentId'] === 'string' && scopeIds.has(placement['parentId']))) {
       throw new Error('That shortcut is outside this project folder.');
+    }
+  }
+
+  async assertWebLinkInScope(backpackId: string, target: string, rootGroupId: string): Promise<void> {
+    const state = await this.loadState(backpackId);
+    const scopeIds = workspaceScopeGroupIds(state as unknown as Record<string, unknown>, rootGroupId);
+    const shortcut = state?.shortcuts.find((candidate) => isRecord(candidate) && candidate['target'] === target);
+    const placements = isRecord(shortcut) && Array.isArray(shortcut['placements'])
+      ? shortcut['placements'].filter(isRecord)
+      : [];
+    if (!placements.some((placement) => placement['bin'] !== true
+      && typeof placement['parentId'] === 'string'
+      && scopeIds.has(placement['parentId']))) {
+      throw new Error('That web link is outside this project folder.');
     }
   }
 
