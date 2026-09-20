@@ -137,7 +137,11 @@ export interface CommandSurfaceOverlayDependencies {
 
 export interface CommandSurfaceOverlaySession {
   open(): Promise<{ ok: boolean; detail: string }>;
+  /** Load the renderer hidden so the first real invocation is warm. */
+  warm(): Promise<{ ok: boolean; detail: string }>;
   close(reason: OverlayCloseReason): Promise<void>;
+  /** Permanently release the warm renderer during Papers shutdown. */
+  destroy(): Promise<void>;
   isOpen(): boolean;
   /** Exposed for the wiring and for tests. */
   registerIpc(): void;
@@ -236,7 +240,7 @@ export function createCommandSurfaceOverlay(
     });
   };
 
-  const teardown = async (reason: OverlayCloseReason): Promise<void> => {
+  const destroyWarmWindow = async (): Promise<void> => {
     if (closing) return;
     closing = true;
     const doomed = window;
@@ -247,6 +251,19 @@ export function createCommandSurfaceOverlay(
       if (doomed && !doomed.isDestroyed()) doomed.destroy();
     } catch {
       /* a destroyed window is the desired end state */
+    }
+    previousForeground = null;
+    closing = false;
+  };
+
+  const teardown = async (reason: OverlayCloseReason): Promise<void> => {
+    if (closing || !window) return;
+    closing = true;
+    const live = window;
+    try {
+      if (!live.isDestroyed()) live.hide();
+    } catch {
+      /* a destroyed window is already hidden */
     }
     if (reason !== 'focus-lost') {
       // Hand focus back BEFORE the caller continues, so the application the
@@ -260,7 +277,9 @@ export function createCommandSurfaceOverlay(
     closing = false;
   };
 
-  const open = async (): Promise<{ ok: boolean; detail: string }> => {
+  type ResolvedSurface = { surface: CommandSurfaceTarget; url: string };
+
+  const resolveSurface = async (): Promise<ResolvedSurface | { ok: false; detail: string }> => {
     const resolution = await dependencies.resolveCommandSurface();
     if (!resolution.ok) {
       // The refusal's own words, not a summary of them. The creator needs to
@@ -281,16 +300,25 @@ export function createCommandSurfaceOverlay(
       return { ok: false, detail: error instanceof Error ? error.message : 'the command surface URL was rejected' };
     }
 
-    // Capture the foreground BEFORE the overlay exists. After it takes focus
-    // the original window is no longer the foreground and cannot be recovered.
-    previousForeground = null;
-    if (dependencies.focusBridge) {
-      try {
-        previousForeground = await dependencies.focusBridge.foregroundWindow();
-      } catch {
-        previousForeground = null;
-      }
+    return { surface, url };
+  };
+
+  const ensureWarm = async ({ surface, url }: ResolvedSurface): Promise<{ ok: boolean; detail: string }> => {
+
+    // A warm overlay keeps its renderer and loaded project state alive. Reuse
+    // it while the declared project is unchanged; the bound project identity
+    // is the only reason a new renderer is needed.
+    if (window && !window.isDestroyed() && projectId === surface.projectId) {
+      surfaceId = surface.surfaceId;
+      return { ok: true, detail: 'the command surface renderer is warm' };
     }
+
+    if (window && !window.isDestroyed()) await destroyWarmWindow();
+
+    // A warm-up must not inspect, change or restore foreground focus. It is
+    // deliberately safe to run during Papers bootstrap while another app is
+    // in front.
+    previousForeground = null;
 
     projectId = surface.projectId;
     surfaceId = surface.surfaceId;
@@ -315,7 +343,7 @@ export function createCommandSurfaceOverlay(
     try {
       await created.loadURL(url);
     } catch (error) {
-      await teardown('focus-lost');
+      await destroyWarmWindow();
       return {
         ok: false,
         detail: `the command surface could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
@@ -325,19 +353,45 @@ export function createCommandSurfaceOverlay(
       return { ok: false, detail: 'the command surface closed while it was loading' };
     }
 
+    return { ok: true, detail: 'the command surface renderer is warm' };
+  };
+
+  const open = async (): Promise<{ ok: boolean; detail: string }> => {
+    const resolved = await resolveSurface();
+    if (!('surface' in resolved)) return resolved;
+    const prepared = await ensureWarm(resolved);
+    if (!prepared.ok || !window || window.isDestroyed()) return prepared;
+
+    // Capture the foreground immediately before the warm renderer takes focus.
+    if (dependencies.focusBridge) {
+      try {
+        previousForeground = await dependencies.focusBridge.foregroundWindow();
+      } catch {
+        previousForeground = null;
+      }
+    }
+
     // Show and take the keyboard. This is what makes Papers the foreground
     // owner and therefore what makes the hand-back possible later.
-    created.show();
-    created.focus();
+    window.setBounds(place());
+    window.show();
+    window.focus();
 
-    deliverInvoke(created, surface.projectId, surface.surfaceId);
+    deliverInvoke(window, resolved.surface.projectId, resolved.surface.surfaceId);
 
     return { ok: true, detail: 'the command surface is open over the current application' };
   };
 
+  const warm = async (): Promise<{ ok: boolean; detail: string }> => {
+    if (window && !window.isDestroyed()) return { ok: true, detail: 'the command surface renderer is warm' };
+    const resolved = await resolveSurface();
+    if (!('surface' in resolved)) return resolved;
+    return ensureWarm(resolved);
+  };
+
   return {
     async open() {
-      if (window && !window.isDestroyed()) {
+      if (window && !window.isDestroyed() && window.isVisible()) {
         // Already open: bring it forward within its own layer rather than
         // stacking a second one, and RE-DELIVER the invoke. The creator pressed
         // the chord again to get back to an empty, focused line, and the project
@@ -353,13 +407,21 @@ export function createCommandSurfaceOverlay(
       return open();
     },
 
+    async warm() {
+      return warm();
+    },
+
     async close(reason: OverlayCloseReason) {
       if (!window) return;
       await teardown(reason);
     },
 
+    async destroy() {
+      await destroyWarmWindow();
+    },
+
     isOpen() {
-      return window !== null && !window.isDestroyed();
+      return window !== null && !window.isDestroyed() && window.isVisible();
     },
 
     /** Channel used by the overlay page to dismiss itself. */

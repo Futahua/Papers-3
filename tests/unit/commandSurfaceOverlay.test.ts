@@ -74,6 +74,19 @@ function harness(overrides: Partial<CommandSurfaceOverlayDependencies> = {}) {
 }
 
 describe('commandSurfaceOverlay opening', () => {
+  it('can warm the renderer without showing it or taking focus', async () => {
+    const h = harness();
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    const result = await overlay.warm();
+
+    expect(result.ok).toBe(true);
+    expect(h.created.calls.filter((c) => c.startsWith('loadURL:'))).toHaveLength(1);
+    expect(h.created.calls).not.toContain('show');
+    expect(h.created.calls).not.toContain('focus');
+    expect(h.setForegroundCalls).toHaveLength(0);
+    expect(overlay.isOpen()).toBe(false);
+  });
+
   it('loads the project entry URL with the opaque mode marker appended', async () => {
     const h = harness();
     const overlay = createCommandSurfaceOverlay(h.deps);
@@ -226,6 +239,35 @@ describe('commandSurfaceOverlay focus return', () => {
 
     expect(h.setForegroundCalls).toHaveLength(0);
     expect(h.closedReasons).toEqual(['focus-lost']);
+  });
+
+  it('keeps the renderer warm after dismissal and reuses it on the next open', async () => {
+    const h = harness();
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    await overlay.open();
+    await overlay.close('dismissed');
+
+    expect(h.created.isDestroyed()).toBe(false);
+    expect(h.created.calls).toContain('hide');
+    expect(overlay.isOpen()).toBe(false);
+
+    await overlay.open();
+
+    expect(h.created.calls.filter((c) => c.startsWith('loadURL:'))).toHaveLength(1);
+    expect(h.created.calls.filter((c) => c === 'show')).toHaveLength(2);
+    expect(h.delivered).toHaveLength(2);
+    expect(overlay.isOpen()).toBe(true);
+  });
+
+  it('destroy permanently releases the warm renderer without restoring focus', async () => {
+    const h = harness();
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    await overlay.open();
+    await overlay.destroy();
+
+    expect(h.created.isDestroyed()).toBe(true);
+    expect(h.setForegroundCalls).toHaveLength(0);
+    expect(overlay.isOpen()).toBe(false);
   });
 
   it('says so when the application that was in front has closed', async () => {

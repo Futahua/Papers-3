@@ -803,6 +803,9 @@ async function bootstrap(): Promise<void> {
           removeWindow: (id) => {
             hostOverlayOwners.delete(id);
             papersWindows.remove(id);
+            if (papersWindows.windowIds.length === 0) {
+              void commandSurfaceOverlay?.destroy().catch(() => undefined);
+            }
           },
           emitHermesSurface: () => facade.emitHermesSurface(),
         });
@@ -2442,7 +2445,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       globalInvoke?.release();
       globalInvoke = null;
       // A launcher left open would be a focus-holding window with no owner.
-      void commandSurfaceOverlay?.close('dismissed').catch(() => undefined);
+      void commandSurfaceOverlay?.destroy().catch(() => undefined);
       commandSurfaceOverlay = null;
       visualResourceMonitor?.detach();
       visualResourceMonitor = null;
@@ -2742,6 +2745,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       if (report.outcome === 'focus-restored') return;
       console.error(`[papers] command surface focus: ${report.detail}`);
     },
+  });
+  // Load the launcher renderer while Papers is settling, without showing it or
+  // touching foreground focus. Later Alt+A presses reuse this hidden surface.
+  void commandSurfaceOverlay.warm().catch((error) => {
+    console.error('[papers] command surface warm-up failed:', error);
   });
 
   // The chord's own open path, shared by the real accelerator and the test seam
