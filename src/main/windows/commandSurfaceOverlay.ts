@@ -109,6 +109,8 @@ export interface CommandSurfaceOverlayDependencies {
     setForegroundWindow(handle: NativeWindowHandle): Promise<boolean>;
     /** Whether the handle is still a real window. */
     isWindow(handle: NativeWindowHandle): Promise<boolean>;
+    /** Whether the handle belongs to one of Papers' ordinary windows. */
+    isPapersWindow?(handle: NativeWindowHandle): Promise<boolean> | boolean;
   };
   /** Where the overlay appears. Defaults to the display with the cursor. */
   placeOn?(): DisplayWorkArea;
@@ -189,6 +191,10 @@ export function createCommandSurfaceOverlay(
       return;
     }
     try {
+      if (await bridge.isPapersWindow?.(target)) {
+        previousForeground = null;
+        return;
+      }
       if (!(await bridge.isWindow(target))) {
         dependencies.report?.({
           outcome: 'focus-not-restored',

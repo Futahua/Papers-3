@@ -2675,6 +2675,23 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     nominate: (projectId) => launcherNomination.set(projectId),
   });
 
+  const nativeHandleOf = (window: BaseWindow): number | null => {
+    try {
+      const buffer = window.getNativeWindowHandle();
+      if (buffer.length >= 8) {
+        const value = buffer.readBigUInt64LE(0);
+        return value > 0n && value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
+      }
+      if (buffer.length >= 4) {
+        const value = buffer.readUInt32LE(0);
+        return value > 0 ? value : null;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
   commandSurfaceOverlay = createCommandSurfaceOverlay({
     // The registry's refusal is carried out verbatim: it names the Backpacks it
     // looked at, which is the only thing the creator cannot check for themselves.
@@ -2682,7 +2699,15 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     resolveEntryUrl: async (projectId) => (await backpackProjects.open(projectId))?.url ?? null,
     preloadPath: path.join(preloadDir, 'backpackProject.cjs'),
     ipcMain,
-    focusBridge: foregroundBridge ?? undefined,
+    focusBridge: foregroundBridge
+      ? {
+          ...foregroundBridge,
+          isPapersWindow: (handle: number) => papersWindows.windowIds.some((windowId) => {
+            const owned = papersWindows.get(windowId)?.owned.window;
+            return owned !== undefined && !owned.isDestroyed() && nativeHandleOf(owned) === handle;
+          }),
+        }
+      : undefined,
     // Where the creator is working, by cursor: the pointer is the best
     // cross-process signal for "the screen they are looking at", and it needs
     // no native call to read.
@@ -2803,22 +2828,6 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   let foregroundHandle: number | null = null;
   const refreshForeground = async (): Promise<void> => {
     foregroundHandle = foregroundBridge ? await foregroundBridge.foregroundWindow().catch(() => null) : null;
-  };
-  const nativeHandleOf = (window: BaseWindow): number | null => {
-    try {
-      const buffer = window.getNativeWindowHandle();
-      if (buffer.length >= 8) {
-        const value = buffer.readBigUInt64LE(0);
-        return value > 0n && value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
-      }
-      if (buffer.length >= 4) {
-        const value = buffer.readUInt32LE(0);
-        return value > 0 ? value : null;
-      }
-      return null;
-    } catch {
-      return null;
-    }
   };
   const foregroundPapersWindowId = (): number | null => {
     if (foregroundHandle === null) return null;

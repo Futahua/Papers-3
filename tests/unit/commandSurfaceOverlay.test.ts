@@ -41,6 +41,7 @@ function harness(overrides: Partial<CommandSurfaceOverlayDependencies> = {}) {
   const setForegroundCalls: number[] = [];
   let foregroundValue: number | null = 778899;
   let isWindowValue = true;
+  let isPapersWindowValue = false;
   let setSucceeds = true;
 
   const deps: CommandSurfaceOverlayDependencies = {
@@ -51,6 +52,7 @@ function harness(overrides: Partial<CommandSurfaceOverlayDependencies> = {}) {
     focusBridge: {
       foregroundWindow: async () => foregroundValue,
       isWindow: async () => isWindowValue,
+      isPapersWindow: async () => isPapersWindowValue,
       setForegroundWindow: async (handle) => { setForegroundCalls.push(handle); return setSucceeds; },
     },
     placeOn: () => ({ x: 0, y: 0, width: 1920, height: 1080 }),
@@ -70,6 +72,7 @@ function harness(overrides: Partial<CommandSurfaceOverlayDependencies> = {}) {
     setForegroundOutcome: (ok: boolean) => { setSucceeds = ok; },
     setForegroundValue: (value: number | null) => { foregroundValue = value; },
     setWindowAlive: (alive: boolean) => { isWindowValue = alive; },
+    setPapersWindow: (isPapers: boolean) => { isPapersWindowValue = isPapers; },
   };
 }
 
@@ -214,6 +217,17 @@ describe('commandSurfaceOverlay focus return', () => {
     await overlay.close('dismissed');
 
     expect(h.setForegroundCalls).toHaveLength(1);
+    expect(h.closedReasons).toEqual(['dismissed']);
+  });
+
+  it('does not force an ordinary Papers window back to the foreground on dismiss', async () => {
+    const h = harness();
+    h.setPapersWindow(true);
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    await overlay.open();
+    await overlay.close('dismissed');
+
+    expect(h.setForegroundCalls).toHaveLength(0);
     expect(h.closedReasons).toEqual(['dismissed']);
   });
 
