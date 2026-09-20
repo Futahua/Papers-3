@@ -59,6 +59,7 @@ export interface HostFacade {
   setBackpackProjectSurfaceBounds(senderId: number, surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): void;
   requestCloseBackpackProject(senderId: number): Promise<void>;
   runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
+  resolveBackpackProjectWorkspaceScope(senderId: number, projectKey: string, projectName: string): Promise<unknown>;
   copyBackpackProjectText(senderId: number, text: string): void;
   loadBackpackProjectState(senderId: number): Promise<unknown>;
   loadBackpackProjectStateVersioned(senderId: number): Promise<unknown>;
@@ -159,6 +160,8 @@ const surfaceIdSchema = z.string().min(1).max(128);
 /** A sha256 hex digest, or the sentinel for "no state file yet". */
 const backpackProjectRevisionSchema = z.union([z.literal('absent'), z.string().regex(/^[0-9a-f]{64}$/)]);
 const backpackProjectTextSchema = z.string().min(1).max(50_000);
+const backpackProjectWorkspaceKeySchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/);
+const backpackProjectWorkspaceNameSchema = z.string().max(200);
 const backpackProjectWebUrlSchema = z.string().min(8).max(2_048);
 const backpackProjectNativeSourcePathSchema = z.string().min(1).max(32_768);
 const backpackProjectNativeSourceRefSchema = z
@@ -273,6 +276,13 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpack-project:run-action', (event, actionId) =>
     facade.runBackpackProjectAction(event.sender.id, backpackProjectActionIdSchema.parse(actionId)),
+  );
+  handle('host:backpack-project:workspace-scope', (event, projectKey, projectName) =>
+    facade.resolveBackpackProjectWorkspaceScope(
+      event.sender.id,
+      backpackProjectWorkspaceKeySchema.parse(projectKey),
+      backpackProjectWorkspaceNameSchema.parse(projectName),
+    ),
   );
   // The local-service capability. `projectAllowed` because a project surface is
   // exactly who may use it, and the facade resolves that sender to its project

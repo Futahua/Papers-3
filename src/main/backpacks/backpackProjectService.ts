@@ -31,8 +31,20 @@ export interface ProjectManifest {
   backpackId: string;
   entry: string;
   root: string;
+  /** Optional host-owned child workspace declaration. The renderer never
+   * supplies the target Backpack; it is read from the bound manifest. */
+  workspaceHost?: string;
   /** The record is open: a project may state more than the host needs. */
   [field: string]: unknown;
+}
+
+export interface BackpackProjectWorkspaceScope {
+  /** The canonical Backpack whose document is being displayed. */
+  backpackId: string;
+  /** The real As you Go group that is the immutable visible root. */
+  rootGroupId: string;
+  /** A Papers-served entry URL for the canonical child surface. */
+  url: string;
 }
 
 interface ProjectAction {
@@ -298,7 +310,7 @@ export class BackpackProjectService {
       if (!entry.startsWith(`${publicDirectory}/`)) {
         throw new Error('Backpack project entry is not public.');
       }
-      return { backpackId, entry, root: binding.root };
+      return { ...parsed, backpackId, entry, root: binding.root } as ProjectManifest;
     } catch (error) {
       if (error instanceof Error && /does not match|outside|not public/.test(error.message)) {
         throw error;
@@ -336,6 +348,70 @@ export class BackpackProjectService {
     return {
       url: projectUrl.toString(),
     };
+  }
+
+  /**
+   * Resolve the canonical As you Go surface for a host project and provision
+   * one empty, deterministic folder for the requested Proxima project.
+   *
+   * The binding is deliberately declared by the host project's manifest. A
+   * renderer may name its own opaque project key, but it cannot choose an AYG
+   * Backpack or group. The group is created only when absent; existing AYG
+   * records are never imported or copied into the host project's store.
+   */
+  async workspaceScope(
+    hostBackpackId: string,
+    projectKey: string,
+    projectName: string,
+  ): Promise<BackpackProjectWorkspaceScope | null> {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(projectKey)) {
+      throw new Error('Invalid Backpack workspace project key.');
+    }
+    const host = await this.manifest(hostBackpackId);
+    const canonicalBackpackId = typeof host?.workspaceHost === 'string' ? host.workspaceHost : null;
+    if (!canonicalBackpackId || canonicalBackpackId === hostBackpackId) return null;
+    const canonical = await this.manifest(canonicalBackpackId);
+    if (!canonical) throw new Error('The canonical workspace Backpack is not available.');
+
+    const rootGroupId = `group-proxima-${createHash('sha256')
+      .update(`${hostBackpackId}\0${projectKey}`, 'utf8')
+      .digest('hex')
+      .slice(0, 32)}`;
+    const name = String(projectName || projectKey).trim().slice(0, 120) || projectKey;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const loaded = await this.loadStateVersioned(canonicalBackpackId);
+      const state = loaded.state as BackpackProjectState & { groups: Array<Record<string, unknown>> };
+      const groups = state.groups as Array<Record<string, unknown>>;
+      if (!groups.some((candidate) => candidate && candidate.id === rootGroupId)) {
+        const siblings = groups.filter((candidate) => candidate?.parentId === 'root');
+        groups.push({
+          id: rootGroupId,
+          parentId: 'root',
+          order: siblings.length,
+          name,
+          icon: null,
+        });
+        const saved = await this.saveState(
+          canonicalBackpackId,
+          JSON.stringify(state),
+          loaded.revision,
+        );
+        if (!saved.ok) continue;
+      }
+      const opened = await this.open(canonicalBackpackId);
+      if (!opened) throw new Error('The canonical workspace surface could not be opened.');
+      return { backpackId: canonicalBackpackId, rootGroupId, url: opened.url };
+    }
+    throw new Error('The canonical workspace changed while its project folder was being created.');
+  }
+
+  /** Origins that a host project's CSP may embed. */
+  async embeddedProjectOrigins(backpackId: string): Promise<string[]> {
+    const manifest = await this.manifest(backpackId);
+    return typeof manifest?.workspaceHost === 'string'
+      ? [`${BACKPACK_PROJECT_SCHEME}://${manifest.workspaceHost}`]
+      : [];
   }
 
   async resolveAsset(backpackId: string, requestPath: string): Promise<string> {

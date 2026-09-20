@@ -57,6 +57,7 @@ export type ProjectCapability =
 const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.freeze({
   'host:backpack-project:state-load': 'read',
   'host:backpack-project:state-load-versioned': 'read',
+  'host:backpack-project:workspace-scope': 'read',
   'host:backpack-project:shortcut-icon': 'read',
   'host:backpack-project:resolve-web-link-icon': 'read',
 

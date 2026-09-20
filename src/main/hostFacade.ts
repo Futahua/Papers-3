@@ -23,6 +23,7 @@ import type { PapersUpdater } from './papersUpdater';
 import type { BackpackRegistry } from './backpacks/backpackRegistry';
 import type {
   BackpackProjectService,
+  BackpackProjectWorkspaceScope,
   LoadedBackpackProjectState,
   OpenBackpackProject,
   SaveStateResult,
@@ -262,6 +263,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * awaited registry write.
    */
   private readonly projectOwnershipTails = new Map<string, Promise<void>>();
+  /** The current embedded AYG binding for each live top-level project frame. */
+  private readonly workspaceScopes = new Map<number, BackpackProjectWorkspaceScope>();
 
   constructor(private readonly deps: FacadeDeps) {}
 
@@ -692,6 +695,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return id;
   }
 
+  private projectStateForSender(senderId: number): string {
+    const projectId = this.requireProjectForSender(senderId);
+    return this.workspaceScopes.get(senderId)?.backpackId ?? projectId;
+  }
+
   /**
    * A0.2: a HOST renderer naming an explicit target.
    *
@@ -968,6 +976,18 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     await this.deps.backpackProjects.runAction(this.requireProjectForSender(senderId), actionId);
   }
 
+  async resolveBackpackProjectWorkspaceScope(
+    senderId: number,
+    projectKey: string,
+    projectName: string,
+  ): Promise<BackpackProjectWorkspaceScope | null> {
+    const hostProjectId = this.requireProjectForSender(senderId);
+    const scope = await this.deps.backpackProjects.workspaceScope(hostProjectId, projectKey, projectName);
+    if (scope) this.workspaceScopes.set(senderId, scope);
+    else this.workspaceScopes.delete(senderId);
+    return scope;
+  }
+
   copyBackpackProjectText(senderId: number, text: string): void {
     this.requireProjectForSender(senderId);
     clipboard.writeText(text);
@@ -975,11 +995,11 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   /** Load with the revision needed to save safely afterwards. */
   async loadBackpackProjectStateVersioned(senderId: number): Promise<LoadedBackpackProjectState> {
-    return this.deps.backpackProjects.loadStateVersioned(this.requireProjectForSender(senderId));
+    return this.deps.backpackProjects.loadStateVersioned(this.projectStateForSender(senderId));
   }
 
   async loadBackpackProjectState(senderId: number): Promise<unknown> {
-    return this.deps.backpackProjects.loadState(this.requireProjectForSender(senderId));
+    return this.deps.backpackProjects.loadState(this.projectStateForSender(senderId));
   }
 
   /**
@@ -1026,7 +1046,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   async saveBackpackProjectState(senderId: number, rawState: string): Promise<void> {
-    await this.deps.backpackProjects.saveState(this.requireProjectForSender(senderId), rawState);
+    await this.deps.backpackProjects.saveState(this.projectStateForSender(senderId), rawState);
   }
 
   /**
@@ -1043,7 +1063,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     expectedRevision: string,
   ): Promise<SaveStateResult> {
     return this.deps.backpackProjects.saveState(
-      this.requireProjectForSender(senderId),
+      this.projectStateForSender(senderId),
       rawState,
       expectedRevision,
     );
@@ -1068,17 +1088,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   async backpackProjectShortcutIcon(senderId: number, shortcutId: string): Promise<string | null> {
     return this.deps.backpackProjects.shortcutIcon(
-      this.requireProjectForSender(senderId),
+      this.projectStateForSender(senderId),
       shortcutId,
     );
   }
 
   async launchBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void> {
-    await this.deps.backpackProjects.launchShortcut(this.requireProjectForSender(senderId), shortcutId);
+    await this.deps.backpackProjects.launchShortcut(this.projectStateForSender(senderId), shortcutId);
   }
 
   async revealBackpackProjectShortcut(senderId: number, shortcutId: string): Promise<void> {
-    await this.deps.backpackProjects.revealShortcut(this.requireProjectForSender(senderId), shortcutId);
+    await this.deps.backpackProjects.revealShortcut(this.projectStateForSender(senderId), shortcutId);
   }
   async grantBackpackProjectNativeSource(senderId: number, target: string): Promise<string> {
     return this.deps.backpackProjects.grantNativeSource(this.requireProjectForSender(senderId), target);
@@ -1099,7 +1119,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     senderId: number,
     paths: string[],
   ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>> {
-    this.requireProjectForSender(senderId);
+    this.projectStateForSender(senderId);
     return this.deps.backpackProjects.describeDroppedTargets(paths);
   }
 
@@ -1107,7 +1127,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     senderId: number,
     url: string,
   ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string; title: string | null }> {
-    return this.deps.backpackProjects.resolveWebLinkIcon(this.requireProjectForSender(senderId), url);
+    return this.deps.backpackProjects.resolveWebLinkIcon(this.projectStateForSender(senderId), url);
   }
 
   // -------------------------------------------------------------- programs

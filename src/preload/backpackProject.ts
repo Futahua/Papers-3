@@ -6,7 +6,7 @@ interface ProjectMessage {
    * credential. */
   method?: string;
   headers?: Record<string, string>;
-  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
+  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -223,6 +223,15 @@ window.addEventListener('message', (event) => {
     task = ipcRenderer.invoke('host:backpack-project:native-source-reveal-granted', request.sourceRef);
   }
   if (request.type === 'papers:project:run-action' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:run-action', request.actionId);
+  if (request.type === 'papers:project:workspace-scope'
+    && typeof request.projectKey === 'string'
+    && typeof request.projectName === 'string') {
+    task = ipcRenderer.invoke(
+      'host:backpack-project:workspace-scope',
+      request.projectKey,
+      request.projectName,
+    ).then((workspaceScope) => ({ workspaceScope }));
+  }
   if (request.type === 'papers:project:copy-text' && typeof request.text === 'string') task = ipcRenderer.invoke('host:backpack-project:copy-text', request.text);
   // The local-service capability: this page asking Papers to reach an HTTP
   // service the creator runs on this machine. The page supplies an address, a

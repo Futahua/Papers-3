@@ -63,7 +63,8 @@ export function registerBackpackProjectSchemePrivileges(): void {
  * service refuses, and a page cannot read a credential file. The credential and
  * the request itself travel through `localServiceBridge` in the main process.
  */
-export function contentSecurityPolicy(origin: string): string {
+export function contentSecurityPolicy(origin: string, frameOrigins: readonly string[] = []): string {
+  const allowedFrames = frameOrigins.length > 0 ? frameOrigins.join(' ') : "'none'";
   return [
     `default-src 'none'`,
     `script-src ${origin}`,
@@ -74,7 +75,7 @@ export function contentSecurityPolicy(origin: string): string {
     `object-src 'none'`,
     `base-uri 'none'`,
     `form-action 'none'`,
-    `frame-src 'none'`,
+    `frame-src ${allowedFrames}`,
   ].join('; ');
 }
 
@@ -95,12 +96,14 @@ export function installBackpackProjectProtocol(service: BackpackProjectService):
       if (!mime) return denied(415, `unsupported file type ${extension || '(none)'}`);
       const fileResponse = await net.fetch(pathToFileURL(file).toString());
       if (!fileResponse.ok) return denied(404, 'not found');
+      const embeddedOrigins = await service.embeddedProjectOrigins(backpackId);
       return new Response(await fileResponse.arrayBuffer(), {
         status: 200,
         headers: {
           'content-type': mime,
           'content-security-policy': contentSecurityPolicy(
             `${BACKPACK_PROJECT_SCHEME}://${backpackId}`,
+            embeddedOrigins,
           ),
           'x-content-type-options': 'nosniff',
         },
