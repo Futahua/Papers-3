@@ -181,6 +181,20 @@ function hasBinMarker(value: unknown): boolean {
   return value !== undefined && value !== null && value !== false;
 }
 
+function placementBelongsToScope(placement: Record<string, unknown>, scopeIds: Set<string>): boolean {
+  const parentId = hasBinMarker(placement['bin']) && isRecord(placement['bin'])
+    ? placement['bin']['parentId']
+    : placement['parentId'];
+  return typeof parentId === 'string' && scopeIds.has(parentId);
+}
+
+function layoutBelongsToScope(layout: Record<string, unknown>, scopeIds: Set<string>): boolean {
+  const parentId = hasBinMarker(layout['bin']) && isRecord(layout['bin'])
+    ? layout['bin']['parentId']
+    : layout['parentId'];
+  return typeof parentId === 'string' && scopeIds.has(parentId);
+}
+
 function workspaceScopeGroupIds(state: Record<string, unknown>, rootGroupId: string): Set<string> {
   const groups = Array.isArray(state['groups']) ? state['groups'].filter(isRecord) : [];
   const ids = new Set<string>([rootGroupId]);
@@ -206,9 +220,9 @@ function scopeBoundaryProjection(state: Record<string, unknown>, rootGroupId: st
   const groupInside = (groupId: unknown): boolean => typeof groupId === 'string' && scopeIds.has(groupId);
   const outsideShortcuts = shortcuts.filter((shortcut) => {
     const placements = Array.isArray(shortcut['placements']) ? shortcut['placements'].filter(isRecord) : [];
-    return placements.some((placement) => hasBinMarker(placement['bin']) || !groupInside(placement['parentId']));
+    return placements.some((placement) => !placementBelongsToScope(placement, scopeIds));
   });
-  const outsideLayouts = windowLayouts.filter((layout) => layout['bin'] || !groupInside(layout['parentId']));
+  const outsideLayouts = windowLayouts.filter((layout) => !layoutBelongsToScope(layout, scopeIds));
   const topLevel = Object.fromEntries(Object.entries(state).filter(([key]) => !['groups', 'shortcuts', 'windowLayouts', 'view'].includes(key)));
   const view = isRecord(state['view']) ? JSON.parse(JSON.stringify(state['view'])) as Record<string, unknown> : null;
   if (view) {
@@ -247,9 +261,7 @@ function scopedStateProjection(state: BackpackProjectState, rootGroupId: string)
   const shortcuts = Array.isArray(source['shortcuts']) ? source['shortcuts'].filter(isRecord) : [];
   const scopedShortcuts: Record<string, unknown>[] = shortcuts.flatMap((shortcut) => {
     const placements = Array.isArray(shortcut['placements']) ? shortcut['placements'].filter(isRecord) : [];
-    const inside = placements.filter((placement) => !hasBinMarker(placement['bin'])
-      && typeof placement['parentId'] === 'string'
-      && scopedGroupIds.has(placement['parentId']));
+    const inside = placements.filter((placement) => placementBelongsToScope(placement, scopedGroupIds));
     return inside.length ? [{ ...shortcut, placements: inside } as Record<string, unknown>] : [];
   });
   const scopedItemIds = new Set<string>(scopedGroupIds);
@@ -260,9 +272,7 @@ function scopedStateProjection(state: BackpackProjectState, rootGroupId: string)
     }
   }
   const layouts = Array.isArray(source['windowLayouts']) ? source['windowLayouts'].filter(isRecord) : [];
-  const scopedLayouts = layouts.filter((layout) => layout['bin'] !== true
-    && typeof layout['parentId'] === 'string'
-    && scopedGroupIds.has(layout['parentId']));
+  const scopedLayouts = layouts.filter((layout) => layoutBelongsToScope(layout, scopedGroupIds));
   const viewSource = isRecord(source['view']) ? source['view'] : {};
   const view: Record<string, unknown> = {
     iconSize: viewSource['iconSize'],
@@ -316,7 +326,7 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
   const candidateGroups = Array.isArray(candidateRecord['groups']) ? candidateRecord['groups'].filter(isRecord) : [];
   const scopeIds = workspaceScopeGroupIds(previousRecord, rootGroupId);
   const candidateRoot = candidateGroups.find((group) => group['id'] === rootGroupId);
-  if (!candidateRoot || candidateRoot['parentId'] !== 'root' || candidateRoot['bin'] === true) return null;
+  if (!candidateRoot || candidateRoot['parentId'] !== 'root' || hasBinMarker(candidateRoot['bin'])) return null;
   const previousGroupIds = new Set(previousGroups.map((group) => group['id']).filter((id): id is string => typeof id === 'string'));
   const candidateGroupById = new Map<string, Record<string, unknown>>();
   for (const group of candidateGroups) {
@@ -345,38 +355,28 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
   const mergedShortcuts: Record<string, unknown>[] = [];
   for (const previousShortcut of previousShortcuts) {
     const placements = Array.isArray(previousShortcut['placements']) ? previousShortcut['placements'].filter(isRecord) : [];
-    const outside = placements.filter((placement) => hasBinMarker(placement['bin'])
-      || typeof placement['parentId'] !== 'string'
-      || !scopeIds.has(placement['parentId']));
-    const insideBefore = placements.some((placement) => !hasBinMarker(placement['bin'])
-      && typeof placement['parentId'] === 'string'
-      && scopeIds.has(placement['parentId']));
+    const outside = placements.filter((placement) => !placementBelongsToScope(placement, scopeIds));
+    const insideBefore = placements.some((placement) => placementBelongsToScope(placement, scopeIds));
     const candidateShortcut = candidateShortcutById.get(previousShortcut['id']);
     if (outside.length) {
       if (candidateShortcut) {
         if (!insideBefore) return null;
         const inside = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
-        if (inside.some((placement) => hasBinMarker(placement['bin'])
-          || typeof placement['parentId'] !== 'string'
-          || !candidateScopeIds.has(placement['parentId']))) return null;
+        if (inside.some((placement) => !placementBelongsToScope(placement, candidateScopeIds))) return null;
         mergedShortcuts.push({ ...candidateShortcut, placements: [...inside, ...outside] });
       } else {
         mergedShortcuts.push({ ...previousShortcut, placements: outside });
       }
     } else if (candidateShortcut) {
       const inside = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
-      if (inside.some((placement) => hasBinMarker(placement['bin'])
-        || typeof placement['parentId'] !== 'string'
-        || !candidateScopeIds.has(placement['parentId']))) return null;
+      if (inside.some((placement) => !placementBelongsToScope(placement, candidateScopeIds))) return null;
       mergedShortcuts.push({ ...candidateShortcut, placements: inside });
     }
   }
   for (const candidateShortcut of candidateShortcuts) {
     if (previousShortcuts.some((shortcut) => shortcut['id'] === candidateShortcut['id'])) continue;
     const placements = Array.isArray(candidateShortcut['placements']) ? candidateShortcut['placements'].filter(isRecord) : [];
-    if (placements.some((placement) => hasBinMarker(placement['bin'])
-      || typeof placement['parentId'] !== 'string'
-      || !candidateScopeIds.has(placement['parentId']))) return null;
+    if (placements.some((placement) => !placementBelongsToScope(placement, candidateScopeIds))) return null;
     mergedShortcuts.push({ ...candidateShortcut, placements });
   }
 
@@ -388,14 +388,9 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
     if (candidateLayoutIdsSeen.has(layout['id'])) return true;
     candidateLayoutIdsSeen.add(layout['id']);
     const previousLayout = previousLayoutById.get(layout['id']);
-    const previousInside = previousLayout
-      && !hasBinMarker(previousLayout['bin'])
-      && typeof previousLayout['parentId'] === 'string'
-      && scopeIds.has(previousLayout['parentId']);
+    const previousInside = previousLayout && layoutBelongsToScope(previousLayout, scopeIds);
     if (previousLayout && !previousInside) return true;
-    return hasBinMarker(layout['bin'])
-    || typeof layout['parentId'] !== 'string'
-    || !candidateScopeIds.has(layout['parentId']);
+    return !layoutBelongsToScope(layout, candidateScopeIds);
   })) return null;
   const candidateLayoutIds = new Set(candidateLayouts.map((layout) => layout['id']));
   const candidateItemIds = new Set<string>(candidateScopeIds);
@@ -407,7 +402,7 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
     }
   }
   const mergedLayouts = previousLayouts
-    .filter((layout) => typeof layout['parentId'] !== 'string' || !scopeIds.has(layout['parentId']))
+    .filter((layout) => !layoutBelongsToScope(layout, scopeIds))
     .concat(candidateLayouts);
   const candidateView = isRecord(candidateRecord['view']) ? candidateRecord['view'] : {};
   const previousView = isRecord(previousRecord['view']) ? previousRecord['view'] : {};
