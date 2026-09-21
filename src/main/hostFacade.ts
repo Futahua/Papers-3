@@ -796,14 +796,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     }
     if (queue.holder?.senderId === sender.id) return { token: queue.holder.token };
     return new Promise<{ token: string }>((resolve, reject) => {
-      const waiter: WriterLeaseWaiter = { sender, resolve, reject };
+      let waiter: WriterLeaseWaiter;
       const onDestroyed = () => {
         const index = queue!.waiters.indexOf(waiter);
         if (index >= 0) queue!.waiters.splice(index, 1);
         reject(new Error('The project surface was destroyed while waiting for writer access.'));
       };
       sender.once('destroyed', onDestroyed);
-      queue!.waiters.push({
+      waiter = {
         sender,
         resolve: (lease) => {
           sender.removeListener('destroyed', onDestroyed);
@@ -813,7 +813,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
           sender.removeListener('destroyed', onDestroyed);
           reject(error);
         },
-      });
+      };
+      queue!.waiters.push(waiter);
       this.grantNextWriterLease(key);
     });
   }
