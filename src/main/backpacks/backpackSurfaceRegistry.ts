@@ -77,6 +77,8 @@ const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.f
 
   'host:backpack-project:state-save': 'mutate',
   'host:backpack-project:state-save-checked': 'mutate',
+  'host:backpack-project:workspace-writer-lease-acquire': 'mutate',
+  'host:backpack-project:workspace-writer-lease-release': 'mutate',
 
   'host:backpack-project:native-source-grant': 'native',
   'host:backpack-project:native-source-open-granted': 'native',

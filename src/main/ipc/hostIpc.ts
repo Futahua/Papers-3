@@ -61,6 +61,8 @@ export interface HostFacade {
   runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
   resolveBackpackProjectWorkspaceScope(senderId: number, projectKey: string, projectName: string): Promise<unknown>;
   revokeBackpackProjectWorkspaceScope(senderId: number): void;
+  acquireBackpackProjectWriterLease(sender: WebContents, workspaceOrigin?: string): Promise<{ token: string }>;
+  releaseBackpackProjectWriterLease(senderId: number, token: string): void;
   rebindBackpackProject(backpackId: string, newRoot: string): Promise<void>;
   copyBackpackProjectText(senderId: number, text: string): void;
   loadBackpackProjectState(senderId: number, workspaceOrigin?: string): Promise<unknown>;
@@ -173,6 +175,7 @@ const backpackProjectNativeSourcePathSchema = z.string().min(1).max(32_768);
 const backpackProjectNativeSourceRefSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+const backpackProjectWriterLeaseTokenSchema = backpackProjectNativeSourceRefSchema;
 export const hostWorkspaceSurfaceMoveTargetSchema = z.object({
   surfaceId: surfaceIdSchema,
   targetWindowId: z.number().int().nonnegative(),
@@ -292,6 +295,18 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpack-project:workspace-scope-revoke', (event) =>
     facade.revokeBackpackProjectWorkspaceScope(event.sender.id),
+  );
+  handle('host:backpack-project:workspace-writer-lease-acquire', (event, workspaceOrigin) =>
+    facade.acquireBackpackProjectWriterLease(
+      event.sender,
+      backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
+    ),
+  );
+  handle('host:backpack-project:workspace-writer-lease-release', (event, token) =>
+    facade.releaseBackpackProjectWriterLease(
+      event.sender.id,
+      backpackProjectWriterLeaseTokenSchema.parse(token),
+    ),
   );
   handle('host:backpack-project:rebind', (_event, backpackId, newRoot) =>
     facade.rebindBackpackProject(

@@ -62,6 +62,17 @@ interface CanvasPersistedState {
   lastActiveProgramId: string | null;
 }
 
+interface WriterLeaseWaiter {
+  sender: WebContents;
+  resolve: (lease: { token: string }) => void;
+  reject: (error: Error) => void;
+}
+
+interface WriterLeaseQueue {
+  holder: { token: string; senderId: number } | null;
+  waiters: WriterLeaseWaiter[];
+}
+
 /** WHATWG URL reports `origin === "null"` for Papers' custom scheme. Keep the
  * origin comparison bound to the exact Backpack host instead of treating that
  * valid custom origin as absent. */
@@ -273,6 +284,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private readonly projectOwnershipTails = new Map<string, Promise<void>>();
   /** The current embedded AYG binding for each live top-level project frame. */
   private readonly workspaceScopes = new Map<number, BackpackProjectWorkspaceScope>();
+  /** Papers-main writer arbitration for custom-scheme renderers without Web Locks. */
+  private readonly writerLeases = new Map<string, WriterLeaseQueue>();
+  private readonly writerLeasesByToken = new Map<string, { key: string; senderId: number }>();
 
   constructor(private readonly deps: FacadeDeps) {}
 
@@ -721,6 +735,95 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return scope;
   }
 
+  private writerLeaseKey(senderId: number, workspaceOrigin?: string): string {
+    const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    const backpackId = scope?.backpackId ?? this.requireProjectForSender(senderId);
+    return scope
+      ? `${backpackId}:scope:${scope.rootGroupId}`
+      : `${backpackId}:full`;
+  }
+
+  private grantNextWriterLease(key: string): void {
+    const queue = this.writerLeases.get(key);
+    if (!queue || queue.holder) return;
+    while (queue.waiters.length > 0) {
+      const waiter = queue.waiters.shift()!;
+      if (waiter.sender.isDestroyed()) {
+        waiter.reject(new Error('The project surface was destroyed while waiting for writer access.'));
+        continue;
+      }
+      const token = randomUUID();
+      queue.holder = { token, senderId: waiter.sender.id };
+      this.writerLeasesByToken.set(token, { key, senderId: waiter.sender.id });
+      waiter.sender.once('destroyed', () => this.releaseWriterLeaseToken(token));
+      waiter.resolve({ token });
+      return;
+    }
+    this.writerLeases.delete(key);
+  }
+
+  private releaseWriterLeaseToken(token: string): void {
+    const entry = this.writerLeasesByToken.get(token);
+    if (!entry) return;
+    this.writerLeasesByToken.delete(token);
+    const queue = this.writerLeases.get(entry.key);
+    if (!queue || queue.holder?.token !== token) return;
+    queue.holder = null;
+    this.grantNextWriterLease(entry.key);
+  }
+
+  private releaseAllWriterLeasesForSender(senderId: number): void {
+    for (const [token, entry] of [...this.writerLeasesByToken]) {
+      if (entry.senderId === senderId) this.releaseWriterLeaseToken(token);
+    }
+    for (const [key, queue] of [...this.writerLeases]) {
+      const remaining: WriterLeaseWaiter[] = [];
+      for (const waiter of queue.waiters) {
+        if (waiter.sender.id === senderId) waiter.reject(new Error('The project surface no longer owns this workspace.'));
+        else remaining.push(waiter);
+      }
+      queue.waiters = remaining;
+      this.grantNextWriterLease(key);
+    }
+  }
+
+  async acquireBackpackProjectWriterLease(sender: WebContents, workspaceOrigin?: string): Promise<{ token: string }> {
+    const key = this.writerLeaseKey(sender.id, workspaceOrigin);
+    let queue = this.writerLeases.get(key);
+    if (!queue) {
+      queue = { holder: null, waiters: [] };
+      this.writerLeases.set(key, queue);
+    }
+    if (queue.holder?.senderId === sender.id) return { token: queue.holder.token };
+    return new Promise<{ token: string }>((resolve, reject) => {
+      const waiter: WriterLeaseWaiter = { sender, resolve, reject };
+      const onDestroyed = () => {
+        const index = queue!.waiters.indexOf(waiter);
+        if (index >= 0) queue!.waiters.splice(index, 1);
+        reject(new Error('The project surface was destroyed while waiting for writer access.'));
+      };
+      sender.once('destroyed', onDestroyed);
+      queue!.waiters.push({
+        sender,
+        resolve: (lease) => {
+          sender.removeListener('destroyed', onDestroyed);
+          resolve(lease);
+        },
+        reject: (error) => {
+          sender.removeListener('destroyed', onDestroyed);
+          reject(error);
+        },
+      });
+      this.grantNextWriterLease(key);
+    });
+  }
+
+  releaseBackpackProjectWriterLease(senderId: number, token: string): void {
+    const entry = this.writerLeasesByToken.get(token);
+    if (!entry || entry.senderId !== senderId) throw new Error('That writer lease is not owned by this project surface.');
+    this.releaseWriterLeaseToken(token);
+  }
+
   private projectStateForWorkspaceRequest(senderId: number, origin: string | undefined): string {
     const scope = this.scopedWorkspaceForSender(senderId, origin);
     return scope?.backpackId ?? this.projectStateForSender(senderId);
@@ -1015,6 +1118,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   revokeBackpackProjectWorkspaceScope(senderId: number): void {
+    this.releaseAllWriterLeasesForSender(senderId);
     this.workspaceScopes.delete(senderId);
   }
 

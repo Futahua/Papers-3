@@ -142,6 +142,8 @@ const SCOPED_WORKSPACE_REQUESTS = new Set([
   'papers:project:as-you-go-save',
   'papers:project:state-load-versioned',
   'papers:project:state-save-checked',
+  'papers:project:workspace-writer-lease-acquire',
+  'papers:project:workspace-writer-lease-release',
   'papers:project:as-you-go-shortcut-icon',
   'papers:project:as-you-go-launch',
   'papers:project:as-you-go-reveal',
@@ -413,6 +415,8 @@ window.addEventListener('message', (event) => {
   // payload over `ok: true` -- unwrapped, a stale revision would arrive at the
   // project as a failed request instead of the typed answer it is.
   if (request.type === 'papers:project:state-save-checked' && typeof request.state === 'string' && typeof request.revision === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save-checked', request.state, request.revision, ...workspaceOriginArgs).then((result) => ({ stateSave: result }));
+  if (request.type === 'papers:project:workspace-writer-lease-acquire') task = ipcRenderer.invoke('host:backpack-project:workspace-writer-lease-acquire', ...workspaceOriginArgs).then((writerLease) => ({ writerLease }));
+  if (request.type === 'papers:project:workspace-writer-lease-release' && typeof request.token === 'string') task = ipcRenderer.invoke('host:backpack-project:workspace-writer-lease-release', request.token, ...workspaceOriginArgs);
   if (request.type === 'papers:project:as-you-go-pick-target' && (request.kind === 'file' || request.kind === 'folder')) task = ipcRenderer.invoke('host:backpack-project:pick-target', request.kind, ...workspaceOriginArgs).then((selection) => ({ target: selection?.target ?? null, icon: selection?.icon ?? null }));
   if (request.type === 'papers:project:as-you-go-shortcut-icon' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:shortcut-icon', request.actionId, ...workspaceOriginArgs).then((icon) => ({ icon }));
   if (request.type === 'papers:project:as-you-go-launch' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:launch-shortcut', request.actionId, ...workspaceOriginArgs);
