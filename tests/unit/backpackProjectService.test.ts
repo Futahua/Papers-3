@@ -774,4 +774,57 @@ describe('BackpackProjectService', () => {
     await service.saveState(backpackId, JSON.stringify(validState('recovered')));
     await expect(service.loadState(backpackId)).resolves.toEqual(validState('recovered'));
   });
+
+  it('a scoped save accepts a scope root nested under another folder', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {});
+    const root = 'group-proxima-nestedroot';
+    const seed = {
+      schemaVersion: 1 as const,
+      groups: [
+        { id: 'outer', parentId: 'root', name: 'Outer' },
+        { id: root, parentId: 'outer', name: 'Bound' },
+      ],
+      shortcuts: [],
+    };
+    const seeded = await service.saveState(backpackId, JSON.stringify(seed));
+    expect(seeded.ok).toBe(true);
+    const candidate = {
+      schemaVersion: 1 as const,
+      groups: [
+        { id: root, parentId: 'outer', name: 'Bound' },
+        { id: 'child', parentId: root, name: 'Child' },
+      ],
+      shortcuts: [],
+    };
+    const loaded = await service.loadStateVersioned(backpackId);
+    await expect(
+      service.saveState(backpackId, JSON.stringify(candidate), loaded.revision, root),
+    ).resolves.toMatchObject({ ok: true });
+    const after = await service.loadStateVersioned(backpackId);
+    expect(after.state.groups.map((group) => group.id).sort()).toEqual(
+      ['child', 'outer', root].sort(),
+    );
+  });
+
+  it('a scoped save still refuses a binned scope root', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {});
+    const root = 'group-proxima-binnedroot';
+    const seed = {
+      schemaVersion: 1 as const,
+      groups: [{ id: root, parentId: 'root', name: 'Bound' }],
+      shortcuts: [],
+    };
+    await service.saveState(backpackId, JSON.stringify(seed));
+    const loaded = await service.loadStateVersioned(backpackId);
+    const candidate = {
+      schemaVersion: 1 as const,
+      groups: [{ id: root, parentId: 'root', name: 'Bound', bin: { parentId: 'root' } }],
+      shortcuts: [],
+    };
+    await expect(
+      service.saveState(backpackId, JSON.stringify(candidate), loaded.revision, root),
+    ).resolves.toMatchObject({ ok: false, code: 'SCOPE_VIOLATION' });
+  });
 });

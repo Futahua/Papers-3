@@ -326,7 +326,10 @@ function mergeScopedState(previous: BackpackProjectState, candidate: BackpackPro
   const candidateGroups = Array.isArray(candidateRecord['groups']) ? candidateRecord['groups'].filter(isRecord) : [];
   const scopeIds = workspaceScopeGroupIds(previousRecord, rootGroupId);
   const candidateRoot = candidateGroups.find((group) => group['id'] === rootGroupId);
-  if (!candidateRoot || candidateRoot['parentId'] !== 'root' || hasBinMarker(candidateRoot['bin'])) return null;
+  // The scope root may live anywhere, including nested under another folder:
+  // the scope is the subtree below it, and every check below already walks
+  // that subtree. Only a missing or binned root breaks scoped saves.
+  if (!candidateRoot || hasBinMarker(candidateRoot['bin'])) return null;
   const previousGroupIds = new Set(previousGroups.map((group) => group['id']).filter((id): id is string => typeof id === 'string'));
   const candidateGroupById = new Map<string, Record<string, unknown>>();
   for (const group of candidateGroups) {
