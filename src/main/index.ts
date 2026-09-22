@@ -445,18 +445,23 @@ export const TEST_OPEN_COMMAND_SURFACE_KEY = '__papersTestOpenCommandSurface';
 // surfaces must never be allowed to become an unreachable single-instance
 // owner: if the main surface still exists, restore it; if it does not, retire
 // the orphaned process so the next launch can start cleanly.
+//
+// The chord toggles: a consecutive press while Papers already holds focus
+// minimizes it instead of re-raising it.
 app.on('second-instance', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    bringWindowToFront(mainWindow);
+  const target = (mainWindow && !mainWindow.isDestroyed())
+    ? mainWindow
+    : papersWindows.all().map((context) => context.owned.window).find((window) => !window.isDestroyed()) ?? null;
+  if (!target) {
+    app.quit();
     return;
   }
-  for (const context of papersWindows.all()) {
-    if (!context.owned.window.isDestroyed()) {
-      bringWindowToFront(context.owned.window);
-      return;
-    }
+  if (target.isFocused()) {
+    void commandSurfaceOverlay?.close('dismissed').catch(() => undefined);
+    target.minimize();
+    return;
   }
-  app.quit();
+  bringWindowToFront(target);
 });
 
 /** Height of the slim custom title bar / native window-controls overlay. */
@@ -2566,8 +2571,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // ------------------------------------------------- global invocation chords
   // Two system-wide chords, live while Papers runs, working from inside any
   // other application:
-  //   Alt+Shift+A  is owned by the Windows Papers.lnk shortcut and brings
-  //                Papers to the front through the single-instance path.
+  // Alt+Shift+A  is owned by the Windows Papers.lnk shortcut and brings
+  //                Papers to the front through the single-instance path, or
+  //                minimizes it when pressed consecutively while focused.
   //   Alt+A        pop the command surface OVER whatever the creator is doing.
   //                Papers does NOT come forward - this is a launcher, not a
   //                window switcher. The application they came from keeps its
@@ -2772,9 +2778,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     (globalThis as Record<string, unknown>)['__papersTestOpenCommandSurface'] = openCommandSurface;
   }
 
-  // Alt+Shift+A is raise-only. It never minimizes Papers.
-  /* Legacy toggle implementation retained below for historical tests; the
-     shipping Alt+Shift+A path is raise-only and does not wire it. */
+  // Alt+Shift+A toggles: raise when another app holds focus, minimize on a
+  // consecutive press while Papers is focused.
+  /* Legacy toggle implementation retained below for historical tests. */
   /* windowToggle = createWindowToggle({
     foregroundPapersWindowId,
     currentWindowId: () => {
