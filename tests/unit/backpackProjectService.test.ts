@@ -802,7 +802,7 @@ describe('BackpackProjectService', () => {
       service.saveState(backpackId, JSON.stringify(candidate), loaded.revision, root),
     ).resolves.toMatchObject({ ok: true });
     const after = await service.loadStateVersioned(backpackId);
-    expect(after.state.groups.map((group) => group.id).sort()).toEqual(
+    expect((after.state.groups as Array<{ id: string }>).map((group) => group.id).sort()).toEqual(
       ['child', 'outer', root].sort(),
     );
   });
