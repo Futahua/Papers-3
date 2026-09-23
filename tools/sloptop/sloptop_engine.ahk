@@ -1604,6 +1604,17 @@ ExitLatchedCtrlSpaceMode() {
     ; a window. Resolve the window under this click for every new pickup.
     HideOverlays()
     hWnd := GetMouseTargetInfo().hwnd
+    if !hWnd && ctrlSpaceLatched && moveSelected.Count {
+        ; An empty desktop click can anchor a move of the selected group.
+        for selectedHwnd, entry in moveSelected {
+            try {
+                if WinExist("ahk_id " selectedHwnd) && WinGetPID("ahk_id " selectedHwnd) = entry.pid {
+                    hWnd := selectedHwnd
+                    break
+                }
+            }
+        }
+    }
     if !hWnd {
         if ctrlSpaceLatched
             ExitLatchedCtrlSpaceMode()
