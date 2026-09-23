@@ -1780,7 +1780,19 @@ async function bootstrap(): Promise<void> {
     },
     onWidgetRegistered: (senderId, handle) => hoverInputBridge?.registerWidget(senderId, handle),
     onWidgetRemoved: (senderId) => {
-      pendingHoverCaptures.delete(senderId);
+      const pending = pendingHoverCaptures.get(senderId);
+      if (pending?.opening) {
+        pendingHoverCaptures.delete(senderId);
+        for (const item of pending.buffer) item.resolve?.({ ok: false, detail: 'the source widget closed during Quick Run handoff' });
+        for (const wake of pending.wake) wake();
+        void hoverInputBridge?.setOverlayOpen(false);
+      }
+      for (const [key, seal] of pendingWidgetSeals) {
+        if (seal.senderId !== senderId) continue;
+        clearTimeout(seal.timer);
+        pendingWidgetSeals.delete(key);
+        seal.reject(new Error('the source widget closed during Quick Run handoff'));
+      }
       hoverInputBridge?.removeWidget(senderId);
     },
     onFollowTarget: (senderId, handle) => hoverInputBridge?.setFollowTarget(senderId, handle),
@@ -1796,55 +1808,138 @@ async function bootstrap(): Promise<void> {
     },
   });
   widgetSession.registerIpc();
-  const pendingHoverCaptures = new Map<number, {
-    projectId: string;
-    opening: boolean;
-    buffered: Array<{ captureId: string; text: string }>;
-  }>();
-  const appendHoverCapture = async (senderId: number, captureId: string, text: string): Promise<{ ok: boolean; detail: string }> => {
+  type QuickRunCapture = { captureId: string; text: string; resolve?: (result: { ok: boolean; detail: string }) => void };
+  type PendingHoverCapture = { projectId: string; opening: boolean; buffer: QuickRunCapture[]; wake: Array<() => void> };
+  const pendingHoverCaptures = new Map<number, PendingHoverCapture>();
+  const pendingCommandSurfaceAcks = new Map<string, { projectId: string; senderId: number; resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  const pendingWidgetSeals = new Map<string, { senderId: number; resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  let quickRunDeliverySequence = 0;
+  let quickRunSealSequence = 0;
+  const nextQuickRunDeliveryId = (): string => `papers-${Date.now()}-${++quickRunDeliverySequence}`;
+  const appendHoverCapture = async (senderId: number, text: string, waitForReceipt: boolean): Promise<{ ok: boolean; detail: string }> => {
     const pending = pendingHoverCaptures.get(senderId);
     if (!pending) return { ok: false, detail: 'there is no Quick Run handoff for this widget' };
     if (pending.opening) {
-      if (pending.buffered.length >= 64) return { ok: false, detail: 'the Quick Run opening buffer is full' };
-      pending.buffered.push({ captureId, text });
-      return { ok: true, detail: 'the character was queued for Quick Run' };
+      if (pending.buffer.length >= 64) return { ok: false, detail: 'the Quick Run opening buffer is full' };
+      if (!waitForReceipt) {
+        pending.buffer.push({ captureId: nextQuickRunDeliveryId(), text });
+        for (const wake of pending.wake.splice(0)) wake();
+        return { ok: true, detail: 'the character was queued for Quick Run' };
+      }
+      return new Promise((resolve) => {
+        pending.buffer.push({ captureId: nextQuickRunDeliveryId(), text, resolve });
+        for (const wake of pending.wake.splice(0)) wake();
+      });
     }
-    const result = await commandSurfaceOverlay?.appendForProject(pending.projectId, text, captureId);
+    const result = await commandSurfaceOverlay?.appendForProject(pending.projectId, text, nextQuickRunDeliveryId());
     return result ?? { ok: false, detail: 'the command surface is unavailable' };
   };
-  const beginHoverCapture = async (senderId: number, captureId: string, text: string): Promise<{ ok: boolean; detail: string }> => {
+  const requestWidgetQuickRunSeal = (senderId: number, generation: number): Promise<void> => {
+    const surface = widgetRegistry.surface(senderId);
+    const contents = webContents.fromId(senderId);
+    if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND || !contents || contents.isDestroyed()) {
+      return Promise.reject(new Error('the Quick Run source widget is no longer available'));
+    }
+    const key = `${senderId}:${generation}`;
+    if (pendingWidgetSeals.has(key)) return Promise.reject(new Error('a Quick Run seal is already pending'));
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingWidgetSeals.delete(key);
+        reject(new Error('the widget did not seal its queued Quick Run characters'));
+      }, 3000);
+      pendingWidgetSeals.set(key, { senderId, resolve, reject, timer });
+      contents.send('papers:backpack:widget-quick-run-seal-request', { generation });
+    });
+  };
+  const acknowledgeWidgetQuickRunSeal = (senderId: number, generation: number): boolean => {
+    const key = `${senderId}:${generation}`;
+    const pending = pendingWidgetSeals.get(key);
+    if (!pending || pending.senderId !== senderId) return false;
+    clearTimeout(pending.timer);
+    pendingWidgetSeals.delete(key);
+    pending.resolve();
+    return true;
+  };
+  ipcMain.handle('papers:backpack:command-surface-input-ack', async (event, raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).length !== 1
+      || typeof raw.captureId !== 'string' || raw.captureId.length > 128) {
+      throw new Error('command-surface input acknowledgement is malformed');
+    }
+    const context = surfaceContexts.contextForSender(event.sender.id);
+    const pending = pendingCommandSurfaceAcks.get(raw.captureId);
+    if (!pending || event.sender.id !== commandSurfaceSenderId || pending.senderId !== event.sender.id
+      || context?.kind !== 'launcher' || context.projectId !== pending.projectId) {
+      throw new Error('command-surface input acknowledgement is stale or unauthorized');
+    }
+    clearTimeout(pending.timer);
+    pendingCommandSurfaceAcks.delete(raw.captureId);
+    pending.resolve();
+    return { ok: true };
+  });
+  const deliverQueuedHoverCaptures = async (pending: PendingHoverCapture): Promise<void> => {
+    while (pending.buffer.length > 0) {
+      const next = pending.buffer.shift()!;
+      try {
+        const delivered = await commandSurfaceOverlay?.appendForProject(pending.projectId, next.text, next.captureId);
+        const result = delivered ?? { ok: false, detail: 'the command surface is unavailable' };
+        next.resolve?.(result);
+        if (!result.ok) throw new Error(result.detail);
+      } catch (error) {
+        next.resolve?.({ ok: false, detail: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
+    }
+  };
+  const drainHoverCapture = async (senderId: number, pending: PendingHoverCapture, ready: Promise<void>): Promise<void> => {
+    let readyComplete = false;
+    void ready.then(() => { readyComplete = true; for (const wake of pending.wake.splice(0)) wake(); });
+    while (pendingHoverCaptures.get(senderId) === pending && (!readyComplete || pending.buffer.length > 0)) {
+      if (pending.buffer.length > 0) {
+        await deliverQueuedHoverCaptures(pending);
+        continue;
+      }
+      await Promise.race([ready, new Promise<void>((resolve) => pending.wake.push(resolve))]);
+    }
+    pending.opening = false;
+  };
+  const beginHoverCapture = async (senderId: number, text: string, nativeCapture: boolean): Promise<{ ok: boolean; detail: string }> => {
     const surface = widgetRegistry.surface(senderId);
     if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND) return { ok: false, detail: 'the widget is no longer registered' };
     const existing = pendingHoverCaptures.get(senderId);
-    if (existing) return appendHoverCapture(senderId, captureId, text);
+    if (existing) return appendHoverCapture(senderId, text, nativeCapture);
     if (!commandSurfaceOverlay) return { ok: false, detail: 'the command surface is unavailable' };
-    hoverInputBridge?.setCaptureOpening(senderId);
-    const pending = { projectId: surface.projectId, opening: true, buffered: [] as Array<{ captureId: string; text: string }> };
-    pendingHoverCaptures.set(senderId, pending);
     try {
-      const opened = await commandSurfaceOverlay.openForProject(surface.projectId, text, captureId);
-      if (pendingHoverCaptures.get(senderId) !== pending) {
-        return { ok: false, detail: 'the widget Quick Run handoff ended before it was ready' };
-      }
-      if (!opened.ok) {
-        pendingHoverCaptures.delete(senderId);
-        hoverInputBridge?.setOverlayOpen(false);
+      if (!nativeCapture) await hoverInputBridge?.setCaptureOpening(senderId);
+      const pending: PendingHoverCapture = { projectId: surface.projectId, opening: true, buffer: [], wake: [] };
+      pendingHoverCaptures.set(senderId, pending);
+      const opened = await commandSurfaceOverlay.openForProject(surface.projectId, text, nextQuickRunDeliveryId());
+      if (!opened.ok) throw new Error(opened.detail);
+      const generation = ++quickRunSealSequence;
+      await requestWidgetQuickRunSeal(senderId, generation);
+      // The seal means every widget-originated append has reached this process;
+      // apply that queue before the helper may stop capturing. Native-hook
+      // characters that arrive just after this drain remain outstanding in the
+      // helper and are drained/acknowledged by the live pump below.
+      await deliverQueuedHoverCaptures(pending);
+      const ready = hoverInputBridge?.setOverlayOpen(true) ?? Promise.resolve();
+      const drain = drainHoverCapture(senderId, pending, ready);
+      if (nativeCapture) {
+        void drain.catch((error: unknown) => {
+          console.warn('[papers] Quick Run input handoff failed:', error);
+          pendingHoverCaptures.delete(senderId);
+          void hoverInputBridge?.setOverlayOpen(false);
+        });
         return opened;
       }
-      // This acknowledgement is sent only after the command-surface window has
-      // been shown, focused and sent the seed. Until then the native helper
-      // keeps buffering printable input so no key leaks to the previous app.
-      hoverInputBridge?.setOverlayOpen(true);
-      while (pending.buffered.length > 0) {
-        const buffered = pending.buffered.shift()!;
-        const appended = await commandSurfaceOverlay.appendForProject(pending.projectId, buffered.text, buffered.captureId);
-        if (!appended.ok) console.warn(`[papers] queued Quick Run character was not delivered: ${appended.detail}`);
-      }
-      pending.opening = false;
+      await drain;
+      await ready;
       return opened;
     } catch (error) {
+      const pending = pendingHoverCaptures.get(senderId);
       pendingHoverCaptures.delete(senderId);
-      hoverInputBridge?.setOverlayOpen(false);
+      for (const item of pending?.buffer ?? []) item.resolve?.({ ok: false, detail: 'the Quick Run handoff failed' });
+      for (const wake of pending?.wake ?? []) wake();
+      void hoverInputBridge?.setOverlayOpen(false);
       return { ok: false, detail: error instanceof Error ? error.message : String(error) };
     }
   };
@@ -1856,15 +1951,13 @@ async function bootstrap(): Promise<void> {
         if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
       }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
     },
-    onCaptured: (senderId, captureId, text) => {
-      void beginHoverCapture(senderId, captureId, text).then((opened) => {
-        if (!opened.ok) console.warn(`[papers] hover type-to-run was not opened: ${opened.detail}`);
-      });
+    onCaptured: async (senderId, _captureId, text) => {
+      const result = await beginHoverCapture(senderId, text, true);
+      if (!result.ok) throw new Error(result.detail);
     },
-    onAppended: (senderId, captureId, text) => {
-      void appendHoverCapture(senderId, captureId, text).then((result) => {
-        if (!result.ok) console.warn(`[papers] hover type-to-run append was not delivered: ${result.detail}`);
-      });
+    onAppended: async (senderId, _captureId, text) => {
+      const result = await appendHoverCapture(senderId, text, true);
+      if (!result.ok) throw new Error(result.detail);
     },
     onError: (message) => console.warn(`[papers] ${message}`),
   });
@@ -1887,9 +1980,10 @@ async function bootstrap(): Promise<void> {
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     windowIdForWorkspaceSender: windowIdForProjectSender,
     setHoverPolicy: (senderId, enabled, blockedBindings) => hoverInputBridge?.setPolicy(senderId, enabled, blockedBindings),
-    requestHoverQuickRun: (senderId, phase, text, captureId) => phase === 'open'
-      ? beginHoverCapture(senderId, captureId, text)
-      : appendHoverCapture(senderId, captureId, text),
+    requestHoverQuickRun: (senderId, phase, text) => phase === 'open'
+      ? beginHoverCapture(senderId, text, false)
+      : appendHoverCapture(senderId, text, false),
+    acknowledgeHoverQuickRunSeal: acknowledgeWidgetQuickRunSeal,
     hidePreview: hideWidgetPreview,
     dismissCandidatePicker: (sender) => {
       const active = candidatePickerSessions.get(sender.id);
@@ -2861,8 +2955,22 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       return target ? { ok: true, target } : null;
     },
     onClosed: () => {
+      for (const pending of pendingHoverCaptures.values()) {
+        for (const item of pending.buffer) item.resolve?.({ ok: false, detail: 'the command surface closed during Quick Run handoff' });
+        for (const wake of pending.wake) wake();
+      }
       pendingHoverCaptures.clear();
-      hoverInputBridge?.setOverlayOpen(false);
+      for (const [captureId, pending] of pendingCommandSurfaceAcks) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error('the command surface closed before acknowledging input'));
+        pendingCommandSurfaceAcks.delete(captureId);
+      }
+      for (const [key, pending] of pendingWidgetSeals) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error('the command surface closed during widget input handoff'));
+        pendingWidgetSeals.delete(key);
+      }
+      void hoverInputBridge?.setOverlayOpen(false);
     },
     onTargetResolved: (target, ownerWindowId) => {
       const owner = papersWindows.get(ownerWindowId);
@@ -2971,9 +3079,39 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       return overlayWindow;
     },
     deliver: (senderId, payload) => {
-      if (payload.reason === 'global-accelerator') hoverInputBridge?.setOverlayOpen(true);
+      if (payload.reason === 'global-accelerator') void hoverInputBridge?.setOverlayOpen(true);
       const contents = webContents.fromId(senderId);
-      if (!contents || contents.isDestroyed()) return;
+      if (!contents || contents.isDestroyed()) {
+        if (typeof payload.captureId === 'string') throw new Error('the command-surface renderer is unavailable for captured input');
+        return;
+      }
+      if (typeof payload.captureId === 'string') {
+        if (pendingCommandSurfaceAcks.has(payload.captureId)) throw new Error('duplicate command-surface input receipt id');
+        let resolve!: () => void;
+        let reject!: (error: Error) => void;
+        const receipt = new Promise<void>((accept, decline) => { resolve = accept; reject = decline; });
+        const timer = setTimeout(() => {
+          pendingCommandSurfaceAcks.delete(payload.captureId!);
+          reject(new Error('Quick Run did not acknowledge the delivered character'));
+        }, 5000);
+        const pending = {
+          projectId: payload.projectId,
+          senderId,
+          resolve,
+          reject,
+          timer,
+        };
+        pendingCommandSurfaceAcks.set(payload.captureId, pending);
+        try {
+          contents.send(COMMAND_SURFACE_INVOKE_CHANNEL, payload);
+        } catch (error) {
+          clearTimeout(timer);
+          pendingCommandSurfaceAcks.delete(payload.captureId);
+          reject(error instanceof Error ? error : new Error(String(error)));
+          throw error;
+        }
+        return receipt;
+      }
       contents.send(COMMAND_SURFACE_INVOKE_CHANNEL, payload);
     },
     report: (report) => {

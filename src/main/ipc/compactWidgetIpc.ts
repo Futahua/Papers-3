@@ -22,7 +22,8 @@ export interface CompactWidgetIpcDependencies {
   windowIdForWorkspaceSender: (sender: WebContents) => number | null;
   isWidgetSender: (sender: WebContents, projectId: string) => boolean;
   setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => void;
-  requestHoverQuickRun?: (senderId: number, phase: 'open' | 'append', text: string, captureId: string) => Promise<{ ok: boolean; detail: string }>;
+  requestHoverQuickRun?: (senderId: number, phase: 'open' | 'append', text: string) => Promise<{ ok: boolean; detail: string }>;
+  acknowledgeHoverQuickRunSeal?: (senderId: number, generation: number) => boolean;
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
@@ -67,7 +68,7 @@ function ensureWorkspaceSurface(
   registry.register(senderId, projectId, WORKSPACE_SURFACE_KIND);
 }
 
-export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, setHoverPolicy, requestHoverQuickRun, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
+export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, setHoverPolicy, requestHoverQuickRun, acknowledgeHoverQuickRunSeal, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
   ipcMain.handle('papers:backpack:widget-open', async (event, raw) => {
     await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget open payload is malformed');
@@ -164,13 +165,12 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
 
   ipcMain.handle('papers:backpack:widget-quick-run-input', async (event, raw) => {
     await waitForAuthority?.(event.sender);
-    if (!object(raw) || !exact(raw, ['token', 'phase', 'text', 'captureId'])) throw new Error('widget Quick Run input is malformed');
+    if (!object(raw) || !exact(raw, ['token', 'phase', 'text'])) throw new Error('widget Quick Run input is malformed');
     const token = key(raw.token, 'token');
     const phase = raw.phase;
     const text = raw.text;
-    const captureId = raw.captureId;
     if ((phase !== 'open' && phase !== 'append') || typeof text !== 'string' || [...text].length !== 1
-      || Buffer.byteLength(text, 'utf8') > 8 || typeof captureId !== 'string' || !/^\d{1,20}$/.test(captureId)) {
+      || Buffer.byteLength(text, 'utf8') > 8) {
       throw new Error('widget Quick Run input is malformed');
     }
     const surface = registry.surface(event.sender.id);
@@ -179,7 +179,23 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
       throw new Error('denied: sender is not the registered widget');
     }
     if (!requestHoverQuickRun) throw new Error('widget Quick Run is unavailable');
-    return requestHoverQuickRun(event.sender.id, phase, text, captureId);
+    return requestHoverQuickRun(event.sender.id, phase, text);
+  });
+
+  ipcMain.handle('papers:backpack:widget-quick-run-seal-ack', async (event, raw) => {
+    if (!object(raw) || !exact(raw, ['token', 'generation'])) throw new Error('widget Quick Run seal acknowledgement is malformed');
+    const token = key(raw.token, 'token');
+    const generation = raw.generation;
+    const surface = registry.surface(event.sender.id);
+    if (!surface || !isWidgetSender(event.sender, surface.projectId)
+      || !registry.validSender(event.sender.id, surface.projectId, token)) {
+      throw new Error('denied: sender is not the registered widget');
+    }
+    if (typeof generation !== 'number' || !Number.isSafeInteger(generation) || generation < 1
+      || !acknowledgeHoverQuickRunSeal?.(event.sender.id, generation)) {
+      throw new Error('widget Quick Run seal acknowledgement is stale');
+    }
+    return { ok: true };
   });
 
   ipcMain.handle('papers:backpack:widget-preview-show', async (event, raw) => {

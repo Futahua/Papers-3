@@ -16,6 +16,7 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>) {
     resizeFromSender: vi.fn(),
   } as unknown as CompactWidgetSession;
   const requestHoverQuickRun = vi.fn(async () => ({ ok: true, detail: 'queued' }));
+  const acknowledgeHoverQuickRunSeal = vi.fn(() => true);
   registerCompactWidgetIpc({
     ipcMain,
     registry,
@@ -25,13 +26,14 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>) {
     isWorkspaceSender: (sender, projectId) => sender.id === 1 && projectId === 'bp-a',
     isWidgetSender: (sender, projectId) => sender.id === 2 && projectId === 'bp-a',
     requestHoverQuickRun,
+    acknowledgeHoverQuickRunSeal,
   });
   const invoke = (channel: string, senderId: number, raw: unknown) => {
     const handler = handlers.get(channel);
     if (!handler) throw new Error(`missing ${channel}`);
     return handler({ sender: { id: senderId } }, raw);
   };
-  return { registry, session, invoke, requestHoverQuickRun };
+  return { registry, session, invoke, requestHoverQuickRun, acknowledgeHoverQuickRunSeal };
 }
 
 describe('compact widget IPC', () => {
@@ -69,13 +71,22 @@ describe('compact widget IPC', () => {
   it('routes only bounded printable Quick Run input from the registered widget token', async () => {
     const h = harness();
     const token = h.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
-    const payload = { token, phase: 'open', text: 'a', captureId: '1' };
+    const payload = { token, phase: 'open', text: 'a' };
     await expect(h.invoke('papers:backpack:widget-quick-run-input', 2, payload)).resolves.toEqual({ ok: true, detail: 'queued' });
-    expect(h.requestHoverQuickRun).toHaveBeenCalledWith(2, 'open', 'a', '1');
+    expect(h.requestHoverQuickRun).toHaveBeenCalledWith(2, 'open', 'a');
     await expect(h.invoke('papers:backpack:widget-quick-run-input', 2, { ...payload, token: 'stale' })).rejects.toThrow(/denied/);
     await expect(h.invoke('papers:backpack:widget-quick-run-input', 1, payload)).rejects.toThrow(/denied/);
     await expect(h.invoke('papers:backpack:widget-quick-run-input', 2, { ...payload, text: 'ab' })).rejects.toThrow(/malformed/);
     expect(h.requestHoverQuickRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts seal acknowledgements only from the registered widget token and generation', async () => {
+    const h = harness();
+    const token = h.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    await expect(h.invoke('papers:backpack:widget-quick-run-seal-ack', 2, { token, generation: 3 })).resolves.toEqual({ ok: true });
+    expect(h.acknowledgeHoverQuickRunSeal).toHaveBeenCalledWith(2, 3);
+    await expect(h.invoke('papers:backpack:widget-quick-run-seal-ack', 2, { token: 'stale', generation: 4 })).rejects.toThrow(/denied/);
+    expect(h.acknowledgeHoverQuickRunSeal).toHaveBeenCalledTimes(1);
   });
 
   it('019C: registers the bound workspace sender on first widget-open and reuses it', async () => {

@@ -9,10 +9,10 @@ export const HOVER_INPUT_BRIDGE_EXECUTABLE = 'papers-hover-input-bridge.exe';
 export interface HoverInputBridge {
   registerWidget(senderId: number, nativeHandle: Buffer): void;
   setPolicy(senderId: number, enabled: boolean, blockedBindings: readonly string[]): void;
-  setCaptureOpening(senderId: number): void;
+  setCaptureOpening(senderId: number): Promise<void>;
   removeWidget(senderId: number): void;
   setFollowTarget(senderId: number, nativeHandle: Buffer): void;
-  setOverlayOpen(open: boolean): void;
+  setOverlayOpen(open: boolean): Promise<void>;
   close(): void;
 }
 
@@ -23,8 +23,8 @@ export interface HoverInputBridgeOptions {
   spawn?: typeof spawnProcess;
   onAltQ: () => void;
   onAltQRelease?: () => void;
-  onCaptured: (senderId: number, captureId: string, text: string) => void;
-  onAppended?: (senderId: number, captureId: string, text: string) => void;
+  onCaptured: (senderId: number, captureId: string, text: string) => void | Promise<void>;
+  onAppended?: (senderId: number, captureId: string, text: string) => void | Promise<void>;
   onError?: (message: string) => void;
 }
 
@@ -98,10 +98,39 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
   });
   let closed = false;
   let buffered = '';
+  let requestSequence = 0;
+  let overlayReady: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
+  const openingReady = new Map<number, { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   const send = (record: string): void => {
     if (closed || child.stdin.destroyed) return;
     try { child.stdin.write(`${record}\n`); }
     catch { options.onError?.('native hover-input helper disconnected'); }
+  };
+  const rejectPending = (error: Error): void => {
+    if (overlayReady) {
+      clearTimeout(overlayReady.timer);
+      overlayReady.reject(error);
+      overlayReady = null;
+    }
+    for (const pending of openingReady.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    openingReady.clear();
+  };
+  const trackNativeInput = (senderId: number, captureId: string, text: string, callback: HoverInputBridgeOptions['onCaptured']): void => {
+    Promise.resolve().then(() => callback(senderId, captureId, text)).then(() => {
+      send(`ACK\t${captureId}`);
+    }).catch((error: unknown) => {
+      options.onError?.(`native hover input was not delivered: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  };
+  const trackNativeAppend = (senderId: number, captureId: string, text: string): void => {
+    Promise.resolve().then(() => options.onAppended?.(senderId, captureId, text)).then(() => {
+      send(`ACK\t${captureId}`);
+    }).catch((error: unknown) => {
+      options.onError?.(`native hover input append was not delivered: ${error instanceof Error ? error.message : String(error)}`);
+    });
   };
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (chunk: string) => {
@@ -114,6 +143,22 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
       const parts = line.split('\t');
       if (parts[0] === 'ALTQ') options.onAltQ();
       else if (parts[0] === 'ALTQ_RELEASE') options.onAltQRelease?.();
+      else if (parts[0] === 'OPENING_READY' && parts.length === 2) {
+        const senderId = Number(parts[1]);
+        const pending = openingReady.get(senderId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          openingReady.delete(senderId);
+          pending.resolve();
+        }
+      } else if (parts[0] === 'OVERLAY_READY' && parts.length === 2) {
+        const generation = Number(parts[1]);
+        if (overlayReady && generation === requestSequence) {
+          clearTimeout(overlayReady.timer);
+          overlayReady.resolve();
+          overlayReady = null;
+        }
+      }
       else if (parts[0] === 'ERROR') options.onError?.(`native hover-input helper: ${parts[1] ?? 'unknown error'}`);
       else if (parts[0] === 'CAPTURE' && parts.length === 4) {
         const senderId = Number(parts[1]);
@@ -124,7 +169,7 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
           const text = Buffer.from(encoded, 'base64').toString('utf8');
           if (Number.isSafeInteger(senderId) && senderId > 0 && /^\d{1,20}$/.test(captureId)
             && [...text].length === 1 && Buffer.byteLength(text, 'utf8') <= 8) {
-            options.onCaptured(senderId, captureId, text);
+            trackNativeInput(senderId, captureId, text, options.onCaptured);
           }
         } catch { /* malformed native event fails closed */ }
       } else if (parts[0] === 'APPEND' && parts.length === 4) {
@@ -135,7 +180,7 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
           if (typeof encoded !== 'string' || typeof captureId !== 'string') continue;
           const text = Buffer.from(encoded, 'base64').toString('utf8');
           if (Number.isSafeInteger(senderId) && senderId > 0 && /^\d{1,20}$/.test(captureId)
-            && [...text].length === 1 && Buffer.byteLength(text, 'utf8') <= 8) options.onAppended?.(senderId, captureId, text);
+            && [...text].length === 1 && Buffer.byteLength(text, 'utf8') <= 8) trackNativeAppend(senderId, captureId, text);
         } catch { /* malformed native event fails closed */ }
       } else if (parts[0] === 'READY' && parts[1] === '0') {
         options.onError?.('Alt+Q is already registered by another application; Papers could not claim it');
@@ -148,6 +193,7 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
   child.once('error', () => options.onError?.('native hover-input helper failed to start'));
   child.once('exit', (code) => {
     closed = true;
+    rejectPending(new Error('native hover-input helper disconnected'));
     if (code !== 0) options.onError?.(`native hover-input helper exited (${code ?? 'unknown'})`);
     options.onAltQRelease?.();
   });
@@ -160,12 +206,47 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
       const blocked = validBlockedBindings(blockedBindings);
       send(`POLICY\t${senderId}\t${enabled ? '1' : '0'}\t${Buffer.from(blocked.join('\n'), 'utf8').toString('base64')}`);
     },
-    setCaptureOpening(senderId) { send(`OPENING\t${senderId}`); },
+    setCaptureOpening(senderId) {
+      if (closed) return Promise.reject(new Error('native hover-input helper is closed'));
+      if (openingReady.has(senderId)) return Promise.reject(new Error('widget opening is already pending'));
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          openingReady.delete(senderId);
+          reject(new Error('native helper did not acknowledge widget opening'));
+        }, 3000);
+        openingReady.set(senderId, { resolve, reject, timer });
+        send(`OPENING\t${senderId}`);
+      });
+    },
     removeWidget(senderId) { send(`REMOVE\t${senderId}`); },
     setFollowTarget(senderId, nativeHandle) {
       send(`TARGET\t${senderId}\t${nativeHandleValue(nativeHandle)}`);
     },
-    setOverlayOpen(open) { send(`OVERLAY\t${open ? '1' : '0'}`); },
+    setOverlayOpen(open) {
+      if (!open) {
+        if (overlayReady) {
+          clearTimeout(overlayReady.timer);
+          overlayReady.reject(new Error('overlay handoff was cancelled'));
+          overlayReady = null;
+        }
+        send('OVERLAY\t0');
+        return Promise.resolve();
+      }
+      if (closed) return Promise.reject(new Error('native hover-input helper is closed'));
+      if (overlayReady) return overlayReady.promise;
+      const generation = ++requestSequence;
+      let resolve!: () => void;
+      let reject!: (error: Error) => void;
+      const promise = new Promise<void>((accept, decline) => { resolve = accept; reject = decline; });
+      const timer = setTimeout(() => {
+        if (overlayReady?.promise !== promise) return;
+        overlayReady = null;
+        reject(new Error('native helper did not acknowledge the overlay handoff'));
+      }, 5000);
+      overlayReady = { promise, resolve, reject, timer };
+      send(`OVERLAY\t1\t${generation}`);
+      return promise;
+    },
     close() {
       if (closed) return;
       send('QUIT');

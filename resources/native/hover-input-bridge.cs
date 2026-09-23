@@ -65,6 +65,8 @@ internal static class HoverInputBridge
     private static WidgetPolicy[] policies = new WidgetPolicy[0];
     private static readonly object policyLock = new object();
     private static readonly HashSet<uint> swallowedKeys = new HashSet<uint>();
+    private static readonly object captureLock = new object();
+    private static readonly HashSet<long> outstandingCaptures = new HashSet<long>();
     private static readonly ConcurrentQueue<string> output = new ConcurrentQueue<string>();
     private static readonly HookProc hookCallback = KeyboardHook;
     private static IntPtr hookHandle = IntPtr.Zero;
@@ -76,6 +78,8 @@ internal static class HoverInputBridge
     private static volatile bool captureOpening;
     private static volatile int openingWidgetId;
     private static long captureId;
+    private static bool overlayReadyRequested;
+    private static long overlayReadyGeneration;
 
     [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetWindowsHookEx(int id, HookProc callback, IntPtr module, uint threadId);
     [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hook);
@@ -127,11 +131,27 @@ internal static class HoverInputBridge
             try
             {
                 if (parts[0] == "QUIT") { PostThreadMessage(mainThreadId, WM_QUIT, UIntPtr.Zero, IntPtr.Zero); return; }
-                if (parts[0] == "OVERLAY" && parts.Length == 2)
+                if (parts[0] == "OVERLAY" && parts.Length == 2 && parts[1] == "0")
                 {
-                    overlayOpen = parts[1] == "1";
+                    lock (captureLock)
+                    {
+                        overlayReadyRequested = false;
+                        overlayReadyGeneration = 0;
+                        outstandingCaptures.Clear();
+                    }
+                    overlayOpen = false;
                     captureOpening = false;
                     openingWidgetId = 0;
+                    continue;
+                }
+                if (parts[0] == "OVERLAY" && parts.Length == 3 && parts[1] == "1")
+                {
+                    lock (captureLock)
+                    {
+                        overlayReadyRequested = true;
+                        overlayReadyGeneration = long.Parse(parts[2], CultureInfo.InvariantCulture);
+                    }
+                    CompleteOverlayReadyIfDrained();
                     continue;
                 }
                 if (parts[0] == "OPENING" && parts.Length == 2)
@@ -139,6 +159,20 @@ internal static class HoverInputBridge
                     openingWidgetId = int.Parse(parts[1], CultureInfo.InvariantCulture);
                     overlayOpen = false;
                     captureOpening = true;
+                    lock (captureLock)
+                    {
+                        overlayReadyRequested = false;
+                        overlayReadyGeneration = 0;
+                        outstandingCaptures.Clear();
+                    }
+                    Emit("OPENING_READY\t" + openingWidgetId.ToString(CultureInfo.InvariantCulture));
+                    continue;
+                }
+                if (parts[0] == "ACK" && parts.Length == 2)
+                {
+                    long acknowledged = long.Parse(parts[1], CultureInfo.InvariantCulture);
+                    lock (captureLock) outstandingCaptures.Remove(acknowledged);
+                    CompleteOverlayReadyIfDrained();
                     continue;
                 }
                 if (parts[0] == "TARGET" && parts.Length == 3)
@@ -176,6 +210,25 @@ internal static class HoverInputBridge
         PostThreadMessage(mainThreadId, WM_QUIT, UIntPtr.Zero, IntPtr.Zero);
     }
 
+    private static void CompleteOverlayReadyIfDrained()
+    {
+        long generation = 0;
+        lock (captureLock)
+        {
+            if (!overlayReadyRequested || outstandingCaptures.Count != 0) return;
+            overlayReadyRequested = false;
+            generation = overlayReadyGeneration;
+            overlayReadyGeneration = 0;
+        }
+        overlayOpen = true;
+        captureOpening = false;
+        openingWidgetId = 0;
+        Emit("OVERLAY_READY\t" + generation.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private static void TrackCapture(long id)
+    { lock (captureLock) outstandingCaptures.Add(id); }
+
     private static void UpdatePolicies(int id, WidgetPolicy replacement)
     {
         lock (policyLock)
@@ -191,7 +244,18 @@ internal static class HoverInputBridge
             Interlocked.Exchange(ref followHandle, IntPtr.Zero);
             followRequested = false;
         }
-        if (replacement == null && openingWidgetId == id) { captureOpening = false; openingWidgetId = 0; }
+        if (replacement == null && openingWidgetId == id)
+        {
+            lock (captureLock)
+            {
+                outstandingCaptures.Clear();
+                overlayReadyRequested = false;
+                overlayReadyGeneration = 0;
+            }
+            overlayOpen = false;
+            captureOpening = false;
+            openingWidgetId = 0;
+        }
     }
 
     private static WidgetPolicy FindById(WidgetPolicy[] source, int id)
@@ -292,12 +356,14 @@ internal static class HoverInputBridge
             if (openingWidgetId != policy.Id) return CallNextHookEx(hookHandle, code, wParam, lParam);
             swallowedKeys.Add(key.vkCode);
             long appendId = Interlocked.Increment(ref captureId);
+            TrackCapture(appendId);
             Emit("APPEND\t" + policy.Id.ToString(CultureInfo.InvariantCulture) + "\t" + appendId.ToString(CultureInfo.InvariantCulture) + "\t" + Convert.ToBase64String(Encoding.UTF8.GetBytes(text)));
             return new IntPtr(1);
         }
         if (policy.Blocked.Contains(binding)) return CallNextHookEx(hookHandle, code, wParam, lParam);
         swallowedKeys.Add(key.vkCode);
         long id = Interlocked.Increment(ref captureId);
+        TrackCapture(id);
         openingWidgetId = policy.Id;
         captureOpening = true;
         Emit("CAPTURE\t" + policy.Id.ToString(CultureInfo.InvariantCulture) + "\t" + id.ToString(CultureInfo.InvariantCulture) + "\t" + Convert.ToBase64String(Encoding.UTF8.GetBytes(text)));

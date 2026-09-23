@@ -217,6 +217,32 @@ describe('commandSurfaceOverlay opening', () => {
     expect(await overlay.appendForProject('project-b', 'x', '12')).toMatchObject({ ok: false });
   });
 
+  it('does not report seeded or appended input delivered until the project renderer receipt arrives', async () => {
+    const acknowledge: Array<() => void> = [];
+    const h = harness({
+      resolveProjectCommandSurface: async (projectId) => projectId === 'project-a'
+        ? { ok: true, target: { projectId, surfaceId: 'surface-1' } }
+        : null,
+      deliver: vi.fn(() => new Promise<void>((resolve) => acknowledge.push(resolve))),
+    });
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    let opened = false;
+    const opening = overlay.openForProject('project-a', 'a', 'receipt-seed').then((result) => { opened = result.ok; });
+    await vi.waitFor(() => expect(acknowledge).toHaveLength(1));
+    expect(opened).toBe(false);
+    acknowledge[0]!();
+    await opening;
+    expect(opened).toBe(true);
+
+    let appended = false;
+    const append = overlay.appendForProject('project-a', 'g', 'receipt-append').then((result) => { appended = result.ok; });
+    await vi.waitFor(() => expect(acknowledge).toHaveLength(2));
+    expect(appended).toBe(false);
+    acknowledge[1]!();
+    await append;
+    expect(appended).toBe(true);
+  });
+
   it('places the overlay inside the work area it is given, near the top', async () => {
     const h = harness({ placeOn: () => ({ x: 100, y: 50, width: 1000, height: 800 }) });
     const overlay = createCommandSurfaceOverlay(h.deps);

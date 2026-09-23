@@ -6,7 +6,7 @@ interface ProjectMessage {
    * credential. */
   destination?: unknown; method?: string;
   headers?: Record<string, string>;
-  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; captureId?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; }
+  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; captureId?: unknown; generation?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -588,10 +588,9 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (request.type === 'papers:project:widget-quick-run-input') {
-    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'phase', 'text', 'captureId']) || !widgetToken
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'phase', 'text']) || !widgetToken
       || (request.phase !== 'open' && request.phase !== 'append') || typeof request.text !== 'string'
-      || [...request.text].length !== 1 || Buffer.byteLength(request.text, 'utf8') > 8
-      || typeof request.captureId !== 'string' || !/^\d{1,20}$/.test(request.captureId)) {
+      || [...request.text].length !== 1 || Buffer.byteLength(request.text, 'utf8') > 8) {
       immediateHostError(request.requestId, event.origin, 'widget Quick Run input is malformed');
       return;
     }
@@ -599,8 +598,23 @@ window.addEventListener('message', (event) => {
       token: widgetToken,
       phase: request.phase,
       text: request.text,
-      captureId: request.captureId,
     });
+  }
+  if (request.type === 'papers:project:widget-quick-run-seal-ack') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'generation']) || !widgetToken
+      || typeof request.generation !== 'number' || !Number.isSafeInteger(request.generation) || request.generation < 1) {
+      immediateHostError(request.requestId, event.origin, 'widget Quick Run seal acknowledgement is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-quick-run-seal-ack', { token: widgetToken, generation: request.generation });
+  }
+  if (request.type === 'papers:project:command-surface-input-ack') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'captureId'])
+      || typeof request.captureId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(request.captureId)) {
+      immediateHostError(request.requestId, event.origin, 'command surface input acknowledgement is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:command-surface-input-ack', { captureId: request.captureId });
   }
   if (request.type === 'papers:project:detach-resumed-ack') {
     if (!validTransferId(request.transferId)) {
@@ -655,6 +669,7 @@ for (const [channel, type] of [
   // that the chord was pressed, which chord it was, and that this project's
   // command surface is what should respond. The project decides the rest.
   ['papers:backpack:command-surface-invoke', 'papers:project:command-surface-invoke'],
+  ['papers:backpack:widget-quick-run-seal-request', 'papers:project:widget-quick-run-seal-request'],
 ] as const) {
   ipcRenderer.on(channel, (_event, payload) => window.postMessage({ type, ...(payload ?? {}) }, window.location.origin));
 }

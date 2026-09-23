@@ -123,7 +123,7 @@ export interface CommandSurfaceOverlayDependencies {
     initialText?: string;
     appendText?: string;
     captureId?: string;
-  }): void;
+  }): void | Promise<void>;
   resolveProjectCommandSurface?(projectId: string): Promise<CommandSurfaceResolution | null> | CommandSurfaceResolution | null;
   onClosed?(reason: OverlayCloseReason): void;
   /** Reports what happened to focus, so a failure is visible rather than felt. */
@@ -242,14 +242,14 @@ export function createCommandSurfaceOverlay(
    * again and let the project clear itself. A repeat that only refocused the
    * window left the project with no event at all - the reported defect.
    */
-  const deliverInvoke = (target: OverlayNativeWindow, project: string, surface: string, seed?: { text: string; captureId: string; append?: boolean }): void => {
-    dependencies.deliver?.(target.webContents.id, {
+  const deliverInvoke = (target: OverlayNativeWindow, project: string, surface: string, seed?: { text: string; captureId: string; append?: boolean }): Promise<void> => {
+    return Promise.resolve(dependencies.deliver?.(target.webContents.id, {
       projectId: project,
       surfaceId: surface,
       chord: 'invoke',
       reason: seed ? (seed.append ? 'hover-type-to-run-append' : 'hover-type-to-run') : 'global-accelerator',
       ...(seed ? { ...(seed.append ? { appendText: seed.text } : { initialText: seed.text }), captureId: seed.captureId } : {}),
-    });
+    }));
   };
 
   const destroyWarmWindow = async (): Promise<void> => {
@@ -413,18 +413,18 @@ export function createCommandSurfaceOverlay(
     window.show();
     window.focus();
 
-    deliverInvoke(window, resolved.surface.projectId, resolved.surface.surfaceId);
+    await deliverInvoke(window, resolved.surface.projectId, resolved.surface.surfaceId);
 
     return { ok: true, detail: 'the command surface is open over the current application' };
   };
 
   const openForProject = async (project: string, text: string, capture: string): Promise<{ ok: boolean; detail: string }> => {
-    if ([...text].length !== 1 || Buffer.byteLength(text, 'utf8') > 8 || !/^\d{1,20}$/.test(capture)) {
+    if ([...text].length !== 1 || Buffer.byteLength(text, 'utf8') > 8 || !/^[A-Za-z0-9_-]{1,128}$/.test(capture)) {
       return { ok: false, detail: 'the captured character was malformed' };
     }
     if (window && !window.isDestroyed() && window.isVisible() && projectId === project && surfaceId !== null) {
       window.focus();
-      deliverInvoke(window, project, surfaceId, { text, captureId: capture });
+      await deliverInvoke(window, project, surfaceId, { text, captureId: capture });
       return { ok: true, detail: 'the command surface was already open' };
     }
     const resolution = await dependencies.resolveProjectCommandSurface?.(project);
@@ -441,18 +441,18 @@ export function createCommandSurfaceOverlay(
     window.setBounds(place());
     window.show();
     window.focus();
-    deliverInvoke(window, resolved.surface.projectId, resolved.surface.surfaceId, { text, captureId: capture });
+    await deliverInvoke(window, resolved.surface.projectId, resolved.surface.surfaceId, { text, captureId: capture });
     return { ok: true, detail: 'the command surface opened with the captured character' };
   };
 
   const appendForProject = async (project: string, text: string, capture: string): Promise<{ ok: boolean; detail: string }> => {
-    if ([...text].length !== 1 || Buffer.byteLength(text, 'utf8') > 8 || !/^\d{1,20}$/.test(capture)) {
+    if ([...text].length !== 1 || Buffer.byteLength(text, 'utf8') > 8 || !/^[A-Za-z0-9_-]{1,128}$/.test(capture)) {
       return { ok: false, detail: 'the appended character was malformed' };
     }
     if (!window || window.isDestroyed() || !window.isVisible() || projectId !== project || surfaceId === null) {
       return { ok: false, detail: 'the command surface is not open for this widget project' };
     }
-    deliverInvoke(window, project, surfaceId, { text, captureId: capture, append: true });
+    await deliverInvoke(window, project, surfaceId, { text, captureId: capture, append: true });
     return { ok: true, detail: 'the captured character was appended' };
   };
 
@@ -475,7 +475,7 @@ export function createCommandSurfaceOverlay(
         // it would discard whatever the creator had already typed.
         window.focus();
         if (projectId !== null && surfaceId !== null) {
-          deliverInvoke(window, projectId, surfaceId);
+          await deliverInvoke(window, projectId, surfaceId);
         }
         return { ok: true, detail: 'the command surface was already open' };
       }

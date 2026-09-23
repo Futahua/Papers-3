@@ -194,14 +194,28 @@ describe('Backpack project protocol alignment', () => {
     const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
     tokenHandler({}, { token: 'widget-token' });
     mocks.invoke.mockResolvedValue({ ok: true, detail: 'queued' });
-    dispatch({ type: 'papers:project:widget-quick-run-input', requestId: 'type-open', phase: 'open', text: 'a', captureId: '1' });
-    dispatch({ type: 'papers:project:widget-quick-run-input', requestId: 'type-bad', phase: 'open', text: 'ab', captureId: '2' });
+    dispatch({ type: 'papers:project:widget-quick-run-input', requestId: 'type-open', phase: 'open', text: 'a' });
+    dispatch({ type: 'papers:project:widget-quick-run-input', requestId: 'type-bad', phase: 'open', text: 'ab' });
     await new Promise((resolve) => setImmediate(resolve));
     expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-quick-run-input', {
-      token: 'widget-token', phase: 'open', text: 'a', captureId: '1',
+      token: 'widget-token', phase: 'open', text: 'a',
     });
     expect(posts).not.toContainEqual(expect.objectContaining({ token: 'widget-token' }));
     expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'type-bad', ok: false }));
+  });
+
+  it('routes renderer input receipts and widget seal acknowledgements through authorized IPC', async () => {
+    await import('../../src/preload/backpackProject');
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    tokenHandler({}, { token: 'widget-token' });
+    mocks.invoke.mockResolvedValue({ ok: true });
+    dispatch({ type: 'papers:project:command-surface-input-ack', requestId: 'receipt-1', captureId: 'papers-123-1' });
+    dispatch({ type: 'papers:project:widget-quick-run-seal-ack', requestId: 'seal-1', generation: 7 });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:command-surface-input-ack', { captureId: 'papers-123-1' });
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-quick-run-seal-ack', { token: 'widget-token', generation: 7 });
+    expect(posts).not.toContainEqual(expect.objectContaining({ token: 'widget-token' }));
   });
 
   it('019C: workspace widget-open/focus/close attach projectId and keep keys bounded', async () => {
