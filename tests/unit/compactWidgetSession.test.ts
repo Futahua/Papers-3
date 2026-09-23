@@ -7,6 +7,7 @@ class FakeWindow {
   static nextId = 8000;
   readonly webContents = { id: ++FakeWindow.nextId, send: vi.fn(), on: vi.fn() };
   readonly closedHandlers: Array<() => void> = [];
+  readonly focusHandlers: Array<() => void> = [];
   destroyed = false;
   bounds = { x: 0, y: 0, width: 420, height: 180 };
   loadedUrls: string[] = [];
@@ -14,13 +15,18 @@ class FakeWindow {
   getBounds = vi.fn(() => ({ ...this.bounds }));
   setContentSize = vi.fn((width: number, height: number) => { this.bounds = { ...this.bounds, width, height }; });
   focus = vi.fn();
+  minimized = false;
+  isMinimized = vi.fn(() => this.minimized);
+  restore = vi.fn(() => { this.minimized = false; });
+  showInactive = vi.fn();
   isDestroyed = vi.fn(() => this.destroyed);
   destroy = vi.fn(() => {
     this.destroyed = true;
     for (const handler of [...this.closedHandlers]) handler();
   });
-  on(event: 'closed', handler: () => void): void {
+  on(event: 'closed' | 'focus', handler: () => void): void {
     if (event === 'closed') this.closedHandlers.push(handler);
+    else this.focusHandlers.push(handler);
   }
   loadURL = vi.fn(async (url: string) => { this.loadedUrls.push(url); });
 }
@@ -34,6 +40,7 @@ function harness() {
   const screen = {
     getAllDisplays: () => [{ x: 0, y: 0, width: 1200, height: 800 }],
     getPrimaryDisplay: () => ({ x: 0, y: 0, width: 1200, height: 800 }),
+    getCursorScreenPoint: () => ({ x: 537, y: 284 }),
     on: vi.fn((event: string, handler: () => void) => { screenListeners.set(event, handler); }),
     removeListener: vi.fn(),
   };
@@ -99,7 +106,7 @@ describe('compact widget session', () => {
     const registry = new BackpackSurfaceRegistry();
     registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
     const windows: FakeWindow[] = [];
-    const screen = { getAllDisplays: () => [{ x: 0, y: 0, width: 1200, height: 800 }], getPrimaryDisplay: () => ({ x: 0, y: 0, width: 1200, height: 800 }), on: vi.fn(), removeListener: vi.fn() };
+    const screen = { getAllDisplays: () => [{ x: 0, y: 0, width: 1200, height: 800 }], getPrimaryDisplay: () => ({ x: 0, y: 0, width: 1200, height: 800 }), getCursorScreenPoint: () => ({ x: 537, y: 284 }), on: vi.fn(), removeListener: vi.fn() };
     const ipcMain = { on: vi.fn(), removeListener: vi.fn() };
     const session = createCompactWidgetSession({
       registry,
@@ -165,6 +172,22 @@ describe('compact widget session', () => {
     const calls = window.setBounds.mock.calls.length;
     drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 180, y: 160 });
     expect(window.setBounds.mock.calls).toHaveLength(calls);
+  });
+
+  it('moves the most recently focused widget to the exact pointer and restores it when minimized', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 1 });
+    const target = h.windows[0]!;
+    target.focusHandlers[0]!();
+    target.minimized = true;
+
+    expect(h.session.bringLatestToCursor()).toBe(true);
+    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 537, y: 284, width: 420, height: 180 });
+    expect(target.restore).toHaveBeenCalledOnce();
+    expect(target.showInactive).toHaveBeenCalledOnce();
+    expect(target.focus).toHaveBeenCalled();
+    expect(h.windows[1]!.restore).not.toHaveBeenCalled();
   });
 });
 

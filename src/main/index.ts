@@ -1663,6 +1663,7 @@ async function bootstrap(): Promise<void> {
         const display = screen.getPrimaryDisplay();
         return { x: display.workArea.x, y: display.workArea.y, width: display.workArea.width, height: display.workArea.height };
       },
+      getCursorScreenPoint: () => screen.getCursorScreenPoint(),
       on: (event, callback) => {
         screen.on(event as 'display-metrics-changed', callback);
       },
@@ -1742,6 +1743,13 @@ async function bootstrap(): Promise<void> {
     },
   });
   widgetSession.registerIpc();
+  const widgetToCursorAccelerator = 'Alt+Q';
+  if (!globalShortcut.register(widgetToCursorAccelerator, () => {
+    const moved = widgetSession?.bringLatestToCursor() ?? false;
+    if (!moved) console.info('[papers] Alt+Q pressed with no live window-layout widget to move');
+  })) {
+    console.error(`[papers] global shortcut refused: ${widgetToCursorAccelerator} is already registered or unusable; widget-to-cursor is unavailable`);
+  }
   const widgetPreviewWindows = new Map<number, BrowserWindow>();
   type CandidatePickerSession = {
     window: BrowserWindow;
@@ -2515,6 +2523,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // exits - not even while the rest of teardown is still draining.
       globalInvoke?.release();
       globalInvoke = null;
+      globalShortcut.unregister(widgetToCursorAccelerator);
       // A launcher left open would be a focus-holding window with no owner.
       void commandSurfaceOverlay?.destroy().catch(() => undefined);
       commandSurfaceOverlay = null;

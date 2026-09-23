@@ -40,9 +40,12 @@ export interface CompactWidgetWindow {
   getBounds(): WindowBounds;
   setContentSize(width: number, height: number): void;
   focus(): void;
+  isMinimized(): boolean;
+  restore(): void;
+  showInactive(): void;
   isDestroyed(): boolean;
   destroy(): void;
-  on(event: 'closed', callback: () => void): void;
+  on(event: 'closed' | 'focus', callback: () => void): void;
   loadURL(url: string): Promise<void>;
 }
 
@@ -51,6 +54,7 @@ export interface CompactWidgetSessionDependencies {
   screen: {
     getAllDisplays(): DisplayArea[];
     getPrimaryDisplay(): DisplayArea;
+    getCursorScreenPoint(): { x: number; y: number };
     on(event: 'display-metrics-changed' | 'display-added' | 'display-removed', callback: () => void): void;
     removeListener(event: 'display-metrics-changed' | 'display-added' | 'display-removed', callback: () => void): void;
   };
@@ -72,6 +76,8 @@ export interface CompactWidgetSession {
   open(request: { projectId: string; layoutKey: string; owningWindowId: number; bounds?: WindowBounds | null }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }>;
   ready(senderId: number, payload: unknown): boolean;
   focus(projectId: string, layoutKey: string, owningWindowId: number): boolean;
+  /** Restore the most recently opened/focused widget at the current pointer. */
+  bringLatestToCursor(): boolean;
   close(projectId: string, layoutKey: string, owningWindowId: number): Promise<void>;
   /**
    * Destroy every widget belonging to one Papers window.
@@ -115,6 +121,7 @@ function widgetUrl(raw: string, layoutKey: string, projectId: string): string {
 
 export function createCompactWidgetSession(deps: CompactWidgetSessionDependencies): CompactWidgetSession {
   const entries = new Map<string, WidgetEntry>();
+  let latestWidgetKey: string | null = null;
   let activeDrag: { senderId: number; token: string; offsetX: number; offsetY: number } | null = null;
   let registered = false;
   /**
@@ -146,6 +153,10 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     const key = keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId);
     if (entries.get(key) !== entry) return;
     entries.delete(key);
+    if (latestWidgetKey === key) {
+      const remainingKeys = [...entries.keys()];
+      latestWidgetKey = remainingKeys[remainingKeys.length - 1] ?? null;
+    }
     if (activeDrag?.senderId === entry.window.webContents.id) activeDrag = null;
     deps.registry.unregister(entry.window.webContents.id);
     if (!entry.window.isDestroyed()) entry.window.destroy();
@@ -218,6 +229,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       const key = keyOf(request.projectId, request.layoutKey, request.owningWindowId);
       const existing = entries.get(key);
       if (existing && !existing.window.isDestroyed()) {
+        latestWidgetKey = key;
         existing.window.focus();
         return { ok: true, reused: true };
       }
@@ -231,6 +243,10 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       catch { if (!window.isDestroyed()) window.destroy(); return { ok: false, error: 'widget surface registration failed' }; }
       const entry: WidgetEntry = { projectId: request.projectId, layoutKey: request.layoutKey, owningWindowId: request.owningWindowId, window, closing: false };
       entries.set(key, entry);
+      latestWidgetKey = key;
+      window.on('focus', () => {
+        if (entries.get(key) === entry) latestWidgetKey = key;
+      });
       window.on('closed', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));
       window.webContents.on('render-process-gone', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));
       try { await window.loadURL(url); }
@@ -245,8 +261,21 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       return before?.kind === COMPACT_WIDGET_SURFACE_KIND && before.token === (payload as { token?: unknown })?.token;
     },
     focus(projectId, layoutKey, owningWindowId) {
-      const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
+      const key = keyOf(projectId, layoutKey, owningWindowId);
+      const entry = entries.get(key);
       if (!entry || entry.closing || entry.window.isDestroyed()) return false;
+      latestWidgetKey = key;
+      entry.window.focus();
+      return true;
+    },
+    bringLatestToCursor() {
+      const entry = latestWidgetKey === null ? undefined : entries.get(latestWidgetKey);
+      if (!entry || entry.closing || entry.window.isDestroyed()) return false;
+      const point = deps.screen.getCursorScreenPoint();
+      if (entry.window.isMinimized()) entry.window.restore();
+      const bounds = entry.window.getBounds();
+      entry.window.setBounds({ ...bounds, x: Math.round(point.x), y: Math.round(point.y) });
+      entry.window.showInactive();
       entry.window.focus();
       return true;
     },
