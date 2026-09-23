@@ -64,6 +64,9 @@ const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.f
 
   'host:backpack-project:launch-shortcut': 'invoke',
   'host:backpack-project:run-action': 'invoke',
+  // Opening a searched web link is the same user-invoked result as launching
+  // a shortcut. It does not grant the launcher file picking or reveal access.
+  'host:backpack-project:open-web-link': 'invoke',
 
   // Putting TEXT on the clipboard, and nothing else. Kept separate from `reveal`
   // because a launcher legitimately copies an item and has no business opening
@@ -73,7 +76,6 @@ const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.f
   // Activating something OUTSIDE Papers, on the creator's desktop.
   'host:backpack-project:pick-target': 'reveal',
   'host:backpack-project:reveal-shortcut': 'reveal',
-  'host:backpack-project:open-web-link': 'reveal',
 
   'host:backpack-project:state-save': 'mutate',
   'host:backpack-project:state-save-checked': 'mutate',
@@ -92,6 +94,8 @@ const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.f
   // conflating the two would make "a launcher must not write project state" also
   // mean "a launcher must not open what it found", which is not the same claim.
   'host:backpack-project:open-new-surface': 'surface',
+  // The launcher may dismiss itself after handing off to a selected result.
+  'host:backpack-project:command-surface-dismiss': 'surface',
 
   // Reaching a service ON THIS MACHINE through the host, which attaches a
   // credential the project declared. Its own capability because it is its own

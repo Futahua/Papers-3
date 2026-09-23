@@ -44,6 +44,15 @@ export interface ForegroundBridge {
    * is nothing usable there.
    */
   nextWindowInZOrder(handle: number): Promise<number | null>;
+  /** A shortcut-launched secondary Papers process tries direct activation and,
+   * when Windows refuses it, transfers foreground permission to the existing
+   * process so its second-instance handler can complete the handoff. */
+  activatePapersProcess(executablePath: string): Promise<{
+    found: boolean;
+    activated: boolean;
+    foregroundGranted: boolean;
+    detail: string;
+  }>;
 }
 
 export interface ForegroundBridgeOptions {
@@ -233,6 +242,29 @@ export function createForegroundBridge(options: ForegroundBridgeOptions): Foregr
       if (!found) return null;
       const value = Number(found[1]);
       return Number.isSafeInteger(value) && value > 0 ? value : null;
+    },
+
+    async activatePapersProcess(executablePath: string) {
+      if (typeof executablePath !== 'string' || executablePath.length === 0 || executablePath.length > 32_768) {
+        return { found: false, activated: false, foregroundGranted: false, detail: 'the Papers executable path is invalid' };
+      }
+      const out = await run(['activate-papers', executablePath]);
+      if (!out) return { found: false, activated: false, foregroundGranted: false, detail: 'the native activation helper returned no result' };
+      const found = /(?:^|\s)found=1(?:\s|$)/.test(out);
+      const activated = /(?:^|\s)moved=1(?:\s|$)/.test(out);
+      const foregroundGranted = /(?:^|\s)allowed=1(?:\s|$)/.test(out);
+      return {
+        found,
+        activated,
+        foregroundGranted,
+        detail: activated
+          ? 'the shortcut-launched process activated the existing Papers window'
+          : foregroundGranted
+            ? 'the shortcut-launched process granted foreground permission to the existing Papers process'
+            : found
+              ? 'Windows refused both direct activation and foreground permission transfer'
+              : 'no existing Papers window was found',
+      };
     },
   };
 }

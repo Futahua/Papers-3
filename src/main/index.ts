@@ -71,7 +71,7 @@ import {
   type CommandSurfaceRegistry,
 } from './backpacks/commandSurfaceRegistry';
 import { createLauncherNominationStore } from './backpacks/launcherNominationStore';
-import { bringWindowToFront } from './windows/windowFront';
+import { bringFirstWindowToFront, bringWindowToFront } from './windows/windowFront';
 import {
   COMMAND_SURFACE_HEIGHT as COMMAND_SURFACE_OVERLAY_HEIGHT,
   COMMAND_SURFACE_INVOKE_CHANNEL,
@@ -145,12 +145,47 @@ if (process.env['PAPERS_TEST_USER_DATA']) {
 }
 
 // Papers is a single-instance application (except under isolated test homes).
+let ownsSingleInstanceLock = true;
+let foregroundBridge: ReturnType<typeof createForegroundBridge> = null;
 if (
   !hermesUpdateHelperMode &&
-  !process.env['PAPERS_TEST_USER_DATA'] &&
-  !app.requestSingleInstanceLock()
+  !process.env['PAPERS_TEST_USER_DATA']
 ) {
-  app.quit();
+  ownsSingleInstanceLock = app.requestSingleInstanceLock();
+  if (!ownsSingleInstanceLock) {
+    // A Windows shortcut-key launch gives the NEW process the only useful
+    // opportunity to hand foreground permission to the already-running one.
+    // The primary process's second-instance event still verifies activation;
+    // this pre-lock attempt is the permission handoff, not a success claim.
+    if (process.platform === 'win32') {
+      try {
+        foregroundBridge = createForegroundBridge({
+          cacheDirectory: app.getPath('userData'),
+          sourcePath: resolveForegroundBridgeSourcePath({
+            appPath: app.getAppPath(),
+            resourcesPath: process.resourcesPath,
+            packaged: app.isPackaged,
+          }),
+        });
+      } catch {
+        foregroundBridge = null;
+      }
+    }
+    if (foregroundBridge) {
+      void foregroundBridge.activatePapersProcess(process.execPath)
+        .then((result) => {
+          if (!result.activated && !result.foregroundGranted) {
+            console.warn(`[papers] shortcut process could not activate the existing window: ${result.detail}`);
+          }
+        })
+        .catch((error: unknown) => {
+          console.warn('[papers] shortcut-process foreground handoff failed', error);
+        })
+        .finally(() => app.quit());
+    } else {
+      app.quit();
+    }
+  }
 }
 
 let mainWindow: BaseWindow | null = null;
@@ -428,6 +463,7 @@ let globalShortcutReport: GlobalInvokeRegistrationReport | null = null;
  * one launcher for the process, and pressing the chord again dismisses it.
  */
 let commandSurfaceOverlay: CommandSurfaceOverlaySession | null = null;
+let commandSurfaceSenderId: number | null = null;
 /**
  * Test-only seam for the invoke chord.
  *
@@ -446,17 +482,22 @@ export const TEST_OPEN_COMMAND_SURFACE_KEY = '__papersTestOpenCommandSurface';
 // owner: if the main surface still exists, restore it; if it does not, retire
 // the orphaned process so the next launch can start cleanly.
 app.on('second-instance', () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    bringWindowToFront(mainWindow);
-    return;
-  }
-  for (const context of papersWindows.all()) {
-    if (!context.owned.window.isDestroyed()) {
-      bringWindowToFront(context.owned.window);
-      return;
-    }
-  }
-  app.quit();
+  const candidates = [
+    ...(mainWindow && !mainWindow.isDestroyed() ? [mainWindow] : []),
+    ...papersWindows.all().map((context) => context.owned.window).filter((window) => !window.isDestroyed()),
+  ];
+  void bringFirstWindowToFront(candidates, {
+    platform: process.platform,
+    nativeForeground: foregroundBridge ?? undefined,
+    nativeActivationAttempts: 10,
+    nativeActivationRetryDelayMs: 75,
+  }).then((result) => {
+    if (!result.ok) console.warn(`[papers] second-instance activation failed: ${result.detail}`);
+  }).catch((error: unknown) => {
+    console.warn('[papers] second-instance activation rejected', error);
+  }).finally(() => {
+    if (candidates.length === 0) app.quit();
+  });
 });
 
 /** Height of the slim custom title bar / native window-controls overlay. */
@@ -1033,6 +1074,32 @@ async function bootstrap(): Promise<void> {
 
   const facade = new PapersHostFacade({
     localServiceFetch: fetchLocalServiceFor,
+    dismissCommandSurface: async (senderId, destination) => {
+      const context = surfaceContexts.contextForSender(senderId);
+      if (!context || context.kind !== 'launcher') {
+        throw new Error('Only the command-surface launcher may dismiss itself.');
+      }
+      const overlay = commandSurfaceOverlay;
+      if (!overlay) throw new Error('The command-surface overlay is unavailable.');
+      if (destination === 'papers') {
+        // If the creator already moved to another application, do not steal
+        // focus back. Otherwise the still-focused overlay is the foreground
+        // owner, so Papers may activate the exact window that opened the result.
+        if (overlay.isFocused()) {
+          const target = papersWindows.get(context.windowId)?.owned.window;
+          const activated = await bringWindowToFront(target, {
+            platform: process.platform,
+            nativeForeground: foregroundBridge ?? undefined,
+          });
+          if (!activated.ok) throw new Error(activated.detail);
+          await overlay.close('action-host');
+        } else {
+          await overlay.close('action-external');
+        }
+        return;
+      }
+      await overlay.close(destination === 'external' ? 'action-external' : 'action-run');
+    },
     // Phase 1B.3: delivery with explicit semantics. Broadcast reaches every
     // live host renderer; sendToWindow reaches exactly one.
     broadcastToHosts: (channel, payload) => {
@@ -2584,9 +2651,12 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // therefore surfaced through the same host-error channel the rest of the app
   // uses, naming the chord and saying it is taken. No substitute chord is
   // chosen, ever.
-  const bringPapersWindowForward = (windowId: number): { ok: boolean; detail: string } => {
+  const bringPapersWindowForward = async (windowId: number): Promise<{ ok: boolean; detail: string }> => {
     const context = papersWindows.get(windowId);
-    const result = bringWindowToFront(context?.owned.window);
+    const result = await bringWindowToFront(context?.owned.window, {
+      platform: process.platform,
+      nativeForeground: foregroundBridge ?? undefined,
+    });
     return { ok: result.ok, detail: result.detail };
   };
 
@@ -2598,7 +2668,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // native bridge is the only component that can hand focus back: a background
   // process calling SetForegroundWindow is refused by the Windows foreground
   // lock, which was measured rather than assumed.
-  const foregroundBridge = createForegroundBridge({
+  foregroundBridge = createForegroundBridge({
     cacheDirectory: app.getPath('userData'),
     sourcePath: resolveForegroundBridgeSourcePath({
       appPath: app.getAppPath(),
@@ -2651,10 +2721,23 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     // The registry's refusal is carried out verbatim: it names the Backpacks it
     // looked at, which is the only thing the creator cannot check for themselves.
     resolveCommandSurface: () => commandSurfaceRegistry.resolve(),
+    onTargetResolved: (target, ownerWindowId) => {
+      const owner = papersWindows.get(ownerWindowId);
+      if (!owner?.owned.projectSurfaces.entryUrlForProject(target.projectId)) {
+        throw new Error('the selected command surface no longer belongs to a live Papers window');
+      }
+      if (commandSurfaceSenderId !== null) {
+        surfaceContexts.bind(commandSurfaceSenderId, {
+          projectId: target.projectId,
+          windowId: ownerWindowId,
+          kind: 'launcher',
+        });
+      }
+    },
     resolveEntryUrl: (projectId) => {
       for (const windowId of papersWindows.windowIds) {
         const url = papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null;
-        if (url) return url;
+        if (url) return { entryUrl: url, ownerWindowId: windowId };
       }
       return null;
     },
@@ -2738,6 +2821,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // It has its own kind because a reader of a kind is entitled to a
       // different answer for a launcher.
       bindOwnedProjectSurface(overlayWindow, projectId, 'launcher', papersWindows.windowIds[0] ?? 0);
+      commandSurfaceSenderId = overlayWindow.webContents.id;
+      overlayWindow.webContents.once('destroyed', () => {
+        if (commandSurfaceSenderId === overlayWindow.webContents.id) commandSurfaceSenderId = null;
+      });
       return overlayWindow;
     },
     deliver: (senderId, payload) => {
@@ -2961,6 +3048,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
 }
 
 app.whenReady().then(() => {
+  if (!ownsSingleInstanceLock) return;
   if (hermesUpdateHelperMode) {
     return runHermesUpdateHelper().catch((err) => {
       console.error('[papers] Hermes update helper failed:', err);

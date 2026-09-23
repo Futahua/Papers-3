@@ -86,7 +86,7 @@ export type CommandSurfaceResolution =
 export interface CommandSurfaceOverlayDependencies {
   /** The focused project's entry URL for that project, or null. Owner-scoped:
    * two Papers windows may show one project with different runtimes. */
-  resolveEntryUrl(projectId: string): string | null;
+  resolveEntryUrl(projectId: string): { entryUrl: string; ownerWindowId: number } | null;
   /**
    * Which project's command surface the launcher targets.
    *
@@ -95,6 +95,8 @@ export interface CommandSurfaceOverlayDependencies {
    * looked at, rather than a generic "no project is open".
    */
   resolveCommandSurface(): Promise<CommandSurfaceResolution> | CommandSurfaceResolution;
+  /** Rebind the transient launcher to the Papers window presenting its project. */
+  onTargetResolved?(target: CommandSurfaceTarget, ownerWindowId: number): void;
   createWindow(options: { projectId: string; preloadPath: string }): OverlayNativeWindow;
   preloadPath: string;
   /**
@@ -143,6 +145,8 @@ export interface CommandSurfaceOverlaySession {
   /** Permanently release the warm renderer during Papers shutdown. */
   destroy(): Promise<void>;
   isOpen(): boolean;
+  isFocused(): boolean;
+  target(): CommandSurfaceTarget | null;
   /** Exposed for the wiring and for tests. */
   registerIpc(): void;
   unregisterIpc(): void;
@@ -265,7 +269,7 @@ export function createCommandSurfaceOverlay(
     } catch {
       /* a destroyed window is already hidden */
     }
-    if (reason !== 'focus-lost') {
+    if (reason === 'dismissed' || reason === 'action-run') {
       // Hand focus back BEFORE the caller continues, so the application the
       // creator came from owns the keyboard again by the time anything else
       // happens.
@@ -277,7 +281,7 @@ export function createCommandSurfaceOverlay(
     closing = false;
   };
 
-  type ResolvedSurface = { surface: CommandSurfaceTarget; url: string };
+  type ResolvedSurface = { surface: CommandSurfaceTarget; url: string; ownerWindowId: number };
 
   const resolveSurface = async (): Promise<ResolvedSurface | { ok: false; detail: string }> => {
     const resolution = await dependencies.resolveCommandSurface();
@@ -288,19 +292,19 @@ export function createCommandSurfaceOverlay(
     }
     const surface = resolution.target;
 
-    const entryUrl = dependencies.resolveEntryUrl(surface.projectId);
-    if (entryUrl === null) {
+    const presentation = dependencies.resolveEntryUrl(surface.projectId);
+    if (presentation === null) {
       return { ok: false, detail: 'the focused project has no surface to show the command surface in' };
     }
 
     let url: string;
     try {
-      url = overlayUrl(entryUrl, surface.projectId);
+      url = overlayUrl(presentation.entryUrl, surface.projectId);
     } catch (error) {
       return { ok: false, detail: error instanceof Error ? error.message : 'the command surface URL was rejected' };
     }
 
-    return { surface, url };
+    return { surface, url, ownerWindowId: presentation.ownerWindowId };
   };
 
   const ensureWarm = async ({ surface, url }: ResolvedSurface): Promise<{ ok: boolean; detail: string }> => {
@@ -359,6 +363,7 @@ export function createCommandSurfaceOverlay(
   const open = async (): Promise<{ ok: boolean; detail: string }> => {
     const resolved = await resolveSurface();
     if (!('surface' in resolved)) return resolved;
+    dependencies.onTargetResolved?.(resolved.surface, resolved.ownerWindowId);
     const prepared = await ensureWarm(resolved);
     if (!prepared.ok || !window || window.isDestroyed()) return prepared;
 
@@ -422,6 +427,14 @@ export function createCommandSurfaceOverlay(
 
     isOpen() {
       return window !== null && !window.isDestroyed() && window.isVisible();
+    },
+
+    isFocused() {
+      return window !== null && !window.isDestroyed() && window.isFocused();
+    },
+
+    target() {
+      return projectId !== null && surfaceId !== null ? { projectId, surfaceId } : null;
     },
 
     /** Channel used by the overlay page to dismiss itself. */

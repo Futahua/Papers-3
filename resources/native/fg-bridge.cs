@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Text;
 using System.Runtime.InteropServices;
 
@@ -69,7 +72,19 @@ public class FgBridge
     [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool AllowSetForegroundWindow(uint processId);
+
+    private delegate bool EnumWindowsCallback(IntPtr hWnd, IntPtr lParam);
+
     private const int SW_RESTORE = 9;
+    private const int SW_SHOW = 5;
     private const uint GW_HWNDNEXT = 2;
     private const uint GW_OWNER = 4;
 
@@ -87,6 +102,76 @@ public class FgBridge
         return sb.ToString();
     }
 
+    private static int ActivatePapersProcess(string executablePath)
+    {
+        string expectedPath;
+        try { expectedPath = Path.GetFullPath(executablePath); }
+        catch { Console.WriteLine("found=0 moved=0 allowed=0 detail=invalid-path"); return 2; }
+        string processName = Path.GetFileNameWithoutExtension(expectedPath);
+        var processIds = new HashSet<uint>();
+        int currentProcessId;
+        using (Process current = Process.GetCurrentProcess()) currentProcessId = current.Id;
+        foreach (Process process in Process.GetProcessesByName(processName))
+        {
+            try
+            {
+                if (process.Id != currentProcessId
+                    && String.Equals(Path.GetFullPath(process.MainModule.FileName), expectedPath, StringComparison.OrdinalIgnoreCase))
+                    processIds.Add((uint)process.Id);
+            }
+            catch { }
+            finally { process.Dispose(); }
+        }
+
+        var candidates = new List<IntPtr>();
+        EnumWindows(delegate(IntPtr hWnd, IntPtr ignored)
+        {
+            uint processId;
+            GetWindowThreadProcessId(hWnd, out processId);
+            if (!processIds.Contains(processId) || !IsWindow(hWnd) || GetWindow(hWnd, GW_OWNER) != IntPtr.Zero)
+                return true;
+            string title = TitleOf(hWnd);
+            if (String.Equals(title, "Papers", StringComparison.Ordinal)) candidates.Add(hWnd);
+            return true;
+        }, IntPtr.Zero);
+
+        if (candidates.Count == 0)
+        {
+            Console.WriteLine("found=0 moved=0 allowed=0");
+            return 5;
+        }
+
+        foreach (IntPtr hWnd in candidates)
+        {
+            uint processId;
+            GetWindowThreadProcessId(hWnd, out processId);
+            if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
+            else if (!IsWindowVisible(hWnd)) ShowWindow(hWnd, SW_SHOW);
+            if (GetForegroundWindow() == hWnd)
+            {
+                Console.WriteLine("found=1 moved=1 allowed=0 pid=" + processId);
+                return 0;
+            }
+            BringWindowToTop(hWnd);
+            bool set = SetForegroundWindow(hWnd);
+            if (GetForegroundWindow() == hWnd)
+            {
+                Console.WriteLine("found=1 moved=1 allowed=0 pid=" + processId);
+                return 0;
+            }
+
+            // A shortcut-launched second process can inherit foreground
+            // eligibility even though the already-running process cannot.
+            // Transfer that permission before the primary instance handles
+            // Electron's second-instance event.
+            bool allowed = AllowSetForegroundWindow(processId);
+            Console.WriteLine("found=1 moved=0 allowed=" + (allowed ? "1" : "0")
+                + " set=" + (set ? "1" : "0") + " pid=" + processId);
+            if (allowed) return 0;
+        }
+        return 4;
+    }
+
     public static int Main(string[] args)
     {
         try
@@ -98,6 +183,16 @@ public class FgBridge
             }
 
             string command = args[0].ToLowerInvariant();
+
+            if (command == "activate-papers")
+            {
+                if (args.Length < 2 || String.IsNullOrWhiteSpace(args[1]))
+                {
+                    Console.WriteLine("missing executable path");
+                    return 2;
+                }
+                return ActivatePapersProcess(args[1]);
+            }
 
             if (command == "get")
             {

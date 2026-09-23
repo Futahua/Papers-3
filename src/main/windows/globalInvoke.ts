@@ -57,6 +57,10 @@ export type OverlayCloseReason =
   | 'dismissed'
   /** The creator ran something; the application they came from takes focus back while it runs. */
   | 'action-run'
+  /** A chosen web link or shortcut is taking the user to another application. */
+  | 'action-external'
+  /** A command-surface action opened a Papers surface which should stay in front. */
+  | 'action-host'
   /** The overlay lost focus to something else. The creator has moved on. */
   | 'focus-lost';
 
@@ -126,7 +130,7 @@ export interface GlobalInvokeDependencies {
   shortcut: GlobalShortcutLike;
   /** The focused Papers window, or null when there is none to bring forward. */
   currentWindowId(): number | null;
-  bringToFront(windowId: number): { ok: boolean; detail: string };
+  bringToFront(windowId: number): { ok: boolean; detail: string } | Promise<{ ok: boolean; detail: string }>;
   /**
    * Launch Papers when the host has no live window. This is necessarily a
    * best-effort fallback: a process-level global shortcut cannot receive a
@@ -255,12 +259,12 @@ export function createGlobalInvoke(dependencies: GlobalInvokeDependencies): Glob
   const accelerators = dependencies.accelerators ?? DEFAULT_INVOKE_ACCELERATORS;
   const held = new Set<string>();
 
-  const handleBringToFront = (): { ok: boolean; detail: string } => {
+  const handleBringToFront = async (): Promise<{ ok: boolean; detail: string }> => {
     const windowId = dependencies.currentWindowId();
     if (windowId === null) {
       return { ok: false, detail: 'no Papers window is open' };
     }
-    return dependencies.bringToFront(windowId);
+    return await dependencies.bringToFront(windowId);
   };
 
   const emit = (report: GlobalInvokeReport): void => {
@@ -284,12 +288,18 @@ export function createGlobalInvoke(dependencies: GlobalInvokeDependencies): Glob
       })();
       return;
     }
-    const result = dependencies.bringToFront(windowId);
-    emit({
-      chord: 'bringToFront',
-      outcome: result.ok ? 'brought-forward' : 'window-unavailable',
-      detail: result.detail,
-    });
+    void Promise.resolve()
+      .then(() => dependencies.bringToFront(windowId))
+      .then((result) => emit({
+        chord: 'bringToFront',
+        outcome: result.ok ? 'brought-forward' : 'window-unavailable',
+        detail: result.detail,
+      }))
+      .catch((error: unknown) => emit({
+        chord: 'bringToFront',
+        outcome: 'window-unavailable',
+        detail: `Papers could not be brought forward: ${error instanceof Error ? error.message : String(error)}`.slice(0, 400),
+      }));
   };
 
   /**

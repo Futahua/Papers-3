@@ -4,7 +4,7 @@ interface ProjectMessage {
   /** The local-service capability adds `method`, `headers` and `body` to the
    * request shape. `url` already exists below, and a page never supplies the
    * credential. */
-  method?: string;
+  destination?: unknown; method?: string;
   headers?: Record<string, string>;
   body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
@@ -314,6 +314,18 @@ window.addEventListener('message', (event) => {
   }
   if (request.type === 'papers:project:open-web-link' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-web-link', request.url, ...workspaceOriginArgs);
   if (request.type === 'papers:project:open-new-surface' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-new-surface', request.url);
+  if (request.type === 'papers:project:command-surface-dismiss') {
+    const keys = request.destination === undefined
+      ? ['type', 'requestId']
+      : ['type', 'requestId', 'destination'];
+    if (!exactKeys(request as Record<string, unknown>, keys)
+      || (request.destination !== undefined && !['restore', 'external', 'papers'].includes(String(request.destination)))) {
+      immediateHostError(request.requestId, event.origin, 'command-surface dismissal request is malformed');
+      return;
+    }
+    const destination = request.destination ?? 'restore';
+    task = ipcRenderer.invoke('host:backpack-project:command-surface-dismiss', destination);
+  }
   if (request.type === 'papers:project:resolve-dropped-targets' && Array.isArray(request.files)) {
     const paths = request.files.filter((file): file is File => file instanceof File).map((file) => webUtils.getPathForFile(file)).filter(Boolean);
     if (paths.length) task = ipcRenderer.invoke('host:backpack-project:resolve-dropped-targets', paths, ...workspaceOriginArgs).then((targets) => ({ targets }));

@@ -52,6 +52,7 @@ export interface HostFacade {
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
   replaceBackpackProject(senderId: number, surfaceId: string, id: string): Promise<unknown>;
   openBackpackProjectNewSurface(senderId: number, url: string): Promise<unknown>;
+  dismissBackpackProjectCommandSurface(senderId: number, destination: 'restore' | 'external' | 'papers'): Promise<void>;
   closeBackpackProject(senderId: number, surfaceId: string): Promise<void>;
   activateBackpackProjectSurface(senderId: number, surfaceId: string): void;
   showBackpackProjectSurface(senderId: number, surfaceId: string, url: string): Promise<void>;
@@ -182,6 +183,7 @@ export const hostWorkspaceSurfaceMoveTargetSchema = z.object({
   targetGroupId: z.string().min(1).max(128),
   targetIndex: z.number().int().nonnegative(),
 }).strict();
+export const commandSurfaceDismissDestinationSchema = z.enum(['restore', 'external', 'papers']);
 const backpackProjectDroppedPathsSchema = z.array(z.string().min(1).max(32_768)).min(1).max(64);
 const delegateWaveRequestSchema = z
   .object({
@@ -257,6 +259,10 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   handle('host:backpack-project:open-new-surface', (event, url) =>
     facade.openBackpackProjectNewSurface(event.sender.id, z.string().url().max(2_048).parse(url)),
+    true,
+  );
+  handle('host:backpack-project:command-surface-dismiss', (event, destination) =>
+    facade.dismissBackpackProjectCommandSurface(event.sender.id, commandSurfaceDismissDestinationSchema.parse(destination)),
     true,
   );
   handle('host:backpack-project:replace', (event, surfaceId, id) =>

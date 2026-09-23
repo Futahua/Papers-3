@@ -170,4 +170,13 @@ describe('createForegroundBridge', () => {
       expect(next).not.toBe(foreground);
     }
   });
+
+  it('does not claim activation when the requested Papers process has no window', async () => {
+    const bridge = createForegroundBridge({ cacheDirectory: cacheDir(), sourcePath: BRIDGE_SOURCE });
+    if (bridge === null) return;
+
+    const unrelatedExecutable = path.join(os.tmpdir(), `papers-no-live-process-${process.pid}-${Date.now()}.exe`);
+    const result = await bridge.activatePapersProcess(unrelatedExecutable);
+    expect(result).toMatchObject({ found: false, activated: false, foregroundGranted: false });
+  });
 });

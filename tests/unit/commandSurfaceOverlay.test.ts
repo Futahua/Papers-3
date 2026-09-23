@@ -45,7 +45,7 @@ function harness(overrides: Partial<CommandSurfaceOverlayDependencies> = {}) {
 
   const deps: CommandSurfaceOverlayDependencies = {
     resolveCommandSurface: () => ({ ok: true, target: { projectId: 'project-a', surfaceId: 'surface-1' } }),
-    resolveEntryUrl: () => 'papers-backpack://project-a/public/index.html',
+    resolveEntryUrl: () => ({ entryUrl: 'papers-backpack://project-a/public/index.html', ownerWindowId: 7 }),
     createWindow: () => created.window,
     preloadPath: 'C:\\papers\\backpackProject.cjs',
     focusBridge: {
@@ -102,7 +102,7 @@ describe('commandSurfaceOverlay opening', () => {
   });
 
   it('refuses a URL that is not the bound project surface', async () => {
-    const h = harness({ resolveEntryUrl: () => 'https://example.com/index.html' });
+    const h = harness({ resolveEntryUrl: () => ({ entryUrl: 'https://example.com/index.html', ownerWindowId: 7 }) });
     const overlay = createCommandSurfaceOverlay(h.deps);
     const result = await overlay.open();
 
@@ -228,6 +228,42 @@ describe('commandSurfaceOverlay focus return', () => {
 
     expect(h.setForegroundCalls).toHaveLength(1);
     expect(h.closedReasons).toEqual(['action-run']);
+  });
+
+  it('does not restore the previous application after an external handoff', async () => {
+    const h = harness();
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    await overlay.open();
+    await overlay.close('action-external');
+
+    expect(h.setForegroundCalls).toHaveLength(0);
+    expect(h.closedReasons).toEqual(['action-external']);
+  });
+
+  it('does not restore the previous application after a Papers handoff', async () => {
+    const h = harness();
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    await overlay.open();
+    await overlay.close('action-host');
+
+    expect(h.setForegroundCalls).toHaveLength(0);
+    expect(h.closedReasons).toEqual(['action-host']);
+  });
+
+  it('exposes the resolved project surface for its owner-window handoff', async () => {
+    const h = harness({
+      resolveCommandSurface: () => ({ ok: true, target: { projectId: 'project-a', surfaceId: 'quick-run' } }),
+    });
+    const resolved: unknown[] = [];
+    const overlay = createCommandSurfaceOverlay({
+      ...h.deps,
+      onTargetResolved: (target, ownerWindowId) => resolved.push({ target, ownerWindowId }),
+    });
+    await overlay.open();
+
+    expect(resolved).toEqual([{ target: { projectId: 'project-a', surfaceId: 'quick-run' }, ownerWindowId: 7 }]);
+    expect(overlay.target()).toEqual({ projectId: 'project-a', surfaceId: 'quick-run' });
+    expect(overlay.isFocused()).toBe(true);
   });
 
   it('does NOT steal focus back when the creator moved on by themselves', async () => {

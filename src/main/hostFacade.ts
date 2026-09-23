@@ -101,6 +101,7 @@ export interface FacadeDeps {
    * `localServiceBridge`, and no project's name appears anywhere.
    */
   localServiceFetch?: (projectId: string, request: unknown) => Promise<LocalServiceResponse>;
+  dismissCommandSurface?: (senderId: number, destination: 'restore' | 'external' | 'papers') => Promise<void>;
   broadcastToHosts: (channel: string, payload: unknown) => void;
   sendToWindow: (windowId: number, channel: string, payload: unknown) => void;
   /** Exact host delivery for transactions that cannot succeed headlessly. */
@@ -880,6 +881,20 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     }
     return this.runProjectOwnership(projectId, () =>
       this.openWorkspaceSurfaceFromControlUngated(context.windowId, projectId, parsed.toString()));
+  }
+
+  async dismissBackpackProjectCommandSurface(
+    senderId: number,
+    destination: 'restore' | 'external' | 'papers',
+  ): Promise<void> {
+    const context = this.deps.surfaces.contextForSender(senderId);
+    if (!context || context.kind !== 'launcher') {
+      throw new Error('Only the command-surface launcher may dismiss itself.');
+    }
+    if (!this.deps.dismissCommandSurface) {
+      throw new Error('The command-surface dismissal path is unavailable.');
+    }
+    await this.deps.dismissCommandSurface(senderId, destination);
   }
 
   private async openBackpackProjectUngated(senderId: number, id: string): Promise<OpenBackpackProject | null> {

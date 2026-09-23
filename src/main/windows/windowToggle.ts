@@ -55,7 +55,7 @@ export interface WindowToggleDependencies {
   isForeground(): boolean;
   /** Minimise one live Papers window. Returns false when it did not happen. */
   minimize(windowId: number): boolean;
-  bringToFront(windowId: number): { ok: boolean; detail: string };
+  bringToFront(windowId: number): { ok: boolean; detail: string } | Promise<{ ok: boolean; detail: string }>;
   /**
    * The next window down the z-order from the one being minimised - the window
    * that was underneath. Null when there is nothing usable underneath.
@@ -97,7 +97,7 @@ export function createWindowToggle(dependencies: WindowToggleDependencies): Wind
       emit('window-unavailable', detail);
       return { outcome: 'window-unavailable', detail, focusHandedTo: null };
     }
-    const result = dependencies.bringToFront(windowId);
+    const result = await dependencies.bringToFront(windowId);
     const detail = result.detail;
     emit(result.ok ? 'brought-forward' : 'window-unavailable', detail);
     return {
