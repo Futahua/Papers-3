@@ -1795,7 +1795,6 @@ async function bootstrap(): Promise<void> {
       }
       hoverInputBridge?.removeWidget(senderId);
     },
-    onFollowTarget: (senderId, handle) => hoverInputBridge?.setFollowTarget(senderId, handle),
     isSurfaceOrigin: (senderId, projectId) => {
       const contents = webContents.fromId(senderId);
       if (!contents || contents.isDestroyed()) return false;
@@ -1954,6 +1953,7 @@ async function bootstrap(): Promise<void> {
         if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
       }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
     },
+    onAltQRelease: () => widgetSession?.stopFollowing(),
     onCaptured: async (senderId, _captureId, text) => {
       const result = await beginHoverCapture(senderId, text, true);
       if (!result.ok) throw new Error(result.detail);

@@ -100,6 +100,21 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     return { ok: session.focus(projectId, layoutKey, owningWindowId) };
   });
 
+  ipcMain.handle('papers:backpack:widget-minimize', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
+    if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget minimize payload is malformed');
+    const projectId = key(raw.projectId, 'projectId');
+    const layoutKey = key(raw.layoutKey, 'layoutKey');
+    if (!isWorkspaceSender(event.sender, projectId)) throw new Error('denied: not the bound workspace sender');
+    const surface = registry.surface(event.sender.id);
+    if (!surface || surface.projectId !== projectId || surface.kind !== WORKSPACE_SURFACE_KIND) {
+      throw new Error('denied: workspace is not registered');
+    }
+    const owningWindowId = windowIdForWorkspaceSender(event.sender);
+    if (owningWindowId === null) throw new Error('denied: workspace has no Papers window');
+    return { ok: session.minimize(projectId, layoutKey, owningWindowId) };
+  });
+
   ipcMain.handle('papers:backpack:widget-close', async (event, raw) => {
     await waitForAuthority?.(event.sender);
     if (!object(raw)) throw new Error('widget close payload is malformed');

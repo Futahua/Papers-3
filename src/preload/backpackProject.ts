@@ -480,6 +480,18 @@ window.addEventListener('message', (event) => {
     }
     task = ipcRenderer.invoke('papers:backpack:widget-focus', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
   }
+  if (request.type === 'papers:project:widget-minimize') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutKey']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'widget minimize request is malformed');
+      return;
+    }
+    let layoutKey: string;
+    try { layoutKey = parseBoundedString(request.layoutKey); } catch {
+      immediateHostError(request.requestId, event.origin, 'widget minimize request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-minimize', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+  }
   if (request.type === 'papers:project:widget-report-size') {
     // 024: the compact-widget page reports its bounded card content size after
     // each render so the host refits the frameless window to the card. Only the

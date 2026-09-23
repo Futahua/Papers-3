@@ -11,7 +11,6 @@ export interface HoverInputBridge {
   setPolicy(senderId: number, enabled: boolean, blockedBindings: readonly string[]): void;
   setCaptureOpening(senderId: number): Promise<void>;
   removeWidget(senderId: number): void;
-  setFollowTarget(senderId: number, nativeHandle: Buffer): void;
   setOverlayOpen(open: boolean): Promise<void>;
   close(): void;
 }
@@ -219,9 +218,6 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
       });
     },
     removeWidget(senderId) { send(`REMOVE\t${senderId}`); },
-    setFollowTarget(senderId, nativeHandle) {
-      send(`TARGET\t${senderId}\t${nativeHandleValue(nativeHandle)}`);
-    },
     setOverlayOpen(open) {
       if (!open) {
         if (overlayReady) {

@@ -10,6 +10,7 @@ class FakeWindow {
   readonly focusHandlers: Array<() => void> = [];
   destroyed = false;
   bounds = { x: 0, y: 0, width: 420, height: 180 };
+  visible = true;
   loadedUrls: string[] = [];
   setBounds = vi.fn((bounds) => { this.bounds = { ...bounds }; });
   getBounds = vi.fn(() => ({ ...this.bounds }));
@@ -17,9 +18,10 @@ class FakeWindow {
   focus = vi.fn();
   minimized = false;
   isMinimized = vi.fn(() => this.minimized);
-  restore = vi.fn(() => { this.minimized = false; });
-  isVisible = vi.fn(() => true);
-  show = vi.fn();
+  restore = vi.fn(() => { this.minimized = false; this.visible = true; });
+  minimize = vi.fn(() => { this.minimized = true; this.visible = false; });
+  isVisible = vi.fn(() => this.visible);
+  show = vi.fn(() => { this.visible = true; });
   moveTop = vi.fn();
   isFocused = vi.fn(() => true);
   getNativeWindowHandle = vi.fn(() => Buffer.alloc(8));
@@ -59,8 +61,8 @@ function harness(cursor = { x: 537, y: 284 }) {
     preloadPath: 'backpack.cjs',
     resolveEntryUrl: () => 'papers-backpack://bp-a/_papers-open/a/public/index.html',
     activateWindow: async (window) => {
-      window.restore();
-      window.show();
+      if (window.isMinimized()) window.restore();
+      if (!window.isVisible()) window.show();
       window.focus();
       window.moveTop();
       return true;
@@ -194,14 +196,72 @@ describe('compact widget session', () => {
     const target = h.windows[0]!;
     target.focusHandlers[0]!();
     target.minimized = true;
+    target.visible = false;
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
     expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 194, width: 420, height: 180 });
     expect(target.restore).toHaveBeenCalledOnce();
-    expect(target.show).toHaveBeenCalledOnce();
+    expect(target.show).not.toHaveBeenCalled();
+    expect(target.restore.mock.invocationCallOrder[0]).toBeLessThan(target.setBounds.mock.invocationCallOrder[0]!);
+    expect(target.isVisible()).toBe(true);
     expect(target.focus).toHaveBeenCalled();
     expect(target.moveTop).toHaveBeenCalledOnce();
     expect(h.windows[1]!.restore).not.toHaveBeenCalled();
+    h.session.stopFollowing();
+  });
+
+  it('follows the pointer while Alt+Q is held and stops immediately on release', async () => {
+    vi.useFakeTimers();
+    try {
+      const cursor = { x: 537, y: 284 };
+      const h = harness(cursor);
+      await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+      const target = h.windows[0]!;
+      expect(await h.session.bringLatestToCursor()).toBe(true);
+      expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 194, width: 420, height: 180 });
+
+      cursor.x = 800;
+      cursor.y = 500;
+      await vi.advanceTimersByTimeAsync(16);
+      expect(target.setBounds).toHaveBeenLastCalledWith({ x: 590, y: 410, width: 420, height: 180 });
+
+      h.session.stopFollowing();
+      const callsAtRelease = target.setBounds.mock.calls.length;
+      cursor.x = 900;
+      cursor.y = 600;
+      await vi.advanceTimersByTimeAsync(64);
+      expect(target.setBounds).toHaveBeenCalledTimes(callsAtRelease);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a pill-docked widget alive and restores it at the pointer with Alt+Q', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const target = h.windows[0]!;
+    expect(h.session.minimize('bp-a', 'layout-a', 1)).toBe(true);
+    expect(target.minimize).toHaveBeenCalledOnce();
+    expect(target.isDestroyed()).toBe(false);
+
+    expect(await h.session.bringLatestToCursor()).toBe(true);
+    expect(target.restore).toHaveBeenCalledOnce();
+    expect(target.isVisible()).toBe(true);
+    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 194, width: 420, height: 180 });
+    h.session.stopFollowing();
+  });
+
+  it('reopening a pill restores and focuses the existing native widget instead of duplicating it', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const target = h.windows[0]!;
+    expect(h.session.minimize('bp-a', 'layout-a', 1)).toBe(true);
+    await expect(h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 }))
+      .resolves.toEqual({ ok: true, reused: true });
+    expect(h.windows).toHaveLength(1);
+    expect(target.restore).toHaveBeenCalledOnce();
+    expect(target.isVisible()).toBe(true);
+    expect(target.focus).toHaveBeenCalled();
   });
 
   it('keeps the cursor at the widget center at screen edges rather than clamping', async () => {
@@ -210,6 +270,7 @@ describe('compact widget session', () => {
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
     expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: -208, y: -86, width: 420, height: 180 });
+    h.session.stopFollowing();
   });
 
   it('keeps the cursor centered beyond the right and bottom display edges', async () => {
@@ -218,6 +279,7 @@ describe('compact widget session', () => {
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
     expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: 988, y: 708, width: 420, height: 180 });
+    h.session.stopFollowing();
   });
 
   it('reports a refused activation instead of claiming Alt+Q succeeded', async () => {
@@ -240,6 +302,7 @@ describe('compact widget session', () => {
     });
     await session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 1 });
     expect(await session.bringLatestToCursor()).toBe(false);
+    session.stopFollowing();
   });
 });
 

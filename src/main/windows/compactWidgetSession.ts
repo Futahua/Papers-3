@@ -44,6 +44,7 @@ export interface CompactWidgetWindow {
   isMinimized(): boolean;
   isVisible(): boolean;
   restore(): void;
+  minimize(): void;
   show(): void;
   moveTop(): void;
   getNativeWindowHandle(): Buffer;
@@ -79,15 +80,18 @@ export interface CompactWidgetSessionDependencies {
   onSurfaceClosed?: (projectId: string, layoutKey: string, owningWindowId: number) => void;
   onWidgetRegistered?: (senderId: number, nativeHandle: Buffer) => void;
   onWidgetRemoved?: (senderId: number) => void;
-  onFollowTarget?: (senderId: number, nativeHandle: Buffer) => void;
 }
 
 export interface CompactWidgetSession {
   open(request: { projectId: string; layoutKey: string; owningWindowId: number; bounds?: WindowBounds | null }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }>;
   ready(senderId: number, payload: unknown): boolean;
   focus(projectId: string, layoutKey: string, owningWindowId: number): boolean;
+  /** Minimize without destroying the widget, so Alt+Q can restore it. */
+  minimize(projectId: string, layoutKey: string, owningWindowId: number): boolean;
   /** Restore the most recently opened/focused widget at the current pointer. */
   bringLatestToCursor(): Promise<boolean>;
+  /** Stop the pointer-follow started by the most recent Alt+Q press. */
+  stopFollowing(): void;
   close(projectId: string, layoutKey: string, owningWindowId: number): Promise<void>;
   /**
    * Destroy every widget belonging to one Papers window.
@@ -132,6 +136,8 @@ function widgetUrl(raw: string, layoutKey: string, projectId: string): string {
 export function createCompactWidgetSession(deps: CompactWidgetSessionDependencies): CompactWidgetSession {
   const entries = new Map<string, WidgetEntry>();
   let latestWidgetKey: string | null = null;
+  let followTimer: NodeJS.Timeout | null = null;
+  let followedEntry: WidgetEntry | null = null;
   let activeDrag: { senderId: number; token: string; offsetX: number; offsetY: number } | null = null;
   let registered = false;
   /**
@@ -145,6 +151,49 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
    */
   const keyOf = (projectId: string, layoutKey: string, owningWindowId: number) =>
     `${owningWindowId}\0${projectId}\0${layoutKey}`;
+
+  const stopFollowing = (): void => {
+    if (followTimer !== null) clearInterval(followTimer);
+    followTimer = null;
+    followedEntry = null;
+  };
+
+  const restoreAndFocus = (entry: WidgetEntry): boolean => {
+    if (entry.closing || entry.window.isDestroyed()) return false;
+    if (entry.window.isMinimized()) entry.window.restore();
+    if (!entry.window.isVisible()) entry.window.show();
+    entry.window.focus();
+    return true;
+  };
+
+  const placeAtCursor = (entry: WidgetEntry): void => {
+    if (entry.closing || entry.window.isDestroyed()) return;
+    const point = deps.screen.getCursorScreenPoint();
+    const bounds = entry.window.getBounds();
+    const next = {
+      ...bounds,
+      x: Math.round(point.x - bounds.width / 2),
+      y: Math.round(point.y - bounds.height / 2),
+    };
+    if (next.x !== bounds.x || next.y !== bounds.y) entry.window.setBounds(next);
+  };
+
+  const followCursor = (entry: WidgetEntry): void => {
+    stopFollowing();
+    followedEntry = entry;
+    placeAtCursor(entry);
+    followTimer = setInterval(() => {
+      if (followedEntry !== entry || entries.get(keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId)) !== entry
+        || entry.closing || entry.window.isDestroyed()) {
+        stopFollowing();
+        return;
+      }
+      // Electron's cursor and BrowserWindow bounds are both DIP coordinates.
+      // The old helper moved using Win32 physical pixels, so mixed-DPI desktops
+      // could make a held Alt+Q appear not to follow (or jump by a scale ratio).
+      placeAtCursor(entry);
+    }, 16);
+  };
 
   function clamp(bounds: WindowBounds | null): WindowBounds {
     const displays = deps.screen.getAllDisplays();
@@ -163,6 +212,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     const key = keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId);
     if (entries.get(key) !== entry) return;
     entries.delete(key);
+    if (followedEntry === entry) stopFollowing();
     if (latestWidgetKey === key) {
       const remainingKeys = [...entries.keys()];
       latestWidgetKey = remainingKeys[remainingKeys.length - 1] ?? null;
@@ -241,7 +291,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       const existing = entries.get(key);
       if (existing && !existing.window.isDestroyed()) {
         latestWidgetKey = key;
-        existing.window.focus();
+        restoreAndFocus(existing);
         return { ok: true, reused: true };
       }
       const entryUrl = deps.resolveEntryUrl(request.projectId, request.owningWindowId);
@@ -277,26 +327,30 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       const entry = entries.get(key);
       if (!entry || entry.closing || entry.window.isDestroyed()) return false;
       latestWidgetKey = key;
-      entry.window.focus();
-      return true;
+      return restoreAndFocus(entry);
+    },
+    minimize(projectId, layoutKey, owningWindowId) {
+      const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
+      if (!entry || entry.closing || entry.window.isDestroyed()) return false;
+      stopFollowing();
+      entry.window.minimize();
+      return entry.window.isMinimized();
     },
     async bringLatestToCursor() {
       const entry = latestWidgetKey === null ? undefined : entries.get(latestWidgetKey);
       if (!entry || entry.closing || entry.window.isDestroyed()) return false;
-      const point = deps.screen.getCursorScreenPoint();
-      const bounds = entry.window.getBounds();
-      entry.window.setBounds({
-        ...bounds,
-        x: Math.round(point.x - bounds.width / 2),
-        y: Math.round(point.y - bounds.height / 2),
-      });
-      deps.onFollowTarget?.(entry.window.webContents.id, entry.window.getNativeWindowHandle());
+      // Restore/show before changing bounds: moving a minimized HWND can update
+      // its restore rectangle without making the native window visible. Do the
+      // visibility transition explicitly, then place it at the live pointer.
+      if (!restoreAndFocus(entry)) return false;
+      followCursor(entry);
       try {
         return await deps.activateWindow(entry.window);
       } catch {
         return false;
       }
     },
+    stopFollowing,
     async close(projectId, layoutKey, owningWindowId) {
       const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
       if (entry) destroy(entry);
@@ -333,6 +387,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       }
     },
     closeAll() {
+      stopFollowing();
       for (const entry of [...entries.values()]) destroy(entry);
       return Promise.resolve();
     },

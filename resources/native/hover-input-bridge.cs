@@ -17,7 +17,6 @@ internal static class HoverInputBridge
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_SYSKEYUP = 0x0105;
     private const int WM_HOTKEY = 0x0312;
-    private const int WM_TIMER = 0x0113;
     private const int WM_QUIT = 0x0012;
     private const int VK_Q = 0x51;
     private const int VK_MENU = 0x12;
@@ -33,12 +32,7 @@ internal static class HoverInputBridge
     private const int LLKHF_ALTDOWN = 0x20;
     private const uint MOD_ALT = 0x0001;
     private const uint MOD_NOREPEAT = 0x4000;
-    private const uint SWP_NOSIZE = 0x0001;
-    private const uint SWP_NOZORDER = 0x0004;
-    private const uint SWP_NOACTIVATE = 0x0010;
-    private const uint SWP_NOOWNERZORDER = 0x0200;
     private const uint GA_ROOT = 2;
-    private const uint TIMER_ID = 0x5041;
     private const int HOTKEY_ID = 0x5041;
     private const uint PM_NOREMOVE = 0x0000;
     private const int MAX_TEXT_BYTES = 512;
@@ -70,10 +64,7 @@ internal static class HoverInputBridge
     private static readonly ConcurrentQueue<string> output = new ConcurrentQueue<string>();
     private static readonly HookProc hookCallback = KeyboardHook;
     private static IntPtr hookHandle = IntPtr.Zero;
-    private static IntPtr followHandle = IntPtr.Zero;
-    private static volatile int followWidgetId;
     private static uint mainThreadId;
-    private static volatile bool followRequested;
     private static volatile bool overlayOpen;
     private static volatile bool captureOpening;
     private static volatile int openingWidgetId;
@@ -90,8 +81,6 @@ internal static class HoverInputBridge
     [DllImport("user32.dll")] private static extern bool PeekMessage(out MSG message, IntPtr window, uint min, uint max, uint remove);
     [DllImport("user32.dll")] private static extern bool TranslateMessage(ref MSG message);
     [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref MSG message);
-    [DllImport("user32.dll")] private static extern uint SetTimer(IntPtr window, UIntPtr id, uint interval, IntPtr callback);
-    [DllImport("user32.dll")] private static extern bool KillTimer(IntPtr window, UIntPtr id);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out RECT rect);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
@@ -105,7 +94,6 @@ internal static class HoverInputBridge
     [DllImport("user32.dll")] private static extern bool GetKeyboardState(byte[] state);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int ToUnicodeEx(uint key, uint scan, byte[] state, [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder text, int capacity, uint flags, IntPtr layout);
-    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
     [DllImport("imm32.dll")] private static extern bool ImmIsIME(IntPtr layout);
 
     private static void Emit(string line) { output.Enqueue(line); }
@@ -176,12 +164,6 @@ internal static class HoverInputBridge
                     CompleteOverlayReadyIfDrained();
                     continue;
                 }
-                if (parts[0] == "TARGET" && parts.Length == 3)
-                {
-                    followWidgetId = int.Parse(parts[1], CultureInfo.InvariantCulture);
-                    Interlocked.Exchange(ref followHandle, new IntPtr(long.Parse(parts[2], CultureInfo.InvariantCulture)));
-                    continue;
-                }
                 if (parts[0] == "REMOVE" && parts.Length == 2)
                 {
                     int removeId = int.Parse(parts[1], CultureInfo.InvariantCulture);
@@ -238,12 +220,6 @@ internal static class HoverInputBridge
             foreach (WidgetPolicy item in Snapshot()) if (item.Id != id) next.Add(item);
             if (replacement != null) next.Add(replacement);
             Interlocked.Exchange(ref policies, next.ToArray());
-        }
-        if (replacement == null && followWidgetId == id)
-        {
-            followWidgetId = 0;
-            Interlocked.Exchange(ref followHandle, IntPtr.Zero);
-            followRequested = false;
         }
         if (replacement == null)
         {
@@ -334,8 +310,6 @@ internal static class HoverInputBridge
         bool isAlt = key.vkCode == VK_MENU || key.vkCode == VK_LMENU || key.vkCode == VK_RMENU;
         if (up && (key.vkCode == VK_Q || isAlt))
         {
-            followRequested = false;
-            Interlocked.Exchange(ref followHandle, IntPtr.Zero);
             Emit("ALTQ_RELEASE");
         }
         if (up && swallowedKeys.Remove(key.vkCode)) return new IntPtr(1);
@@ -375,28 +349,6 @@ internal static class HoverInputBridge
         }
     }
 
-    private static void FollowTick()
-    {
-        if (!followRequested) return;
-        IntPtr target = Interlocked.CompareExchange(ref followHandle, IntPtr.Zero, IntPtr.Zero);
-        // The UI resolves the latest target asynchronously after WM_HOTKEY.
-        // Preserve the physical hold until that handle arrives; a minimized
-        // widget may also need restoration before it becomes movable.
-        if (target == IntPtr.Zero) return;
-        if (!IsWindow(target))
-        { followRequested = false; Interlocked.Exchange(ref followHandle, IntPtr.Zero); return; }
-        // Watchdog runs outside LowLevelKeyboardProc, where GetAsyncKeyState is valid.
-        if ((GetAsyncKeyState(VK_Q) & 0x8000) == 0
-            || ((GetAsyncKeyState(VK_MENU) & 0x8000) == 0 && (GetAsyncKeyState(VK_LMENU) & 0x8000) == 0 && (GetAsyncKeyState(VK_RMENU) & 0x8000) == 0))
-        { followRequested = false; Interlocked.Exchange(ref followHandle, IntPtr.Zero); Emit("ALTQ_RELEASE"); return; }
-        if (!IsWindowVisible(target) || IsIconic(target)) return;
-        POINT point; RECT rect;
-        if (!GetCursorPos(out point) || !GetWindowRect(target, out rect)) return;
-        int width = rect.right - rect.left, height = rect.bottom - rect.top;
-        SetWindowPos(target, IntPtr.Zero, (int)Math.Round(point.x - width / 2.0), (int)Math.Round(point.y - height / 2.0), 0, 0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
-    }
-
     private static void Main()
     {
         mainThreadId = GetCurrentThreadId();
@@ -407,7 +359,6 @@ internal static class HoverInputBridge
         if (hookHandle == IntPtr.Zero) Emit("ERROR\thook-install-failed");
         else Emit("READY\t" + (hotkey ? "1" : "0"));
         if (!hotkey) Emit("ERROR\talt-q-registration-failed");
-        SetTimer(IntPtr.Zero, new UIntPtr(TIMER_ID), 12, IntPtr.Zero);
         Thread reader = new Thread(ReadCommands); reader.IsBackground = true; reader.Start();
         MSG message;
         int result;
@@ -415,18 +366,11 @@ internal static class HoverInputBridge
         {
             if (message.message == WM_HOTKEY && message.wParam.ToUInt64() == HOTKEY_ID)
             {
-                // A new press chooses its target only after the UI resolves the latest widget.
-                // Never let a prior hold keep moving its stale target during that resolution.
-                followRequested = false;
-                followWidgetId = 0;
-                Interlocked.Exchange(ref followHandle, IntPtr.Zero);
-                followRequested = true;
+                // Main-process Electron code owns cursor-follow so cursor and window bounds use the same DPI units.
                 Emit("ALTQ");
             }
-            else if (message.message == WM_TIMER && message.wParam.ToUInt64() == TIMER_ID) FollowTick();
             TranslateMessage(ref message); DispatchMessage(ref message); FlushOutput();
         }
-        KillTimer(IntPtr.Zero, new UIntPtr(TIMER_ID));
         UnregisterHotKey(IntPtr.Zero, HOTKEY_ID);
         if (hookHandle != IntPtr.Zero) UnhookWindowsHookEx(hookHandle);
         FlushOutput();

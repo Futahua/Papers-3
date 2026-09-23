@@ -11,6 +11,7 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>) {
   const session = {
     open: vi.fn(async () => ({ ok: true, reused: false })),
     focus: vi.fn(() => true),
+    minimize: vi.fn(() => true),
     close: vi.fn(async () => undefined),
     closeFromSender: vi.fn(async () => undefined),
     resizeFromSender: vi.fn(),
@@ -115,6 +116,15 @@ describe('compact widget IPC', () => {
     await expect(h.invoke('papers:backpack:widget-close', 1, { projectId: 'bp-a', layoutKey: 'layout-a' })).resolves.toEqual({ ok: true });
     expect(h.session.close).toHaveBeenCalledWith('bp-a', 'layout-a', 1);
     await expect(h.invoke('papers:backpack:widget-close', 9, { projectId: 'bp-a', layoutKey: 'layout-a' })).rejects.toThrow(/denied/);
+  });
+
+  it('widget-minimize is workspace-authenticated and preserves the session entry', async () => {
+    const h = harness();
+    h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
+    await expect(h.invoke('papers:backpack:widget-minimize', 1, { projectId: 'bp-a', layoutKey: 'layout-a' })).resolves.toEqual({ ok: true });
+    expect(h.session.minimize).toHaveBeenCalledWith('bp-a', 'layout-a', 1);
+    await expect(h.invoke('papers:backpack:widget-minimize', 9, { projectId: 'bp-a', layoutKey: 'layout-a' })).rejects.toThrow(/denied/);
+    await expect(h.invoke('papers:backpack:widget-minimize', 1, { projectId: 'bp-a', layoutKey: 'layout-a', extra: true })).rejects.toThrow(/malformed/);
   });
 
   it('019F: focus requires an ALREADY registered workspace surface (no auto-register)', async () => {
