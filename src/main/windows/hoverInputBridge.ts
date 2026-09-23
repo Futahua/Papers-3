@@ -9,6 +9,7 @@ export const HOVER_INPUT_BRIDGE_EXECUTABLE = 'papers-hover-input-bridge.exe';
 export interface HoverInputBridge {
   registerWidget(senderId: number, nativeHandle: Buffer): void;
   setPolicy(senderId: number, enabled: boolean, blockedBindings: readonly string[]): void;
+  setCaptureOpening(senderId: number): void;
   removeWidget(senderId: number): void;
   setFollowTarget(senderId: number, nativeHandle: Buffer): void;
   setOverlayOpen(open: boolean): void;
@@ -159,6 +160,7 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
       const blocked = validBlockedBindings(blockedBindings);
       send(`POLICY\t${senderId}\t${enabled ? '1' : '0'}\t${Buffer.from(blocked.join('\n'), 'utf8').toString('base64')}`);
     },
+    setCaptureOpening(senderId) { send(`OPENING\t${senderId}`); },
     removeWidget(senderId) { send(`REMOVE\t${senderId}`); },
     setFollowTarget(senderId, nativeHandle) {
       send(`TARGET\t${senderId}\t${nativeHandleValue(nativeHandle)}`);

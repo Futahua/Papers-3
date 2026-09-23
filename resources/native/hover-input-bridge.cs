@@ -130,7 +130,15 @@ internal static class HoverInputBridge
                 if (parts[0] == "OVERLAY" && parts.Length == 2)
                 {
                     overlayOpen = parts[1] == "1";
-                    if (!overlayOpen) { captureOpening = false; openingWidgetId = 0; }
+                    captureOpening = false;
+                    openingWidgetId = 0;
+                    continue;
+                }
+                if (parts[0] == "OPENING" && parts.Length == 2)
+                {
+                    openingWidgetId = int.Parse(parts[1], CultureInfo.InvariantCulture);
+                    overlayOpen = false;
+                    captureOpening = true;
                     continue;
                 }
                 if (parts[0] == "TARGET" && parts.Length == 3)
@@ -279,7 +287,6 @@ internal static class HoverInputBridge
         string canonical = CanonicalKey(text);
         if (canonical == null) return CallNextHookEx(hookHandle, code, wParam, lParam);
         string binding = (shifted ? "Shift+" : "") + canonical;
-        if (policy.Blocked.Contains(binding)) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if (captureOpening)
         {
             if (openingWidgetId != policy.Id) return CallNextHookEx(hookHandle, code, wParam, lParam);
@@ -288,6 +295,7 @@ internal static class HoverInputBridge
             Emit("APPEND\t" + policy.Id.ToString(CultureInfo.InvariantCulture) + "\t" + appendId.ToString(CultureInfo.InvariantCulture) + "\t" + Convert.ToBase64String(Encoding.UTF8.GetBytes(text)));
             return new IntPtr(1);
         }
+        if (policy.Blocked.Contains(binding)) return CallNextHookEx(hookHandle, code, wParam, lParam);
         swallowedKeys.Add(key.vkCode);
         long id = Interlocked.Increment(ref captureId);
         openingWidgetId = policy.Id;

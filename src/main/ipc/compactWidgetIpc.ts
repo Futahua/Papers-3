@@ -22,6 +22,7 @@ export interface CompactWidgetIpcDependencies {
   windowIdForWorkspaceSender: (sender: WebContents) => number | null;
   isWidgetSender: (sender: WebContents, projectId: string) => boolean;
   setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => void;
+  requestHoverQuickRun?: (senderId: number, phase: 'open' | 'append', text: string, captureId: string) => Promise<{ ok: boolean; detail: string }>;
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
@@ -66,7 +67,7 @@ function ensureWorkspaceSurface(
   registry.register(senderId, projectId, WORKSPACE_SURFACE_KIND);
 }
 
-export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, setHoverPolicy, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
+export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, setHoverPolicy, requestHoverQuickRun, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
   ipcMain.handle('papers:backpack:widget-open', async (event, raw) => {
     await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget open payload is malformed');
@@ -159,6 +160,26 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     }
     setHoverPolicy?.(event.sender.id, raw.enabled, [...new Set(raw.blockedBindings as string[])]);
     return { ok: true };
+  });
+
+  ipcMain.handle('papers:backpack:widget-quick-run-input', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
+    if (!object(raw) || !exact(raw, ['token', 'phase', 'text', 'captureId'])) throw new Error('widget Quick Run input is malformed');
+    const token = key(raw.token, 'token');
+    const phase = raw.phase;
+    const text = raw.text;
+    const captureId = raw.captureId;
+    if ((phase !== 'open' && phase !== 'append') || typeof text !== 'string' || [...text].length !== 1
+      || Buffer.byteLength(text, 'utf8') > 8 || typeof captureId !== 'string' || !/^\d{1,20}$/.test(captureId)) {
+      throw new Error('widget Quick Run input is malformed');
+    }
+    const surface = registry.surface(event.sender.id);
+    if (!surface || !isWidgetSender(event.sender, surface.projectId)
+      || !registry.validSender(event.sender.id, surface.projectId, token)) {
+      throw new Error('denied: sender is not the registered widget');
+    }
+    if (!requestHoverQuickRun) throw new Error('widget Quick Run is unavailable');
+    return requestHoverQuickRun(event.sender.id, phase, text, captureId);
   });
 
   ipcMain.handle('papers:backpack:widget-preview-show', async (event, raw) => {

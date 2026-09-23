@@ -6,7 +6,7 @@ interface ProjectMessage {
    * credential. */
   destination?: unknown; method?: string;
   headers?: Record<string, string>;
-  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; }
+  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; captureId?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -586,6 +586,21 @@ window.addEventListener('message', (event) => {
     ipcRenderer.send('papers:backpack:detach-stop-ack', { transferId: request.transferId });
     immediateHostResult(request.requestId, event.origin);
     return;
+  }
+  if (request.type === 'papers:project:widget-quick-run-input') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'phase', 'text', 'captureId']) || !widgetToken
+      || (request.phase !== 'open' && request.phase !== 'append') || typeof request.text !== 'string'
+      || [...request.text].length !== 1 || Buffer.byteLength(request.text, 'utf8') > 8
+      || typeof request.captureId !== 'string' || !/^\d{1,20}$/.test(request.captureId)) {
+      immediateHostError(request.requestId, event.origin, 'widget Quick Run input is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-quick-run-input', {
+      token: widgetToken,
+      phase: request.phase,
+      text: request.text,
+      captureId: request.captureId,
+    });
   }
   if (request.type === 'papers:project:detach-resumed-ack') {
     if (!validTransferId(request.transferId)) {

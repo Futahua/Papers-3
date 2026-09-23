@@ -1779,7 +1779,10 @@ async function bootstrap(): Promise<void> {
       return widgetWindow;
     },
     onWidgetRegistered: (senderId, handle) => hoverInputBridge?.registerWidget(senderId, handle),
-    onWidgetRemoved: (senderId) => hoverInputBridge?.removeWidget(senderId),
+    onWidgetRemoved: (senderId) => {
+      pendingHoverCaptures.delete(senderId);
+      hoverInputBridge?.removeWidget(senderId);
+    },
     onFollowTarget: (senderId, handle) => hoverInputBridge?.setFollowTarget(senderId, handle),
     isSurfaceOrigin: (senderId, projectId) => {
       const contents = webContents.fromId(senderId);
@@ -1798,6 +1801,53 @@ async function bootstrap(): Promise<void> {
     opening: boolean;
     buffered: Array<{ captureId: string; text: string }>;
   }>();
+  const appendHoverCapture = async (senderId: number, captureId: string, text: string): Promise<{ ok: boolean; detail: string }> => {
+    const pending = pendingHoverCaptures.get(senderId);
+    if (!pending) return { ok: false, detail: 'there is no Quick Run handoff for this widget' };
+    if (pending.opening) {
+      if (pending.buffered.length >= 64) return { ok: false, detail: 'the Quick Run opening buffer is full' };
+      pending.buffered.push({ captureId, text });
+      return { ok: true, detail: 'the character was queued for Quick Run' };
+    }
+    const result = await commandSurfaceOverlay?.appendForProject(pending.projectId, text, captureId);
+    return result ?? { ok: false, detail: 'the command surface is unavailable' };
+  };
+  const beginHoverCapture = async (senderId: number, captureId: string, text: string): Promise<{ ok: boolean; detail: string }> => {
+    const surface = widgetRegistry.surface(senderId);
+    if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND) return { ok: false, detail: 'the widget is no longer registered' };
+    const existing = pendingHoverCaptures.get(senderId);
+    if (existing) return appendHoverCapture(senderId, captureId, text);
+    if (!commandSurfaceOverlay) return { ok: false, detail: 'the command surface is unavailable' };
+    hoverInputBridge?.setCaptureOpening(senderId);
+    const pending = { projectId: surface.projectId, opening: true, buffered: [] as Array<{ captureId: string; text: string }> };
+    pendingHoverCaptures.set(senderId, pending);
+    try {
+      const opened = await commandSurfaceOverlay.openForProject(surface.projectId, text, captureId);
+      if (pendingHoverCaptures.get(senderId) !== pending) {
+        return { ok: false, detail: 'the widget Quick Run handoff ended before it was ready' };
+      }
+      if (!opened.ok) {
+        pendingHoverCaptures.delete(senderId);
+        hoverInputBridge?.setOverlayOpen(false);
+        return opened;
+      }
+      // This acknowledgement is sent only after the command-surface window has
+      // been shown, focused and sent the seed. Until then the native helper
+      // keeps buffering printable input so no key leaks to the previous app.
+      hoverInputBridge?.setOverlayOpen(true);
+      while (pending.buffered.length > 0) {
+        const buffered = pending.buffered.shift()!;
+        const appended = await commandSurfaceOverlay.appendForProject(pending.projectId, buffered.text, buffered.captureId);
+        if (!appended.ok) console.warn(`[papers] queued Quick Run character was not delivered: ${appended.detail}`);
+      }
+      pending.opening = false;
+      return opened;
+    } catch (error) {
+      pendingHoverCaptures.delete(senderId);
+      hoverInputBridge?.setOverlayOpen(false);
+      return { ok: false, detail: error instanceof Error ? error.message : String(error) };
+    }
+  };
   hoverInputBridge = createHoverInputBridge({
     cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
     sourcePath: resolveHoverInputBridgeSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
@@ -1807,44 +1857,14 @@ async function bootstrap(): Promise<void> {
       }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
     },
     onCaptured: (senderId, captureId, text) => {
-      hoverInputBridge?.setOverlayOpen(true);
-      const surface = widgetRegistry.surface(senderId);
-      if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND) {
-        hoverInputBridge?.setOverlayOpen(false);
-        return;
-      }
-      const overlay = commandSurfaceOverlay;
-      if (!overlay) {
-        hoverInputBridge?.setOverlayOpen(false);
-        return;
-      }
-      const pending = { projectId: surface.projectId, opening: true, buffered: [] as Array<{ captureId: string; text: string }> };
-      pendingHoverCaptures.set(senderId, pending);
-      void overlay.openForProject(surface.projectId, text, captureId).then((opened) => {
+      void beginHoverCapture(senderId, captureId, text).then((opened) => {
         if (!opened.ok) console.warn(`[papers] hover type-to-run was not opened: ${opened.detail}`);
-        if (!opened.ok) {
-          pendingHoverCaptures.delete(senderId);
-          hoverInputBridge?.setOverlayOpen(false);
-          return;
-        }
-        pending.opening = false;
-        for (const buffered of pending.buffered.splice(0)) {
-          void overlay.appendForProject(pending.projectId, buffered.text, buffered.captureId);
-        }
-      }).catch((error: unknown) => {
-        pendingHoverCaptures.delete(senderId);
-        hoverInputBridge?.setOverlayOpen(false);
-        console.warn('[papers] hover type-to-run failed', error);
       });
     },
     onAppended: (senderId, captureId, text) => {
-      const pending = pendingHoverCaptures.get(senderId);
-      if (!pending) return;
-      if (pending.opening) {
-        if (pending.buffered.length < 64) pending.buffered.push({ captureId, text });
-        return;
-      }
-      void commandSurfaceOverlay?.appendForProject(pending.projectId, text, captureId);
+      void appendHoverCapture(senderId, captureId, text).then((result) => {
+        if (!result.ok) console.warn(`[papers] hover type-to-run append was not delivered: ${result.detail}`);
+      });
     },
     onError: (message) => console.warn(`[papers] ${message}`),
   });
@@ -1867,6 +1887,9 @@ async function bootstrap(): Promise<void> {
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     windowIdForWorkspaceSender: windowIdForProjectSender,
     setHoverPolicy: (senderId, enabled, blockedBindings) => hoverInputBridge?.setPolicy(senderId, enabled, blockedBindings),
+    requestHoverQuickRun: (senderId, phase, text, captureId) => phase === 'open'
+      ? beginHoverCapture(senderId, captureId, text)
+      : appendHoverCapture(senderId, captureId, text),
     hidePreview: hideWidgetPreview,
     dismissCandidatePicker: (sender) => {
       const active = candidatePickerSessions.get(sender.id);
@@ -2948,7 +2971,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       return overlayWindow;
     },
     deliver: (senderId, payload) => {
-      hoverInputBridge?.setOverlayOpen(true);
+      if (payload.reason === 'global-accelerator') hoverInputBridge?.setOverlayOpen(true);
       const contents = webContents.fromId(senderId);
       if (!contents || contents.isDestroyed()) return;
       contents.send(COMMAND_SURFACE_INVOKE_CHANNEL, payload);

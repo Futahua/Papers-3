@@ -188,6 +188,22 @@ describe('Backpack project protocol alignment', () => {
     expect(mocks.send.mock.calls).toHaveLength(before);
   });
 
+  it('routes one bounded widget Quick Run character with its hidden token and rejects malformed records', async () => {
+    await import('../../src/preload/backpackProject');
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    tokenHandler({}, { token: 'widget-token' });
+    mocks.invoke.mockResolvedValue({ ok: true, detail: 'queued' });
+    dispatch({ type: 'papers:project:widget-quick-run-input', requestId: 'type-open', phase: 'open', text: 'a', captureId: '1' });
+    dispatch({ type: 'papers:project:widget-quick-run-input', requestId: 'type-bad', phase: 'open', text: 'ab', captureId: '2' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-quick-run-input', {
+      token: 'widget-token', phase: 'open', text: 'a', captureId: '1',
+    });
+    expect(posts).not.toContainEqual(expect.objectContaining({ token: 'widget-token' }));
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'type-bad', ok: false }));
+  });
+
   it('019C: workspace widget-open/focus/close attach projectId and keep keys bounded', async () => {
     await import('../../src/preload/backpackProject');
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
