@@ -87,6 +87,31 @@ describe('commandSurfaceOverlay opening', () => {
     expect(overlay.isOpen()).toBe(false);
   });
 
+  it('joins the in-flight startup warm-up when Alt+A arrives on the first press', async () => {
+    const h = harness();
+    const createWindow = vi.fn(h.deps.createWindow);
+    let finishLoad!: () => void;
+    let signalLoadStarted!: () => void;
+    const loadStarted = new Promise<void>((resolve) => { signalLoadStarted = resolve; });
+    const loadGate = new Promise<void>((resolve) => { finishLoad = resolve; });
+    vi.spyOn(h.created.window, 'loadURL').mockImplementation(async () => {
+      signalLoadStarted();
+      await loadGate;
+    });
+    const overlay = createCommandSurfaceOverlay({ ...h.deps, createWindow });
+
+    const warm = overlay.warm();
+    await loadStarted;
+    const firstInvoke = overlay.open();
+    expect(createWindow).toHaveBeenCalledOnce();
+
+    finishLoad();
+    expect((await warm).ok).toBe(true);
+    expect((await firstInvoke).ok).toBe(true);
+    expect(createWindow).toHaveBeenCalledOnce();
+    expect(h.delivered).toHaveLength(1);
+  });
+
   it('loads the project entry URL with the opaque mode marker appended', async () => {
     const h = harness();
     const overlay = createCommandSurfaceOverlay(h.deps);

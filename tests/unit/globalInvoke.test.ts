@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   DEFAULT_INVOKE_ACCELERATORS,
+  createDeferredCommandSurfaceOverlay,
   createGlobalInvoke,
   type GlobalInvokeDependencies,
   type GlobalInvokeReport,
@@ -94,6 +95,18 @@ describe('globalInvoke registration', () => {
     expect(report.registered).toEqual(['Alt+A']);
     expect(shortcut.order).toEqual(['Alt+A']);
     expect([...shortcut.held]).toEqual(['Alt+A']);
+  });
+
+  it('holds an Alt+A pressed during startup until the command surface is attached', async () => {
+    const gate = createDeferredCommandSurfaceOverlay();
+    const h = harness({ overlay: gate.overlay });
+    createGlobalInvoke(h.deps).register();
+
+    h.shortcut.callbacks.get('Alt+A')?.();
+    expect(h.overlay.opened).toBe(0);
+
+    gate.attach(h.overlay);
+    await vi.waitFor(() => expect(h.overlay.opened).toBe(1));
   });
 
   it('reports a chord another application already owns as an explicit refusal naming the chord', () => {

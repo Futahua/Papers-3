@@ -126,6 +126,51 @@ export interface CommandSurfaceOverlay {
   isOpen(): boolean;
 }
 
+/** Holds the system-wide chord while the command surface renderer is being
+ * prepared. A key pressed during Papers startup waits here instead of leaking
+ * into whichever project renderer happened to finish loading first. */
+export interface DeferredCommandSurfaceOverlay {
+  overlay: CommandSurfaceOverlay;
+  attach(overlay: CommandSurfaceOverlay): void;
+  fail(detail: string): void;
+}
+
+export function createDeferredCommandSurfaceOverlay(): DeferredCommandSurfaceOverlay {
+  let current: CommandSurfaceOverlay | null = null;
+  let settled = false;
+  let failureDetail = 'the command surface did not finish starting';
+  let resolveReady!: (overlay: CommandSurfaceOverlay | null) => void;
+  const ready = new Promise<CommandSurfaceOverlay | null>((resolve) => {
+    resolveReady = resolve;
+  });
+
+  return {
+    overlay: {
+      open: async () => {
+        const target = current ?? await ready;
+        return target ? target.open() : { ok: false, detail: failureDetail };
+      },
+      close: async (reason) => {
+        const target = current ?? await ready;
+        if (target) await target.close(reason);
+      },
+      isOpen: () => current?.isOpen() ?? false,
+    },
+    attach(overlay) {
+      if (settled) throw new Error('the command surface overlay startup gate is already settled');
+      current = overlay;
+      settled = true;
+      resolveReady(overlay);
+    },
+    fail(detail) {
+      if (settled) return;
+      failureDetail = detail;
+      settled = true;
+      resolveReady(null);
+    },
+  };
+}
+
 export interface GlobalInvokeDependencies {
   shortcut: GlobalShortcutLike;
   /** The focused Papers window, or null when there is none to bring forward. */

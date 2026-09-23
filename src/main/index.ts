@@ -62,7 +62,13 @@ import { evaluateVisualAssertions, type VisualAssertion } from './visual/visualA
 import { createVisualWaitService } from './visual/visualWait';
 import { createLogicalSurfaceRegistry } from './windows/logicalSurfaceRegistry';
 import { createPapersWindowRegistry } from './windows/papersWindowRegistry';
-import { createGlobalInvoke, type GlobalInvoke, type GlobalInvokeRegistrationReport } from './windows/globalInvoke';
+import {
+  createDeferredCommandSurfaceOverlay,
+  createGlobalInvoke,
+  type DeferredCommandSurfaceOverlay,
+  type GlobalInvoke,
+  type GlobalInvokeRegistrationReport,
+} from './windows/globalInvoke';
 import { createAdoptedWindowDock } from './windows/adoptedWindowDockSession';
 import {
   createManifestDeclarationReader,
@@ -454,6 +460,7 @@ let hostView: WebContentsView | null = null;
  * Papers process already exists.
  */
 let globalInvoke: GlobalInvoke | null = null;
+let startupCommandSurfaceGate: DeferredCommandSurfaceOverlay | null = null;
 /** The outcome of the one registration attempt, kept so the control snapshot
  * can report a refused chord instead of leaving it invisible. */
 let globalShortcutReport: GlobalInvokeRegistrationReport | null = null;
@@ -542,6 +549,34 @@ function dockBoundsFor(content: { width: number; height: number }): {
 }
 
 async function bootstrap(): Promise<void> {
+  // Claim Alt+A before any restored project renderer can receive keyboard
+  // input. The first press may arrive before the command-surface window exists;
+  // the gate holds it and opens the real overlay as soon as it is attached.
+  const commandSurfaceGate = createDeferredCommandSurfaceOverlay();
+  startupCommandSurfaceGate = commandSurfaceGate;
+  let earlyShortcutRegistered = false;
+  try {
+    earlyShortcutRegistered = globalShortcut.register('Alt+A', () => {
+      void commandSurfaceGate.overlay.open().then((opened) => {
+        if (!opened.ok) {
+          hostView?.webContents.send('host:event:host-error', {
+            component: 'Global shortcut',
+            what: 'The command surface shortcut could not open the launcher.',
+            known: opened.detail,
+            intact: 'Nothing was changed, and no other application was affected. Papers did not come forward.',
+            retryUseful: true,
+            inspect: 'Shortcuts: bring Papers forward is the Windows Papers.lnk hotkey Alt+Shift+A; open the command surface is Alt+A.',
+            recover: 'Open a Backpack in Papers, then press the shortcut again.',
+          });
+        }
+      }).catch((error: unknown) => {
+        console.error('[papers] startup Alt+A dispatch failed:', error);
+      });
+    });
+  } catch {
+    // The regular registration below records and reports the exact refusal.
+  }
+
   const baseDir = app.getPath('userData');
   const paths = papersPaths(baseDir);
   const workspaceTopologyStore = new WorkspaceTopologyStore(paths);
@@ -2523,6 +2558,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // exits - not even while the rest of teardown is still draining.
       globalInvoke?.release();
       globalInvoke = null;
+      if (earlyShortcutRegistered) globalShortcut.unregister('Alt+A');
+      startupCommandSurfaceGate?.fail('Papers is shutting down before the command surface finished starting');
+      startupCommandSurfaceGate = null;
       globalShortcut.unregister(widgetToCursorAccelerator);
       // A launcher left open would be a focus-holding window with no owner.
       void commandSurfaceOverlay?.destroy().catch(() => undefined);
@@ -2849,8 +2887,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   });
   // Load the launcher renderer while Papers is settling, without showing it or
   // touching foreground focus. Later Alt+A presses reuse this hidden surface.
-  void commandSurfaceOverlay.warm().catch((error) => {
+  const startupOverlay = commandSurfaceOverlay;
+  void startupOverlay.warm().catch((error) => {
     console.error('[papers] command surface warm-up failed:', error);
+  }).finally(() => {
+    // Startup presses wait until warm-up settles, so the first open joins a
+    // fully-loaded renderer instead of racing a second window creation.
+    if (startupCommandSurfaceGate === commandSurfaceGate) commandSurfaceGate.attach(startupOverlay);
   });
 
   // The chord's own open path, shared by the real accelerator and the test seam
@@ -2982,27 +3025,29 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     },
   });
 
+  // Transfer the already-held chord to the normal dispatcher without yielding
+  // to the event loop; the startup callback above has been swallowing and
+  // queueing the first press until the real overlay is available.
+  if (earlyShortcutRegistered) globalShortcut.unregister('Alt+A');
   const shortcutReport = globalInvoke.register();
   globalShortcutReport = shortcutReport;
   if (!shortcutReport.ok) {
     for (const failure of shortcutReport.failures) {
       console.error(`[papers] global shortcut refused: ${failure.message}`);
     }
-    hostView.webContents.once('did-finish-load', () => {
-      for (const failure of shortcutReport.failures) {
-        hostView?.webContents.send('host:event:host-error', {
-          component: 'Global shortcut',
-          what: failure.reason === 'already-registered-by-another-application'
-            ? 'A shortcut key is already taken by another application.'
-            : 'A shortcut key could not be registered.',
-          known: failure.message,
-          intact: 'Papers is running normally; only this shortcut is unavailable.',
-          retryUseful: failure.reason === 'already-registered-by-another-application',
-          inspect: `Requested key: ${failure.accelerator}`,
-          recover: 'Close whichever application owns that key combination, then restart Papers. Papers deliberately does not choose a different key on its own.',
-        });
-      }
-    });
+    for (const failure of shortcutReport.failures) {
+      hostView.webContents.send('host:event:host-error', {
+        component: 'Global shortcut',
+        what: failure.reason === 'already-registered-by-another-application'
+          ? 'A shortcut key is already taken by another application.'
+          : 'A shortcut key could not be registered.',
+        known: failure.message,
+        intact: 'Papers is running normally; only this shortcut is unavailable.',
+        retryUseful: failure.reason === 'already-registered-by-another-application',
+        inspect: `Requested key: ${failure.accelerator}`,
+        recover: 'Close whichever application owns that key combination, then restart Papers. Papers deliberately does not choose a different key on its own.',
+      });
+    }
   }
 
   // Window-dock: hover any ordinary application window and press the chord

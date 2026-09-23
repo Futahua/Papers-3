@@ -174,6 +174,7 @@ export function createCommandSurfaceOverlay(
   let previousForeground: NativeWindowHandle | null = null;
   let closing = false;
   let ipcRegistered = false;
+  let warming: { projectId: string; promise: Promise<{ ok: boolean; detail: string }> } | null = null;
   const ipcHandlers: Array<{ channel: string; handler: (...args: unknown[]) => void }> = [];
 
   const place = (): { x: number; y: number; width: number; height: number } => {
@@ -307,7 +308,7 @@ export function createCommandSurfaceOverlay(
     return { surface, url, ownerWindowId: presentation.ownerWindowId };
   };
 
-  const ensureWarm = async ({ surface, url }: ResolvedSurface): Promise<{ ok: boolean; detail: string }> => {
+  const ensureWarmOnce = async ({ surface, url }: ResolvedSurface): Promise<{ ok: boolean; detail: string }> => {
 
     // A warm overlay keeps its renderer and loaded project state alive. Reuse
     // it while the declared project is unchanged; the bound project identity
@@ -360,6 +361,31 @@ export function createCommandSurfaceOverlay(
     return { ok: true, detail: 'the command surface renderer is warm' };
   };
 
+  const ensureWarm = async (resolved: ResolvedSurface): Promise<{ ok: boolean; detail: string }> => {
+    const pending = warming;
+    if (pending) {
+      if (pending.projectId === resolved.surface.projectId) {
+        const prepared = await pending.promise;
+        if (prepared.ok && window && !window.isDestroyed()) surfaceId = resolved.surface.surfaceId;
+        return prepared;
+      }
+      await pending.promise;
+      return ensureWarm(resolved);
+    }
+    if (window && !window.isDestroyed() && projectId === resolved.surface.projectId) {
+      surfaceId = resolved.surface.surfaceId;
+      return { ok: true, detail: 'the command surface renderer is warm' };
+    }
+
+    const task = { projectId: resolved.surface.projectId, promise: ensureWarmOnce(resolved) };
+    warming = task;
+    try {
+      return await task.promise;
+    } finally {
+      if (warming === task) warming = null;
+    }
+  };
+
   const open = async (): Promise<{ ok: boolean; detail: string }> => {
     const resolved = await resolveSurface();
     if (!('surface' in resolved)) return resolved;
@@ -388,6 +414,7 @@ export function createCommandSurfaceOverlay(
   };
 
   const warm = async (): Promise<{ ok: boolean; detail: string }> => {
+    if (warming) return warming.promise;
     if (window && !window.isDestroyed()) return { ok: true, detail: 'the command surface renderer is warm' };
     const resolved = await resolveSurface();
     if (!('surface' in resolved)) return resolved;
