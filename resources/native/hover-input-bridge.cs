@@ -138,10 +138,10 @@ internal static class HoverInputBridge
                         overlayReadyRequested = false;
                         overlayReadyGeneration = 0;
                         outstandingCaptures.Clear();
+                        overlayOpen = false;
+                        captureOpening = false;
+                        openingWidgetId = 0;
                     }
-                    overlayOpen = false;
-                    captureOpening = false;
-                    openingWidgetId = 0;
                     continue;
                 }
                 if (parts[0] == "OVERLAY" && parts.Length == 3 && parts[1] == "1")
@@ -156,16 +156,17 @@ internal static class HoverInputBridge
                 }
                 if (parts[0] == "OPENING" && parts.Length == 2)
                 {
-                    openingWidgetId = int.Parse(parts[1], CultureInfo.InvariantCulture);
-                    overlayOpen = false;
-                    captureOpening = true;
+                    int senderId = int.Parse(parts[1], CultureInfo.InvariantCulture);
                     lock (captureLock)
                     {
                         overlayReadyRequested = false;
                         overlayReadyGeneration = 0;
                         outstandingCaptures.Clear();
+                        openingWidgetId = senderId;
+                        overlayOpen = false;
+                        captureOpening = true;
                     }
-                    Emit("OPENING_READY\t" + openingWidgetId.ToString(CultureInfo.InvariantCulture));
+                    Emit("OPENING_READY\t" + senderId.ToString(CultureInfo.InvariantCulture));
                     continue;
                 }
                 if (parts[0] == "ACK" && parts.Length == 2)
@@ -219,15 +220,15 @@ internal static class HoverInputBridge
             overlayReadyRequested = false;
             generation = overlayReadyGeneration;
             overlayReadyGeneration = 0;
+            // The hook's capture admission takes this same lock while checking
+            // captureOpening and registering an accepted record. Thus no key
+            // can slip between the empty-set test and this mode transition.
+            overlayOpen = true;
+            captureOpening = false;
+            openingWidgetId = 0;
         }
-        overlayOpen = true;
-        captureOpening = false;
-        openingWidgetId = 0;
         Emit("OVERLAY_READY\t" + generation.ToString(CultureInfo.InvariantCulture));
     }
-
-    private static void TrackCapture(long id)
-    { lock (captureLock) outstandingCaptures.Add(id); }
 
     private static void UpdatePolicies(int id, WidgetPolicy replacement)
     {
@@ -244,17 +245,18 @@ internal static class HoverInputBridge
             Interlocked.Exchange(ref followHandle, IntPtr.Zero);
             followRequested = false;
         }
-        if (replacement == null && openingWidgetId == id)
+        if (replacement == null)
         {
             lock (captureLock)
             {
+                if (openingWidgetId != id) return;
                 outstandingCaptures.Clear();
                 overlayReadyRequested = false;
                 overlayReadyGeneration = 0;
+                overlayOpen = false;
+                captureOpening = false;
+                openingWidgetId = 0;
             }
-            overlayOpen = false;
-            captureOpening = false;
-            openingWidgetId = 0;
         }
     }
 
@@ -339,7 +341,6 @@ internal static class HoverInputBridge
         if (up && swallowedKeys.Remove(key.vkCode)) return new IntPtr(1);
         if (!down) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if (swallowedKeys.Contains(key.vkCode)) return new IntPtr(1); // suppress auto-repeat for consumed physical key
-        if (overlayOpen && !captureOpening) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if ((key.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if ((key.flags & LLKHF_ALTDOWN) != 0 || key.vkCode == VK_Q || isAlt) return CallNextHookEx(hookHandle, code, wParam, lParam);
         WidgetPolicy policy = HitWidget();
@@ -347,27 +348,31 @@ internal static class HoverInputBridge
         bool shifted;
         string text = Translate(key, out shifted);
         if (String.IsNullOrEmpty(text) || Encoding.UTF8.GetByteCount(text) > MAX_TEXT_BYTES) return CallNextHookEx(hookHandle, code, wParam, lParam);
-        if (text == " " && !captureOpening) return CallNextHookEx(hookHandle, code, wParam, lParam);
         string canonical = CanonicalKey(text);
         if (canonical == null) return CallNextHookEx(hookHandle, code, wParam, lParam);
         string binding = (shifted ? "Shift+" : "") + canonical;
-        if (captureOpening)
+        lock (captureLock)
         {
-            if (openingWidgetId != policy.Id) return CallNextHookEx(hookHandle, code, wParam, lParam);
+            if (overlayOpen && !captureOpening) return CallNextHookEx(hookHandle, code, wParam, lParam);
+            if (captureOpening)
+            {
+                if (openingWidgetId != policy.Id) return CallNextHookEx(hookHandle, code, wParam, lParam);
+                swallowedKeys.Add(key.vkCode);
+                long appendId = Interlocked.Increment(ref captureId);
+                outstandingCaptures.Add(appendId);
+                Emit("APPEND\t" + policy.Id.ToString(CultureInfo.InvariantCulture) + "\t" + appendId.ToString(CultureInfo.InvariantCulture) + "\t" + Convert.ToBase64String(Encoding.UTF8.GetBytes(text)));
+                return new IntPtr(1);
+            }
+            if (text == " " || policy.Blocked.Contains(binding)) return CallNextHookEx(hookHandle, code, wParam, lParam);
             swallowedKeys.Add(key.vkCode);
-            long appendId = Interlocked.Increment(ref captureId);
-            TrackCapture(appendId);
-            Emit("APPEND\t" + policy.Id.ToString(CultureInfo.InvariantCulture) + "\t" + appendId.ToString(CultureInfo.InvariantCulture) + "\t" + Convert.ToBase64String(Encoding.UTF8.GetBytes(text)));
+            long id = Interlocked.Increment(ref captureId);
+            outstandingCaptures.Add(id);
+            openingWidgetId = policy.Id;
+            captureOpening = true;
+            overlayOpen = false;
+            Emit("CAPTURE\t" + policy.Id.ToString(CultureInfo.InvariantCulture) + "\t" + id.ToString(CultureInfo.InvariantCulture) + "\t" + Convert.ToBase64String(Encoding.UTF8.GetBytes(text)));
             return new IntPtr(1);
         }
-        if (policy.Blocked.Contains(binding)) return CallNextHookEx(hookHandle, code, wParam, lParam);
-        swallowedKeys.Add(key.vkCode);
-        long id = Interlocked.Increment(ref captureId);
-        TrackCapture(id);
-        openingWidgetId = policy.Id;
-        captureOpening = true;
-        Emit("CAPTURE\t" + policy.Id.ToString(CultureInfo.InvariantCulture) + "\t" + id.ToString(CultureInfo.InvariantCulture) + "\t" + Convert.ToBase64String(Encoding.UTF8.GetBytes(text)));
-        return new IntPtr(1);
     }
 
     private static void FollowTick()

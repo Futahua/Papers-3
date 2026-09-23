@@ -1908,10 +1908,13 @@ async function bootstrap(): Promise<void> {
     const existing = pendingHoverCaptures.get(senderId);
     if (existing) return appendHoverCapture(senderId, text, nativeCapture);
     if (!commandSurfaceOverlay) return { ok: false, detail: 'the command surface is unavailable' };
+    const pending: PendingHoverCapture = { projectId: surface.projectId, opening: true, buffer: [], wake: [] };
+    // Publish the queue before the OPENING_READY round-trip. The focused widget
+    // can deliver more prevented keydowns while the native helper arms; those
+    // appends must have somewhere ordered to wait.
+    pendingHoverCaptures.set(senderId, pending);
     try {
       if (!nativeCapture) await hoverInputBridge?.setCaptureOpening(senderId);
-      const pending: PendingHoverCapture = { projectId: surface.projectId, opening: true, buffer: [], wake: [] };
-      pendingHoverCaptures.set(senderId, pending);
       const opened = await commandSurfaceOverlay.openForProject(surface.projectId, text, nextQuickRunDeliveryId());
       if (!opened.ok) throw new Error(opened.detail);
       const generation = ++quickRunSealSequence;
