@@ -33,6 +33,35 @@ internal sealed class AltQHoldTracker
     }
 }
 
+internal sealed class AltQReleaseWatchdog
+{
+    private readonly UIntPtr timerId;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern UIntPtr SetTimer(IntPtr window, UIntPtr id, uint interval, IntPtr callback);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool KillTimer(IntPtr window, UIntPtr id);
+
+    public AltQReleaseWatchdog(uint requestedId, uint interval)
+    {
+        // With a null HWND, Windows may replace requestedId. Always retain the
+        // returned UINT_PTR for WM_TIMER matching and KillTimer.
+        timerId = SetTimer(IntPtr.Zero, new UIntPtr(requestedId), interval, IntPtr.Zero);
+    }
+
+    public bool IsRunning { get { return !timerId.Equals(UIntPtr.Zero); } }
+
+    public bool IsTimerMessage(UIntPtr messageId)
+    {
+        return IsRunning && timerId.Equals(messageId);
+    }
+
+    public void Stop()
+    {
+        if (IsRunning) KillTimer(IntPtr.Zero, timerId);
+    }
+}
+
 internal static class HoverInputBridge
 {
     private const int WH_KEYBOARD_LL = 13;
@@ -108,8 +137,6 @@ internal static class HoverInputBridge
     [DllImport("user32.dll")] private static extern bool PeekMessage(out MSG message, IntPtr window, uint min, uint max, uint remove);
     [DllImport("user32.dll")] private static extern bool TranslateMessage(ref MSG message);
     [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref MSG message);
-    [DllImport("user32.dll", SetLastError = true)] private static extern uint SetTimer(IntPtr window, UIntPtr id, uint interval, IntPtr callback);
-    [DllImport("user32.dll")] private static extern bool KillTimer(IntPtr window, UIntPtr id);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out RECT rect);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
@@ -399,11 +426,11 @@ internal static class HoverInputBridge
         MSG queueMessage; PeekMessage(out queueMessage, IntPtr.Zero, 0, 0, PM_NOREMOVE);
         hookHandle = SetWindowsHookEx(WH_KEYBOARD_LL, hookCallback, IntPtr.Zero, 0);
         bool hotkey = RegisterHotKey(IntPtr.Zero, HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, VK_Q);
-        uint releaseWatchdog = SetTimer(IntPtr.Zero, new UIntPtr(ALTQ_RELEASE_WATCHDOG_ID), 12, IntPtr.Zero);
+        var releaseWatchdog = new AltQReleaseWatchdog(ALTQ_RELEASE_WATCHDOG_ID, 12);
         if (hookHandle == IntPtr.Zero) Emit("ERROR\thook-install-failed");
         else Emit("READY\t" + (hotkey ? "1" : "0"));
         if (!hotkey) Emit("ERROR\talt-q-registration-failed");
-        if (releaseWatchdog == 0) Emit("ERROR\talt-q-release-watchdog-failed");
+        if (!releaseWatchdog.IsRunning) Emit("ERROR\talt-q-release-watchdog-failed");
         Thread reader = new Thread(ReadCommands); reader.IsBackground = true; reader.Start();
         MSG message;
         int result;
@@ -419,11 +446,11 @@ internal static class HoverInputBridge
                     Emit("ALTQ");
                 }
             }
-            else if (message.message == WM_TIMER && message.wParam.ToUInt64() == ALTQ_RELEASE_WATCHDOG_ID)
+            else if (message.message == WM_TIMER && releaseWatchdog.IsTimerMessage(message.wParam))
                 ReleaseAltQIfKeysAreUp();
             TranslateMessage(ref message); DispatchMessage(ref message); FlushOutput();
         }
-        if (releaseWatchdog != 0) KillTimer(IntPtr.Zero, new UIntPtr(ALTQ_RELEASE_WATCHDOG_ID));
+        releaseWatchdog.Stop();
         UnregisterHotKey(IntPtr.Zero, HOTKEY_ID);
         if (hookHandle != IntPtr.Zero) UnhookWindowsHookEx(hookHandle);
         FlushOutput();
