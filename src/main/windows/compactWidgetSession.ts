@@ -40,9 +40,13 @@ export interface CompactWidgetWindow {
   getBounds(): WindowBounds;
   setContentSize(width: number, height: number): void;
   focus(): void;
+  isFocused(): boolean;
   isMinimized(): boolean;
+  isVisible(): boolean;
   restore(): void;
-  showInactive(): void;
+  show(): void;
+  moveTop(): void;
+  getNativeWindowHandle(): Buffer;
   isDestroyed(): boolean;
   destroy(): void;
   on(event: 'closed' | 'focus', callback: () => void): void;
@@ -63,6 +67,9 @@ export interface CompactWidgetSessionDependencies {
     removeListener(channel: string, handler: (event: { sender: { id: number } }, payload?: unknown) => void): void;
   };
   createWindow: (options: { bounds: WindowBounds; preloadPath: string; projectId: string; layoutKey: string; owningWindowId: number }) => CompactWidgetWindow;
+  /** Activate a widget after positioning it. Must report whether it actually
+   * became the foreground window, rather than trusting Electron's focus call. */
+  activateWindow: (window: CompactWidgetWindow) => Promise<boolean>;
   preloadPath: string;
   /** Owner-scoped: two Papers windows may show one project, and each has its
    * own project runtime, so the entry URL cannot be derived from the project
@@ -77,7 +84,7 @@ export interface CompactWidgetSession {
   ready(senderId: number, payload: unknown): boolean;
   focus(projectId: string, layoutKey: string, owningWindowId: number): boolean;
   /** Restore the most recently opened/focused widget at the current pointer. */
-  bringLatestToCursor(): boolean;
+  bringLatestToCursor(): Promise<boolean>;
   close(projectId: string, layoutKey: string, owningWindowId: number): Promise<void>;
   /**
    * Destroy every widget belonging to one Papers window.
@@ -268,16 +275,17 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       entry.window.focus();
       return true;
     },
-    bringLatestToCursor() {
+    async bringLatestToCursor() {
       const entry = latestWidgetKey === null ? undefined : entries.get(latestWidgetKey);
       if (!entry || entry.closing || entry.window.isDestroyed()) return false;
       const point = deps.screen.getCursorScreenPoint();
-      if (entry.window.isMinimized()) entry.window.restore();
       const bounds = entry.window.getBounds();
       entry.window.setBounds({ ...bounds, x: Math.round(point.x), y: Math.round(point.y) });
-      entry.window.showInactive();
-      entry.window.focus();
-      return true;
+      try {
+        return await deps.activateWindow(entry.window);
+      } catch {
+        return false;
+      }
     },
     async close(projectId, layoutKey, owningWindowId) {
       const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
