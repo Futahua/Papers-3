@@ -330,9 +330,15 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       return restoreAndFocus(entry);
     },
     minimize(projectId, layoutKey, owningWindowId) {
-      const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
+      const key = keyOf(projectId, layoutKey, owningWindowId);
+      const entry = entries.get(key);
       if (!entry || entry.closing || entry.window.isDestroyed()) return false;
       stopFollowing();
+      // Docking is an explicit user action on this widget. Keep that exact
+      // instance as the Alt+Q target even if another widget was focused most
+      // recently (for example, while the AYG pill tray was handling the
+      // minimize request).
+      latestWidgetKey = key;
       entry.window.minimize();
       return entry.window.isMinimized();
     },

@@ -251,6 +251,22 @@ describe('compact widget session', () => {
     h.session.stopFollowing();
   });
 
+  it('Alt+Q restores the widget that was explicitly pill-docked, not another recently focused widget', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 1 });
+    const pillDocked = h.windows[0]!;
+    const otherWidget = h.windows[1]!;
+
+    expect(h.session.minimize('bp-a', 'layout-a', 1)).toBe(true);
+    expect(await h.session.bringLatestToCursor()).toBe(true);
+
+    expect(pillDocked.restore).toHaveBeenCalledOnce();
+    expect(otherWidget.restore).not.toHaveBeenCalled();
+    expect(pillDocked.isVisible()).toBe(true);
+    h.session.stopFollowing();
+  });
+
   it('reopening a pill restores and focuses the existing native widget instead of duplicating it', async () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
