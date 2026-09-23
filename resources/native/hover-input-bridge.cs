@@ -9,6 +9,30 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
+internal sealed class AltQHoldTracker
+{
+    private bool active;
+
+    public bool Begin()
+    {
+        if (active) return false;
+        active = true;
+        return true;
+    }
+
+    public bool Release()
+    {
+        if (!active) return false;
+        active = false;
+        return true;
+    }
+
+    public bool ReleaseIfKeysAreUp(bool chordHeld)
+    {
+        return !chordHeld && Release();
+    }
+}
+
 internal static class HoverInputBridge
 {
     private const int WH_KEYBOARD_LL = 13;
@@ -17,6 +41,7 @@ internal static class HoverInputBridge
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_SYSKEYUP = 0x0105;
     private const int WM_HOTKEY = 0x0312;
+    private const int WM_TIMER = 0x0113;
     private const int WM_QUIT = 0x0012;
     private const int VK_Q = 0x51;
     private const int VK_MENU = 0x12;
@@ -33,6 +58,7 @@ internal static class HoverInputBridge
     private const uint MOD_ALT = 0x0001;
     private const uint MOD_NOREPEAT = 0x4000;
     private const uint GA_ROOT = 2;
+    private const uint ALTQ_RELEASE_WATCHDOG_ID = 0x5042;
     private const int HOTKEY_ID = 0x5041;
     private const uint PM_NOREMOVE = 0x0000;
     private const int MAX_TEXT_BYTES = 512;
@@ -65,6 +91,7 @@ internal static class HoverInputBridge
     private static readonly HookProc hookCallback = KeyboardHook;
     private static IntPtr hookHandle = IntPtr.Zero;
     private static uint mainThreadId;
+    private static readonly AltQHoldTracker altQHold = new AltQHoldTracker();
     private static volatile bool overlayOpen;
     private static volatile bool captureOpening;
     private static volatile int openingWidgetId;
@@ -81,6 +108,8 @@ internal static class HoverInputBridge
     [DllImport("user32.dll")] private static extern bool PeekMessage(out MSG message, IntPtr window, uint min, uint max, uint remove);
     [DllImport("user32.dll")] private static extern bool TranslateMessage(ref MSG message);
     [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref MSG message);
+    [DllImport("user32.dll", SetLastError = true)] private static extern uint SetTimer(IntPtr window, UIntPtr id, uint interval, IntPtr callback);
+    [DllImport("user32.dll")] private static extern bool KillTimer(IntPtr window, UIntPtr id);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out RECT rect);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
@@ -105,6 +134,20 @@ internal static class HoverInputBridge
             try { Console.Out.WriteLine(line); Console.Out.Flush(); }
             catch { /* parent exited; shutdown is handled by stdin */ }
         }
+    }
+
+    private static bool IsAltQPhysicallyHeld()
+    {
+        bool qDown = (GetAsyncKeyState(VK_Q) & 0x8000) != 0;
+        bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0
+            || (GetAsyncKeyState(VK_LMENU) & 0x8000) != 0
+            || (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0;
+        return qDown && altDown;
+    }
+
+    private static void ReleaseAltQIfKeysAreUp()
+    {
+        if (altQHold.ReleaseIfKeysAreUp(IsAltQPhysicallyHeld())) Emit("ALTQ_RELEASE");
     }
 
     private static WidgetPolicy[] Snapshot()
@@ -308,7 +351,7 @@ internal static class HoverInputBridge
         if (!down && !up) return CallNextHookEx(hookHandle, code, wParam, lParam);
         KBDLLHOOKSTRUCT key = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
         bool isAlt = key.vkCode == VK_MENU || key.vkCode == VK_LMENU || key.vkCode == VK_RMENU;
-        if (up && (key.vkCode == VK_Q || isAlt))
+        if (up && (key.vkCode == VK_Q || isAlt) && altQHold.Release())
         {
             Emit("ALTQ_RELEASE");
         }
@@ -356,9 +399,11 @@ internal static class HoverInputBridge
         MSG queueMessage; PeekMessage(out queueMessage, IntPtr.Zero, 0, 0, PM_NOREMOVE);
         hookHandle = SetWindowsHookEx(WH_KEYBOARD_LL, hookCallback, IntPtr.Zero, 0);
         bool hotkey = RegisterHotKey(IntPtr.Zero, HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, VK_Q);
+        uint releaseWatchdog = SetTimer(IntPtr.Zero, new UIntPtr(ALTQ_RELEASE_WATCHDOG_ID), 12, IntPtr.Zero);
         if (hookHandle == IntPtr.Zero) Emit("ERROR\thook-install-failed");
         else Emit("READY\t" + (hotkey ? "1" : "0"));
         if (!hotkey) Emit("ERROR\talt-q-registration-failed");
+        if (releaseWatchdog == 0) Emit("ERROR\talt-q-release-watchdog-failed");
         Thread reader = new Thread(ReadCommands); reader.IsBackground = true; reader.Start();
         MSG message;
         int result;
@@ -366,11 +411,19 @@ internal static class HoverInputBridge
         {
             if (message.message == WM_HOTKEY && message.wParam.ToUInt64() == HOTKEY_ID)
             {
-                // Main-process Electron code owns cursor-follow so cursor and window bounds use the same DPI units.
-                Emit("ALTQ");
+                // The registered hotkey can be dequeued after the physical key-up
+                // callback. The timer below repairs that ordering by polling the
+                // actual key state after the start record has been emitted.
+                if (altQHold.Begin())
+                {
+                    Emit("ALTQ");
+                }
             }
+            else if (message.message == WM_TIMER && message.wParam.ToUInt64() == ALTQ_RELEASE_WATCHDOG_ID)
+                ReleaseAltQIfKeysAreUp();
             TranslateMessage(ref message); DispatchMessage(ref message); FlushOutput();
         }
+        if (releaseWatchdog != 0) KillTimer(IntPtr.Zero, new UIntPtr(ALTQ_RELEASE_WATCHDOG_ID));
         UnregisterHotKey(IntPtr.Zero, HOTKEY_ID);
         if (hookHandle != IntPtr.Zero) UnhookWindowsHookEx(hookHandle);
         FlushOutput();
