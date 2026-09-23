@@ -77,6 +77,9 @@ export interface CompactWidgetSessionDependencies {
   resolveEntryUrl: (projectId: string, owningWindowId: number) => string | null;
   isSurfaceOrigin?: (senderId: number, projectId: string) => boolean;
   onSurfaceClosed?: (projectId: string, layoutKey: string, owningWindowId: number) => void;
+  onWidgetRegistered?: (senderId: number, nativeHandle: Buffer) => void;
+  onWidgetRemoved?: (senderId: number) => void;
+  onFollowTarget?: (senderId: number, nativeHandle: Buffer) => void;
 }
 
 export interface CompactWidgetSession {
@@ -165,6 +168,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       latestWidgetKey = remainingKeys[remainingKeys.length - 1] ?? null;
     }
     if (activeDrag?.senderId === entry.window.webContents.id) activeDrag = null;
+    deps.onWidgetRemoved?.(entry.window.webContents.id);
     deps.registry.unregister(entry.window.webContents.id);
     if (!entry.window.isDestroyed()) entry.window.destroy();
     deps.onSurfaceClosed?.(entry.projectId, entry.layoutKey, entry.owningWindowId);
@@ -250,6 +254,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       catch { if (!window.isDestroyed()) window.destroy(); return { ok: false, error: 'widget surface registration failed' }; }
       const entry: WidgetEntry = { projectId: request.projectId, layoutKey: request.layoutKey, owningWindowId: request.owningWindowId, window, closing: false };
       entries.set(key, entry);
+      deps.onWidgetRegistered?.(window.webContents.id, window.getNativeWindowHandle());
       latestWidgetKey = key;
       window.on('focus', () => {
         if (entries.get(key) === entry) latestWidgetKey = key;
@@ -280,7 +285,12 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       if (!entry || entry.closing || entry.window.isDestroyed()) return false;
       const point = deps.screen.getCursorScreenPoint();
       const bounds = entry.window.getBounds();
-      entry.window.setBounds({ ...bounds, x: Math.round(point.x), y: Math.round(point.y) });
+      entry.window.setBounds({
+        ...bounds,
+        x: Math.round(point.x - bounds.width / 2),
+        y: Math.round(point.y - bounds.height / 2),
+      });
+      deps.onFollowTarget?.(entry.window.webContents.id, entry.window.getNativeWindowHandle());
       try {
         return await deps.activateWindow(entry.window);
       } catch {

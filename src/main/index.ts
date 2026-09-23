@@ -86,6 +86,7 @@ import {
   type CommandSurfaceOverlaySession,
 } from './windows/commandSurfaceOverlay';
 import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './windows/foregroundBridge';
+import { createHoverInputBridge, resolveHoverInputBridgeSourcePath, type HoverInputBridge } from './windows/hoverInputBridge';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
@@ -1685,6 +1686,7 @@ async function bootstrap(): Promise<void> {
   // (projectId, layoutKey), opened/focused by the registered live workspace via
   // opaque bounded keys. Papers binds identities and routes bounded opaque
   // messages only; it never parses AYG state or commands.
+  let hoverInputBridge: HoverInputBridge | null = null;
   widgetSession = createCompactWidgetSession({
     registry: widgetRegistry,
     screen: {
@@ -1776,6 +1778,9 @@ async function bootstrap(): Promise<void> {
       bindOwnedProjectSurface(widgetWindow, projectId, 'widget', owningWindowId);
       return widgetWindow;
     },
+    onWidgetRegistered: (senderId, handle) => hoverInputBridge?.registerWidget(senderId, handle),
+    onWidgetRemoved: (senderId) => hoverInputBridge?.removeWidget(senderId),
+    onFollowTarget: (senderId, handle) => hoverInputBridge?.setFollowTarget(senderId, handle),
     isSurfaceOrigin: (senderId, projectId) => {
       const contents = webContents.fromId(senderId);
       if (!contents || contents.isDestroyed()) return false;
@@ -1788,16 +1793,61 @@ async function bootstrap(): Promise<void> {
     },
   });
   widgetSession.registerIpc();
-  const widgetToCursorAccelerator = 'Alt+Q';
-  if (!globalShortcut.register(widgetToCursorAccelerator, () => {
-    void widgetSession?.bringLatestToCursor().then((activated) => {
-      if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
-    }).catch((error: unknown) => {
-      console.warn('[papers] Alt+Q widget activation rejected', error);
-    });
-  })) {
-    console.error(`[papers] global shortcut refused: ${widgetToCursorAccelerator} is already registered or unusable; widget-to-cursor is unavailable`);
-  }
+  const pendingHoverCaptures = new Map<number, {
+    projectId: string;
+    opening: boolean;
+    buffered: Array<{ captureId: string; text: string }>;
+  }>();
+  hoverInputBridge = createHoverInputBridge({
+    cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
+    sourcePath: resolveHoverInputBridgeSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
+    onAltQ: () => {
+      void widgetSession?.bringLatestToCursor().then((activated) => {
+        if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
+      }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
+    },
+    onCaptured: (senderId, captureId, text) => {
+      hoverInputBridge?.setOverlayOpen(true);
+      const surface = widgetRegistry.surface(senderId);
+      if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND) {
+        hoverInputBridge?.setOverlayOpen(false);
+        return;
+      }
+      const overlay = commandSurfaceOverlay;
+      if (!overlay) {
+        hoverInputBridge?.setOverlayOpen(false);
+        return;
+      }
+      const pending = { projectId: surface.projectId, opening: true, buffered: [] as Array<{ captureId: string; text: string }> };
+      pendingHoverCaptures.set(senderId, pending);
+      void overlay.openForProject(surface.projectId, text, captureId).then((opened) => {
+        if (!opened.ok) console.warn(`[papers] hover type-to-run was not opened: ${opened.detail}`);
+        if (!opened.ok) {
+          pendingHoverCaptures.delete(senderId);
+          hoverInputBridge?.setOverlayOpen(false);
+          return;
+        }
+        pending.opening = false;
+        for (const buffered of pending.buffered.splice(0)) {
+          void overlay.appendForProject(pending.projectId, buffered.text, buffered.captureId);
+        }
+      }).catch((error: unknown) => {
+        pendingHoverCaptures.delete(senderId);
+        hoverInputBridge?.setOverlayOpen(false);
+        console.warn('[papers] hover type-to-run failed', error);
+      });
+    },
+    onAppended: (senderId, captureId, text) => {
+      const pending = pendingHoverCaptures.get(senderId);
+      if (!pending) return;
+      if (pending.opening) {
+        if (pending.buffered.length < 64) pending.buffered.push({ captureId, text });
+        return;
+      }
+      void commandSurfaceOverlay?.appendForProject(pending.projectId, text, captureId);
+    },
+    onError: (message) => console.warn(`[papers] ${message}`),
+  });
   const widgetPreviewWindows = new Map<number, BrowserWindow>();
   type CandidatePickerSession = {
     window: BrowserWindow;
@@ -1816,6 +1866,7 @@ async function bootstrap(): Promise<void> {
     session: widgetSession,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     windowIdForWorkspaceSender: windowIdForProjectSender,
+    setHoverPolicy: (senderId, enabled, blockedBindings) => hoverInputBridge?.setPolicy(senderId, enabled, blockedBindings),
     hidePreview: hideWidgetPreview,
     dismissCandidatePicker: (sender) => {
       const active = candidatePickerSessions.get(sender.id);
@@ -2574,7 +2625,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       if (earlyShortcutRegistered) globalShortcut.unregister('Alt+A');
       startupCommandSurfaceGate?.fail('Papers is shutting down before the command surface finished starting');
       startupCommandSurfaceGate = null;
-      globalShortcut.unregister(widgetToCursorAccelerator);
+      hoverInputBridge?.close();
+      hoverInputBridge = null;
       // A launcher left open would be a focus-holding window with no owner.
       void commandSurfaceOverlay?.destroy().catch(() => undefined);
       commandSurfaceOverlay = null;
@@ -2781,6 +2833,14 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     // The registry's refusal is carried out verbatim: it names the Backpacks it
     // looked at, which is the only thing the creator cannot check for themselves.
     resolveCommandSurface: () => commandSurfaceRegistry.resolve(),
+    resolveProjectCommandSurface: async (projectId) => {
+      const target = await commandSurfaceRegistry.resolveProject(projectId);
+      return target ? { ok: true, target } : null;
+    },
+    onClosed: () => {
+      pendingHoverCaptures.clear();
+      hoverInputBridge?.setOverlayOpen(false);
+    },
     onTargetResolved: (target, ownerWindowId) => {
       const owner = papersWindows.get(ownerWindowId);
       if (!owner?.owned.projectSurfaces.entryUrlForProject(target.projectId)) {
@@ -2888,6 +2948,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       return overlayWindow;
     },
     deliver: (senderId, payload) => {
+      hoverInputBridge?.setOverlayOpen(true);
       const contents = webContents.fromId(senderId);
       if (!contents || contents.isDestroyed()) return;
       contents.send(COMMAND_SURFACE_INVOKE_CHANNEL, payload);

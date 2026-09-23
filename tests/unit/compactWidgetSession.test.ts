@@ -35,7 +35,7 @@ class FakeWindow {
   loadURL = vi.fn(async (url: string) => { this.loadedUrls.push(url); });
 }
 
-function harness() {
+function harness(cursor = { x: 537, y: 284 }) {
   const registry = new BackpackSurfaceRegistry();
   registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
   const windows: FakeWindow[] = [];
@@ -44,7 +44,7 @@ function harness() {
   const screen = {
     getAllDisplays: () => [{ x: 0, y: 0, width: 1200, height: 800 }],
     getPrimaryDisplay: () => ({ x: 0, y: 0, width: 1200, height: 800 }),
-    getCursorScreenPoint: () => ({ x: 537, y: 284 }),
+    getCursorScreenPoint: () => ({ ...cursor }),
     on: vi.fn((event: string, handler: () => void) => { screenListeners.set(event, handler); }),
     removeListener: vi.fn(),
   };
@@ -196,12 +196,28 @@ describe('compact widget session', () => {
     target.minimized = true;
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
-    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 537, y: 284, width: 420, height: 180 });
+    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 194, width: 420, height: 180 });
     expect(target.restore).toHaveBeenCalledOnce();
     expect(target.show).toHaveBeenCalledOnce();
     expect(target.focus).toHaveBeenCalled();
     expect(target.moveTop).toHaveBeenCalledOnce();
     expect(h.windows[1]!.restore).not.toHaveBeenCalled();
+  });
+
+  it('keeps the cursor at the widget center at screen edges rather than clamping', async () => {
+    const h = harness({ x: 2, y: 4 });
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+
+    expect(await h.session.bringLatestToCursor()).toBe(true);
+    expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: -208, y: -86, width: 420, height: 180 });
+  });
+
+  it('keeps the cursor centered beyond the right and bottom display edges', async () => {
+    const h = harness({ x: 1198, y: 798 });
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+
+    expect(await h.session.bringLatestToCursor()).toBe(true);
+    expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: 988, y: 708, width: 420, height: 180 });
   });
 
   it('reports a refused activation instead of claiming Alt+Q succeeded', async () => {

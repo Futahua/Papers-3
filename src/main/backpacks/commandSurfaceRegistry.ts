@@ -113,6 +113,7 @@ export interface CommandSurfaceRegistryDependencies {
 
 export interface CommandSurfaceRegistry {
   resolve(): Promise<LauncherResolution>;
+  resolveProject(projectId: string): Promise<LauncherTarget | null>;
   nominate(projectId: string | null): void;
   nominatedProjectId(): string | null;
 }
@@ -214,6 +215,11 @@ export function createCommandSurfaceRegistry(
   };
 
   return {
+    async resolveProject(projectId: string): Promise<LauncherTarget | null> {
+      if (!dependencies.openProjects().some((project) => project.projectId === projectId)) return null;
+      const match = (await declaredProjects()).find((project) => project.projectId === projectId);
+      return match ? { projectId: match.projectId, surfaceId: match.declaration.surface } : null;
+    },
     async resolve(): Promise<LauncherResolution> {
       const open = dependencies.openProjects();
 

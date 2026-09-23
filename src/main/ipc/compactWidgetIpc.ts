@@ -21,6 +21,7 @@ export interface CompactWidgetIpcDependencies {
    */
   windowIdForWorkspaceSender: (sender: WebContents) => number | null;
   isWidgetSender: (sender: WebContents, projectId: string) => boolean;
+  setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => void;
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
@@ -65,7 +66,7 @@ function ensureWorkspaceSurface(
   registry.register(senderId, projectId, WORKSPACE_SURFACE_KIND);
 }
 
-export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
+export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, setHoverPolicy, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
   ipcMain.handle('papers:backpack:widget-open', async (event, raw) => {
     await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget open payload is malformed');
@@ -141,6 +142,22 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
       throw new Error('denied: sender is not the registered widget');
     }
     session.resizeFromSender(event.sender.id, token, Math.round(width), Math.round(height));
+    return { ok: true };
+  });
+
+  ipcMain.handle('papers:backpack:widget-hover-policy', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
+    if (!object(raw) || !exact(raw, ['token', 'enabled', 'blockedBindings'])) throw new Error('widget hover policy is malformed');
+    const token = key(raw.token, 'token');
+    if (typeof raw.enabled !== 'boolean' || !Array.isArray(raw.blockedBindings) || raw.blockedBindings.length > 256
+      || raw.blockedBindings.some((binding) => typeof binding !== 'string' || binding.length < 1 || binding.length > 64 || !/^(?:Shift\+)?[^+\t\r\n]+$/.test(binding))) {
+      throw new Error('widget hover policy is malformed');
+    }
+    const surface = registry.surface(event.sender.id);
+    if (!surface || !isWidgetSender(event.sender, surface.projectId) || !registry.validSender(event.sender.id, surface.projectId, token)) {
+      throw new Error('denied: sender is not the registered widget');
+    }
+    setHoverPolicy?.(event.sender.id, raw.enabled, [...new Set(raw.blockedBindings as string[])]);
     return { ok: true };
   });
 

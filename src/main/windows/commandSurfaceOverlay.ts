@@ -119,8 +119,12 @@ export interface CommandSurfaceOverlayDependencies {
     projectId: string;
     surfaceId: string;
     chord: 'invoke';
-    reason: 'global-accelerator';
+    reason: 'global-accelerator' | 'hover-type-to-run' | 'hover-type-to-run-append';
+    initialText?: string;
+    appendText?: string;
+    captureId?: string;
   }): void;
+  resolveProjectCommandSurface?(projectId: string): Promise<CommandSurfaceResolution | null> | CommandSurfaceResolution | null;
   onClosed?(reason: OverlayCloseReason): void;
   /** Reports what happened to focus, so a failure is visible rather than felt. */
   report?(report: { outcome: 'focus-restored' | 'focus-not-restored' | 'focus-unknown'; detail: string }): void;
@@ -139,6 +143,8 @@ export interface CommandSurfaceOverlayDependencies {
 
 export interface CommandSurfaceOverlaySession {
   open(): Promise<{ ok: boolean; detail: string }>;
+  openForProject(projectId: string, initialText: string, captureId: string): Promise<{ ok: boolean; detail: string }>;
+  appendForProject(projectId: string, text: string, captureId: string): Promise<{ ok: boolean; detail: string }>;
   /** Load the renderer hidden so the first real invocation is warm. */
   warm(): Promise<{ ok: boolean; detail: string }>;
   close(reason: OverlayCloseReason): Promise<void>;
@@ -236,12 +242,13 @@ export function createCommandSurfaceOverlay(
    * again and let the project clear itself. A repeat that only refocused the
    * window left the project with no event at all - the reported defect.
    */
-  const deliverInvoke = (target: OverlayNativeWindow, project: string, surface: string): void => {
+  const deliverInvoke = (target: OverlayNativeWindow, project: string, surface: string, seed?: { text: string; captureId: string; append?: boolean }): void => {
     dependencies.deliver?.(target.webContents.id, {
       projectId: project,
       surfaceId: surface,
       chord: 'invoke',
-      reason: 'global-accelerator',
+      reason: seed ? (seed.append ? 'hover-type-to-run-append' : 'hover-type-to-run') : 'global-accelerator',
+      ...(seed ? { ...(seed.append ? { appendText: seed.text } : { initialText: seed.text }), captureId: seed.captureId } : {}),
     });
   };
 
@@ -284,15 +291,7 @@ export function createCommandSurfaceOverlay(
 
   type ResolvedSurface = { surface: CommandSurfaceTarget; url: string; ownerWindowId: number };
 
-  const resolveSurface = async (): Promise<ResolvedSurface | { ok: false; detail: string }> => {
-    const resolution = await dependencies.resolveCommandSurface();
-    if (!resolution.ok) {
-      // The refusal's own words, not a summary of them. The creator needs to
-      // know which Backpack was looked at, because they cannot see the front tab.
-      return { ok: false, detail: resolution.detail };
-    }
-    const surface = resolution.target;
-
+  const resolveSurfaceForTarget = async (surface: CommandSurfaceTarget): Promise<ResolvedSurface | { ok: false; detail: string }> => {
     const presentation = dependencies.resolveEntryUrl(surface.projectId);
     if (presentation === null) {
       return { ok: false, detail: 'the focused project has no surface to show the command surface in' };
@@ -306,6 +305,12 @@ export function createCommandSurfaceOverlay(
     }
 
     return { surface, url, ownerWindowId: presentation.ownerWindowId };
+  };
+
+  const resolveSurface = async (): Promise<ResolvedSurface | { ok: false; detail: string }> => {
+    const resolution = await dependencies.resolveCommandSurface();
+    if (!resolution.ok) return { ok: false, detail: resolution.detail };
+    return resolveSurfaceForTarget(resolution.target);
   };
 
   const ensureWarmOnce = async ({ surface, url }: ResolvedSurface): Promise<{ ok: boolean; detail: string }> => {
@@ -413,6 +418,44 @@ export function createCommandSurfaceOverlay(
     return { ok: true, detail: 'the command surface is open over the current application' };
   };
 
+  const openForProject = async (project: string, text: string, capture: string): Promise<{ ok: boolean; detail: string }> => {
+    if ([...text].length !== 1 || Buffer.byteLength(text, 'utf8') > 8 || !/^\d{1,20}$/.test(capture)) {
+      return { ok: false, detail: 'the captured character was malformed' };
+    }
+    if (window && !window.isDestroyed() && window.isVisible() && projectId === project && surfaceId !== null) {
+      window.focus();
+      deliverInvoke(window, project, surfaceId, { text, captureId: capture });
+      return { ok: true, detail: 'the command surface was already open' };
+    }
+    const resolution = await dependencies.resolveProjectCommandSurface?.(project);
+    if (!resolution?.ok) return { ok: false, detail: resolution && !resolution.ok ? resolution.detail : 'the widget project has no declared command surface' };
+    const resolved = await resolveSurfaceForTarget(resolution.target);
+    if (!('surface' in resolved)) return resolved;
+    dependencies.onTargetResolved?.(resolved.surface, resolved.ownerWindowId);
+    const prepared = await ensureWarm(resolved);
+    if (!prepared.ok || !window || window.isDestroyed()) return prepared;
+    if (dependencies.focusBridge) {
+      try { previousForeground = await dependencies.focusBridge.foregroundWindow(); }
+      catch { previousForeground = null; }
+    }
+    window.setBounds(place());
+    window.show();
+    window.focus();
+    deliverInvoke(window, resolved.surface.projectId, resolved.surface.surfaceId, { text, captureId: capture });
+    return { ok: true, detail: 'the command surface opened with the captured character' };
+  };
+
+  const appendForProject = async (project: string, text: string, capture: string): Promise<{ ok: boolean; detail: string }> => {
+    if ([...text].length !== 1 || Buffer.byteLength(text, 'utf8') > 8 || !/^\d{1,20}$/.test(capture)) {
+      return { ok: false, detail: 'the appended character was malformed' };
+    }
+    if (!window || window.isDestroyed() || !window.isVisible() || projectId !== project || surfaceId === null) {
+      return { ok: false, detail: 'the command surface is not open for this widget project' };
+    }
+    deliverInvoke(window, project, surfaceId, { text, captureId: capture, append: true });
+    return { ok: true, detail: 'the captured character was appended' };
+  };
+
   const warm = async (): Promise<{ ok: boolean; detail: string }> => {
     if (warming) return warming.promise;
     if (window && !window.isDestroyed()) return { ok: true, detail: 'the command surface renderer is warm' };
@@ -437,6 +480,14 @@ export function createCommandSurfaceOverlay(
         return { ok: true, detail: 'the command surface was already open' };
       }
       return open();
+    },
+
+    async openForProject(project, initialText, captureId) {
+      return openForProject(project, initialText, captureId);
+    },
+
+    async appendForProject(project, text, captureId) {
+      return appendForProject(project, text, captureId);
     },
 
     async warm() {

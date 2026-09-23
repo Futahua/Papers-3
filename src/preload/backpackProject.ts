@@ -6,7 +6,7 @@ interface ProjectMessage {
    * credential. */
   destination?: unknown; method?: string;
   headers?: Record<string, string>;
-  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
+  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -500,6 +500,19 @@ window.addEventListener('message', (event) => {
       width: Math.round(width),
       height: Math.round(height),
     }).then((payload) => ({ size: payload }));
+  }
+  if (request.type === 'papers:project:widget-hover-policy') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'enabled', 'blockedBindings']) || !widgetToken
+      || typeof request.enabled !== 'boolean' || !Array.isArray(request.blockedBindings) || request.blockedBindings.length > 256
+      || request.blockedBindings.some((binding) => typeof binding !== 'string')) {
+      immediateHostError(request.requestId, event.origin, 'widget hover policy is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-hover-policy', {
+      token: widgetToken,
+      enabled: request.enabled,
+      blockedBindings: request.blockedBindings,
+    });
   }
   if (request.type === 'papers:project:widget-preview-show') {
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'imageUrl', 'title', 'width', 'height', 'anchor']) || !widgetToken) {

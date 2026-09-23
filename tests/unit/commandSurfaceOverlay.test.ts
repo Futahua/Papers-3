@@ -199,6 +199,24 @@ describe('commandSurfaceOverlay opening', () => {
     });
   });
 
+  it('opens the exact widget project with the captured first character and appends follow-up keys', async () => {
+    const h = harness({
+      resolveProjectCommandSurface: async (projectId) => projectId === 'project-a'
+        ? { ok: true, target: { projectId, surfaceId: 'surface-1' } }
+        : null,
+    });
+    const overlay = createCommandSurfaceOverlay(h.deps);
+    expect(await overlay.openForProject('project-a', 'v', '10')).toMatchObject({ ok: true });
+    expect(h.delivered.at(-1)?.payload).toMatchObject({
+      reason: 'hover-type-to-run', initialText: 'v', captureId: '10',
+    });
+    expect(await overlay.appendForProject('project-a', 'i', '11')).toMatchObject({ ok: true });
+    expect(h.delivered.at(-1)?.payload).toMatchObject({
+      reason: 'hover-type-to-run-append', appendText: 'i', captureId: '11',
+    });
+    expect(await overlay.appendForProject('project-b', 'x', '12')).toMatchObject({ ok: false });
+  });
+
   it('places the overlay inside the work area it is given, near the top', async () => {
     const h = harness({ placeOn: () => ({ x: 100, y: 50, width: 1000, height: 800 }) });
     const overlay = createCommandSurfaceOverlay(h.deps);
