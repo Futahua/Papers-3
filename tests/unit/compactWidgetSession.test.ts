@@ -199,7 +199,7 @@ describe('compact widget session', () => {
     target.visible = false;
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
-    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 194, width: 420, height: 180 });
+    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 115, width: 420, height: 180 });
     expect(target.restore).toHaveBeenCalledOnce();
     expect(target.show).not.toHaveBeenCalled();
     expect(target.restore.mock.invocationCallOrder[0]).toBeLessThan(target.setBounds.mock.invocationCallOrder[0]!);
@@ -210,7 +210,7 @@ describe('compact widget session', () => {
     h.session.stopFollowing();
   });
 
-  it('follows the pointer while Alt+Q is held and stops immediately on release', async () => {
+  it('keeps the bottom control-strip center under the pointer while Alt+Q is held', async () => {
     vi.useFakeTimers();
     try {
       const cursor = { x: 537, y: 284 };
@@ -218,12 +218,12 @@ describe('compact widget session', () => {
       await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
       const target = h.windows[0]!;
       expect(await h.session.bringLatestToCursor()).toBe(true);
-      expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 194, width: 420, height: 180 });
+      expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 115, width: 420, height: 180 });
 
       cursor.x = 800;
       cursor.y = 500;
       await vi.advanceTimersByTimeAsync(16);
-      expect(target.setBounds).toHaveBeenLastCalledWith({ x: 590, y: 410, width: 420, height: 180 });
+      expect(target.setBounds).toHaveBeenLastCalledWith({ x: 590, y: 331, width: 420, height: 180 });
 
       h.session.stopFollowing();
       const callsAtRelease = target.setBounds.mock.calls.length;
@@ -247,7 +247,7 @@ describe('compact widget session', () => {
     expect(await h.session.bringLatestToCursor()).toBe(true);
     expect(target.restore).toHaveBeenCalledOnce();
     expect(target.isVisible()).toBe(true);
-    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 194, width: 420, height: 180 });
+    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 115, width: 420, height: 180 });
     h.session.stopFollowing();
   });
 
@@ -280,21 +280,21 @@ describe('compact widget session', () => {
     expect(target.focus).toHaveBeenCalled();
   });
 
-  it('keeps the cursor at the widget center at screen edges rather than clamping', async () => {
+  it('keeps the cursor at the bottom control-strip center at screen edges rather than clamping', async () => {
     const h = harness({ x: 2, y: 4 });
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
-    expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: -208, y: -86, width: 420, height: 180 });
+    expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: -208, y: -165, width: 420, height: 180 });
     h.session.stopFollowing();
   });
 
-  it('keeps the cursor centered beyond the right and bottom display edges', async () => {
+  it('keeps the cursor at the strip center beyond the right and bottom display edges', async () => {
     const h = harness({ x: 1198, y: 798 });
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
-    expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: 988, y: 708, width: 420, height: 180 });
+    expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: 988, y: 629, width: 420, height: 180 });
     h.session.stopFollowing();
   });
 

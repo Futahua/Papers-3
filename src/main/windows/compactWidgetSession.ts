@@ -8,6 +8,9 @@ export const COMPACT_WIDGET_LAYOUT_PARAM = 'papers-layout-key';
 export const COMPACT_WIDGET_MAX_KEY_BYTES = 512;
 export const COMPACT_WIDGET_WIDTH = 420;
 export const COMPACT_WIDGET_HEIGHT = 180;
+// Alt+Q anchors the cursor to the center of the widget's bottom control strip,
+// rather than the center of the whole card. Keep this in DIP, like window bounds.
+const COMPACT_WIDGET_CURSOR_BOTTOM_INSET = 11;
 /** 024/031: the compact widget host refits the frameless window to the reported
  * CARD content with only a small chrome tolerance - never a large empty
  * surround. The floor is a small usability safety net (an empty card), not a
@@ -173,7 +176,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     const next = {
       ...bounds,
       x: Math.round(point.x - bounds.width / 2),
-      y: Math.round(point.y - bounds.height / 2),
+      y: Math.round(point.y - Math.max(0, bounds.height - COMPACT_WIDGET_CURSOR_BOTTOM_INSET)),
     };
     if (next.x !== bounds.x || next.y !== bounds.y) entry.window.setBounds(next);
   };
