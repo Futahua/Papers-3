@@ -559,6 +559,25 @@ function Get-WhVisibleWindows {
   return @($result)
 }
 
+# Enumerate EVERY top-level window, visible or not. This exists ONLY for
+# identity-based recovery of a window an earlier helper session hid: a hidden
+# window is absent from Get-WhVisibleWindows (and therefore from the
+# task-worthy list), so the visible enumeration can never find it again. The
+# task-worthy LIST path must never use this. `WindowSource` is injectable for
+# the fake tests: it returns an array of observations.
+function Get-WhAllWindows {
+  param([scriptblock]$WindowSource)
+  if ($WindowSource) { return @(& $WindowSource) }
+  $result = [System.Collections.Generic.List[object]]::new()
+  $callback = [WH.EnumWindowsProc]{
+    param([IntPtr]$hWnd, [IntPtr]$lParam)
+    $result.Add((Get-WhWindowObservation $hWnd))
+    return $true
+  }
+  [void][WH.Win32]::EnumWindows($callback, [IntPtr]::Zero)
+  return @($result)
+}
+
 # Resolve exactly one window matching `Predicate` (scriptblock taking an
 # observation). Returns the single match; throws on zero or multiple. This is
 # the only way a window becomes routable through the adapter.

@@ -378,32 +378,78 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     }
   }
 
+  /** A CONFIRMED identity-based reveal releases EVERY record of that identity:
+   * the protection set, the token -> identity mapping and any queue entry. */
+  function releasePeekHiddenIdentity(instanceId: string): void {
+    const tokens = [...peekHiddenByToken.entries()]
+      .filter(([, mapped]) => mapped === instanceId)
+      .map(([token]) => token);
+    for (const token of tokens) forgetPeekHidden(token);
+    peekHiddenInstanceIds.delete(instanceId);
+    if (tokens.length > 0) {
+      peekRestoreTokens = peekRestoreTokens.filter((token) => !tokens.includes(token));
+    }
+  }
+
+  /** Identity-based recovery: reveal a window this service hid by its STABLE
+   * instance identity instead of by session token. The helper recomputes the
+   * identity from a RAW top-level enumeration, so this still works when the
+   * token is unknown - exactly the helper-restart case. Returns true only on a
+   * CONFIRMED success; a missing/ambiguous/denied/timeout answer, a rejection
+   * or an older helper without the method confirms nothing. */
+  async function recoverPeekHiddenIdentity(instanceId: string): Promise<boolean> {
+    const reveal = factory.revealInstance;
+    if (!reveal) return false;
+    const result = await reveal.call(factory, instanceId).catch(() => undefined);
+    if (!result || result.outcome !== 'success') return false;
+    releasePeekHiddenIdentity(instanceId);
+    return true;
+  }
+
+  /** Shutdown recovery: every identity still recorded as Peek-hidden gets one
+   * identity-based reveal attempt BEFORE the helper is torn down, so Papers
+   * exiting can never strand another application's window in hidden state. */
+  async function recoverAllPeekHidden(): Promise<void> {
+    if (!factoryBuilt || stopped || peekHiddenInstanceIds.size === 0) return;
+    if (!factory.revealInstance) return;
+    for (const instanceId of [...peekHiddenInstanceIds]) {
+      await recoverPeekHiddenIdentity(instanceId).catch(() => false);
+    }
+  }
+
   /** Receipt-coupled reveal of Peek-hidden tokens: ONE native attempt per set,
-   * and an identity is forgotten ONLY for a token whose reveal was CONFIRMED
-   * successful. A typed non-success, a rejected promise or a missing operation
-   * confirms nothing, so those tokens keep their non-terminal protection AND
-   * stay queued for a later retry - the window may still be hidden, and absence
-   * of a window we hid is not evidence that it is gone. Returns the number of
-   * tokens whose reveal stayed unresolved. */
+   * then - for whatever the token path could not confirm - the identity-based
+   * recovery, which does not depend on the session token at all. An identity is
+   * forgotten ONLY where a reveal was CONFIRMED successful by either path; a
+   * typed non-success, a rejected promise or a missing operation confirms
+   * nothing, so those tokens keep their non-terminal protection AND stay queued
+   * for a later retry - the window may still be hidden, and absence of a window
+   * we hid is not evidence that it is gone. Returns the number of tokens whose
+   * reveal stayed unresolved. */
   async function revealPeekHidden(tokens: RuntimeWindowId[]): Promise<number> {
     if (tokens.length === 0) return 0;
+    const unresolved: RuntimeWindowId[] = [];
     if (factory.uncloakMany) {
       const batch = await factory.uncloakMany(tokens).catch(() => undefined);
       if (batch && batch.outcome === 'success') {
         for (const token of tokens) forgetPeekHidden(token);
         return 0;
       }
-      queuePeekRestore(tokens);
-      return tokens.length;
+      unresolved.push(...tokens);
+    } else {
+      await Promise.all(tokens.map(async (token) => {
+        const revealed = await factory.uncloak?.(token).catch(() => undefined);
+        if (revealed && revealed.outcome === 'success') forgetPeekHidden(token);
+        else unresolved.push(token);
+      }));
     }
-    const unresolved: RuntimeWindowId[] = [];
-    await Promise.all(tokens.map(async (token) => {
-      const revealed = await factory.uncloak?.(token).catch(() => undefined);
-      if (revealed && revealed.outcome === 'success') forgetPeekHidden(token);
-      else unresolved.push(token);
-    }));
-    queuePeekRestore(unresolved);
-    return unresolved.length;
+    for (const token of unresolved) {
+      const instanceId = peekHiddenByToken.get(token);
+      if (instanceId) await recoverPeekHiddenIdentity(instanceId).catch(() => false);
+    }
+    const stillUnresolved = unresolved.filter((token) => peekHiddenByToken.has(token));
+    queuePeekRestore(stillUnresolved);
+    return stillUnresolved.length;
   }
 
   function purgeBindingThumbnails(bindingId: string): void {
@@ -1247,6 +1293,13 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   async function stop(): Promise<void> {
     await endLivePreview().catch(() => undefined);
     await endPeek().catch(() => undefined);
+    // Shutdown must not be able to abandon a hide it could not confirm: every
+    // identity still recorded as Peek-hidden gets an identity-based reveal
+    // attempt (which does not depend on the old session token, so it also
+    // covers a helper restart) BEFORE the helper is torn down. Only then is the
+    // bookkeeping cleared - leaving another application's real window hidden
+    // after Papers exits is worse than any stale layout member.
+    await recoverAllPeekHidden().catch(() => undefined);
     if (stopped) return;
     stopped = true;
     candidatesByListedId.clear();
