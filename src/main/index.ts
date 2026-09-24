@@ -1512,11 +1512,6 @@ async function bootstrap(): Promise<void> {
     // overlay utility windows retain empty/data titles and remain ineligible.
     allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
   });
-  // Peek recovery across launches: a previous Papers run may have died while a
-  // window it hid was still hidden (a hard kill included). Every identity the
-  // durable journal still owes gets one token-free reveal attempt now - no Peek
-  // has to be begun - and anything unconfirmed stays owed and protected.
-  void windowCapabilityService.recoverOwedPeekReveals().catch(() => undefined);
   registerWindowCapabilityIpc({
     ipcMain,
     service: windowCapabilityService,

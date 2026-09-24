@@ -45,12 +45,6 @@ import {
   type WindowObservation,
   type WindowState,
 } from './windowCapabilityTypes';
-import {
-  createMemoryWindowPeekRevealJournal,
-  createWindowPeekRevealJournal,
-  WINDOW_PEEK_REVEAL_JOURNAL_FILE,
-  type WindowPeekRevealJournal,
-} from './windowPeekRevealJournal';
 
 export const WINDOW_CAPABILITY_MAX_CANDIDATES = 64;
 export const WINDOW_CAPABILITY_MAX_ICON_CACHE = 64;
@@ -217,13 +211,6 @@ export interface WindowCapabilityService {
    * helper enumeration. Every identity must match exactly once or the complete
    * commit fails closed. */
   bindNativePickerSelection(selections: NativePickerWindowIdentity[]): Promise<NativePickerBindResult>;
-  /** Launch-time recovery for a Peek that a previous Papers process never
-   * finished: every identity the durable journal still owes gets one
-   * token-free reveal attempt, with no Peek begun in this session. Confirmed
-   * reveals are removed from the journal; anything else stays owed (and stays
-   * protected from being reported as gone). Returns the number of identities
-   * still owed. The app calls this once after creating the service. */
-  recoverOwedPeekReveals(): Promise<number>;
   stop(): Promise<void>;
 }
 
@@ -244,10 +231,6 @@ export interface WindowCapabilityServiceOptions {
   /** 028 P3: bounded durable validated-frame retention. Default is a
    * Papers-owned cache under the app userData dir; tests inject a store. */
   durableFrames?: ThumbnailFrameStore;
-  /** Durable owed-reveal journal for Peek-hidden windows. Default is a
-   * Papers-owned file under the app userData dir; tests inject a store or a
-   * temp-directory journal. */
-  peekRevealJournal?: WindowPeekRevealJournal;
 }
 
 const HELPER_UNAVAILABLE: WindowCandidateListResult = {
@@ -299,32 +282,6 @@ function defaultDurableFrames(): ThumbnailFrameStore {
   };
   defaultDurableFramesStore = noop;
   return defaultDurableFramesStore;
-}
-
-/** Durable owed-reveal journal under the app userData directory. Lazily
- * resolved so unit tests never require Electron; when the path cannot be
- * resolved an in-memory journal is returned (durability degrades to this
- * process, never to a hidden window being forgotten within it). */
-let defaultPeekRevealJournalStore: WindowPeekRevealJournal | null = null;
-function defaultPeekRevealJournal(): WindowPeekRevealJournal {
-  if (defaultPeekRevealJournalStore) return defaultPeekRevealJournalStore;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const electron = require('electron') as { app?: { getPath(name: string): string } };
-    const userData = electron?.app?.getPath?.('userData');
-    if (typeof userData === 'string' && userData.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const nodePath = require('node:path') as typeof import('node:path');
-      defaultPeekRevealJournalStore = createWindowPeekRevealJournal({
-        file: nodePath.join(userData, WINDOW_PEEK_REVEAL_JOURNAL_FILE),
-      });
-      return defaultPeekRevealJournalStore;
-    }
-  } catch {
-    /* fall through to the in-memory journal */
-  }
-  defaultPeekRevealJournalStore = createMemoryWindowPeekRevealJournal();
-  return defaultPeekRevealJournalStore;
 }
 
 /** Returns the trusted process id of a candidate, or null when the window
@@ -387,39 +344,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   const peekHiddenInstanceIds = new Set<string>();
   const peekHiddenByToken = new Map<RuntimeWindowId, string>();
   let livePreview: { target: RuntimeWindowId; caller: string } | null = null;
-  /** Durable owed-reveal journal: the in-memory rule's crash-proof twin. */
-  const peekRevealJournal = options.peekRevealJournal ?? defaultPeekRevealJournal();
-  // Identities a PREVIOUS session still owes a reveal are protected from the
-  // moment this instance exists: a window that may still be hidden by us must
-  // never be reported as terminally gone, and recoverOwedPeekReveals() retries
-  // each of them without any Peek having to be begun in this session.
-  for (const owedInstanceId of peekRevealJournal.read()) {
-    peekHiddenInstanceIds.add(owedInstanceId);
-  }
-
-  /** Durable BEFORE native. Record every identity that is about to be hidden and
-   * only report true when ALL of them are durably owed; the caller must then
-   * perform the hide. On failure the entries THIS call wrote are rolled back
-   * (older debts are never touched) and the caller must hide nothing. */
-  function persistPeekHides(observations: WindowObservation[]): boolean {
-    const wanted: string[] = [];
-    for (const observation of observations) {
-      const instanceId = observation.windowInstanceId;
-      if (instanceId && !wanted.includes(instanceId)) wanted.push(instanceId);
-    }
-    const alreadyOwed = new Set(peekRevealJournal.read());
-    const written: string[] = [];
-    for (const instanceId of wanted) {
-      if (alreadyOwed.has(instanceId)) continue;
-      if (!peekRevealJournal.add(instanceId)) {
-        for (const recorded of written) peekRevealJournal.remove(recorded);
-        return false;
-      }
-      written.push(instanceId);
-    }
-    for (const observation of observations) rememberPeekHidden(observation);
-    return true;
-  }
 
   function rememberPeekHidden(observation: WindowObservation): void {
     const instanceId = observation.windowInstanceId;
@@ -454,9 +378,8 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     }
   }
 
-  /** A CONFIRMED reveal releases EVERY record of that identity: the protection
-   * set, the token -> identity mapping, the retry queue and - last - the durable
-   * journal. A reveal that was not confirmed removes nothing. */
+  /** A CONFIRMED identity-based reveal releases EVERY record of that identity:
+   * the protection set, the token -> identity mapping and any queue entry. */
   function releasePeekHiddenIdentity(instanceId: string): void {
     const tokens = [...peekHiddenByToken.entries()]
       .filter(([, mapped]) => mapped === instanceId)
@@ -466,60 +389,21 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (tokens.length > 0) {
       peekRestoreTokens = peekRestoreTokens.filter((token) => !tokens.includes(token));
     }
-    peekRevealJournal.remove(instanceId);
-  }
-
-  /** Release ONE token after its reveal was confirmed: the identity goes away
-   * (memory and journal) only through the receipt rule above. When the token is
-   * not mapped yet - the token-free startup path, or an explicit reveal of a
-   * window owed by a PREVIOUS session - the stable identity is taken from the
-   * fresh observation instead. */
-  function releaseConfirmedReveal(token: RuntimeWindowId, observation?: WindowObservation): void {
-    const instanceId = peekHiddenByToken.get(token) ?? observation?.windowInstanceId;
-    if (!instanceId) {
-      forgetPeekHidden(token, observation);
-      return;
-    }
-    releasePeekHiddenIdentity(instanceId);
   }
 
   /** Identity-based recovery: reveal a window this service hid by its STABLE
    * instance identity instead of by session token. The helper recomputes the
    * identity from a RAW top-level enumeration, so this still works when the
-   * token is unknown - exactly the helper-restart case. A genuinely CRASHED
-   * helper is re-established FIRST (ensureStarted -> start re-validates and
-   * re-spawns), because an absent client is an unconfirmed reveal and not a
-   * verdict. Returns true only on a CONFIRMED success; a missing/ambiguous/
-   * denied/timeout answer, a rejection or an older helper without the method
-   * confirms nothing. */
+   * token is unknown - exactly the helper-restart case. Returns true only on a
+   * CONFIRMED success; a missing/ambiguous/denied/timeout answer, a rejection
+   * or an older helper without the method confirms nothing. */
   async function recoverPeekHiddenIdentity(instanceId: string): Promise<boolean> {
-    // Build the (lazy) factory FIRST: launch-time recovery can run before any
-    // other capability request, so `factory` may not exist yet.
-    const helper = ensureFactory();
-    const reveal = helper.revealInstance;
+    const reveal = factory.revealInstance;
     if (!reveal) return false;
-    const ready = await ensureStarted().catch(() => false);
-    if (!ready) return false;
-    const result = await reveal.call(helper, instanceId).catch(() => undefined);
+    const result = await reveal.call(factory, instanceId).catch(() => undefined);
     if (!result || result.outcome !== 'success') return false;
     releasePeekHiddenIdentity(instanceId);
     return true;
-  }
-
-  /** Launch-time recovery: every identity the durable journal still owes gets
-   * one identity-based reveal attempt - with NO Peek ever begun in this session
-   * and no session token involved. Confirmed reveals are removed from the
-   * journal; anything else stays owed for a later launch and stays protected
-   * from being reported as gone. Returns the number of identities still owed. */
-  async function recoverOwedPeekReveals(): Promise<number> {
-    const owed = peekRevealJournal.read();
-    if (stopped) return owed.length;
-    let unresolved = 0;
-    for (const instanceId of owed) {
-      const revealed = await recoverPeekHiddenIdentity(instanceId).catch(() => false);
-      if (!revealed) unresolved += 1;
-    }
-    return unresolved;
   }
 
   /** Shutdown recovery: every identity still recorded as Peek-hidden gets one
@@ -527,6 +411,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
    * exiting can never strand another application's window in hidden state. */
   async function recoverAllPeekHidden(): Promise<void> {
     if (!factoryBuilt || stopped || peekHiddenInstanceIds.size === 0) return;
+    if (!factory.revealInstance) return;
     for (const instanceId of [...peekHiddenInstanceIds]) {
       await recoverPeekHiddenIdentity(instanceId).catch(() => false);
     }
@@ -547,14 +432,14 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (factory.uncloakMany) {
       const batch = await factory.uncloakMany(tokens).catch(() => undefined);
       if (batch && batch.outcome === 'success') {
-        for (const token of tokens) releaseConfirmedReveal(token);
+        for (const token of tokens) forgetPeekHidden(token);
         return 0;
       }
       unresolved.push(...tokens);
     } else {
       await Promise.all(tokens.map(async (token) => {
         const revealed = await factory.uncloak?.(token).catch(() => undefined);
-        if (revealed && revealed.outcome === 'success') releaseConfirmedReveal(token);
+        if (revealed && revealed.outcome === 'success') forgetPeekHidden(token);
         else unresolved.push(token);
       }));
     }
@@ -1014,10 +899,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         return revealed ?? { outcome: 'helper-unavailable', error: 'window reveal is unavailable' };
       }
       // The reveal happens BEFORE this step's hides, so the hidden set is
-      // updated in the same order the native actions happen: release the
+      // updated in the same order the native actions happen: forget the
       // revealed identity first, and let a later hide in this same call be the
       // only thing that can record it again.
-      releaseConfirmedReveal(target, targetObservation);
+      forgetPeekHidden(target, targetObservation);
     }
     if (targetObservation?.state === 'minimized') {
       const revealed = await factory.uncloak?.(target).catch(() => undefined);
@@ -1025,7 +910,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         return revealed ?? { outcome: 'helper-unavailable', error: 'minimized window reveal is unavailable' };
       }
       peekMinimizedTarget = target;
-      releaseConfirmedReveal(target, targetObservation);
+      forgetPeekHidden(target, targetObservation);
     }
     if (generation !== peekGeneration) return { outcome: 'success' };
     if (!factory.cloak) return { outcome: 'helper-unavailable', error: 'window cloak is unavailable' };
@@ -1036,21 +921,18 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       && !peekRestoreTokens.includes(observation.runtimeId));
     const tokens = toHide.map((observation) => observation.runtimeId);
     if (tokens.length > 0 && factory.cloakMany) {
-      // DURABLE before native, and in-memory before native: between the helper
-      // applying the hide and this call returning, a reconciler could otherwise
-      // observe the absence and read it as death; and a hard kill right after
-      // the hide must still leave the reveal owed to the next launch. If the
-      // debt cannot be recorded, NO window is hidden.
-      if (!persistPeekHides(toHide)) {
-        return { outcome: 'denied', error: 'the reveal debt could not be durably recorded; no window was hidden' };
-      }
+      // Record BEFORE the native hide: between the helper applying the hide and
+      // this call returning, a reconciler could otherwise observe the absence
+      // and read it as death. Recording early is the safe direction - an
+      // identity that MIGHT be hidden by us is never reported as gone.
+      for (const observation of toHide) rememberPeekHidden(observation);
       const result = await factory.cloakMany(tokens);
       if (result.outcome === 'success') {
         if (generation === peekGeneration) {
           peekRestoreTokens.push(...tokens);
         } else {
           // Superseded generation: undo this call's hides with a compensating
-          // reveal under the SAME receipt rule - an identity is released only
+          // reveal under the SAME receipt rule - an identity is forgotten only
           // where that reveal was CONFIRMED successful. Anything else keeps the
           // protection (the window may still be hidden) and stays queued.
           await revealPeekHidden(tokens);
@@ -1063,9 +945,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       }
     } else {
       await Promise.all(toHide.map(async (observation) => {
-        // Same persist-before-hide rule per window: an identity that cannot be
-        // durably owed is NOT hidden (it simply stays visible this step).
-        if (!persistPeekHides([observation])) return;
+        // Same pre-record reasoning as the batch branch: the identity is marked
+        // before the native hide can be observed by anyone else.
+        rememberPeekHidden(observation);
         const result = await factory.cloak!(observation.runtimeId);
         if (result.outcome !== 'success') {
           queuePeekRestore([observation.runtimeId]);
@@ -1413,12 +1295,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     await endPeek().catch(() => undefined);
     // Shutdown must not be able to abandon a hide it could not confirm: every
     // identity still recorded as Peek-hidden gets an identity-based reveal
-    // attempt (which re-establishes a crashed helper and does not depend on the
-    // old session token) BEFORE the helper is torn down. Only then is the
-    // in-memory bookkeeping cleared - leaving another application's real window
-    // hidden after Papers exits is worse than any stale layout member. The
-    // JOURNAL is deliberately NOT cleared: an identity whose reveal stayed
-    // unconfirmed is still owed, and the next launch retries it.
+    // attempt (which does not depend on the old session token, so it also
+    // covers a helper restart) BEFORE the helper is torn down. Only then is the
+    // bookkeeping cleared - leaving another application's real window hidden
+    // after Papers exits is worse than any stale layout member.
     await recoverAllPeekHidden().catch(() => undefined);
     if (stopped) return;
     stopped = true;
@@ -1458,7 +1338,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     pickAt,
     prepareNativePicker,
     bindNativePickerSelection,
-    recoverOwedPeekReveals,
     stop,
   };
 }

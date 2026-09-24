@@ -5,12 +5,6 @@ import * as path from 'node:path';
 
 import { createWindowCapabilityService, type WindowRuntimeCapability } from '../../src/main/windows/windowCapabilityService';
 import { createThumbnailFrameStore } from '../../src/main/windows/thumbnailFrameStore';
-import {
-  createWindowPeekRevealJournal,
-  WINDOW_PEEK_REVEAL_JOURNAL_FILE,
-  WINDOW_PEEK_REVEAL_JOURNAL_MAX_ENTRIES,
-  type WindowPeekRevealJournal,
-} from '../../src/main/windows/windowPeekRevealJournal';
 import type { WindowHelperFactory } from '../../src/main/windows/windowHelperFactory';
 import type { WindowCapabilityResult, WindowObservation, RuntimeWindowId } from '../../src/main/windows/windowCapabilityTypes';
 
@@ -317,10 +311,7 @@ describe('windowCapabilityService candidates', () => {
   /** Peek harness with controllable reveal RECEIPTS: the fake can deny or
    * reject the next batch reveal, deny the per-token reveal for named tokens,
    * and hold a hide in flight so a generation replacement can be forced. */
-  function receiptHarness(
-    useBatchCloak: boolean,
-    options: { identityPath?: boolean; journal?: WindowPeekRevealJournal } = {},
-  ) {
+  function receiptHarness(useBatchCloak: boolean, options: { identityPath?: boolean } = {}) {
     const rows = [
       observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Window A', processId: 1001, processPath: 'C:\\Apps\\a.exe' }),
       observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Window B', processId: 2002, processPath: 'C:\\Apps\\b.exe' }),
@@ -336,36 +327,9 @@ describe('windowCapabilityService candidates', () => {
     /** The helper-restart case: the session that hid the windows is gone, so
      * EVERY token reveal answers 'missing' while the stable identities remain. */
     let sessionDropped = false;
-    let denyIdentityReveals = 0;   // 0 = allow, >0 = deny that many, -1 = deny all
+    let denyIdentityReveals = 0;
     const identityReveals: string[] = [];
     const events: string[] = [];
-    // The CRASH model: while `sessionReady` is false the factory has no client,
-    // so every op answers helper-unavailable WITHOUT restarting anything - the
-    // real factory's withClient() behaviour - until start() runs again.
-    let sessionReady = true;
-    let startCalls = 0;
-    let restarts = 0;
-    const journalOwed = new Set<string>();
-    const journalEvents: string[] = [];
-    const journal: WindowPeekRevealJournal = options.journal ?? {
-      read: () => [...journalOwed],
-      add: (instanceId: string) => {
-        journalOwed.add(instanceId);
-        journalEvents.push(`journal:add:${instanceId}`);
-        // The SHARED log lets a test compare journal ordering against the
-        // native hide/reveal events, which live in the same sequence.
-        events.push(`journal:add:${instanceId}`);
-        return true;
-      },
-      remove: (instanceId: string) => {
-        journalOwed.delete(instanceId);
-        journalEvents.push(`journal:remove:${instanceId}`);
-        events.push(`journal:remove:${instanceId}`);
-      },
-    };
-    function notReady(): WindowCapabilityResult {
-      return { outcome: 'helper-unavailable', error: 'helper is not ready' };
-    }
     let armedHide: { entered: () => void; waitEntered: Promise<void>; gate: Promise<void> } | null = null;
     function armNextHide() {
       let markEntered!: () => void;
@@ -376,44 +340,19 @@ describe('windowCapabilityService candidates', () => {
       return { waitEntered, release: () => releaseGate() };
     }
     const overrides: Partial<WindowHelperFactory> = {
-      start: async () => {
-        startCalls += 1;
-        // A real factory coalesces: an already-ready start spawns nothing. Only
-        // a start after the session was lost is an actual RESTART.
-        if (!sessionReady) {
-          restarts += 1;
-          events.push('helper-restart');
-        }
-        sessionReady = true;
-        return 'ready' as const;
-      },
-      isReady: () => sessionReady,
-      list: async () => {
-        if (!sessionReady) return notReady();
-        return { outcome: 'success' as const, windows: visible.filter((row) => !hidden.has(row.runtimeId)) };
-      },
-      cloak: async (runtimeId) => {
-        if (!sessionReady) return notReady();
-        hidden.add(runtimeId);
-        events.push(`hide:${runtimeId}`);
-        return { outcome: 'success' as const };
-      },
+      list: async () => ({ outcome: 'success', windows: visible.filter((row) => !hidden.has(row.runtimeId)) }),
+      cloak: async (runtimeId) => { hidden.add(runtimeId); return { outcome: 'success' as const }; },
       cloakMany: async (runtimeIds) => {
-        if (!sessionReady) return notReady();
         if (armedHide) {
           const armed = armedHide;
           armedHide = null;
           armed.entered();
           await armed.gate;
         }
-        for (const runtimeId of runtimeIds) {
-          hidden.add(runtimeId);
-          events.push(`hide:${runtimeId}`);
-        }
+        for (const runtimeId of runtimeIds) hidden.add(runtimeId);
         return { outcome: 'success' as const };
       },
       uncloak: async (runtimeId) => {
-        if (!sessionReady) return notReady();
         if (sessionDropped) return { outcome: 'missing' as const, error: 'unknown session token' };
         if (denyRevealFor.has(runtimeId)) {
           // One-shot refusal (the transient fail-closed identity case).
@@ -424,7 +363,6 @@ describe('windowCapabilityService candidates', () => {
         return { outcome: 'success' as const };
       },
       uncloakMany: async (runtimeIds) => {
-        if (!sessionReady) return notReady();
         if (sessionDropped) return { outcome: 'missing' as const, error: 'unknown session token' };
         if (rejectNextBatchReveal) {
           rejectNextBatchReveal = false;
@@ -441,9 +379,8 @@ describe('windowCapabilityService candidates', () => {
       // The token-free recovery path: match the STABLE identity against every
       // row, hidden ones included, exactly as the helper's raw enumeration does.
       revealInstance: async (instanceId) => {
-        if (!sessionReady) return notReady();
-        if (denyIdentityReveals !== 0) {
-          if (denyIdentityReveals > 0) denyIdentityReveals -= 1;
+        if (denyIdentityReveals > 0) {
+          denyIdentityReveals -= 1;
           return { outcome: 'denied' as const, error: 'identity not corroborated' };
         }
         const row = rows.find((candidate) => candidate.windowInstanceId === instanceId);
@@ -468,7 +405,6 @@ describe('windowCapabilityService candidates', () => {
       createFactory: () => fakeFactory(overrides),
       currentPid: 9999,
       getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
-      peekRevealJournal: journal,
     });
     async function bind(title: string): Promise<WindowRuntimeCapability> {
       const listed = await service.listCandidates();
@@ -485,24 +421,15 @@ describe('windowCapabilityService candidates', () => {
       a,
       b: rows[1]!,
       c: rows[2]!,
-      journal,
-      journalOwed,
-      journalEvents,
       bind,
       identityReveals,
       events,
-      get startCalls() { return startCalls; },
-      get restarts() { return restarts; },
-      crash: () => { sessionReady = false; events.push('helper-crash'); },
-      markHidden: (runtimeId: RuntimeWindowId) => { hidden.add(runtimeId); },
       armNextHide,
       denyNextBatchReveal: () => { denyNextBatchReveal = true; },
       denyBatchRevealAlways: () => { denyAllBatchReveals = true; },
       rejectNextBatchReveal: () => { rejectNextBatchReveal = true; },
       denyRevealFor: (runtimeId: RuntimeWindowId) => { denyRevealFor.add(runtimeId); },
       denyNextIdentityReveal: (count = 1) => { denyIdentityReveals = count; },
-      denyAllIdentityReveals: () => { denyIdentityReveals = -1; },
-      allowIdentityReveals: () => { denyIdentityReveals = 0; },
       dropSession: () => { sessionDropped = true; },
       close: (title: string) => { visible = visible.filter((row) => row.title !== title); },
       closeAllButTarget: () => { visible = [a]; },
@@ -683,223 +610,6 @@ describe('windowCapabilityService candidates', () => {
     const stopIndex = h.events.indexOf('helper-stopped');
     expect(stopIndex).toBeGreaterThanOrEqual(0);
     expect(h.events.findIndex((event) => event.startsWith('reveal:'))).toBeLessThan(stopIndex);
-  });
-
-  it('restarts a genuinely crashed helper before concluding a Peek reveal cannot be confirmed', async () => {
-    const h = receiptHarness(true);
-    const capability = await h.bind('Window A');
-    expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
-    expect(h.hidden.size).toBe(2);
-    expect(h.restarts).toBe(0);
-
-    // The helper PROCESS is gone: the supervisor has no client, so every op -
-    // token reveal AND identity reveal - answers helper-unavailable and does NOT
-    // restart anything by itself (the real factory's withClient behaviour).
-    h.crash();
-
-    // Releasing the Peek must re-establish a session rather than read an absent
-    // client as "cannot reveal".
-    expect((await h.service.endPeek()).outcome).toBe('success');
-    expect(h.restarts).toBe(1);
-    expect(h.hidden.size).toBe(0);
-    const restartIndex = h.events.lastIndexOf('helper-restart');
-    for (const instanceId of [h.b.windowInstanceId!, h.c.windowInstanceId!]) {
-      expect(h.events.indexOf(`reveal:${instanceId}`)).toBeGreaterThan(restartIndex);
-    }
-  });
-
-  it('restarts a crashed helper during the shutdown sweep as well', async () => {
-    const h = receiptHarness(true);
-    const capability = await h.bind('Window A');
-    expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
-    h.crash();
-
-    await h.service.stop();
-    expect(h.restarts).toBe(1);
-    expect(h.hidden.size).toBe(0);
-    const restartIndex = h.events.lastIndexOf('helper-restart');
-    const stopIndex = h.events.indexOf('helper-stopped');
-    expect(stopIndex).toBeGreaterThan(restartIndex);
-    expect(h.events.findIndex((event) => event.startsWith('reveal:'))).toBeGreaterThan(restartIndex);
-    expect(h.events.findIndex((event) => event.startsWith('reveal:'))).toBeLessThan(stopIndex);
-  });
-
-  it('records the owed reveal durably BEFORE the hide and removes it only on a confirmed reveal', async () => {
-    const h = receiptHarness(true);
-    const capability = await h.bind('Window A');
-    expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
-
-    // Persist-before-hide, per window: the journal entry precedes the native hide.
-    for (const row of [h.b, h.c]) {
-      const addIndex = h.events.indexOf(`journal:add:${row.windowInstanceId!}`);
-      const hideIndex = h.events.indexOf(`hide:${row.runtimeId}`);
-      expect(addIndex).toBeGreaterThanOrEqual(0);
-      expect(hideIndex).toBeGreaterThanOrEqual(0);
-      expect(addIndex).toBeLessThan(hideIndex);
-    }
-    expect([...h.journalOwed].sort()).toEqual([h.b.windowInstanceId!, h.c.windowInstanceId!].sort());
-
-    // No receipt, no removal: with both paths refused the debt stays.
-    h.denyBatchRevealAlways();
-    h.denyAllIdentityReveals();
-    expect(await h.service.endPeek()).toMatchObject({ outcome: 'timeout' });
-    expect(h.journalOwed.size).toBe(2);
-
-    // A confirmed reveal removes it (the identity path confirms here, the token
-    // path stays refused).
-    h.allowIdentityReveals();
-    expect((await h.service.endPeek()).outcome).toBe('success');
-    expect(h.identityReveals.length).toBe(2);
-    expect(h.journalOwed.size).toBe(0);
-  });
-
-  it('retains an owed entry when every reveal path stays unconfirmed, even through stop()', async () => {
-    const h = receiptHarness(true);
-    const capability = await h.bind('Window A');
-    expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
-    h.denyBatchRevealAlways();
-    h.denyAllIdentityReveals();
-    expect(await h.service.endPeek()).toMatchObject({ outcome: 'timeout' });
-    await h.service.stop();
-    // Still owed (and still protected) for the next launch.
-    expect(h.journalOwed.size).toBe(2);
-    expect(h.hidden.size).toBe(2);
-  });
-
-  it('refuses to hide a window whose reveal debt cannot be durably recorded', async () => {
-    const failing: WindowPeekRevealJournal = {
-      read: () => [],
-      add: () => false,
-      remove: () => undefined,
-    };
-    const h = receiptHarness(true, { journal: failing });
-    const capability = await h.bind('Window A');
-    expect(await h.service.beginPeekCapability(capability)).toMatchObject({ outcome: 'denied' });
-    // Nothing was hidden, so nothing can be owed.
-    expect(h.hidden.size).toBe(0);
-    expect(h.events.some((event) => event.startsWith('hide:'))).toBe(false);
-  });
-
-  it('rolls back a partially recorded debt and hides nothing', async () => {
-    let adds = 0;
-    const removals: string[] = [];
-    const partial: WindowPeekRevealJournal = {
-      read: () => [],
-      // The first identity records durably, the second cannot.
-      add: () => { adds += 1; return adds === 1; },
-      remove: (instanceId: string) => { removals.push(instanceId); },
-    };
-    const h = receiptHarness(true, { journal: partial });
-    const capability = await h.bind('Window A');
-    expect(await h.service.beginPeekCapability(capability)).toMatchObject({ outcome: 'denied' });
-    expect(adds).toBe(2);
-    // Exactly the entry this call wrote was rolled back, and NO window was hidden.
-    expect(removals).toEqual([h.b.windowInstanceId!]);
-    expect(h.hidden.size).toBe(0);
-    expect(h.events.some((event) => event.startsWith('hide:'))).toBe(false);
-  });
-
-  it('a fresh service over the same journal recovers an owed reveal with no Peek begun, and clears it', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-journal-'));
-    const file = path.join(dir, WINDOW_PEEK_REVEAL_JOURNAL_FILE);
-    // First process: hide, then lose every reveal path and exit cleanly.
-    const first = receiptHarness(true, { journal: createWindowPeekRevealJournal({ file }) });
-    const capability = await first.bind('Window A');
-    expect((await first.service.beginPeekCapability(capability)).outcome).toBe('success');
-    first.denyBatchRevealAlways();
-    first.denyAllIdentityReveals();
-    expect(await first.service.endPeek()).toMatchObject({ outcome: 'timeout' });
-    await first.service.stop();
-    // Durably owed on disk with no help from memory.
-    const owedOnDisk = createWindowPeekRevealJournal({ file }).read();
-    expect(owedOnDisk.sort()).toEqual([first.b.windowInstanceId!, first.c.windowInstanceId!].sort());
-
-    // Next launch: a FRESH service over the same journal, with no Peek at all.
-    const second = receiptHarness(true, { journal: createWindowPeekRevealJournal({ file }) });
-    second.markHidden(TOKEN_B as RuntimeWindowId);
-    second.markHidden(TOKEN_C as RuntimeWindowId);
-    expect(await second.service.recoverOwedPeekReveals()).toBe(0);
-    expect(second.hidden.size).toBe(0);
-    expect(second.identityReveals.sort()).toEqual([second.b.windowInstanceId!, second.c.windowInstanceId!].sort());
-    expect(createWindowPeekRevealJournal({ file }).read()).toEqual([]);
-    await second.service.stop();
-  });
-
-  it('recovers after a hard death: a service abandoned without stop() leaves the debt for the next launch', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-journal-'));
-    const file = path.join(dir, WINDOW_PEEK_REVEAL_JOURNAL_FILE);
-    // Hide, then simply vanish: no endPeek, no stop, no reveal attempt at all.
-    const first = receiptHarness(true, { journal: createWindowPeekRevealJournal({ file }) });
-    const capability = await first.bind('Window A');
-    expect((await first.service.beginPeekCapability(capability)).outcome).toBe('success');
-    expect(createWindowPeekRevealJournal({ file }).read().sort())
-      .toEqual([first.b.windowInstanceId!, first.c.windowInstanceId!].sort());
-
-    const second = receiptHarness(true, { journal: createWindowPeekRevealJournal({ file }) });
-    second.markHidden(TOKEN_B as RuntimeWindowId);
-    second.markHidden(TOKEN_C as RuntimeWindowId);
-    expect(await second.service.recoverOwedPeekReveals()).toBe(0);
-    expect(second.hidden.size).toBe(0);
-    expect(createWindowPeekRevealJournal({ file }).read()).toEqual([]);
-    await second.service.stop();
-  });
-
-  it('retains an owed entry when the next launch cannot confirm the reveal either', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-journal-'));
-    const file = path.join(dir, WINDOW_PEEK_REVEAL_JOURNAL_FILE);
-    const first = receiptHarness(true, { journal: createWindowPeekRevealJournal({ file }) });
-    const capability = await first.bind('Window A');
-    expect((await first.service.beginPeekCapability(capability)).outcome).toBe('success');
-
-    const second = receiptHarness(true, { journal: createWindowPeekRevealJournal({ file }) });
-    second.denyAllIdentityReveals();
-    expect(await second.service.recoverOwedPeekReveals()).toBe(2);
-    const stillOwed = createWindowPeekRevealJournal({ file }).read();
-    expect(stillOwed.sort()).toEqual([first.b.windowInstanceId!, first.c.windowInstanceId!].sort());
-    // Owed identities stay protected: absence is still not evidence of death.
-    second.closeAllButTarget();
-    expect(await second.service.resolveInstance(second.b.windowInstanceId!)).toMatchObject({ outcome: 'timeout' });
-    await second.service.stop();
-  });
-
-  it('treats a corrupt or wrong-version journal as empty and keeps working', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-journal-'));
-    const file = path.join(dir, WINDOW_PEEK_REVEAL_JOURNAL_FILE);
-    fs.writeFileSync(file, '{not json at all');
-    const journal = createWindowPeekRevealJournal({ file });
-    expect(journal.read()).toEqual([]);
-    const h = receiptHarness(true, { journal });
-    expect(await h.service.recoverOwedPeekReveals()).toBe(0);
-    // The service is fully functional: a normal Peek still works end to end.
-    const capability = await h.bind('Window A');
-    expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
-    expect((await h.service.endPeek()).outcome).toBe('success');
-    expect(journal.read()).toEqual([]);
-    // A wrong VERSION is likewise ignored rather than guessed at.
-    fs.writeFileSync(file, JSON.stringify({ version: 99, owed: ['W0123456789abcdef'] }));
-    expect(journal.read()).toEqual([]);
-  });
-
-  it('bounds and de-duplicates the durable journal and rejects invalid entries', async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peek-journal-'));
-    const file = path.join(dir, WINDOW_PEEK_REVEAL_JOURNAL_FILE);
-    const journal = createWindowPeekRevealJournal({ file });
-    expect(journal.add('not-an-identity')).toBe(false);
-    const identity = 'W0123456789abcdef';
-    expect(journal.add(identity)).toBe(true);
-    expect(journal.add(identity)).toBe(true);
-    expect(journal.read()).toEqual([identity]);
-    journal.remove(identity);
-    expect(journal.read()).toEqual([]);
-    for (let index = 0; index < WINDOW_PEEK_REVEAL_JOURNAL_MAX_ENTRIES; index += 1) {
-      expect(journal.add(`W${index.toString(16).padStart(16, '0')}`)).toBe(true);
-    }
-    expect(journal.read()).toHaveLength(WINDOW_PEEK_REVEAL_JOURNAL_MAX_ENTRIES);
-    // At the cap a NEW debt is refused (the caller then does not hide) rather
-    // than silently evicting an older owed reveal.
-    expect(journal.add('Wffffffffffffffff')).toBe(false);
-    expect(journal.read()).toHaveLength(WINDOW_PEEK_REVEAL_JOURNAL_MAX_ENTRIES);
-    expect(journal.read()).not.toContain('Wffffffffffffffff');
   });
 
   it('lists only trusted candidates: Papers itself, empty titles and missing paths are excluded', async () => {

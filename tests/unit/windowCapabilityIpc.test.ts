@@ -38,7 +38,6 @@ function fakeService(): WindowCapabilityService {
     terminateCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     beginPeekCapability: async () => ({ outcome: 'success' }),
     endPeek: async () => ({ outcome: 'success' }),
-    recoverOwedPeekReveals: async () => 0,
     applyCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     thumbnailCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     resolvePersisted: async () => ({ outcome: 'missing', error: 'no match' }),
