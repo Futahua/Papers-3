@@ -78,11 +78,6 @@ export interface WindowHelperFactory {
   /** 019G real-window thumbnail: bounded PrintWindow capture scaled to fit
    * (maxWidth, maxHeight). */
   thumbnail(runtimeId: RuntimeWindowId, maxWidth?: number, maxHeight?: number): Promise<WindowCapabilityResult>;
-  /** Identity-based Peek recovery (optional, like the other later
-   * capabilities): reveal the window named by its STABLE instance identity.
-   * Token-free by design, so it still works after the helper session that hid
-   * the window has been replaced. Main-process internal only. */
-  revealInstance?(instanceId: string): Promise<WindowCapabilityResult>;
   /** Monotonic session revision: incremented every time a FRESH helper
    * session is created (first start and every post-crash/post-stop restart).
    * The service uses it to invalidate the bounded thumbnail cache on helper
@@ -261,7 +256,6 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
     terminate: (runtimeId) => withClient((client) => client.terminate(runtimeId), HELPER_NOT_READY),
     hover: (x, y) => withClient((client) => client.hover(x, y), HELPER_NOT_READY),
     thumbnail: (runtimeId, maxWidth, maxHeight) => withClient((client) => client.thumbnail(runtimeId, maxWidth, maxHeight), HELPER_NOT_READY),
-    revealInstance: (instanceId) => withClient((client) => client.revealInstance(instanceId), HELPER_NOT_READY),
     get revision() {
       return revision;
     },

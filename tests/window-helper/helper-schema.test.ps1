@@ -131,7 +131,7 @@ function Test-WireResponseOk {
   if ($R['outcome'] -eq 'success') {
     if ($R['method'] -eq 'list') {
       if (-not ($hasWindowsKey -and $windowsIsArray -and -not $hasObservationKey -and -not $hasWindowKey -and -not $hasThumbnailKey)) { return $false }
-    } elseif ($R['method'] -eq 'close' -or $R['method'] -eq 'terminate' -or $R['method'] -eq 'reveal-instance') {
+    } elseif ($R['method'] -eq 'close' -or $R['method'] -eq 'terminate') {
       if ($hasWindowsKey -or $hasObservationKey -or $hasWindowKey -or $hasThumbnailKey) { return $false }
     } elseif ($R['method'] -eq 'hover') {
       if (-not ($hasWindowKey -and -not $hasWindowsKey -and -not $hasObservationKey -and -not $hasThumbnailKey)) { return $false }
@@ -309,10 +309,7 @@ $script:WhOps = @{
   }
   Cloak = { param([IntPtr]$id, [bool]$hide)
     $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
-    # The REAL helper hides with SW_HIDE / restores with SW_SHOWNA (a reversible
-    # VISIBILITY change), so the fake models the same property: a hidden window
-    # stops being IsWindowVisible and therefore leaves every task-worthy list.
-    $entry.Visible = -not $hide
+    $entry.Cloaked = $hide
     $entry.touched += "cloak:$hide"
   }
   Close = { param([IntPtr]$id)
@@ -387,12 +384,6 @@ function Get-WhWindowObservation {
   }
 }
 function Get-WhVisibleWindows {
-  return @($script:fakeRegistry | ForEach-Object { Get-WhWindowObservation $_.RuntimeId })
-}
-# Identity-based Peek recovery enumerates EVERY top-level window, so the fake
-# must expose invisible ones too. Production EnumWindows lists hidden windows;
-# only the task-worthy LIST path filters on visibility.
-function Get-WhAllWindows {
   return @($script:fakeRegistry | ForEach-Object { Get-WhWindowObservation $_.RuntimeId })
 }
 
@@ -616,16 +607,16 @@ Assert-Outcome (Invoke-Line ('{"requestId":184,"method":"observe","target":"' + 
 # window cloaked rather than revealing a replacement it cannot corroborate.
 $recloak = Invoke-Line ('{"requestId":185,"method":"cloak","target":"' + $reuseToken + '"}')
 Assert-Outcome $recloak 'success' 'setup: the replacement window is cloaked through its own token'
-Assert-True (-not [bool]$script:fakeRegistry[0].Visible) 'setup: the replacement window is actually hidden'
+Assert-True ([bool]$script:fakeRegistry[0].Cloaked) 'setup: the replacement window is actually cloaked'
 $script:fakeProcessStartTicks[[int]$reuseEntry.pid] = $laterTicks + 1000
 $staleUncloak = Invoke-Line ('{"requestId":186,"method":"uncloak","target":"' + $reuseToken + '"}')
 Assert-Outcome $staleUncloak 'denied' 'FINDING 2: uncloak refuses an identity whose process creation time changed'
 Assert-True (-not $staleUncloak.ContainsKey('observation')) 'FINDING 2: the refused uncloak emits no observation and therefore no stale identity'
-Assert-True (-not [bool]$script:fakeRegistry[0].Visible) 'FINDING 2: the refused uncloak left the uncorroborated window hidden'
+Assert-True ([bool]$script:fakeRegistry[0].Cloaked) 'FINDING 2: the refused uncloak left the uncorroborated window cloaked'
 $script:fakeProcessStartTicks[[int]$reuseEntry.pid] = $laterTicks
 $cleanUncloak = Invoke-Line ('{"requestId":187,"method":"uncloak","target":"' + $reuseToken + '"}')
 Assert-Outcome $cleanUncloak 'success' 'FINDING 2: the unchanged identity still reveals successfully'
-Assert-True ([bool]$script:fakeRegistry[0].Visible) 'FINDING 2: the corroborated reveal actually revealed the window'
+Assert-True (-not [bool]$script:fakeRegistry[0].Cloaked) 'FINDING 2: the corroborated reveal actually uncloaked the window'
 $script:fakeProcessStartTicks.Remove([int]$reuseEntry.pid)
 
 # ---- an UNREADABLE process creation time fails closed (FINDING 2) ----------
@@ -635,56 +626,14 @@ $script:fakeProcessStartTicks.Remove([int]$reuseEntry.pid)
 $ticksOp = $script:WhOps['ProcessStartTicks']
 $script:WhOps.Remove('ProcessStartTicks')
 Assert-Outcome (Invoke-Line ('{"requestId":188,"method":"observe","target":"' + $reuseToken + '"}')) 'denied' 'FINDING 2: an unreadable process creation time denies observe (fail closed)'
-$script:fakeRegistry[0].Visible = $false
+$script:fakeRegistry[0].Cloaked = $true
 Assert-Outcome (Invoke-Line ('{"requestId":189,"method":"uncloak","target":"' + $reuseToken + '"}')) 'denied' 'FINDING 2: an unreadable process creation time denies uncloak (fail closed)'
-Assert-True (-not [bool]$script:fakeRegistry[0].Visible) 'FINDING 2: the uncloak refusal left the window untouched'
+Assert-True ([bool]$script:fakeRegistry[0].Cloaked) 'FINDING 2: the uncloak refusal left the window untouched'
 $script:WhOps['ProcessStartTicks'] = $ticksOp
 $script:fakeProcessStartTicks[[int]$reuseEntry.pid] = $laterTicks
 Assert-Outcome (Invoke-Line ('{"requestId":190,"method":"observe","target":"' + $reuseToken + '"}')) 'success' 'FINDING 2: a readable unchanged creation time restores corroborated access'
-$script:fakeRegistry[0].Visible = $true
+$script:fakeRegistry[0].Cloaked = $false
 $script:fakeProcessStartTicks.Remove([int]$reuseEntry.pid)
-
-# ---- identity-based Peek recovery: reveal-instance -------------------------
-# A window our own Peek hid is absent from the task-worthy enumeration, and the
-# session token that hid it can be gone (helper restart). This request names the
-# window by its STABLE identity instead and finds it in the RAW enumeration.
-$script:recoveryTarget = $script:fakeRegistry[2]
-$script:recoveryTarget.Visible = $false      # SWP_HIDEWINDOW: invisible, alive
-$script:recoveryTarget.Cloaked = $false
-$recoveryIdentity = Get-WhWindowInstanceId @{
-  hwnd = [long]$script:recoveryTarget.RuntimeId
-  pid = [int]$script:recoveryTarget.ProcessId
-  processStartTicks = (Get-WhProcessStartTicks ([int]$script:recoveryTarget.ProcessId))
-  className = [string]$script:recoveryTarget.ClassName
-}
-$hiddenList = Invoke-Line '{"requestId":200,"method":"list"}'
-Assert-True (@($hiddenList.windows | Where-Object { $_.windowInstanceId -eq $recoveryIdentity }).Count -eq 0) 'reveal-instance: an SWP-hidden window is ABSENT from the task-worthy list'
-# A FRESH session (no tokens at all) proves the request consults no session state.
-$script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
-$revealedByInstance = Invoke-Line ('{"requestId":201,"method":"reveal-instance","instance":"' + $recoveryIdentity + '"}')
-Assert-Outcome $revealedByInstance 'success' 'reveal-instance: an invisible window is revealed by its stable identity alone, with no session token'
-Assert-True ([bool]$script:recoveryTarget.Visible) 'reveal-instance: the hidden window is visible again'
-Assert-True (@($script:recoveryTarget.touched) -contains 'cloak:False') 'reveal-instance: the reveal uses the same native visibility call as uncloak'
-Assert-True (-not $revealedByInstance.ContainsKey('observation') -and -not $revealedByInstance.ContainsKey('windows')) 'reveal-instance: the success envelope carries no payload'
-Assert-Outcome (Invoke-Line '{"requestId":202,"method":"reveal-instance","instance":"Wffffffffffffffff"}') 'missing' 'reveal-instance: an unknown identity is missing'
-Assert-True (@($script:recoveryTarget.touched).Count -eq 1) 'reveal-instance: an unknown identity touches no window'
-Assert-Outcome (Invoke-Line '{"requestId":203,"method":"reveal-instance","instance":"nope"}') 'malformed' 'reveal-instance: a malformed identity is malformed'
-Assert-Outcome (Invoke-Line ('{"requestId":204,"method":"reveal-instance","instance":"' + $recoveryIdentity + '","target":"T1"}')) 'denied' 'reveal-instance: extra fields are denied'
-Assert-True (@($script:recoveryTarget.touched).Count -eq 1) 'reveal-instance: a denied request touches no window'
-# More than one window matching the same stable identity must refuse, never guess.
-$savedRegistry = $script:fakeRegistry
-$recoveryDuplicate = $script:recoveryTarget.PSObject.Copy()
-$recoveryDuplicate.Visible = $false
-$recoveryDuplicate.Cloaked = $false
-$recoveryDuplicate.touched = @()
-$script:fakeRegistry = @($savedRegistry + $recoveryDuplicate)
-Assert-Outcome (Invoke-Line ('{"requestId":205,"method":"reveal-instance","instance":"' + $recoveryIdentity + '"}')) 'ambiguous' 'reveal-instance: more than one match is ambiguous, never a guess'
-Assert-True (-not [bool]$recoveryDuplicate.Visible) 'reveal-instance: an ambiguous identity reveals nothing'
-Assert-True (@($script:recoveryTarget.touched).Count -eq 1) 'reveal-instance: neither ambiguous candidate was touched'
-$script:fakeRegistry = $savedRegistry
-# A window whose identity does NOT match is never touched by any of the above.
-$untouchedFixture = @($script:fakeRegistry | Where-Object { $_.Title -eq 'WH-TEST-DOC-1' } | Select-Object -First 1)
-Assert-True ($untouchedFixture.Count -eq 1 -and @($untouchedFixture[0].touched).Count -eq 0) 'reveal-instance: unrelated windows are never touched'
 
 # ---- simulated helper restart: old tokens are unusable --------------------
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }

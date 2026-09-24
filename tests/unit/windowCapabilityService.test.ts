@@ -311,7 +311,7 @@ describe('windowCapabilityService candidates', () => {
   /** Peek harness with controllable reveal RECEIPTS: the fake can deny or
    * reject the next batch reveal, deny the per-token reveal for named tokens,
    * and hold a hide in flight so a generation replacement can be forced. */
-  function receiptHarness(useBatchCloak: boolean, options: { identityPath?: boolean } = {}) {
+  function receiptHarness(useBatchCloak: boolean) {
     const rows = [
       observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Window A', processId: 1001, processPath: 'C:\\Apps\\a.exe' }),
       observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Window B', processId: 2002, processPath: 'C:\\Apps\\b.exe' }),
@@ -321,15 +321,8 @@ describe('windowCapabilityService candidates', () => {
     let visible: WindowObservation[] = [...rows];
     const hidden = new Set<RuntimeWindowId>();
     let denyNextBatchReveal = false;
-    let denyAllBatchReveals = false;
     let rejectNextBatchReveal = false;
     const denyRevealFor = new Set<RuntimeWindowId>();
-    /** The helper-restart case: the session that hid the windows is gone, so
-     * EVERY token reveal answers 'missing' while the stable identities remain. */
-    let sessionDropped = false;
-    let denyIdentityReveals = 0;
-    const identityReveals: string[] = [];
-    const events: string[] = [];
     let armedHide: { entered: () => void; waitEntered: Promise<void>; gate: Promise<void> } | null = null;
     function armNextHide() {
       let markEntered!: () => void;
@@ -353,7 +346,6 @@ describe('windowCapabilityService candidates', () => {
         return { outcome: 'success' as const };
       },
       uncloak: async (runtimeId) => {
-        if (sessionDropped) return { outcome: 'missing' as const, error: 'unknown session token' };
         if (denyRevealFor.has(runtimeId)) {
           // One-shot refusal (the transient fail-closed identity case).
           denyRevealFor.delete(runtimeId);
@@ -363,12 +355,10 @@ describe('windowCapabilityService candidates', () => {
         return { outcome: 'success' as const };
       },
       uncloakMany: async (runtimeIds) => {
-        if (sessionDropped) return { outcome: 'missing' as const, error: 'unknown session token' };
         if (rejectNextBatchReveal) {
           rejectNextBatchReveal = false;
           throw new Error('reveal rejected');
         }
-        if (denyAllBatchReveals) return { outcome: 'denied' as const, error: 'window identity changed' };
         if (denyNextBatchReveal) {
           denyNextBatchReveal = false;
           return { outcome: 'denied' as const, error: 'window identity changed' };
@@ -376,30 +366,10 @@ describe('windowCapabilityService candidates', () => {
         for (const runtimeId of runtimeIds) hidden.delete(runtimeId);
         return { outcome: 'success' as const };
       },
-      // The token-free recovery path: match the STABLE identity against every
-      // row, hidden ones included, exactly as the helper's raw enumeration does.
-      revealInstance: async (instanceId) => {
-        if (denyIdentityReveals > 0) {
-          denyIdentityReveals -= 1;
-          return { outcome: 'denied' as const, error: 'identity not corroborated' };
-        }
-        const row = rows.find((candidate) => candidate.windowInstanceId === instanceId);
-        if (!row) return { outcome: 'missing' as const, error: 'no window matches the instance identity' };
-        identityReveals.push(instanceId);
-        events.push(`reveal:${instanceId}`);
-        hidden.delete(row.runtimeId);
-        return { outcome: 'success' as const };
-      },
-      stop: async () => { events.push('helper-stopped'); },
     };
     if (!useBatchCloak) {
       delete overrides.cloakMany;
       delete overrides.uncloakMany;
-    }
-    if (options.identityPath === false) {
-      // An older helper has no identity-based recovery: the token receipt rule
-      // is then the only protection, which is what those regressions exercise.
-      delete overrides.revealInstance;
     }
     const service = createWindowCapabilityService({
       createFactory: () => fakeFactory(overrides),
@@ -422,22 +392,17 @@ describe('windowCapabilityService candidates', () => {
       b: rows[1]!,
       c: rows[2]!,
       bind,
-      identityReveals,
-      events,
       armNextHide,
       denyNextBatchReveal: () => { denyNextBatchReveal = true; },
-      denyBatchRevealAlways: () => { denyAllBatchReveals = true; },
       rejectNextBatchReveal: () => { rejectNextBatchReveal = true; },
       denyRevealFor: (runtimeId: RuntimeWindowId) => { denyRevealFor.add(runtimeId); },
-      denyNextIdentityReveal: (count = 1) => { denyIdentityReveals = count; },
-      dropSession: () => { sessionDropped = true; },
       close: (title: string) => { visible = visible.filter((row) => row.title !== title); },
       closeAllButTarget: () => { visible = [a]; },
     };
   }
 
   it('keeps a Peek-hidden identity protected when the endPeek reveal is denied, and releases it on a confirmed reveal', async () => {
-    const h = receiptHarness(true, { identityPath: false });
+    const h = receiptHarness(true);
     const capability = await h.bind('Window A');
     expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
     expect(h.hidden.has(TOKEN_B as RuntimeWindowId)).toBe(true);
@@ -469,7 +434,7 @@ describe('windowCapabilityService candidates', () => {
   });
 
   it('keeps a Peek-hidden identity protected when the endPeek reveal rejects', async () => {
-    const h = receiptHarness(true, { identityPath: false });
+    const h = receiptHarness(true);
     const capability = await h.bind('Window A');
     expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
 
@@ -481,7 +446,7 @@ describe('windowCapabilityService candidates', () => {
   });
 
   it('releases only the per-token reveals that were confirmed successful', async () => {
-    const h = receiptHarness(false, { identityPath: false });
+    const h = receiptHarness(false);
     const capability = await h.bind('Window A');
     expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
     expect(h.hidden.has(TOKEN_B as RuntimeWindowId)).toBe(true);
@@ -507,7 +472,7 @@ describe('windowCapabilityService candidates', () => {
   });
 
   it('keeps protection when a superseded Peek generation cannot compensate its own hides', async () => {
-    const h = receiptHarness(true, { identityPath: false });
+    const h = receiptHarness(true);
     const capabilityA = await h.bind('Window A');
     const capabilityB = await h.bind('Window B');
 
@@ -532,84 +497,6 @@ describe('windowCapabilityService candidates', () => {
     expect((await h.service.endPeek()).outcome).toBe('success');
     h.closeAllButTarget();
     expect(await h.service.resolveInstance(h.b.windowInstanceId!)).toMatchObject({ outcome: 'missing' });
-  });
-
-  it('recovers a Peek-hidden identity through the token-free path when the token reveal is denied', async () => {
-    const h = receiptHarness(true);
-    const capability = await h.bind('Window A');
-    expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
-    expect(h.hidden.has(TOKEN_B as RuntimeWindowId)).toBe(true);
-    expect(h.hidden.has(TOKEN_C as RuntimeWindowId)).toBe(true);
-
-    // The token path cannot confirm anything...
-    h.denyBatchRevealAlways();
-    const end = await h.service.endPeek();
-    // ...but the STABLE identity path can, so nothing stays hidden and nothing
-    // stays unresolved.
-    expect(end.outcome).toBe('success');
-    expect(h.hidden.size).toBe(0);
-    expect([...h.identityReveals].sort()).toEqual([h.b.windowInstanceId!, h.c.windowInstanceId!].sort());
-
-    // A later genuine absence is exact again.
-    h.closeAllButTarget();
-    expect(await h.service.resolveInstance(h.b.windowInstanceId!)).toMatchObject({ outcome: 'missing' });
-  });
-
-  it('never leaves a window hidden after stop(): identity recovery runs before the helper is torn down', async () => {
-    const h = receiptHarness(true);
-    const capability = await h.bind('Window A');
-    expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
-    expect(h.hidden.has(TOKEN_B as RuntimeWindowId)).toBe(true);
-    expect(h.hidden.has(TOKEN_C as RuntimeWindowId)).toBe(true);
-
-    // Nothing can confirm: the token path always refuses and the first two
-    // identity attempts fail too.
-    h.denyBatchRevealAlways();
-    h.denyNextIdentityReveal(2);
-    expect(await h.service.endPeek()).toMatchObject({ outcome: 'timeout' });
-    expect(h.hidden.size).toBe(2);
-
-    await h.service.stop();
-    // Shutdown recovered both identities BEFORE the helper was stopped.
-    expect(h.hidden.size).toBe(0);
-    const stopIndex = h.events.indexOf('helper-stopped');
-    expect(stopIndex).toBeGreaterThanOrEqual(0);
-    for (const instanceId of [h.b.windowInstanceId!, h.c.windowInstanceId!]) {
-      const revealIndex = h.events.indexOf(`reveal:${instanceId}`);
-      expect(revealIndex).toBeGreaterThanOrEqual(0);
-      expect(revealIndex).toBeLessThan(stopIndex);
-    }
-  });
-
-  it('recovers after helper-session loss, where every session token is unknown', async () => {
-    const h = receiptHarness(true);
-    const capability = await h.bind('Window A');
-    expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
-    expect(h.hidden.size).toBe(2);
-
-    // The helper session that hid the windows is gone: every token reveal now
-    // answers 'missing'. Recovery must not depend on the old token.
-    h.dropSession();
-    expect(await h.service.endPeek()).toMatchObject({ outcome: 'success' });
-    expect(h.hidden.size).toBe(0);
-    expect([...h.identityReveals].sort()).toEqual([h.b.windowInstanceId!, h.c.windowInstanceId!].sort());
-  });
-
-  it('recovers a lost-session hide at shutdown even when an identity attempt fails first', async () => {
-    const h = receiptHarness(true);
-    const capability = await h.bind('Window A');
-    expect((await h.service.beginPeekCapability(capability)).outcome).toBe('success');
-
-    h.dropSession();
-    h.denyNextIdentityReveal(2);
-    expect(await h.service.endPeek()).toMatchObject({ outcome: 'timeout' });
-    expect(h.hidden.size).toBe(2);
-
-    await h.service.stop();
-    expect(h.hidden.size).toBe(0);
-    const stopIndex = h.events.indexOf('helper-stopped');
-    expect(stopIndex).toBeGreaterThanOrEqual(0);
-    expect(h.events.findIndex((event) => event.startsWith('reveal:'))).toBeLessThan(stopIndex);
   });
 
   it('lists only trusted candidates: Papers itself, empty titles and missing paths are excluded', async () => {

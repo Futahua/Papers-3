@@ -53,11 +53,6 @@ export interface WindowCapabilityClient {
    * (maxWidth, maxHeight). Dimensions are positive integers (maxWidth <= 320,
    * maxHeight <= 180); the service validates them before reaching this. */
   thumbnail(runtimeId: RuntimeWindowId, maxWidth?: number, maxHeight?: number): Promise<WindowCapabilityResult>;
-  /** Identity-based Peek recovery: reveal the window named by a STABLE
-   * instance identity. Deliberately token-free, so it still works after the
-   * helper session that hid the window has been replaced. Main-process
-   * internal only: no IPC route and no preload method exposes it. */
-  revealInstance(instanceId: string): Promise<WindowCapabilityResult>;
   /** Inbound message path the transport delivers into. */
   handleMessage(raw: unknown): void;
   /** Rejects every pending request exactly once (supervisor crash/stop). */
@@ -85,7 +80,6 @@ export function createWindowCapabilityClient({
     detail: {
       target?: RuntimeWindowId;
       targets?: RuntimeWindowId[];
-      instance?: string;
       caller?: string;
       enabled?: boolean;
       bounds?: WindowBounds;
@@ -109,7 +103,6 @@ export function createWindowCapabilityClient({
       method,
       ...(detail.target !== undefined ? { target: detail.target } : {}),
       ...(detail.targets !== undefined ? { targets: detail.targets } : {}),
-      ...(detail.instance !== undefined ? { instance: detail.instance } : {}),
       ...(detail.caller !== undefined ? { caller: detail.caller } : {}),
       ...(detail.enabled !== undefined ? { enabled: detail.enabled } : {}),
       ...(detail.bounds !== undefined ? { bounds: detail.bounds } : {}),
@@ -204,7 +197,6 @@ export function createWindowCapabilityClient({
     terminate: (runtimeId) => request('terminate', { target: runtimeId }),
     hover: (x, y) => request('hover', { x, y }),
     thumbnail: (runtimeId, maxWidth, maxHeight) => request('thumbnail', { target: runtimeId, maxWidth, maxHeight }),
-    revealInstance: (instanceId) => request('reveal-instance', { instance: instanceId }),
     handleMessage,
     rejectAllPending,
     stop,

@@ -32,11 +32,6 @@ export const WINDOW_CAPABILITY_METHODS = [
   'terminate',
   'hover',
   'thumbnail',
-  // Identity-based Peek recovery: reveal a window this helper (or a previous
-  // helper session) hid, named by its STABLE instance identity instead of a
-  // session token. Main-process internal only - no IPC route and no preload
-  // method exposes it.
-  'reveal-instance',
 ] as const;
 
 export type WindowCapabilityMethod = (typeof WINDOW_CAPABILITY_METHODS)[number];
@@ -106,9 +101,6 @@ export interface WindowRequestMessage {
   method: WindowCapabilityMethod;
   target?: RuntimeWindowId;
   targets?: RuntimeWindowId[];
-  /** `reveal-instance` only: the STABLE persisted instance identity to reveal.
-   * Never a session token, so a helper restart cannot make it unusable. */
-  instance?: string;
   caller?: string;
   enabled?: boolean;
   bounds?: WindowBounds;
@@ -358,7 +350,7 @@ export function parseWindowResponse(raw: unknown): WindowResponseMessage | null 
   // key and invalidates the envelope.
   if (method !== 'toggle' && raw['action'] !== undefined) return null;
 
-  if (method === 'close' || method === 'terminate' || method === 'cloak-many' || method === 'uncloak-many' || method === 'live-preview' || method === 'reveal-instance') {
+  if (method === 'close' || method === 'terminate' || method === 'cloak-many' || method === 'uncloak-many' || method === 'live-preview') {
     // Documented close shape: envelope only, no payload.
     if (hasExtraPayload) return null;
     return { requestId, method: methodName, outcome: outcome as WindowOutcome, ...(error !== undefined ? { error } : {}) };

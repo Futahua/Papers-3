@@ -254,29 +254,12 @@ describe('window capability client', () => {
     const client = createWindowCapabilityClient({ transport: fake.transport });
     const surface = Object.keys(client);
     expect(surface.sort()).toEqual(
-      ['apply', 'cloak', 'cloakMany', 'close', 'handleMessage', 'hover', 'list', 'livePreview', 'minimize', 'observe', 'pendingCount', 'rejectAllPending', 'restore', 'revealInstance', 'stop', 'terminate', 'thumbnail', 'toggle', 'uncloak', 'uncloakMany'].sort(),
+      ['apply', 'cloak', 'cloakMany', 'close', 'handleMessage', 'hover', 'list', 'livePreview', 'minimize', 'observe', 'pendingCount', 'rejectAllPending', 'restore', 'stop', 'terminate', 'thumbnail', 'toggle', 'uncloak', 'uncloakMany'].sort(),
     );
     for (const name of surface) {
       expect(name.toLowerCase()).not.toMatch(/send|exec|invoke|shell|spawn|launch|eval/);
     }
-    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'terminate', 'hover', 'thumbnail', 'reveal-instance']);
-  });
-
-  it('routes identity-based Peek recovery as a token-free request', async () => {
-    const fake = fakeTransport();
-    const client = createWindowCapabilityClient({ transport: fake.transport });
-    const pending = client.revealInstance('W0123456789abcdef');
-    const sent = fake.sent[0]!;
-    expect(sent).toMatchObject({ method: 'reveal-instance', instance: 'W0123456789abcdef' });
-    // No session token crosses this request - that is what makes it survive a
-    // helper restart.
-    expect(sent).not.toHaveProperty('target');
-    fake.deliver(response(sent.requestId, 'reveal-instance', 'success'));
-    await expect(pending).resolves.toEqual({ outcome: 'success' });
-    const missing = client.revealInstance('Wfedcba9876543210');
-    const missingSent = fake.sent[1]!;
-    fake.deliver({ ...response(missingSent.requestId, 'reveal-instance', 'missing'), error: 'no window matches the stable instance identity' });
-    await expect(missing).resolves.toEqual({ outcome: 'missing', error: 'no window matches the stable instance identity' });
+    expect([...WINDOW_CAPABILITY_METHODS]).toEqual(['list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'terminate', 'hover', 'thumbnail']);
   });
 
   it('routes bounded batched visibility through one correlated request', async () => {

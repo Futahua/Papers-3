@@ -140,7 +140,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot/window-capability.ps1"
 
-$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'terminate', 'hover', 'thumbnail', 'reveal-instance')
+$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'terminate', 'hover', 'thumbnail')
 $FORBIDDEN_KEYS = @('exec', 'command', 'script', 'path', 'handle', 'env', 'args', 'cmd', 'powershell', 'invoke', 'shell')
 $MAX_SAFE_REQUEST_ID = 9007199254740991L
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
@@ -455,23 +455,6 @@ function Test-WhRequestShape {
     }
     return @{ Valid = $true; RequestId = $id; Method = [string]$method }
   }
-  if ($method -eq 'reveal-instance') {
-    # Identity-based Peek recovery. The request carries a STABLE instance
-    # identity and NEVER a session token, so it still works after a helper
-    # restart, where the old token is deliberately unknown. Strict shape: only
-    # requestId, method and instance are accepted, and the identity must have
-    # the exact canonical form the helper emits.
-    $instance = $Request['instance']
-    if ($instance -isnot [string] -or $instance -notmatch '^W[0-9a-f]{16}$') {
-      return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'malformed' $null 'reveal-instance requires a stable W identity') }
-    }
-    foreach ($key in $Request.Keys) {
-      if (@('requestId', 'method', 'instance') -notcontains ([string]$key)) {
-        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' $null 'reveal-instance accepts only requestId, method and instance') }
-      }
-    }
-    return @{ Valid = $true; RequestId = $id; Method = [string]$method }
-  }
   if ($method -ne 'list') {
     $target = $Request['target']
     if ($target -isnot [string] -or $target.Length -eq 0) {
@@ -552,34 +535,6 @@ function Invoke-WhRequest {
         }
       }
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ windows = $windows } $null)
-    }
-    if ($Method -eq 'reveal-instance') {
-      # Identity-based recovery for a window this helper - or a PREVIOUS helper
-      # session - hid. It deliberately consults NO session token: after a helper
-      # restart the old T token is unknown, but the stable identity survives,
-      # because it is computed from properties that do not change while the
-      # window lives (HWND, owning PID, that process's creation time, class).
-      # The enumeration is the RAW top-level list, so a hidden window is found,
-      # and every candidate identity is recomputed exactly as issuance does.
-      $instanceId = ([string]$Request['instance']).ToLowerInvariant()
-      $matches = @()
-      foreach ($observation in @(Get-WhAllWindows)) {
-        $candidateIdentity = Get-WhWindowInstanceId @{
-          hwnd = [long]$observation.RuntimeId
-          pid = [int]$observation.ProcessId
-          processStartTicks = (Get-WhProcessStartTicks ([int]$observation.ProcessId))
-          className = [string]$observation.ClassName
-        }
-        if ($candidateIdentity -eq $instanceId) { $matches += $observation }
-      }
-      if ($matches.Count -eq 0) {
-        return (ConvertTo-WhResponse $RequestId $Method 'missing' $null 'no window matches the stable instance identity')
-      }
-      if ($matches.Count -gt 1) {
-        return (ConvertTo-WhResponse $RequestId $Method 'ambiguous' $null 'more than one window matches the stable instance identity')
-      }
-      Uncloak-WhWindow ([IntPtr]$matches[0].RuntimeId)
-      return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
     }
     if ($Method -eq 'hover') {
       $observation = Resolve-WhTaskWindowAtPoint ([int][Math]::Round([double]$Request['x'], 0, [MidpointRounding]::AwayFromZero)) ([int][Math]::Round([double]$Request['y'], 0, [MidpointRounding]::AwayFromZero))

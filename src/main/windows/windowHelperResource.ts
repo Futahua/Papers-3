@@ -51,14 +51,6 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
  * mutates and emits that identity. Only the helper script hash moved with this
  * revision; the pins and manifest.json moved together.
  *
- * Peek-recovery revision: the helper gained a main-process-internal
- * `reveal-instance` request that reveals a window an earlier Peek hid by its
- * STABLE instance identity instead of a session token. It recomputes each
- * candidate identity from a RAW top-level enumeration (new adapter function
- * `Get-WhAllWindows`, hidden windows included), refuses an ambiguous match, and
- * has no IPC route or preload method. BOTH pins below moved with this revision
- * (helper and adapter), together with manifest.json.
- *
  * EOL DEFECT FIXED HERE: these pins are SHA-256 over exact BYTES, and
  * `.gitattributes` declares `* text=auto eol=lf`, so a git checkout always
  * delivers LF. The adapter script was nevertheless stored in the working tree
@@ -69,8 +61,8 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
  * every checkout receives. `tests/unit/windowHelperResource.test.ts` guards
  * this by validating the committed blob, not the working copy. */
 export const WINDOW_HELPER_EXPECTED_HASHES: Record<string, string> = {
-  [WINDOW_HELPER_SCRIPT_FILE]: '0d72f25977954695414190f51b05acc12e671697d0805527a1c72bf26abfd54d',
-  [WINDOW_HELPER_ADAPTER_FILE]: '21a611a11560c1660dd2fffd39a2d2e637db9fe9f6adb132e7ff6b2433d7df8a',
+  [WINDOW_HELPER_SCRIPT_FILE]: '4cc820f48b882eee5f21fdf233303fcca79535e15bd15f666ad5ea2f86ab7e52',
+  [WINDOW_HELPER_ADAPTER_FILE]: 'e5ba6cce5f9964922f1f02ab33a4235baeb9ac98ca36b0e2eb94d32722a74c29',
 };
 
 export interface WindowHelperResourcePaths {
