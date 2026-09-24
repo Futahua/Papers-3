@@ -58,6 +58,9 @@ global rButtonDragging := false
 global movingWindowHwnd := 0
 global movingRightDownAt := 0
 global movingWindows := Map()
+global movingMode := ""
+global movingStartedWithShift := false
+global movingResizeReferenceHeight := 1
 global moveSelected := Map()
 global mButtonDragging := false
 global spacePressed := false
@@ -1181,7 +1184,7 @@ ActivateTargetWindow(hWnd, restore := true) {
 
 UpdateOverlay() {
     global fillGui, innerGui, crossGui, spacePressed, activeTargetHwnd
-    global ctrlSpaceLatched, moveSelected
+    global ctrlSpaceLatched, moveSelected, movingWindowHwnd
     global outerTopGui, outerBottomGui, outerLeftGui, outerRightGui
     prevDpiContext := SetThreadPerMonitorV2()
 
@@ -1295,6 +1298,12 @@ UpdateOverlay() {
             return
         }
 
+        if ctrlSpaceLatched && movingWindowHwnd && moveSelected.Count {
+            SetGlobalCursor(squashCursorPath, "squash")
+            HideOverlays()
+            return
+        }
+
         ; Resize mode
         crossGui.Hide()
         GetInnerZone(wx, wy, ww, wh, &ix, &iy, &iw, &ih)
@@ -1368,6 +1377,7 @@ SetTimer(UpdateOverlay, 16)
 *Space:: {
     global spacePressed, ctrlSpaceActivationDown, ctrlSpaceArmed, ctrlSpaceLatched, ctrlSpaceHoldPending
     global moveSelected, movingWindowHwnd, movingWindows, movingRightDownAt, activeTargetHwnd
+    global movingMode, movingStartedWithShift
     if ctrlSpaceActivationDown
         return
     ctrlSpaceActivationDown := true
@@ -1379,6 +1389,8 @@ SetTimer(UpdateOverlay, 16)
                 movingWindowHwnd := 0
                 movingWindows := Map()
                 movingRightDownAt := 0
+                movingMode := ""
+                movingStartedWithShift := false
             }
             ClearMoveSelections()
             activeTargetHwnd := 0
@@ -1466,6 +1478,7 @@ CtrlSpaceKeyDown(ih, vk, sc) {
 ExitLatchedCtrlSpaceMode() {
     global ctrlSpaceArmed, ctrlSpaceLatched, ctrlSpaceHoldPending, ctrlSpaceKeyWatcher
     global movingWindowHwnd, movingRightDownAt, movingWindows, rButtonDragging, mButtonDragging, activeTargetHwnd
+    global movingMode, movingStartedWithShift
     ctrlSpaceArmed := false
     ctrlSpaceLatched := false
     ctrlSpaceHoldPending := false
@@ -1473,6 +1486,8 @@ ExitLatchedCtrlSpaceMode() {
     movingWindowHwnd := 0
     movingRightDownAt := 0
     movingWindows := Map()
+    movingMode := ""
+    movingStartedWithShift := false
     ClearMoveSelections()
     rButtonDragging := false
     mButtonDragging := false
@@ -1571,10 +1586,11 @@ ExitLatchedCtrlSpaceMode() {
 }
 
 ; RMB — click once to pick up the window, click again to place it.
-#HotIf movingWindowHwnd || (IsMoveModeActive() && !IsMouseOverCSP())
+#HotIf movingWindowHwnd || (ctrlSpaceLatched && !IsMouseOverCSP()) || (IsMoveModeActive() && !IsMouseOverCSP())
 *RButton:: {
     global activeTargetHwnd, movingWindowHwnd, movingWindowOffsetX, movingWindowOffsetY
     global movingRightDownAt, movingWindows, movingAnchorMouseX, movingAnchorMouseY
+    global movingMode, movingStartedWithShift
     global moveSelected, rButtonDragging, ctrlSpaceLatched
     if ctrlSpaceLatched && GetKeyState("Ctrl", "P") {
         if movingWindowHwnd {
@@ -1583,6 +1599,8 @@ ExitLatchedCtrlSpaceMode() {
             movingWindowHwnd := 0
             movingWindows := Map()
             movingRightDownAt := 0
+            movingMode := ""
+            movingStartedWithShift := false
         }
         HideOverlays()
         target := GetMouseTargetInfo().hwnd
@@ -1596,6 +1614,8 @@ ExitLatchedCtrlSpaceMode() {
         movingWindowHwnd := 0
         movingWindows := Map()
         movingRightDownAt := 0
+        movingMode := ""
+        movingStartedWithShift := false
         activeTargetHwnd := 0
         return
     }
@@ -1667,6 +1687,8 @@ ExitLatchedCtrlSpaceMode() {
         break
     }
     movingRightDownAt := A_TickCount
+    movingStartedWithShift := GetEngineKeyState("Shift")
+    movingMode := movingStartedWithShift ? "pending" : "move"
     SetTimer(UpdateMovingWindow, 10)
     RaiseWindow(hWnd)
 }
@@ -1674,9 +1696,29 @@ ExitLatchedCtrlSpaceMode() {
 
 UpdateMovingWindow() {
     global movingWindowHwnd, movingWindows, movingAnchorMouseX, movingAnchorMouseY, moveSelected
+    global movingMode, movingStartedWithShift, movingRightDownAt, movingResizeReferenceHeight
     if !movingWindowHwnd
         return
     MouseGetPos(&currentX, &currentY)
+    if (movingStartedWithShift && movingRightDownAt
+        && (A_TickCount - movingRightDownAt <= 100) && GetKeyState("RButton", "P"))
+        return
+
+    wantedMode := GetEngineKeyState("Shift") ? "resize" : "move"
+    if (movingMode != wantedMode) {
+        pending := (movingMode = "pending")
+        originalAnchorX := movingAnchorMouseX
+        originalAnchorY := movingAnchorMouseY
+        RebaseMovingWindows(currentX, currentY)
+        if !movingWindowHwnd
+            return
+        if pending {
+            movingAnchorMouseX := originalAnchorX
+            movingAnchorMouseY := originalAnchorY
+        }
+        movingMode := wantedMode
+    }
+
     dx := currentX - movingAnchorMouseX
     dy := currentY - movingAnchorMouseY
     anyLive := false
@@ -1684,18 +1726,60 @@ UpdateMovingWindow() {
         if !WinExist("ahk_id " hWnd)
             continue
         anyLive := true
-        DllCall("SetWindowPos", "Ptr", hWnd, "Ptr", 0,
-            "Int", origin.x + dx, "Int", origin.y + dy,
-            "Int", 0, "Int", 0, "UInt", 0x0415)
-        if moveSelected.Has(hWnd)
-            PositionPickerBorder(moveSelected[hWnd].tint, hWnd,
-                origin.vx + dx, origin.vy + dy, origin.vw, origin.vh)
+        if (movingMode = "resize") {
+            scale := Max(0.15, 1.0 - (dy / movingResizeReferenceHeight) * 3.0)
+            ScaleWindow(hWnd, origin.w, origin.h,
+                origin.x + origin.w / 2, origin.y + origin.h / 2,
+                scale, origin.maxW, origin.maxH)
+            if moveSelected.Has(hWnd) {
+                GetVisibleRect(hWnd, &visibleX, &visibleY, &visibleW, &visibleH)
+                PositionPickerBorder(moveSelected[hWnd].tint, hWnd,
+                    visibleX, visibleY, visibleW, visibleH)
+            }
+        } else {
+            DllCall("SetWindowPos", "Ptr", hWnd, "Ptr", 0,
+                "Int", origin.x + dx, "Int", origin.y + dy,
+                "Int", 0, "Int", 0, "UInt", 0x0415)
+            if moveSelected.Has(hWnd)
+                PositionPickerBorder(moveSelected[hWnd].tint, hWnd,
+                    origin.vx + dx, origin.vy + dy, origin.vw, origin.vh)
+        }
     }
     if !anyLive {
         SetTimer(UpdateMovingWindow, 0)
         movingWindowHwnd := 0
         movingWindows := Map()
+        movingMode := ""
     }
+}
+
+RebaseMovingWindows(mouseX, mouseY) {
+    global movingWindowHwnd, movingWindows, movingAnchorMouseX, movingAnchorMouseY
+    global movingResizeReferenceHeight
+    live := Map()
+    movingWindowHwnd := 0
+    movingResizeReferenceHeight := 1
+    for hWnd in movingWindows {
+        try {
+            if !WinExist("ahk_id " hWnd)
+                continue
+            WinGetPos(&x, &y, &w, &h, "ahk_id " hWnd)
+            if (w <= 0 || h <= 0)
+                continue
+            GetVisibleRect(hWnd, &vx, &vy, &vw, &vh)
+            GetMonitorForWindow(hWnd, &left, &top, &right, &bottom)
+            live[hWnd] := {x: x, y: y, w: w, h: h, vx: vx, vy: vy, vw: vw, vh: vh,
+                maxW: Max(140, right - left - 60), maxH: Max(140, bottom - top - 60)}
+            movingResizeReferenceHeight := Max(movingResizeReferenceHeight, h)
+            if !movingWindowHwnd
+                movingWindowHwnd := hWnd
+        }
+    }
+    movingWindows := live
+    movingAnchorMouseX := mouseX
+    movingAnchorMouseY := mouseY
+    if !movingWindowHwnd
+        SetTimer(UpdateMovingWindow, 0)
 }
 
 ; ============================================================
@@ -1709,6 +1793,7 @@ UpdateMovingWindow() {
         ExitLatchedCtrlSpaceMode()
 }
 
+#HotIf !ctrlSpaceLatched && IsResizeModeActive() && !movingWindowHwnd && !IsMouseOverCSP()
 *RButton:: {
     global rButtonDragging, activeTargetHwnd, ctrlSpaceLatched
     if ctrlSpaceLatched && !GetMouseTargetInfo().hwnd {
@@ -1793,6 +1878,7 @@ UpdateMovingWindow() {
 }
 
 ; MMB — smooth proportional scale drag
+#HotIf IsResizeModeActive() && !movingWindowHwnd && !IsMouseOverCSP()
 *MButton:: {
     global mButtonDragging, activeTargetHwnd, ctrlSpaceLatched
     if ctrlSpaceLatched && !GetMouseTargetInfo().hwnd {
@@ -1843,15 +1929,20 @@ UpdateMovingWindow() {
 #HotIf rButtonDragging || (ctrlSpaceLatched && movingWindowHwnd)
 *RButton Up:: {
     global rButtonDragging, movingWindowHwnd, movingWindows, movingRightDownAt, activeTargetHwnd
+    global movingMode, movingStartedWithShift
     if rButtonDragging {
         rButtonDragging := false
         return
     }
-    if movingWindowHwnd && (A_TickCount - movingRightDownAt > 100) {
-        UpdateMovingWindow()
+    heldLongEnough := movingRightDownAt && (A_TickCount - movingRightDownAt > 100)
+    if movingWindowHwnd && (heldLongEnough || movingStartedWithShift) {
+        if heldLongEnough
+            UpdateMovingWindow()
         SetTimer(UpdateMovingWindow, 0)
         movingWindowHwnd := 0
         movingWindows := Map()
+        movingMode := ""
+        movingStartedWithShift := false
         activeTargetHwnd := 0
     }
     movingRightDownAt := 0
