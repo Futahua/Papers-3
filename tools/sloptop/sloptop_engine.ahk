@@ -70,7 +70,6 @@ global mButtonDragging := false
 global spacePressed := false
 global ctrlSpaceActivationDown := false
 global ctrlSpaceArmed := false
-global spaceFirstArmed := false
 global ctrlSpaceLatched := false
 global ctrlSpaceHoldPending := false
 global ctrlSpaceKeyWatcher := 0
@@ -452,7 +451,6 @@ HandleScriptExit(*) {
     global ctrlSpaceKeyWatcher
     SetTimer(UpdateMovingWindow, 0)
     SetTimer(ConfirmHeldCtrlSpace, 0)
-    SetTimer(ExpireSequentialSpaceCtrl, 0)
     try ClearMoveSelections()
     if ctrlSpaceKeyWatcher
         ctrlSpaceKeyWatcher.Stop()
@@ -1445,8 +1443,7 @@ SetTimer(UpdateOverlay, 16)
 ; Space suppression — blocks Space from reaching the active window on both machines
 #HotIf !IsMouseOverCSP() && (ctrlSpaceArmed || ctrlSpaceLatched || GetEngineKeyState("Ctrl"))
 *Space:: {
-    global spacePressed, ctrlSpaceActivationDown, ctrlSpaceArmed, spaceFirstArmed
-    global ctrlSpaceLatched, ctrlSpaceHoldPending
+    global spacePressed, ctrlSpaceActivationDown, ctrlSpaceArmed, ctrlSpaceLatched, ctrlSpaceHoldPending
     global moveSelected, movingWindowHwnd, movingWindows, movingRightDownAt, activeTargetHwnd
     global movingMode, movingStartedWithShift
     if ctrlSpaceActivationDown
@@ -1477,8 +1474,6 @@ SetTimer(UpdateOverlay, 16)
         return
     }
     ctrlSpaceArmed := false
-    spaceFirstArmed := false
-    SetTimer(ExpireSequentialSpaceCtrl, 0)
     ctrlSpaceLatched := true
     ctrlSpaceHoldPending := true
     SetTimer(ConfirmHeldCtrlSpace, -100)
@@ -1486,68 +1481,25 @@ SetTimer(UpdateOverlay, 16)
 #HotIf
 
 #HotIf spacePressed || ctrlSpaceActivationDown
-~*Space Up:: {
+*Space Up:: {
     global spacePressed, ctrlSpaceActivationDown
     spacePressed := false
     ctrlSpaceActivationDown := false
 }
 #HotIf
 
-; A leading Space remains a normal keystroke. Ctrl may follow within 600 ms,
-; or while Space is still down, to start the same latched mode.
-#HotIf !IsMouseOverCSP() && !ctrlSpaceArmed && !ctrlSpaceLatched && !GetEngineKeyState("Ctrl")
-~*Space::ArmSequentialSpaceCtrl()
-#HotIf
-
-~*Space Up:: {
-    global spaceFirstArmed
-    if spaceFirstArmed
-        SetTimer(ExpireSequentialSpaceCtrl, -600)
-}
-
-ArmSequentialSpaceCtrl() {
-    global spaceFirstArmed, ctrlSpaceHoldPending
-    if spaceFirstArmed || ctrlSpaceHoldPending
-        return
-    spaceFirstArmed := true
-    StartCtrlSpaceKeyWatcher()
-}
-
-ExpireSequentialSpaceCtrl() {
-    global spaceFirstArmed, ctrlSpaceArmed, ctrlSpaceLatched, ctrlSpaceKeyWatcher
-    if GetKeyState("Space", "P")
-        return
-    spaceFirstArmed := false
-    if !ctrlSpaceArmed && !ctrlSpaceLatched && ctrlSpaceKeyWatcher
-        ctrlSpaceKeyWatcher.Stop()
-}
-
-; Tap either modifier order to latch. Holding the completed chord past 100 ms
-; retains the original hold behavior.
+; Tap Ctrl, then Space to keep the mode active after releasing both keys.
 ~*LCtrl::ArmSequentialCtrlSpace()
 ~*RCtrl::ArmSequentialCtrlSpace()
 
 ArmSequentialCtrlSpace() {
-    global ctrlSpaceArmed, spaceFirstArmed, ctrlSpaceLatched, ctrlSpaceHoldPending, spacePressed
+    global ctrlSpaceArmed, ctrlSpaceLatched, ctrlSpaceHoldPending, spacePressed
     if ctrlSpaceHoldPending
         return
     ; Ctrl is the selection modifier while the move mode is latched.
     if ctrlSpaceLatched
         return
-    if IsMouseOverCSP()
-        return
-    if spaceFirstArmed {
-        spaceFirstArmed := false
-        SetTimer(ExpireSequentialSpaceCtrl, 0)
-        ctrlSpaceArmed := false
-        ctrlSpaceLatched := true
-        if GetKeyState("Space", "P") {
-            ctrlSpaceHoldPending := true
-            SetTimer(ConfirmHeldCtrlSpace, -100)
-        }
-        return
-    }
-    if spacePressed
+    if spacePressed || IsMouseOverCSP()
         return
     ctrlSpaceArmed := true
     StartCtrlSpaceKeyWatcher()
@@ -1577,7 +1529,7 @@ StartCtrlSpaceKeyWatcher() {
 }
 
 CtrlSpaceKeyDown(ih, vk, sc) {
-    global ctrlSpaceArmed, spaceFirstArmed, ctrlSpaceLatched
+    global ctrlSpaceArmed, ctrlSpaceLatched
     ; Shift switches a latched move to resize while held. Space is handled
     ; by its hotkey, so a second Space can explicitly exit the mode.
     if (vk = 0x10 || vk = 0xA0 || vk = 0xA1 || vk = 0x20
@@ -1585,24 +1537,20 @@ CtrlSpaceKeyDown(ih, vk, sc) {
         return
     if ctrlSpaceLatched {
         ExitLatchedCtrlSpaceMode()
-    } else if ctrlSpaceArmed || spaceFirstArmed {
+    } else if ctrlSpaceArmed {
         ctrlSpaceArmed := false
-        spaceFirstArmed := false
-        SetTimer(ExpireSequentialSpaceCtrl, 0)
         ih.Stop()
     }
 }
 
 ExitLatchedCtrlSpaceMode() {
-    global ctrlSpaceArmed, spaceFirstArmed, ctrlSpaceLatched, ctrlSpaceHoldPending, ctrlSpaceKeyWatcher
+    global ctrlSpaceArmed, ctrlSpaceLatched, ctrlSpaceHoldPending, ctrlSpaceKeyWatcher
     global movingWindowHwnd, movingRightDownAt, movingWindows, rButtonDragging, mButtonDragging, activeTargetHwnd
     global movingMode, movingStartedWithShift
     ctrlSpaceArmed := false
-    spaceFirstArmed := false
     ctrlSpaceLatched := false
     ctrlSpaceHoldPending := false
     SetTimer(ConfirmHeldCtrlSpace, 0)
-    SetTimer(ExpireSequentialSpaceCtrl, 0)
     movingWindowHwnd := 0
     movingRightDownAt := 0
     movingWindows := Map()
