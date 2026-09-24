@@ -185,8 +185,6 @@ export interface WindowCapabilityResult {
   thumbnail?: WindowThumbnail;
   action?: WindowToggleAction;
   error?: string;
-  /** Exact AYG member identities belonging to a process ended from the owned picker. */
-  retiredWindowInstanceIds?: string[];
 }
 
 export type WindowToggleAction = 'minimize' | 'restore';
