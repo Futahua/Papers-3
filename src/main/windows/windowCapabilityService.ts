@@ -153,8 +153,6 @@ export interface WindowCapabilityService {
   /** Explicit Ctrl+middle-click action. Closes only the exact verified window;
    * sibling windows owned by the same process remain untouched. */
   closeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
-  /** Explicit process-end gesture; terminates only the verified window owner's process. */
-  terminateCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   /** Transient taskbar-style Peek: compositor-cloak every currently visible
    * eligible window except the target, then uncloak exactly that set on end. */
   beginPeekCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
@@ -665,16 +663,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return factory.close(token);
   }
 
-  async function terminateCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
-    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
-    const token = tokenFor(capability);
-    if (!token) return { outcome: 'missing', error: 'binding is not issued' };
-    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
-    return factory.terminate
-      ? factory.terminate(token)
-      : { outcome: 'denied', error: 'process termination is unavailable' };
-  }
-
   async function endPeek(): Promise<WindowCapabilityResult> {
     peekGeneration += 1;
     const restore = peekRestoreTokens.splice(0);
@@ -1055,7 +1043,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     restoreCapability,
     toggleCapability,
     closeCapability,
-    terminateCapability,
     beginPeekCapability,
     endPeek,
     beginLivePreviewCapability,

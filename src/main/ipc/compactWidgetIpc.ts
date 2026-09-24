@@ -2,7 +2,6 @@ import type { IpcMain, WebContents } from 'electron';
 import type { BackpackSurfaceRegistry } from '../backpacks/backpackSurfaceRegistry';
 import { WORKSPACE_SURFACE_KIND, MAX_REGISTERED_SURFACES } from '../backpacks/backpackSurfaceRegistry';
 import type { CompactWidgetSession } from '../windows/compactWidgetSession';
-import type { PersistedWindowMemberDescriptor } from '../windows/windowCapabilityService';
 
 const MAX_BYTES = 512;
 
@@ -28,7 +27,7 @@ export interface CompactWidgetIpcDependencies {
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
-  showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>) => Promise<{ action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null; descriptor?: PersistedWindowMemberDescriptor }>;
+  showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
   dismissCandidatePicker?: (sender: WebContents) => void;
 }
 

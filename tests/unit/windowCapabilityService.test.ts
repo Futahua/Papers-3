@@ -373,26 +373,6 @@ describe('windowCapabilityService bind and capabilities', () => {
     expect((await service.closeCapability({ version: 1, bindingId: 'not-issued' })).outcome).toBe('missing');
     expect(closed).toEqual([TOKEN_A]);
   });
-
-  it('terminates only the process behind an issued capability', async () => {
-    const terminated: RuntimeWindowId[] = [];
-    const service = createWindowCapabilityService({
-      createFactory: () => fakeFactory({
-        terminate: async (runtimeId) => { terminated.push(runtimeId); return { outcome: 'success' }; },
-      }),
-      currentPid: 9999,
-      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
-    });
-    const listed = await service.listCandidates();
-    if (listed.outcome !== 'success' || listed.candidates.length === 0) throw new Error('no candidates');
-    const bound = await service.bindCandidate(listed.candidates[0]!.id);
-    if (bound.outcome !== 'success') throw new Error('bind failed');
-
-    expect(await service.terminateCapability(bound.capability)).toEqual({ outcome: 'success' });
-    expect(terminated).toEqual([TOKEN_A]);
-    expect((await service.terminateCapability({ version: 1, bindingId: 'not-issued' })).outcome).toBe('missing');
-    expect(terminated).toEqual([TOKEN_A]);
-  });
 });
 
 describe('windowCapabilityService persisted re-resolution', () => {

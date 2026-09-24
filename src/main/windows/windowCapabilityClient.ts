@@ -45,7 +45,6 @@ export interface WindowCapabilityClient {
   livePreview(runtimeId: RuntimeWindowId, caller: string, enabled: boolean): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
-  terminate(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** 016 direct pick: resolve the topmost task-worthy window at a screen
    * point (helper-owned eligibility). No target - the helper resolves. */
   hover(x: number, y: number): Promise<WindowCapabilityResult>;
@@ -194,7 +193,6 @@ export function createWindowCapabilityClient({
     livePreview: (runtimeId, caller, enabled) => request('live-preview', { target: runtimeId, caller, enabled }),
     apply: (runtimeId, bounds, state) => request('apply', { target: runtimeId, bounds, state }),
     close: (runtimeId) => request('close', { target: runtimeId }),
-    terminate: (runtimeId) => request('terminate', { target: runtimeId }),
     hover: (x, y) => request('hover', { x, y }),
     thumbnail: (runtimeId, maxWidth, maxHeight) => request('thumbnail', { target: runtimeId, maxWidth, maxHeight }),
     handleMessage,

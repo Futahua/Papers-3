@@ -72,7 +72,6 @@ export interface WindowHelperFactory {
   livePreview?(runtimeId: RuntimeWindowId, caller: string, enabled: boolean): Promise<WindowCapabilityResult>;
   apply(runtimeId: RuntimeWindowId, bounds: WindowBounds, state?: WindowState): Promise<WindowCapabilityResult>;
   close(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
-  terminate?(runtimeId: RuntimeWindowId): Promise<WindowCapabilityResult>;
   /** 016 direct pick: topmost task-worthy window at a screen point. */
   hover(x: number, y: number): Promise<WindowCapabilityResult>;
   /** 019G real-window thumbnail: bounded PrintWindow capture scaled to fit
@@ -253,7 +252,6 @@ export function createWindowHelperFactory(options: WindowHelperFactoryOptions = 
     livePreview: (runtimeId, caller, enabled) => withClient((client) => client.livePreview(runtimeId, caller, enabled), HELPER_NOT_READY),
     apply: (runtimeId, bounds, state) => withClient((client) => client.apply(runtimeId, bounds, state), HELPER_NOT_READY),
     close: (runtimeId) => withClient((client) => client.close(runtimeId), HELPER_NOT_READY),
-    terminate: (runtimeId) => withClient((client) => client.terminate(runtimeId), HELPER_NOT_READY),
     hover: (x, y) => withClient((client) => client.hover(x, y), HELPER_NOT_READY),
     thumbnail: (runtimeId, maxWidth, maxHeight) => withClient((client) => client.thumbnail(runtimeId, maxWidth, maxHeight), HELPER_NOT_READY),
     get revision() {

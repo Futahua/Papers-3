@@ -456,29 +456,6 @@ $script:WhOps = @{
     [void][WH.Win32]::GetWindowThreadProcessId($id, [ref]$pidValue)
     try { return (Get-Process -Id ([int]$pidValue) -ErrorAction Stop).ProcessName } catch { return '' }
   }
-  ProcessStartTicks = { param([int]$processId)
-    try { return [long](Get-Process -Id $processId -ErrorAction Stop).StartTime.ToUniversalTime().Ticks } catch { return $null }
-  }
-  TerminateProcess = { param([IntPtr]$id, [object]$expectedStartTicks)
-    if (-not [WH.Win32]::IsWindow($id)) { throw 'WH-FAIL-CLOSED: selected window is gone.' }
-    $pidValue = [uint32]0
-    [void][WH.Win32]::GetWindowThreadProcessId($id, [ref]$pidValue)
-    $targetPid = [int]$pidValue
-    $parentPid = [int](& $script:WhOps['ParentPid'])
-    if ($targetPid -le 4 -or $targetPid -eq $PID -or $targetPid -eq $parentPid) {
-      throw 'WH-FAIL-CLOSED: refusing to terminate a protected host process.'
-    }
-    $process = Get-Process -Id $targetPid -ErrorAction Stop
-    if ($null -eq $expectedStartTicks -or [long]$process.StartTime.ToUniversalTime().Ticks -ne [long]$expectedStartTicks) {
-      throw 'WH-FAIL-CLOSED: selected process identity changed or is unavailable.'
-    }
-    # Recheck the same live HWND immediately before the process-wide action.
-    $confirmedPid = [uint32]0
-    if (-not [WH.Win32]::IsWindow($id)) { throw 'WH-FAIL-CLOSED: selected window is gone.' }
-    [void][WH.Win32]::GetWindowThreadProcessId($id, [ref]$confirmedPid)
-    if ([int]$confirmedPid -ne $targetPid) { throw 'WH-FAIL-CLOSED: selected window owner changed.' }
-    $process.Kill()
-  }
   Observation = { param([IntPtr]$id) (Get-WhWindowObservation $id) }
   ParentPid = {
     if ($null -eq $script:WhParentPid) {
@@ -609,20 +586,6 @@ function Close-ResolvedWhMember([IntPtr]$RuntimeId) {
     throw "WH-FAIL-CLOSED: runtime member is gone; refusing close."
   }
   & $script:WhOps['Close'] $RuntimeId
-}
-
-# Explicit destructive gesture from the native candidate picker. The caller
-# must pass the HWND reached only after the opaque capability identity gate.
-# Kill the HWND owner, not merely its window, and never the helper or its host.
-function Terminate-ResolvedWhProcess([IntPtr]$RuntimeId, [string]$Token) {
-  if (-not (Test-WhWindowAlive $RuntimeId)) {
-    throw 'WH-FAIL-CLOSED: runtime member is gone; refusing process termination.'
-  }
-  $entry = Resolve-WhSessionToken $Token
-  if ($null -eq $entry -or [long]$entry.hwnd -ne [long]$RuntimeId) {
-    throw 'WH-FAIL-CLOSED: selected process identity is unavailable.'
-  }
-  & $script:WhOps['TerminateProcess'] $RuntimeId $entry.processStartTicks
 }
 
 # 019G real-window thumbnail: capture the FULL window content via PrintWindow

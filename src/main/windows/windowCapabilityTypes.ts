@@ -29,7 +29,6 @@ export const WINDOW_CAPABILITY_METHODS = [
   'live-preview',
   'apply',
   'close',
-  'terminate',
   'hover',
   'thumbnail',
 ] as const;
@@ -342,7 +341,7 @@ export function parseWindowResponse(raw: unknown): WindowResponseMessage | null 
   // key and invalidates the envelope.
   if (method !== 'toggle' && raw['action'] !== undefined) return null;
 
-  if (method === 'close' || method === 'terminate' || method === 'cloak-many' || method === 'uncloak-many' || method === 'live-preview') {
+  if (method === 'close' || method === 'cloak-many' || method === 'uncloak-many' || method === 'live-preview') {
     // Documented close shape: envelope only, no payload.
     if (hasExtraPayload) return null;
     return { requestId, method: methodName, outcome: outcome as WindowOutcome, ...(error !== undefined ? { error } : {}) };
