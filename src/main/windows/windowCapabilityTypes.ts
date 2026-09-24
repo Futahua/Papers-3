@@ -67,8 +67,6 @@ export type RuntimeWindowId = string & { [runtimeWindowIdBrand]: true };
 
 export interface WindowObservation {
   runtimeId: RuntimeWindowId;
-  /** Stable reconciliation ID supplied by the helper; never an authority token. */
-  windowInstanceId?: string;
   title: string;
   processId: number | null;
   processPath: string | null;
@@ -291,9 +289,6 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
   if (!isPlainObject(raw)) return undefined;
   const runtimeId = parseRuntimeWindowId(raw['runtimeId']);
   if (!runtimeId) return undefined;
-  const windowInstanceId = raw['windowInstanceId'];
-  if (windowInstanceId !== undefined && windowInstanceId !== null
-    && (typeof windowInstanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(windowInstanceId))) return undefined;
   if (typeof raw['title'] !== 'string') return undefined;
   const processId = raw['processId'];
   if (processId !== null
@@ -311,7 +306,6 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
   if (bounds === undefined) return undefined;
   return {
     runtimeId,
-    ...(typeof windowInstanceId === 'string' ? { windowInstanceId } : {}),
     title: raw['title'],
     processId,
     processPath,

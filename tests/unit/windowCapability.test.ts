@@ -614,24 +614,6 @@ describe('window capability contract types', () => {
     });
   });
 
-  describe('stable persisted window identity', () => {
-    const base = { runtimeId: 'A', title: 'A', processId: 42, processPath: 'C:\\Apps\\a.exe', state: 'normal', bounds: null };
-
-    it('preserves a valid helper-supplied instance identity and rejects malformed values', () => {
-      const parsed = parseWindowResponse({
-        requestId: 1, method: 'observe', outcome: 'success',
-        observation: { ...base, windowInstanceId: 'W0123456789abcdef' },
-      });
-      expect(parsed && 'observation' in parsed ? parsed.observation?.windowInstanceId : undefined).toBe('W0123456789abcdef');
-      for (const windowInstanceId of ['T0123456789abcdef', 'W0123', 42]) {
-        expect(parseWindowResponse({
-          requestId: 1, method: 'observe', outcome: 'success',
-          observation: { ...base, windowInstanceId },
-        })).toBeNull();
-      }
-    });
-  });
-
   it('enforces strict per-method/outcome payload shapes', () => {
     // Successful list must carry a valid list.
     expect(parseWindowResponse({ requestId: 1, method: 'list', outcome: 'success' })).toBeNull();

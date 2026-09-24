@@ -93,7 +93,6 @@ function Test-WireObservationOk {
   if ($Obs['title'] -isnot [string]) { return $false }
   if ($null -ne $Obs['processId'] -and -not (Test-WireSafeIntegerOk $Obs['processId'])) { return $false }
   if ($null -ne $Obs['processPath'] -and $Obs['processPath'] -isnot [string]) { return $false }
-  if ($Obs.ContainsKey('windowInstanceId') -and $null -ne $Obs['windowInstanceId'] -and -not ($Obs['windowInstanceId'] -is [string] -and $Obs['windowInstanceId'] -match '^W[0-9a-f]{16}$')) { return $false }
   if ($Obs['state'] -isnot [string] -or $STATES -notcontains $Obs['state']) { return $false }
   if (-not (Test-WireBoundsOk $Obs['bounds'])) { return $false }
   return $true
@@ -484,18 +483,8 @@ $tokenB = [string]$list.windows[1].runtimeId
 Assert-True ([string]$tokenA -match '^T[0-9a-f]{32}$') 'token A is nonempty high-entropy nonnumeric'
 Assert-True ([string]$tokenB -match '^T[0-9a-f]{32}$') 'token B is nonempty high-entropy nonnumeric'
 Assert-True ($tokenA -ne $tokenB) 'two identities get distinct tokens'
-Assert-True ([string]$list.windows[0].windowInstanceId -match '^W[0-9a-f]{16}$') 'list carries a stable persisted window identity'
 $list2 = Invoke-Line '{"requestId":8,"method":"list"}'
 Assert-True ([string]$list2.windows[0].runtimeId -eq $tokenA -and [string]$list2.windows[1].runtimeId -eq $tokenB) 'unchanged identities keep stable tokens across repeated list'
-Assert-True ([string]$list2.windows[0].windowInstanceId -eq [string]$list.windows[0].windowInstanceId) 'unchanged HWND/PID/process-start/class keeps its persisted identity across list refresh'
-$priorSession = $script:WhSession
-$priorEntry = Resolve-WhSessionToken $tokenA
-$priorInstanceId = Get-WhWindowInstanceId $priorEntry
-$script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
-$restartedToken = New-WhSessionToken ([long]$priorEntry.hwnd) ([int]$priorEntry.pid) ([string]$priorEntry.className)
-$restartedInstanceId = Get-WhWindowInstanceId (Resolve-WhSessionToken $restartedToken)
-$script:WhSession = $priorSession
-Assert-True ($restartedToken -ne $tokenA -and $restartedInstanceId -eq $priorInstanceId) 'helper restart changes the runtime token but preserves the persisted instance identity'
 
 # ---- zero-sized window rects become null bounds (015 helper fix) -----------
 $zeroEntry = @($list.windows | Where-Object { $_.title -eq 'WH-TEST-ZERO' } | Select-Object -First 1)
@@ -665,7 +654,6 @@ Assert-Outcome (Invoke-Line '{"requestId":53,"method":"hover","x":1e10,"y":1}') 
 $hoverA = Invoke-Line '{"requestId":54,"method":"hover","x":100,"y":70}'
 Assert-True ($hoverA.outcome -eq 'success' -and $null -ne $hoverA.window) 'hover: task-worthy window at point resolves'
 Assert-True ([string]$hoverA.window.runtimeId -match '^T[0-9a-f]{32}$') 'hover: window carries a session token'
-Assert-True ([string]$hoverA.window.windowInstanceId -eq [string]$list.windows[0].windowInstanceId) 'hover and list expose the same stable persisted identity'
 $hoverShell = Invoke-Line '{"requestId":55,"method":"hover","x":300,"y":200}'
 Assert-True ($hoverShell.outcome -eq 'success' -and $null -eq $hoverShell.window) 'hover: Progman at point resolves to null'
 $hoverCloaked = Invoke-Line '{"requestId":56,"method":"hover","x":500,"y":450}'

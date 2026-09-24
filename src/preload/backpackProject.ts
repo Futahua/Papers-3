@@ -6,7 +6,7 @@ interface ProjectMessage {
    * credential. */
   destination?: unknown; method?: string;
   headers?: Record<string, string>;
-  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; instanceId?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; captureId?: unknown; generation?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; }
+  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; captureId?: unknown; generation?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -380,12 +380,6 @@ window.addEventListener('message', (event) => {
   if (request.type === 'papers:project:window-resolve-descriptor') {
     const descriptor = parseDescriptor(request.descriptor);
     task = ipcRenderer.invoke('papers:window-capability:resolve', descriptor);
-  }
-  if (request.type === 'papers:project:window-resolve-instance') {
-    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'instanceId'])) throw new Error('window instance resolve request contains unknown fields');
-    const instanceId = parseBoundedString(request.instanceId);
-    if (!/^W[0-9a-f]{16}$/i.test(instanceId)) throw new Error('instanceId is invalid');
-    task = ipcRenderer.invoke('papers:window-capability:resolve-instance', instanceId);
   }
   if (request.type === 'papers:project:window-thumbnail') {
     // 019G/019GR2: the final AYG page event is EXACTLY

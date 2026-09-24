@@ -79,15 +79,12 @@ export interface WindowCandidate {
 
 /** Stable, persisted-safe member identity for fail-closed re-resolution of
  * an ALREADY VISIBLE window. Deliberately contains no runtime id, token,
- * HWND or executable authority. The helper derives windowInstanceId from
- * HWND + PID + process creation ticks + class, so it survives helper restarts
- * and does not alias a reused PID. It is a reconciliation key, not proof of
- * HWND lifetime: callers still re-resolve through the helper capability. */
+ * HWND or executable authority. */
 export interface PersistedWindowMemberDescriptor {
   version: 1;
   executableFingerprint?: string;
   title: string;
-  /** Stable helper-derived reconciliation identity; legacy descriptors omit it. */
+  /** Opaque exact identity for one live helper session; legacy descriptors omit it. */
   windowInstanceId?: string;
 }
 
@@ -146,7 +143,6 @@ export type NativePickerBindResult =
 export interface WindowCapabilityService {
   listCandidates(options?: { includeNativeIcons?: boolean }): Promise<WindowCandidateListResult>;
   bindCandidate(candidateId: string): Promise<WindowBindResult>;
-  resolveInstance(windowInstanceId: string): Promise<WindowResolveResult>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   restoreCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
@@ -509,11 +505,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   function candidateForObservation(observation: WindowObservation): { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate; processId: number } {
     const helperToken = observation.runtimeId;
     const id = `wl-candidate-${helperToken}`;
+    const windowInstanceId = `W${createHash('sha256').update(helperToken).digest('hex').slice(0, 16)}`;
     const descriptor: PersistedWindowMemberDescriptor = {
       version: 1,
       executableFingerprint: fingerprint(observation.processPath ?? ''),
       title: boundedTitle(observation.title),
-      ...(observation.windowInstanceId ? { windowInstanceId: observation.windowInstanceId } : {}),
+      windowInstanceId,
     };
     const candidate: WindowCandidate = {
       id,
@@ -681,19 +678,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (!binding) return { outcome: 'missing', error: 'binding is no longer issued' };
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
     if (!factory.terminate) return { outcome: 'denied', error: 'process termination is unavailable' };
-    const processEntries = [...candidatesByListedId.values()].filter((entry) => entry.processId === binding.processId);
-    if (processEntries.length === 0 || processEntries.some((entry) => !entry.descriptor.windowInstanceId)) {
-      return { outcome: 'denied', error: 'the process windows cannot all be identified safely' };
-    }
-    // A full list may have been truncated at the service limit. Do not kill a
-    // process if the post-kill retirement response could omit known siblings.
-    if (candidatesByListedId.size >= WINDOW_CAPABILITY_MAX_CANDIDATES) {
-      return { outcome: 'denied', error: 'the visible window list may be incomplete' };
-    }
-    const retiredWindowInstanceIds = [...new Set(processEntries
-      .map((entry) => entry.descriptor.windowInstanceId as string))].slice(0, WINDOW_CAPABILITY_MAX_CANDIDATES);
     const terminated = await factory.terminate(token);
     if (terminated.outcome !== 'success') return terminated;
+    const retiredWindowInstanceIds = [...new Set([...candidatesByListedId.values()]
+      .filter((entry) => entry.processId === binding.processId)
+      .map((entry) => entry.descriptor.windowInstanceId)
+      .filter((id): id is string => typeof id === 'string'))].slice(0, WINDOW_CAPABILITY_MAX_CANDIDATES);
     return { ...terminated, retiredWindowInstanceIds };
   }
 
@@ -922,16 +912,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const listed = await listCandidates();
     if (listed.outcome !== 'success') return { outcome: 'helper-unavailable', error: listed.error };
-    const listedEntries = [...candidatesByListedId.entries()];
-    const matchingDisplayIdentity = listedEntries.filter(([, entry]) =>
+    const matches = [...candidatesByListedId.entries()].filter(([, entry]) =>
       entry.descriptor.executableFingerprint === descriptor.executableFingerprint
       && entry.descriptor.title === descriptor.title);
-    const matches = descriptor.windowInstanceId
-      ? listedEntries.filter(([, entry]) => entry.descriptor.windowInstanceId === descriptor.windowInstanceId)
-      : matchingDisplayIdentity;
-    if (descriptor.windowInstanceId && matches.length === 0 && matchingDisplayIdentity.length > 0) {
-      return { outcome: 'ambiguous', error: 'the visible window identity changed and cannot be safely rebound' };
-    }
     if (matches.length === 0) return { outcome: 'missing', error: 'no visible window matches the descriptor' };
     if (matches.length > 1) return { outcome: 'ambiguous', error: 'more than one visible window matches the descriptor' };
     const bound = await bindCandidate(matches[0]![0]);
@@ -939,20 +922,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       return { outcome: bound.outcome, error: bound.error };
     }
     return { outcome: 'success', capability: bound.capability, descriptor: bound.descriptor };
-  }
-
-  async function resolveInstance(windowInstanceId: string): Promise<WindowResolveResult> {
-    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
-    if (!/^W[0-9a-f]{16}$/i.test(windowInstanceId)) return { outcome: 'missing', error: 'window instance identity is malformed' };
-    const listed = await listCandidates();
-    if (listed.outcome !== 'success') return { outcome: 'helper-unavailable', error: listed.error };
-    const matches = [...candidatesByListedId.entries()].filter(([, entry]) => entry.descriptor.windowInstanceId === windowInstanceId);
-    if (matches.length === 0) return { outcome: 'missing', error: 'no visible window matches the instance identity' };
-    if (matches.length > 1) return { outcome: 'ambiguous', error: 'the instance identity matched multiple visible windows' };
-    const bound = await bindCandidate(matches[0]![0]);
-    return bound.outcome === 'success'
-      ? { outcome: 'success', capability: bound.capability, descriptor: bound.descriptor }
-      : { outcome: bound.outcome, error: bound.error };
   }
 
   async function nativePickerSnapshot(): Promise<
@@ -1093,7 +1062,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   return {
     listCandidates,
     bindCandidate,
-    resolveInstance,
     observeCapability,
     minimizeCapability,
     restoreCapability,
