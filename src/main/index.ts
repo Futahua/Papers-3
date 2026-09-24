@@ -1978,7 +1978,7 @@ async function bootstrap(): Promise<void> {
   type CandidatePickerSession = {
     window: BrowserWindow;
     candidateIds: Set<string>;
-    resolve: ((result: { action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null; descriptor?: PersistedWindowMemberDescriptor }) => void) | null;
+    resolve: ((result: { action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null; retiredWindowInstanceIds?: string[] }) => void) | null;
   };
   const candidatePickerSessions = new Map<number, CandidatePickerSession>();
   const hideWidgetPreview = (senderId: number): void => {
@@ -2019,7 +2019,18 @@ async function bootstrap(): Promise<void> {
         menu.popup({ window: owner, callback: () => finish('cancel') });
       });
     },
-    showCandidatePicker: async (sender, candidates) => {
+    showCandidatePicker: async (sender, requestedCandidates) => {
+      const currentById = new Map(requestedCandidates.map((candidate) => [candidate.id, candidate.current]));
+      const authoritative = await windowCapabilityService.listCandidates({ includeNativeIcons: true });
+      if (authoritative.outcome !== 'success') return { action: 'cancel', candidateId: null };
+      // Project data may supply membership state, but never the process title
+      // or icon displayed beside this destructive picker action.
+      const candidates = authoritative.candidates.map((candidate) => ({
+        id: candidate.id,
+        title: candidate.title,
+        icon: candidate.icon,
+        current: currentById.get(candidate.id) === true,
+      }));
       const active = candidatePickerSessions.get(sender.id);
       if (active && !active.window.isDestroyed()) {
         active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
@@ -2028,7 +2039,7 @@ async function bootstrap(): Promise<void> {
           `window.__papersPickerUpdate?.(${update})`, true).catch(() => undefined);
         if (!active.window.isVisible()) active.window.show();
         active.window.focus();
-        return new Promise<{ action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
+        return new Promise<{ action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null; retiredWindowInstanceIds?: string[] }>((resolve) => {
           // The Backpack requests the next choice only after the previous one
           // settled. Fail closed if a malformed caller overlaps requests.
           active.resolve?.({ action: 'cancel', candidateId: null });
@@ -2072,7 +2083,7 @@ function signal(path,id=''){window.candidatePicker.signal(path,id)}
  window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
 const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=false;render()};const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;document.querySelector('.direct-pick').onclick=()=>{document.body.classList.add('busy');signal('direct-pick')};search.oninput=render;currentFilter.onchange=()=>setExclusiveFilter(currentFilter,availableFilter);availableFilter.onchange=()=>setExclusiveFilter(availableFilter,currentFilter);document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
-      return new Promise<{ action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null; descriptor?: PersistedWindowMemberDescriptor }>((resolve) => {
+      return new Promise<{ action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null; retiredWindowInstanceIds?: string[] }>((resolve) => {
         const pickerOpenedAt = Date.now();
         let pickerPointerEntered = false;
         let pickerOutsideSince: number | null = null;
@@ -2136,7 +2147,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           const current = candidatePickerSessions.get(sender.id);
           if (!current || current.window !== picker || !current.resolve) return;
           let resolvedAction: 'select' | 'close' | 'terminate' | 'cancel' = action;
-          let terminatedDescriptor: PersistedWindowMemberDescriptor | undefined;
+          let retiredWindowInstanceIds: string[] | undefined;
           if (action === 'terminate') {
             // Destructive process termination stays in the main-process picker
             // action path; project renderers never receive a kill capability.
@@ -2148,7 +2159,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
               } else {
                 const terminated = await windowCapabilityService.terminateCapability(bound.capability);
                 if (terminated.outcome !== 'success') resolvedAction = 'cancel';
-                else terminatedDescriptor = bound.descriptor;
+                else retiredWindowInstanceIds = terminated.retiredWindowInstanceIds
+                  ?? (bound.descriptor.windowInstanceId ? [bound.descriptor.windowInstanceId] : []);
               }
             } catch (error) {
               console.warn('[papers] candidate process termination failed', error);
@@ -2162,7 +2174,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           settle({
             action: resolvedAction,
             candidateId: resolvedAction === 'cancel' ? null : candidateId,
-            ...(terminatedDescriptor ? { descriptor: terminatedDescriptor } : {}),
+            ...(retiredWindowInstanceIds ? { retiredWindowInstanceIds } : {}),
           });
         };
         const finishDirectPick = (): void => {

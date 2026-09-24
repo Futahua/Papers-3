@@ -64,11 +64,15 @@ function parseBounds(raw: unknown): Record<string, unknown> {
 
 function parseDescriptor(raw: unknown): Record<string, unknown> {
   if (!isPlainObject(raw)) throw new Error('descriptor must be an object');
-  if (!exactKeys(raw, ['version', 'title', 'executableFingerprint'])) throw new Error('descriptor contains unknown fields');
+  const hasWindowInstanceId = raw['windowInstanceId'] !== undefined;
+  if (!exactKeys(raw, hasWindowInstanceId
+    ? ['version', 'title', 'executableFingerprint', 'windowInstanceId']
+    : ['version', 'title', 'executableFingerprint'])) throw new Error('descriptor contains unknown fields');
   if (raw['version'] !== 1) throw new Error('unsupported descriptor version');
   parseBoundedString(raw['title']);
   const fingerprint = parseBoundedString(raw['executableFingerprint']);
   if (!/^[a-f0-9]{64}$/i.test(fingerprint)) throw new Error('descriptor.executableFingerprint is invalid');
+  if (hasWindowInstanceId && !/^W[0-9a-f]{16}$/i.test(parseBoundedString(raw['windowInstanceId']))) throw new Error('descriptor.windowInstanceId is invalid');
   return raw;
 }
 

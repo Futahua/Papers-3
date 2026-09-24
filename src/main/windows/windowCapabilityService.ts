@@ -84,6 +84,8 @@ export interface PersistedWindowMemberDescriptor {
   version: 1;
   executableFingerprint?: string;
   title: string;
+  /** Opaque exact identity for one live helper session; legacy descriptors omit it. */
+  windowInstanceId?: string;
 }
 
 /** Ephemeral runtime capability: never persisted, never reconstructed from
@@ -286,8 +288,8 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   let factoryBuilt = false;
   let stopped = false;
   let candidateIdCounter = 0;
-  const candidatesByListedId = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }>();
-  const bindings = new Map<string, { helperToken: RuntimeWindowId; touched: number }>();
+  const candidatesByListedId = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate; processId: number }>();
+  const bindings = new Map<string, { helperToken: RuntimeWindowId; touched: number; processId: number }>();
   const bindingDescriptors = new Map<string, PersistedWindowMemberDescriptor>();
   const observations = new Map<string, Promise<WindowCapabilityResult>>();
   const iconCache = new Map<string, string>();
@@ -435,12 +437,13 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       return { outcome: 'helper-unavailable', error: result.error };
     }
     const candidates: WindowCandidate[] = [];
-    const listed = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }>();
+    const listed = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate; processId: number }>();
     for (const observation of result.windows ?? []) {
       if (candidates.length >= WINDOW_CAPABILITY_MAX_CANDIDATES) break;
       const processId = trustedProcessId(observation, currentPid, allowCurrentProcessWindow);
       if (processId === null) continue;
       const entry = candidateForObservation(observation);
+      entry.processId = processId;
       // Interactive pick lists request exact native window/class icons so
       // packaged Electron apps do not collapse to generic executable tiles.
       // Internal relisting keeps the original cheap file-icon path.
@@ -490,7 +493,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return iconFor(observation);
   }
 
-  function listedEntry(candidateId: string): { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate } | null {
+  function listedEntry(candidateId: string): { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate; processId: number } | null {
     return candidatesByListedId.get(candidateId) ?? null;
   }
 
@@ -499,13 +502,15 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
    * identity: it derives from the helper-session token, which the helper
    * reuses for an unchanged identity, so hover and list agree on the same id
    * and a click can be authorized against the exact highlighted candidate. */
-  function candidateForObservation(observation: WindowObservation): { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate } {
+  function candidateForObservation(observation: WindowObservation): { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate; processId: number } {
     const helperToken = observation.runtimeId;
     const id = `wl-candidate-${helperToken}`;
+    const windowInstanceId = `W${createHash('sha256').update(helperToken).digest('hex').slice(0, 16)}`;
     const descriptor: PersistedWindowMemberDescriptor = {
       version: 1,
       executableFingerprint: fingerprint(observation.processPath ?? ''),
       title: boundedTitle(observation.title),
+      windowInstanceId,
     };
     const candidate: WindowCandidate = {
       id,
@@ -514,7 +519,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       icon: null,
       state: observation.state,
     };
-    return { helperToken, descriptor, candidate };
+    return { helperToken, descriptor, candidate, processId: observation.processId ?? 0 };
   }
 
   /** 016 direct pick: resolve the topmost task-worthy candidate at a point.
@@ -564,13 +569,13 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return { ...bound, candidate: hovered.candidate };
   }
 
-  function issueBinding(token: RuntimeWindowId): WindowRuntimeCapability {
+  function issueBinding(token: RuntimeWindowId, processId: number): WindowRuntimeCapability {
     const bindingId = `wl-binding-${candidateIdCounter}-${Math.random().toString(36).slice(2, 12)}`;
     if (bindings.size >= 128) {
       const oldest = [...bindings.entries()].sort((a, b) => a[1].touched - b[1].touched)[0];
       if (oldest) bindings.delete(oldest[0]);
     }
-    bindings.set(bindingId, { helperToken: token, touched: Date.now() });
+    bindings.set(bindingId, { helperToken: token, touched: Date.now(), processId });
     return { version: 1, bindingId };
   }
 
@@ -593,7 +598,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       if (observed.outcome === 'missing') return { outcome: 'missing', error: observed.error };
       return { outcome: observed.outcome === 'timeout' ? 'timeout' : 'helper-unavailable', error: observed.error };
     }
-    const capability = issueBinding(entry.helperToken);
+    const capability = issueBinding(entry.helperToken, entry.processId);
     const bindingId = capability.bindingId;
     if (!bindingId) return { outcome: 'helper-unavailable', error: 'binding failed' };
     const descriptor = entry.descriptor;
@@ -669,10 +674,17 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const token = tokenFor(capability);
     if (!token) return { outcome: 'missing', error: 'binding is not issued' };
+    const binding = capability.bindingId ? bindings.get(capability.bindingId) : undefined;
+    if (!binding) return { outcome: 'missing', error: 'binding is no longer issued' };
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
-    return factory.terminate
-      ? factory.terminate(token)
-      : { outcome: 'denied', error: 'process termination is unavailable' };
+    if (!factory.terminate) return { outcome: 'denied', error: 'process termination is unavailable' };
+    const terminated = await factory.terminate(token);
+    if (terminated.outcome !== 'success') return terminated;
+    const retiredWindowInstanceIds = [...new Set([...candidatesByListedId.values()]
+      .filter((entry) => entry.processId === binding.processId)
+      .map((entry) => entry.descriptor.windowInstanceId)
+      .filter((id): id is string => typeof id === 'string'))].slice(0, WINDOW_CAPABILITY_MAX_CANDIDATES);
+    return { ...terminated, retiredWindowInstanceIds };
   }
 
   async function endPeek(): Promise<WindowCapabilityResult> {
