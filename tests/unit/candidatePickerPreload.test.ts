@@ -25,12 +25,14 @@ describe('candidate picker preload bridge', () => {
 
     expect(api).toBeDefined();
     api?.signal('select', 'window-candidate-1');
-    api?.signal('close', 'window-candidate-2');
-    api?.signal('terminate', 'window-candidate-3');
+    api?.signal('remove', 'window-candidate-2');
+    api?.signal('close', 'window-candidate-3');
+    api?.signal('terminate', 'window-candidate-4');
 
     expect(mocks.send.mock.calls).toEqual([
       ['papers:candidate-picker:signal', { action: 'select', candidateId: 'window-candidate-1' }],
-      ['papers:candidate-picker:signal', { action: 'close', candidateId: 'window-candidate-2' }],
+      ['papers:candidate-picker:signal', { action: 'remove', candidateId: 'window-candidate-2' }],
+      ['papers:candidate-picker:signal', { action: 'close', candidateId: 'window-candidate-3' }],
     ]);
   });
 

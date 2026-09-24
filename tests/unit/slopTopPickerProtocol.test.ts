@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import {
   createSlopTopPickerSession,
@@ -61,6 +62,19 @@ function harness() {
 }
 
 describe('SlopTop local picker protocol', () => {
+  it('publishes the activation ACK before enabling any-key confirmation', () => {
+    const source = readFileSync(new URL('../../tools/sloptop/sloptop_engine.ahk', import.meta.url), 'utf8');
+    const start = source.indexOf('CheckPickerActivation() {');
+    const end = source.indexOf('\nStopPickerMode(cancel := true)', start);
+    const activation = source.slice(start, end);
+    const ack = activation.indexOf('if !PickerWriteAck()');
+    const active = activation.indexOf('pickerActive := true');
+    const hook = activation.indexOf('StartPickerInputHook()');
+    expect(ack).toBeGreaterThanOrEqual(0);
+    expect(active).toBeGreaterThan(ack);
+    expect(hook).toBeGreaterThan(active);
+  });
+
   it('sends one seed snapshot and consumes one final green-set snapshot', async () => {
     const test = harness();
     const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });

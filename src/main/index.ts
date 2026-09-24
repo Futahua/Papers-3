@@ -1983,7 +1983,8 @@ async function bootstrap(): Promise<void> {
   type CandidatePickerSession = {
     window: BrowserWindow;
     candidateIds: Set<string>;
-    resolve: ((result: { action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }) => void) | null;
+    currentMemberCandidateIds: Set<string>;
+    resolve: ((result: { action: 'select' | 'remove' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }) => void) | null;
   };
   const candidatePickerSessions = new Map<number, CandidatePickerSession>();
   const hideWidgetPreview = (senderId: number): void => {
@@ -2024,8 +2025,8 @@ async function bootstrap(): Promise<void> {
         menu.popup({ window: owner, callback: () => finish('cancel') });
       });
     },
-    showCandidatePicker: async (sender, currentTitles) => {
-      const currentTitleSet = new Set(currentTitles);
+    showCandidatePicker: async (sender, currentWindowInstanceIds) => {
+      const currentWindowInstanceSet = new Set(currentWindowInstanceIds);
       const authoritative = await windowCapabilityService.listCandidates({ includeNativeIcons: true });
       if (authoritative.outcome !== 'success') throw new Error(authoritative.error || 'Window list unavailable');
       // Project data may supply membership state, but never the process title
@@ -2035,17 +2036,20 @@ async function bootstrap(): Promise<void> {
         id: candidate.id,
         title: candidate.title,
         icon: candidate.icon,
-        current: currentTitleSet.has(candidate.title),
+        windowInstanceId: candidate.windowInstanceId ?? null,
+        current: typeof candidate.windowInstanceId === 'string'
+          && currentWindowInstanceSet.has(candidate.windowInstanceId),
       }));
       const active = candidatePickerSessions.get(sender.id);
       if (active && !active.window.isDestroyed()) {
         active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
+        active.currentMemberCandidateIds = new Set(candidates.filter((candidate) => candidate.current).map((candidate) => candidate.id));
         const update = JSON.stringify(candidates).replace(/</g, '\\u003c');
         await active.window.webContents.executeJavaScript(
           `window.__papersPickerUpdate?.(${update})`, true).catch(() => undefined);
         if (!active.window.isVisible()) active.window.show();
         active.window.focus();
-        return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
+        return new Promise<{ action: 'select' | 'remove' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
           // The Backpack requests the next choice only after the previous one
           // settled. Fail closed if a malformed caller overlaps requests.
           active.resolve?.({ action: 'cancel', candidateId: null });
@@ -2085,11 +2089,69 @@ async function bootstrap(): Promise<void> {
  let all=JSON.parse(document.getElementById('data').textContent);const list=document.querySelector('.list'),search=document.querySelector('.search'),currentFilter=document.querySelector('.current-filter'),availableFilter=document.querySelector('.available-filter');
 function signal(path,id=''){window.candidatePicker.signal(path,id)}
  function appendDragSpace(){const d=document.createElement('div');d.className='drag-space';d.setAttribute('aria-hidden','true');list.append(d)}
-function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>{if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('select',c.id)};b.onpointerdown=e=>{if(e.button!==1)return;e.preventDefault();e.stopPropagation();if(e.ctrlKey){document.body.classList.add('busy');signal('close',c.id)}else if(c.current){document.body.classList.add('busy');signal('select',c.id)}};list.append(b)}appendDragSpace()}
+function render() {
+  const q = search.value.trim().toLowerCase();
+  const filtering = currentFilter.checked || availableFilter.checked;
+  const rows = all.filter(x => x.title.toLowerCase().includes(q)
+    && (!filtering || (currentFilter.checked && x.current) || (availableFilter.checked && !x.current)));
+  list.replaceChildren();
+  if (!rows.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No matching windows';
+    list.append(empty);
+    appendDragSpace();
+    return;
+  }
+  for (const c of rows) {
+    const b = document.createElement('button');
+    b.className = 'row' + (c.current ? ' current' : '');
+    b.type = 'button';
+    if (c.icon) {
+      const icon = document.createElement('img');
+      icon.className = 'icon';
+      icon.src = c.icon;
+      b.append(icon);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'fallback';
+      b.append(fallback);
+    }
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = c.title;
+    b.append(label);
+    const state = document.createElement('span');
+    state.className = 'state';
+    state.textContent = c.current ? 'remove' : 'add';
+    b.append(state);
+    b.onpointerenter = () => signal('peek', c.id);
+    b.onpointerleave = () => signal('peek-end');
+    b.onclick = () => {
+      if (document.body.classList.contains('busy')) return;
+      document.body.classList.add('busy');
+      signal('select', c.id);
+    };
+    b.onpointerdown = event => {
+      if (event.button !== 1) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.ctrlKey) {
+        document.body.classList.add('busy');
+        signal('close', c.id);
+      } else if (c.current) {
+        document.body.classList.add('busy');
+        signal('remove', c.id);
+      }
+    };
+    list.append(b);
+  }
+  appendDragSpace();
+}
  window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
 const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=false;render()};const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;document.querySelector('.direct-pick').onclick=()=>{document.body.classList.add('busy');signal('direct-pick')};search.oninput=render;currentFilter.onchange=()=>setExclusiveFilter(currentFilter,availableFilter);availableFilter.onchange=()=>setExclusiveFilter(availableFilter,currentFilter);document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
-      return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
+      return new Promise<{ action: 'select' | 'remove' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
         const pickerOpenedAt = Date.now();
         let pickerPointerEntered = false;
         let pickerOutsideSince: number | null = null;
@@ -2146,10 +2208,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         const session: CandidatePickerSession = {
           window: picker,
           candidateIds: new Set(candidates.map((candidate) => candidate.id)),
+          currentMemberCandidateIds: new Set(candidates.filter((candidate) => candidate.current).map((candidate) => candidate.id)),
           resolve,
         };
         candidatePickerSessions.set(sender.id, session);
-        const finishAction = async (action: 'select' | 'close', candidateId: string): Promise<void> => {
+        const finishAction = async (action: 'select' | 'remove' | 'close', candidateId: string): Promise<void> => {
           const current = candidatePickerSessions.get(sender.id);
           if (!current || current.window !== picker || !current.resolve) return;
           endCandidatePeek();
@@ -2217,10 +2280,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             }
             if (url.host !== 'papers-picker.invalid') return;
             const action = url.pathname.startsWith('/select/') ? 'select'
-              : url.pathname.startsWith('/close/') ? 'close' : null;
+              : url.pathname.startsWith('/remove/') ? 'remove'
+                : url.pathname.startsWith('/close/') ? 'close' : null;
             if (!action) return;
             const candidateId = decodeURIComponent(url.pathname.slice(`/${action}/`.length));
-            if (session.candidateIds.has(candidateId)) void finishAction(action, candidateId);
+            if (!session.candidateIds.has(candidateId)) return;
+            if (action === 'remove' && !session.currentMemberCandidateIds.has(candidateId)) return;
+            void finishAction(action, candidateId);
           } catch { /* malformed navigation is ignored */ }
         };
         picker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -2230,7 +2296,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (Object.keys(record).some((key) => key !== 'action' && key !== 'candidateId')) return;
           const action = record.action;
           const candidateId = record.candidateId;
-          if (typeof action !== 'string' || !['select', 'close', 'cancel', 'peek', 'peek-end', 'direct-pick'].includes(action)) return;
+          if (typeof action !== 'string' || !['select', 'remove', 'close', 'cancel', 'peek', 'peek-end', 'direct-pick'].includes(action)) return;
           if (typeof candidateId !== 'string' || Buffer.byteLength(candidateId, 'utf8') > 512) return;
           handlePickerUrl(`https://papers-picker.invalid/${action}${candidateId ? `/${encodeURIComponent(candidateId)}` : ''}`);
         };

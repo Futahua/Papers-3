@@ -407,13 +407,15 @@ CheckPickerActivation() {
         PickerTrace("activation rejected: seed mismatch")
         return
     }
-    pickerActive := true
-    try FileDelete(pickerActivationPath)
-    StartPickerInputHook()
     if !PickerWriteAck() {
         StopPickerMode(false)
         return
     }
+    ; Publish readiness before any key can complete this session. The host
+    ; starts its result protocol only after observing this durable token ACK.
+    pickerActive := true
+    try FileDelete(pickerActivationPath)
+    StartPickerInputHook()
     PickerTrace("activation accepted")
 }
 

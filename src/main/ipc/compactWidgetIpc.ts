@@ -27,7 +27,7 @@ export interface CompactWidgetIpcDependencies {
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
-  showCandidatePicker?: (sender: WebContents, currentTitles: string[]) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
+  showCandidatePicker?: (sender: WebContents, currentWindowInstanceIds: string[]) => Promise<{ action: 'select' | 'remove' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
   dismissCandidatePicker?: (sender: WebContents) => void;
 }
 
@@ -267,19 +267,19 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
 
   ipcMain.handle('papers:backpack:window-candidate-picker', async (event, raw) => {
     await waitForAuthority?.(event.sender);
-    if (!object(raw) || !Array.isArray(raw.currentTitles) || raw.currentTitles.length > 64
-      || raw.currentTitles.some((title) => typeof title !== 'string' || Buffer.byteLength(title, 'utf8') > 256)) {
+    if (!object(raw) || !Array.isArray(raw.currentWindowInstanceIds) || raw.currentWindowInstanceIds.length > 64
+      || raw.currentWindowInstanceIds.some((id) => typeof id !== 'string' || !/^W[0-9a-f]{16}$/i.test(id))) {
       throw new Error('window candidate picker payload is malformed');
     }
     let authorized = false;
-    if (exact(raw, ['projectId', 'currentTitles'])) {
+    if (exact(raw, ['projectId', 'currentWindowInstanceIds'])) {
       const projectId = key(raw.projectId, 'projectId');
       if (isWorkspaceSender(event.sender, projectId)) {
         ensureWorkspaceSurface(registry, event.sender.id, projectId);
         const surface = registry.surface(event.sender.id);
         authorized = !!surface && surface.projectId === projectId && surface.kind === WORKSPACE_SURFACE_KIND;
       }
-    } else if (exact(raw, ['token', 'currentTitles'])) {
+    } else if (exact(raw, ['token', 'currentWindowInstanceIds'])) {
       const surface = registry.surface(event.sender.id);
       const token = key(raw.token, 'token');
       authorized = !!surface && isWidgetSender(event.sender, surface.projectId)
@@ -287,7 +287,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     }
     if (!authorized) throw new Error('denied: sender is not a registered project surface');
     return showCandidatePicker
-      ? showCandidatePicker(event.sender, raw.currentTitles as string[])
+      ? showCandidatePicker(event.sender, raw.currentWindowInstanceIds as string[])
       : { action: 'cancel', candidateId: null };
   });
 

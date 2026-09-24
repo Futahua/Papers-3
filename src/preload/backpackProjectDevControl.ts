@@ -135,7 +135,7 @@ ipcRenderer.on(VISUAL_FENCE_REQUEST_CHANNEL, (_event, payload) => {
   ipcRenderer.send(VISUAL_FENCE_RESPONSE_CHANNEL, { requestId, documentInstanceId, ready: true });
 });
 
-interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; currentTitles?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; instanceId?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
+interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; currentTitles?: unknown; currentWindowInstanceIds?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; instanceId?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
 const SCOPED_WORKSPACE_REQUESTS = new Set([
   'papers:project:as-you-go-load',
@@ -674,15 +674,15 @@ window.addEventListener('message', (event) => {
       .then((payload) => ({ menu: payload }));
   }
   if (request.type === 'papers:project:window-candidate-picker') {
-    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'currentTitles'])
-      || !validRequestId(request.requestId) || !Array.isArray(request.currentTitles) || request.currentTitles.length > 64
-      || request.currentTitles.some((title) => typeof title !== 'string' || Buffer.byteLength(title, 'utf8') > 256)) {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'currentWindowInstanceIds'])
+      || !validRequestId(request.requestId) || !Array.isArray(request.currentWindowInstanceIds) || request.currentWindowInstanceIds.length > 64
+      || request.currentWindowInstanceIds.some((id) => typeof id !== 'string' || !/^W[0-9a-f]{16}$/i.test(id))) {
       immediateHostError(request.requestId, event.origin, 'window candidate picker request is malformed');
       return;
     }
     const payload = widgetToken
-      ? { token: widgetToken, currentTitles: request.currentTitles }
-      : { projectId: projectIdFromOrigin(), currentTitles: request.currentTitles };
+      ? { token: widgetToken, currentWindowInstanceIds: request.currentWindowInstanceIds }
+      : { projectId: projectIdFromOrigin(), currentWindowInstanceIds: request.currentWindowInstanceIds };
     task = ipcRenderer.invoke('papers:backpack:window-candidate-picker', payload)
       .then((value) => ({ picker: value }));
   }

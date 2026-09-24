@@ -18,6 +18,7 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>) {
   } as unknown as CompactWidgetSession;
   const requestHoverQuickRun = vi.fn(async () => ({ ok: true, detail: 'queued' }));
   const acknowledgeHoverQuickRunSeal = vi.fn(() => true);
+  const showCandidatePicker = vi.fn(async () => ({ action: 'remove' as const, candidateId: 'candidate-a' }));
   registerCompactWidgetIpc({
     ipcMain,
     registry,
@@ -28,16 +29,30 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>) {
     isWidgetSender: (sender, projectId) => sender.id === 2 && projectId === 'bp-a',
     requestHoverQuickRun,
     acknowledgeHoverQuickRunSeal,
+    showCandidatePicker,
   });
   const invoke = (channel: string, senderId: number, raw: unknown) => {
     const handler = handlers.get(channel);
     if (!handler) throw new Error(`missing ${channel}`);
     return handler({ sender: { id: senderId } }, raw);
   };
-  return { registry, session, invoke, requestHoverQuickRun, acknowledgeHoverQuickRunSeal };
+  return { registry, session, invoke, requestHoverQuickRun, acknowledgeHoverQuickRunSeal, showCandidatePicker };
 }
 
 describe('compact widget IPC', () => {
+  it('routes exact current window identities to the picker and rejects title-based membership payloads', async () => {
+    const h = harness();
+    const currentWindowInstanceIds = ['W0000000000000001'];
+    const token = h.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    await expect(h.invoke('papers:backpack:window-candidate-picker', 2, { token, currentWindowInstanceIds }))
+      .resolves.toEqual({ action: 'remove', candidateId: 'candidate-a' });
+    expect(h.showCandidatePicker).toHaveBeenCalledWith({ id: 2 }, currentWindowInstanceIds);
+    await expect(h.invoke('papers:backpack:window-candidate-picker', 2, { token, currentTitles: ['Untitled'] }))
+      .rejects.toThrow(/malformed/);
+    await expect(h.invoke('papers:backpack:window-candidate-picker', 2, { token, currentWindowInstanceIds: ['not-a-window-id'] }))
+      .rejects.toThrow(/malformed/);
+  });
+
   it('waits for staged authority before widget-open can execute', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
