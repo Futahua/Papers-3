@@ -330,42 +330,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   let peekGeneration = 0;
   let peekRestoreTokens: RuntimeWindowId[] = [];
   let peekMinimizedTarget: RuntimeWindowId | null = null;
-  /** Stable instance identities the ACTIVE Peek is holding hidden. A window our
-   * own Peek hid is absent from the helper's task-worthy enumeration (the
-   * helper hides it with SWP_HIDEWINDOW and its list requires a visible
-   * window), so during a Peek an absence can be SELF-INFLICTED: it is not
-   * evidence that the instance ceased to exist. `peekHiddenByToken` carries the
-   * token -> identity mapping so an explicit reveal can forget it (the window
-   * is unlistable while hidden, so a fresh observation cannot be relied on). */
-  const peekHiddenInstanceIds = new Set<string>();
-  const peekHiddenByToken = new Map<RuntimeWindowId, string>();
   let livePreview: { target: RuntimeWindowId; caller: string } | null = null;
-
-  function rememberPeekHidden(observation: WindowObservation): void {
-    const instanceId = observation.windowInstanceId;
-    if (!instanceId) return;
-    peekHiddenByToken.set(observation.runtimeId, instanceId);
-    peekHiddenInstanceIds.add(instanceId);
-  }
-
-  /** Record that one explicitly revealed token is visible again. The helper
-   * issues exactly one token per (HWND, PID, creation time, class) identity, so
-   * an instance id belongs to at most one hidden token. */
-  function forgetPeekHidden(token: RuntimeWindowId, observation?: WindowObservation): void {
-    const instanceId = peekHiddenByToken.get(token) ?? observation?.windowInstanceId;
-    if (!instanceId) return;
-    peekHiddenByToken.delete(token);
-    peekHiddenInstanceIds.delete(instanceId);
-  }
-
-  function peekHoldsHidden(windowInstanceId: string): boolean {
-    return peekHiddenInstanceIds.has(windowInstanceId);
-  }
-
-  function clearPeekHidden(): void {
-    peekHiddenInstanceIds.clear();
-    peekHiddenByToken.clear();
-  }
 
   function purgeBindingThumbnails(bindingId: string): void {
     for (const key of [...thumbnailCache.keys()]) {
@@ -756,10 +721,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const restore = peekRestoreTokens.splice(0);
     const reminimize = peekMinimizedTarget;
     peekMinimizedTarget = null;
-    // The Peek ends here: everything it hid is being revealed (or is already
-    // gone), so no identity may keep being reported as Peek-hidden - a stale
-    // entry would suppress exact 'missing' answers for the rest of the session.
-    clearPeekHidden();
     if (!factoryBuilt || stopped) return { outcome: 'success' };
     if (restore.length > 0 && factory.uncloakMany) {
       await factory.uncloakMany(restore.reverse()).catch(() => undefined);
@@ -801,11 +762,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         peekRestoreTokens.push(target);
         return revealed ?? { outcome: 'helper-unavailable', error: 'window reveal is unavailable' };
       }
-      // The reveal happens BEFORE this step's hides, so the hidden set is
-      // updated in the same order the native actions happen: forget the
-      // revealed identity first, and let a later hide in this same call be the
-      // only thing that can record it again.
-      forgetPeekHidden(target, targetObservation);
     }
     if (targetObservation?.state === 'minimized') {
       const revealed = await factory.uncloak?.(target).catch(() => undefined);
@@ -813,7 +769,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         return revealed ?? { outcome: 'helper-unavailable', error: 'minimized window reveal is unavailable' };
       }
       peekMinimizedTarget = target;
-      forgetPeekHidden(target, targetObservation);
     }
     if (generation !== peekGeneration) return { outcome: 'success' };
     if (!factory.cloak) return { outcome: 'helper-unavailable', error: 'window cloak is unavailable' };
@@ -824,35 +779,17 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       && !peekRestoreTokens.includes(observation.runtimeId));
     const tokens = toHide.map((observation) => observation.runtimeId);
     if (tokens.length > 0 && factory.cloakMany) {
-      // Record BEFORE the native hide: between the helper applying the hide and
-      // this call returning, a reconciler could otherwise observe the absence
-      // and read it as death. Recording early is the safe direction - an
-      // identity that MIGHT be hidden by us is never reported as gone - and a
-      // failed batch keeps its records (visibility is then unknown, not "gone");
-      // the set is dropped when the Peek ends.
-      for (const observation of toHide) rememberPeekHidden(observation);
       const result = await factory.cloakMany(tokens);
       if (result.outcome === 'success') {
-        if (generation === peekGeneration) {
-          peekRestoreTokens.push(...tokens);
-        } else {
-          if (factory.uncloakMany) await factory.uncloakMany(tokens).catch(() => undefined);
-          for (const observation of toHide) forgetPeekHidden(observation.runtimeId, observation);
-        }
+        if (generation === peekGeneration) peekRestoreTokens.push(...tokens);
+        else if (factory.uncloakMany) await factory.uncloakMany(tokens).catch(() => undefined);
       }
     } else {
       await Promise.all(toHide.map(async (observation) => {
-        // Same pre-record reasoning as the batch branch: the identity is marked
-        // before the native hide can be observed by anyone else.
-        rememberPeekHidden(observation);
         const result = await factory.cloak!(observation.runtimeId);
         if (result.outcome !== 'success') return;
-        if (generation === peekGeneration) {
-          peekRestoreTokens.push(observation.runtimeId);
-        } else {
-          await factory.uncloak?.(observation.runtimeId).catch(() => undefined);
-          forgetPeekHidden(observation.runtimeId, observation);
-        }
+        if (generation === peekGeneration) peekRestoreTokens.push(observation.runtimeId);
+        else await factory.uncloak?.(observation.runtimeId).catch(() => undefined);
       }));
     }
     return { outcome: 'success' };
@@ -1015,13 +952,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       return { outcome: 'ambiguous', error: 'the visible window identity changed and cannot be safely rebound' };
     }
     if (matches.length === 0) {
-      if (descriptor.windowInstanceId && peekHoldsHidden(descriptor.windowInstanceId)) {
-        // The runtime engine's member resolver reaches the same terminal answer
-        // through an id-carrying descriptor, so the Peek-hidden rule applies
-        // here too: our own Peek hid this member, which is not evidence of
-        // death. The 'ambiguous' identity-changed answer above stays untouched.
-        return { outcome: 'timeout', error: 'the window is hidden by the active Peek; a hidden window is not evidence that it is gone' };
-      }
       if (listed.truncated) {
         // Same invariant as resolveInstance: this snapshot is a BOUNDED prefix
         // of the desktop, so absence here cannot be reported as the terminal
@@ -1046,13 +976,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (listed.outcome !== 'success') return { outcome: 'helper-unavailable', error: listed.error };
     const matches = [...candidatesByListedId.entries()].filter(([, entry]) => entry.descriptor.windowInstanceId === windowInstanceId);
     if (matches.length === 0) {
-      if (peekHoldsHidden(windowInstanceId)) {
-        // Absence is SELF-INFLICTED here: our own active Peek hid this window,
-        // which drops it out of the helper's task-worthy enumeration. The
-        // window is not gone, and a consumer that deletes persisted identity on
-        // exactly 'missing' would destroy live layout members.
-        return { outcome: 'timeout', error: 'the window is hidden by the active Peek; a hidden window is not evidence that it is gone' };
-      }
       if (listed.truncated) {
         // Absence from a BOUNDED snapshot is not evidence of death: this exact
         // identity may belong to a window beyond the service's 64-candidate
@@ -1198,7 +1121,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     lastFrameCache.clear();
     frameSeedAt.clear();
     frameSeedInFlight.clear();
-    clearPeekHidden();
     thumbnailCacheRevision = -1;
     if (factoryBuilt) {
       await factory.stop().catch(() => undefined);
