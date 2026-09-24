@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { createWindowCapabilityService } from '../../src/main/windows/windowCapabilityService';
+import { createWindowCapabilityService, type WindowRuntimeCapability } from '../../src/main/windows/windowCapabilityService';
 import { createThumbnailFrameStore } from '../../src/main/windows/thumbnailFrameStore';
 import type { WindowHelperFactory } from '../../src/main/windows/windowHelperFactory';
 import type { WindowCapabilityResult, WindowObservation, RuntimeWindowId } from '../../src/main/windows/windowCapabilityTypes';
@@ -169,6 +169,143 @@ describe('windowCapabilityService candidates', () => {
     expect((await service.endPeek()).outcome).toBe('success');
     expect(revealedBatches).toEqual([[TOKEN_B]]);
     expect(minimized).toEqual([TOKEN_A]);
+  });
+
+  /** A Peek harness whose fake `list` models the helper's own enumeration: a
+   * window hidden by the Peek is ABSENT from an otherwise complete list, which
+   * is exactly how a Peek-hidden window becomes an apparent "absence". */
+  function peekHarness(useBatchCloak: boolean) {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Window A', processId: 1001, processPath: 'C:\\Apps\\a.exe' });
+    const other = observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Window B', processId: 2002, processPath: 'C:\\Apps\\b.exe' });
+    let rows: WindowObservation[] = [target, other];
+    const hidden = new Set<RuntimeWindowId>();
+    const overrides: Partial<WindowHelperFactory> = {
+      list: async () => ({ outcome: 'success', windows: rows.filter((row) => !hidden.has(row.runtimeId)) }),
+      cloak: async (runtimeId) => { hidden.add(runtimeId); return { outcome: 'success' }; },
+      uncloak: async (runtimeId) => { hidden.delete(runtimeId); return { outcome: 'success' }; },
+      ...(useBatchCloak
+        ? {
+          cloakMany: async (runtimeIds: RuntimeWindowId[]) => { for (const runtimeId of runtimeIds) hidden.add(runtimeId); return { outcome: 'success' as const }; },
+          uncloakMany: async (runtimeIds: RuntimeWindowId[]) => { for (const runtimeId of runtimeIds) hidden.delete(runtimeId); return { outcome: 'success' as const }; },
+        }
+        : {}),
+    };
+    const service = createWindowCapabilityService({
+      createFactory: () => fakeFactory(overrides),
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    async function bind(title: string): Promise<WindowRuntimeCapability> {
+      const listed = await service.listCandidates();
+      if (listed.outcome !== 'success') throw new Error('list failed');
+      const row = listed.candidates.find((candidate) => candidate.title === title);
+      if (!row) throw new Error(`peek target is not listed: ${title}`);
+      const bound = await service.bindCandidate(row.id);
+      if (bound.outcome !== 'success') throw new Error('bind failed');
+      return bound.capability;
+    }
+    return {
+      service,
+      hidden,
+      target,
+      other,
+      bind,
+      closeOther: () => { rows = [target]; },
+      close: (title: string) => { rows = rows.filter((row) => row.title !== title); },
+    };
+  }
+
+  it('never reports a Peek-hidden identity as missing (batch cloak path)', async () => {
+    const { service, hidden, other, bind, closeOther } = peekHarness(true);
+    const capability = await bind('Window A');
+
+    // A REAL Peek through the public API: Window A is the target, so Window B is
+    // hidden and drops out of the helper's enumeration.
+    expect((await service.beginPeekCapability(capability)).outcome).toBe('success');
+    expect(hidden.has(TOKEN_B as RuntimeWindowId)).toBe(true);
+    const hiddenIdentity = other.windowInstanceId!;
+
+    // A reconciler deletes persisted members on exactly 'missing'; a member our
+    // own Peek hid is not gone, so it must never receive that answer.
+    const duringInstance = await service.resolveInstance(hiddenIdentity);
+    expect(duringInstance.outcome).not.toBe('missing');
+    expect(duringInstance).toMatchObject({ outcome: 'timeout' });
+    const duringDescriptor = await service.resolvePersisted({
+      version: 1,
+      title: 'Hidden member',
+      executableFingerprint: 'f'.repeat(64),
+      windowInstanceId: hiddenIdentity,
+    });
+    expect(duringDescriptor.outcome).not.toBe('missing');
+    expect(duringDescriptor).toMatchObject({ outcome: 'timeout' });
+
+    // Strictly NARROWER than "any lookup during a Peek is inconclusive": an
+    // identity the Peek is not holding hidden is still an exact absence.
+    expect(await service.resolveInstance('Wcccccccccccccccc')).toMatchObject({ outcome: 'missing' });
+    expect(await service.resolvePersisted({
+      version: 1,
+      title: 'Never listed',
+      executableFingerprint: 'f'.repeat(64),
+      windowInstanceId: 'Wdddddddddddddddd',
+    })).toMatchObject({ outcome: 'missing' });
+
+    // The Peek ends, and the member really is gone (closed while hidden): its
+    // absence is exact again.
+    expect((await service.endPeek()).outcome).toBe('success');
+    expect(hidden.size).toBe(0);
+    closeOther();
+    expect(await service.resolveInstance(hiddenIdentity)).toMatchObject({ outcome: 'missing' });
+  });
+
+  it('never reports a Peek-hidden identity as missing (single-cloak fallback path)', async () => {
+    const { service, hidden, other, bind, closeOther } = peekHarness(false);
+    const capability = await bind('Window A');
+
+    expect((await service.beginPeekCapability(capability)).outcome).toBe('success');
+    expect(hidden.has(TOKEN_B as RuntimeWindowId)).toBe(true);
+    expect(await service.resolveInstance(other.windowInstanceId!)).toMatchObject({ outcome: 'timeout' });
+    expect(await service.resolveInstance('Wcccccccccccccccc')).toMatchObject({ outcome: 'missing' });
+
+    expect((await service.endPeek()).outcome).toBe('success');
+    expect(hidden.size).toBe(0);
+    closeOther();
+    expect(await service.resolveInstance(other.windowInstanceId!)).toMatchObject({ outcome: 'missing' });
+  });
+
+  it('tracks the differential Peek transition in native order: the revealed member stops being suppressed', async () => {
+    const harness = peekHarness(true);
+    const { service, hidden, target, other, bind } = harness;
+    // Bind BOTH while both are visible: the second Peek targets the member the
+    // first one hid - the exact A -> B transition that reveals and hides in one
+    // call.
+    const capabilityA = await bind('Window A');
+    const capabilityB = await bind('Window B');
+    const aIdentity = target.windowInstanceId!;
+    const bIdentity = other.windowInstanceId!;
+
+    expect((await service.beginPeekCapability(capabilityA)).outcome).toBe('success');
+    expect(hidden.has(TOKEN_B as RuntimeWindowId)).toBe(true);
+
+    // Pointer moves A -> B: B is revealed FIRST and A is hidden SECOND. B is
+    // absent from the enumeration while hidden, so its release can only come
+    // from the recorded token -> identity mapping.
+    expect((await service.beginPeekCapability(capabilityB)).outcome).toBe('success');
+    expect(hidden.has(TOKEN_A as RuntimeWindowId)).toBe(true);
+    expect(hidden.has(TOKEN_B as RuntimeWindowId)).toBe(false);
+
+    // The newly hidden member is inconclusive.
+    expect(await service.resolveInstance(aIdentity)).toMatchObject({ outcome: 'timeout' });
+
+    // The revealed member was FORGOTTEN: once it is genuinely gone, its absence
+    // is exact again even though the Peek still runs and A is still hidden. A
+    // stale suppression would answer 'timeout' here.
+    harness.close('Window B');
+    expect(await service.resolveInstance(bIdentity)).toMatchObject({ outcome: 'missing' });
+    // An identity the Peek never touched is still exact.
+    expect(await service.resolveInstance('Wcccccccccccccccc')).toMatchObject({ outcome: 'missing' });
+
+    expect((await service.endPeek()).outcome).toBe('success');
+    expect(hidden.size).toBe(0);
   });
 
   it('lists only trusted candidates: Papers itself, empty titles and missing paths are excluded', async () => {
