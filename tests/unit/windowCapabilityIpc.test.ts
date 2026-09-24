@@ -28,6 +28,7 @@ function pngWithSize(width: number, height: number): string {
 function fakeService(): WindowCapabilityService {
   return {
     listCandidates: async () => ({ outcome: 'success', candidates: [] }),
+    windowLifecycleSnapshot: async () => ({ outcome: 'success', snapshot: { complete: true, trackerSessionId: 'test', sequence: 1, windows: [] } }),
     bindCandidate: async () => ({ outcome: 'missing', error: 'not listed' }),
     resolveInstance: async () => ({ outcome: 'missing', error: 'not listed' }),
     observeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
@@ -77,6 +78,7 @@ describe('windowCapabilityIpc', () => {
     registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service: fakeService(), isSender: () => true });
     expect(ipc.channels()).toEqual([
       'papers:window-capability:list',
+      'papers:window-capability:lifecycle-snapshot',
       'papers:window-capability:bind',
       'papers:window-capability:observe',
       'papers:window-capability:minimize',
@@ -169,6 +171,23 @@ describe('windowCapabilityIpc', () => {
     const result = await ipc.invoke('papers:window-capability:list', 42, undefined);
     expect(result).toEqual({ outcome: 'success', candidates: [] });
     expect(calls).toBe(1);
+  });
+
+  it('exposes only the authenticated typed lifecycle snapshot route', async () => {
+    const ipc = fakeIpcMain();
+    const service = fakeService();
+    service.windowLifecycleSnapshot = async () => ({
+      outcome: 'success',
+      snapshot: { complete: true, trackerSessionId: 'test-session', sequence: 3, windows: [] },
+    });
+    registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service, isSender: (sender) => sender.id === 42 });
+
+    await expect(ipc.invoke('papers:window-capability:lifecycle-snapshot', 1, undefined)).rejects.toThrow('denied');
+    await expect(ipc.invoke('papers:window-capability:lifecycle-snapshot', 42, undefined)).resolves.toMatchObject({
+      outcome: 'success',
+      snapshot: { complete: true, trackerSessionId: 'test-session', sequence: 3, windows: [] },
+    });
+    await expect(ipc.invoke('papers:window-capability:lifecycle-snapshot', 42, { extra: true })).rejects.toThrow('empty');
   });
 
   it('validates inputs deeply and rejects unknown or malformed fields', async () => {

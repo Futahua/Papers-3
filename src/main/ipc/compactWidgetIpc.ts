@@ -27,7 +27,7 @@ export interface CompactWidgetIpcDependencies {
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
-  showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>) => Promise<{ action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null; retiredWindowInstanceIds?: string[] }>;
+  showCandidatePicker?: (sender: WebContents, currentTitles: string[]) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
   dismissCandidatePicker?: (sender: WebContents) => void;
 }
 
@@ -267,34 +267,27 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
 
   ipcMain.handle('papers:backpack:window-candidate-picker', async (event, raw) => {
     await waitForAuthority?.(event.sender);
-    if (!object(raw) || !Array.isArray(raw.candidates) || raw.candidates.length > 64) throw new Error('window candidate picker payload is malformed');
+    if (!object(raw) || !Array.isArray(raw.currentTitles) || raw.currentTitles.length > 64
+      || raw.currentTitles.some((title) => typeof title !== 'string' || Buffer.byteLength(title, 'utf8') > 256)) {
+      throw new Error('window candidate picker payload is malformed');
+    }
     let authorized = false;
-    if (exact(raw, ['projectId', 'candidates'])) {
+    if (exact(raw, ['projectId', 'currentTitles'])) {
       const projectId = key(raw.projectId, 'projectId');
       if (isWorkspaceSender(event.sender, projectId)) {
         ensureWorkspaceSurface(registry, event.sender.id, projectId);
         const surface = registry.surface(event.sender.id);
         authorized = !!surface && surface.projectId === projectId && surface.kind === WORKSPACE_SURFACE_KIND;
       }
-    } else if (exact(raw, ['token', 'candidates'])) {
+    } else if (exact(raw, ['token', 'currentTitles'])) {
       const surface = registry.surface(event.sender.id);
       const token = key(raw.token, 'token');
       authorized = !!surface && isWidgetSender(event.sender, surface.projectId)
         && registry.validSender(event.sender.id, surface.projectId, token);
     }
     if (!authorized) throw new Error('denied: sender is not a registered project surface');
-    const candidates = raw.candidates.map((value) => {
-      if (!object(value) || !exact(value, ['id', 'title', 'icon', 'current'])) throw new Error('window candidate picker item is malformed');
-      const id = key(value.id, 'candidate id');
-      const title = key(value.title, 'candidate title');
-      const icon = value.icon;
-      if (icon !== null && (typeof icon !== 'string' || Buffer.byteLength(icon, 'utf8') > 256 * 1024
-        || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(icon))) throw new Error('candidate icon is malformed');
-      if (typeof value.current !== 'boolean') throw new Error('candidate current state is malformed');
-      return { id, title, icon, current: value.current };
-    });
     return showCandidatePicker
-      ? showCandidatePicker(event.sender, candidates)
+      ? showCandidatePicker(event.sender, raw.currentTitles as string[])
       : { action: 'cancel', candidateId: null };
   });
 

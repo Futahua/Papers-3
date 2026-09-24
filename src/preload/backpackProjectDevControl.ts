@@ -135,7 +135,7 @@ ipcRenderer.on(VISUAL_FENCE_REQUEST_CHANNEL, (_event, payload) => {
   ipcRenderer.send(VISUAL_FENCE_RESPONSE_CHANNEL, { requestId, documentInstanceId, ready: true });
 });
 
-interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; instanceId?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
+interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; currentTitles?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; instanceId?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
 const SCOPED_WORKSPACE_REQUESTS = new Set([
   'papers:project:as-you-go-load',
@@ -453,6 +453,10 @@ window.addEventListener('message', (event) => {
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window candidate request contains unknown fields');
     task = ipcRenderer.invoke('papers:window-capability:list');
   }
+  if (request.type === 'papers:project:window-lifecycle-snapshot') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window lifecycle snapshot request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:lifecycle-snapshot');
+  }
   if (request.type === 'papers:project:window-bind-candidate') {
     const candidateId = parseBoundedString(request.candidateId);
     task = ipcRenderer.invoke('papers:window-capability:bind', candidateId);
@@ -670,14 +674,15 @@ window.addEventListener('message', (event) => {
       .then((payload) => ({ menu: payload }));
   }
   if (request.type === 'papers:project:window-candidate-picker') {
-    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'candidates'])
-      || !validRequestId(request.requestId) || !Array.isArray(request.candidates) || request.candidates.length > 64) {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'currentTitles'])
+      || !validRequestId(request.requestId) || !Array.isArray(request.currentTitles) || request.currentTitles.length > 64
+      || request.currentTitles.some((title) => typeof title !== 'string' || Buffer.byteLength(title, 'utf8') > 256)) {
       immediateHostError(request.requestId, event.origin, 'window candidate picker request is malformed');
       return;
     }
     const payload = widgetToken
-      ? { token: widgetToken, candidates: request.candidates }
-      : { projectId: projectIdFromOrigin(), candidates: request.candidates };
+      ? { token: widgetToken, currentTitles: request.currentTitles }
+      : { projectId: projectIdFromOrigin(), currentTitles: request.currentTitles };
     task = ipcRenderer.invoke('papers:backpack:window-candidate-picker', payload)
       .then((value) => ({ picker: value }));
   }

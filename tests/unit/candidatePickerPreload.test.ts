@@ -17,18 +17,19 @@ describe('candidate picker preload bridge', () => {
     vi.resetModules();
   });
 
-  it('forwards plain middle-click termination and Ctrl+middle-click close actions', async () => {
+  it('forwards data-only selection and explicit Ctrl+middle-click close, never termination', async () => {
     await import('../../src/preload/candidatePicker');
     const api = mocks.exposeInMainWorld.mock.calls[0]?.[1] as {
       signal: (action: string, candidateId?: string) => void;
     } | undefined;
 
     expect(api).toBeDefined();
-    api?.signal('terminate', 'window-candidate-1');
+    api?.signal('select', 'window-candidate-1');
     api?.signal('close', 'window-candidate-2');
+    api?.signal('terminate', 'window-candidate-3');
 
     expect(mocks.send.mock.calls).toEqual([
-      ['papers:candidate-picker:signal', { action: 'terminate', candidateId: 'window-candidate-1' }],
+      ['papers:candidate-picker:signal', { action: 'select', candidateId: 'window-candidate-1' }],
       ['papers:candidate-picker:signal', { action: 'close', candidateId: 'window-candidate-2' }],
     ]);
   });
@@ -40,6 +41,7 @@ describe('candidate picker preload bridge', () => {
     } | undefined;
 
     api?.signal('arbitrary-action', 'window-candidate-1');
+    api?.signal('terminate', 'window-candidate-1');
     api?.signal('terminate', 'x'.repeat(513));
 
     expect(mocks.send).not.toHaveBeenCalled();

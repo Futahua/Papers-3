@@ -17,6 +17,7 @@ import {
   type WindowBindResult,
   type WindowCandidateListResult,
   type WindowCapabilityService,
+  type WindowLifecycleSnapshotResult,
   type WindowResolveResult,
   type WindowRuntimeCapability,
 } from '../windows/windowCapabilityService';
@@ -183,7 +184,7 @@ function toPageThumbnailResult(result: WindowCapabilityResult): WindowThumbnailR
   return { outcome: result.outcome, ...(result.error !== undefined ? { error: boundPageError(result.error) } : {}) };
 }
 
-type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult;
+type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult | WindowLifecycleSnapshotResult;
 
 function resultPayload(result: IpcResult): IpcResult {
   return result;
@@ -217,6 +218,11 @@ export function registerWindowCapabilityIpc({
     if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('list payload must be empty');
     return undefined;
   }, () => service.listCandidates({ includeNativeIcons: true }));
+  handle('papers:window-capability:lifecycle-snapshot', (raw) => {
+    if (raw === undefined) return undefined;
+    if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('lifecycle snapshot payload must be empty');
+    return undefined;
+  }, () => service.windowLifecycleSnapshot());
   handle('papers:window-capability:bind', (raw) => parseBoundedString(raw, 'candidateId'), (candidateId) => service.bindCandidate(candidateId));
   handle('papers:window-capability:observe', parseRuntimeCapability, (capability) => service.observeCapability(capability));
   handle('papers:window-capability:minimize', parseRuntimeCapability, (capability) => service.minimizeCapability(capability));

@@ -28,7 +28,7 @@
  */
 
 import { createWindowHelperFactory, type WindowHelperFactory } from './windowHelperFactory';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   createThumbnailFrameStore,
   pngDimensions,
@@ -81,7 +81,20 @@ export interface WindowCandidate {
   applicationLabel: string;
   icon: string | null;
   state: WindowState;
+  /** Stable, non-secret identity used only for Auto tracking snapshots. */
+  windowInstanceId?: string;
 }
+
+export interface WindowLifecycleSnapshot {
+  complete: boolean;
+  trackerSessionId: string;
+  sequence: number;
+  windows: Array<{ windowInstanceId: string }>;
+}
+
+export type WindowLifecycleSnapshotResult =
+  | { outcome: 'success'; snapshot: WindowLifecycleSnapshot }
+  | { outcome: 'helper-unavailable' | 'timeout'; error?: string };
 
 /** Stable, persisted-safe member identity for fail-closed re-resolution of
  * an ALREADY VISIBLE window. Deliberately contains no runtime id, token,
@@ -131,7 +144,7 @@ export type WindowHoverResult =
   | { outcome: 'missing' | 'helper-unavailable' | 'timeout'; error?: string };
 
 export type WindowBindResult =
-  | { outcome: 'success'; capability: WindowRuntimeCapability; descriptor: PersistedWindowMemberDescriptor }
+  | { outcome: 'success'; capability: WindowRuntimeCapability; descriptor: PersistedWindowMemberDescriptor; candidate?: WindowCandidate }
   | { outcome: 'missing' | 'helper-unavailable' | 'timeout'; error?: string };
 
 export type WindowResolveResult =
@@ -160,7 +173,8 @@ export type NativePickerBindResult =
   | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string };
 
 export interface WindowCapabilityService {
-  listCandidates(options?: { includeNativeIcons?: boolean }): Promise<WindowCandidateListResult>;
+  listCandidates(options?: { includeNativeIcons?: boolean; includeIcons?: boolean; preserveListedCandidates?: boolean }): Promise<WindowCandidateListResult>;
+  windowLifecycleSnapshot(): Promise<WindowLifecycleSnapshotResult>;
   bindCandidate(candidateId: string): Promise<WindowBindResult>;
   resolveInstance(windowInstanceId: string): Promise<WindowResolveResult>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
@@ -349,6 +363,8 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   let factoryBuilt = false;
   let stopped = false;
   let candidateIdCounter = 0;
+  const trackerSessionId = randomUUID();
+  let lifecycleSnapshotSequence = 0;
   const candidatesByListedId = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate; processId: number }>();
   const bindings = new Map<string, { helperToken: RuntimeWindowId; touched: number; processId: number }>();
   const bindingDescriptors = new Map<string, PersistedWindowMemberDescriptor>();
@@ -672,7 +688,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return outcome === 'ready';
   }
 
-  async function listCandidates(options: { includeNativeIcons?: boolean } = {}): Promise<WindowCandidateListResult> {
+  async function listCandidates(options: { includeNativeIcons?: boolean; includeIcons?: boolean; preserveListedCandidates?: boolean } = {}): Promise<WindowCandidateListResult> {
     if (stopped) return HELPER_UNAVAILABLE;
     if (!(await ensureStarted())) return HELPER_UNAVAILABLE;
     let result = await factory.list();
@@ -706,16 +722,37 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       // Interactive pick lists request exact native window/class icons so
       // packaged Electron apps do not collapse to generic executable tiles.
       // Internal relisting keeps the original cheap file-icon path.
-      const icon = options.includeNativeIcons
-        ? await nativeIconFor(observation)
-        : await iconFor(observation);
+      const icon = options.includeIcons === false
+        ? null
+        : options.includeNativeIcons
+          ? await nativeIconFor(observation)
+          : await iconFor(observation);
       entry.candidate.icon = icon;
       candidates.push(entry.candidate);
       listed.set(entry.candidate.id, entry);
     }
-    candidatesByListedId.clear();
-    for (const [id, entry] of listed) candidatesByListedId.set(id, entry);
+    if (options.preserveListedCandidates !== true) {
+      candidatesByListedId.clear();
+      for (const [id, entry] of listed) candidatesByListedId.set(id, entry);
+    }
     return { outcome: 'success', candidates, ...(truncated ? { truncated: true } : {}) };
+  }
+
+  async function windowLifecycleSnapshot(): Promise<WindowLifecycleSnapshotResult> {
+    const listed = await listCandidates({ includeIcons: false, preserveListedCandidates: true });
+    if (listed.outcome !== 'success') return listed;
+    const windows = listed.candidates.flatMap((candidate) => candidate.windowInstanceId
+      ? [{ windowInstanceId: candidate.windowInstanceId }]
+      : []);
+    return {
+      outcome: 'success',
+      snapshot: {
+        complete: listed.truncated !== true && windows.length === listed.candidates.length,
+        trackerSessionId,
+        sequence: ++lifecycleSnapshotSequence,
+        windows,
+      },
+    };
   }
 
   async function iconFor(observation: WindowObservation): Promise<string | null> {
@@ -775,6 +812,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       applicationLabel: appLabel(observation.processPath ?? ''),
       icon: null,
       state: observation.state,
+      ...(observation.windowInstanceId ? { windowInstanceId: observation.windowInstanceId } : {}),
     };
     return { helperToken, descriptor, candidate, processId: observation.processId ?? 0 };
   }
@@ -860,7 +898,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (!bindingId) return { outcome: 'helper-unavailable', error: 'binding failed' };
     const descriptor = entry.descriptor;
     bindingDescriptors.set(bindingId, descriptor);
-    return { outcome: 'success', capability, descriptor };
+    return { outcome: 'success', capability, descriptor, candidate: entry.candidate };
   }
 
   async function observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
@@ -1439,6 +1477,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
 
   return {
     listCandidates,
+    windowLifecycleSnapshot,
     bindCandidate,
     resolveInstance,
     observeCapability,

@@ -114,12 +114,62 @@ function harness(overrides: Parameters<typeof createWindowCapabilityService>[0] 
 }
 
 describe('windowCapabilityService candidates', () => {
+  it('returns a complete identity-only lifecycle snapshot without icon work', async () => {
+    const getFileIcon = vi.fn(async () => ({ toDataURL: () => 'unused-icon' }) as never);
+    const service = createWindowCapabilityService({
+      createFactory: () => fakeFactory(),
+      currentPid: 9999,
+      getFileIcon,
+    });
+
+    const snapshot = await service.windowLifecycleSnapshot();
+
+    expect(snapshot).toMatchObject({
+      outcome: 'success',
+      snapshot: {
+        complete: true,
+        windows: [
+          { windowInstanceId: 'Waaaaaaaaaaaaaaaa' },
+          { windowInstanceId: 'Wbbbbbbbbbbbbbbbb' },
+        ],
+      },
+    });
+    if (snapshot.outcome === 'success') {
+      expect(snapshot.snapshot.trackerSessionId).toMatch(/^[0-9a-f-]{36}$/i);
+      expect(snapshot.snapshot.sequence).toBe(1);
+    }
+    expect(getFileIcon).not.toHaveBeenCalled();
+  });
+
+  it('marks a bounded lifecycle prefix incomplete without discarding its positive identities', async () => {
+    const windows = Array.from({ length: 65 }, (_, index) => {
+      const identity = (index + 1).toString(16).padStart(16, '0');
+      const runtimeId = `T${identity}${'f'.repeat(16)}` as RuntimeWindowId;
+      return observation({ runtimeId, title: `Window ${index}`, processId: 1000 + index });
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => fakeFactory({ list: async () => ({ outcome: 'success', windows }) }),
+      currentPid: 9999,
+    });
+
+    const result = await service.windowLifecycleSnapshot();
+
+    expect(result.outcome).toBe('success');
+    if (result.outcome === 'success') {
+      expect(result.snapshot.complete).toBe(false);
+      expect(result.snapshot.windows).toHaveLength(64);
+      expect(result.snapshot.windows[0]).toEqual({ windowInstanceId: 'W0000000000000001' });
+    }
+  });
+
   it('resolves a persisted instance ID only through the current helper candidate list', async () => {
     const { service } = harness();
     const listed = await service.listCandidates();
     if (listed.outcome !== 'success') throw new Error('list failed');
+    await service.windowLifecycleSnapshot();
     const bound = await service.bindCandidate(listed.candidates[0]!.id);
     if (bound.outcome !== 'success' || !bound.descriptor.windowInstanceId) throw new Error('bind failed');
+    expect(bound.candidate).toMatchObject({ id: listed.candidates[0]!.id, title: 'Window A' });
 
     const resolved = await service.resolveInstance(bound.descriptor.windowInstanceId);
     expect(resolved.outcome).toBe('success');
