@@ -83,10 +83,13 @@
 # Session tokens:
 # - The wire id is a high-entropy helper-session TOKEN ('T'+32 hex GUID),
 #   never a raw HWND. Tokens are issued on list, keyed by the full
-#   (HWND, PID, window CLASS) identity: an unchanged identity keeps its
-#   token across repeated list calls; an HWND reused with a different
-#   PID/class gets a NEW token while the old token stays bound to the old
-#   identity and fails closed. Tokens are never overwritten or rebound.
+#   (HWND, PID, process CREATION TIME, window CLASS) identity: an unchanged
+#   identity keeps its token across repeated list calls; a reused HWND with a
+#   different PID/creation time/class gets a NEW token (and a NEW stable
+#   persisted identity) while the old token stays bound to the OLD identity
+#   and fails closed. Tokens are never overwritten or rebound. The creation
+#   time is what stops PID reuse from inheriting a predecessor's token: the
+#   same (HWND, PID, class) after process reuse is a DIFFERENT identity.
 #
 #   018 IDENTITY REVISION: the exact TITLE is no longer part of this key. A
 #   title is mutable display metadata - it changes on every browser tab switch
@@ -95,12 +98,13 @@
 #   its place as the stable corroborator.
 #
 #   What the key proves, and what it does not: it proves the handle still
-#   belongs to the same process and the same class of window, which survives
-#   title changes, helper restarts and Papers restarts. It does NOT prove the
-#   same window OBJECT - Windows may recycle a handle value, and a replacement
-#   in the same process with the same class would satisfy every clause. A
-#   failed check is therefore UNVERIFIED, never "gone"; no consumer may treat
-#   this refusal as terminal evidence that the instance ceased to exist.
+#   belongs to the same process INSTANCE (PID plus creation time) and the same
+#   class of window, which survives title changes, helper restarts and Papers
+#   restarts. It does NOT prove the same window OBJECT - Windows may recycle a
+#   handle value, and a NEW window of the same class created by the SAME live
+#   process instance would satisfy every clause. A failed check is therefore
+#   UNVERIFIED, never "gone"; no consumer may treat this refusal as terminal
+#   evidence that the instance ceased to exist.
 # - The session registry is BOUNDED: a fixed limit of 4096 issued
 #   tokens per helper session. The list path preflights the FULL list
 #   atomically BEFORE issuing anything: if existing token count + distinct
@@ -227,23 +231,35 @@ function Get-WhWireBounds {
   }
 }
 
-# 018 identity: the session token is keyed by the EXACT LIVE WINDOW INSTANCE as
-# the native layer can corroborate it - the runtime handle, the owning process
-# and the window class. The TITLE IS NOT PART OF IDENTITY. It is display
-# metadata: it changes on every browser tab switch and on every document edit,
-# and keying identity by it made an ordinary title change look like window
-# invalidation. That is the defect this revision removes.
+# 018 identity, revised for process reuse: the session token is keyed by the
+# EXACT LIVE WINDOW INSTANCE as the native layer can corroborate it - the
+# runtime handle, the owning process INSTANCE (PID plus creation time) and the
+# window class. The TITLE IS NOT PART OF IDENTITY. It is display metadata: it
+# changes on every browser tab switch and on every document edit, and keying
+# identity by it made an ordinary title change look like window invalidation.
+# That is the defect this revision removes.
+#
+# The creation ticks are what stop PID reuse: (HWND, PID, class) alone aliases a
+# LATER process that happens to reuse all three, which would let the old token
+# mutate the replacement window and keep emitting the old stable identity.
 #
 # What this key does and does not prove. It proves "this handle still belongs to
-# the same process and the same class of window", which is stable across title
-# changes, helper restarts and Papers restarts. It does NOT prove "this is the
-# same window object": Windows may recycle a handle value, and a replacement in
-# the SAME process with the SAME class would satisfy every clause here. Consumers
-# must therefore treat this as strong corroboration and never as terminal
-# evidence of anything - a failed check means UNVERIFIED, never "gone".
+# the same process instance and the same class of window", which is stable
+# across title changes, helper restarts and Papers restarts. It does NOT prove
+# "this is the same window object": Windows may recycle a handle value, and a
+# NEW window of the SAME class created by the SAME live process instance would
+# satisfy every clause here. Consumers must therefore treat this as strong
+# corroboration and never as terminal evidence of anything - a failed check
+# means UNVERIFIED, never "gone".
+function Get-WhProcessStartTicks {
+  param([int]$PidValue)
+  if (-not $script:WhOps.ContainsKey('ProcessStartTicks')) { return $null }
+  try { return & $script:WhOps['ProcessStartTicks'] $PidValue } catch { return $null }
+}
+
 function Get-WhIdentityKey {
-  param([long]$Hwnd, [int]$PidValue, [string]$ClassName)
-  return "$Hwnd|$PidValue|$ClassName"
+  param([long]$Hwnd, [int]$PidValue, [string]$ClassName, [object]$ProcessStartTicks)
+  return "$Hwnd|$PidValue|$ProcessStartTicks|$ClassName"
 }
 
 function Get-WhResponseObservation {
@@ -279,22 +295,19 @@ function Get-WhWindowInstanceId {
   }
 }
 
-# Issue or reuse the session token for one (HWND, PID, window class) identity.
+# Issue or reuse the session token for one (HWND, PID, process start, window class) identity.
 # A changed identity under the same HWND yields a NEW token; tokens are never
 # overwritten or rebound. A title change does NOT change the identity and
 # therefore does NOT yield a new token.
 function New-WhSessionToken {
   param([long]$Hwnd, [int]$PidValue, [string]$ClassName)
-  $key = Get-WhIdentityKey $Hwnd $PidValue $ClassName
+  $startTicks = Get-WhProcessStartTicks $PidValue
+  $key = Get-WhIdentityKey $Hwnd $PidValue $ClassName $startTicks
   if ($script:WhSession.byKey.ContainsKey($key)) {
     return $script:WhSession.byKey[$key]
   }
   $token = 'T' + [guid]::NewGuid().ToString('N')
   $script:WhSession.byKey[$key] = $token
-  $startTicks = $null
-  if ($script:WhOps.ContainsKey('ProcessStartTicks')) {
-    try { $startTicks = & $script:WhOps['ProcessStartTicks'] $PidValue } catch { $startTicks = $null }
-  }
   $script:WhSession.byToken[$token] = @{ hwnd = $Hwnd; pid = $PidValue; className = $ClassName; processStartTicks = $startTicks }
   return $token
 }
@@ -311,19 +324,28 @@ function Test-WhListCapacity {
   param([object[]]$Observations)
   $newCount = 0
   foreach ($observation in $Observations) {
-    $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
+    $startTicks = Get-WhProcessStartTicks ([int]$observation.ProcessId)
+    $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName) $startTicks
     if (-not $script:WhSession.byKey.ContainsKey($key)) { $newCount += 1 }
   }
   return ($script:WhSession.byToken.Count + $newCount) -le $script:WhSession.maxTokens
 }
 
 # Fail-closed identity gate executed in the SAME request handler, immediately
-# before EVERY observe and mutation. Never re-registers or repairs.
+# before EVERY observe, mutation and visibility restore. Never re-registers or
+# repairs.
 #
 # 018: the exact TITLE is deliberately NOT compared. A title is mutable display
 # metadata, not identity; requiring it to be unchanged made an ordinary Chrome
 # tab switch invalidate a healthy capability. The window class replaces it as
 # the stable corroborator.
+#
+# Process reuse: the LIVE process creation time is read here and compared with
+# the creation time captured when the token was issued. It must be readable and
+# unchanged. A reused (HWND, PID, class) with a different creation time is a
+# DIFFERENT process instance and is refused; an unreadable creation time is
+# refused too (fail closed) rather than assumed. A refusal therefore means
+# UNVERIFIED only - it is never proof that the window is gone.
 #
 # The outcome vocabulary is unchanged so every existing consumer keeps working,
 # but consumers MUST NOT read this refusal as proof of death: a failure here means
@@ -343,7 +365,14 @@ function Test-WhTokenIdentity {
   } catch {
     return @{ ok = $false; outcome = 'denied'; error = (Get-BoundedErrorText $_) }
   }
-  if ([int]$live.ProcessId -ne [int]$entry.pid -or [string]$live.ClassName -ne [string]$entry.className) {
+  $liveStartTicks = Get-WhProcessStartTicks ([int]$live.ProcessId)
+  # Fail closed: an unreadable creation time on EITHER side is a refusal, never
+  # an assumption that the instance is unchanged. The operators stay at the END
+  # of each line so the continuation parses on Windows PowerShell 5.1 too.
+  if ($null -eq $entry.processStartTicks -or $null -eq $liveStartTicks -or
+    [long]$liveStartTicks -ne [long]$entry.processStartTicks -or
+    [int]$live.ProcessId -ne [int]$entry.pid -or
+    [string]$live.ClassName -ne [string]$entry.className) {
     return @{ ok = $false; outcome = 'denied'; error = 'window identity changed since the token was issued' }
   }
   return @{ ok = $true }
@@ -512,7 +541,8 @@ function Invoke-WhRequest {
       if ($null -eq $observation) {
         return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = $null } $null)
       }
-      $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
+      $startTicks = Get-WhProcessStartTicks ([int]$observation.ProcessId)
+      $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName) $startTicks
       $atCapacity = -not $script:WhSession.byKey.ContainsKey($key) -and $script:WhSession.byToken.Count -ge $script:WhSession.maxTokens
       if ($atCapacity) {
         return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'session token capacity reached')
@@ -547,6 +577,10 @@ function Invoke-WhRequest {
       return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
     }
     if ($Method -eq 'live-preview') {
+      # Deliberately NOT gated by Test-WhTokenIdentity: this method mutates no
+      # window state and emits no stable identity. Its own gates stay the live
+      # target HWND and the caller HWND, and a DWM activation against a dead
+      # handle fails closed inside DWM.
       $target = [string]$Request['target']
       $entry = Resolve-WhSessionToken $target
       if ($null -eq $entry -or -not (Test-WhWindowAlive ([IntPtr]$entry.hwnd))) {
@@ -628,14 +662,19 @@ function Invoke-WhRequest {
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ thumbnail = $thumb; target = $target } $null)
     }
     if ($Method -eq 'uncloak') {
-      # A cloaked window is intentionally absent from task-worthy enumeration.
-      # The still-issued session token plus live HWND are the bounded gate.
-      $entry = Resolve-WhSessionToken $target
-      $runtimeId = [IntPtr]$entry.hwnd
-      if (-not (Test-WhWindowAlive $runtimeId)) {
-        return (ConvertTo-WhResponse $RequestId $Method 'missing' $null 'window is gone')
+      # A cloaked window is intentionally absent from task-worthy enumeration, so
+      # this recovery path revalidates the token against the WINDOW ITSELF
+      # (IsWindow, PID, process creation time, class) - never against the list -
+      # exactly like every other mutation. It also emits the stable persisted
+      # identity, so an ungated reveal would both touch a replacement window and
+      # re-emit a predecessor's W identity. Refusal stays typed and leaves the
+      # window cloaked rather than acting on an uncorroborated handle.
+      $identity = Test-WhTokenIdentity $target
+      if (-not $identity.ok) {
+        return (ConvertTo-WhResponse $RequestId $Method $identity.outcome $null $identity.error)
       }
-      Uncloak-WhWindow $runtimeId
+      $entry = Resolve-WhSessionToken $target
+      Uncloak-WhWindow ([IntPtr]$entry.hwnd)
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ observation = (Get-WhResponseObservation $target) } $null)
     }
     # ---- mutations: identity gate BEFORE any native act -------------------

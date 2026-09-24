@@ -42,6 +42,15 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
  * `windowClass`. Both pins below moved with that revision, together with
  * `WINDOW_HELPER_PROTOCOL_VERSION` and manifest.json.
  *
+ * Process-reuse identity revision: the session-token key and the common
+ * identity gate now include the live PROCESS CREATION TIME alongside HWND, PID
+ * and window class, so a reused HWND/PID/class cannot inherit a predecessor's
+ * token or keep emitting its stable window identity; a changed OR unreadable
+ * creation time is refused (fail closed) rather than assumed unchanged. The
+ * `uncloak` visibility restore is gated like every other mutation, since it
+ * mutates and emits that identity. Only the helper script hash moved with this
+ * revision; the pins and manifest.json moved together.
+ *
  * EOL DEFECT FIXED HERE: these pins are SHA-256 over exact BYTES, and
  * `.gitattributes` declares `* text=auto eol=lf`, so a git checkout always
  * delivers LF. The adapter script was nevertheless stored in the working tree
@@ -52,7 +61,7 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
  * every checkout receives. `tests/unit/windowHelperResource.test.ts` guards
  * this by validating the committed blob, not the working copy. */
 export const WINDOW_HELPER_EXPECTED_HASHES: Record<string, string> = {
-  [WINDOW_HELPER_SCRIPT_FILE]: '56eb7fbf1b5a47ac3e7f863c37f2925ce16c26b641a7ee465e64943f6624f7cb',
+  [WINDOW_HELPER_SCRIPT_FILE]: '4cc820f48b882eee5f21fdf233303fcca79535e15bd15f666ad5ea2f86ab7e52',
   [WINDOW_HELPER_ADAPTER_FILE]: 'e5ba6cce5f9964922f1f02ab33a4235baeb9ac98ca36b0e2eb94d32722a74c29',
 };
 

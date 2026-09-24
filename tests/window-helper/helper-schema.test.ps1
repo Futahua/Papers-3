@@ -273,6 +273,7 @@ $script:fakeMonitors = @(
 )
 # Point -> window resolution map for hover tests (set per test).
 $script:windowAtPoint = @{}
+$script:fakeProcessStartTicks = @{}
 $script:WhOps = @{
   IsWindow = { param([IntPtr]$id) (@($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id -and $_.alive }).Count) -eq 1 }
   Visible = { param([IntPtr]$id) [bool](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).Visible) }
@@ -280,7 +281,7 @@ $script:WhOps = @{
   ExStyle = { param([IntPtr]$id) [long](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).ExStyle) }
   ClassName = { param([IntPtr]$id) [string](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).ClassName) }
   ProcessName = { param([IntPtr]$id) [string](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).ProcessName) }
-  ProcessStartTicks = { param([int]$processId) [long](1000000000 + $processId) }
+  ProcessStartTicks = { param([int]$processId) if ($script:fakeProcessStartTicks.ContainsKey($processId)) { [long]$script:fakeProcessStartTicks[$processId] } else { [long](1000000000 + $processId) } }
   OwnerHwnd = { param([IntPtr]$id) [IntPtr](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).OwnerHwnd) }
   RootAncestor = { param([IntPtr]$id) [IntPtr](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).RootAncestor) }
   LastActivePopup = { param([IntPtr]$id) [IntPtr](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).LastActivePopup) }
@@ -305,6 +306,11 @@ $script:WhOps = @{
   }
   Raise = { param([IntPtr]$id)
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).touched += 'foreground-once'
+  }
+  Cloak = { param([IntPtr]$id, [bool]$hide)
+    $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
+    $entry.Cloaked = $hide
+    $entry.touched += "cloak:$hide"
   }
   Close = { param([IntPtr]$id)
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).alive = $false
@@ -496,6 +502,14 @@ $restartedToken = New-WhSessionToken ([long]$priorEntry.hwnd) ([int]$priorEntry.
 $restartedInstanceId = Get-WhWindowInstanceId (Resolve-WhSessionToken $restartedToken)
 $script:WhSession = $priorSession
 Assert-True ($restartedToken -ne $tokenA -and $restartedInstanceId -eq $priorInstanceId) 'helper restart changes the runtime token but preserves the persisted instance identity'
+$replacementTicks = [long]$priorEntry.processStartTicks + 1
+$script:fakeProcessStartTicks[[int]$priorEntry.pid] = $replacementTicks
+$replacementToken = New-WhSessionToken ([long]$priorEntry.hwnd) ([int]$priorEntry.pid) ([string]$priorEntry.className)
+$replacementEntry = Resolve-WhSessionToken $replacementToken
+$oldTokenIdentity = Test-WhTokenIdentity $tokenA
+$script:fakeProcessStartTicks.Remove([int]$priorEntry.pid)
+Assert-True ($replacementToken -ne $tokenA -and (Get-WhWindowInstanceId $replacementEntry) -ne $priorInstanceId) 'same HWND/PID/class with changed process start receives a new token and persisted identity'
+Assert-True (-not $oldTokenIdentity.ok -and $oldTokenIdentity.outcome -eq 'denied') 'old token refuses operations after process-start identity changes'
 
 # ---- zero-sized window rects become null bounds (015 helper fix) -----------
 $zeroEntry = @($list.windows | Where-Object { $_.title -eq 'WH-TEST-ZERO' } | Select-Object -First 1)
@@ -560,6 +574,66 @@ Assert-Outcome $newObserve 'success' 'the resolver-selected new token observes s
 $newMin = Invoke-Line ('{"requestId":25,"method":"minimize","target":"' + $tokenNew + '"}')
 Assert-Outcome $newMin 'success' 'the resolver-selected new token mutates successfully'
 Assert-True ($script:fakeRegistry[0].touched -contains 'minimize') 'the new token acts on the replacement window'
+
+# ---- process-start revalidation through the WIRE (FINDING 2) ---------------
+# The reviewer's chain: a LATER process reuses the same HWND, PID and class but
+# has a different creation time. Process creation time is part of the token key
+# and of the identity gate, so the reused identity must get a NEW token and a
+# NEW stable W identity, while the predecessor token is refused on every path
+# that could act on the replacement window or emit the old W identity.
+$reuseEntry = Resolve-WhSessionToken $tokenNew
+$reuseInstanceId = Get-WhWindowInstanceId $reuseEntry
+$laterTicks = [long]$reuseEntry.processStartTicks + 1000
+$script:fakeProcessStartTicks[[int]$reuseEntry.pid] = $laterTicks
+$staleObserve = Invoke-Line ('{"requestId":180,"method":"observe","target":"' + $tokenNew + '"}')
+Assert-Outcome $staleObserve 'denied' 'FINDING 2: a token whose process creation time changed is denied on observe'
+Assert-True (-not $staleObserve.ContainsKey('observation')) 'FINDING 2: the refusal emits no observation, so the predecessor stable identity is never re-emitted'
+$touchesBeforeStale = @($script:fakeRegistry[0].touched).Count
+$staleMin = Invoke-Line ('{"requestId":181,"method":"minimize","target":"' + $tokenNew + '"}')
+Assert-Outcome $staleMin 'denied' 'FINDING 2: the same HWND/PID/class with a changed creation time cannot mutate through the old token'
+Assert-True (@($script:fakeRegistry[0].touched).Count -eq $touchesBeforeStale) 'FINDING 2: the reused window was never touched by the stale token'
+$reuseList = Invoke-Line '{"requestId":182,"method":"list"}'
+$reuseRow = @($reuseList.windows | Where-Object { $_.title -eq 'WH-TEST-EVIL' } | Select-Object -First 1)
+Assert-True ($reuseRow.Count -eq 1) 'FINDING 2: the reused identity is still listed'
+Assert-True ([string]$reuseRow[0].runtimeId -ne $tokenNew) 'FINDING 2: the reused HWND/PID/class receives a NEW token'
+Assert-True ([string]$reuseRow[0].windowInstanceId -ne $reuseInstanceId) 'FINDING 2: the changed creation time emits a DIFFERENT stable W identity'
+$reuseToken = [string]$reuseRow[0].runtimeId
+$reuseObserve = Invoke-Line ('{"requestId":183,"method":"observe","target":"' + $reuseToken + '"}')
+Assert-Outcome $reuseObserve 'success' 'FINDING 2: the replacement token observes successfully'
+Assert-True ([string]$reuseObserve.observation.windowInstanceId -eq [string]$reuseRow[0].windowInstanceId) 'FINDING 2: the replacement token emits the NEW stable identity'
+Assert-Outcome (Invoke-Line ('{"requestId":184,"method":"observe","target":"' + $tokenNew + '"}')) 'denied' 'FINDING 2: the predecessor token stays denied after the list refresh (never repaired)'
+# The visibility-recovery path is a mutation that also emits the stable
+# identity, so it must refuse an uncorroborated handle too - and leave the
+# window cloaked rather than revealing a replacement it cannot corroborate.
+$recloak = Invoke-Line ('{"requestId":185,"method":"cloak","target":"' + $reuseToken + '"}')
+Assert-Outcome $recloak 'success' 'setup: the replacement window is cloaked through its own token'
+Assert-True ([bool]$script:fakeRegistry[0].Cloaked) 'setup: the replacement window is actually cloaked'
+$script:fakeProcessStartTicks[[int]$reuseEntry.pid] = $laterTicks + 1000
+$staleUncloak = Invoke-Line ('{"requestId":186,"method":"uncloak","target":"' + $reuseToken + '"}')
+Assert-Outcome $staleUncloak 'denied' 'FINDING 2: uncloak refuses an identity whose process creation time changed'
+Assert-True (-not $staleUncloak.ContainsKey('observation')) 'FINDING 2: the refused uncloak emits no observation and therefore no stale identity'
+Assert-True ([bool]$script:fakeRegistry[0].Cloaked) 'FINDING 2: the refused uncloak left the uncorroborated window cloaked'
+$script:fakeProcessStartTicks[[int]$reuseEntry.pid] = $laterTicks
+$cleanUncloak = Invoke-Line ('{"requestId":187,"method":"uncloak","target":"' + $reuseToken + '"}')
+Assert-Outcome $cleanUncloak 'success' 'FINDING 2: the unchanged identity still reveals successfully'
+Assert-True (-not [bool]$script:fakeRegistry[0].Cloaked) 'FINDING 2: the corroborated reveal actually uncloaked the window'
+$script:fakeProcessStartTicks.Remove([int]$reuseEntry.pid)
+
+# ---- an UNREADABLE process creation time fails closed (FINDING 2) ----------
+# The gate must refuse when the creation time cannot be read at all - never
+# assume the instance is unchanged. Removing the op IS the unreadable case (an
+# adapter without it, or a process whose StartTime query fails).
+$ticksOp = $script:WhOps['ProcessStartTicks']
+$script:WhOps.Remove('ProcessStartTicks')
+Assert-Outcome (Invoke-Line ('{"requestId":188,"method":"observe","target":"' + $reuseToken + '"}')) 'denied' 'FINDING 2: an unreadable process creation time denies observe (fail closed)'
+$script:fakeRegistry[0].Cloaked = $true
+Assert-Outcome (Invoke-Line ('{"requestId":189,"method":"uncloak","target":"' + $reuseToken + '"}')) 'denied' 'FINDING 2: an unreadable process creation time denies uncloak (fail closed)'
+Assert-True ([bool]$script:fakeRegistry[0].Cloaked) 'FINDING 2: the uncloak refusal left the window untouched'
+$script:WhOps['ProcessStartTicks'] = $ticksOp
+$script:fakeProcessStartTicks[[int]$reuseEntry.pid] = $laterTicks
+Assert-Outcome (Invoke-Line ('{"requestId":190,"method":"observe","target":"' + $reuseToken + '"}')) 'success' 'FINDING 2: a readable unchanged creation time restores corroborated access'
+$script:fakeRegistry[0].Cloaked = $false
+$script:fakeProcessStartTicks.Remove([int]$reuseEntry.pid)
 
 # ---- simulated helper restart: old tokens are unusable --------------------
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
