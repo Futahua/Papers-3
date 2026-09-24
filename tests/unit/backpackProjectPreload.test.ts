@@ -223,10 +223,12 @@ describe('Backpack project protocol alignment', () => {
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     mocks.invoke.mockResolvedValue({ ok: true, reused: false });
     dispatch({ type: 'papers:project:widget-open', requestId: 'wo-1', layoutKey: 'layout-a' });
+    dispatch({ type: 'papers:project:widget-open', requestId: 'wo-quiet', layoutKey: 'layout-b', activate: false });
     dispatch({ type: 'papers:project:widget-focus', requestId: 'wf-1', layoutKey: 'layout-a' });
     dispatch({ type: 'papers:project:widget-close', requestId: 'wc-1', layoutKey: 'layout-a' });
     await new Promise((resolve) => setImmediate(resolve));
     expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-open', { projectId: 'bp-a', layoutKey: 'layout-a' });
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-open', { projectId: 'bp-a', layoutKey: 'layout-b', activate: false });
     expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-focus', { projectId: 'bp-a', layoutKey: 'layout-a' });
     expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-close', { projectId: 'bp-a', layoutKey: 'layout-a' });
     expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'wo-1', ok: true, widget: { ok: true, reused: false } }));

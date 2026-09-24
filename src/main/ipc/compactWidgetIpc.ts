@@ -71,7 +71,10 @@ function ensureWorkspaceSurface(
 export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, setHoverPolicy, requestHoverQuickRun, acknowledgeHoverQuickRunSeal, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
   ipcMain.handle('papers:backpack:widget-open', async (event, raw) => {
     await waitForAuthority?.(event.sender);
-    if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget open payload is malformed');
+    if (!object(raw) || !exact(raw, raw.activate === undefined
+      ? ['projectId', 'layoutKey']
+      : ['projectId', 'layoutKey', 'activate'])
+      || (raw.activate !== undefined && typeof raw.activate !== 'boolean')) throw new Error('widget open payload is malformed');
     const projectId = key(raw.projectId, 'projectId');
     const layoutKey = key(raw.layoutKey, 'layoutKey');
     if (!isWorkspaceSender(event.sender, projectId)) throw new Error('denied: not the bound workspace sender');
@@ -80,7 +83,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     if (!surface || surface.projectId !== projectId || surface.kind !== WORKSPACE_SURFACE_KIND) throw new Error('denied: workspace is not registered');
     const owningWindowId = windowIdForWorkspaceSender(event.sender);
     if (owningWindowId === null) throw new Error('denied: workspace has no Papers window');
-    return session.open({ projectId, layoutKey, owningWindowId });
+    return session.open({ projectId, layoutKey, owningWindowId, ...(raw.activate === undefined ? {} : { activate: raw.activate }) });
   });
 
   ipcMain.handle('papers:backpack:widget-focus', async (event, raw) => {

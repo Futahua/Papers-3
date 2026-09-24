@@ -567,7 +567,10 @@ window.addEventListener('message', (event) => {
     // 019C: the registered live workspace opens/focuses a layout's compact
     // widget by opaque layoutKey; projectId is attached ONLY here, never from
     // page data. The opaque key is bounded and never parsed.
-    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutKey']) || !validRequestId(request.requestId)) {
+    const raw = request as Record<string, unknown>;
+    const validKeys = exactKeys(raw, ['type', 'requestId', 'layoutKey'])
+      || exactKeys(raw, ['type', 'requestId', 'layoutKey', 'activate']);
+    if (!validKeys || (raw.activate !== undefined && typeof raw.activate !== 'boolean') || !validRequestId(request.requestId)) {
       immediateHostError(request.requestId, event.origin, 'widget open request is malformed');
       return;
     }
@@ -576,7 +579,10 @@ window.addEventListener('message', (event) => {
       immediateHostError(request.requestId, event.origin, 'widget open request is malformed');
       return;
     }
-    task = ipcRenderer.invoke('papers:backpack:widget-open', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+    task = ipcRenderer.invoke('papers:backpack:widget-open', {
+      projectId: projectIdFromOrigin(), layoutKey,
+      ...(raw.activate === undefined ? {} : { activate: raw.activate }),
+    }).then((payload) => ({ widget: payload }));
   }
   if (request.type === 'papers:project:widget-focus') {
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutKey']) || !validRequestId(request.requestId)) {

@@ -50,6 +50,7 @@ export interface CompactWidgetWindow {
   restore(): void;
   minimize(): void;
   show(): void;
+  showInactive(): void;
   moveTop(): void;
   getNativeWindowHandle(): Buffer;
   isDestroyed(): boolean;
@@ -87,7 +88,7 @@ export interface CompactWidgetSessionDependencies {
 }
 
 export interface CompactWidgetSession {
-  open(request: { projectId: string; layoutKey: string; owningWindowId: number; bounds?: WindowBounds | null }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }>;
+  open(request: { projectId: string; layoutKey: string; owningWindowId: number; bounds?: WindowBounds | null; activate?: boolean }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }>;
   /** Authenticated live widgets can host a project's declared command surface
    * after its ordinary workspace tab has been closed. */
   liveProjectOwners(): Array<{ projectId: string; owningWindowId: number }>;
@@ -298,8 +299,12 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       const key = keyOf(request.projectId, request.layoutKey, request.owningWindowId);
       const existing = entries.get(key);
       if (existing && !existing.window.isDestroyed()) {
-        latestWidgetKey = key;
-        restoreAndFocus(existing);
+        if (request.activate !== false) {
+          latestWidgetKey = key;
+          restoreAndFocus(existing);
+        } else if (existing.window.isMinimized() || !existing.window.isVisible()) {
+          existing.window.showInactive();
+        }
         return { ok: true, reused: true };
       }
       const entryUrl = deps.resolveEntryUrl(request.projectId, request.owningWindowId);

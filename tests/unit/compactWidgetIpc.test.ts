@@ -49,6 +49,15 @@ describe('compact widget IPC', () => {
     await expect(pending).resolves.toEqual({ ok: true, reused: false });
   });
 
+  it('accepts an explicit non-activating ensure request and rejects invalid activation values', async () => {
+    const h = harness();
+    await expect(h.invoke('papers:backpack:widget-open', 1, { projectId: 'bp-a', layoutKey: 'layout-a', activate: false }))
+      .resolves.toEqual({ ok: true, reused: false });
+    expect(h.session.open).toHaveBeenCalledWith({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false });
+    await expect(h.invoke('papers:backpack:widget-open', 1, { projectId: 'bp-a', layoutKey: 'layout-a', activate: 'false' }))
+      .rejects.toThrow(/malformed/);
+  });
+
   it('opens and focuses only from the registered workspace sender', async () => {
     const h = harness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);

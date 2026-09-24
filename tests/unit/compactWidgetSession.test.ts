@@ -22,6 +22,7 @@ class FakeWindow {
   minimize = vi.fn(() => { this.minimized = true; this.visible = false; });
   isVisible = vi.fn(() => this.visible);
   show = vi.fn(() => { this.visible = true; });
+  showInactive = vi.fn(() => { this.visible = true; this.minimized = false; });
   moveTop = vi.fn();
   isFocused = vi.fn(() => true);
   getNativeWindowHandle = vi.fn(() => Buffer.alloc(8));
@@ -77,6 +78,22 @@ function harness(cursor = { x: 537, y: 284 }) {
 }
 
 describe('compact widget session', () => {
+  it('can ensure a live widget without focusing or activating it', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const window = h.windows[0]!;
+    window.focus.mockClear();
+    await expect(h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false }))
+      .resolves.toEqual({ ok: true, reused: true });
+    expect(window.focus).not.toHaveBeenCalled();
+    expect(window.showInactive).not.toHaveBeenCalled();
+
+    window.minimize();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false });
+    expect(window.showInactive).toHaveBeenCalledOnce();
+    expect(window.focus).not.toHaveBeenCalled();
+  });
+
   it('opens one authenticated widget per layout, reuses duplicates, and never sends 018 transfer traffic', async () => {
     const h = harness();
     const first = await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
