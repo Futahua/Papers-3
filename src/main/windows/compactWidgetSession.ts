@@ -25,6 +25,7 @@ export const COMPACT_WIDGET_MAX_HEIGHT = 2000;
 interface WidgetEntry {
   projectId: string;
   layoutKey: string;
+  entryUrl: string;
   /** The Papers window this widget belongs to. Part of its identity, so two
    * windows showing one layout get their own widget rather than sharing one
    * that neither can be said to own. */
@@ -87,6 +88,10 @@ export interface CompactWidgetSessionDependencies {
 
 export interface CompactWidgetSession {
   open(request: { projectId: string; layoutKey: string; owningWindowId: number; bounds?: WindowBounds | null }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }>;
+  /** Authenticated live widgets can host a project's declared command surface
+   * after its ordinary workspace tab has been closed. */
+  liveProjectOwners(): Array<{ projectId: string; owningWindowId: number }>;
+  entryUrlForOwner(projectId: string, owningWindowId: number): string | null;
   ready(senderId: number, payload: unknown): boolean;
   focus(projectId: string, layoutKey: string, owningWindowId: number): boolean;
   /** Minimize without destroying the widget, so Alt+Q can restore it. */
@@ -305,7 +310,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       let token: string;
       try { token = deps.registry.register(window.webContents.id, request.projectId, COMPACT_WIDGET_SURFACE_KIND, request.layoutKey); }
       catch { if (!window.isDestroyed()) window.destroy(); return { ok: false, error: 'widget surface registration failed' }; }
-      const entry: WidgetEntry = { projectId: request.projectId, layoutKey: request.layoutKey, owningWindowId: request.owningWindowId, window, closing: false };
+      const entry: WidgetEntry = { projectId: request.projectId, layoutKey: request.layoutKey, entryUrl, owningWindowId: request.owningWindowId, window, closing: false };
       entries.set(key, entry);
       deps.onWidgetRegistered?.(window.webContents.id, window.getNativeWindowHandle());
       latestWidgetKey = key;
@@ -324,6 +329,22 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       const before = deps.registry.surface(senderId);
       readyHandler({ sender: { id: senderId } }, payload);
       return before?.kind === COMPACT_WIDGET_SURFACE_KIND && before.token === (payload as { token?: unknown })?.token;
+    },
+    liveProjectOwners() {
+      const owners = new Map<string, { projectId: string; owningWindowId: number }>();
+      for (const entry of entries.values()) {
+        if (entry.closing || entry.window.isDestroyed()) continue;
+        owners.set(`${entry.projectId}\0${entry.owningWindowId}`, {
+          projectId: entry.projectId,
+          owningWindowId: entry.owningWindowId,
+        });
+      }
+      return [...owners.values()];
+    },
+    entryUrlForOwner(projectId, owningWindowId) {
+      const entry = [...entries.values()].find((candidate) => candidate.projectId === projectId
+        && candidate.owningWindowId === owningWindowId && !candidate.closing && !candidate.window.isDestroyed());
+      return entry?.entryUrl ?? null;
     },
     focus(projectId, layoutKey, owningWindowId) {
       const key = keyOf(projectId, layoutKey, owningWindowId);

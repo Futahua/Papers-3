@@ -2942,6 +2942,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           open.push({ projectId, root: '' });
         }
       }
+      for (const { projectId } of widgetSession.liveProjectOwners()) {
+        if (seen.has(projectId)) continue;
+        seen.add(projectId);
+        open.push({ projectId, root: '' });
+      }
       return open;
     },
     readDeclaration: readLauncherDeclaration,
@@ -2977,7 +2982,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     },
     onTargetResolved: (target, ownerWindowId) => {
       const owner = papersWindows.get(ownerWindowId);
-      if (!owner?.owned.projectSurfaces.entryUrlForProject(target.projectId)) {
+      const hasLiveProjectEntry = owner?.owned.projectSurfaces.entryUrlForProject(target.projectId)
+        || widgetSession.entryUrlForOwner(target.projectId, ownerWindowId);
+      if (!hasLiveProjectEntry) {
         throw new Error('the selected command surface no longer belongs to a live Papers window');
       }
       if (commandSurfaceSenderId !== null) {
@@ -2990,7 +2997,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     },
     resolveEntryUrl: (projectId) => {
       for (const windowId of papersWindows.windowIds) {
-        const url = papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null;
+        const owner = papersWindows.get(windowId);
+        const url = owner?.owned.projectSurfaces.entryUrlForProject(projectId)
+          ?? widgetSession.entryUrlForOwner(projectId, windowId);
         if (url) return { entryUrl: url, ownerWindowId: windowId };
       }
       return null;

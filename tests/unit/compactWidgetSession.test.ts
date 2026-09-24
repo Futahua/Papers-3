@@ -92,6 +92,9 @@ describe('compact widget session', () => {
     expect(h.windows[0]!.webContents.send.mock.calls.map(([channel]) => channel)).not.toContain('papers:backpack:detach-stop-request');
     expect(h.registry.surfaceForWidget('bp-a', 'layout-a')).not.toBeNull();
     expect(h.registry.surfaceForWidget('bp-a', 'layout-b')).not.toBeNull();
+    expect(h.session.liveProjectOwners()).toEqual([{ projectId: 'bp-a', owningWindowId: 1 }]);
+    expect(h.session.entryUrlForOwner('bp-a', 1)).toBe('papers-backpack://bp-a/_papers-open/a/public/index.html');
+    expect(h.session.entryUrlForOwner('bp-a', 2)).toBeNull();
   });
 
   it('accepts only the live widget token, rejects stale tokens, and cleans up close/crash/repeat', async () => {
@@ -113,6 +116,8 @@ describe('compact widget session', () => {
     expect(h.registry.surface(replacement.webContents.id)).toBeNull();
     await h.session.closeAll();
     expect(h.registry.surfaceForWidget('bp-a', 'layout-a')).toBeNull();
+    expect(h.session.liveProjectOwners()).toEqual([]);
+    expect(h.session.entryUrlForOwner('bp-a', 1)).toBeNull();
   });
 
   it('019F: widgetUrl requires the exact project host (wrong-host and wrong-scheme rejected)', async () => {
