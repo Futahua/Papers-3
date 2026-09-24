@@ -433,6 +433,42 @@ describe('windowCapabilityService bind and capabilities', () => {
     expect((await service.terminateCapability(bound.capability)).outcome).toBe('denied');
     expect(terminated).not.toHaveBeenCalled();
   });
+
+  it('returns the pre-kill process identity snapshot if candidates are relisted during termination', async () => {
+    const selected = observation({ runtimeId: TOKEN_A as RuntimeWindowId, processId: 1001, windowInstanceId: 'Waaaaaaaaaaaaaaaa' });
+    const sibling = observation({
+      runtimeId: 'Tg'.padEnd(33, 'g') as RuntimeWindowId,
+      title: 'Second window',
+      processId: 1001,
+      windowInstanceId: 'Wbbbbbbbbbbbbbbbb',
+    });
+    let currentWindows: WindowObservation[] = [selected, sibling];
+    let releaseKill!: () => void;
+    const killGate = new Promise<void>((resolve) => { releaseKill = resolve; });
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: currentWindows }),
+      terminate: async () => { await killGate; return { outcome: 'success' }; },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('list failed');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    if (bound.outcome !== 'success') throw new Error('bind failed');
+
+    const pending = service.terminateCapability(bound.capability);
+    currentWindows = [observation({ runtimeId: 'Th'.padEnd(33, 'h') as RuntimeWindowId, processId: 1001, windowInstanceId: 'Wcccccccccccccccc' })];
+    await service.listCandidates();
+    releaseKill();
+
+    expect(await pending).toEqual({
+      outcome: 'success',
+      retiredWindowInstanceIds: ['Waaaaaaaaaaaaaaaa', 'Wbbbbbbbbbbbbbbbb'],
+    });
+  });
 });
 
 describe('windowCapabilityService persisted re-resolution', () => {
