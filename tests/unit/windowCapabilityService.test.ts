@@ -388,7 +388,10 @@ describe('windowCapabilityService bind and capabilities', () => {
     const bound = await service.bindCandidate(listed.candidates[0]!.id);
     if (bound.outcome !== 'success') throw new Error('bind failed');
 
-    expect(await service.terminateCapability(bound.capability)).toEqual({ outcome: 'success' });
+    expect(await service.terminateCapability(bound.capability)).toEqual({
+      outcome: 'success',
+      retiredWindowInstanceIds: [bound.descriptor.windowInstanceId],
+    });
     expect(terminated).toEqual([TOKEN_A]);
     expect((await service.terminateCapability({ version: 1, bindingId: 'not-issued' })).outcome).toBe('missing');
     expect(terminated).toEqual([TOKEN_A]);

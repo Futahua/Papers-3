@@ -94,12 +94,21 @@ function parseBounds(raw: unknown): WindowBounds {
 
 function parsePersistedDescriptor(raw: unknown): PersistedWindowMemberDescriptor {
   if (!isPlainObject(raw)) throw new Error('descriptor must be an object');
-  if (!exactKeys(raw, ['version', 'title', 'executableFingerprint'])) throw new Error('descriptor contains unknown fields');
+  const hasWindowInstanceId = raw['windowInstanceId'] !== undefined;
+  if (!exactKeys(raw, hasWindowInstanceId
+    ? ['version', 'title', 'executableFingerprint', 'windowInstanceId']
+    : ['version', 'title', 'executableFingerprint'])) throw new Error('descriptor contains unknown fields');
   if (raw['version'] !== 1) throw new Error('unsupported descriptor version');
   const title = parseBoundedString(raw['title'], 'descriptor.title');
   const executableFingerprint = parseBoundedString(raw['executableFingerprint'], 'descriptor.executableFingerprint');
   if (!/^[a-f0-9]{64}$/i.test(executableFingerprint)) throw new Error('descriptor.executableFingerprint is invalid');
-  return { version: 1, title, executableFingerprint };
+  const descriptor: PersistedWindowMemberDescriptor = { version: 1, title, executableFingerprint };
+  if (hasWindowInstanceId) {
+    const windowInstanceId = parseBoundedString(raw['windowInstanceId'], 'descriptor.windowInstanceId');
+    if (!/^W[0-9a-f]{16}$/i.test(windowInstanceId)) throw new Error('descriptor.windowInstanceId is invalid');
+    descriptor.windowInstanceId = windowInstanceId;
+  }
+  return descriptor;
 }
 
 /** 019G thumbnail request dimensions: absent -> the 240x135 default; when
