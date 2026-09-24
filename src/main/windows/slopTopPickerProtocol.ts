@@ -226,11 +226,15 @@ export function createSlopTopPickerSession(
       const beginToken = token;
       try {
         await transport.activate({ version: 2, token: beginToken, seeds: prepared.seeds });
-        pollTimer = setInterval(() => { void consumeResult(); }, resultPollMs);
         if (!(await awaitAck(beginToken))) {
           finish({ outcome: 'failed', error: 'SlopTop did not acknowledge the picker activation.' });
           return { outcome: 'failed', error: 'SlopTop did not acknowledge the picker activation.' };
         }
+        // AHK may publish a result immediately after its ACK. Do not consume
+        // results until this host has positively observed that ACK; then read
+        // once immediately before starting the steady-state poll interval.
+        void consumeResult();
+        pollTimer = setInterval(() => { void consumeResult(); }, resultPollMs);
         return { outcome: 'started' };
       } catch {
         finish({ outcome: 'failed', error: 'SlopTop picker activation failed.' });

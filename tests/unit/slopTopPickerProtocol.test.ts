@@ -33,13 +33,24 @@ function harness() {
   let result: unknown = null;
   let cancelledToken = '';
   let cleanedToken = '';
+  let ackObserved = false;
+  const resultReadAckStates: boolean[] = [];
   const transport: SlopTopPickerTransport = {
     activate: (next) => {
       activation = next;
       ack = { version: 2, token: next.token, active: true };
     },
-    readAck: () => ack,
-    readResult: () => result,
+    readAck: (token) => {
+      if (ack && typeof ack === 'object' && !Array.isArray(ack)) {
+        const value = ack as Record<string, unknown>;
+        ackObserved ||= value.version === 2 && value.token === token && value.active === true;
+      }
+      return ack;
+    },
+    readResult: () => {
+      resultReadAckStates.push(ackObserved);
+      return result;
+    },
     requestCancel: (token) => { cancelledToken = token; },
     cleanup: (token) => { cleanedToken = token; },
   };
@@ -58,6 +69,7 @@ function harness() {
     setResult: (next: unknown) => { result = next; },
     cancelledToken: () => cancelledToken,
     cleanedToken: () => cleanedToken,
+    resultReadAckStates: () => resultReadAckStates,
   };
 }
 
@@ -92,6 +104,23 @@ describe('SlopTop local picker protocol', () => {
     });
     expect(session.active).toBe(false);
     expect(test.cleanedToken()).toBe(activation!.token);
+  });
+
+  it('does not consume a committed result until the host has observed activation ACK', async () => {
+    const test = harness();
+    test.transport.activate = (next) => {
+      test.setResult({ version: 2, token: next.token, outcome: 'committed', windows: [seed] });
+      test.setAck(null);
+      setTimeout(() => test.setAck({ version: 2, token: next.token, active: true }), 20);
+    };
+    const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });
+    let delivered: unknown = null;
+    await expect(session.begin({ memberDescriptors: [], onResult: (next) => { delivered = next; } }))
+      .resolves.toEqual({ outcome: 'started' });
+    await waitFor(() => delivered !== null);
+    expect(delivered).toMatchObject({ outcome: 'committed' });
+    expect(test.resultReadAckStates().length).toBeGreaterThan(0);
+    expect(test.resultReadAckStates().every(Boolean)).toBe(true);
   });
 
   it('derives removals from the final complete set instead of click events', async () => {
