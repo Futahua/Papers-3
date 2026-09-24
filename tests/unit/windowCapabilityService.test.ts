@@ -214,39 +214,6 @@ describe('windowCapabilityService candidates', () => {
     expect(result.candidates.length).toBeLessThanOrEqual(64);
   });
 
-  it('reports truncation exactly when a further ELIGIBLE window exists beyond the bound', async () => {
-    const eligible = (count: number): WindowObservation[] => Array.from({ length: count }, (_, index) =>
-      observation({ runtimeId: `T${index}`.padEnd(33, 'a') as RuntimeWindowId, title: `W ${index}`, processId: 5000 + index, processPath: `C:\\Apps\\w${index}.exe` }));
-    // Empty title, missing process path and no bounds are INELIGIBLE: they never
-    // become candidates, so a tail of them can never make a complete
-    // enumeration look truncated.
-    const ineligible: WindowObservation[] = [
-      observation({ runtimeId: 'Tz'.padEnd(33, 'z') as RuntimeWindowId, title: '', processId: 6001, processPath: 'C:\\Apps\\z.exe' }),
-      observation({ runtimeId: 'Ty'.padEnd(33, 'y') as RuntimeWindowId, title: 'No Path', processId: 6002, processPath: null }),
-      observation({ runtimeId: 'Tw'.padEnd(33, 'w') as RuntimeWindowId, title: 'No Bounds', processId: 6003, processPath: 'C:\\Apps\\w.exe', bounds: null }),
-    ];
-    let windows: WindowObservation[] = [...eligible(64), ...ineligible];
-    const factory = fakeFactory({ list: async () => ({ outcome: 'success', windows }) });
-    const service = createWindowCapabilityService({
-      createFactory: () => factory,
-      currentPid: 9999,
-      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
-    });
-
-    const complete = await service.listCandidates();
-    expect(complete.outcome).toBe('success');
-    if (complete.outcome !== 'success') return;
-    expect(complete.candidates).toHaveLength(64);
-    expect(complete.truncated).toBeUndefined();
-
-    windows = [...eligible(65), ...ineligible];
-    const saturated = await service.listCandidates();
-    expect(saturated.outcome).toBe('success');
-    if (saturated.outcome !== 'success') return;
-    expect(saturated.candidates).toHaveLength(64);
-    expect(saturated.truncated).toBe(true);
-  });
-
   it('reports helper-unavailable when the factory cannot start', async () => {
     const factory = fakeFactory({ start: async () => 'helper-unavailable' });
     const service = createWindowCapabilityService({ createFactory: () => factory });
@@ -548,49 +515,6 @@ describe('windowCapabilityService persisted re-resolution', () => {
     const { service } = harness();
     const resolved = await service.resolvePersisted({ version: 1, title: 'Gone Window', executableFingerprint: 'a'.repeat(64) });
     expect(resolved.outcome).toBe('missing');
-  });
-
-  it('never answers the terminal missing from a truncated snapshot (identity beyond the bound)', async () => {
-    // Hex-safe padding: the service validates the exact W[0-9a-f]{16} shape of
-    // a target identity before any lookup, so a fixture must be well formed.
-    const many = Array.from({ length: 65 }, (_, index) =>
-      observation({ runtimeId: `T${index}`.padEnd(33, 'a') as RuntimeWindowId, title: `W ${index}`, processId: 5000 + index, processPath: `C:\\Apps\\w${index}.exe` }));
-    // The 65th eligible window is LIVE and simply outside the bounded snapshot.
-    const targetInstanceId = many[64]!.windowInstanceId!;
-    const fingerprint = 'f'.repeat(64);
-    const truncatedFactory = fakeFactory({ list: async () => ({ outcome: 'success', windows: many }) });
-    const service = createWindowCapabilityService({
-      createFactory: () => truncatedFactory,
-      currentPid: 9999,
-      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
-    });
-    const listed = await service.listCandidates();
-    if (listed.outcome !== 'success') throw new Error('list failed');
-    expect(listed.candidates).toHaveLength(64);
-    expect(listed.truncated).toBe(true);
-
-    // A consumer deletes persisted member identity on exactly 'missing', so a
-    // bounded enumeration may never produce one.
-    const resolved = await service.resolveInstance(targetInstanceId);
-    expect(resolved.outcome).not.toBe('missing');
-    expect(resolved).toMatchObject({ outcome: 'timeout' });
-    const persisted = await service.resolvePersisted({ version: 1, title: 'Beyond the bound', executableFingerprint: fingerprint, windowInstanceId: targetInstanceId });
-    expect(persisted.outcome).not.toBe('missing');
-    expect(persisted).toMatchObject({ outcome: 'timeout' });
-
-    // Companion: with a COMPLETE enumeration (<= 64 eligible windows) the very
-    // same absence is still the exact terminal 'missing'.
-    const completeFactory = fakeFactory({ list: async () => ({ outcome: 'success', windows: many.slice(0, 64) }) });
-    const completeService = createWindowCapabilityService({
-      createFactory: () => completeFactory,
-      currentPid: 9999,
-      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
-    });
-    const completeListed = await completeService.listCandidates();
-    if (completeListed.outcome !== 'success') throw new Error('list failed');
-    expect(completeListed.truncated).toBeUndefined();
-    expect(await completeService.resolveInstance(targetInstanceId)).toMatchObject({ outcome: 'missing' });
-    expect(await completeService.resolvePersisted({ version: 1, title: 'Beyond the bound', executableFingerprint: fingerprint, windowInstanceId: targetInstanceId })).toMatchObject({ outcome: 'missing' });
   });
 
   it('returns ambiguous when more than one visible window matches', async () => {

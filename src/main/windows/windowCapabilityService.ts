@@ -98,18 +98,8 @@ export interface WindowRuntimeCapability {
   bindingId?: string;
 }
 
-/** `truncated` is present and true EXACTLY when at least one further ELIGIBLE
- * window existed beyond WINDOW_CAPABILITY_MAX_CANDIDATES, so this success
- * carries only a bounded prefix of the desktop; absent or false means the
- * enumeration was complete and an absence is genuinely exact. Exact
- * instance-identity lookups must therefore never answer their terminal
- * 'missing' from a truncated snapshot - absence from a bounded enumeration is
- * not evidence that an instance ceased to exist. (The helper itself never
- * truncates: at its own session-token capacity it answers with a typed denial
- * and NO windows payload, which becomes 'helper-unavailable' below - a
- * non-destructive outcome - never a partial window array.) */
 export type WindowCandidateListResult =
-  | { outcome: 'success'; candidates: WindowCandidate[]; truncated?: boolean }
+  | { outcome: 'success'; candidates: WindowCandidate[] }
   | { outcome: 'helper-unavailable'; error?: string };
 
 /** 016 direct-pick hover: the topmost task-worthy candidate at a point, or
@@ -452,20 +442,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     }
     const candidates: WindowCandidate[] = [];
     const listed = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate; processId: number }>();
-    let truncated = false;
     for (const observation of result.windows ?? []) {
-      // Eligibility is decided BEFORE the bound: only an observation the host
-      // would actually admit as a candidate (trusted process + real bounds)
-      // can set the truncation flag, so the flag is true exactly when a
-      // further ELIGIBLE window exists beyond the bound and stays absent when
-      // the enumeration was complete.
+      if (candidates.length >= WINDOW_CAPABILITY_MAX_CANDIDATES) break;
       const processId = trustedProcessId(observation, currentPid, allowCurrentProcessWindow);
       if (processId === null) continue;
-      if (!observation.bounds) continue;
-      if (candidates.length >= WINDOW_CAPABILITY_MAX_CANDIDATES) {
-        truncated = true;
-        break;
-      }
       const entry = candidateForObservation(observation);
       entry.processId = processId;
       // Interactive pick lists request exact native window/class icons so
@@ -475,12 +455,13 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         ? await nativeIconFor(observation)
         : await iconFor(observation);
       entry.candidate.icon = icon;
+      if (!observation.bounds) continue;
       candidates.push(entry.candidate);
       listed.set(entry.candidate.id, entry);
     }
     candidatesByListedId.clear();
     for (const [id, entry] of listed) candidatesByListedId.set(id, entry);
-    return { outcome: 'success', candidates, ...(truncated ? { truncated: true } : {}) };
+    return { outcome: 'success', candidates };
   }
 
   async function iconFor(observation: WindowObservation): Promise<string | null> {
@@ -951,16 +932,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (descriptor.windowInstanceId && matches.length === 0 && matchingDisplayIdentity.length > 0) {
       return { outcome: 'ambiguous', error: 'the visible window identity changed and cannot be safely rebound' };
     }
-    if (matches.length === 0) {
-      if (listed.truncated) {
-        // Same invariant as resolveInstance: this snapshot is a BOUNDED prefix
-        // of the desktop, so absence here cannot be reported as the terminal
-        // 'missing'. A consumer deletes persisted member identity on exactly
-        // 'missing', and a bounded enumeration is not evidence of death.
-        return { outcome: 'timeout', error: 'candidate enumeration was truncated; the descriptor may match a window outside the bounded list' };
-      }
-      return { outcome: 'missing', error: 'no visible window matches the descriptor' };
-    }
+    if (matches.length === 0) return { outcome: 'missing', error: 'no visible window matches the descriptor' };
     if (matches.length > 1) return { outcome: 'ambiguous', error: 'more than one visible window matches the descriptor' };
     const bound = await bindCandidate(matches[0]![0]);
     if (bound.outcome !== 'success') {
@@ -975,16 +947,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const listed = await listCandidates();
     if (listed.outcome !== 'success') return { outcome: 'helper-unavailable', error: listed.error };
     const matches = [...candidatesByListedId.entries()].filter(([, entry]) => entry.descriptor.windowInstanceId === windowInstanceId);
-    if (matches.length === 0) {
-      if (listed.truncated) {
-        // Absence from a BOUNDED snapshot is not evidence of death: this exact
-        // identity may belong to a window beyond the service's 64-candidate
-        // display bound. Answer with a non-destructive outcome no consumer can
-        // read as "gone" instead of the terminal 'missing'.
-        return { outcome: 'timeout', error: 'candidate enumeration was truncated; instance identity may be outside the bounded list' };
-      }
-      return { outcome: 'missing', error: 'no visible window matches the instance identity' };
-    }
+    if (matches.length === 0) return { outcome: 'missing', error: 'no visible window matches the instance identity' };
     if (matches.length > 1) return { outcome: 'ambiguous', error: 'the instance identity matched multiple visible windows' };
     const bound = await bindCandidate(matches[0]![0]);
     return bound.outcome === 'success'
