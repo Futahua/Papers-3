@@ -172,7 +172,11 @@ export interface WindowCapabilityService {
   /** Explicit process-end gesture; terminates only the verified window owner's process. */
   terminateCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   /** Transient taskbar-style Peek: compositor-cloak every currently visible
-   * eligible window except the target, then uncloak exactly that set on end. */
+   * eligible window except the target, then uncloak exactly that set on end.
+   * `endPeek` resolves each hidden identity only against a CONFIRMED successful
+   * reveal: an unconfirmed reveal keeps that identity non-terminal and queued
+   * for a later attempt, and the call itself answers the typed 'timeout'
+   * instead of claiming unconditional success. */
   beginPeekCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   endPeek(): Promise<WindowCapabilityResult>;
   /** Native taskbar-style DWM live preview used by the candidate list. The
@@ -365,6 +369,41 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   function clearPeekHidden(): void {
     peekHiddenInstanceIds.clear();
     peekHiddenByToken.clear();
+  }
+
+  /** Queue hidden tokens for a later reveal attempt, without duplicates. */
+  function queuePeekRestore(tokens: RuntimeWindowId[]): void {
+    for (const token of tokens) {
+      if (!peekRestoreTokens.includes(token)) peekRestoreTokens.push(token);
+    }
+  }
+
+  /** Receipt-coupled reveal of Peek-hidden tokens: ONE native attempt per set,
+   * and an identity is forgotten ONLY for a token whose reveal was CONFIRMED
+   * successful. A typed non-success, a rejected promise or a missing operation
+   * confirms nothing, so those tokens keep their non-terminal protection AND
+   * stay queued for a later retry - the window may still be hidden, and absence
+   * of a window we hid is not evidence that it is gone. Returns the number of
+   * tokens whose reveal stayed unresolved. */
+  async function revealPeekHidden(tokens: RuntimeWindowId[]): Promise<number> {
+    if (tokens.length === 0) return 0;
+    if (factory.uncloakMany) {
+      const batch = await factory.uncloakMany(tokens).catch(() => undefined);
+      if (batch && batch.outcome === 'success') {
+        for (const token of tokens) forgetPeekHidden(token);
+        return 0;
+      }
+      queuePeekRestore(tokens);
+      return tokens.length;
+    }
+    const unresolved: RuntimeWindowId[] = [];
+    await Promise.all(tokens.map(async (token) => {
+      const revealed = await factory.uncloak?.(token).catch(() => undefined);
+      if (revealed && revealed.outcome === 'success') forgetPeekHidden(token);
+      else unresolved.push(token);
+    }));
+    queuePeekRestore(unresolved);
+    return unresolved.length;
   }
 
   function purgeBindingThumbnails(bindingId: string): void {
@@ -756,18 +795,30 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const restore = peekRestoreTokens.splice(0);
     const reminimize = peekMinimizedTarget;
     peekMinimizedTarget = null;
-    // The Peek ends here: everything it hid is being revealed (or is already
-    // gone), so no identity may keep being reported as Peek-hidden - a stale
-    // entry would suppress exact 'missing' answers for the rest of the session.
-    clearPeekHidden();
-    if (!factoryBuilt || stopped) return { outcome: 'success' };
-    if (restore.length > 0 && factory.uncloakMany) {
-      await factory.uncloakMany(restore.reverse()).catch(() => undefined);
-    } else {
-      await Promise.all(restore.reverse().map((token) =>
-        factory.uncloak?.(token).catch(() => undefined)));
+    if (!factoryBuilt || stopped) {
+      // No helper session ever started (so nothing was hidden by this instance)
+      // or the service is going away: stop() clears the whole instance state,
+      // including the Peek-hidden set. The set is deliberately NOT cleared on
+      // the reveal path below.
+      return { outcome: 'success' };
     }
+    // Cleanup is RECEIPT-COUPLED. An identity is forgotten only where the native
+    // reveal was CONFIRMED successful; a failed or inconclusive reveal keeps
+    // both its non-terminal protection and its queue entry, so a window our own
+    // Peek may still be hiding can never be reported as terminally gone, and a
+    // later endPeek retries it.
+    const unresolved = await revealPeekHidden([...restore].reverse());
     if (reminimize) await factory.minimize(reminimize).catch(() => undefined);
+    if (unresolved > 0) {
+      // Truthful, non-terminal answer: the Peek is over but its restore is
+      // UNRESOLVED. 'timeout' says exactly that (an inconclusive wait), it is
+      // already part of this result vocabulary, and no consumer can read it as
+      // "the window is gone".
+      return {
+        outcome: 'timeout',
+        error: `the Peek ended with ${unresolved} window reveal(s) unconfirmed; their identities stay protected until a reveal succeeds`,
+      };
+    }
     return { outcome: 'success' };
   }
 
@@ -827,18 +878,24 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       // Record BEFORE the native hide: between the helper applying the hide and
       // this call returning, a reconciler could otherwise observe the absence
       // and read it as death. Recording early is the safe direction - an
-      // identity that MIGHT be hidden by us is never reported as gone - and a
-      // failed batch keeps its records (visibility is then unknown, not "gone");
-      // the set is dropped when the Peek ends.
+      // identity that MIGHT be hidden by us is never reported as gone.
       for (const observation of toHide) rememberPeekHidden(observation);
       const result = await factory.cloakMany(tokens);
       if (result.outcome === 'success') {
         if (generation === peekGeneration) {
           peekRestoreTokens.push(...tokens);
         } else {
-          if (factory.uncloakMany) await factory.uncloakMany(tokens).catch(() => undefined);
-          for (const observation of toHide) forgetPeekHidden(observation.runtimeId, observation);
+          // Superseded generation: undo this call's hides with a compensating
+          // reveal under the SAME receipt rule - an identity is forgotten only
+          // where that reveal was CONFIRMED successful. Anything else keeps the
+          // protection (the window may still be hidden) and stays queued.
+          await revealPeekHidden(tokens);
         }
+      } else {
+        // The hide itself did not confirm: the helper may still have applied it,
+        // so the protection stays and the tokens are queued for a later reveal
+        // that resolves the ambiguity instead of protecting them forever.
+        queuePeekRestore(tokens);
       }
     } else {
       await Promise.all(toHide.map(async (observation) => {
@@ -846,12 +903,14 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         // before the native hide can be observed by anyone else.
         rememberPeekHidden(observation);
         const result = await factory.cloak!(observation.runtimeId);
-        if (result.outcome !== 'success') return;
+        if (result.outcome !== 'success') {
+          queuePeekRestore([observation.runtimeId]);
+          return;
+        }
         if (generation === peekGeneration) {
           peekRestoreTokens.push(observation.runtimeId);
         } else {
-          await factory.uncloak?.(observation.runtimeId).catch(() => undefined);
-          forgetPeekHidden(observation.runtimeId, observation);
+          await revealPeekHidden([observation.runtimeId]);
         }
       }));
     }
