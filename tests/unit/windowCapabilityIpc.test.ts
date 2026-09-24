@@ -34,6 +34,7 @@ function fakeService(): WindowCapabilityService {
     restoreCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     toggleCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     closeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    terminateCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     beginPeekCapability: async () => ({ outcome: 'success' }),
     endPeek: async () => ({ outcome: 'success' }),
     applyCapability: async () => ({ outcome: 'missing', error: 'gone' }),
@@ -190,7 +191,7 @@ describe('windowCapabilityIpc', () => {
     const service = new Proxy(fakeService(), {
       get(target, property) {
         const name = String(property);
-        if (['listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'closeCapability', 'applyCapability', 'thumbnailCapability', 'resolvePersisted'].includes(name)) {
+        if (['listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'closeCapability', 'terminateCapability', 'applyCapability', 'thumbnailCapability', 'resolvePersisted'].includes(name)) {
           return async (...args: unknown[]) => {
             calls.push(name);
             if (name === 'listCandidates') return { outcome: 'success', candidates: [{ id: 'c1', title: 'W', applicationLabel: 'W', icon: null, state: 'normal' }] };

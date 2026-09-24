@@ -130,7 +130,7 @@ function Test-WireResponseOk {
   if ($R['outcome'] -eq 'success') {
     if ($R['method'] -eq 'list') {
       if (-not ($hasWindowsKey -and $windowsIsArray -and -not $hasObservationKey -and -not $hasWindowKey -and -not $hasThumbnailKey)) { return $false }
-    } elseif ($R['method'] -eq 'close') {
+    } elseif ($R['method'] -eq 'close' -or $R['method'] -eq 'terminate') {
       if ($hasWindowsKey -or $hasObservationKey -or $hasWindowKey -or $hasThumbnailKey) { return $false }
     } elseif ($R['method'] -eq 'hover') {
       if (-not ($hasWindowKey -and -not $hasWindowsKey -and -not $hasObservationKey -and -not $hasThumbnailKey)) { return $false }
@@ -279,6 +279,7 @@ $script:WhOps = @{
   ExStyle = { param([IntPtr]$id) [long](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).ExStyle) }
   ClassName = { param([IntPtr]$id) [string](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).ClassName) }
   ProcessName = { param([IntPtr]$id) [string](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).ProcessName) }
+  ProcessStartTicks = { param([int]$processId) [long](1000000000 + $processId) }
   OwnerHwnd = { param([IntPtr]$id) [IntPtr](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).OwnerHwnd) }
   RootAncestor = { param([IntPtr]$id) [IntPtr](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).RootAncestor) }
   LastActivePopup = { param([IntPtr]$id) [IntPtr](($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).LastActivePopup) }
@@ -307,6 +308,14 @@ $script:WhOps = @{
   Close = { param([IntPtr]$id)
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).alive = $false
     ($script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1).touched += 'close'
+  }
+  TerminateProcess = { param([IntPtr]$id, [object]$expectedStartTicks)
+    $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
+    if ($null -eq $entry -or [long]$expectedStartTicks -ne [long](1000000000 + $entry.ProcessId)) { throw 'process identity mismatch' }
+    foreach ($owned in @($script:fakeRegistry | Where-Object { $_.ProcessId -eq $entry.ProcessId })) {
+      $owned.alive = $false
+      $owned.touched += 'terminate-process'
+    }
   }
   GetWindowRect = { param([IntPtr]$id)
     $entry = $script:fakeRegistry | Where-Object { $_.RuntimeId -eq $id } | Select-Object -First 1
@@ -362,6 +371,7 @@ function Get-WhWindowObservation {
     Title = $entry.Title
     ProcessId = $entry.ProcessId
     ProcessPath = $entry.ProcessPath
+    ClassName = $entry.ClassName
     State = $entry.State
     Bounds = $entry.Bounds
   }
@@ -427,6 +437,8 @@ $listWithObs = @{ requestId = 1; method = 'list'; outcome = 'success'; observati
 Assert-WireRejected $listWithObs 'list success with an observation payload is rejected'
 $closeWithObs = @{ requestId = 1; method = 'close'; outcome = 'success'; observation = $validObs }
 Assert-WireRejected $closeWithObs 'close success with a payload is rejected'
+$terminateWithObs = @{ requestId = 1; method = 'terminate'; outcome = 'success'; observation = $validObs }
+Assert-WireRejected $terminateWithObs 'terminate success with a payload is rejected'
 $deniedWithWindows = @{ requestId = 1; method = 'observe'; outcome = 'denied'; windows = @($validObs) }
 Assert-WireRejected $deniedWithWindows 'non-success with a windows payload is rejected'
 $closeScalarWindows = @{ requestId = 1; method = 'close'; outcome = 'success'; windows = $validObs }
@@ -502,6 +514,9 @@ Assert-True ($script:fakeRegistry[0].touched -contains 'restore' -and $script:fa
 Assert-Outcome (Invoke-Line ('{"requestId":15,"method":"close","target":"' + $tokenA + '"}')) 'success' 'close succeeds on an issued token'
 Assert-Outcome (Invoke-Line ('{"requestId":16,"method":"observe","target":"' + $tokenA + '"}')) 'missing' 'vanished token returns missing'
 Assert-Outcome (Invoke-Line ('{"requestId":17,"method":"restore","target":"' + $tokenA + '","handle":123}')) 'denied' 'a handle field on a mutation is denied'
+$terminatedB = Invoke-Line ('{"requestId":170,"method":"terminate","target":"' + $tokenB + '"}')
+Assert-Outcome $terminatedB 'success' '020 process termination succeeds only through an issued token'
+Assert-True (-not $script:fakeRegistry[1].alive -and $script:fakeRegistry[2].alive) '020 termination ends only the selected process and leaves unrelated processes alive'
 
 # ---- HWND reuse: new token, old token never rebound -----------------------
 $script:fakeRegistry[0].alive = $true

@@ -136,7 +136,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot/window-capability.ps1"
 
-$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail')
+$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'terminate', 'hover', 'thumbnail')
 $FORBIDDEN_KEYS = @('exec', 'command', 'script', 'path', 'handle', 'env', 'args', 'cmd', 'powershell', 'invoke', 'shell')
 $MAX_SAFE_REQUEST_ID = 9007199254740991L
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
@@ -273,7 +273,11 @@ function New-WhSessionToken {
   }
   $token = 'T' + [guid]::NewGuid().ToString('N')
   $script:WhSession.byKey[$key] = $token
-  $script:WhSession.byToken[$token] = @{ hwnd = $Hwnd; pid = $PidValue; className = $ClassName }
+  $startTicks = $null
+  if ($script:WhOps.ContainsKey('ProcessStartTicks')) {
+    try { $startTicks = & $script:WhOps['ProcessStartTicks'] $PidValue } catch { $startTicks = $null }
+  }
+  $script:WhSession.byToken[$token] = @{ hwnd = $Hwnd; pid = $PidValue; className = $ClassName; processStartTicks = $startTicks }
   return $token
 }
 
@@ -444,6 +448,13 @@ function Test-WhRequestShape {
     foreach ($key in $Request.Keys) {
       if ($allowed -notcontains ([string]$key)) {
         return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' @{ target = $thumbTarget } 'thumbnail request must contain only requestId, method, target and optional maxWidth/maxHeight') }
+      }
+    }
+  }
+  if ($method -eq 'terminate') {
+    foreach ($key in $Request.Keys) {
+      if (@('requestId', 'method', 'target') -notcontains ([string]$key)) {
+        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' $null 'terminate accepts only requestId, method and target') }
       }
     }
   }
@@ -655,6 +666,10 @@ function Invoke-WhRequest {
     }
     if ($Method -eq 'close') {
       Close-ResolvedWhMember $runtimeId
+      return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
+    }
+    if ($Method -eq 'terminate') {
+      Terminate-ResolvedWhProcess $runtimeId $target
       return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
     }
     return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'method not permitted')

@@ -28,7 +28,7 @@ import * as path from 'node:path';
 
 import { WINDOW_HELPER_ARGUMENT_PREFIX, WINDOW_HELPER_EXECUTABLE } from './windowHelperSpawn';
 
-export const WINDOW_HELPER_PROTOCOL_VERSION = '018';
+export const WINDOW_HELPER_PROTOCOL_VERSION = '020';
 export const WINDOW_HELPER_RESOURCE_DIRECTORY_NAME = 'window-helper';
 export const WINDOW_HELPER_MANIFEST_FILE = 'manifest.json';
 export const WINDOW_HELPER_SCRIPT_FILE = 'window-helper.ps1';
@@ -52,8 +52,8 @@ export const WINDOW_HELPER_ADAPTER_FILE = 'window-capability.ps1';
  * every checkout receives. `tests/unit/windowHelperResource.test.ts` guards
  * this by validating the committed blob, not the working copy. */
 export const WINDOW_HELPER_EXPECTED_HASHES: Record<string, string> = {
-  [WINDOW_HELPER_SCRIPT_FILE]: 'c4057656e0f7ccb0f535143a85dd39bcb6a80a06c0126fe07777b7519d3721dc',
-  [WINDOW_HELPER_ADAPTER_FILE]: 'd9f6ca87e572520e824e71e6eb8880f49137096fe81a903f757c5494212a6b31',
+  [WINDOW_HELPER_SCRIPT_FILE]: 'c797b59b240bfb07f9489a263412f4feb05848461da78f4afcab37b378fa9abb',
+  [WINDOW_HELPER_ADAPTER_FILE]: 'e5ba6cce5f9964922f1f02ab33a4235baeb9ac98ca36b0e2eb94d32722a74c29',
 };
 
 export interface WindowHelperResourcePaths {
