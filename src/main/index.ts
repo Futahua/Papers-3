@@ -89,6 +89,7 @@ import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './win
 import { createHoverInputBridge, resolveHoverInputBridgeSourcePath, type HoverInputBridge } from './windows/hoverInputBridge';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
+import type { PersistedWindowMemberDescriptor } from './windows/windowCapabilityService';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
 import { createWindowDetachSession, isAllowedDetachedNavigation, type WindowDetachSession } from './windows/windowDetachSession';
 import {
@@ -1905,7 +1906,16 @@ async function bootstrap(): Promise<void> {
     const surface = widgetRegistry.surface(senderId);
     if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND) return { ok: false, detail: 'the widget is no longer registered' };
     const existing = pendingHoverCaptures.get(senderId);
-    if (existing) return appendHoverCapture(senderId, text, nativeCapture);
+    if (existing) {
+      const appended = await appendHoverCapture(senderId, text, nativeCapture)
+        .catch((error: unknown) => ({ ok: false, detail: error instanceof Error ? error.message : String(error) }));
+      if (appended.ok || existing.opening || pendingHoverCaptures.get(senderId) !== existing) return appended;
+      // The shared command-surface window can be retargeted to another project
+      // without this widget closing. In that case its old capture record is no
+      // longer an append destination; discard that stale record and reopen for
+      // this widget instead of rejecting its next typed character.
+      pendingHoverCaptures.delete(senderId);
+    }
     if (!commandSurfaceOverlay) return { ok: false, detail: 'the command surface is unavailable' };
     const pending: PendingHoverCapture = { projectId: surface.projectId, opening: true, buffer: [], wake: [] };
     // Publish the queue before the OPENING_READY round-trip. The focused widget
@@ -1968,7 +1978,7 @@ async function bootstrap(): Promise<void> {
   type CandidatePickerSession = {
     window: BrowserWindow;
     candidateIds: Set<string>;
-    resolve: ((result: { action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }) => void) | null;
+    resolve: ((result: { action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null; descriptor?: PersistedWindowMemberDescriptor }) => void) | null;
   };
   const candidatePickerSessions = new Map<number, CandidatePickerSession>();
   const hideWidgetPreview = (senderId: number): void => {
@@ -2018,7 +2028,7 @@ async function bootstrap(): Promise<void> {
           `window.__papersPickerUpdate?.(${update})`, true).catch(() => undefined);
         if (!active.window.isVisible()) active.window.show();
         active.window.focus();
-        return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
+        return new Promise<{ action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
           // The Backpack requests the next choice only after the previous one
           // settled. Fail closed if a malformed caller overlaps requests.
           active.resolve?.({ action: 'cancel', candidateId: null });
@@ -2058,11 +2068,11 @@ async function bootstrap(): Promise<void> {
  let all=JSON.parse(document.getElementById('data').textContent);const list=document.querySelector('.list'),search=document.querySelector('.search'),currentFilter=document.querySelector('.current-filter'),availableFilter=document.querySelector('.available-filter');
 function signal(path,id=''){window.candidatePicker.signal(path,id)}
  function appendDragSpace(){const d=document.createElement('div');d.className='drag-space';d.setAttribute('aria-hidden','true');list.append(d)}
- function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>{document.body.classList.add('busy');signal('select',c.id)};b.onauxclick=e=>{if(e.button!==1||!e.ctrlKey)return;e.preventDefault();document.body.classList.add('busy');signal('close',c.id)};list.append(b)}appendDragSpace()}
+ function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>{document.body.classList.add('busy');signal('select',c.id)};b.onauxclick=e=>{if(e.button!==1)return;e.preventDefault();document.body.classList.add('busy');signal(e.ctrlKey?'close':'terminate',c.id)};list.append(b)}appendDragSpace()}
  window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
 const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=false;render()};const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;document.querySelector('.direct-pick').onclick=()=>{document.body.classList.add('busy');signal('direct-pick')};search.oninput=render;currentFilter.onchange=()=>setExclusiveFilter(currentFilter,availableFilter);availableFilter.onchange=()=>setExclusiveFilter(availableFilter,currentFilter);document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
-      return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
+      return new Promise<{ action: 'select' | 'close' | 'terminate' | 'cancel' | 'direct-pick'; candidateId: string | null; descriptor?: PersistedWindowMemberDescriptor }>((resolve) => {
         const pickerOpenedAt = Date.now();
         let pickerPointerEntered = false;
         let pickerOutsideSince: number | null = null;
@@ -2122,13 +2132,38 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           resolve,
         };
         candidatePickerSessions.set(sender.id, session);
-        const finishAction = (action: 'select' | 'close', candidateId: string): void => {
+        const finishAction = async (action: 'select' | 'close' | 'terminate', candidateId: string): Promise<void> => {
           const current = candidatePickerSessions.get(sender.id);
           if (!current || current.window !== picker || !current.resolve) return;
+          let resolvedAction: 'select' | 'close' | 'terminate' | 'cancel' = action;
+          let terminatedDescriptor: PersistedWindowMemberDescriptor | undefined;
+          if (action === 'terminate') {
+            // Destructive process termination stays in the main-process picker
+            // action path; project renderers never receive a kill capability.
+            try {
+              const bound = await windowCapabilityService.bindCandidate(candidateId);
+              if (candidatePickerSessions.get(sender.id) !== current || !current.resolve) return;
+              if (bound.outcome !== 'success') {
+                resolvedAction = 'cancel';
+              } else {
+                const terminated = await windowCapabilityService.terminateCapability(bound.capability);
+                if (terminated.outcome !== 'success') resolvedAction = 'cancel';
+                else terminatedDescriptor = bound.descriptor;
+              }
+            } catch (error) {
+              console.warn('[papers] candidate process termination failed', error);
+              resolvedAction = 'cancel';
+            }
+            if (candidatePickerSessions.get(sender.id) !== current || !current.resolve) return;
+          }
           endCandidatePeek();
           const settle = current.resolve;
           current.resolve = null;
-          settle({ action, candidateId });
+          settle({
+            action: resolvedAction,
+            candidateId: resolvedAction === 'cancel' ? null : candidateId,
+            ...(terminatedDescriptor ? { descriptor: terminatedDescriptor } : {}),
+          });
         };
         const finishDirectPick = (): void => {
           const current = candidatePickerSessions.get(sender.id);
@@ -2187,10 +2222,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             }
             if (url.host !== 'papers-picker.invalid') return;
             const action = url.pathname.startsWith('/select/') ? 'select'
-              : url.pathname.startsWith('/close/') ? 'close' : null;
+              : url.pathname.startsWith('/close/') ? 'close'
+                : url.pathname.startsWith('/terminate/') ? 'terminate' : null;
             if (!action) return;
             const candidateId = decodeURIComponent(url.pathname.slice(`/${action}/`.length));
-            if (session.candidateIds.has(candidateId)) finishAction(action, candidateId);
+            if (session.candidateIds.has(candidateId)) void finishAction(action, candidateId);
           } catch { /* malformed navigation is ignored */ }
         };
         picker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -2200,7 +2236,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (Object.keys(record).some((key) => key !== 'action' && key !== 'candidateId')) return;
           const action = record.action;
           const candidateId = record.candidateId;
-          if (typeof action !== 'string' || !['select', 'close', 'cancel', 'peek', 'peek-end', 'direct-pick'].includes(action)) return;
+          if (typeof action !== 'string' || !['select', 'close', 'terminate', 'cancel', 'peek', 'peek-end', 'direct-pick'].includes(action)) return;
           if (typeof candidateId !== 'string' || Buffer.byteLength(candidateId, 'utf8') > 512) return;
           handlePickerUrl(`https://papers-picker.invalid/${action}${candidateId ? `/${encodeURIComponent(candidateId)}` : ''}`);
         };
