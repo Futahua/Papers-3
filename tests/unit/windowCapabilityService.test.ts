@@ -29,6 +29,7 @@ function pngWithSize(width: number, height: number): string {
 
 function observation(partial: Partial<WindowObservation> & { runtimeId: RuntimeWindowId }): WindowObservation {
   return {
+    windowInstanceId: `W${partial.runtimeId.slice(1, 17)}`,
     title: 'Window A',
     processId: 1001,
     processPath: 'C:\\Apps\\a.exe',
@@ -107,6 +108,19 @@ function harness(overrides: Parameters<typeof createWindowCapabilityService>[0] 
 }
 
 describe('windowCapabilityService candidates', () => {
+  it('resolves a persisted instance ID only through the current helper candidate list', async () => {
+    const { service } = harness();
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('list failed');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    if (bound.outcome !== 'success' || !bound.descriptor.windowInstanceId) throw new Error('bind failed');
+
+    const resolved = await service.resolveInstance(bound.descriptor.windowInstanceId);
+    expect(resolved.outcome).toBe('success');
+    if (resolved.outcome === 'success') expect(resolved.descriptor.windowInstanceId).toBe(bound.descriptor.windowInstanceId);
+    expect(await service.resolveInstance('Wffffffffffffffff')).toMatchObject({ outcome: 'missing' });
+  });
+
   it('temporarily reveals a minimized Peek target and returns it to minimized on end', async () => {
     const target = observation({
       runtimeId: TOKEN_A as RuntimeWindowId,
@@ -396,9 +410,63 @@ describe('windowCapabilityService bind and capabilities', () => {
     expect((await service.terminateCapability({ version: 1, bindingId: 'not-issued' })).outcome).toBe('missing');
     expect(terminated).toEqual([TOKEN_A]);
   });
+
+  it('refuses process termination when persisted window identities are unavailable', async () => {
+    const terminated = vi.fn(async () => ({ outcome: 'success' as const }));
+    const factory = fakeFactory({
+      list: async () => ({
+        outcome: 'success',
+        windows: [observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: undefined })],
+      }),
+      terminate: terminated,
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('list failed');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    if (bound.outcome !== 'success') throw new Error('bind failed');
+
+    expect((await service.terminateCapability(bound.capability)).outcome).toBe('denied');
+    expect(terminated).not.toHaveBeenCalled();
+  });
 });
 
 describe('windowCapabilityService persisted re-resolution', () => {
+  it('requires a supplied stable instance identity to match exactly', async () => {
+    const current = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      title: 'Same Title',
+      processId: 1001,
+      processPath: 'C:\\Apps\\a.exe',
+      windowInstanceId: 'W0123456789abcdef',
+    });
+    const factory = fakeFactory({ list: async () => ({ outcome: 'success', windows: [current] }) });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+
+    const exact = await service.resolvePersisted({
+      version: 1,
+      title: 'Same Title',
+      executableFingerprint: '6a992db418ddfbdab5743ccd05f2eb7822b6c6d25e294987bebd5969f8143609',
+      windowInstanceId: 'W0123456789abcdef',
+    });
+    expect(exact.outcome).toBe('success');
+    const stale = await service.resolvePersisted({
+      version: 1,
+      title: 'Same Title',
+      executableFingerprint: '6a992db418ddfbdab5743ccd05f2eb7822b6c6d25e294987bebd5969f8143609',
+      windowInstanceId: 'Wfedcba9876543210',
+    });
+    expect(stale.outcome).toBe('ambiguous');
+  });
+
   it('resolves a visible window by exact pid+title into a fresh capability', async () => {
     const { service } = harness();
     const resolved = await service.resolvePersisted({ version: 1, title: 'Window A', executableFingerprint: '6a992db418ddfbdab5743ccd05f2eb7822b6c6d25e294987bebd5969f8143609' });
