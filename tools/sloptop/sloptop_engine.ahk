@@ -60,6 +60,10 @@ global movingWindows := Map()
 global movingMode := ""
 global movingStartedWithShift := false
 global movingResizeReferenceHeight := 1
+global movingResizeTargetHwnd := 0
+global movingResizeZone := "inner"
+global movingResizeLeft := false
+global movingResizeTop := false
 global moveSelected := Map()
 global papersNormalBounds := Map()
 global mButtonDragging := false
@@ -1678,7 +1682,7 @@ ExitLatchedCtrlSpaceMode() {
 *RButton:: {
     global activeTargetHwnd, movingWindowHwnd, movingWindowOffsetX, movingWindowOffsetY
     global movingRightDownAt, movingWindows, movingAnchorMouseX, movingAnchorMouseY
-    global movingMode, movingStartedWithShift
+    global movingMode, movingStartedWithShift, movingResizeTargetHwnd
     global moveSelected, rButtonDragging, ctrlSpaceLatched
     if ctrlSpaceLatched && GetKeyState("Ctrl", "P") {
         if movingWindowHwnd {
@@ -1770,6 +1774,7 @@ ExitLatchedCtrlSpaceMode() {
     }
     if !movingWindows.Count
         return
+    movingResizeTargetHwnd := hWnd
     for selectedHwnd in movingWindows {
         movingWindowHwnd := selectedHwnd
         break
@@ -1785,6 +1790,7 @@ ExitLatchedCtrlSpaceMode() {
 UpdateMovingWindow() {
     global movingWindowHwnd, movingWindows, movingAnchorMouseX, movingAnchorMouseY, moveSelected
     global movingMode, movingStartedWithShift, movingRightDownAt, movingResizeReferenceHeight
+    global movingResizeZone, movingResizeLeft, movingResizeTop
     if !movingWindowHwnd
         return
     MouseGetPos(&currentX, &currentY)
@@ -1804,6 +1810,9 @@ UpdateMovingWindow() {
             movingAnchorMouseX := originalAnchorX
             movingAnchorMouseY := originalAnchorY
         }
+        if (wantedMode = "resize")
+            ConfigureMovingResize(pending ? originalAnchorX : currentX,
+                pending ? originalAnchorY : currentY)
         movingMode := wantedMode
     }
 
@@ -1815,10 +1824,18 @@ UpdateMovingWindow() {
             continue
         anyLive := true
         if (movingMode = "resize") {
-            scale := Max(0.15, 1.0 - (dy / movingResizeReferenceHeight) * 3.0)
-            ScaleWindow(hWnd, origin.w, origin.h,
-                origin.x + origin.w / 2, origin.y + origin.h / 2,
-                scale, origin.maxW, origin.maxH)
+            if (movingResizeZone = "inner") {
+                scale := Max(0.15, 1.0 - (dy / movingResizeReferenceHeight) * 3.0)
+                ScaleWindow(hWnd, origin.w, origin.h,
+                    origin.x + origin.w / 2, origin.y + origin.h / 2,
+                    scale, origin.maxW, origin.maxH)
+            } else {
+                newW := Max(140, origin.w + (movingResizeLeft ? -dx : dx))
+                newH := Max(140, origin.h + (movingResizeTop ? -dy : dy))
+                newX := movingResizeLeft ? origin.x + origin.w - newW : origin.x
+                newY := movingResizeTop ? origin.y + origin.h - newH : origin.y
+                MoveWindow(hWnd, newX, newY, newW, newH)
+            }
             if moveSelected.Has(hWnd) {
                 GetVisibleRect(hWnd, &visibleX, &visibleY, &visibleW, &visibleH)
                 PositionPickerBorder(moveSelected[hWnd].tint, hWnd,
@@ -1839,6 +1856,26 @@ UpdateMovingWindow() {
         movingWindows := Map()
         movingMode := ""
     }
+}
+
+ConfigureMovingResize(pointerX, pointerY) {
+    global movingResizeTargetHwnd, movingWindows, movingResizeReferenceHeight
+    global movingResizeZone, movingResizeLeft, movingResizeTop
+    hWnd := movingResizeTargetHwnd
+    if !WinExist("ahk_id " hWnd) {
+        for candidate in movingWindows {
+            hWnd := candidate
+            break
+        }
+    }
+    if !hWnd
+        return
+    WinGetPos(&x, &y, &w, &h, "ahk_id " hWnd)
+    movingResizeReferenceHeight := Max(1, h)
+    movingResizeZone := (pointerX >= x + w * 0.25 && pointerX <= x + w * 0.75
+        && pointerY >= y + h * 0.25 && pointerY <= y + h * 0.75) ? "inner" : "outer"
+    movingResizeLeft := (pointerX < x + w / 2)
+    movingResizeTop := (pointerY < y + h / 2)
 }
 
 RebaseMovingWindows(mouseX, mouseY) {
