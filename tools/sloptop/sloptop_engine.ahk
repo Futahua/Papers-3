@@ -53,7 +53,6 @@ CoordMode("Mouse", "Screen")
 ; and "2NDctrlclipclose SLOPTOP.ahk".
 ; ============================================================
 
-global savedPos := Map()
 global rButtonDragging := false
 global movingWindowHwnd := 0
 global movingRightDownAt := 0
@@ -62,6 +61,7 @@ global movingMode := ""
 global movingStartedWithShift := false
 global movingResizeReferenceHeight := 1
 global moveSelected := Map()
+global papersNormalBounds := Map()
 global mButtonDragging := false
 global spacePressed := false
 global ctrlSpaceActivationDown := false
@@ -1119,6 +1119,70 @@ GetMonitorForWindow(hWnd, &mLeft, &mTop, &mRight, &mBottom) {
     MonitorGetWorkArea(MonitorGetPrimary(), &mLeft, &mTop, &mRight, &mBottom)
 }
 
+IsMonitorSizedWindow(x, y, w, h) {
+    Loop MonitorGetCount() {
+        MonitorGet(A_Index, &left, &top, &right, &bottom)
+        if (x <= left + 5 && y <= top + 5
+            && x + w >= right - 5 && y + h >= bottom - 5)
+            return true
+    }
+    return false
+}
+
+RememberPapersNormalBounds() {
+    global papersNormalBounds
+    for hWnd in WinGetList("ahk_exe Papers.exe") {
+        try {
+            if WinGetMinMax("ahk_id " hWnd)
+                continue
+            WinGetPos(&x, &y, &w, &h, "ahk_id " hWnd)
+            if (w < 140 || h < 140 || IsMonitorSizedWindow(x, y, w, h))
+                continue
+            papersNormalBounds[hWnd] := {pid: WinGetPID("ahk_id " hWnd),
+                x: x, y: y, w: w, h: h}
+        }
+    }
+    for hWnd, bounds in papersNormalBounds {
+        try {
+            if WinExist("ahk_id " hWnd) && WinGetPID("ahk_id " hWnd) = bounds.pid
+                continue
+        }
+        papersNormalBounds.Delete(hWnd)
+    }
+}
+SetTimer(RememberPapersNormalBounds, 250)
+
+PapersMaxButtonTarget() {
+    target := GetMouseTargetInfo()
+    hWnd := target.hwnd
+    if !hWnd
+        return 0
+    try {
+        if (WinGetProcessName("ahk_id " hWnd) != "Papers.exe")
+            return 0
+        point := ((target.y & 0xFFFF) << 16) | (target.x & 0xFFFF)
+        return DllCall("SendMessage", "Ptr", hWnd, "UInt", 0x0084,
+            "Ptr", 0, "Ptr", point, "Ptr") = 9 ? hWnd : 0 ; HTMAXBUTTON
+    }
+    return 0
+}
+
+RestorePapersAfterFailedCaptionClick(hWnd, pid) {
+    global papersNormalBounds
+    try {
+        if !WinExist("ahk_id " hWnd) || WinGetPID("ahk_id " hWnd) != pid
+            return
+        if !papersNormalBounds.Has(hWnd) || papersNormalBounds[hWnd].pid != pid
+            return
+        WinGetPos(&x, &y, &w, &h, "ahk_id " hWnd)
+        if (WinGetMinMax("ahk_id " hWnd) != 1 && !IsMonitorSizedWindow(x, y, w, h))
+            return
+        p := papersNormalBounds[hWnd]
+        WinRestore("ahk_id " hWnd)
+        MoveWindow(hWnd, p.x, p.y, p.w, p.h)
+    }
+}
+
 ScaleWindow(hWnd, origW, origH, centerX, centerY, scale, maxW, maxH) {
     aspect := origW / origH
     newH := origH * scale
@@ -1517,9 +1581,24 @@ ExitLatchedCtrlSpaceMode() {
 ; Ctrl + Space — Move mode
 ; ============================================================
 
+; Papers' transparent title-bar control can leave a native maximized window
+; unchanged on restore. Let its click run first, then repair that one outcome.
+#HotIf !IsMoveModeActive() && !IsResizeModeActive() && PapersMaxButtonTarget()
+~*LButton:: {
+    hWnd := PapersMaxButtonTarget()
+    if !hWnd
+        return
+    WinGetPos(&x, &y, &w, &h, "ahk_id " hWnd)
+    if (WinGetMinMax("ahk_id " hWnd) = 1 || IsMonitorSizedWindow(x, y, w, h)) {
+        pid := WinGetPID("ahk_id " hWnd)
+        SetTimer(() => RestorePapersAfterFailedCaptionClick(hWnd, pid), -250)
+    }
+}
+#HotIf
+
 #HotIf IsMoveModeActive() && !IsMouseOverCSP()
 *LButton:: {
-    global activeTargetHwnd, ctrlSpaceLatched
+    global activeTargetHwnd, ctrlSpaceLatched, papersNormalBounds
     if ctrlSpaceLatched && !GetMouseTargetInfo().hwnd {
         ExitLatchedCtrlSpaceMode()
         return
@@ -1528,18 +1607,27 @@ ExitLatchedCtrlSpaceMode() {
     if !hWnd
         return
     wasTopmost := IsWindowTopmost(hWnd)
-    ActivateTargetWindow(hWnd)
-    if savedPos.Has(hWnd) {
-        p := savedPos[hWnd]
-        WinSetStyle("+0xC40000", "ahk_id " hWnd)
-        MoveWindow(hWnd, p.x, p.y, p.w, p.h)
-        savedPos.Delete(hWnd)
-    } else {
+    state := WinGetMinMax("ahk_id " hWnd)
+    ActivateTargetWindow(hWnd, false)
+    if (state = 1)
+        WinRestore("ahk_id " hWnd)
+    else {
+        if (state = -1)
+            WinRestore("ahk_id " hWnd)
+        isPapers := (WinGetProcessName("ahk_id " hWnd) = "Papers.exe")
         WinGetPos(&x, &y, &w, &h, "ahk_id " hWnd)
-        savedPos[hWnd] := {x: x, y: y, w: w, h: h}
-        GetMonitorForWindow(hWnd, &mLeft, &mTop, &mRight, &mBottom)
-        WinSetStyle("-0xC40000", "ahk_id " hWnd)
-        MoveWindow(hWnd, mLeft, mTop, mRight - mLeft, mBottom - mTop)
+        if (isPapers && IsMonitorSizedWindow(x, y, w, h)
+            && papersNormalBounds.Has(hWnd)
+            && papersNormalBounds[hWnd].pid = WinGetPID("ahk_id " hWnd)) {
+            p := papersNormalBounds[hWnd]
+            WinRestore("ahk_id " hWnd)
+            MoveWindow(hWnd, p.x, p.y, p.w, p.h)
+        } else {
+            if (isPapers && !IsMonitorSizedWindow(x, y, w, h))
+                papersNormalBounds[hWnd] := {pid: WinGetPID("ahk_id " hWnd),
+                    x: x, y: y, w: w, h: h}
+            WinMaximize("ahk_id " hWnd)
+        }
     }
     RestoreWindowTopmostState(hWnd, wasTopmost)
     RaiseWindow(hWnd)
