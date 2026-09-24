@@ -111,6 +111,12 @@ function parsePersistedDescriptor(raw: unknown): PersistedWindowMemberDescriptor
   return descriptor;
 }
 
+function parseWindowInstanceId(raw: unknown): string {
+  const id = parseBoundedString(raw, 'windowInstanceId');
+  if (!/^W[0-9a-f]{16}$/i.test(id)) throw new Error('windowInstanceId is invalid');
+  return id;
+}
+
 /** 019G thumbnail request dimensions: absent -> the 240x135 default; when
  * present they must be positive integers within the 320x180 contract bounds.
  * Unknown option keys are rejected, never ignored. */
@@ -256,6 +262,7 @@ export function registerWindowCapabilityIpc({
     (input) => service.applyCapability(input.capability, input.bounds),
   );
   handle('papers:window-capability:resolve', parsePersistedDescriptor, (descriptor) => service.resolvePersisted(descriptor));
+  handle('papers:window-capability:resolve-instance', parseWindowInstanceId, (windowInstanceId) => service.resolveInstance(windowInstanceId));
   handle(
     'papers:window-capability:thumbnail',
     (raw) => {

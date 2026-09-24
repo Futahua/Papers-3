@@ -252,12 +252,30 @@ function Get-WhResponseObservation {
   $obs = Get-WhWindowObservation ([IntPtr]$entry.hwnd)
   return [ordered]@{
     runtimeId = $Token
+    windowInstanceId = (Get-WhWindowInstanceId $entry)
     title = $obs.Title
     processId = $obs.ProcessId
     processPath = $obs.ProcessPath
     windowClass = $obs.ClassName
     state = $obs.State
     bounds = (Get-WhWireBounds $obs.Bounds)
+  }
+}
+
+# Persisted identity is stable across helper sessions while the same HWND and
+# owning process instance remain alive. The process creation ticks prevent PID
+# reuse from aliasing a later process. This is a reconciliation key, not a
+# mutation capability; every operation still requires the opaque session token.
+function Get-WhWindowInstanceId {
+  param([object]$Entry)
+  if ($null -eq $Entry -or $null -eq $Entry.processStartTicks) { return $null }
+  $identity = "$($Entry.hwnd)|$($Entry.pid)|$($Entry.processStartTicks)|$($Entry.className)"
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $digest = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($identity))
+    return 'W' + [System.BitConverter]::ToString($digest, 0, 8).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $sha.Dispose()
   }
 }
 
@@ -475,8 +493,10 @@ function Invoke-WhRequest {
       $windows = @()
       foreach ($observation in $observations) {
         $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
+        $sessionEntry = Resolve-WhSessionToken $token
         $windows += [ordered]@{
           runtimeId = $token
+          windowInstanceId = (Get-WhWindowInstanceId $sessionEntry)
           title = $observation.Title
           processId = $observation.ProcessId
           processPath = $observation.ProcessPath
@@ -498,8 +518,10 @@ function Invoke-WhRequest {
         return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'session token capacity reached')
       }
       $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
+      $sessionEntry = Resolve-WhSessionToken $token
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = [ordered]@{
         runtimeId = $token
+        windowInstanceId = (Get-WhWindowInstanceId $sessionEntry)
         title = $observation.Title
         processId = $observation.ProcessId
         processPath = $observation.ProcessPath

@@ -29,6 +29,7 @@ function fakeService(): WindowCapabilityService {
   return {
     listCandidates: async () => ({ outcome: 'success', candidates: [] }),
     bindCandidate: async () => ({ outcome: 'missing', error: 'not listed' }),
+    resolveInstance: async () => ({ outcome: 'missing', error: 'not listed' }),
     observeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     minimizeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     restoreCapability: async () => ({ outcome: 'missing', error: 'gone' }),
@@ -85,6 +86,7 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:peek-end',
       'papers:window-capability:apply',
       'papers:window-capability:resolve',
+      'papers:window-capability:resolve-instance',
       'papers:window-capability:thumbnail',
     ]);
   });
@@ -182,6 +184,7 @@ describe('windowCapabilityIpc', () => {
     await expect(ipc.invoke('papers:window-capability:apply', 42, { capability, bounds: { x: 0, y: 0, width: 10 } })).rejects.toThrow('height');
     await expect(ipc.invoke('papers:window-capability:resolve', 42, { version: 1, title: '', executableFingerprint: 'a'.repeat(64) })).rejects.toThrow('title');
     await expect(ipc.invoke('papers:window-capability:resolve', 42, { version: 1, title: 'x', executableFingerprint: 'bad' })).rejects.toThrow('invalid');
+    await expect(ipc.invoke('papers:window-capability:resolve-instance', 42, 'not-an-instance-id')).rejects.toThrow('invalid');
     await expect(ipc.invoke('papers:window-capability:apply', 42, { capability, bounds: { x: 0, y: 0, width: 10, height: 10 }, extra: 'command' })).rejects.toThrow('payload');
   });
 
@@ -191,11 +194,12 @@ describe('windowCapabilityIpc', () => {
     const service = new Proxy(fakeService(), {
       get(target, property) {
         const name = String(property);
-        if (['listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'closeCapability', 'terminateCapability', 'applyCapability', 'thumbnailCapability', 'resolvePersisted'].includes(name)) {
+        if (['listCandidates', 'bindCandidate', 'resolveInstance', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'closeCapability', 'terminateCapability', 'applyCapability', 'thumbnailCapability', 'resolvePersisted'].includes(name)) {
           return async (...args: unknown[]) => {
             calls.push(name);
             if (name === 'listCandidates') return { outcome: 'success', candidates: [{ id: 'c1', title: 'W', applicationLabel: 'W', icon: null, state: 'normal' }] };
             if (name === 'bindCandidate') return { outcome: 'success', capability, descriptor: { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64) } };
+            if (name === 'resolveInstance') return { outcome: 'success', capability, descriptor: { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W0123456789abcdef' } };
             if (name === 'thumbnailCapability') return { outcome: 'success', thumbnail: { image: pngWithSize(240, 135), width: 240, height: 135 } };
             if (name === 'resolvePersisted') return { outcome: 'missing', error: 'no match' };
             return { outcome: 'success', observation: null };
@@ -226,6 +230,8 @@ describe('windowCapabilityIpc', () => {
     expect(applied.outcome).toBe('success');
     const resolved = await ipc.invoke('papers:window-capability:resolve', 42, { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64) });
     expect(resolved).toEqual({ outcome: 'missing', error: 'no match' });
+    const instanceResolved = await ipc.invoke('papers:window-capability:resolve-instance', 42, 'W0123456789abcdef');
+    expect(instanceResolved).toMatchObject({ outcome: 'success', capability, descriptor: { windowInstanceId: 'W0123456789abcdef' } });
     const thumbImage = pngWithSize(240, 135);
     const thumb = await ipc.invoke('papers:window-capability:thumbnail', 42, {
       capability,
@@ -237,7 +243,7 @@ describe('windowCapabilityIpc', () => {
     expect(thumb.height).toBe(135);
     expect(calls).toEqual([
       'listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability',
-      'restoreCapability', 'closeCapability', 'applyCapability', 'resolvePersisted', 'thumbnailCapability',
+      'restoreCapability', 'closeCapability', 'applyCapability', 'resolvePersisted', 'resolveInstance', 'thumbnailCapability',
     ]);
   });
 
