@@ -451,6 +451,7 @@ HandleScriptExit(*) {
     global ctrlSpaceKeyWatcher
     SetTimer(UpdateMovingWindow, 0)
     SetTimer(ConfirmHeldCtrlSpace, 0)
+    SetTimer(ExpireCtrlSpaceArm, 0)
     try ClearMoveSelections()
     if ctrlSpaceKeyWatcher
         ctrlSpaceKeyWatcher.Stop()
@@ -1441,7 +1442,7 @@ SetTimer(UpdateOverlay, 16)
 #HotIf
 
 ; Space suppression — blocks Space from reaching the active window on both machines
-#HotIf !IsMouseOverCSP() && (ctrlSpaceArmed || ctrlSpaceLatched || GetEngineKeyState("Ctrl"))
+#HotIf !IsMouseOverCSP() && (ctrlSpaceArmed || ctrlSpaceLatched)
 *Space:: {
     global spacePressed, ctrlSpaceActivationDown, ctrlSpaceArmed, ctrlSpaceLatched, ctrlSpaceHoldPending
     global moveSelected, movingWindowHwnd, movingWindows, movingRightDownAt, activeTargetHwnd
@@ -1470,10 +1471,12 @@ SetTimer(UpdateOverlay, 16)
     }
     if ctrlSpaceArmed && !GetKeyState("Ctrl", "P") {
         ctrlSpaceArmed := false
+        SetTimer(ExpireCtrlSpaceArm, 0)
         ctrlSpaceLatched := true
         return
     }
     ctrlSpaceArmed := false
+    SetTimer(ExpireCtrlSpaceArm, 0)
     ctrlSpaceLatched := true
     ctrlSpaceHoldPending := true
     SetTimer(ConfirmHeldCtrlSpace, -100)
@@ -1502,7 +1505,17 @@ ArmSequentialCtrlSpace() {
     if spacePressed || IsMouseOverCSP()
         return
     ctrlSpaceArmed := true
+    SetTimer(ExpireCtrlSpaceArm, -1000)
     StartCtrlSpaceKeyWatcher()
+}
+
+ExpireCtrlSpaceArm() {
+    global ctrlSpaceArmed, ctrlSpaceLatched, ctrlSpaceKeyWatcher
+    if !ctrlSpaceArmed || ctrlSpaceLatched
+        return
+    ctrlSpaceArmed := false
+    if ctrlSpaceKeyWatcher
+        ctrlSpaceKeyWatcher.Stop()
 }
 
 ConfirmHeldCtrlSpace() {
@@ -1539,6 +1552,7 @@ CtrlSpaceKeyDown(ih, vk, sc) {
         ExitLatchedCtrlSpaceMode()
     } else if ctrlSpaceArmed {
         ctrlSpaceArmed := false
+        SetTimer(ExpireCtrlSpaceArm, 0)
         ih.Stop()
     }
 }
@@ -1551,6 +1565,7 @@ ExitLatchedCtrlSpaceMode() {
     ctrlSpaceLatched := false
     ctrlSpaceHoldPending := false
     SetTimer(ConfirmHeldCtrlSpace, 0)
+    SetTimer(ExpireCtrlSpaceArm, 0)
     movingWindowHwnd := 0
     movingRightDownAt := 0
     movingWindows := Map()
