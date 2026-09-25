@@ -247,15 +247,10 @@ internal static class HoverInputBridge
                     UpdatePolicies(id, new WidgetPolicy(id, hwnd, false, new HashSet<string>()));
                     continue;
                 }
-                if (parts[0] == "POLICY" && parts.Length == 4)
+                if (parts[0] == "POLICY" && parts.Length == 5)
                 {
-                    int id = int.Parse(parts[1], CultureInfo.InvariantCulture);
-                    WidgetPolicy current = FindById(Snapshot(), id);
-                    if (current == null) continue;
-                    bool enabled = parts[2] == "1";
-                    string decoded = Encoding.UTF8.GetString(Convert.FromBase64String(parts[3]));
-                    HashSet<string> blocked = new HashSet<string>(decoded.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
-                    UpdatePolicies(id, new WidgetPolicy(id, current.Handle, enabled, blocked));
+                    string acknowledgement = ApplyPolicyCommand(parts);
+                    if (acknowledgement != null) Emit(acknowledgement);
                 }
             }
             catch { Emit("ERROR\tbad-command"); }
@@ -304,6 +299,21 @@ internal static class HoverInputBridge
                 openingWidgetId = 0;
             }
         }
+    }
+
+    private static string ApplyPolicyCommand(string[] parts)
+    {
+        long requestId = long.Parse(parts[1], CultureInfo.InvariantCulture);
+        if (requestId <= 0) throw new FormatException();
+        int id = int.Parse(parts[2], CultureInfo.InvariantCulture);
+        WidgetPolicy current = FindById(Snapshot(), id);
+        if (current == null) return "POLICY_ACK\t" + requestId.ToString(CultureInfo.InvariantCulture) + "\tERROR\twidget-not-found";
+        if (parts[3] != "0" && parts[3] != "1") throw new FormatException();
+        bool enabled = parts[3] == "1";
+        string decoded = Encoding.UTF8.GetString(Convert.FromBase64String(parts[4]));
+        HashSet<string> blocked = new HashSet<string>(decoded.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
+        UpdatePolicies(id, new WidgetPolicy(id, current.Handle, enabled, blocked));
+        return "POLICY_ACK\t" + requestId.ToString(CultureInfo.InvariantCulture) + "\tOK\t-";
     }
 
     private static WidgetPolicy FindById(WidgetPolicy[] source, int id)

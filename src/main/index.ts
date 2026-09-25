@@ -1984,7 +1984,10 @@ async function bootstrap(): Promise<void> {
     session: widgetSession,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     windowIdForWorkspaceSender: windowIdForProjectSender,
-    setHoverPolicy: (senderId, enabled, blockedBindings) => hoverInputBridge?.setPolicy(senderId, enabled, blockedBindings),
+    setHoverPolicy: (senderId, enabled, blockedBindings) => {
+      if (!hoverInputBridge) return Promise.reject(new Error('native hover-input policy bridge is unavailable'));
+      return hoverInputBridge.setPolicy(senderId, enabled, blockedBindings);
+    },
     requestHoverQuickRun: (senderId, phase, text) => phase === 'open'
       ? beginHoverCapture(senderId, text, false)
       : appendHoverCapture(senderId, text, false),

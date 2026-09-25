@@ -111,6 +111,77 @@ describe('window capability client', () => {
     await expect(minimize).resolves.toMatchObject({ outcome: 'success', observation: expect.objectContaining({ state: 'minimized' }) });
   });
 
+  it('prioritizes control dispatch over deferred thumbnails and drains captures fairly', async () => {
+    const fake = fakeTransport();
+    const client = createWindowCapabilityClient({ transport: fake.transport });
+    const thumbnailA = client.thumbnail(runtimeId('THUMB-A'), 1, 1);
+    const thumbnailB = client.thumbnail(runtimeId('THUMB-B'), 1, 1);
+    const thumbnailC = client.thumbnail(runtimeId('THUMB-C'), 1, 1);
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail']);
+
+    const observe = client.observe(runtimeId('CONTROL-A'));
+    const restore = client.restore(runtimeId('CONTROL-B'));
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail', 'observe', 'restore']);
+    expect(fake.sent.filter((message) => message.method === 'thumbnail')).toHaveLength(1);
+
+    fake.deliver(successWithObservation(5, 'restore', 'CONTROL-B'));
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail', 'observe', 'restore']);
+    fake.deliver(successWithObservation(4, 'observe', 'CONTROL-A'));
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail', 'observe', 'restore']);
+    fake.deliver({
+      ...response(1, 'thumbnail', 'success'),
+      target: 'THUMB-A',
+      thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 },
+    });
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail', 'observe', 'restore', 'thumbnail']);
+    expect(fake.sent[3]).toMatchObject({ requestId: 2, target: 'THUMB-B' });
+
+    const close = client.close(runtimeId('CONTROL-C'));
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail', 'observe', 'restore', 'thumbnail', 'close']);
+    fake.deliver({
+      ...response(2, 'thumbnail', 'success'),
+      target: 'THUMB-B',
+      thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 },
+    });
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail', 'observe', 'restore', 'thumbnail', 'close']);
+    fake.deliver(response(6, 'close', 'success'));
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail', 'observe', 'restore', 'thumbnail', 'close', 'thumbnail']);
+    expect(fake.sent[5]).toMatchObject({ requestId: 3, target: 'THUMB-C' });
+    fake.deliver({
+      ...response(3, 'thumbnail', 'success'),
+      target: 'THUMB-C',
+      thumbnail: { image: pngWithSize(1, 1), width: 1, height: 1 },
+    });
+    await expect(thumbnailA).resolves.toMatchObject({ outcome: 'success' });
+    await expect(thumbnailB).resolves.toMatchObject({ outcome: 'success' });
+    await expect(thumbnailC).resolves.toMatchObject({ outcome: 'success' });
+    await expect(observe).resolves.toMatchObject({ outcome: 'success' });
+    await expect(restore).resolves.toMatchObject({ outcome: 'success' });
+    await expect(close).resolves.toMatchObject({ outcome: 'success' });
+  });
+
+  it('reserves bounded pending capacity so thumbnail saturation cannot reject control requests', async () => {
+    const fake = fakeTransport();
+    const client = createWindowCapabilityClient({ transport: fake.transport, maxPending: 64 });
+    const thumbnails = Array.from({ length: 64 }, (_, index) => client.thumbnail(runtimeId(`THUMB-${index}`), 1, 1));
+    expect(client.pendingCount).toBe(56);
+    expect(fake.sent).toHaveLength(1);
+    expect(fake.sent[0]).toMatchObject({ method: 'thumbnail', target: 'THUMB-0' });
+
+    const control = client.close(runtimeId('CONTROL-RESERVED'));
+    expect(client.pendingCount).toBe(57);
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail', 'close']);
+    const controlMessage = fake.sent[1]!;
+    fake.deliver(response(controlMessage.requestId, 'close', 'success'));
+    await expect(control).resolves.toMatchObject({ outcome: 'success' });
+    await expect(Promise.all(thumbnails.slice(56))).resolves.toEqual(Array.from({ length: 8 }, () => ({
+      outcome: 'helper-unavailable', error: 'speculative thumbnail limit reached',
+    })));
+
+    client.stop();
+    expect(client.pendingCount).toBe(0);
+  });
+
   it('resolves with a typed timeout and clears the pending slot', async () => {
     const fake = fakeTransport();
     const client = createWindowCapabilityClient({ transport: fake.transport, timeoutMs: 20 });

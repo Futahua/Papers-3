@@ -8,7 +8,7 @@ export const HOVER_INPUT_BRIDGE_EXECUTABLE = 'papers-hover-input-bridge.exe';
 
 export interface HoverInputBridge {
   registerWidget(senderId: number, nativeHandle: Buffer): void;
-  setPolicy(senderId: number, enabled: boolean, blockedBindings: readonly string[]): void;
+  setPolicy(senderId: number, enabled: boolean, blockedBindings: readonly string[]): Promise<void>;
   setCaptureOpening(senderId: number): Promise<void>;
   removeWidget(senderId: number): void;
   setOverlayOpen(open: boolean): Promise<void>;
@@ -97,13 +97,15 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
   });
   let closed = false;
   let buffered = '';
-  let requestSequence = 0;
+  let overlayGenerationSequence = 0;
+  let policyRequestSequence = 0;
+  const policyAcks = new Map<number, { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   let overlayReady: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
   const openingReady = new Map<number, { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
-  const send = (record: string): void => {
-    if (closed || child.stdin.destroyed) return;
-    try { child.stdin.write(`${record}\n`); }
-    catch { options.onError?.('native hover-input helper disconnected'); }
+  const send = (record: string): boolean => {
+    if (closed || child.stdin.destroyed) return false;
+    try { child.stdin.write(`${record}\n`); return true; }
+    catch { options.onError?.('native hover-input helper disconnected'); return false; }
   };
   const rejectPending = (error: Error): void => {
     if (overlayReady) {
@@ -116,6 +118,11 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
       pending.reject(error);
     }
     openingReady.clear();
+    for (const pending of policyAcks.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    policyAcks.clear();
   };
   const trackNativeInput = (senderId: number, captureId: string, text: string, callback: HoverInputBridgeOptions['onCaptured']): void => {
     Promise.resolve().then(() => callback(senderId, captureId, text)).then(() => {
@@ -152,10 +159,19 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
         }
       } else if (parts[0] === 'OVERLAY_READY' && parts.length === 2) {
         const generation = Number(parts[1]);
-        if (overlayReady && generation === requestSequence) {
+        if (overlayReady && generation === overlayGenerationSequence) {
           clearTimeout(overlayReady.timer);
           overlayReady.resolve();
           overlayReady = null;
+        }
+      } else if (parts[0] === 'POLICY_ACK' && parts.length === 4 && /^\d+$/.test(parts[1] ?? '')) {
+        const requestId = Number(parts[1]);
+        const pending = policyAcks.get(requestId);
+        if (pending) {
+          clearTimeout(pending.timer);
+          policyAcks.delete(requestId);
+          if (parts[2] === 'OK' && parts[3] === '-') pending.resolve();
+          else pending.reject(new Error(`native helper rejected hover-input policy: ${parts[3] ?? 'unknown error'}`));
         }
       }
       else if (parts[0] === 'ERROR') options.onError?.(`native hover-input helper: ${parts[1] ?? 'unknown error'}`);
@@ -203,7 +219,22 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
     },
     setPolicy(senderId, enabled, blockedBindings) {
       const blocked = validBlockedBindings(blockedBindings);
-      send(`POLICY\t${senderId}\t${enabled ? '1' : '0'}\t${Buffer.from(blocked.join('\n'), 'utf8').toString('base64')}`);
+      if (closed) return Promise.reject(new Error('native hover-input helper is closed'));
+      if (policyAcks.size >= 256) return Promise.reject(new Error('too many native hover-input policy requests are pending'));
+      const requestId = ++policyRequestSequence;
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          policyAcks.delete(requestId);
+          reject(new Error('native helper did not acknowledge the hover-input policy'));
+        }, 1500);
+        policyAcks.set(requestId, { resolve, reject, timer });
+        const record = `POLICY\t${requestId}\t${senderId}\t${enabled ? '1' : '0'}\t${Buffer.from(blocked.join('\n'), 'utf8').toString('base64')}`;
+        if (!send(record)) {
+          clearTimeout(timer);
+          policyAcks.delete(requestId);
+          reject(new Error('native hover-input helper is unavailable'));
+        }
+      });
     },
     setCaptureOpening(senderId) {
       if (closed) return Promise.reject(new Error('native hover-input helper is closed'));
@@ -230,7 +261,7 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
       }
       if (closed) return Promise.reject(new Error('native hover-input helper is closed'));
       if (overlayReady) return overlayReady.promise;
-      const generation = ++requestSequence;
+      const generation = ++overlayGenerationSequence;
       let resolve!: () => void;
       let reject!: (error: Error) => void;
       const promise = new Promise<void>((accept, decline) => { resolve = accept; reject = decline; });

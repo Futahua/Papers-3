@@ -21,11 +21,14 @@ import {
 
 export const DEFAULT_WINDOW_CAPABILITY_TIMEOUT_MS = 2000;
 export const DEFAULT_WINDOW_CAPABILITY_MAX_PENDING = 64;
+const MAX_RESERVED_CONTROL_REQUESTS = 8;
 
 interface PendingEntry {
   resolve: (result: WindowCapabilityResult) => void;
-  timer: NodeJS.Timeout;
+  timer: NodeJS.Timeout | null;
   method: WindowCapabilityMethod;
+  message: WindowRequestMessage;
+  dispatched: boolean;
   /** The runtime id the request was issued for; a response carrying an
    * observation for a DIFFERENT id must never satisfy this request. */
   target: RuntimeWindowId | undefined;
@@ -74,6 +77,56 @@ export function createWindowCapabilityClient({
   let nextRequestId = 1;
   let stopped = false;
   const pending = new Map<number, PendingEntry>();
+  const reservedControlSlots = Math.min(MAX_RESERVED_CONTROL_REQUESTS, Math.max(1, Math.floor(maxPending / 4)));
+  const maxPendingThumbnails = Math.max(0, maxPending - reservedControlSlots);
+  const deferredThumbnails: number[] = [];
+  let activeThumbnailRequestId: number | null = null;
+
+  function dispatch(entry: PendingEntry): void {
+    if (stopped || entry.dispatched || !pending.has(entry.message.requestId)) return;
+    entry.dispatched = true;
+    entry.timer = setTimeout(() => {
+      if (!pending.has(entry.message.requestId)) return;
+      finish(entry.message.requestId, {
+        outcome: 'timeout',
+        error: `request ${entry.message.requestId} (${entry.method}) timed out`,
+      });
+    }, timeoutMs);
+    if (entry.method === 'thumbnail') activeThumbnailRequestId = entry.message.requestId;
+    transport.send(entry.message).catch(() => {
+      // The helper never accepted the request: fail this one closed, exactly
+      // once, without disturbing any other pending request.
+      if (!pending.has(entry.message.requestId)) return;
+      finish(entry.message.requestId, { outcome: 'helper-unavailable', error: 'transport send failed' });
+    });
+  }
+
+  function dispatchDeferredThumbnail(): void {
+    if (stopped || activeThumbnailRequestId !== null) return;
+    // A control request should be able to follow the one thumbnail already
+    // dispatched, but speculative captures never queue ahead of controls.
+    for (const entry of pending.values()) {
+      if (entry.method !== 'thumbnail') return;
+    }
+    while (deferredThumbnails.length > 0) {
+      const requestId = deferredThumbnails.shift()!;
+      const entry = pending.get(requestId);
+      if (entry && !entry.dispatched) {
+        dispatch(entry);
+        return;
+      }
+    }
+  }
+
+  function finish(requestId: number, result: WindowCapabilityResult): void {
+    const entry = pending.get(requestId);
+    if (!entry) return;
+    if (entry.timer) clearTimeout(entry.timer);
+    pending.delete(requestId);
+    if (entry.method === 'thumbnail' && activeThumbnailRequestId === requestId) activeThumbnailRequestId = null;
+    entry.resolve(result);
+    dispatchDeferredThumbnail();
+  }
 
   function request(
     method: WindowCapabilityMethod,
@@ -92,6 +145,13 @@ export function createWindowCapabilityClient({
   ): Promise<WindowCapabilityResult> {
     if (stopped) {
       return Promise.resolve({ outcome: 'helper-unavailable', error: 'client is stopped' });
+    }
+    if (method === 'thumbnail') {
+      let thumbnailCount = 0;
+      for (const entry of pending.values()) if (entry.method === 'thumbnail') thumbnailCount += 1;
+      if (thumbnailCount >= maxPendingThumbnails) {
+        return Promise.resolve({ outcome: 'helper-unavailable', error: 'speculative thumbnail limit reached' });
+      }
     }
     if (pending.size >= maxPending) {
       return Promise.resolve({ outcome: 'helper-unavailable', error: 'pending-request limit reached' });
@@ -113,21 +173,16 @@ export function createWindowCapabilityClient({
       ...(detail.maxHeight !== undefined ? { maxHeight: detail.maxHeight } : {}),
     };
     const result = new Promise<WindowCapabilityResult>((resolve) => {
-      const timer = setTimeout(() => {
-        if (pending.delete(requestId)) {
-          resolve({ outcome: 'timeout', error: `request ${requestId} (${method}) timed out` });
-        }
-      }, timeoutMs);
-      pending.set(requestId, { resolve, timer, method, target: detail.target });
-    });
-    transport.send(message).catch(() => {
-      // The helper never accepted the request: fail this one closed, exactly
-      // once, without disturbing any other pending request.
-      const entry = pending.get(requestId);
-      if (!entry) return;
-      clearTimeout(entry.timer);
-      pending.delete(requestId);
-      entry.resolve({ outcome: 'helper-unavailable', error: 'transport send failed' });
+      const entry: PendingEntry = { resolve, timer: null, method, message, dispatched: false, target: detail.target };
+      pending.set(requestId, entry);
+      if (method === 'thumbnail') {
+        deferredThumbnails.push(requestId);
+        dispatchDeferredThumbnail();
+      } else {
+        // Control requests pass any deferred thumbnails immediately. At most
+        // one thumbnail may already be ahead because captures are serialized.
+        dispatch(entry);
+      }
     });
     return result;
   }
@@ -152,9 +207,7 @@ export function createWindowCapabilityClient({
       // DIFFERENT window: fail closed and keep the request pending.
       return;
     }
-    clearTimeout(entry.timer);
-    pending.delete(response.requestId);
-    entry.resolve({
+    finish(response.requestId, {
       outcome: response.outcome,
       ...(response.windows !== undefined ? { windows: response.windows } : {}),
       ...(response.observation !== undefined ? { observation: response.observation } : {}),
@@ -167,10 +220,12 @@ export function createWindowCapabilityClient({
 
   function rejectAllPending(outcome: WindowCapabilityResult['outcome'], error = 'helper unavailable'): void {
     for (const [requestId, entry] of pending) {
-      clearTimeout(entry.timer);
+      if (entry.timer) clearTimeout(entry.timer);
       pending.delete(requestId);
       entry.resolve({ outcome, error });
     }
+    deferredThumbnails.length = 0;
+    activeThumbnailRequestId = null;
   }
 
   function stop(): void {

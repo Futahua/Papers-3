@@ -4,7 +4,7 @@ import { BackpackSurfaceRegistry, COMPACT_WIDGET_SURFACE_KIND, WORKSPACE_SURFACE
 import { registerCompactWidgetIpc } from '../../src/main/ipc/compactWidgetIpc';
 import type { CompactWidgetSession } from '../../src/main/windows/compactWidgetSession';
 
-function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>) {
+function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => Promise<void>) {
   const handlers = new Map<string, (event: { sender: { id: number } }, raw: unknown) => Promise<unknown>>();
   const ipcMain = { handle: vi.fn((channel: string, handler: (event: { sender: { id: number } }, raw: unknown) => Promise<unknown>) => handlers.set(channel, handler)) };
   const registry = new BackpackSurfaceRegistry();
@@ -23,6 +23,7 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>) {
     registry,
     session,
     waitForAuthority,
+    setHoverPolicy,
     windowIdForWorkspaceSender: () => 1,
     isWorkspaceSender: (sender, projectId) => sender.id === 1 && projectId === 'bp-a',
     isWidgetSender: (sender, projectId) => sender.id === 2 && projectId === 'bp-a',
@@ -88,6 +89,34 @@ describe('compact widget IPC', () => {
     await expect(h.invoke('papers:backpack:widget-quick-run-input', 1, payload)).rejects.toThrow(/denied/);
     await expect(h.invoke('papers:backpack:widget-quick-run-input', 2, { ...payload, text: 'ab' })).rejects.toThrow(/malformed/);
     expect(h.requestHoverQuickRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the native hover-policy acknowledgement and propagates helper failures', async () => {
+    const setPolicy = vi.fn(async () => undefined);
+    const h = harness(undefined, setPolicy);
+    const token = h.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    await expect(h.invoke('papers:backpack:widget-hover-policy', 2, {
+      token, enabled: true, blockedBindings: ['A', 'Shift+B', 'A'],
+    })).resolves.toEqual({ ok: true });
+    expect(setPolicy).toHaveBeenCalledWith(2, true, ['A', 'Shift+B']);
+
+    const absent = harness();
+    const absentToken = absent.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    await expect(absent.invoke('papers:backpack:widget-hover-policy', 2, {
+      token: absentToken, enabled: false, blockedBindings: [],
+    })).rejects.toThrow(/bridge is unavailable/);
+
+    const timedOut = harness(undefined, async () => { throw new Error('native helper did not acknowledge the hover-input policy'); });
+    const timedOutToken = timedOut.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    await expect(timedOut.invoke('papers:backpack:widget-hover-policy', 2, {
+      token: timedOutToken, enabled: false, blockedBindings: [],
+    })).rejects.toThrow(/did not acknowledge/);
+
+    const rejected = harness(undefined, async () => { throw new Error('native helper rejected hover-input policy: widget-not-found'); });
+    const rejectedToken = rejected.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    await expect(rejected.invoke('papers:backpack:widget-hover-policy', 2, {
+      token: rejectedToken, enabled: false, blockedBindings: [],
+    })).rejects.toThrow(/widget-not-found/);
   });
 
   it('accepts seal acknowledgements only from the registered widget token and generation', async () => {

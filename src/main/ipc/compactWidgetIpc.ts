@@ -21,7 +21,7 @@ export interface CompactWidgetIpcDependencies {
    */
   windowIdForWorkspaceSender: (sender: WebContents) => number | null;
   isWidgetSender: (sender: WebContents, projectId: string) => boolean;
-  setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => void;
+  setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => Promise<void>;
   requestHoverQuickRun?: (senderId: number, phase: 'open' | 'append', text: string) => Promise<{ ok: boolean; detail: string }>;
   acknowledgeHoverQuickRunSeal?: (senderId: number, generation: number) => boolean;
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
@@ -177,7 +177,8 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     if (!surface || !isWidgetSender(event.sender, surface.projectId) || !registry.validSender(event.sender.id, surface.projectId, token)) {
       throw new Error('denied: sender is not the registered widget');
     }
-    setHoverPolicy?.(event.sender.id, raw.enabled, [...new Set(raw.blockedBindings as string[])]);
+    if (!setHoverPolicy) throw new Error('native hover-input policy bridge is unavailable');
+    await setHoverPolicy(event.sender.id, raw.enabled, [...new Set(raw.blockedBindings as string[])]);
     return { ok: true };
   });
 
