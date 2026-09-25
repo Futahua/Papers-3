@@ -955,7 +955,7 @@ export function buildOverlayHtml(): string {
   });
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') window.pickOverlay.cancel();
-    else if (event.key === 'Enter') window.pickOverlay.commit();
+    else window.pickOverlay.commit();
   });
 </script>
 </body>

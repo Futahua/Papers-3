@@ -720,6 +720,7 @@ describe('window pick session (019B live picker)', () => {
     // The renderer bridge and the click-through-agnostic page.
     expect(html).toContain('window.pickOverlay.onState');
     expect(html).toContain('window.pickOverlay.commit');
+    expect(html).toContain("if (event.key === 'Escape') window.pickOverlay.cancel();\n    else window.pickOverlay.commit();");
   });
 
   it('033 C1-C2: repeated production session cycles stay immediate and tear down cleanly', async () => {

@@ -1,6 +1,6 @@
 {
-  "protocolVersion": "018",
-  "description": "Papers-owned window helper resource. Protocol, session tokens, identity revalidation, capacity limits and native behavior are locked to the accepted Assignment 013 (013R..013R5F) probe snapshot, extended by the reviewed Assignment 016 additions (task-worthy list filter, hover, apply clamping) the reviewed Assignment 019G thumbnail method, the atomic `toggle` method that reads a window’s live state and minimizes or restores it in ONE request, and the reviewed Assignment 018 identity revision (session-token identity drops the mutable exact title in favour of the window class, and every observation carries windowClass). The hashes below must equal the compiled expected hashes in src/main/windows/windowHelperResource.ts and the actual resource bytes; a deliberate helper edit requires an explicit reviewed code+manifest update.",
+  "protocolVersion": "019",
+  "description": "Papers-owned window helper resource. Protocol, session tokens, identity revalidation, capacity limits and native behavior are locked to the accepted Assignment 013 (013R..013R5F) probe snapshot, extended by the reviewed Assignment 016 additions (task-worthy list filter, hover, apply clamping), Assignment 019G thumbnail method, atomic toggle method, Assignment 018 identity revision, stable window-instance identities, process start-time identity checks, and the opaque-capability end-process method. Process termination accepts only an issued helper token and refuses host/self or changed process identities. The hashes below must equal the compiled expected hashes in src/main/windows/windowHelperResource.ts and the actual resource bytes; a deliberate helper edit requires an explicit reviewed code+manifest update.",
   "executable": "powershell.exe",
   "spawnArguments": [
     "-NoProfile",
@@ -12,7 +12,7 @@
     "window-capability.ps1"
   ],
   "hashes": {
-    "window-helper.ps1": "c4057656e0f7ccb0f535143a85dd39bcb6a80a06c0126fe07777b7519d3721dc",
-    "window-capability.ps1": "d9f6ca87e572520e824e71e6eb8880f49137096fe81a903f757c5494212a6b31"
+    "window-helper.ps1": "c558d64da75508df1bae2480d757eb957e636ddf53877de013cf30a4aebbbebe",
+    "window-capability.ps1": "7923b0a8adb5a8b73083ace619e816b5fa56f0da08072b66fa34605efbc00538"
   }
 }

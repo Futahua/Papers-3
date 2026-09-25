@@ -27,6 +27,12 @@ function pngWithSize(width: number, height: number): string {
   return Buffer.concat([sig, ihdr]).toString('base64');
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
 function observation(partial: Partial<WindowObservation> & { runtimeId: RuntimeWindowId }): WindowObservation {
   return {
     title: 'Window A',
@@ -166,6 +172,52 @@ describe('windowCapabilityService candidates', () => {
     expect(result.candidates.map((candidate) => candidate.title)).toEqual(['Window A', 'Window B']);
     expect(result.candidates[0]!.applicationLabel).toBe('a');
     expect(result.candidates[0]!.icon).toBe('data:image/png;base64,ICON');
+  });
+
+  it('starts independent file-icon reads together before the list waits for them', async () => {
+    const firstIcon = deferred<{ toDataURL: () => string }>();
+    const requested: string[] = [];
+    const { service } = harness({
+      getFileIcon: async (filePath) => {
+        requested.push(filePath);
+        if (filePath.endsWith('a.exe')) return firstIcon.promise as never;
+        return { toDataURL: () => 'data:image/png;base64,B' } as never;
+      },
+    });
+    const listing = service.listCandidates();
+    await vi.waitFor(() => expect(requested).toEqual(['C:\\Apps\\a.exe', 'C:\\Apps\\b.exe']));
+    firstIcon.resolve({ toDataURL: () => 'data:image/png;base64,A' });
+    const result = await listing;
+    expect(result.outcome).toBe('success');
+    if (result.outcome === 'success') {
+      expect(result.candidates.map((candidate) => candidate.icon)).toEqual([
+        'data:image/png;base64,A', 'data:image/png;base64,B',
+      ]);
+    }
+  });
+
+  it('shares one in-flight file icon for windows from the same process', async () => {
+    const oneIcon = deferred<{ toDataURL: () => string }>();
+    const read = vi.fn(() => oneIcon.promise as never);
+    const windows = [
+      observation({ runtimeId: TOKEN_A as RuntimeWindowId }),
+      observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Window B' }),
+    ];
+    const service = createWindowCapabilityService({
+      createFactory: () => fakeFactory({ list: async () => ({ outcome: 'success', windows }) }),
+      currentPid: 9999,
+      getFileIcon: read,
+    });
+    const listing = service.listCandidates();
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+    oneIcon.resolve({ toDataURL: () => 'data:image/png;base64,SAME' });
+    const result = await listing;
+    expect(result.outcome).toBe('success');
+    if (result.outcome === 'success') {
+      expect(result.candidates.map((candidate) => candidate.icon)).toEqual([
+        'data:image/png;base64,SAME', 'data:image/png;base64,SAME',
+      ]);
+    }
   });
 
   it('can explicitly admit the main Papers shell without admitting other same-process surfaces', async () => {
@@ -407,6 +459,228 @@ describe('windowCapabilityService persisted re-resolution', () => {
 });
 
 describe('windowCapabilityService lifecycle', () => {
+  it('shows the chooser from a recent watcher list but refreshes stale or authoritative calls', async () => {
+    const target = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      windowInstanceId: 'W1111111111111111',
+      processStartTicks: '638945344001234567',
+    });
+    let clock = 1000;
+    let listCalls = 0;
+    const factory = fakeFactory({
+      list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      now: () => clock,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+    expect((await service.listCandidates({ includeNativeIcons: false })).outcome).toBe('success');
+    expect(listCalls).toBe(1); // the visible chooser reuses the complete watcher observation
+    expect((await service.listCandidates()).outcome).toBe('success');
+    expect(listCalls).toBe(2); // authoritative callers still enumerate afresh
+    clock += 1001;
+    expect((await service.listCandidates({ includeNativeIcons: false })).outcome).toBe('success');
+    expect(listCalls).toBe(3); // an expired presentation cache is never reused
+    stop();
+    await service.stop();
+  });
+
+  it('defers lifecycle helper enumerations during native icon hydration and runs one complete catch-up', async () => {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W1111111111111111', processStartTicks: '638945344001234567' });
+    const iconRequest = deferred<WindowCapabilityResult>();
+    let listCalls = 0;
+    const factory = fakeFactory({
+      list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; },
+      thumbnail: async () => iconRequest.promise,
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const baselines: unknown[] = [];
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: (snapshot) => baselines.push(snapshot) });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(baselines).toHaveLength(1);
+    expect(listCalls).toBe(1);
+
+    const candidates = service.listCandidates({ includeNativeIcons: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(listCalls).toBe(2); // native list; no lifecycle poll has interleaved
+    const snapshot = service.windowLifecycleSnapshot();
+    await Promise.resolve();
+    expect(listCalls).toBe(2);
+
+    iconRequest.resolve({ outcome: 'success', thumbnail: { image: pngWithSize(48, 48), width: 48, height: 48, source: 'icon' } });
+    const listed = await candidates;
+    expect(listed.outcome).toBe('success');
+    if (listed.outcome === 'success') {
+      expect(listed.candidates[0]).toMatchObject({ windowInstanceId: 'W1111111111111111', icon: `data:image/png;base64,${pngWithSize(48, 48)}` });
+    }
+    const reconciled = await snapshot;
+    expect(reconciled.snapshot.complete).toBe(true);
+    expect(listCalls).toBe(3); // exactly one post-list lifecycle catch-up
+    stop();
+    await service.stop();
+  });
+
+  it('retains live-preview release intent when disable fails and retries it', async () => {
+    let disables = 0;
+    const calls: boolean[] = [];
+    const factory = fakeFactory({
+      livePreview: async (_target, _caller, enabled) => {
+        calls.push(enabled);
+        if (!enabled && ++disables === 1) return { outcome: 'denied', error: 'DWM release failed' };
+        return { outcome: 'success' };
+      },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    if (bound.outcome !== 'success') throw new Error('candidate bind failed');
+    expect((await service.beginLivePreviewCapability!(bound.capability, '424242')).outcome).toBe('success');
+    expect((await service.endLivePreview!()).outcome).toBe('denied');
+    expect((await service.endLivePreview!()).outcome).toBe('success');
+    expect(calls).toEqual([true, false, false]);
+    await service.stop();
+  });
+
+  it('attempts release after live-preview begin reports timeout', async () => {
+    const calls: boolean[] = [];
+    const factory = fakeFactory({
+      livePreview: async (_target, _caller, enabled) => {
+        calls.push(enabled);
+        return enabled ? { outcome: 'timeout', error: 'begin timed out' } : { outcome: 'success' };
+      },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    if (bound.outcome !== 'success') throw new Error('candidate bind failed');
+    expect((await service.beginLivePreviewCapability!(bound.capability, '424242')).outcome).toBe('timeout');
+    expect(calls).toEqual([true, false]);
+    await service.stop();
+  });
+
+  it('emits complete baselines and discovery events, while incomplete enumerations never retire members', async () => {
+    const first = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      windowInstanceId: 'W1111111111111111',
+      processStartTicks: '638945344001234567',
+    });
+    const second = observation({
+      runtimeId: TOKEN_B as RuntimeWindowId,
+      windowInstanceId: 'W2222222222222222',
+      processStartTicks: '638945344009876543',
+    });
+    let windows: WindowObservation[] = [first];
+    let complete = true;
+    const factory = fakeFactory({
+      list: async () => complete ? { outcome: 'success', windows } : { outcome: 'timeout', error: 'enumeration timeout' },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const events: unknown[] = [];
+    const baselines: unknown[] = [];
+    const stop = service.watchWindowLifecycle({ onEvent: (event) => events.push(event), onBaseline: (baseline) => baselines.push(baseline) });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(baselines).toHaveLength(1);
+    expect(baselines[0]).toMatchObject({ complete: true, windows: [{ windowInstanceId: 'W1111111111111111' }] });
+    windows = [first, second];
+    await service.windowLifecycleSnapshot();
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'open', windowInstanceId: 'W2222222222222222', sequence: 1 }));
+    complete = false;
+    expect((await service.windowLifecycleSnapshot()).snapshot.complete).toBe(false);
+    expect(events).not.toContainEqual(expect.objectContaining({ kind: 'gone', windowInstanceId: 'W1111111111111111' }));
+    stop();
+    await service.stop();
+  });
+
+  it('ends only an issued exact process capability and refuses self, protected windows, PID reuse and stale bindings', async () => {
+    const exact = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      processId: 1001,
+      processPath: 'C:\\Apps\\a.exe',
+      processStartTicks: '638945344001234567',
+      windowInstanceId: 'W1111111111111111',
+    });
+    let live = exact;
+    const endProcess = vi.fn(async () => ({ outcome: 'success' as const }));
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [exact] }),
+      observe: async () => ({ outcome: 'success', observation: live }),
+      endProcess,
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const listed = await service.listCandidates();
+    expect(listed.outcome).toBe('success');
+    if (listed.outcome !== 'success') return;
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    expect(bound.outcome).toBe('success');
+    if (bound.outcome !== 'success') return;
+    expect(await service.endProcessCapability(bound.capability)).toEqual({ outcome: 'success' });
+    expect(endProcess).toHaveBeenCalledTimes(1);
+    expect(endProcess).toHaveBeenCalledWith(TOKEN_A);
+    expect((await service.endProcessCapability({ version: 1, bindingId: 'stale' })).outcome).toBe('missing');
+
+    live = { ...exact, processStartTicks: '638945344001234568', windowInstanceId: 'W3333333333333333' };
+    expect((await service.endProcessCapability(bound.capability)).outcome).toBe('denied');
+    expect(endProcess).toHaveBeenCalledTimes(1);
+    await service.stop();
+  });
+
+  it('refuses the Papers process and protected Windows surfaces before they can receive an end capability', async () => {
+    const self = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId, title: 'Papers', processId: 9999,
+      processPath: 'C:\\Papers\\Papers.exe', processStartTicks: '638945344001234567',
+      windowInstanceId: 'W1111111111111111',
+    });
+    const shell = observation({
+      runtimeId: TOKEN_B as RuntimeWindowId, title: 'Program Manager', processId: 2002,
+      processPath: 'C:\\Windows\\explorer.exe', windowClass: 'Progman',
+    });
+    const textInput = observation({
+      runtimeId: TOKEN_C as RuntimeWindowId, title: 'Text Input', processId: 3003,
+      processPath: 'C:\\Windows\\SystemApps\\TextInputHost.exe', windowClass: 'TextInputHost',
+    });
+    const systemProcess = observation({
+      runtimeId: 'Td'.padEnd(33, 'd') as RuntimeWindowId, title: 'Service Host', processId: 4004,
+      processPath: 'C:\\Windows\\System32\\svchost.exe', processStartTicks: '638945344001234567',
+      windowInstanceId: 'W4444444444444444',
+    });
+    const endProcess = vi.fn(async () => ({ outcome: 'success' as const }));
+    const factory = fakeFactory({ list: async () => ({ outcome: 'success', windows: [self, shell, textInput, systemProcess] }), endProcess });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory, currentPid: 9999,
+      allowCurrentProcessWindow: (candidate) => candidate.title === 'Papers',
+    });
+    const listed = await service.listCandidates();
+    expect(listed).toMatchObject({ outcome: 'success', candidates: [{ title: 'Papers' }, { title: 'Service Host' }] });
+    if (listed.outcome !== 'success') return;
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    expect(bound.outcome).toBe('success');
+    if (bound.outcome !== 'success') return;
+    expect((await service.endProcessCapability(bound.capability)).outcome).toBe('denied');
+    expect(endProcess).not.toHaveBeenCalled();
+    const systemCandidate = listed.candidates.find((candidate) => candidate.title === 'Service Host')!;
+    const systemBound = await service.bindCandidate(systemCandidate.id);
+    expect(systemBound.outcome).toBe('success');
+    if (systemBound.outcome === 'success') {
+      expect((await service.endProcessCapability(systemBound.capability)).outcome).toBe('denied');
+    }
+    expect(endProcess).not.toHaveBeenCalled();
+    await service.stop();
+
+    const protectedFactory = fakeFactory({ list: async () => ({ outcome: 'success', windows: [shell, textInput] }), endProcess });
+    const protectedService = createWindowCapabilityService({ createFactory: () => protectedFactory, currentPid: 9999 });
+    expect(await protectedService.listCandidates()).toEqual({ outcome: 'success', candidates: [] });
+    expect((await protectedService.windowLifecycleSnapshot()).snapshot.windows).toEqual([]);
+    expect(endProcess).not.toHaveBeenCalled();
+    await protectedService.stop();
+  });
+
+
   it('stop tears down the factory and further calls are unavailable', async () => {
     const { service, factory } = harness();
     await service.listCandidates();

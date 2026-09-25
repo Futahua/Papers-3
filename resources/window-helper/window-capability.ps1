@@ -101,6 +101,7 @@ namespace WH
         [DllImport("user32.dll", EntryPoint = "GetClassLongPtrW")] public static extern IntPtr GetClassLongPtr(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll", EntryPoint = "GetClassLongW")] public static extern int GetClassLong(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);
         [DllImport("user32.dll")] public static extern bool DrawIconEx(IntPtr hdc, int xLeft, int yTop, IntPtr hIcon, int cx, int cy, int istepIfAniCur, IntPtr hbrFlickerFreeDraw, uint diFlags);
         [DllImport("dwmapi.dll")] public static extern int DwmRegisterThumbnail(IntPtr hwndDestination, IntPtr hwndSource, out IntPtr phThumbnailId);
         [DllImport("dwmapi.dll")] public static extern int DwmUpdateThumbnailProperties(IntPtr hThumbnailId, ref DWM_THUMBNAIL_PROPERTIES ptnProperties);
@@ -128,6 +129,7 @@ namespace WH
         public const int GCLP_HICON = -14;
         public const uint WM_GETICON = 0x007F;
         public const uint ICON_BIG = 1;
+        public const uint SMTO_ABORTIFHUNG = 0x0002;
         public const uint DI_NORMAL = 0x0003;
         public const long WS_EX_TOOLWINDOW = 0x00000080;
         public const long WS_EX_NOACTIVATE = 0x08000000;
@@ -237,7 +239,12 @@ $script:WhOps = @{
   # used as a REAL image fallback for minimized or hardware-accelerated (acad)
   # windows that PrintWindow cannot paint. Same identity as the taskbar image.
   ResolveWindowIcon = { param([IntPtr]$id)
-    $h = [WH.Win32]::SendMessage($id, [WH.Win32]::WM_GETICON, [IntPtr]([WH.Win32]::ICON_BIG), [IntPtr]::Zero)
+    $h = [IntPtr]::Zero
+    $reply = [IntPtr]::Zero
+    $sent = [WH.Win32]::SendMessageTimeout($id, [WH.Win32]::WM_GETICON,
+      [IntPtr]([WH.Win32]::ICON_BIG), [IntPtr]::Zero,
+      [WH.Win32]::SMTO_ABORTIFHUNG, 100, [ref]$reply)
+    if ($sent -ne [IntPtr]::Zero) { $h = $reply }
     if ($h -eq [IntPtr]::Zero) {
       if ([IntPtr]::Size -eq 8) { $h = [WH.Win32]::GetClassLongPtr($id, [WH.Win32]::GCLP_HICON) }
       else { $h = [IntPtr]([WH.Win32]::GetClassLong($id, [WH.Win32]::GCLP_HICON)) }
@@ -501,13 +508,17 @@ function Get-WhWindowObservation([IntPtr]$hWnd) {
   if ([WH.Win32]::IsZoomed($hWnd)) { $state = 'maximized' }
   elseif ([WH.Win32]::IsIconic($hWnd)) { $state = 'minimized' }
   $processPath = $null
+  $processStartTicks = $null
   try {
-    $processPath = (Get-Process -Id ([int]$pidValue) -ErrorAction SilentlyContinue).Path
+    $process = Get-Process -Id ([int]$pidValue) -ErrorAction Stop
+    $processPath = $process.Path
+    $processStartTicks = [string]$process.StartTime.ToUniversalTime().Ticks
   } catch { }
   return [pscustomobject]@{
     RuntimeId = $hWnd
     ProcessId = [int]$pidValue
     ProcessPath = $processPath
+    ProcessStartTicks = $processStartTicks
     Title = $title.ToString()
     # 018: the window CLASS is identity-bearing corroboration. A title changes
     # constantly; a class does not. It is NOT a discriminator on its own - class
@@ -764,6 +775,7 @@ function Test-WhTaskWorthy {
   if ($className -eq 'Progman' -or $className -eq 'WorkerW') { return $false }
   $processName = [string](& $script:WhOps['ProcessName'] $id)
   if ($processName -eq 'TextInputHost') { return $false }
+  if ([int]$Observation.ProcessId -eq [int]$PID) { return $false }
   # Same-process Papers surfaces are deliberately left in LIST enumeration so
   # the trusted host can admit its one real shell by current native identity.
   # The host rejects every other same-process surface. Direct hover still

@@ -130,7 +130,7 @@ function Test-WireResponseOk {
   if ($R['outcome'] -eq 'success') {
     if ($R['method'] -eq 'list') {
       if (-not ($hasWindowsKey -and $windowsIsArray -and -not $hasObservationKey -and -not $hasWindowKey -and -not $hasThumbnailKey)) { return $false }
-    } elseif ($R['method'] -eq 'close') {
+    } elseif ($R['method'] -eq 'close' -or $R['method'] -eq 'end-process') {
       if ($hasWindowsKey -or $hasObservationKey -or $hasWindowKey -or $hasThumbnailKey) { return $false }
     } elseif ($R['method'] -eq 'hover') {
       if (-not ($hasWindowKey -and -not $hasWindowsKey -and -not $hasObservationKey -and -not $hasThumbnailKey)) { return $false }
@@ -362,6 +362,8 @@ function Get-WhWindowObservation {
     Title = $entry.Title
     ProcessId = $entry.ProcessId
     ProcessPath = $entry.ProcessPath
+    ProcessStartTicks = if ($entry.PSObject.Properties['ProcessStartTicks']) { [string]$entry.ProcessStartTicks } else { '' }
+    ClassName = $entry.ClassName
     State = $entry.State
     Bounds = $entry.Bounds
   }
@@ -502,6 +504,15 @@ Assert-True ($script:fakeRegistry[0].touched -contains 'restore' -and $script:fa
 Assert-Outcome (Invoke-Line ('{"requestId":15,"method":"close","target":"' + $tokenA + '"}')) 'success' 'close succeeds on an issued token'
 Assert-Outcome (Invoke-Line ('{"requestId":16,"method":"observe","target":"' + $tokenA + '"}')) 'missing' 'vanished token returns missing'
 Assert-Outcome (Invoke-Line ('{"requestId":17,"method":"restore","target":"' + $tokenA + '","handle":123}')) 'denied' 'a handle field on a mutation is denied'
+$script:fakeRegistry[1] | Add-Member -NotePropertyName ProcessStartTicks -NotePropertyValue '638945344001234567' -Force
+Assert-Outcome (Invoke-Line ('{"requestId":171,"method":"end-process","target":"' + $tokenB + '"}')) 'denied' 'a process start-time change after token issuance refuses process termination'
+Assert-True ($script:fakeRegistry[1].touched -notcontains 'end-process') 'a reused PID is never terminated through a stale window token'
+$systemTokenEntry = Resolve-WhSessionToken $tokenB
+$systemTokenEntry.startTicks = '638945344001234567'
+$systemTokenEntry.processPath = 'C:\Windows\System32\svchost.exe'
+$script:fakeRegistry[1].ProcessPath = 'C:\Windows\System32\svchost.exe'
+Assert-Outcome (Invoke-Line ('{"requestId":170,"method":"end-process","target":"' + $tokenB + '"}')) 'denied' 'Windows system processes cannot be ended through an issued token'
+Assert-True ($script:fakeRegistry[1].touched -notcontains 'end-process') 'a protected Windows process is never terminated'
 
 # ---- HWND reuse: new token, old token never rebound -----------------------
 $script:fakeRegistry[0].alive = $true
@@ -607,6 +618,7 @@ Assert-True ($substringResolve.outcome -eq 'missing') 'resolver: exact title equ
 # Earlier sections mutate registry entries in place; the 016 fixtures need the
 # pristine full registry with fresh objects.
 $script:fakeRegistry = New-PristineRegistry
+$script:fakeRegistry += [pscustomobject]@{ RuntimeId = [IntPtr]0x3030; Title = 'Window Helper Self'; ProcessId = $PID; ProcessPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'; State = 'normal'; Bounds = @{ Left = 0; Top = 0; Right = 100; Bottom = 80; Width = 100; Height = 80 }; alive = $true; touched = @(); Visible = $true; Cloaked = $false; ExStyle = 0; ClassName = 'FakeWin'; ProcessName = 'powershell'; OwnerHwnd = [IntPtr]::Zero; RootAncestor = [IntPtr]0x3030; LastActivePopup = [IntPtr]0x3030 }
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
 # ---- 016: task-worthy list filter -----------------------------------------
 $taskList = Invoke-Line '{"requestId":50,"method":"list"}'
@@ -626,6 +638,7 @@ Assert-True ($taskTitles -notcontains 'WH-TEST-CLOAKED') 'task-worthy: cloaked d
 Assert-True ($taskTitles -notcontains 'WH-TEST-TOOL') 'task-worthy: WS_EX_TOOLWINDOW excluded'
 Assert-True ($taskTitles -notcontains 'WH-TEST-OWNED-INACTIVE') 'task-worthy: owned inactive popup excluded'
 Assert-True ($taskTitles -notcontains 'TextInput') 'task-worthy: TextInputHost system surface excluded'
+Assert-True ($taskTitles -notcontains 'Window Helper Self') 'task-worthy: the Papers-owned helper process is never a candidate'
 # 016R2 direct-pick dedup: list keeps the root identity, popup collapses.
 Assert-True ($taskTitles -contains 'WH-TEST-DEDUP-ROOT') 'same-task dedup: DEDUP-ROOT stays listed'
 Assert-True ($taskTitles -notcontains 'WH-TEST-DEDUP-POPUP') 'same-task dedup: DEDUP-POPUP collapses into its root in the list'
