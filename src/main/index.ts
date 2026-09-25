@@ -1993,9 +1993,17 @@ async function bootstrap(): Promise<void> {
       : appendHoverCapture(senderId, text, false),
     acknowledgeHoverQuickRunSeal: acknowledgeWidgetQuickRunSeal,
     hidePreview: hideWidgetPreview,
-    dismissCandidatePicker: (sender) => {
+    dismissCandidatePicker: async (sender) => {
       const active = candidatePickerSessions.get(sender.id);
-      if (active && !active.window.isDestroyed()) active.dismiss?.();
+      if (!active || active.window.isDestroyed()) return;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('window chooser did not close')), 8000);
+        active.window.once('closed', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        active.dismiss?.();
+      });
     },
     showContextMenu: async (sender) => {
       const owner = BrowserWindow.fromWebContents(sender);

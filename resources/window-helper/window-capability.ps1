@@ -127,8 +127,11 @@ namespace WH
         public const uint GA_ROOT = 2;
         public const int GWL_EXSTYLE = -20;
         public const int GCLP_HICON = -14;
+        public const int GCLP_HICONSM = -34;
         public const uint WM_GETICON = 0x007F;
+        public const uint ICON_SMALL = 0;
         public const uint ICON_BIG = 1;
+        public const uint ICON_SMALL2 = 2;
         public const uint SMTO_ABORTIFHUNG = 0x0002;
         public const uint DI_NORMAL = 0x0003;
         public const long WS_EX_TOOLWINDOW = 0x00000080;
@@ -235,19 +238,23 @@ $script:WhOps = @{
   }
   IsIconic = { param([IntPtr]$id) [WH.Win32]::IsIconic($id) }
   PrintWindow = { param([IntPtr]$id, [IntPtr]$hdc) [WH.Win32]::PrintWindow($id, $hdc, [WH.Win32]::PW_RENDERFULLCONTENT) }
-  # 024: window/class program icon (WM_GETICON ICON_BIG, then the class icon)
+  # Window and class icons can be published at either size. Many modern app
+  # windows only answer ICON_SMALL2 or provide GCLP_HICONSM.
   # used as a REAL image fallback for minimized or hardware-accelerated (acad)
   # windows that PrintWindow cannot paint. Same identity as the taskbar image.
   ResolveWindowIcon = { param([IntPtr]$id)
     $h = [IntPtr]::Zero
-    $reply = [IntPtr]::Zero
-    $sent = [WH.Win32]::SendMessageTimeout($id, [WH.Win32]::WM_GETICON,
-      [IntPtr]([WH.Win32]::ICON_BIG), [IntPtr]::Zero,
-      [WH.Win32]::SMTO_ABORTIFHUNG, 100, [ref]$reply)
-    if ($sent -ne [IntPtr]::Zero) { $h = $reply }
-    if ($h -eq [IntPtr]::Zero) {
-      if ([IntPtr]::Size -eq 8) { $h = [WH.Win32]::GetClassLongPtr($id, [WH.Win32]::GCLP_HICON) }
-      else { $h = [IntPtr]([WH.Win32]::GetClassLong($id, [WH.Win32]::GCLP_HICON)) }
+    foreach ($kind in @([WH.Win32]::ICON_BIG, [WH.Win32]::ICON_SMALL2, [WH.Win32]::ICON_SMALL)) {
+      $reply = [IntPtr]::Zero
+      $sent = [WH.Win32]::SendMessageTimeout($id, [WH.Win32]::WM_GETICON,
+        [IntPtr]$kind, [IntPtr]::Zero,
+        [WH.Win32]::SMTO_ABORTIFHUNG, 100, [ref]$reply)
+      if ($sent -ne [IntPtr]::Zero -and $reply -ne [IntPtr]::Zero) { return $reply }
+    }
+    foreach ($index in @([WH.Win32]::GCLP_HICON, [WH.Win32]::GCLP_HICONSM)) {
+      if ([IntPtr]::Size -eq 8) { $h = [WH.Win32]::GetClassLongPtr($id, $index) }
+      else { $h = [IntPtr]([WH.Win32]::GetClassLong($id, $index)) }
+      if ($h -ne [IntPtr]::Zero) { return $h }
     }
     return $h
   }

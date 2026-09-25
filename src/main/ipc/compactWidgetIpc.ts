@@ -28,7 +28,7 @@ export interface CompactWidgetIpcDependencies {
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
   showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
-  dismissCandidatePicker?: (sender: WebContents) => void;
+  dismissCandidatePicker?: (sender: WebContents) => Promise<void> | void;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -315,7 +315,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
         && registry.validSender(event.sender.id, surface.projectId, token);
     }
     if (!authorized) throw new Error('denied: sender is not a registered project surface');
-    dismissCandidatePicker?.(event.sender);
+    await dismissCandidatePicker?.(event.sender);
     return { ok: true };
   });
 }

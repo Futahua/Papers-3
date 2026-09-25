@@ -4,7 +4,7 @@ import { BackpackSurfaceRegistry, COMPACT_WIDGET_SURFACE_KIND, WORKSPACE_SURFACE
 import { registerCompactWidgetIpc } from '../../src/main/ipc/compactWidgetIpc';
 import type { CompactWidgetSession } from '../../src/main/windows/compactWidgetSession';
 
-function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => Promise<void>) {
+function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => Promise<void>, dismissCandidatePicker?: () => Promise<void>) {
   const handlers = new Map<string, (event: { sender: { id: number } }, raw: unknown) => Promise<unknown>>();
   const ipcMain = { handle: vi.fn((channel: string, handler: (event: { sender: { id: number } }, raw: unknown) => Promise<unknown>) => handlers.set(channel, handler)) };
   const registry = new BackpackSurfaceRegistry();
@@ -29,6 +29,7 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, s
     isWidgetSender: (sender, projectId) => sender.id === 2 && projectId === 'bp-a',
     requestHoverQuickRun,
     acknowledgeHoverQuickRunSeal,
+    dismissCandidatePicker,
   });
   const invoke = (channel: string, senderId: number, raw: unknown) => {
     const handler = handlers.get(channel);
@@ -39,6 +40,20 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, s
 }
 
 describe('compact widget IPC', () => {
+  it('does not acknowledge chooser close until the native window is gone', async () => {
+    let release!: () => void;
+    const closed = new Promise<void>((resolve) => { release = resolve; });
+    const h = harness(undefined, undefined, () => closed);
+    const token = h.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    let acknowledged = false;
+    const pending = h.invoke('papers:backpack:window-candidate-picker-close', 2, { token })
+      .then((result) => { acknowledged = true; return result; });
+    await Promise.resolve();
+    expect(acknowledged).toBe(false);
+    release();
+    await expect(pending).resolves.toEqual({ ok: true });
+  });
+
   it('waits for staged authority before widget-open can execute', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
