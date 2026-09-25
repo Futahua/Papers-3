@@ -160,6 +160,81 @@ describe('window capability client', () => {
     await expect(close).resolves.toMatchObject({ outcome: 'success' });
   });
 
+  it('holds FIFO thumbnails behind all pending controls across mixed reply order', async () => {
+    const fake = fakeTransport();
+    const client = createWindowCapabilityClient({ transport: fake.transport });
+    const thumbnailA = client.thumbnail(runtimeId('THUMB-A'), 1, 1);
+    const thumbnailB = client.thumbnail(runtimeId('THUMB-B'), 1, 1);
+    const thumbnailC = client.thumbnail(runtimeId('THUMB-C'), 1, 1);
+    expect(fake.sent.map((message) => message.method)).toEqual(['thumbnail']);
+
+    const observe = client.observe(runtimeId('CONTROL-A'));
+    const restore = client.restore(runtimeId('CONTROL-B'));
+    const close = client.close(runtimeId('CONTROL-C'));
+    expect(fake.sent.map((message) => message.method)).toEqual([
+      'thumbnail', 'observe', 'restore', 'close',
+    ]);
+    expect(fake.sent.filter((message) => message.method === 'thumbnail')).toHaveLength(1);
+
+    const observeMessage = fake.sent[1]!;
+    const restoreMessage = fake.sent[2]!;
+    const closeMessage = fake.sent[3]!;
+    fake.deliver(response(closeMessage.requestId, 'close', 'success'));
+    fake.deliver(successWithObservation(restoreMessage.requestId, 'restore', 'CONTROL-B'));
+    const thumbnailAImage = pngWithSize(1, 1);
+    fake.deliver({
+      ...response(1, 'thumbnail', 'success'),
+      target: 'THUMB-A',
+      thumbnail: { image: thumbnailAImage, width: 1, height: 1 },
+    });
+    expect(fake.sent.map((message) => message.method)).toEqual([
+      'thumbnail', 'observe', 'restore', 'close',
+    ]);
+    expect(fake.sent.filter((message) => message.method === 'thumbnail')).toHaveLength(1);
+
+    // The last outstanding control releases the FIFO, but only B starts.
+    fake.deliver(successWithObservation(observeMessage.requestId, 'observe', 'CONTROL-A'));
+    expect(fake.sent.map((message) => message.method)).toEqual([
+      'thumbnail', 'observe', 'restore', 'close', 'thumbnail',
+    ]);
+    expect(fake.sent[4]).toMatchObject({ requestId: 2, target: 'THUMB-B' });
+
+    // A new control can pass B; C stays queued until that control settles.
+    const minimize = client.minimize(runtimeId('CONTROL-D'));
+    const minimizeMessage = fake.sent[5]!;
+    expect(minimizeMessage).toMatchObject({ method: 'minimize' });
+    fake.deliver({
+      ...response(2, 'thumbnail', 'success'),
+      target: 'THUMB-B',
+      thumbnail: { image: thumbnailAImage, width: 1, height: 1 },
+    });
+    expect(fake.sent.map((message) => message.method)).toEqual([
+      'thumbnail', 'observe', 'restore', 'close', 'thumbnail', 'minimize',
+    ]);
+    expect(fake.sent.filter((message) => message.method === 'thumbnail')).toHaveLength(2);
+
+    fake.deliver(successWithObservation(minimizeMessage.requestId, 'minimize', 'CONTROL-D'));
+    expect(fake.sent.map((message) => message.method)).toEqual([
+      'thumbnail', 'observe', 'restore', 'close', 'thumbnail', 'minimize', 'thumbnail',
+    ]);
+    expect(fake.sent[6]).toMatchObject({ requestId: 3, target: 'THUMB-C' });
+    fake.deliver({
+      ...response(3, 'thumbnail', 'success'),
+      target: 'THUMB-C',
+      thumbnail: { image: thumbnailAImage, width: 1, height: 1 },
+    });
+
+    await expect(Promise.all([thumbnailA, thumbnailB, thumbnailC])).resolves.toEqual([
+      expect.objectContaining({ outcome: 'success' }),
+      expect.objectContaining({ outcome: 'success' }),
+      expect.objectContaining({ outcome: 'success' }),
+    ]);
+    await expect(observe).resolves.toMatchObject({ outcome: 'success' });
+    await expect(restore).resolves.toMatchObject({ outcome: 'success' });
+    await expect(close).resolves.toMatchObject({ outcome: 'success' });
+    await expect(minimize).resolves.toMatchObject({ outcome: 'success' });
+  });
+
   it('reserves bounded pending capacity so thumbnail saturation cannot reject control requests', async () => {
     const fake = fakeTransport();
     const client = createWindowCapabilityClient({ transport: fake.transport, maxPending: 64 });

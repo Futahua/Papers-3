@@ -32,6 +32,21 @@ internal static class HoverInputBridgePolicyTests
         var blocked = (HashSet<string>)policyType.GetField("Blocked").GetValue(updated);
         Require(blocked.Contains("A") && blocked.Contains("Shift+B"), "native parser must preserve blocked bindings");
 
+        // Repeated asynchronous renewals are applied in protocol arrival order.
+        // Their acknowledgements are only receipts: an earlier receipt cannot
+        // roll back the most recently installed widget policy.
+        string firstRenewal = (string)apply.Invoke(null, new object[] { new[] { "POLICY", "43", "17", "1", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("A")) } });
+        string secondRenewal = (string)apply.Invoke(null, new object[] { new[] { "POLICY", "44", "17", "0", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("Shift+B")) } });
+        string latestRenewal = (string)apply.Invoke(null, new object[] { new[] { "POLICY", "45", "17", "1", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("Shift+C")) } });
+        Require(firstRenewal == "POLICY_ACK\t43\tOK\t-", "first renewal must keep its own request ID");
+        Require(secondRenewal == "POLICY_ACK\t44\tOK\t-", "second renewal must keep its own request ID");
+        Require(latestRenewal == "POLICY_ACK\t45\tOK\t-", "latest renewal must keep its own request ID");
+        updatedPolicies = (Array)bridge.GetMethod("Snapshot", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+        updated = updatedPolicies.GetValue(0);
+        blocked = (HashSet<string>)policyType.GetField("Blocked").GetValue(updated);
+        Require((bool)policyType.GetField("Enabled").GetValue(updated), "latest renewal must leave capture enabled");
+        Require(blocked.Count == 1 && blocked.Contains("Shift+C"), "latest renewal must replace the earlier binding set");
+
         string missingWidgetAck = (string)apply.Invoke(null, new object[] { new[] { "POLICY", "42", "18", "0", "" } });
         Require(missingWidgetAck == "POLICY_ACK\t42\tERROR\twidget-not-found", "unknown widget must receive a correlated error acknowledgement");
         try
