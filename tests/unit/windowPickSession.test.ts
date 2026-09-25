@@ -350,6 +350,74 @@ describe('window pick session (019B live picker)', () => {
     await session.cancel();
   });
 
+  it('WID keeps W2 as an add while staging the exact W1 removal alongside it', async () => {
+    const w1 = { version: 1 as const, title: 'Editor', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W1111111111111111' };
+    const w2 = { version: 1 as const, title: 'Editor', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W2222222222222222' };
+    const candidate1 = { id: 'candidate-w1', title: 'Editor', applicationLabel: 'Editor', icon: null, state: 'normal' as const };
+    const candidate2 = { id: 'candidate-w2', title: 'Editor', applicationLabel: 'Editor', icon: null, state: 'normal' as const };
+    const hoverAt = vi.fn(async (x: number) => ({
+      outcome: 'success' as const,
+      candidate: x < 400 ? candidate2 : candidate1,
+      bounds: { x: x < 400 ? 100 : 500, y: 100, width: 300, height: 200 },
+      descriptor: x < 400 ? w2 : w1,
+    }));
+    const pickAt = vi.fn(async () => ({
+      outcome: 'success' as const,
+      capability: { version: 1 as const, bindingId: 'binding-w2' },
+      descriptor: w2,
+      candidate: candidate2,
+    }));
+    const { session, created } = sessionWithOverlays(fakeService({
+      hoverAt: hoverAt as unknown as PickService['hoverAt'],
+      pickAt: pickAt as unknown as PickService['pickAt'],
+    }));
+    let result: unknown = null;
+    await session.begin({ memberDescriptors: [w1], onResult: (next) => { result = next; } });
+    created[0]!.pointerMoveAt(250, 150); // W2 shares title/fingerprint but has another WID.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    created[0]!.clickAt(250, 150); // stage add W2
+    created[0]!.pointerMoveAt(650, 150); // exact W1
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    created[0]!.clickAt(650, 150); // stage remove W1
+    const staged = lastState(created[0]!)['staged'] as Array<{ kind: string }>;
+    expect(staged.map((entry) => entry.kind).sort()).toEqual(['add', 'remove']);
+    created[0]!.commitPick();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(result).toEqual({
+      outcome: 'committed',
+      adds: [{ descriptor: w2, capability: { version: 1, bindingId: 'binding-w2' }, candidate: candidate2 }],
+      removes: [{ descriptor: w1 }],
+    });
+  });
+
+  it('allows a unique legacy fallback and suppresses an ambiguous one', async () => {
+    const legacy = { version: 1 as const, title: 'Editor', executableFingerprint: 'a'.repeat(64) };
+    const modern = { ...legacy, windowInstanceId: 'W1111111111111111' };
+    const candidate = { id: 'candidate-modern', title: 'Editor', applicationLabel: 'Editor', icon: null, state: 'normal' as const };
+    const hoverAt = vi.fn(async () => ({
+      outcome: 'success' as const,
+      candidate,
+      bounds: { x: 100, y: 100, width: 300, height: 200 },
+      descriptor: modern,
+    }));
+    const unique = sessionWithOverlays(fakeService({ hoverAt: hoverAt as unknown as PickService['hoverAt'] }));
+    await unique.session.begin({ memberDescriptors: [legacy], onResult: vi.fn() });
+    unique.created[0]!.pointerMoveAt(200, 150);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    unique.created[0]!.clickAt(200, 150);
+    expect((lastState(unique.created[0]!)['staged'] as Array<{ kind: string }>).map((entry) => entry.kind)).toContain('remove');
+    await unique.session.cancel();
+
+    const ambiguous = sessionWithOverlays(fakeService({ hoverAt: hoverAt as unknown as PickService['hoverAt'] }));
+    await ambiguous.session.begin({ memberDescriptors: [legacy, { ...legacy }], onResult: vi.fn() });
+    ambiguous.created[0]!.pointerMoveAt(200, 150);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    ambiguous.created[0]!.clickAt(200, 150);
+    expect(lastState(ambiguous.created[0]!)['hover']).toBeNull();
+    expect(lastState(ambiguous.created[0]!)['staged']).toEqual([]);
+    await ambiguous.session.cancel();
+  });
+
   it('Enter commits the complete staged set in one typed result', async () => {
     const pickAt = vi.fn(async () => ({
       outcome: 'success' as const,

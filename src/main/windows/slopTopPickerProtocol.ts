@@ -15,6 +15,7 @@ import type {
   PersistedWindowMemberDescriptor,
   WindowCapabilityService,
 } from './windowCapabilityService';
+import { canFallbackLegacyWindowIdentity, compareWindowMemberIdentity } from './windowCapabilityService';
 import type { WindowPickResult, WindowPickSession } from './windowPickSession';
 
 export const SLOPTOP_PICKER_PROTOCOL_VERSION = 2;
@@ -118,8 +119,28 @@ function ackMatches(value: unknown, token: string): boolean {
     && value['active'] === true;
 }
 
-function descriptorKey(descriptor: PersistedWindowMemberDescriptor): string {
-  return `${descriptor.executableFingerprint ?? ''}|${descriptor.title}`;
+function descriptorDiff(
+  initial: PersistedWindowMemberDescriptor[],
+  final: Array<{ descriptor: PersistedWindowMemberDescriptor }>,
+): { adds: number[]; removes: number[] } | null {
+  const matchesFromInitial = initial.map(() => [] as number[]);
+  const matchesFromFinal = final.map(() => [] as number[]);
+  for (let initialIndex = 0; initialIndex < initial.length; initialIndex += 1) {
+    for (let finalIndex = 0; finalIndex < final.length; finalIndex += 1) {
+      const relation = compareWindowMemberIdentity(initial[initialIndex]!, final[finalIndex]!.descriptor);
+      if (relation === 'ambiguous' && !canFallbackLegacyWindowIdentity(initial[initialIndex]!, final[finalIndex]!.descriptor)) return null;
+      if (relation === 'same' || canFallbackLegacyWindowIdentity(initial[initialIndex]!, final[finalIndex]!.descriptor)) {
+        matchesFromInitial[initialIndex]!.push(finalIndex);
+        matchesFromFinal[finalIndex]!.push(initialIndex);
+      }
+    }
+  }
+  if (matchesFromInitial.some((matches) => matches.length > 1)
+    || matchesFromFinal.some((matches) => matches.length > 1)) return null;
+  return {
+    adds: matchesFromFinal.flatMap((matches, index) => matches.length === 0 ? [index] : []),
+    removes: matchesFromInitial.flatMap((matches, index) => matches.length === 0 ? [index] : []),
+  };
 }
 
 export function createSlopTopPickerSession(
@@ -172,16 +193,18 @@ export function createSlopTopPickerSession(
         finish({ outcome: 'failed', error: bound.error ?? 'the final native picker set could not be resolved' });
         return;
       }
-      const initial = new Map(memberDescriptors.map((descriptor) => [descriptorKey(descriptor), descriptor]));
-      const final = new Map(bound.windows.map((window) => [descriptorKey(window.descriptor), window]));
+      const diff = descriptorDiff(memberDescriptors, bound.windows);
+      if (!diff) {
+        finish({ outcome: 'failed', error: 'the final picker set has ambiguous window identities' });
+        return;
+      }
       finish({
         outcome: 'committed',
-        adds: [...final.entries()]
-          .filter(([key]) => !initial.has(key))
-          .map(([, window]) => ({ descriptor: window.descriptor, capability: window.capability, candidate: window.candidate })),
-        removes: [...initial.entries()]
-          .filter(([key]) => !final.has(key))
-          .map(([, descriptor]) => ({ descriptor })),
+        adds: diff.adds.map((index) => {
+          const window = bound.windows[index]!;
+          return { descriptor: window.descriptor, capability: window.capability, candidate: window.candidate };
+        }),
+        removes: diff.removes.map((index) => ({ descriptor: memberDescriptors[index]! })),
       });
     } catch (caught) {
       // A missing result file is the normal idle state. Any other local

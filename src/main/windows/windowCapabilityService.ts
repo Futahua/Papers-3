@@ -90,6 +90,52 @@ export interface PersistedWindowMemberDescriptor {
   windowInstanceId?: string;
 }
 
+/** Compares persisted descriptor identity without treating title as an exact
+ * identity once either side carries a host-issued window instance ID. */
+export function compareWindowMemberIdentity(
+  left: PersistedWindowMemberDescriptor,
+  right: PersistedWindowMemberDescriptor,
+): 'same' | 'different' | 'ambiguous' {
+  const leftId = left.windowInstanceId;
+  const rightId = right.windowInstanceId;
+  const leftHasId = typeof leftId === 'string' && /^W[0-9a-f]{16}$/i.test(leftId);
+  const rightHasId = typeof rightId === 'string' && /^W[0-9a-f]{16}$/i.test(rightId);
+  if ((leftId !== undefined && !leftHasId) || (rightId !== undefined && !rightHasId)) return 'ambiguous';
+  if (leftHasId && rightHasId) return leftId!.toLowerCase() === rightId!.toLowerCase() ? 'same' : 'different';
+
+  const leftFingerprint = left.executableFingerprint;
+  const rightFingerprint = right.executableFingerprint;
+  const leftHasFingerprint = typeof leftFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(leftFingerprint);
+  const rightHasFingerprint = typeof rightFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(rightFingerprint);
+  if (!leftHasFingerprint || !rightHasFingerprint) return 'ambiguous';
+  if (leftFingerprint!.toLowerCase() !== rightFingerprint!.toLowerCase()) return 'different';
+
+  // Same executable plus exactly one WID can be the same window after a
+  // retitle or a sibling. Only an exact WID match proves identity.
+  if (leftHasId !== rightHasId) return 'ambiguous';
+  return left.title === right.title ? 'same' : 'different';
+}
+
+/** A legacy row may be associated with one modern WID row only when its
+ * complete legacy key agrees; callers must still require that association to
+ * be unique in the surrounding set. */
+export function canFallbackLegacyWindowIdentity(
+  left: PersistedWindowMemberDescriptor,
+  right: PersistedWindowMemberDescriptor,
+): boolean {
+  const leftHasId = typeof left.windowInstanceId === 'string' && /^W[0-9a-f]{16}$/i.test(left.windowInstanceId);
+  const rightHasId = typeof right.windowInstanceId === 'string' && /^W[0-9a-f]{16}$/i.test(right.windowInstanceId);
+  if ((left.windowInstanceId !== undefined && !leftHasId)
+    || (right.windowInstanceId !== undefined && !rightHasId)) return false;
+  const leftFingerprint = left.executableFingerprint;
+  const rightFingerprint = right.executableFingerprint;
+  return leftHasId !== rightHasId
+    && typeof leftFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(leftFingerprint)
+    && typeof rightFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(rightFingerprint)
+    && leftFingerprint.toLowerCase() === rightFingerprint.toLowerCase()
+    && left.title === right.title;
+}
+
 /** Ephemeral runtime capability: never persisted, never reconstructed from
  * a descriptor. */
 export interface WindowRuntimeCapability {
@@ -1262,11 +1308,29 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const seeds: NativePickerWindowIdentity[] = [];
     const claimed = new Set<string>();
     for (const descriptor of memberDescriptors) {
+      if (descriptor.windowInstanceId !== undefined
+        && (typeof descriptor.windowInstanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(descriptor.windowInstanceId))) {
+        return { outcome: 'ambiguous', error: `layout member identity is invalid: ${descriptor.title}` };
+      }
       const matches = snapshot.observations.filter((observation) => {
         const candidate = candidateForObservation(observation);
+        if (descriptor.windowInstanceId !== undefined) {
+          return candidate.descriptor.windowInstanceId === descriptor.windowInstanceId;
+        }
         return candidate.descriptor.executableFingerprint === descriptor.executableFingerprint
           && candidate.descriptor.title === descriptor.title;
       });
+      if (descriptor.windowInstanceId !== undefined && matches.length === 0) {
+        const unresolvedLegacy = snapshot.observations.some((observation) => {
+          const candidate = candidateForObservation(observation);
+          return candidate.descriptor.windowInstanceId === undefined
+            && candidate.descriptor.executableFingerprint === descriptor.executableFingerprint
+            && candidate.descriptor.title === descriptor.title;
+        });
+        if (unresolvedLegacy) {
+          return { outcome: 'ambiguous', error: `layout member identity is ambiguous: ${descriptor.title}` };
+        }
+      }
       // A persisted layout may legitimately contain a closed window. It cannot
       // be painted green, but it must not prevent the creator from opening the
       // picker to add/remove the windows that are currently on screen.

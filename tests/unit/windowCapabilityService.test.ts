@@ -304,6 +304,46 @@ describe('windowCapabilityService native picker snapshots', () => {
     });
   });
 
+  it('seeds the exact WID when same-title same-executable siblings are visible', async () => {
+    const first = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      title: 'Editor',
+      processId: 1001,
+      processPath: 'C:\\Apps\\editor.exe',
+      bounds: { x: 10, y: 20, width: 300, height: 200 },
+      windowInstanceId: 'W1111111111111111',
+    });
+    const second = observation({
+      runtimeId: TOKEN_B as RuntimeWindowId,
+      title: 'Editor',
+      processId: 1001,
+      processPath: 'C:\\Apps\\editor.exe',
+      bounds: { x: 500, y: 20, width: 300, height: 200 },
+      windowInstanceId: 'W2222222222222222',
+    });
+    const factory = fakeFactory({ list: async () => ({ outcome: 'success', windows: [first, second] }) });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const descriptors = [];
+    for (const item of listed.candidates) {
+      const bound = await service.bindCandidate(item.id);
+      if (bound.outcome !== 'success') throw new Error('candidate bind failed');
+      descriptors.push(bound.descriptor);
+    }
+    const memberW1 = descriptors.find((descriptor) => descriptor.windowInstanceId === first.windowInstanceId);
+    if (!memberW1) throw new Error('W1 descriptor missing');
+    const prepared = await service.prepareNativePicker([memberW1]);
+    expect(prepared).toEqual({
+      outcome: 'success',
+      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200 }],
+    });
+  });
+
   it('collapses same-native-rectangle host aliases instead of permanently bricking direct pick', async () => {
     const topmost = observation({
       runtimeId: TOKEN_A as RuntimeWindowId,

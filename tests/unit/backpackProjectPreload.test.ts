@@ -323,6 +323,21 @@ describe('Backpack project protocol alignment', () => {
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
   });
 
+  it('Direct Pick begin preserves one valid windowInstanceId and rejects malformed or unknown descriptor keys', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'started' });
+    const descriptor = { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W0123456789abcdef' };
+    dispatch({ type: 'papers:project:window-pick-begin', requestId: 'pick-wid', members: [descriptor] });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-pick:begin', { members: [descriptor] });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'pick-wid', ok: true }));
+
+    expect(() => dispatch({ type: 'papers:project:window-pick-begin', requestId: 'pick-bad-wid', members: [{ ...descriptor, windowInstanceId: 'not-a-wid' }] })).toThrow('windowInstanceId is invalid');
+    expect(() => dispatch({ type: 'papers:project:window-pick-begin', requestId: 'pick-extra-key', members: [{ ...descriptor, extra: true }] })).toThrow('descriptor contains unknown fields');
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
   it('021: window-pick-stage and window-pick-commit forward empty payloads and reject malformed shapes', async () => {
     await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));

@@ -45,7 +45,10 @@ function parseBoundedString(raw: unknown): string {
 
 function parseMemberDescriptor(raw: unknown): PersistedWindowMemberDescriptor {
   if (!isPlainObject(raw)) throw new Error('member descriptor must be an object');
-  if (!exactKeys(raw, ['version', 'title', 'executableFingerprint'])) {
+  const hasWindowInstanceId = Object.prototype.hasOwnProperty.call(raw, 'windowInstanceId');
+  if (!exactKeys(raw, hasWindowInstanceId
+    ? ['version', 'title', 'executableFingerprint', 'windowInstanceId']
+    : ['version', 'title', 'executableFingerprint'])) {
     throw new Error('member descriptor contains unknown fields');
   }
   if (raw['version'] !== 1) throw new Error('unsupported member descriptor version');
@@ -54,7 +57,12 @@ function parseMemberDescriptor(raw: unknown): PersistedWindowMemberDescriptor {
   if (!/^[a-f0-9]{64}$/i.test(executableFingerprint)) {
     throw new Error('member descriptor.executableFingerprint is invalid');
   }
-  return { version: 1, title, executableFingerprint };
+  if (hasWindowInstanceId && (typeof raw['windowInstanceId'] !== 'string' || !/^W[0-9a-f]{16}$/i.test(raw['windowInstanceId']))) {
+    throw new Error('member descriptor.windowInstanceId is invalid');
+  }
+  return hasWindowInstanceId
+    ? { version: 1, title, executableFingerprint, windowInstanceId: raw['windowInstanceId'] as string }
+    : { version: 1, title, executableFingerprint };
 }
 
 export function registerWindowPickIpc({

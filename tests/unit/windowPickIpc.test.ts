@@ -23,7 +23,9 @@ function fakeSession(): WindowPickSession & { calls: unknown[]; results: Array<(
 
 function fakeIpcMain() {
   const handlers = new Map<string, (event: unknown, raw: unknown) => Promise<unknown>>();
+  const sent: unknown[] = [];
   return {
+    sent,
     ipcMain: {
       handle(channel: string, fn: (event: never, raw: unknown) => Promise<unknown>) {
         handlers.set(channel, fn as (event: unknown, raw: unknown) => Promise<unknown>);
@@ -32,7 +34,7 @@ function fakeIpcMain() {
     invoke(channel: string, senderId: number, raw: unknown) {
       const handler = handlers.get(channel);
       if (!handler) throw new Error(`no handler for ${channel}`);
-      return handler({ sender: { id: senderId, isDestroyed: () => false, send: vi.fn() } }, raw);
+      return handler({ sender: { id: senderId, isDestroyed: () => false, send: (topic: string, result: unknown) => sent.push({ topic, result }) } }, raw);
     },
   };
 }
@@ -41,7 +43,7 @@ const DESCRIPTOR = { version: 1, title: 'Window A', executableFingerprint: 'a'.r
 
 describe('window pick IPC', () => {
   it('begin validates exact keys, bounded members and strict descriptors', async () => {
-    const { ipcMain, invoke } = fakeIpcMain();
+    const { ipcMain, invoke, sent } = fakeIpcMain();
     const session = fakeSession();
     registerWindowPickIpc({ ipcMain, session, isSender: () => true });
 
@@ -51,9 +53,15 @@ describe('window pick IPC', () => {
     await expect(invoke('papers:window-pick:begin', 1, { members: many })).rejects.toThrow('exceeds the bound');
     await expect(invoke('papers:window-pick:begin', 1, { members: [{ version: 2, title: 'x', executableFingerprint: 'a'.repeat(64) }] })).rejects.toThrow('unsupported');
     await expect(invoke('papers:window-pick:begin', 1, { members: [{ version: 1, title: 'x', executableFingerprint: 'zz' }] })).rejects.toThrow('invalid');
+    await expect(invoke('papers:window-pick:begin', 1, { members: [{ ...DESCRIPTOR, windowInstanceId: 'bad' }] })).rejects.toThrow('windowInstanceId is invalid');
+    await expect(invoke('papers:window-pick:begin', 1, { members: [{ ...DESCRIPTOR, windowInstanceId: 'W0123456789abcdef', extra: 'reject' }] })).rejects.toThrow('unknown fields');
 
-    const ok = await invoke('papers:window-pick:begin', 1, { members: [DESCRIPTOR] });
+    const withWindowId = { ...DESCRIPTOR, windowInstanceId: 'W0123456789abcdef' };
+    const ok = await invoke('papers:window-pick:begin', 1, { members: [DESCRIPTOR, withWindowId] });
     expect(ok).toEqual({ outcome: 'started' });
+    expect((session.calls[0] as { memberDescriptors: unknown[] }).memberDescriptors).toEqual([DESCRIPTOR, withWindowId]);
+    session.results[0]!({ outcome: 'committed', adds: [], removes: [{ descriptor: withWindowId }] });
+    expect(sent).toEqual([{ topic: 'papers:window-pick:result', result: { outcome: 'committed', adds: [], removes: [{ descriptor: withWindowId }] } }]);
   });
 
   it('denies non-Backpack senders', async () => {
