@@ -48,6 +48,7 @@ import {
   type WindowObservation,
   type WindowState,
 } from './windowCapabilityTypes';
+import type { ForegroundBridge } from './foregroundBridge';
 
 export const WINDOW_CAPABILITY_MAX_CANDIDATES = 64;
 export const WINDOW_CAPABILITY_MAX_ICON_CACHE = 64;
@@ -238,6 +239,8 @@ export interface WindowCapabilityService {
   bindCandidate(candidateId: string): Promise<WindowBindResult>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  /** Bring a window to the front. Success means the foreground actually moved. */
+  activateCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   restoreCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   /** One helper request that reads the live state and minimizes or restores
    * accordingly, returning the direction taken plus the PRE-mutation
@@ -301,6 +304,10 @@ export interface WindowCapabilityServiceOptions {
   /** Explicitly admits one trusted Papers-owned top-level window (the main
    * Papers shell) while every picker/widget/preview surface stays excluded. */
   allowCurrentProcessWindow?: (observation: WindowObservation) => boolean;
+  /** The native foreground bridge. Bringing a window forward must come from the
+   * process that owns the click: Windows refuses a foreground switch from a
+   * background worker, and a refusal flashes the taskbar button instead. */
+  foregroundBridge?: () => ForegroundBridge | null;
   /** Private DI for tests; default is app.getFileIcon. */
   getFileIcon?: (path: string) => Promise<Electron.NativeImage>;
   /** Private DI for tests; default is the bounded cadence constant. */
@@ -1174,6 +1181,67 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return request;
   }
 
+  /** Bring a window to the front, and report success only when the foreground
+   * actually moved.
+   *
+   * The restore path used to be the only way to raise a window, and its raise
+   * counts as success when EITHER of its two calls worked - so Papers could be
+   * told the window came forward while Windows had in fact refused the
+   * foreground switch and flashed the taskbar button instead. That is what the
+   * creator saw: sometimes one click, sometimes four, and the taskbar glowing.
+   *
+   * The call is made from Papers' side of the world, on the click's own thread of
+   * control, rather than from the long-lived background window helper: a
+   * background worker is refused, and owning input hooks does not grant
+   * foreground rights. It currently executes inside a short-lived
+   * papers-fg-bridge.exe child, which is measured below - a process spawn on the
+   * click path is the next thing to remove if that number is large.
+   */
+  async function activateCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const token = tokenFor(capability);
+    if (!token) return { outcome: 'missing', error: 'binding is not issued' };
+    const observed = await observeCapability(capability);
+    if (observed.outcome !== 'success' || !observed.observation) return observed;
+    const handle = observed.observation.handle;
+    if (typeof handle !== 'number' || !Number.isSafeInteger(handle) || handle <= 0) {
+      return { outcome: 'missing', error: 'the window handle is unavailable' };
+    }
+    const bridge = options.foregroundBridge?.() ?? null;
+    if (!bridge) return { outcome: 'helper-unavailable', error: 'the foreground bridge is unavailable' };
+    let moved = false;
+    let detail = '';
+    const bridgeStartedAt = stamp();
+    try {
+      if (typeof bridge.setForegroundWindowDetailed === 'function') {
+        const attempt = await bridge.setForegroundWindowDetailed(handle);
+        moved = attempt.moved;
+        // Raised and foregrounded are different halves: a window can come to the
+        // top of the z-order while Windows keeps the foreground where it is, and
+        // that is what "sometimes it takes four clicks" looks like from outside.
+        detail = ', raised ' + (attempt.raised ? 1 : 0)
+          + ', set ' + (attempt.setForeground ? 1 : 0)
+          + ', fg ' + String(attempt.foregroundAfter ?? 'unknown');
+      } else {
+        moved = await bridge.setForegroundWindow(handle);
+      }
+    } catch {
+      moved = false;
+    }
+    const bridgeRoundTripMs = stamp() - bridgeStartedAt;
+    try {
+      geometryJournal.record({
+        kind: moved ? 'activate' : 'activate-refused',
+        title: observed.observation.title,
+        detail: 'handle ' + handle + ', bridge ' + bridgeRoundTripMs + 'ms' + detail,
+        outcome: moved ? 'success' : 'refused',
+      });
+    } catch {
+      /* diagnostics never fail the action they describe */
+    }
+    if (!moved) return { outcome: 'denied', error: 'Windows refused the foreground switch' };
+    return { outcome: 'success', observation: observed.observation };
+  }
   async function minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const token = tokenFor(capability);
@@ -1751,6 +1819,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     bindCandidate,
     observeCapability,
     minimizeCapability,
+    activateCapability,
     restoreCapability,
     toggleCapability,
     closeCapability,

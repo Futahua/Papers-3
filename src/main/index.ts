@@ -1512,6 +1512,11 @@ async function bootstrap(): Promise<void> {
     // shell by its fixed native title; same-process picker, widget, preview and
     // overlay utility windows retain empty/data titles and remain ineligible.
     allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
+    // Bringing a member's window forward is done by Papers itself, because
+    // Papers owns the click that asked for it. Windows refuses a foreground
+    // switch from a background worker, and a refusal flashes the taskbar button
+    // instead of raising the window.
+    foregroundBridge: () => foregroundBridge,
   });
   registerWindowCapabilityIpc({
     ipcMain,

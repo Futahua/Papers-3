@@ -70,6 +70,11 @@ export interface WindowObservation {
   title: string;
   processId: number | null;
   processPath: string | null;
+  /** The native handle, reported so the process that owns the click can take the
+   * foreground itself. Windows refuses a foreground switch from a background
+   * worker, and a refused switch flashes the taskbar button instead of raising
+   * the window. `undefined` when the helper did not report it. */
+  handle?: number;
   /** Artwork metadata for a packaged app inside an ApplicationFrameHost window. */
   iconProcessPath?: string;
   windowInstanceId?: string;
@@ -308,6 +313,14 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
   // turn "not corroborated" into "corroborated by nothing".
   const windowClass = raw['windowClass'];
   if (windowClass !== undefined && typeof windowClass !== 'string') return undefined;
+  // The native handle, reported so Papers can take the foreground itself. This
+  // parser DROPPED it, so activation saw no handle and returned before it ever
+  // reached the foreground bridge - the reason a right-click did nothing and the
+  // journal stayed empty. Optional, because an older helper does not report it;
+  // present but malformed is still malformed.
+  const handle = raw['handle'];
+  if (handle !== undefined
+    && !(typeof handle === 'number' && Number.isSafeInteger(handle) && handle > 0)) return undefined;
   const state = raw['state'];
   if (typeof state !== 'string' || !WINDOW_STATES.includes(state)) return undefined;
   const bounds = parseWindowBounds(raw['bounds']);
@@ -321,6 +334,7 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
     ...(windowInstanceId !== undefined ? { windowInstanceId } : {}),
     ...(processStartTicks !== undefined ? { processStartTicks } : {}),
     ...(windowClass !== undefined ? { windowClass } : {}),
+    ...(handle !== undefined ? { handle } : {}),
     state: state as WindowState,
     bounds,
   };

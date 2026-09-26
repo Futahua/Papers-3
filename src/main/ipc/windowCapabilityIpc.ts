@@ -265,7 +265,10 @@ export function registerWindowCapabilityIpc({
   // and acts on it, so no renderer round trip sits between the decision and the
   // mutation. Same opaque capability parsing as every other mutation.
   handle('papers:window-capability:toggle', parseRuntimeCapability, (capability) => service.toggleCapability(capability));
-  handle('papers:window-capability:restore', parseRuntimeCapability, (capability) => service.restoreCapability(capability));
+  // Bring a window to the front. Papers makes this call in its own process and
+  // reports success only when the foreground actually moved, so "did it come
+  // forward" is a fact rather than an assumption.
+  handle('papers:window-capability:activate', parseRuntimeCapability, (capability) => service.activateCapability(capability));  handle('papers:window-capability:restore', parseRuntimeCapability, (capability) => service.restoreCapability(capability));
   handle('papers:window-capability:close', parseRuntimeCapability, (capability) => service.closeCapability(capability));
   handle('papers:window-capability:end-process', parseRuntimeCapability, (capability) => service.endProcessCapability(capability));
   handle('papers:window-capability:peek-begin', parseRuntimeCapability, async (capability, event) => {

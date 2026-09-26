@@ -25,6 +25,16 @@ import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+/** One activation attempt, as the native bridge reported it. */
+export interface ForegroundAttempt {
+  handle: number;
+  raised: boolean;
+  setForeground: boolean;
+  foregroundBefore: string | null;
+  foregroundAfter: string | null;
+  moved: boolean;
+}
+
 export interface ForegroundBridge {
   /** The window that currently has the foreground, or null. Returns null for
    * the shell/desktop, which is not an application to hand focus back to. */
@@ -34,6 +44,8 @@ export interface ForegroundBridge {
   /** Try to put the foreground back on that exact window. Resolves true only
    * when the foreground genuinely moved. */
   setForegroundWindow(handle: number): Promise<boolean>;
+  /** Optional, so an older bridge object stays valid. */
+  setForegroundWindowDetailed?(handle: number): Promise<ForegroundAttempt>;
   /** Whether that exact window currently owns the foreground. Lets the toggle
    * answer "is the window the creator is looking at a Papers window" instead of
    * guessing from visibility. */
@@ -223,6 +235,42 @@ export function createForegroundBridge(options: ForegroundBridgeOptions): Foregr
       // became the target. A `set=1` alone is the false success this whole
       // module exists to avoid.
       return /(?:^|\s)moved=1(?:\s|$)/.test(out);
+    },
+
+    /** The same call, with everything the bridge actually reported.
+     *
+     * `raised` and `set` are the two halves that used to collapse into one
+     * boolean: a window can be raised to the top of the z-order while Windows
+     * refuses to hand it the foreground, which is exactly what "sometimes it
+     * works and sometimes it takes four clicks" looks like from outside. The
+     * before/after foreground handles make a refusal attributable.
+     */
+    async setForegroundWindowDetailed(handle: number): Promise<ForegroundAttempt> {
+      const attempt: ForegroundAttempt = {
+        handle,
+        raised: false,
+        setForeground: false,
+        foregroundBefore: null,
+        foregroundAfter: null,
+        moved: false,
+      };
+      if (!Number.isSafeInteger(handle) || handle <= 0) return attempt;
+      const out = await run(['set', String(handle)]);
+      if (!out) return attempt;
+      const flag = (name: string): boolean => new RegExp(`(?:^|\\s)${name}=1(?:\\s|$)`).test(out);
+      const field = (name: string): string | null => {
+        const found = new RegExp(`(?:^|\\s)${name}=(\\d+)`).exec(out);
+        return found ? found[1]! : null;
+      };
+      attempt.raised = flag('raised');
+      attempt.setForeground = flag('set');
+      // The bridge prints the foreground it ENDED with as `fg`; the foreground
+      // it started from is what the caller last knew. `before` is accepted too,
+      // because an older bridge printed that name.
+      attempt.foregroundAfter = field('fg') ?? field('after');
+      attempt.foregroundBefore = field('before');
+      attempt.moved = flag('moved') || flag('already');
+      return attempt;
     },
 
     async isForegroundWindow(handle: number): Promise<boolean> {
