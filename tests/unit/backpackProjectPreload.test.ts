@@ -11,6 +11,13 @@ vi.mock('electron', () => ({
   webUtils: { getPathForFile: vi.fn() },
 }));
 
+async function loadPreloadForTest(): Promise<void> {
+  await import('../../src/preload/backpackProject');
+  // Exclude the preload's one-way lifecycle subscription from each test's
+  // per-request invoke assertions; subscription has its own regression below.
+  mocks.invoke.mockClear();
+}
+
 describe('Backpack project protocol alignment', () => {
   let messageHandlers: Array<(event: { source: unknown; origin: string; data: unknown }) => void>;
   let posts: unknown[];
@@ -35,8 +42,23 @@ describe('Backpack project protocol alignment', () => {
     vi.resetModules();
   });
 
-  it('0A: a refused checked save travels as a delivered result, not a failed request', async () => {
+  it('subscribes to the native window lifecycle stream when the preload starts', async () => {
     await import('../../src/preload/backpackProject');
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:subscribe-lifecycle', {});
+  });
+
+  it('forwards the exact-icon candidate-list option through the project bridge', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'success', candidates: [] });
+    dispatch({ type: 'papers:project:window-candidates', requestId: 'candidate-list-1', includeNativeIcons: true });
+    await Promise.resolve();
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:list', { includeNativeIcons: true });
+    expect(() => dispatch({ type: 'papers:project:window-candidates', requestId: 'candidate-list-bad', includeNativeIcons: 'yes' })).toThrow('invalid fields');
+  });
+
+  it('0A: a refused checked save travels as a delivered result, not a failed request', async () => {
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
 
     // The host refuses the save: its own `ok: false` must not overwrite the
@@ -66,7 +88,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('0A: an accepted checked save arrives under the same wrapper', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     mocks.invoke.mockResolvedValue({ ok: true, revision: 'c'.repeat(64) });
     dispatch({
@@ -86,7 +108,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('derives workspace identity and resolves one-way ACK requests immediately', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     mocks.invoke.mockResolvedValue({ ok: true });
     dispatch({
@@ -107,7 +129,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('attaches stored detached token and transfer to argument-free reattach/focus', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token')?.[1];
     expect(tokenHandler).toBeTypeOf('function');
@@ -146,7 +168,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('018V2: page-ready before token latches and sends one hidden-token READY', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token')?.[1];
     dispatch({ type: 'papers:project:detach-ready', requestId: 'ready-first' });
@@ -157,7 +179,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('019B: compact widget page/token readiness converges once without exposing its token', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
     expect(tokenHandler).toBeTypeOf('function');
@@ -175,7 +197,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('routes only bounded widget drag coordinates with the hidden widget token', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
     tokenHandler({}, { token: 'widget-token' });
@@ -189,7 +211,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('routes one bounded widget Quick Run character with its hidden token and rejects malformed records', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
     tokenHandler({}, { token: 'widget-token' });
@@ -205,7 +227,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('routes renderer input receipts and widget seal acknowledgements through authorized IPC', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
     tokenHandler({}, { token: 'widget-token' });
@@ -219,7 +241,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('019C: workspace widget-open/focus/close attach projectId and keep keys bounded', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     mocks.invoke.mockResolvedValue({ ok: true, reused: false });
     dispatch({ type: 'papers:project:widget-open', requestId: 'wo-1', layoutKey: 'layout-a' });
@@ -236,7 +258,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('019C: malformed widget open/focus and an over-bounded key are rejected', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     dispatch({ type: 'papers:project:widget-open', requestId: 'wo-bad', layoutKey: 'x'.repeat(513) });
     dispatch({ type: 'papers:project:widget-open', requestId: 'wo-bad2' });
@@ -250,7 +272,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('019C: widget self-close stays token-attached with no page-visible token', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
     mocks.invoke.mockResolvedValue({ ok: true });
@@ -266,7 +288,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('019G: window-thumbnail-capability forwards exact keys and rejects malformed shapes', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     mocks.invoke.mockResolvedValue({ outcome: 'success', imageUrl: 'data:image/png;base64,x', width: 240, height: 135 });
     const capability = { version: 1, bindingId: 'wl-binding-1' };
@@ -301,8 +323,23 @@ describe('Backpack project protocol alignment', () => {
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
   });
 
+  it('Direct Pick begin preserves one valid windowInstanceId and rejects malformed or unknown descriptor keys', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'started' });
+    const descriptor = { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W0123456789abcdef' };
+    dispatch({ type: 'papers:project:window-pick-begin', requestId: 'pick-wid', members: [descriptor] });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-pick:begin', { members: [descriptor] });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'pick-wid', ok: true }));
+
+    expect(() => dispatch({ type: 'papers:project:window-pick-begin', requestId: 'pick-bad-wid', members: [{ ...descriptor, windowInstanceId: 'not-a-wid' }] })).toThrow('windowInstanceId is invalid');
+    expect(() => dispatch({ type: 'papers:project:window-pick-begin', requestId: 'pick-extra-key', members: [{ ...descriptor, extra: true }] })).toThrow('descriptor contains unknown fields');
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
   it('021: window-pick-stage and window-pick-commit forward empty payloads and reject malformed shapes', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     mocks.invoke.mockResolvedValue({ outcome: 'staged' });
     dispatch({ type: 'papers:project:window-pick-stage', requestId: 'stage-1' });
@@ -323,7 +360,7 @@ describe('Backpack project protocol alignment', () => {
   });
 
   it('024: widget-report-size forwards the latched token and bounded size, and rejects malformed reports', async () => {
-    await import('../../src/preload/backpackProject');
+    await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
     mocks.invoke.mockResolvedValue({ ok: true });

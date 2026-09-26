@@ -6,7 +6,7 @@ interface ProjectMessage {
    * credential. */
   destination?: unknown; method?: string;
   headers?: Record<string, string>;
-  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; captureId?: unknown; generation?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; }
+  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; captureId?: unknown; generation?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; windowInstanceId?: unknown; instanceId?: unknown; }
 
 const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
@@ -64,11 +64,17 @@ function parseBounds(raw: unknown): Record<string, unknown> {
 
 function parseDescriptor(raw: unknown): Record<string, unknown> {
   if (!isPlainObject(raw)) throw new Error('descriptor must be an object');
-  if (!exactKeys(raw, ['version', 'title', 'executableFingerprint'])) throw new Error('descriptor contains unknown fields');
+  const hasWindowInstanceId = Object.prototype.hasOwnProperty.call(raw, 'windowInstanceId');
+  if (!exactKeys(raw, hasWindowInstanceId
+    ? ['version', 'title', 'executableFingerprint', 'windowInstanceId']
+    : ['version', 'title', 'executableFingerprint'])) throw new Error('descriptor contains unknown fields');
   if (raw['version'] !== 1) throw new Error('unsupported descriptor version');
   parseBoundedString(raw['title']);
   const fingerprint = parseBoundedString(raw['executableFingerprint']);
   if (!/^[a-f0-9]{64}$/i.test(fingerprint)) throw new Error('descriptor.executableFingerprint is invalid');
+  if (hasWindowInstanceId && (typeof raw['windowInstanceId'] !== 'string' || !/^W[0-9a-f]{16}$/i.test(raw['windowInstanceId']))) {
+    throw new Error('descriptor.windowInstanceId is invalid');
+  }
   return raw;
 }
 
@@ -332,8 +338,25 @@ window.addEventListener('message', (event) => {
   }
   if (request.type === 'papers:project:resolve-web-link-icon' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:resolve-web-link-icon', request.url, ...workspaceOriginArgs);
   if (request.type === 'papers:project:window-candidates') {
-    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window candidate request contains unknown fields');
-    task = ipcRenderer.invoke('papers:window-capability:list');
+    const candidateRequest = request as Record<string, unknown>;
+    if (Object.keys(candidateRequest).some((key) => !['type', 'requestId', 'includeNativeIcons'].includes(key))
+      || (candidateRequest['includeNativeIcons'] !== undefined && typeof candidateRequest['includeNativeIcons'] !== 'boolean')) {
+      throw new Error('window candidate request contains invalid fields');
+    }
+    task = ipcRenderer.invoke('papers:window-capability:list', {
+      includeNativeIcons: candidateRequest['includeNativeIcons'] !== false,
+    });
+  }
+  if (request.type === 'papers:project:window-lifecycle-snapshot') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window lifecycle snapshot request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:lifecycle-snapshot', {});
+  }
+  if (request.type === 'papers:project:window-resolve-instance') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'instanceId'])
+      || typeof request.instanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(request.instanceId)) {
+      throw new Error('window instance request is malformed');
+    }
+    task = ipcRenderer.invoke('papers:window-capability:resolve-instance', { windowInstanceId: request.instanceId });
   }
   if (request.type === 'papers:project:window-bind-candidate') {
     const candidateId = parseBoundedString(request.candidateId);
@@ -358,6 +381,11 @@ window.addEventListener('message', (event) => {
   if (request.type === 'papers:project:window-close-capability') {
     const capability = parseCapability(request.capability);
     task = ipcRenderer.invoke('papers:window-capability:close', capability);
+  }
+  if (request.type === 'papers:project:window-end-process-capability') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability'])) throw new Error('window end-process request contains unknown fields');
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:end-process', capability);
   }
   if (request.type === 'papers:project:window-peek-begin') {
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability'])) throw new Error('window peek begin request contains unknown fields');
@@ -653,6 +681,14 @@ window.addEventListener('message', (event) => {
 ipcRenderer.on('papers:window-pick:result', (_event, result) => {
   window.postMessage({ type: 'papers:project:window-pick-result', result }, window.location.origin);
 });
+
+ipcRenderer.on('papers:window-lifecycle:event', (_event, payload) => {
+  window.postMessage({ type: 'papers:project:window-lifecycle-event', event: payload }, window.location.origin);
+});
+ipcRenderer.on('papers:window-lifecycle:baseline', (_event, payload) => {
+  window.postMessage({ type: 'papers:project:window-lifecycle-baseline', baseline: payload }, window.location.origin);
+});
+void Promise.resolve(ipcRenderer.invoke('papers:window-capability:subscribe-lifecycle', {})).catch(() => undefined);
 
 // The same preload serves the workspace iframe and the top-level detached
 // page. Tokens stay here; the project page sees only bounded lifecycle events.

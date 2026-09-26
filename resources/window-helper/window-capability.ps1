@@ -72,6 +72,7 @@ namespace WH
     public static class Win32
     {
         [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+        [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc cb, IntPtr lParam);
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int max);
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
@@ -101,6 +102,7 @@ namespace WH
         [DllImport("user32.dll", EntryPoint = "GetClassLongPtrW")] public static extern IntPtr GetClassLongPtr(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll", EntryPoint = "GetClassLongW")] public static extern int GetClassLong(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeoutMs, out IntPtr result);
         [DllImport("user32.dll")] public static extern bool DrawIconEx(IntPtr hdc, int xLeft, int yTop, IntPtr hIcon, int cx, int cy, int istepIfAniCur, IntPtr hbrFlickerFreeDraw, uint diFlags);
         [DllImport("dwmapi.dll")] public static extern int DwmRegisterThumbnail(IntPtr hwndDestination, IntPtr hwndSource, out IntPtr phThumbnailId);
         [DllImport("dwmapi.dll")] public static extern int DwmUpdateThumbnailProperties(IntPtr hThumbnailId, ref DWM_THUMBNAIL_PROPERTIES ptnProperties);
@@ -126,8 +128,12 @@ namespace WH
         public const uint GA_ROOT = 2;
         public const int GWL_EXSTYLE = -20;
         public const int GCLP_HICON = -14;
+        public const int GCLP_HICONSM = -34;
         public const uint WM_GETICON = 0x007F;
+        public const uint ICON_SMALL = 0;
         public const uint ICON_BIG = 1;
+        public const uint ICON_SMALL2 = 2;
+        public const uint SMTO_ABORTIFHUNG = 0x0002;
         public const uint DI_NORMAL = 0x0003;
         public const long WS_EX_TOOLWINDOW = 0x00000080;
         public const long WS_EX_NOACTIVATE = 0x08000000;
@@ -233,14 +239,23 @@ $script:WhOps = @{
   }
   IsIconic = { param([IntPtr]$id) [WH.Win32]::IsIconic($id) }
   PrintWindow = { param([IntPtr]$id, [IntPtr]$hdc) [WH.Win32]::PrintWindow($id, $hdc, [WH.Win32]::PW_RENDERFULLCONTENT) }
-  # 024: window/class program icon (WM_GETICON ICON_BIG, then the class icon)
+  # Window and class icons can be published at either size. Many modern app
+  # windows only answer ICON_SMALL2 or provide GCLP_HICONSM.
   # used as a REAL image fallback for minimized or hardware-accelerated (acad)
   # windows that PrintWindow cannot paint. Same identity as the taskbar image.
   ResolveWindowIcon = { param([IntPtr]$id)
-    $h = [WH.Win32]::SendMessage($id, [WH.Win32]::WM_GETICON, [IntPtr]([WH.Win32]::ICON_BIG), [IntPtr]::Zero)
-    if ($h -eq [IntPtr]::Zero) {
-      if ([IntPtr]::Size -eq 8) { $h = [WH.Win32]::GetClassLongPtr($id, [WH.Win32]::GCLP_HICON) }
-      else { $h = [IntPtr]([WH.Win32]::GetClassLong($id, [WH.Win32]::GCLP_HICON)) }
+    $h = [IntPtr]::Zero
+    foreach ($kind in @([WH.Win32]::ICON_BIG, [WH.Win32]::ICON_SMALL2, [WH.Win32]::ICON_SMALL)) {
+      $reply = [IntPtr]::Zero
+      $sent = [WH.Win32]::SendMessageTimeout($id, [WH.Win32]::WM_GETICON,
+        [IntPtr]$kind, [IntPtr]::Zero,
+        [WH.Win32]::SMTO_ABORTIFHUNG, 100, [ref]$reply)
+      if ($sent -ne [IntPtr]::Zero -and $reply -ne [IntPtr]::Zero) { return $reply }
+    }
+    foreach ($index in @([WH.Win32]::GCLP_HICON, [WH.Win32]::GCLP_HICONSM)) {
+      if ([IntPtr]::Size -eq 8) { $h = [WH.Win32]::GetClassLongPtr($id, $index) }
+      else { $h = [IntPtr]([WH.Win32]::GetClassLong($id, $index)) }
+      if ($h -ne [IntPtr]::Zero) { return $h }
     }
     return $h
   }
@@ -501,13 +516,71 @@ function Get-WhWindowObservation([IntPtr]$hWnd) {
   if ([WH.Win32]::IsZoomed($hWnd)) { $state = 'maximized' }
   elseif ([WH.Win32]::IsIconic($hWnd)) { $state = 'minimized' }
   $processPath = $null
+  $processStartTicks = $null
   try {
-    $processPath = (Get-Process -Id ([int]$pidValue) -ErrorAction SilentlyContinue).Path
+    $process = Get-Process -Id ([int]$pidValue) -ErrorAction Stop
+    $processPath = $process.Path
+    $processStartTicks = [string]$process.StartTime.ToUniversalTime().Ticks
   } catch { }
+  # UWP frame windows belong to ApplicationFrameHost, whose executable icon
+  # is generic. The exact frame's CoreWindow child belongs to the app itself.
+  # This path is artwork metadata only; operation authority stays on the
+  # frame HWND/PID/start-time above.
+  $iconProcessPath = $null
+  if ($className.ToString() -eq 'ApplicationFrameWindow' -and
+      $processPath -match '(?i)[\\/]ApplicationFrameHost\.exe$') {
+    $appPids = [System.Collections.Generic.HashSet[uint32]]::new()
+    $childCallback = [WH.EnumWindowsProc]{
+      param([IntPtr]$childHwnd, [IntPtr]$ignored)
+      $childClass = New-Object System.Text.StringBuilder 256
+      [void][WH.Win32]::GetClassName($childHwnd, $childClass, $childClass.Capacity)
+      if ($childClass.ToString() -eq 'Windows.UI.Core.CoreWindow') {
+        $childPid = [uint32]0
+        [void][WH.Win32]::GetWindowThreadProcessId($childHwnd, [ref]$childPid)
+        if ($childPid -gt 0 -and $childPid -ne $pidValue) { [void]$appPids.Add($childPid) }
+      }
+      return $true
+    }
+    [void][WH.Win32]::EnumChildWindows($hWnd, $childCallback, [IntPtr]::Zero)
+    if ($appPids.Count -eq 0 -and $title.Length -gt 0) {
+      # Recent Windows builds expose the app CoreWindow as a separate
+      # top-level peer, not a child of ApplicationFrameWindow. Correlate only
+      # a CoreWindow whose title identifies this exact frame's app. Artwork
+      # is the sole use of this path; the frame remains the action target.
+      $frameTitle = $title.ToString()
+      $peerCallback = [WH.EnumWindowsProc]{
+        param([IntPtr]$peerHwnd, [IntPtr]$ignored)
+        $peerClass = New-Object System.Text.StringBuilder 256
+        [void][WH.Win32]::GetClassName($peerHwnd, $peerClass, $peerClass.Capacity)
+        if ($peerClass.ToString() -ne 'Windows.UI.Core.CoreWindow') { return $true }
+        $peerTitle = New-Object System.Text.StringBuilder 512
+        [void][WH.Win32]::GetWindowText($peerHwnd, $peerTitle, $peerTitle.Capacity)
+        $name = $peerTitle.ToString()
+        $suffixMatches = $frameTitle.EndsWith($name, [System.StringComparison]::OrdinalIgnoreCase)
+        $prefix = if ($suffixMatches) { $frameTitle.Substring(0, $frameTitle.Length - $name.Length).TrimEnd() } else { '' }
+        # UWP frames can insert a directional mark before their title dash.
+        $appSuffix = $suffixMatches -and $prefix.Length -gt 0 -and $prefix.EndsWith('-')
+        if ($name.Length -eq 0 -or ($frameTitle -ne $name -and -not $appSuffix)) { return $true }
+        $peerPid = [uint32]0
+        [void][WH.Win32]::GetWindowThreadProcessId($peerHwnd, [ref]$peerPid)
+        if ($peerPid -gt 0 -and $peerPid -ne $pidValue) { [void]$appPids.Add($peerPid) }
+        return $true
+      }
+      [void][WH.Win32]::EnumWindows($peerCallback, [IntPtr]::Zero)
+    }
+    if ($appPids.Count -eq 1) {
+      try {
+        $appPath = (Get-Process -Id ([int]@($appPids)[0]) -ErrorAction Stop).Path
+        if ($appPath -match '(?i)[\\/]WindowsApps[\\/]') { $iconProcessPath = $appPath }
+      } catch { }
+    }
+  }
   return [pscustomobject]@{
     RuntimeId = $hWnd
     ProcessId = [int]$pidValue
     ProcessPath = $processPath
+    IconProcessPath = $iconProcessPath
+    ProcessStartTicks = $processStartTicks
     Title = $title.ToString()
     # 018: the window CLASS is identity-bearing corroboration. A title changes
     # constantly; a class does not. It is NOT a discriminator on its own - class
@@ -764,6 +837,7 @@ function Test-WhTaskWorthy {
   if ($className -eq 'Progman' -or $className -eq 'WorkerW') { return $false }
   $processName = [string](& $script:WhOps['ProcessName'] $id)
   if ($processName -eq 'TextInputHost') { return $false }
+  if ([int]$Observation.ProcessId -eq [int]$PID) { return $false }
   # Same-process Papers surfaces are deliberately left in LIST enumeration so
   # the trusted host can admit its one real shell by current native identity.
   # The host rejects every other same-process surface. Direct hover still

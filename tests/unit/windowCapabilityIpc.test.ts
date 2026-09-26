@@ -28,12 +28,16 @@ function pngWithSize(width: number, height: number): string {
 function fakeService(): WindowCapabilityService {
   return {
     listCandidates: async () => ({ outcome: 'success', candidates: [] }),
+    windowLifecycleSnapshot: async () => ({ snapshot: { complete: true, trackerSessionId: 'test-session', sequence: 0, windows: [] } }),
+    resolveWindowInstance: async () => ({ outcome: 'missing', error: 'gone' }),
+    watchWindowLifecycle: () => () => undefined,
     bindCandidate: async () => ({ outcome: 'missing', error: 'not listed' }),
     observeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     minimizeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     restoreCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     toggleCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     closeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    endProcessCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     beginPeekCapability: async () => ({ outcome: 'success' }),
     endPeek: async () => ({ outcome: 'success' }),
     applyCapability: async () => ({ outcome: 'missing', error: 'gone' }),
@@ -74,12 +78,16 @@ describe('windowCapabilityIpc', () => {
     registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service: fakeService(), isSender: () => true });
     expect(ipc.channels()).toEqual([
       'papers:window-capability:list',
+      'papers:window-capability:lifecycle-snapshot',
+      'papers:window-capability:resolve-instance',
+      'papers:window-capability:subscribe-lifecycle',
       'papers:window-capability:bind',
       'papers:window-capability:observe',
       'papers:window-capability:minimize',
       'papers:window-capability:toggle',
       'papers:window-capability:restore',
       'papers:window-capability:close',
+      'papers:window-capability:end-process',
       'papers:window-capability:peek-begin',
       'papers:window-capability:peek-end',
       'papers:window-capability:apply',
@@ -140,6 +148,35 @@ describe('windowCapabilityIpc', () => {
     ]);
   });
 
+  it('keeps DWM release armed after a failed begin/end so a later cleanup can retry', async () => {
+    const ipc = fakeIpcMain();
+    const calls: string[] = [];
+    const service = fakeService();
+    service.beginLivePreviewCapability = async () => { calls.push('begin'); return { outcome: 'timeout' }; };
+    let endings = 0;
+    service.endLivePreview = async () => {
+      calls.push('end');
+      endings += 1;
+      return endings === 1 ? { outcome: 'helper-unavailable' } : { outcome: 'success' };
+    };
+    registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service, isSender: () => true, resolveCallerHwnd: () => '424242' });
+    await expect(ipc.invoke('papers:window-capability:peek-begin', 42, capability)).resolves.toEqual({ outcome: 'timeout' });
+    await expect(ipc.invoke('papers:window-capability:peek-end', 42, {})).resolves.toEqual({ outcome: 'helper-unavailable' });
+    await expect(ipc.invoke('papers:window-capability:peek-end', 42, {})).resolves.toEqual({ outcome: 'success' });
+    expect(calls).toEqual(['begin', 'end', 'end']);
+  });
+
+  it('forwards exact-icon candidate list options and rejects malformed flags', async () => {
+    const ipc = fakeIpcMain();
+    const service = fakeService();
+    let options: unknown;
+    service.listCandidates = async (value) => { options = value; return { outcome: 'success', candidates: [] }; };
+    registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service, isSender: () => true });
+    await ipc.invoke('papers:window-capability:list', 42, { includeNativeIcons: true });
+    expect(options).toEqual({ includeNativeIcons: true });
+    await expect(ipc.invoke('papers:window-capability:list', 42, { includeNativeIcons: 'yes' })).rejects.toThrow('boolean');
+  });
+
   it('enforces the Backpack project sender gate on every channel', async () => {
     const ipc = fakeIpcMain();
     let calls = 0;
@@ -190,7 +227,7 @@ describe('windowCapabilityIpc', () => {
     const service = new Proxy(fakeService(), {
       get(target, property) {
         const name = String(property);
-        if (['listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'closeCapability', 'applyCapability', 'thumbnailCapability', 'resolvePersisted'].includes(name)) {
+        if (['listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability', 'restoreCapability', 'closeCapability', 'endProcessCapability', 'applyCapability', 'thumbnailCapability', 'resolvePersisted'].includes(name)) {
           return async (...args: unknown[]) => {
             calls.push(name);
             if (name === 'listCandidates') return { outcome: 'success', candidates: [{ id: 'c1', title: 'W', applicationLabel: 'W', icon: null, state: 'normal' }] };
@@ -221,6 +258,8 @@ describe('windowCapabilityIpc', () => {
     expect(restored.outcome).toBe('success');
     const closed = await ipc.invoke('papers:window-capability:close', 42, capability) as { outcome: string };
     expect(closed.outcome).toBe('success');
+    const ended = await ipc.invoke('papers:window-capability:end-process', 42, capability) as { outcome: string };
+    expect(ended.outcome).toBe('success');
     const applied = await ipc.invoke('papers:window-capability:apply', 42, { capability, bounds: { x: 1, y: 2, width: 300, height: 200 } }) as { outcome: string };
     expect(applied.outcome).toBe('success');
     const resolved = await ipc.invoke('papers:window-capability:resolve', 42, { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64) });
@@ -236,7 +275,7 @@ describe('windowCapabilityIpc', () => {
     expect(thumb.height).toBe(135);
     expect(calls).toEqual([
       'listCandidates', 'bindCandidate', 'observeCapability', 'minimizeCapability',
-      'restoreCapability', 'closeCapability', 'applyCapability', 'resolvePersisted', 'thumbnailCapability',
+      'restoreCapability', 'closeCapability', 'endProcessCapability', 'applyCapability', 'resolvePersisted', 'thumbnailCapability',
     ]);
   });
 

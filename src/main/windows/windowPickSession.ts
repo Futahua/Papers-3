@@ -39,6 +39,7 @@ import type {
   WindowHoverResult,
   WindowRuntimeCapability,
 } from './windowCapabilityService';
+import { canFallbackLegacyWindowIdentity, compareWindowMemberIdentity } from './windowCapabilityService';
 import type { WindowBounds } from './windowCapabilityTypes';
 
 export const WINDOW_PICK_MAX_MEMBERS = 32;
@@ -234,6 +235,7 @@ export interface WindowPickSessionDependencies {
 export interface PickService {
   hoverAt(x: number, y: number): Promise<WindowHoverResult>;
   pickAt(x: number, y: number, candidateId: string): Promise<WindowBindResult & { candidate?: WindowCandidate }>;
+  bindCandidate(candidateId: string): Promise<WindowBindResult>;
   resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<
     | { outcome: 'success'; capability: WindowRuntimeCapability; descriptor: PersistedWindowMemberDescriptor }
     | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string }
@@ -290,6 +292,7 @@ export function createWindowPickSession({
     candidate: WindowCandidate;
     bounds: WindowBounds;
     descriptor: PersistedWindowMemberDescriptor;
+    memberDescriptor: PersistedWindowMemberDescriptor | null;
     kind: 'add' | 'remove';
   } | null = null;
   // Staged multi-toggle (019B): blue staged adds and red staged removes
@@ -308,7 +311,10 @@ export function createWindowPickSession({
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
   function descriptorKey(descriptor: PersistedWindowMemberDescriptor): string {
-    return `${descriptor.executableFingerprint}|${descriptor.title}`;
+    if (descriptor.windowInstanceId && /^W[0-9a-f]{16}$/i.test(descriptor.windowInstanceId)) {
+      return `wid:${descriptor.windowInstanceId.toLowerCase()}`;
+    }
+    return `legacy:${descriptor.executableFingerprint ?? ''}|${descriptor.title}`;
   }
 
   function endSession(): void {
@@ -344,11 +350,18 @@ export function createWindowPickSession({
     if (callback) callback(result);
   }
 
-  function isMemberOfPickingLayout(descriptor: PersistedWindowMemberDescriptor | null): boolean {
-    if (!descriptor) return false;
-    return memberDescriptors.some((member) =>
-      member.title === descriptor.title
-      && member.executableFingerprint === descriptor.executableFingerprint);
+  function memberOfPickingLayout(descriptor: PersistedWindowMemberDescriptor):
+    | { outcome: 'member'; descriptor: PersistedWindowMemberDescriptor }
+    | { outcome: 'not-member' }
+    | { outcome: 'ambiguous' } {
+    const same: PersistedWindowMemberDescriptor[] = [];
+    for (const member of memberDescriptors) {
+      const relation = compareWindowMemberIdentity(member, descriptor);
+      if (relation === 'ambiguous' && !canFallbackLegacyWindowIdentity(member, descriptor)) return { outcome: 'ambiguous' };
+      if (relation === 'same' || canFallbackLegacyWindowIdentity(member, descriptor)) same.push(member);
+    }
+    if (same.length > 1) return { outcome: 'ambiguous' };
+    return same.length === 1 ? { outcome: 'member', descriptor: same[0]! } : { outcome: 'not-member' };
   }
 
   /** 021: the thin overlay covers EXACTLY the union of the painted rects on
@@ -452,11 +465,18 @@ export function createWindowPickSession({
       if (newest && (newest.x !== point.x || newest.y !== point.y)) return;
       lastResolvedPoint = point;
       if (result.outcome === 'success' && result.candidate && result.bounds && result.descriptor) {
+        const membership = memberOfPickingLayout(result.descriptor);
+        if (membership.outcome === 'ambiguous') {
+          lastCandidate = null;
+          pushState();
+          return;
+        }
         lastCandidate = {
           candidate: result.candidate,
           bounds: result.bounds,
           descriptor: result.descriptor,
-          kind: isMemberOfPickingLayout(result.descriptor) ? 'remove' : 'add',
+          memberDescriptor: membership.outcome === 'member' ? membership.descriptor : null,
+          kind: membership.outcome === 'member' ? 'remove' : 'add',
         };
       } else {
         // Blank or transient failure: never strand an old highlight.
@@ -492,9 +512,10 @@ export function createWindowPickSession({
         });
       }
     } else {
-      const key = descriptorKey(lastCandidate.descriptor);
+      const descriptor = lastCandidate.memberDescriptor ?? lastCandidate.descriptor;
+      const key = descriptorKey(descriptor);
       if (stagedRemovals.has(key)) stagedRemovals.delete(key);
-      else stagedRemovals.set(key, lastCandidate.descriptor);
+      else stagedRemovals.set(key, descriptor);
     }
     pushState();
   }
@@ -507,20 +528,25 @@ export function createWindowPickSession({
     const adds: PickCommittedAdd[] = [];
     const removes: PickCommittedRemove[] = [];
     for (const staged of stagedAdds.values()) {
-      const cx = staged.bounds.x + Math.floor(staged.bounds.width / 2);
-      const cy = staged.bounds.y + Math.floor(staged.bounds.height / 2);
-      const bound = await service.pickAt(cx, cy, staged.candidate.id).catch(() => null);
+      // The window was chosen when staged. Requiring it to remain topmost at
+      // its old centre silently drops earlier picks after overlapping windows
+      // move or come forward. Bind the exact recorded candidate identity now.
+      const bound = await service.bindCandidate(staged.candidate.id).catch(() => null);
       if (!active) return;
       if (bound && bound.outcome === 'success' && bound.capability && bound.descriptor) {
         adds.push({
           descriptor: bound.descriptor,
           capability: bound.capability,
-          candidate: bound.candidate ?? staged.candidate,
+          candidate: staged.candidate,
         });
       }
       // A failed staged add is skipped (typed partial semantics).
     }
     for (const descriptor of stagedRemovals.values()) removes.push({ descriptor });
+    if (stagedAdds.size > 0 && adds.length === 0 && removes.length === 0) {
+      endWith({ outcome: 'failed', error: 'the selected windows could not be verified; try Direct Pick again' });
+      return;
+    }
     endWith({ outcome: 'committed', adds, removes });
   }
 
@@ -813,6 +839,7 @@ export function createPickSessionFromService(service: WindowCapabilityService): 
   const pickService: PickService = {
     hoverAt: (x, y) => service.hoverAt(x, y),
     pickAt: (x, y, candidateId) => service.pickAt(x, y, candidateId),
+    bindCandidate: (candidateId) => service.bindCandidate(candidateId),
     resolvePersisted: (descriptor) => service.resolvePersisted(descriptor),
     observeCapability: (capability) => service.observeCapability(capability).then((result) => {
       if (result.outcome === 'success' && result.observation) {
@@ -955,7 +982,7 @@ export function buildOverlayHtml(): string {
   });
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') window.pickOverlay.cancel();
-    else if (event.key === 'Enter') window.pickOverlay.commit();
+    else window.pickOverlay.commit();
   });
 </script>
 </body>

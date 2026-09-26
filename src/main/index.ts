@@ -89,6 +89,7 @@ import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './win
 import { createHoverInputBridge, resolveHoverInputBridgeSourcePath, type HoverInputBridge } from './windows/hoverInputBridge';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
+import { createWindowCandidatePeekController } from './windows/windowCandidatePeekController';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
 import { createWindowDetachSession, isAllowedDetachedNavigation, type WindowDetachSession } from './windows/windowDetachSession';
 import {
@@ -1905,7 +1906,12 @@ async function bootstrap(): Promise<void> {
     const surface = widgetRegistry.surface(senderId);
     if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND) return { ok: false, detail: 'the widget is no longer registered' };
     const existing = pendingHoverCaptures.get(senderId);
-    if (existing) return appendHoverCapture(senderId, text, nativeCapture);
+    if (existing && (existing.opening || commandSurfaceOverlay?.isOpen())) {
+      return appendHoverCapture(senderId, text, nativeCapture);
+    }
+    // A hidden launcher can outlive an interrupted close notification. Its
+    // old handoff must not absorb the first key of every later Quick Run.
+    if (existing) pendingHoverCaptures.delete(senderId);
     if (!commandSurfaceOverlay) return { ok: false, detail: 'the command surface is unavailable' };
     const pending: PendingHoverCapture = { projectId: surface.projectId, opening: true, buffer: [], wake: [] };
     // Publish the queue before the OPENING_READY round-trip. The focused widget
@@ -1969,6 +1975,7 @@ async function bootstrap(): Promise<void> {
     window: BrowserWindow;
     candidateIds: Set<string>;
     resolve: ((result: { action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }) => void) | null;
+    dismiss?: () => void;
   };
   const candidatePickerSessions = new Map<number, CandidatePickerSession>();
   const hideWidgetPreview = (senderId: number): void => {
@@ -1982,15 +1989,26 @@ async function bootstrap(): Promise<void> {
     session: widgetSession,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     windowIdForWorkspaceSender: windowIdForProjectSender,
-    setHoverPolicy: (senderId, enabled, blockedBindings) => hoverInputBridge?.setPolicy(senderId, enabled, blockedBindings),
+    setHoverPolicy: (senderId, enabled, blockedBindings) => {
+      if (!hoverInputBridge) return Promise.reject(new Error('native hover-input policy bridge is unavailable'));
+      return hoverInputBridge.setPolicy(senderId, enabled, blockedBindings);
+    },
     requestHoverQuickRun: (senderId, phase, text) => phase === 'open'
       ? beginHoverCapture(senderId, text, false)
       : appendHoverCapture(senderId, text, false),
     acknowledgeHoverQuickRunSeal: acknowledgeWidgetQuickRunSeal,
     hidePreview: hideWidgetPreview,
-    dismissCandidatePicker: (sender) => {
+    dismissCandidatePicker: async (sender) => {
       const active = candidatePickerSessions.get(sender.id);
-      if (active && !active.window.isDestroyed()) active.window.destroy();
+      if (!active || active.window.isDestroyed()) return;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('window chooser did not close')), 8000);
+        active.window.once('closed', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        active.dismiss?.();
+      });
     },
     showContextMenu: async (sender) => {
       const owner = BrowserWindow.fromWebContents(sender);
@@ -2058,7 +2076,8 @@ async function bootstrap(): Promise<void> {
  let all=JSON.parse(document.getElementById('data').textContent);const list=document.querySelector('.list'),search=document.querySelector('.search'),currentFilter=document.querySelector('.current-filter'),availableFilter=document.querySelector('.available-filter');
 function signal(path,id=''){window.candidatePicker.signal(path,id)}
  function appendDragSpace(){const d=document.createElement('div');d.className='drag-space';d.setAttribute('aria-hidden','true');list.append(d)}
- function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onpointerleave=()=>signal('peek-end');b.onclick=()=>{document.body.classList.add('busy');signal('select',c.id)};b.onauxclick=e=>{if(e.button!==1||!e.ctrlKey)return;e.preventDefault();document.body.classList.add('busy');signal('close',c.id)};list.append(b)}appendDragSpace()}
+ function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onclick=()=>{document.body.classList.add('busy');signal('select',c.id)};b.onmousedown=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};b.onmouseup=e=>{if(e.button!==1)return;e.preventDefault();e.stopPropagation();document.body.classList.add('busy');signal('close',c.id)};b.onauxclick=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};list.append(b)}appendDragSpace()}
+ list.onpointerleave=()=>signal('peek-end');
  window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
 const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=false;render()};const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;document.querySelector('.direct-pick').onclick=()=>{document.body.classList.add('busy');signal('direct-pick')};search.oninput=render;currentFilter.onchange=()=>setExclusiveFilter(currentFilter,availableFilter);availableFilter.onchange=()=>setExclusiveFilter(availableFilter,currentFilter);document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
@@ -2071,44 +2090,41 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         let peekGeneration = 0;
         let peekTimer: NodeJS.Timeout | null = null;
         let peekEndTimer: NodeJS.Timeout | null = null;
-        let candidatePeekUsesLivePreview = false;
         const nativeHandle = picker.getNativeWindowHandle();
         const callerHwnd = nativeHandle.length >= 8
           ? nativeHandle.readBigUInt64LE(0).toString()
           : String(nativeHandle.readUInt32LE(0));
-        const endCandidatePeek = (): void => {
+        const peekController = createWindowCandidatePeekController({
+          endLivePreview: windowCapabilityService.endLivePreview,
+          endPeek: () => windowCapabilityService.endPeek(),
+        });
+        let actionFinishing = false;
+        let pickerClosing = false;
+        let pickerReleaseConfirmed = false;
+        const endCandidatePeek = (): Promise<boolean> => {
           peekGeneration += 1;
           if (peekTimer) { clearTimeout(peekTimer); peekTimer = null; }
           if (peekEndTimer) { clearTimeout(peekEndTimer); peekEndTimer = null; }
-          if (candidatePeekUsesLivePreview && windowCapabilityService.endLivePreview) {
-            candidatePeekUsesLivePreview = false;
-            void windowCapabilityService.endLivePreview().catch(() => undefined);
-          } else {
-            void windowCapabilityService.endPeek().catch(() => undefined);
-          }
+          return peekController.end();
         };
         const beginCandidatePeek = (candidateId: string): void => {
+          // Keep the isolated eye-test usable if a compositor-specific DWM
+          // transition is flashing; the normal product path keeps Peek on.
+          if (process.env['PAPERS_DISABLE_LIST_PEEK'] === '1') return;
+          if (actionFinishing || pickerClosing) return;
           if (peekEndTimer) { clearTimeout(peekEndTimer); peekEndTimer = null; }
           if (peekTimer) clearTimeout(peekTimer);
           const generation = ++peekGeneration;
           peekTimer = setTimeout(() => {
             peekTimer = null;
-            void windowCapabilityService.bindCandidate(candidateId).then(async (bound) => {
-              if (generation !== peekGeneration || bound.outcome !== 'success') return;
-              const live = windowCapabilityService.beginLivePreviewCapability
-                ? await windowCapabilityService.beginLivePreviewCapability(bound.capability, callerHwnd).catch(() => null)
-                : null;
-              if (live?.outcome === 'success') candidatePeekUsesLivePreview = true;
+            peekController.begin(async () => {
+              const bound = await windowCapabilityService.bindCandidate(candidateId);
+              if (generation !== peekGeneration || bound.outcome !== 'success') return { outcome: 'missing' };
               // Never fall back to hide/show. A failed DWM preview should be a
               // quiet no-op, not a cascade that flashes every other window.
-              if (generation !== peekGeneration) {
-                if (candidatePeekUsesLivePreview && windowCapabilityService.endLivePreview) {
-                  candidatePeekUsesLivePreview = false;
-                  void windowCapabilityService.endLivePreview().catch(() => undefined);
-                } else {
-                  void windowCapabilityService.endPeek().catch(() => undefined);
-                }
-              }
+              return windowCapabilityService.beginLivePreviewCapability
+                ? windowCapabilityService.beginLivePreviewCapability(bound.capability, callerHwnd)
+                : { outcome: 'helper-unavailable' };
             });
           }, 32);
         };
@@ -2124,33 +2140,60 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         candidatePickerSessions.set(sender.id, session);
         const finishAction = (action: 'select' | 'close', candidateId: string): void => {
           const current = candidatePickerSessions.get(sender.id);
-          if (!current || current.window !== picker || !current.resolve) return;
-          endCandidatePeek();
-          const settle = current.resolve;
-          current.resolve = null;
-          settle({ action, candidateId });
+          if (!current || current.window !== picker || !current.resolve || actionFinishing) return;
+          actionFinishing = true;
+          void endCandidatePeek().then((released) => {
+            const latest = candidatePickerSessions.get(sender.id);
+            if (!latest || latest.window !== picker || !latest.resolve) return;
+            const settle = latest.resolve;
+            latest.resolve = null;
+            // A requested selection/process end must never race a live preview.
+            settle(released ? { action, candidateId } : { action: 'cancel', candidateId: null });
+          });
         };
         const finishDirectPick = (): void => {
           const current = candidatePickerSessions.get(sender.id);
-          if (!current || current.window !== picker || !current.resolve) return;
-          endCandidatePeek();
-          const settle = current.resolve;
-          current.resolve = null;
-          settle({ action: 'direct-pick', candidateId: null });
+          if (!current || current.window !== picker || !current.resolve || actionFinishing) return;
+          actionFinishing = true;
+          void endCandidatePeek().then((released) => {
+            const latest = candidatePickerSessions.get(sender.id);
+            if (!latest || latest.window !== picker || !latest.resolve) return;
+            const settle = latest.resolve;
+            latest.resolve = null;
+            settle(released ? { action: 'direct-pick', candidateId: null } : { action: 'cancel', candidateId: null });
+          });
           // Backpack owns the transition: it closes this chooser only after
           // receiving the typed result and before starting direct pick.
         };
         const closePicker = (): void => {
           const current = candidatePickerSessions.get(sender.id);
-          if (!current || current.window !== picker) return;
-          candidatePickerSessions.delete(sender.id);
-          endCandidatePeek();
-          const settle = current.resolve;
-          current.resolve = null;
-          settle?.({ action: 'cancel', candidateId: null });
-          if (!picker.isDestroyed()) picker.destroy();
+          if (!current || current.window !== picker || pickerClosing) return;
+          pickerClosing = true;
+          void endCandidatePeek().then((released) => {
+            if (!released) {
+              // Keep the caller HWND alive: DWM needs that exact window for a
+              // later disable attempt. Retry without requiring another click.
+              pickerClosing = false;
+              if (!picker.isDestroyed()) setTimeout(closePicker, 250);
+              return;
+            }
+            const latest = candidatePickerSessions.get(sender.id);
+            if (!latest || latest.window !== picker) return;
+            candidatePickerSessions.delete(sender.id);
+            const settle = latest.resolve;
+            latest.resolve = null;
+            settle?.({ action: 'cancel', candidateId: null });
+            pickerReleaseConfirmed = true;
+            if (!picker.isDestroyed()) picker.destroy();
+          }).catch(() => { pickerClosing = false; });
         };
+        session.dismiss = closePicker;
         sender.once('destroyed', closePicker);
+        picker.on('close', (event) => {
+          if (pickerReleaseConfirmed) return;
+          event.preventDefault();
+          closePicker();
+        });
         // Renderer mouseleave is unreliable over -webkit-app-region:drag:
         // Chromium can report the lower drag-space as outside even while the
         // native pointer remains within this BrowserWindow. Use native screen

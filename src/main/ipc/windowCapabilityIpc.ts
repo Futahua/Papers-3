@@ -17,6 +17,7 @@ import {
   type WindowBindResult,
   type WindowCandidateListResult,
   type WindowCapabilityService,
+  type WindowInstanceSnapshot,
   type WindowResolveResult,
   type WindowRuntimeCapability,
 } from '../windows/windowCapabilityService';
@@ -168,7 +169,7 @@ function toPageThumbnailResult(result: WindowCapabilityResult): WindowThumbnailR
   return { outcome: result.outcome, ...(result.error !== undefined ? { error: boundPageError(result.error) } : {}) };
 }
 
-type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult;
+type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult | { snapshot: WindowInstanceSnapshot };
 
 function resultPayload(result: IpcResult): IpcResult {
   return result;
@@ -182,6 +183,7 @@ export function registerWindowCapabilityIpc({
   resolveCallerHwnd,
 }: WindowCapabilityIpcDependencies): void {
   let nativePeekActive = false;
+  const lifecycleUnsubscribers = new Map<number, () => void>();
   function handle<TInput>(
     channel: string,
     parse: (raw: unknown) => TInput,
@@ -199,9 +201,39 @@ export function registerWindowCapabilityIpc({
 
   handle('papers:window-capability:list', (raw) => {
     if (raw === undefined) return undefined;
-    if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('list payload must be empty');
+    if (!isPlainObject(raw) || Object.keys(raw).some((key) => key !== 'includeNativeIcons')) throw new Error('list payload contains unknown fields');
+    if (raw['includeNativeIcons'] !== undefined && typeof raw['includeNativeIcons'] !== 'boolean') throw new Error('includeNativeIcons must be boolean');
+    return { includeNativeIcons: raw['includeNativeIcons'] !== false };
+  }, (options) => service.listCandidates(options ?? { includeNativeIcons: true }));
+  handle('papers:window-capability:lifecycle-snapshot', (raw) => {
+    if (raw === undefined) return undefined;
+    if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('lifecycle snapshot payload must be empty');
     return undefined;
-  }, () => service.listCandidates({ includeNativeIcons: true }));
+  }, () => service.windowLifecycleSnapshot());
+  handle('papers:window-capability:resolve-instance', (raw) => {
+    if (!isPlainObject(raw) || !exactKeys(raw, ['windowInstanceId'])
+      || typeof raw['windowInstanceId'] !== 'string' || !/^W[0-9a-f]{16}$/i.test(raw['windowInstanceId'])) {
+      throw new Error('window instance payload is malformed');
+    }
+    return raw['windowInstanceId'];
+  }, (windowInstanceId) => service.resolveWindowInstance(windowInstanceId));
+  handle('papers:window-capability:subscribe-lifecycle', (raw) => {
+    if (raw === undefined) return undefined;
+    if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('lifecycle subscription payload must be empty');
+    return undefined;
+  }, async (_input, event) => {
+    lifecycleUnsubscribers.get(event.sender.id)?.();
+    const unsubscribe = service.watchWindowLifecycle({
+      onEvent: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('papers:window-lifecycle:event', payload); },
+      onBaseline: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('papers:window-lifecycle:baseline', payload); },
+    });
+    lifecycleUnsubscribers.set(event.sender.id, unsubscribe);
+    event.sender.once('destroyed', () => {
+      if (lifecycleUnsubscribers.get(event.sender.id) === unsubscribe) lifecycleUnsubscribers.delete(event.sender.id);
+      unsubscribe();
+    });
+    return { outcome: 'success' };
+  });
   handle('papers:window-capability:bind', (raw) => parseBoundedString(raw, 'candidateId'), (candidateId) => service.bindCandidate(candidateId));
   handle('papers:window-capability:observe', parseRuntimeCapability, (capability) => service.observeCapability(capability));
   handle('papers:window-capability:minimize', parseRuntimeCapability, (capability) => service.minimizeCapability(capability));
@@ -211,11 +243,14 @@ export function registerWindowCapabilityIpc({
   handle('papers:window-capability:toggle', parseRuntimeCapability, (capability) => service.toggleCapability(capability));
   handle('papers:window-capability:restore', parseRuntimeCapability, (capability) => service.restoreCapability(capability));
   handle('papers:window-capability:close', parseRuntimeCapability, (capability) => service.closeCapability(capability));
+  handle('papers:window-capability:end-process', parseRuntimeCapability, (capability) => service.endProcessCapability(capability));
   handle('papers:window-capability:peek-begin', parseRuntimeCapability, async (capability, event) => {
     const caller = resolveCallerHwnd?.(event.sender) ?? null;
     if (caller && service.beginLivePreviewCapability) {
+      // A failed/late begin can still have taken effect in DWM. Keep the
+      // release route armed until a confirmed end succeeds.
+      nativePeekActive = true;
       const result = await service.beginLivePreviewCapability(capability, caller);
-      nativePeekActive = result.outcome === 'success';
       return result;
     }
     nativePeekActive = false;
@@ -227,8 +262,9 @@ export function registerWindowCapabilityIpc({
     return undefined;
   }, async () => {
     if (nativePeekActive && service.endLivePreview) {
-      nativePeekActive = false;
-      return service.endLivePreview();
+      const result = await service.endLivePreview();
+      if (result.outcome === 'success') nativePeekActive = false;
+      return result;
     }
     return service.endPeek();
   });

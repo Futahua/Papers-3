@@ -28,7 +28,9 @@
  */
 
 import { createWindowHelperFactory, type WindowHelperFactory } from './windowHelperFactory';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, existsSync } from 'node:fs';
+import path from 'node:path';
 import {
   createThumbnailFrameStore,
   pngDimensions,
@@ -75,6 +77,9 @@ export interface WindowCandidate {
   applicationLabel: string;
   icon: string | null;
   state: WindowState;
+  /** Exact host-observed identity for associating this live row with an
+   * Auto member. It is not authority to invoke a window operation. */
+  windowInstanceId?: string;
 }
 
 /** Stable, persisted-safe member identity for fail-closed re-resolution of
@@ -84,6 +89,53 @@ export interface PersistedWindowMemberDescriptor {
   version: 1;
   executableFingerprint?: string;
   title: string;
+  windowInstanceId?: string;
+}
+
+/** Compares persisted descriptor identity without treating title as an exact
+ * identity once either side carries a host-issued window instance ID. */
+export function compareWindowMemberIdentity(
+  left: PersistedWindowMemberDescriptor,
+  right: PersistedWindowMemberDescriptor,
+): 'same' | 'different' | 'ambiguous' {
+  const leftId = left.windowInstanceId;
+  const rightId = right.windowInstanceId;
+  const leftHasId = typeof leftId === 'string' && /^W[0-9a-f]{16}$/i.test(leftId);
+  const rightHasId = typeof rightId === 'string' && /^W[0-9a-f]{16}$/i.test(rightId);
+  if ((leftId !== undefined && !leftHasId) || (rightId !== undefined && !rightHasId)) return 'ambiguous';
+  if (leftHasId && rightHasId) return leftId!.toLowerCase() === rightId!.toLowerCase() ? 'same' : 'different';
+
+  const leftFingerprint = left.executableFingerprint;
+  const rightFingerprint = right.executableFingerprint;
+  const leftHasFingerprint = typeof leftFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(leftFingerprint);
+  const rightHasFingerprint = typeof rightFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(rightFingerprint);
+  if (!leftHasFingerprint || !rightHasFingerprint) return 'ambiguous';
+  if (leftFingerprint!.toLowerCase() !== rightFingerprint!.toLowerCase()) return 'different';
+
+  // Same executable plus exactly one WID can be the same window after a
+  // retitle or a sibling. Only an exact WID match proves identity.
+  if (leftHasId !== rightHasId) return 'ambiguous';
+  return left.title === right.title ? 'same' : 'different';
+}
+
+/** A legacy row may be associated with one modern WID row only when its
+ * complete legacy key agrees; callers must still require that association to
+ * be unique in the surrounding set. */
+export function canFallbackLegacyWindowIdentity(
+  left: PersistedWindowMemberDescriptor,
+  right: PersistedWindowMemberDescriptor,
+): boolean {
+  const leftHasId = typeof left.windowInstanceId === 'string' && /^W[0-9a-f]{16}$/i.test(left.windowInstanceId);
+  const rightHasId = typeof right.windowInstanceId === 'string' && /^W[0-9a-f]{16}$/i.test(right.windowInstanceId);
+  if ((left.windowInstanceId !== undefined && !leftHasId)
+    || (right.windowInstanceId !== undefined && !rightHasId)) return false;
+  const leftFingerprint = left.executableFingerprint;
+  const rightFingerprint = right.executableFingerprint;
+  return leftHasId !== rightHasId
+    && typeof leftFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(leftFingerprint)
+    && typeof rightFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(rightFingerprint)
+    && leftFingerprint.toLowerCase() === rightFingerprint.toLowerCase()
+    && left.title === right.title;
 }
 
 /** Ephemeral runtime capability: never persisted, never reconstructed from
@@ -122,6 +174,22 @@ export interface WindowMemberUpdate {
   bounds: WindowBounds | null;
 }
 
+export interface WindowInstanceSnapshot {
+  complete: boolean;
+  trackerSessionId: string;
+  sequence: number;
+  windows: Array<{ windowInstanceId: string }>;
+  error?: string;
+}
+
+export interface WindowLifecycleEvent {
+  kind: 'open' | 'gone';
+  windowInstanceId: string;
+  trackerSessionId: string;
+  sequence: number;
+  observation?: { bounds: WindowBounds; state: WindowState };
+}
+
 /** Machine-local identity used only at the SlopTop picker boundary. It is
  * deliberately non-persistable: AHK uses the PID + current visible rectangle
  * to seed and return its local green set, then Papers immediately resolves it
@@ -140,6 +208,12 @@ export type NativePickerBindResult =
 
 export interface WindowCapabilityService {
   listCandidates(options?: { includeNativeIcons?: boolean }): Promise<WindowCandidateListResult>;
+  windowLifecycleSnapshot(): Promise<{ snapshot: WindowInstanceSnapshot }>;
+  resolveWindowInstance(windowInstanceId: string): Promise<WindowResolveResult>;
+  watchWindowLifecycle(callbacks: {
+    onEvent: (event: WindowLifecycleEvent) => void;
+    onBaseline: (snapshot: WindowInstanceSnapshot) => void;
+  }): () => void;
   bindCandidate(candidateId: string): Promise<WindowBindResult>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
@@ -153,6 +227,7 @@ export interface WindowCapabilityService {
   /** Explicit Ctrl+middle-click action. Closes only the exact verified window;
    * sibling windows owned by the same process remain untouched. */
   closeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  endProcessCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   /** Transient taskbar-style Peek: compositor-cloak every currently visible
    * eligible window except the target, then uncloak exactly that set on end. */
   beginPeekCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
@@ -231,6 +306,40 @@ function appLabel(path: string): string {
   return boundedTitle(leaf.replace(/\.[^.]+$/, '') || 'Application');
 }
 
+/** Prefer the package's declared app-list art over a generic executable or
+ * window-class glyph. The path comes from the trusted native observation. */
+function packagedAppLogo(processPath: string): string | null {
+  const marker = /^(.*?[\\/]WindowsApps[\\/][^\\/]+)[\\/]/i.exec(processPath);
+  if (!marker) return null;
+  const packageRoot = marker[1]!;
+  try {
+    const manifest = readFileSync(path.join(packageRoot, 'AppxManifest.xml'));
+    if (manifest.length > 1024 * 1024) return null;
+    const logo = /\bSquare44x44Logo\s*=\s*"([^"]+)"/i.exec(manifest.toString('utf8'))?.[1];
+    if (!logo || !/\.png$/i.test(logo)) return null;
+    const relative = logo.replace(/[\\/]/g, path.sep);
+    const base = path.resolve(packageRoot, relative);
+    const root = path.resolve(packageRoot) + path.sep;
+    if (!base.toLowerCase().startsWith(root.toLowerCase())) return null;
+    const stem = base.slice(0, -4);
+    const candidates = [
+      `${stem}.targetsize-48.png`,
+      `${stem}_targetsize-48.png`,
+      `${stem}.scale-100.png`,
+      `${stem}.scale-200.png`,
+      base,
+    ];
+    for (const candidate of candidates) {
+      if (!existsSync(candidate)) continue;
+      const bytes = readFileSync(candidate);
+      if (bytes.length > 0 && bytes.length <= 192 * 1024) {
+        return `data:image/png;base64,${bytes.toString('base64')}`;
+      }
+    }
+  } catch { /* unavailable package metadata falls through to native icons */ }
+  return null;
+}
+
 /** 028 P3: default durable frame store under the app userData directory.
  * Lazily resolved so unit tests never require Electron; when the path cannot
  * be resolved a bounded NO-OP store is returned (durability degrades to the
@@ -272,6 +381,8 @@ function trustedProcessId(
 ): number | null {
   if (observation.processId === null || observation.processId <= 0) return null;
   if (observation.processId === currentPid && !allowCurrentProcessWindow(observation)) return null;
+  if (observation.windowClass === 'Progman' || observation.windowClass === 'WorkerW') return null;
+  if (typeof observation.processPath === 'string' && /(?:^|[\\/])TextInputHost\.exe$/i.test(observation.processPath)) return null;
   if (typeof observation.title !== 'string' || observation.title.length === 0) return null;
   if (typeof observation.processPath !== 'string' || observation.processPath.length === 0) return null;
   if (Buffer.byteLength(observation.processPath, 'utf8') > 4096) return null;
@@ -285,10 +396,42 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   let stopped = false;
   let candidateIdCounter = 0;
   const candidatesByListedId = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }>();
+  const rememberCandidate = (entry: { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }): void => {
+    const id = entry.candidate.id;
+    candidatesByListedId.delete(id);
+    candidatesByListedId.set(id, entry);
+    // Background lists must not erase a Direct Pick's staged exact identity.
+    // The helper still re-observes the token before binding, and this bounded
+    // LRU prevents old candidates from accumulating across a long session.
+    while (candidatesByListedId.size > 256) {
+      const oldest = candidatesByListedId.keys().next().value;
+      if (oldest === undefined) break;
+      candidatesByListedId.delete(oldest);
+    }
+  };
   const bindings = new Map<string, { helperToken: RuntimeWindowId; touched: number }>();
+  const bindingObservations = new Map<string, WindowObservation>();
   const bindingDescriptors = new Map<string, PersistedWindowMemberDescriptor>();
   const observations = new Map<string, Promise<WindowCapabilityResult>>();
   const iconCache = new Map<string, string>();
+  const iconReadsInFlight = new Map<string, Promise<string | null>>();
+  let lifecycleCurrent = new Map<string, { token: RuntimeWindowId; observation: WindowObservation }>();
+  let lifecycleRevision = -1;
+  let lifecycleLastObservations: WindowObservation[] | null = null;
+  let lifecycleLastObservedAt = Number.NEGATIVE_INFINITY;
+  let lifecycleTrackerSessionId = randomUUID();
+  let lifecycleSequence = 0;
+  let lifecycleTimer: ReturnType<typeof setInterval> | null = null;
+  let lifecycleRefresh: Promise<WindowInstanceSnapshot> | null = null;
+  let lifecycleBaselinePending = false;
+  let nativeCandidateListsInFlight = 0;
+  let lifecycleCatchupRequired = false;
+  let lifecycleRefreshDeferred: Promise<WindowInstanceSnapshot> | null = null;
+  let resolveLifecycleRefreshDeferred: ((snapshot: WindowInstanceSnapshot) => void) | null = null;
+  const lifecycleSubscribers = new Set<{
+    onEvent: (event: WindowLifecycleEvent) => void;
+    onBaseline: (snapshot: WindowInstanceSnapshot) => void;
+  }>();
   /** 019G thumbnail duplicate-request shield: bounded TTL/LRU, cleared on
    * stop and wholesale on any factory/helper revision change (019GR3), so no
    * entry from a previous helper session can ever be served. */
@@ -420,71 +563,300 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   }
 
   async function listCandidates(options: { includeNativeIcons?: boolean } = {}): Promise<WindowCandidateListResult> {
-    if (stopped) return HELPER_UNAVAILABLE;
-    if (!(await ensureStarted())) return HELPER_UNAVAILABLE;
+    const nativeIcons = options.includeNativeIcons === true;
+    const preferRecentLifecycle = options.includeNativeIcons === false;
+    if (nativeIcons) {
+      nativeCandidateListsInFlight += 1;
+      if (lifecycleSubscribers.size > 0) lifecycleCatchupRequired = true;
+    }
+    try {
+      if (stopped) return HELPER_UNAVAILABLE;
+      if (!(await ensureStarted())) return HELPER_UNAVAILABLE;
+      // The visible chooser can use the watcher's recent complete enumeration.
+      // Bind/act still re-observe the clicked token, so a vanished window can
+      // never be acted on from this presentation cache. Other callers retain
+      // a fresh list, and the cache expires after two watcher intervals.
+      const recent = preferRecentLifecycle && lifecycleLastObservations !== null
+        && factory.revision === lifecycleRevision
+        && stamp() - lifecycleLastObservedAt <= 1000;
+      let result: WindowCapabilityResult = recent
+        ? { outcome: 'success', windows: lifecycleLastObservations! }
+        : await factory.list();
+      if (result.outcome === 'timeout') {
+        // The very first request can race the helper's startup/enumeration
+        // latency; one bounded retry against the now-warm helper is made
+        // before declaring it unavailable.
+        result = await factory.list();
+      }
+      if (result.outcome !== 'success') {
+        return { outcome: 'helper-unavailable', error: result.error };
+      }
+      const candidates: WindowCandidate[] = [];
+      const listed = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }>();
+      const eligible = (result.windows ?? []).filter((observation) =>
+        observation.bounds && trustedProcessId(observation, currentPid, allowCurrentProcessWindow) !== null
+      ).slice(0, WINDOW_CAPABILITY_MAX_CANDIDATES);
+      // The visible list uses cached/executable artwork. Start independent
+      // Electron icon reads together instead of waiting for each window in
+      // sequence before the chooser can appear. Native helper icon requests
+      // remain serial so the single-request helper is not flooded.
+      const entries = eligible.map(candidateForObservation);
+      if (nativeIcons) {
+        for (let index = 0; index < entries.length; index += 1) {
+          entries[index]!.candidate.icon = await nativeIconFor(eligible[index]!);
+        }
+      } else {
+        let nextIndex = 0;
+        await Promise.all(Array.from({ length: Math.min(8, entries.length) }, async () => {
+          while (nextIndex < entries.length) {
+            const index = nextIndex++;
+            entries[index]!.candidate.icon = await iconFor(eligible[index]!);
+          }
+        }));
+      }
+      for (const entry of entries) {
+        candidates.push(entry.candidate);
+        listed.set(entry.candidate.id, entry);
+      }
+      for (const entry of listed.values()) rememberCandidate(entry);
+      return { outcome: 'success', candidates };
+    } finally {
+      if (nativeIcons) {
+        nativeCandidateListsInFlight -= 1;
+        if (nativeCandidateListsInFlight === 0 && lifecycleCatchupRequired) {
+          lifecycleCatchupRequired = false;
+          const runCatchup = (): void => {
+            const refresh = refreshWindowLifecycle(lifecycleBaselinePending);
+            void refresh.then((snapshot) => resolveLifecycleRefreshDeferred?.(snapshot), () => {
+              resolveLifecycleRefreshDeferred?.(lifecycleSnapshot(false, 'window enumeration failed'));
+            }).finally(() => {
+              lifecycleRefreshDeferred = null;
+              resolveLifecycleRefreshDeferred = null;
+            });
+          };
+          // Let the candidate request settle first, then take one fresh
+          // baseline/diff so Auto observes any windows opened during the
+          // picker without interleaving helper RPCs among native icon reads.
+          queueMicrotask(() => {
+            if (lifecycleRefresh) void lifecycleRefresh.then(runCatchup, runCatchup);
+            else runCatchup();
+          });
+        }
+      }
+    }
+  }
+
+  function lifecycleSnapshot(complete: boolean, error?: string): WindowInstanceSnapshot {
+    return {
+      complete,
+      trackerSessionId: lifecycleTrackerSessionId,
+      sequence: lifecycleSequence,
+      windows: complete ? [...lifecycleCurrent.keys()].map((windowInstanceId) => ({ windowInstanceId })) : [],
+      ...(error ? { error } : {}),
+    };
+  }
+
+  async function refreshWindowLifecycleOnce(pushBaseline = false): Promise<WindowInstanceSnapshot> {
+    if (stopped) return lifecycleSnapshot(false, 'service is stopped');
+    if (!(await ensureStarted())) return lifecycleSnapshot(false, 'window helper is unavailable');
     let result = await factory.list();
-    if (result.outcome === 'timeout') {
-      // The very first request can race the helper's startup/enumeration
-      // latency; one bounded retry against the now-warm helper is made
-      // before declaring it unavailable.
-      result = await factory.list();
+    if (result.outcome === 'timeout') result = await factory.list();
+    if (result.outcome !== 'success' || !Array.isArray(result.windows)) {
+      return lifecycleSnapshot(false, result.error ?? 'window enumeration is incomplete');
     }
-    if (result.outcome !== 'success') {
-      return { outcome: 'helper-unavailable', error: result.error };
+    if (lifecycleBaselinePending) pushBaseline = true;
+    if (factory.revision !== lifecycleRevision) {
+      lifecycleRevision = factory.revision;
+      lifecycleTrackerSessionId = randomUUID();
+      lifecycleSequence = 0;
+      lifecycleCurrent.clear();
+      pushBaseline = true;
     }
-    const candidates: WindowCandidate[] = [];
-    const listed = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }>();
-    for (const observation of result.windows ?? []) {
-      if (candidates.length >= WINDOW_CAPABILITY_MAX_CANDIDATES) break;
-      const processId = trustedProcessId(observation, currentPid, allowCurrentProcessWindow);
-      if (processId === null) continue;
-      const entry = candidateForObservation(observation);
-      // Interactive pick lists request exact native window/class icons so
-      // packaged Electron apps do not collapse to generic executable tiles.
-      // Internal relisting keeps the original cheap file-icon path.
-      const icon = options.includeNativeIcons
-        ? await nativeIconFor(observation)
-        : await iconFor(observation);
-      entry.candidate.icon = icon;
-      if (!observation.bounds) continue;
-      candidates.push(entry.candidate);
-      listed.set(entry.candidate.id, entry);
+    lifecycleLastObservations = [...result.windows];
+    lifecycleLastObservedAt = stamp();
+    const next = new Map<string, { token: RuntimeWindowId; observation: WindowObservation }>();
+    for (const observation of result.windows) {
+      if (trustedProcessId(observation, currentPid, allowCurrentProcessWindow) === null || !observation.bounds) continue;
+      // Lifecycle membership requires helper-issued stable process identity;
+      // never synthesize one from a per-session token or HWND alone.
+      const instanceId = observation.windowInstanceId;
+      if (typeof instanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(instanceId)
+        || typeof observation.processStartTicks !== 'string' || !/^\d{1,20}$/.test(observation.processStartTicks)) continue;
+      const collision = next.get(instanceId);
+      if (collision && collision.token !== observation.runtimeId) {
+        return lifecycleSnapshot(false, 'window instance identity is ambiguous');
+      }
+      next.set(instanceId, { token: observation.runtimeId, observation });
     }
-    candidatesByListedId.clear();
-    for (const [id, entry] of listed) candidatesByListedId.set(id, entry);
-    return { outcome: 'success', candidates };
+    if (lifecycleBaselinePending) lifecycleBaselinePending = false;
+    const previous = lifecycleCurrent;
+    lifecycleCurrent = next;
+    if (pushBaseline) {
+      const baseline = lifecycleSnapshot(true);
+      for (const subscriber of lifecycleSubscribers) {
+        try { subscriber.onBaseline(baseline); } catch { /* consumer delivery is isolated */ }
+      }
+    } else {
+      for (const [windowInstanceId, current] of next) {
+        if (previous.has(windowInstanceId)) continue;
+        const event: WindowLifecycleEvent = {
+          kind: 'open', windowInstanceId, trackerSessionId: lifecycleTrackerSessionId,
+          sequence: ++lifecycleSequence,
+          observation: { bounds: current.observation.bounds!, state: current.observation.state },
+        };
+        for (const subscriber of lifecycleSubscribers) {
+          try { subscriber.onEvent(event); } catch { /* consumer delivery is isolated */ }
+        }
+      }
+      for (const windowInstanceId of previous.keys()) {
+        if (next.has(windowInstanceId)) continue;
+        const event: WindowLifecycleEvent = {
+          kind: 'gone', windowInstanceId, trackerSessionId: lifecycleTrackerSessionId,
+          sequence: ++lifecycleSequence,
+        };
+        for (const subscriber of lifecycleSubscribers) {
+          try { subscriber.onEvent(event); } catch { /* consumer delivery is isolated */ }
+        }
+      }
+    }
+    return lifecycleSnapshot(true);
+  }
+
+  function refreshWindowLifecycle(pushBaseline = false): Promise<WindowInstanceSnapshot> {
+    if (nativeCandidateListsInFlight > 0) {
+      lifecycleCatchupRequired = true;
+      if (pushBaseline) lifecycleBaselinePending = true;
+      if (!lifecycleRefreshDeferred) {
+        lifecycleRefreshDeferred = new Promise<WindowInstanceSnapshot>((resolve) => { resolveLifecycleRefreshDeferred = resolve; });
+      }
+      return lifecycleRefreshDeferred;
+    }
+    // Keep helper enumerations serialized. Overlapping slow list requests could
+    // otherwise apply stale snapshots out of order and emit false retirements.
+    if (lifecycleRefresh) {
+      if (pushBaseline) lifecycleBaselinePending = true;
+      return lifecycleRefresh;
+    }
+    const pending = refreshWindowLifecycleOnce(pushBaseline);
+    lifecycleRefresh = pending.finally(() => { lifecycleRefresh = null; });
+    return lifecycleRefresh;
+  }
+
+  async function windowLifecycleSnapshot(): Promise<{ snapshot: WindowInstanceSnapshot }> {
+    return { snapshot: await refreshWindowLifecycle() };
+  }
+
+  async function resolveWindowInstance(windowInstanceId: string): Promise<WindowResolveResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    if (!/^W[0-9a-f]{16}$/i.test(windowInstanceId)) return { outcome: 'missing', error: 'window instance is not recognized' };
+    const current = lifecycleCurrent.get(windowInstanceId);
+    if (!current || current.observation.windowInstanceId !== windowInstanceId) return { outcome: 'missing', error: 'window instance is no longer live' };
+    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    const observed = await factory.observe(current.token);
+    if (observed.outcome !== 'success' || !observed.observation) {
+      return { outcome: observed.outcome === 'timeout' ? 'timeout' : observed.outcome === 'missing' ? 'missing' : 'helper-unavailable', error: observed.error };
+    }
+    if (trustedProcessId(observed.observation, currentPid, allowCurrentProcessWindow) === null
+      || !observed.observation.bounds || observed.observation.windowInstanceId !== windowInstanceId
+      || observed.observation.processStartTicks !== current.observation.processStartTicks) {
+      return { outcome: 'missing', error: 'window instance identity changed' };
+    }
+    const entry = candidateForObservation(observed.observation);
+    const capability = issueBinding(entry.helperToken, observed.observation);
+    bindingDescriptors.set(capability.bindingId!, entry.descriptor);
+    return { outcome: 'success', capability, descriptor: { ...entry.descriptor, windowInstanceId } };
+  }
+
+  function watchWindowLifecycle(callbacks: {
+    onEvent: (event: WindowLifecycleEvent) => void;
+    onBaseline: (snapshot: WindowInstanceSnapshot) => void;
+  }): () => void {
+    if (stopped || lifecycleSubscribers.size >= WINDOW_CAPABILITY_MAX_SUBSCRIBERS) return () => undefined;
+    lifecycleSubscribers.add(callbacks);
+    void refreshWindowLifecycle(true);
+    if (!lifecycleTimer) {
+      lifecycleTimer = setInterval(() => { void refreshWindowLifecycle(); }, WINDOW_CAPABILITY_OBSERVE_CADENCE_MS);
+      lifecycleTimer.unref?.();
+    }
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      lifecycleSubscribers.delete(callbacks);
+      if (lifecycleSubscribers.size === 0 && lifecycleTimer) {
+        clearInterval(lifecycleTimer);
+        lifecycleTimer = null;
+      }
+    };
   }
 
   async function iconFor(observation: WindowObservation): Promise<string | null> {
     const processPath = observation.processPath;
     if (typeof processPath !== 'string' || processPath.length === 0) return null;
-    const cacheKey = `${observation.processId}|${processPath}`;
+    const artworkPath = observation.iconProcessPath ?? processPath;
+    const cacheKey = `${observation.processId}|${artworkPath}`;
     const cached = iconCache.get(cacheKey);
-    if (cached !== undefined) return cached;
-    if (iconCache.size >= WINDOW_CAPABILITY_MAX_ICON_CACHE) return null;
-    try {
-      const image = await getFileIcon(processPath);
-      const dataUrl = image.toDataURL();
-      if (Buffer.byteLength(dataUrl, 'utf8') > 256 * 1024) return null;
-      iconCache.set(cacheKey, dataUrl);
-      return dataUrl;
-    } catch {
-      return null;
+    if (cached !== undefined) {
+      // Keep recent artwork resident; a long session sees more than 64
+      // processes, and a permanently full cache used to make every new icon
+      // fail until Papers restarted.
+      iconCache.delete(cacheKey);
+      iconCache.set(cacheKey, cached);
+      return cached;
     }
+    const pending = iconReadsInFlight.get(cacheKey);
+    if (pending) return pending;
+    const rememberIcon = (icon: string): string => {
+      iconCache.set(cacheKey, icon);
+      while (iconCache.size > WINDOW_CAPABILITY_MAX_ICON_CACHE) {
+        const oldest = iconCache.keys().next().value;
+        if (oldest === undefined) break;
+        iconCache.delete(oldest);
+      }
+      return icon;
+    };
+    const read = (async () => {
+      try {
+        const packageIcon = packagedAppLogo(artworkPath);
+        if (packageIcon) {
+          return rememberIcon(packageIcon);
+        }
+        const image = await getFileIcon(artworkPath);
+        const dataUrl = image.toDataURL();
+        if (Buffer.byteLength(dataUrl, 'utf8') > 256 * 1024) return null;
+        return rememberIcon(dataUrl);
+      } catch {
+        return null;
+      } finally {
+        iconReadsInFlight.delete(cacheKey);
+      }
+    })();
+    iconReadsInFlight.set(cacheKey, read);
+    return read;
   }
 
   /** Resolve the exact window/class icon for a trusted observation. The
    * helper's bounded 48x48 request is strictly correlated to this runtime
    * identity and falls back to the executable icon. */
   async function nativeIconFor(observation: WindowObservation): Promise<string | null> {
-    try {
-      const result = await factory.thumbnail(observation.runtimeId, 48, 48);
-      if (result.outcome === 'success' && result.thumbnail?.source === 'icon') {
-        return `data:image/png;base64,${result.thumbnail.image}`;
+    // Packaged apps commonly expose a generic HWND/class icon. Their own
+    // AppxManifest logo is the app identity shown by Windows.
+    const packageIcon = packagedAppLogo(observation.iconProcessPath ?? observation.processPath ?? '');
+    if (packageIcon) return packageIcon;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const result = await factory.thumbnail(observation.runtimeId, 48, 48);
+        if (result.outcome === 'success' && result.thumbnail?.source === 'icon') {
+          return `data:image/png;base64,${result.thumbnail.image}`;
+        }
+      } catch {
+        // Retry one transient helper failure before taking a fallback.
       }
-    } catch {
-      // Executable icon fallback below remains useful for conventional apps.
     }
+    // Electron's executable fallback is not reliable for packaged Windows
+    // apps such as Notepad. Leave these unresolved for the widget to retry
+    // rather than caching a misleading generic glyph as the member icon.
+    if (/(?:^|[\\/])WindowsApps(?:[\\/]|$)/i.test(observation.processPath ?? '')) return null;
     return iconFor(observation);
   }
 
@@ -504,6 +876,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       version: 1,
       executableFingerprint: fingerprint(observation.processPath ?? ''),
       title: boundedTitle(observation.title),
+      ...(observation.windowInstanceId ? { windowInstanceId: observation.windowInstanceId } : {}),
     };
     const candidate: WindowCandidate = {
       id,
@@ -511,6 +884,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       applicationLabel: appLabel(observation.processPath ?? ''),
       icon: null,
       state: observation.state,
+      ...(observation.windowInstanceId ? { windowInstanceId: observation.windowInstanceId } : {}),
     };
     return { helperToken, descriptor, candidate };
   }
@@ -542,7 +916,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const icon = await iconFor(result.window);
     entry.candidate.icon = icon;
     if (!result.window.bounds) return { outcome: 'success', candidate: null, bounds: null, descriptor: entry.descriptor };
-    candidatesByListedId.set(entry.candidate.id, entry);
+    rememberCandidate(entry);
     return { outcome: 'success', candidate: entry.candidate, bounds: result.window.bounds, descriptor: entry.descriptor };
   }
 
@@ -562,13 +936,14 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return { ...bound, candidate: hovered.candidate };
   }
 
-  function issueBinding(token: RuntimeWindowId): WindowRuntimeCapability {
+  function issueBinding(token: RuntimeWindowId, observation?: WindowObservation): WindowRuntimeCapability {
     const bindingId = `wl-binding-${candidateIdCounter}-${Math.random().toString(36).slice(2, 12)}`;
     if (bindings.size >= 128) {
       const oldest = [...bindings.entries()].sort((a, b) => a[1].touched - b[1].touched)[0];
-      if (oldest) bindings.delete(oldest[0]);
+      if (oldest) { bindings.delete(oldest[0]); bindingObservations.delete(oldest[0]); bindingDescriptors.delete(oldest[0]); }
     }
     bindings.set(bindingId, { helperToken: token, touched: Date.now() });
+    if (observation) bindingObservations.set(bindingId, observation);
     return { version: 1, bindingId };
   }
 
@@ -591,7 +966,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       if (observed.outcome === 'missing') return { outcome: 'missing', error: observed.error };
       return { outcome: observed.outcome === 'timeout' ? 'timeout' : 'helper-unavailable', error: observed.error };
     }
-    const capability = issueBinding(entry.helperToken);
+    const capability = issueBinding(entry.helperToken, observed.observation);
     const bindingId = capability.bindingId;
     if (!bindingId) return { outcome: 'helper-unavailable', error: 'binding failed' };
     const descriptor = entry.descriptor;
@@ -663,19 +1038,63 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return factory.close(token);
   }
 
+  async function endProcessCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const token = tokenFor(capability);
+    const bindingId = capability.bindingId ?? '';
+    const issued = bindingObservations.get(bindingId);
+    if (!token || !issued) return { outcome: 'missing', error: 'binding is not issued' };
+    if (issued.processId === currentPid) return { outcome: 'denied', error: 'the Papers process cannot be ended here' };
+    if (typeof issued.processStartTicks !== 'string' || typeof issued.processPath !== 'string' || !issued.windowInstanceId) {
+      return { outcome: 'denied', error: 'the exact process identity is unavailable' };
+    }
+    if (/(?:^|[\\/])Windows(?:[\\/]|$)/i.test(issued.processPath)) {
+      return { outcome: 'denied', error: 'Windows system processes cannot be ended here' };
+    }
+    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    const observed = await factory.observe(token);
+    if (observed.outcome !== 'success' || !observed.observation) {
+      return { outcome: observed.outcome === 'timeout' ? 'timeout' : observed.outcome, error: observed.error };
+    }
+    const live = observed.observation;
+    if (live.processId !== issued.processId || live.processStartTicks !== issued.processStartTicks
+      || live.processPath !== issued.processPath || live.windowInstanceId !== issued.windowInstanceId) {
+      return { outcome: 'denied', error: 'the exact process identity changed' };
+    }
+    if (!factory.endProcess) return { outcome: 'helper-unavailable', error: 'the window helper cannot safely end a process' };
+    return factory.endProcess(token);
+  }
+
   async function endPeek(): Promise<WindowCapabilityResult> {
     peekGeneration += 1;
-    const restore = peekRestoreTokens.splice(0);
+    const restore = [...peekRestoreTokens];
     const reminimize = peekMinimizedTarget;
-    peekMinimizedTarget = null;
     if (!factoryBuilt || stopped) return { outcome: 'success' };
+    let firstFailure: WindowCapabilityResult | null = null;
     if (restore.length > 0 && factory.uncloakMany) {
-      await factory.uncloakMany(restore.reverse()).catch(() => undefined);
+      let result: WindowCapabilityResult;
+      try { result = await factory.uncloakMany([...restore].reverse()); }
+      catch (error) { result = { outcome: 'helper-unavailable', error: String(error) }; }
+      if (result.outcome === 'success') {
+        peekRestoreTokens = peekRestoreTokens.filter((token) => !restore.includes(token));
+      } else firstFailure = result;
     } else {
-      await Promise.all(restore.reverse().map((token) =>
-        factory.uncloak?.(token).catch(() => undefined)));
+      for (const token of [...restore].reverse()) {
+        let result: WindowCapabilityResult;
+        try { result = factory.uncloak ? await factory.uncloak(token) : { outcome: 'helper-unavailable', error: 'window reveal is unavailable' }; }
+        catch (error) { result = { outcome: 'helper-unavailable', error: String(error) }; }
+        if (result.outcome === 'success') peekRestoreTokens = peekRestoreTokens.filter((entry) => entry !== token);
+        else firstFailure ??= result;
+      }
     }
-    if (reminimize) await factory.minimize(reminimize).catch(() => undefined);
+    if (reminimize) {
+      let result: WindowCapabilityResult;
+      try { result = await factory.minimize(reminimize); }
+      catch (error) { result = { outcome: 'helper-unavailable', error: String(error) }; }
+      if (result.outcome === 'success' && peekMinimizedTarget === reminimize) peekMinimizedTarget = null;
+      else firstFailure ??= result;
+    }
+    if (firstFailure) return firstFailure;
     return { outcome: 'success' };
   }
 
@@ -744,9 +1163,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
 
   async function endLivePreview(): Promise<WindowCapabilityResult> {
     const activePreview = livePreview;
-    livePreview = null;
     if (!activePreview || !factory.livePreview || stopped) return { outcome: 'success' };
-    return factory.livePreview(activePreview.target, activePreview.caller, false);
+    let result: WindowCapabilityResult;
+    try { result = await factory.livePreview(activePreview.target, activePreview.caller, false); }
+    catch (error) { result = { outcome: 'helper-unavailable', error: String(error) }; }
+    if (result.outcome === 'success' && livePreview === activePreview) livePreview = null;
+    return result;
   }
 
   async function beginLivePreviewCapability(capability: WindowRuntimeCapability, caller: string): Promise<WindowCapabilityResult> {
@@ -755,9 +1177,19 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (!target) return { outcome: 'missing', error: 'binding is not issued' };
     if (!/^[1-9][0-9]{0,19}$/.test(caller)) return { outcome: 'malformed', error: 'caller window is malformed' };
     if (!(await ensureStarted()) || !factory.livePreview) return { outcome: 'helper-unavailable', error: 'DWM live preview is unavailable' };
-    if (livePreview && (livePreview.target !== target || livePreview.caller !== caller)) await endLivePreview().catch(() => undefined);
+    if (livePreview?.target === target && livePreview.caller === caller) return { outcome: 'success' };
+    // DWM replaces the active preview when enabled for another target. An
+    // explicit disable here exposed the entire desktop between list rows.
+    // Record release intent before the helper call. If begin times out after
+    // DWM accepted it, a later picker cleanup still knows what to disable.
+    const preview = { target, caller };
+    livePreview = preview;
     const result = await factory.livePreview(target, caller, true);
-    if (result.outcome === 'success') livePreview = { target, caller };
+    if (result.outcome !== 'success') {
+      // Begin can partially succeed (for example, after IPC timeout). Try to
+      // undo it now and retain the intent if that cleanup itself fails.
+      await endLivePreview();
+    }
     return result;
   }
 
@@ -946,11 +1378,29 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const seeds: NativePickerWindowIdentity[] = [];
     const claimed = new Set<string>();
     for (const descriptor of memberDescriptors) {
+      if (descriptor.windowInstanceId !== undefined
+        && (typeof descriptor.windowInstanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(descriptor.windowInstanceId))) {
+        return { outcome: 'ambiguous', error: `layout member identity is invalid: ${descriptor.title}` };
+      }
       const matches = snapshot.observations.filter((observation) => {
         const candidate = candidateForObservation(observation);
+        if (descriptor.windowInstanceId !== undefined) {
+          return candidate.descriptor.windowInstanceId === descriptor.windowInstanceId;
+        }
         return candidate.descriptor.executableFingerprint === descriptor.executableFingerprint
           && candidate.descriptor.title === descriptor.title;
       });
+      if (descriptor.windowInstanceId !== undefined && matches.length === 0) {
+        const unresolvedLegacy = snapshot.observations.some((observation) => {
+          const candidate = candidateForObservation(observation);
+          return candidate.descriptor.windowInstanceId === undefined
+            && candidate.descriptor.executableFingerprint === descriptor.executableFingerprint
+            && candidate.descriptor.title === descriptor.title;
+        });
+        if (unresolvedLegacy) {
+          return { outcome: 'ambiguous', error: `layout member identity is ambiguous: ${descriptor.title}` };
+        }
+      }
       // A persisted layout may legitimately contain a closed window. It cannot
       // be painted green, but it must not prevent the creator from opening the
       // picker to add/remove the windows that are currently on screen.
@@ -1021,8 +1471,15 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     await endPeek().catch(() => undefined);
     if (stopped) return;
     stopped = true;
+    if (lifecycleTimer) clearInterval(lifecycleTimer);
+    lifecycleTimer = null;
+    lifecycleSubscribers.clear();
+    lifecycleCurrent.clear();
+    lifecycleLastObservations = null;
+    lifecycleLastObservedAt = Number.NEGATIVE_INFINITY;
     candidatesByListedId.clear();
     bindings.clear();
+    bindingObservations.clear();
     bindingDescriptors.clear();
     observations.clear();
     thumbnailCache.clear();
@@ -1037,12 +1494,16 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
 
   return {
     listCandidates,
+    windowLifecycleSnapshot,
+    resolveWindowInstance,
+    watchWindowLifecycle,
     bindCandidate,
     observeCapability,
     minimizeCapability,
     restoreCapability,
     toggleCapability,
     closeCapability,
+    endProcessCapability,
     beginPeekCapability,
     endPeek,
     beginLivePreviewCapability,

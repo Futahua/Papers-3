@@ -29,6 +29,7 @@ export const WINDOW_CAPABILITY_METHODS = [
   'live-preview',
   'apply',
   'close',
+  'end-process',
   'hover',
   'thumbnail',
 ] as const;
@@ -69,6 +70,10 @@ export interface WindowObservation {
   title: string;
   processId: number | null;
   processPath: string | null;
+  /** Artwork metadata for a packaged app inside an ApplicationFrameHost window. */
+  iconProcessPath?: string;
+  windowInstanceId?: string;
+  processStartTicks?: string;
   /**
    * 018 identity revision: the window CLASS, as corroboration for the live
    * instance behind `runtimeId`.
@@ -292,6 +297,12 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
     && !(typeof processId === 'number' && Number.isSafeInteger(processId) && processId >= 0)) return undefined;
   const processPath = raw['processPath'];
   if (processPath !== null && typeof processPath !== 'string') return undefined;
+  const iconProcessPath = raw['iconProcessPath'];
+  if (iconProcessPath !== undefined && (typeof iconProcessPath !== 'string' || iconProcessPath.length > 1024)) return undefined;
+  const windowInstanceId = raw['windowInstanceId'];
+  if (windowInstanceId !== undefined && (typeof windowInstanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(windowInstanceId))) return undefined;
+  const processStartTicks = raw['processStartTicks'];
+  if (processStartTicks !== undefined && (typeof processStartTicks !== 'string' || !/^\d{1,20}$/.test(processStartTicks))) return undefined;
   // 018: optional, so an older helper or a test fake stays valid. Present but
   // the wrong type is still malformed, because a silently-dropped class would
   // turn "not corroborated" into "corroborated by nothing".
@@ -306,6 +317,9 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
     title: raw['title'],
     processId,
     processPath,
+    ...(iconProcessPath !== undefined ? { iconProcessPath } : {}),
+    ...(windowInstanceId !== undefined ? { windowInstanceId } : {}),
+    ...(processStartTicks !== undefined ? { processStartTicks } : {}),
     ...(windowClass !== undefined ? { windowClass } : {}),
     state: state as WindowState,
     bounds,
@@ -341,7 +355,7 @@ export function parseWindowResponse(raw: unknown): WindowResponseMessage | null 
   // key and invalidates the envelope.
   if (method !== 'toggle' && raw['action'] !== undefined) return null;
 
-  if (method === 'close' || method === 'cloak-many' || method === 'uncloak-many' || method === 'live-preview') {
+  if (method === 'close' || method === 'end-process' || method === 'cloak-many' || method === 'uncloak-many' || method === 'live-preview') {
     // Documented close shape: envelope only, no payload.
     if (hasExtraPayload) return null;
     return { requestId, method: methodName, outcome: outcome as WindowOutcome, ...(error !== undefined ? { error } : {}) };

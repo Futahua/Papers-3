@@ -96,6 +96,66 @@ describe('SlopTop local picker protocol', () => {
     });
   });
 
+  it('keeps same-title, same-executable W1 removal exact while adding W2', async () => {
+    const test = harness();
+    const w1 = { version: 1 as const, title: 'Editor', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W1111111111111111' };
+    const w2 = { version: 1 as const, title: 'Editor', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W2222222222222222' };
+    const w2Candidate = { ...candidate, id: 'candidate-w2', title: 'Editor' };
+    test.service.bindNativePickerSelection = async () => ({
+      outcome: 'success' as const,
+      windows: [{ descriptor: w2, capability: { version: 1 as const, bindingId: 'binding-w2' }, candidate: w2Candidate }],
+    });
+    const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });
+    let delivered: unknown = null;
+    await session.begin({ memberDescriptors: [w1], onResult: (next) => { delivered = next; } });
+    const activation = test.activation()!;
+    test.setResult({ version: 2, token: activation.token, outcome: 'committed', windows: [seed] });
+    await waitFor(() => delivered !== null);
+    expect(delivered).toEqual({
+      outcome: 'committed',
+      adds: [{ descriptor: w2, capability: { version: 1, bindingId: 'binding-w2' }, candidate: w2Candidate }],
+      removes: [{ descriptor: w1 }],
+    });
+  });
+
+  it('fails closed when a mixed WID/legacy fallback is ambiguous', async () => {
+    const test = harness();
+    const legacy = { version: 1 as const, title: 'Editor', executableFingerprint: 'a'.repeat(64) };
+    const modern = { ...legacy, windowInstanceId: 'W1111111111111111' };
+    test.service.bindNativePickerSelection = async () => ({
+      outcome: 'success' as const,
+      windows: [modern, { ...modern, windowInstanceId: 'W2222222222222222' }].map((descriptor, index) => ({
+        descriptor,
+        capability: { version: 1 as const, bindingId: `binding-${index}` },
+        candidate,
+      })),
+    });
+    const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });
+    let delivered: unknown = null;
+    await session.begin({ memberDescriptors: [legacy], onResult: (next) => { delivered = next; } });
+    const activation = test.activation()!;
+    test.setResult({ version: 2, token: activation.token, outcome: 'committed', windows: [seed, { ...seed, x: 600 }] });
+    await waitFor(() => delivered !== null);
+    expect(delivered).toEqual({ outcome: 'failed', error: 'the final picker set has ambiguous window identities' });
+  });
+
+  it('matches one legacy descriptor to one modern descriptor by the full legacy key', async () => {
+    const test = harness();
+    const legacy = { version: 1 as const, title: 'Editor', executableFingerprint: 'a'.repeat(64) };
+    const modern = { ...legacy, windowInstanceId: 'W1111111111111111' };
+    test.service.bindNativePickerSelection = async () => ({
+      outcome: 'success' as const,
+      windows: [{ descriptor: modern, capability: { version: 1 as const, bindingId: 'binding-modern' }, candidate }],
+    });
+    const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });
+    let delivered: unknown = null;
+    await session.begin({ memberDescriptors: [legacy], onResult: (next) => { delivered = next; } });
+    const activation = test.activation()!;
+    test.setResult({ version: 2, token: activation.token, outcome: 'committed', windows: [seed] });
+    await waitFor(() => delivered !== null);
+    expect(delivered).toEqual({ outcome: 'committed', adds: [], removes: [] });
+  });
+
   it('ignores stale or malformed results and cancels through the one-shot transport', async () => {
     const test = harness();
     const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });

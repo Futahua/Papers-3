@@ -247,15 +247,10 @@ internal static class HoverInputBridge
                     UpdatePolicies(id, new WidgetPolicy(id, hwnd, false, new HashSet<string>()));
                     continue;
                 }
-                if (parts[0] == "POLICY" && parts.Length == 4)
+                if (parts[0] == "POLICY" && parts.Length == 5)
                 {
-                    int id = int.Parse(parts[1], CultureInfo.InvariantCulture);
-                    WidgetPolicy current = FindById(Snapshot(), id);
-                    if (current == null) continue;
-                    bool enabled = parts[2] == "1";
-                    string decoded = Encoding.UTF8.GetString(Convert.FromBase64String(parts[3]));
-                    HashSet<string> blocked = new HashSet<string>(decoded.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
-                    UpdatePolicies(id, new WidgetPolicy(id, current.Handle, enabled, blocked));
+                    string acknowledgement = ApplyPolicyCommand(parts);
+                    if (acknowledgement != null) Emit(acknowledgement);
                 }
             }
             catch { Emit("ERROR\tbad-command"); }
@@ -306,6 +301,21 @@ internal static class HoverInputBridge
         }
     }
 
+    private static string ApplyPolicyCommand(string[] parts)
+    {
+        long requestId = long.Parse(parts[1], CultureInfo.InvariantCulture);
+        if (requestId <= 0) throw new FormatException();
+        int id = int.Parse(parts[2], CultureInfo.InvariantCulture);
+        WidgetPolicy current = FindById(Snapshot(), id);
+        if (current == null) return "POLICY_ACK\t" + requestId.ToString(CultureInfo.InvariantCulture) + "\tERROR\twidget-not-found";
+        if (parts[3] != "0" && parts[3] != "1") throw new FormatException();
+        bool enabled = parts[3] == "1";
+        string decoded = Encoding.UTF8.GetString(Convert.FromBase64String(parts[4]));
+        HashSet<string> blocked = new HashSet<string>(decoded.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
+        UpdatePolicies(id, new WidgetPolicy(id, current.Handle, enabled, blocked));
+        return "POLICY_ACK\t" + requestId.ToString(CultureInfo.InvariantCulture) + "\tOK\t-";
+    }
+
     private static WidgetPolicy FindById(WidgetPolicy[] source, int id)
     { foreach (WidgetPolicy item in source) if (item.Id == id) return item; return null; }
 
@@ -354,12 +364,14 @@ internal static class HoverInputBridge
     {
         POINT point;
         if (!GetCursorPos(out point)) return null;
-        IntPtr top = GetAncestor(WindowFromPoint(point), GA_ROOT);
-        if (top == IntPtr.Zero) return null;
         foreach (WidgetPolicy item in Snapshot())
         {
             if (!item.Enabled || unchecked(Environment.TickCount - item.UpdatedAt) > 1200) continue;
-            if (item.Handle != top || !IsWindow(item.Handle) || !IsWindowVisible(item.Handle) || IsIconic(item.Handle)) continue;
+            // Electron's translucent widget can be visually and DOM-hovered
+            // while WindowFromPoint reports the window beneath a transparent
+            // pixel. The renderer's renewed policy is the hover authority;
+            // the native rectangle keeps capture confined to this widget.
+            if (!IsWindow(item.Handle) || !IsWindowVisible(item.Handle) || IsIconic(item.Handle)) continue;
             RECT rect;
             if (!GetWindowRect(item.Handle, out rect)) continue;
             if (point.x < rect.left || point.x >= rect.right || point.y < rect.top || point.y >= rect.bottom) continue;

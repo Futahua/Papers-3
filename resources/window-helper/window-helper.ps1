@@ -3,14 +3,16 @@
 # Behavior is LOCKED to the accepted protocol snapshot 013R5F plus the
 # reviewed Assignment 016 additions (protocolVersion '016' in manifest.json)
 # plus the reviewed Assignment 019G thumbnail method, plus the reviewed
-# Assignment 018 identity revision (protocolVersion '018'): the session-token
+# Assignment 018 identity revision: the session-token
 # identity key drops the exact title in favour of the window class, and every
 # window observation carries `windowClass`. Protocol shape, capacity limits,
 # outcome vocabulary and native behavior are otherwise preserved exactly; 016
 # adds the task-worthy eligibility filter to list, the hover method
 # (task-worthy window at a point, for direct onscreen pick), and offscreen-safe
 # bounds clamping in apply; 019G adds the thumbnail method (bounded PrintWindow
-# full-content capture); 018 makes identity independent of a mutable title.
+# full-content capture); Assignment 019 adds stable window-instance IDs and
+# opaque-capability process termination guarded by PID, process start time,
+# executable path, Papers/helper self checks and Windows system-path denial.
 # This file is the packaged runtime asset; do not drift from the manifest hash
 # without a reviewed protocol change.
 #
@@ -136,7 +138,7 @@ $ErrorActionPreference = 'Stop'
 
 . "$PSScriptRoot/window-capability.ps1"
 
-$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'hover', 'thumbnail')
+$VALID_METHODS = @('list', 'observe', 'minimize', 'restore', 'toggle', 'cloak', 'uncloak', 'cloak-many', 'uncloak-many', 'live-preview', 'apply', 'close', 'end-process', 'hover', 'thumbnail')
 $FORBIDDEN_KEYS = @('exec', 'command', 'script', 'path', 'handle', 'env', 'args', 'cmd', 'powershell', 'invoke', 'shell')
 $MAX_SAFE_REQUEST_ID = 9007199254740991L
 $script:WhSession = @{ byToken = @{}; byKey = @{}; maxTokens = 4096 }
@@ -227,30 +229,42 @@ function Get-WhWireBounds {
   }
 }
 
+function Get-WhWindowInstanceId([long]$Hwnd, [int]$PidValue, [string]$StartTicks, [string]$ClassName) {
+  $identity = "$Hwnd|$PidValue|$StartTicks|$ClassName"
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $digest = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($identity))
+    return 'W' + ([System.BitConverter]::ToString($digest, 0, 8).Replace('-', '').ToLowerInvariant())
+  } finally { $sha.Dispose() }
+}
+
 # 018 identity: the session token is keyed by the EXACT LIVE WINDOW INSTANCE as
-# the native layer can corroborate it - the runtime handle, the owning process
-# and the window class. The TITLE IS NOT PART OF IDENTITY. It is display
+# the native layer can corroborate it - the runtime handle, the owning process,
+# process start time and the window class. The TITLE IS NOT PART OF IDENTITY. It is display
 # metadata: it changes on every browser tab switch and on every document edit,
 # and keying identity by it made an ordinary title change look like window
 # invalidation. That is the defect this revision removes.
 #
-# What this key does and does not prove. It proves "this handle still belongs to
-# the same process and the same class of window", which is stable across title
-# changes, helper restarts and Papers restarts. It does NOT prove "this is the
-# same window object": Windows may recycle a handle value, and a replacement in
-# the SAME process with the SAME class would satisfy every clause here. Consumers
-# must therefore treat this as strong corroboration and never as terminal
-# evidence of anything - a failed check means UNVERIFIED, never "gone".
+# The process start time distinguishes PID reuse; the process path is also
+# saved and rechecked before every capability operation. A fresh helper emits
+# a new opaque token while the stable W+16 instance ID survives helper restarts.
 function Get-WhIdentityKey {
-  param([long]$Hwnd, [int]$PidValue, [string]$ClassName)
-  return "$Hwnd|$PidValue|$ClassName"
+  param([long]$Hwnd, [int]$PidValue, [string]$ClassName, [string]$StartTicks)
+  return "$Hwnd|$PidValue|$StartTicks|$ClassName"
+}
+
+function Get-WhProcessStartTicks([object]$Observation) {
+  if ($Observation -and $Observation.PSObject.Properties['ProcessStartTicks']) {
+    return [string]$Observation.ProcessStartTicks
+  }
+  return ''
 }
 
 function Get-WhResponseObservation {
   param([string]$Token)
   $entry = Resolve-WhSessionToken $Token
   $obs = Get-WhWindowObservation ([IntPtr]$entry.hwnd)
-  return [ordered]@{
+  $wire = [ordered]@{
     runtimeId = $Token
     title = $obs.Title
     processId = $obs.ProcessId
@@ -259,21 +273,29 @@ function Get-WhResponseObservation {
     state = $obs.State
     bounds = (Get-WhWireBounds $obs.Bounds)
   }
+  if ($obs.PSObject.Properties['IconProcessPath'] -and $obs.IconProcessPath) { $wire['iconProcessPath'] = $obs.IconProcessPath }
+  $startTicks = Get-WhProcessStartTicks $obs
+  if ($startTicks -match '^\d{1,20}$') { $wire['processStartTicks'] = $startTicks }
+  if ($obs.ProcessId -gt 0 -and $startTicks -match '^\d{1,20}$') {
+    $wire['windowInstanceId'] = Get-WhWindowInstanceId ([long]$obs.RuntimeId.ToInt64()) ([int]$obs.ProcessId) $startTicks ([string]$obs.ClassName)
+  }
+  return $wire
 }
 
-# Issue or reuse the session token for one (HWND, PID, window class) identity.
+# Issue or reuse the session token for one (HWND, PID, process start time,
+# window class) identity. The executable path is also saved and rechecked.
 # A changed identity under the same HWND yields a NEW token; tokens are never
 # overwritten or rebound. A title change does NOT change the identity and
 # therefore does NOT yield a new token.
 function New-WhSessionToken {
-  param([long]$Hwnd, [int]$PidValue, [string]$ClassName)
-  $key = Get-WhIdentityKey $Hwnd $PidValue $ClassName
+  param([long]$Hwnd, [int]$PidValue, [string]$ClassName, [string]$StartTicks, [string]$ProcessPath)
+  $key = Get-WhIdentityKey $Hwnd $PidValue $ClassName $StartTicks
   if ($script:WhSession.byKey.ContainsKey($key)) {
     return $script:WhSession.byKey[$key]
   }
   $token = 'T' + [guid]::NewGuid().ToString('N')
   $script:WhSession.byKey[$key] = $token
-  $script:WhSession.byToken[$token] = @{ hwnd = $Hwnd; pid = $PidValue; className = $ClassName }
+  $script:WhSession.byToken[$token] = @{ hwnd = $Hwnd; pid = $PidValue; className = $ClassName; startTicks = $StartTicks; processPath = $ProcessPath }
   return $token
 }
 
@@ -289,7 +311,7 @@ function Test-WhListCapacity {
   param([object[]]$Observations)
   $newCount = 0
   foreach ($observation in $Observations) {
-    $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
+    $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName) (Get-WhProcessStartTicks $observation)
     if (-not $script:WhSession.byKey.ContainsKey($key)) { $newCount += 1 }
   }
   return ($script:WhSession.byToken.Count + $newCount) -le $script:WhSession.maxTokens
@@ -303,7 +325,9 @@ function Test-WhListCapacity {
 # tab switch invalidate a healthy capability. The window class replaces it as
 # the stable corroborator.
 #
-# The outcome vocabulary is unchanged so every existing consumer keeps working,
+# Process termination is stricter: it is denied unless process start time and
+# executable path are available and still match the issued token. The outcome
+# vocabulary is unchanged so every existing consumer keeps working,
 # but consumers MUST NOT read this refusal as proof of death: a failure here means
 # the identity could not be corroborated, which is UNVERIFIED, not "gone".
 # Returns @{ ok; outcome; error }.
@@ -321,7 +345,9 @@ function Test-WhTokenIdentity {
   } catch {
     return @{ ok = $false; outcome = 'denied'; error = (Get-BoundedErrorText $_) }
   }
-  if ([int]$live.ProcessId -ne [int]$entry.pid -or [string]$live.ClassName -ne [string]$entry.className) {
+  if (([int]$live.ProcessId -ne [int]$entry.pid) -or ([string]$live.ClassName -ne [string]$entry.className) -or
+    ((Get-WhProcessStartTicks $live) -ne [string]$entry.startTicks) -or
+    (-not [string]::Equals([string]$live.ProcessPath, [string]$entry.processPath, [StringComparison]::OrdinalIgnoreCase))) {
     return @{ ok = $false; outcome = 'denied'; error = 'window identity changed since the token was issued' }
   }
   return @{ ok = $true }
@@ -404,6 +430,13 @@ function Test-WhRequestShape {
     }
     return @{ Valid = $true; RequestId = $id; Method = [string]$method }
   }
+  if ($method -eq 'end-process') {
+    foreach ($key in $Request.Keys) {
+      if (@('requestId', 'method', 'target') -notcontains ([string]$key)) {
+        return @{ Valid = $false; Response = (ConvertTo-WhResponse $id ([string]$method) 'denied' $null 'end-process accepts only its exact session target') }
+      }
+    }
+  }
   if ($method -ne 'list') {
     $target = $Request['target']
     if ($target -isnot [string] -or $target.Length -eq 0) {
@@ -463,8 +496,9 @@ function Invoke-WhRequest {
       }
       $windows = @()
       foreach ($observation in $observations) {
-        $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
-        $windows += [ordered]@{
+        $startTicks = Get-WhProcessStartTicks $observation
+        $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName) $startTicks ([string]$observation.ProcessPath)
+        $wire = [ordered]@{
           runtimeId = $token
           title = $observation.Title
           processId = $observation.ProcessId
@@ -473,6 +507,12 @@ function Invoke-WhRequest {
           state = $observation.State
           bounds = (Get-WhWireBounds $observation.Bounds)
         }
+        if ($observation.PSObject.Properties['IconProcessPath'] -and $observation.IconProcessPath) { $wire['iconProcessPath'] = $observation.IconProcessPath }
+        if ($startTicks -match '^\d{1,20}$') { $wire['processStartTicks'] = $startTicks }
+        if ([int]$observation.ProcessId -gt 0 -and $startTicks -match '^\d{1,20}$') {
+          $wire['windowInstanceId'] = Get-WhWindowInstanceId ([long]$observation.RuntimeId.ToInt64()) ([int]$observation.ProcessId) $startTicks ([string]$observation.ClassName)
+        }
+        $windows += $wire
       }
       return (ConvertTo-WhResponse $RequestId $Method 'success' @{ windows = $windows } $null)
     }
@@ -481,13 +521,14 @@ function Invoke-WhRequest {
       if ($null -eq $observation) {
         return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = $null } $null)
       }
-      $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
+      $startTicks = Get-WhProcessStartTicks $observation
+      $key = Get-WhIdentityKey ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName) $startTicks
       $atCapacity = -not $script:WhSession.byKey.ContainsKey($key) -and $script:WhSession.byToken.Count -ge $script:WhSession.maxTokens
       if ($atCapacity) {
         return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'session token capacity reached')
       }
-      $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName)
-      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = [ordered]@{
+      $token = New-WhSessionToken ([long]$observation.RuntimeId) ([int]$observation.ProcessId) ([string]$observation.ClassName) $startTicks ([string]$observation.ProcessPath)
+      $wire = [ordered]@{
         runtimeId = $token
         title = $observation.Title
         processId = $observation.ProcessId
@@ -495,7 +536,13 @@ function Invoke-WhRequest {
         windowClass = $observation.ClassName
         state = $observation.State
         bounds = (Get-WhWireBounds $observation.Bounds)
-      } } $null)
+      }
+      if ($observation.PSObject.Properties['IconProcessPath'] -and $observation.IconProcessPath) { $wire['iconProcessPath'] = $observation.IconProcessPath }
+      if ($startTicks -match '^\d{1,20}$') { $wire['processStartTicks'] = $startTicks }
+      if ([int]$observation.ProcessId -gt 0 -and $startTicks -match '^\d{1,20}$') {
+        $wire['windowInstanceId'] = Get-WhWindowInstanceId ([long]$observation.RuntimeId.ToInt64()) ([int]$observation.ProcessId) $startTicks ([string]$observation.ClassName)
+      }
+      return (ConvertTo-WhResponse $RequestId $Method 'success' @{ window = $wire } $null)
     }
     if ($Method -eq 'cloak-many' -or $Method -eq 'uncloak-many') {
       $runtimeIds = New-Object System.Collections.Generic.List[System.IntPtr]
@@ -515,37 +562,46 @@ function Invoke-WhRequest {
     }
     if ($Method -eq 'live-preview') {
       $target = [string]$Request['target']
+      $callerNumber = [UInt64]::Parse([string]$Request['caller'], [Globalization.CultureInfo]::InvariantCulture)
+      $callerHwnd = [IntPtr]([Int64]$callerNumber)
+      $enabled = if ([bool]$Request['enabled']) { 1 } else { 0 }
+      if ($enabled -eq 0) {
+        # Microsoft's PowerToys Window Walker deactivates the global preview
+        # with BOTH HWNDs zero and the AltTab trigger (4). Reusing the enable
+        # target/caller and Superbar trigger (3) can report success without
+        # removing the desktop isolation. Release must also work after either
+        # window has gone away.
+        $status = [WH.Win32]::DwmActivateLivePreview([uint32]0, [IntPtr]::Zero,
+          [IntPtr]::Zero, [uint32]4, [IntPtr]::Zero)
+        if (Test-WhWindowAlive $callerHwnd) {
+          $included = 0
+          [void][WH.Win32]::DwmSetWindowAttribute($callerHwnd, 12, [ref]$included, 4)
+        }
+        if ($status -ne 0) {
+          return (ConvertTo-WhResponse $RequestId $Method 'denied' $null "DWM live preview release failed ($status)")
+        }
+        return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
+      }
       $entry = Resolve-WhSessionToken $target
       if ($null -eq $entry -or -not (Test-WhWindowAlive ([IntPtr]$entry.hwnd))) {
         return (ConvertTo-WhResponse $RequestId $Method 'missing' $null 'target window is gone')
       }
-      $callerNumber = [UInt64]::Parse([string]$Request['caller'], [Globalization.CultureInfo]::InvariantCulture)
-      $callerHwnd = [IntPtr]([Int64]$callerNumber)
       if (-not (Test-WhWindowAlive $callerHwnd)) {
         return (ConvertTo-WhResponse $RequestId $Method 'missing' $null 'caller window is gone')
       }
-      $enabled = if ([bool]$Request['enabled']) { 1 } else { 0 }
       # DWMWA_EXCLUDED_FROM_PEEK (12) is independent of the caller argument
       # passed to DwmActivateLivePreview. Keep the candidate picker composed
       # while every unrelated application surface fades to glass.
-      if ($enabled -eq 1) {
-        $excluded = 1
-        $excludeStatus = [WH.Win32]::DwmSetWindowAttribute($callerHwnd, 12, [ref]$excluded, 4)
-        if ($excludeStatus -ne 0) {
-          return (ConvertTo-WhResponse $RequestId $Method 'denied' $null "DWM peek exclusion failed ($excludeStatus)")
-        }
+      $excluded = 1
+      $excludeStatus = [WH.Win32]::DwmSetWindowAttribute($callerHwnd, 12, [ref]$excluded, 4)
+      if ($excludeStatus -ne 0) {
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null "DWM peek exclusion failed ($excludeStatus)")
       }
-      $status = [WH.Win32]::DwmActivateLivePreview([uint32]$enabled, [IntPtr]$entry.hwnd, $callerHwnd, [uint32]3, [IntPtr]::Zero)
+      $status = [WH.Win32]::DwmActivateLivePreview([uint32]1, [IntPtr]$entry.hwnd, $callerHwnd, [uint32]3, [IntPtr]::Zero)
       if ($status -ne 0) {
-        if ($enabled -eq 1) {
-          $included = 0
-          [void][WH.Win32]::DwmSetWindowAttribute($callerHwnd, 12, [ref]$included, 4)
-        }
-        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null "DWM live preview failed ($status)")
-      }
-      if ($enabled -eq 0) {
         $included = 0
         [void][WH.Win32]::DwmSetWindowAttribute($callerHwnd, 12, [ref]$included, 4)
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null "DWM live preview failed ($status)")
       }
       return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
     }
@@ -655,6 +711,37 @@ function Invoke-WhRequest {
     }
     if ($Method -eq 'close') {
       Close-ResolvedWhMember $runtimeId
+      return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
+    }
+    if ($Method -eq 'end-process') {
+      $entry = Resolve-WhSessionToken $target
+      if ([int]$entry.pid -eq [int](& $script:WhOps['ParentPid'])) {
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'the Papers host process cannot be ended here')
+      }
+      if ([string]$entry.processPath -match '(?i)(^|[\\/])Windows([\\/]|$)') {
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'Windows system processes cannot be ended here')
+      }
+      $process = Get-Process -Id ([int]$entry.pid) -ErrorAction Stop
+      # Acquire and retain the process object handle before checking identity;
+      # the subsequent Kill uses this same kernel handle, so PID reuse cannot
+      # redirect termination to a replacement process between check and act.
+      $processHandle = $process.Handle
+      if ($processHandle -eq [IntPtr]::Zero) {
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'the exact process handle is unavailable')
+      }
+      $liveStartTicks = [string]$process.StartTime.ToUniversalTime().Ticks
+      $livePath = [string]$process.Path
+      if (($liveStartTicks -ne [string]$entry.startTicks) -or
+        (-not [string]::Equals($livePath, [string]$entry.processPath, [StringComparison]::OrdinalIgnoreCase))) {
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'the exact process identity changed')
+      }
+      if ($livePath -match '(?i)(^|[\\/])Windows([\\/]|$)') {
+        return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'Windows system processes cannot be ended here')
+      }
+      $process.Kill()
+      if (-not $process.WaitForExit(3000)) {
+        return (ConvertTo-WhResponse $RequestId $Method 'timeout' $null 'the process did not exit within the bounded wait')
+      }
       return (ConvertTo-WhResponse $RequestId $Method 'success' $null $null)
     }
     return (ConvertTo-WhResponse $RequestId $Method 'denied' $null 'method not permitted')

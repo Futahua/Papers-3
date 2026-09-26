@@ -21,14 +21,14 @@ export interface CompactWidgetIpcDependencies {
    */
   windowIdForWorkspaceSender: (sender: WebContents) => number | null;
   isWidgetSender: (sender: WebContents, projectId: string) => boolean;
-  setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => void;
+  setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => Promise<void>;
   requestHoverQuickRun?: (senderId: number, phase: 'open' | 'append', text: string) => Promise<{ ok: boolean; detail: string }>;
   acknowledgeHoverQuickRunSeal?: (senderId: number, generation: number) => boolean;
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
   showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
-  dismissCandidatePicker?: (sender: WebContents) => void;
+  dismissCandidatePicker?: (sender: WebContents) => Promise<void> | void;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -177,7 +177,8 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     if (!surface || !isWidgetSender(event.sender, surface.projectId) || !registry.validSender(event.sender.id, surface.projectId, token)) {
       throw new Error('denied: sender is not the registered widget');
     }
-    setHoverPolicy?.(event.sender.id, raw.enabled, [...new Set(raw.blockedBindings as string[])]);
+    if (!setHoverPolicy) throw new Error('native hover-input policy bridge is unavailable');
+    await setHoverPolicy(event.sender.id, raw.enabled, [...new Set(raw.blockedBindings as string[])]);
     return { ok: true };
   });
 
@@ -314,7 +315,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
         && registry.validSender(event.sender.id, surface.projectId, token);
     }
     if (!authorized) throw new Error('denied: sender is not a registered project surface');
-    dismissCandidatePicker?.(event.sender);
+    await dismissCandidatePicker?.(event.sender);
     return { ok: true };
   });
 }
