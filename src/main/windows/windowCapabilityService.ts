@@ -1151,10 +1151,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (!target) return { outcome: 'missing', error: 'binding is not issued' };
     if (!/^[1-9][0-9]{0,19}$/.test(caller)) return { outcome: 'malformed', error: 'caller window is malformed' };
     if (!(await ensureStarted()) || !factory.livePreview) return { outcome: 'helper-unavailable', error: 'DWM live preview is unavailable' };
-    if (livePreview && (livePreview.target !== target || livePreview.caller !== caller)) {
-      const ended = await endLivePreview();
-      if (ended.outcome !== 'success') return ended;
-    }
+    if (livePreview?.target === target && livePreview.caller === caller) return { outcome: 'success' };
+    // DWM replaces the active preview when enabled for another target. An
+    // explicit disable here exposed the entire desktop between list rows.
     // Record release intent before the helper call. If begin times out after
     // DWM accepted it, a later picker cleanup still knows what to disable.
     const preview = { target, caller };

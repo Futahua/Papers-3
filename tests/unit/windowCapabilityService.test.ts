@@ -586,6 +586,39 @@ describe('windowCapabilityService lifecycle', () => {
     await service.stop();
   });
 
+  it('switches list previews without revealing the desktop between targets', async () => {
+    const calls: Array<{ target: RuntimeWindowId; enabled: boolean }> = [];
+    const firstObservation = observation({ runtimeId: TOKEN_A as RuntimeWindowId });
+    const second = observation({
+      runtimeId: TOKEN_B as RuntimeWindowId,
+      windowInstanceId: 'W2222222222222222',
+      processStartTicks: '638945344001234568',
+    });
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [firstObservation, second] }),
+      observe: async (token) => {
+        const found = [firstObservation, second].find((entry) => entry.runtimeId === token);
+        return found ? { outcome: 'success', observation: found } : { outcome: 'missing' };
+      },
+      livePreview: async (target, _caller, enabled) => {
+        calls.push({ target, enabled });
+        return { outcome: 'success' };
+      },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const first = await service.bindCandidate(listed.candidates[0]!.id);
+    const next = await service.bindCandidate(listed.candidates[1]!.id);
+    if (first.outcome !== 'success' || next.outcome !== 'success') throw new Error('candidate bind failed');
+    expect((await service.beginLivePreviewCapability!(first.capability, '424242')).outcome).toBe('success');
+    expect((await service.beginLivePreviewCapability!(next.capability, '424242')).outcome).toBe('success');
+    expect(calls.map((call) => call.enabled)).toEqual([true, true]);
+    expect((await service.endLivePreview!()).outcome).toBe('success');
+    expect(calls.map((call) => call.enabled)).toEqual([true, true, false]);
+    await service.stop();
+  });
+
   it('attempts release after live-preview begin reports timeout', async () => {
     const calls: boolean[] = [];
     const factory = fakeFactory({
