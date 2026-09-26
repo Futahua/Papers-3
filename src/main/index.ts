@@ -2102,6 +2102,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           return peekController.end();
         };
         const beginCandidatePeek = (candidateId: string): void => {
+          // Keep the isolated eye-test usable if a compositor-specific DWM
+          // transition is flashing; the normal product path keeps Peek on.
+          if (process.env['PAPERS_DISABLE_LIST_PEEK'] === '1') return;
           if (actionFinishing || pickerClosing) return;
           if (peekEndTimer) { clearTimeout(peekEndTimer); peekEndTimer = null; }
           if (peekTimer) clearTimeout(peekTimer);
