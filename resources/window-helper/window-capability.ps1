@@ -72,6 +72,7 @@ namespace WH
     public static class Win32
     {
         [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
+        [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc cb, IntPtr lParam);
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder sb, int max);
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
@@ -521,10 +522,38 @@ function Get-WhWindowObservation([IntPtr]$hWnd) {
     $processPath = $process.Path
     $processStartTicks = [string]$process.StartTime.ToUniversalTime().Ticks
   } catch { }
+  # UWP frame windows belong to ApplicationFrameHost, whose executable icon
+  # is generic. The exact frame's CoreWindow child belongs to the app itself.
+  # This path is artwork metadata only; operation authority stays on the
+  # frame HWND/PID/start-time above.
+  $iconProcessPath = $null
+  if ($className.ToString() -eq 'ApplicationFrameWindow' -and
+      $processPath -match '(?i)[\\/]ApplicationFrameHost\.exe$') {
+    $appPids = [System.Collections.Generic.HashSet[uint32]]::new()
+    $childCallback = [WH.EnumWindowsProc]{
+      param([IntPtr]$childHwnd, [IntPtr]$ignored)
+      $childClass = New-Object System.Text.StringBuilder 256
+      [void][WH.Win32]::GetClassName($childHwnd, $childClass, $childClass.Capacity)
+      if ($childClass.ToString() -eq 'Windows.UI.Core.CoreWindow') {
+        $childPid = [uint32]0
+        [void][WH.Win32]::GetWindowThreadProcessId($childHwnd, [ref]$childPid)
+        if ($childPid -gt 0 -and $childPid -ne $pidValue) { [void]$appPids.Add($childPid) }
+      }
+      return $true
+    }
+    [void][WH.Win32]::EnumChildWindows($hWnd, $childCallback, [IntPtr]::Zero)
+    if ($appPids.Count -eq 1) {
+      try {
+        $appPath = (Get-Process -Id ([int]@($appPids)[0]) -ErrorAction Stop).Path
+        if ($appPath -match '(?i)[\\/]WindowsApps[\\/]') { $iconProcessPath = $appPath }
+      } catch { }
+    }
+  }
   return [pscustomobject]@{
     RuntimeId = $hWnd
     ProcessId = [int]$pidValue
     ProcessPath = $processPath
+    IconProcessPath = $iconProcessPath
     ProcessStartTicks = $processStartTicks
     Title = $title.ToString()
     # 018: the window CLASS is identity-bearing corroboration. A title changes

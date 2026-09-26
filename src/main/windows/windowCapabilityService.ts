@@ -781,7 +781,8 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   async function iconFor(observation: WindowObservation): Promise<string | null> {
     const processPath = observation.processPath;
     if (typeof processPath !== 'string' || processPath.length === 0) return null;
-    const cacheKey = `${observation.processId}|${processPath}`;
+    const artworkPath = observation.iconProcessPath ?? processPath;
+    const cacheKey = `${observation.processId}|${artworkPath}`;
     const cached = iconCache.get(cacheKey);
     if (cached !== undefined) return cached;
     const pending = iconReadsInFlight.get(cacheKey);
@@ -789,12 +790,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (iconCache.size >= WINDOW_CAPABILITY_MAX_ICON_CACHE) return null;
     const read = (async () => {
       try {
-        const packageIcon = packagedAppLogo(processPath);
+        const packageIcon = packagedAppLogo(artworkPath);
         if (packageIcon) {
           iconCache.set(cacheKey, packageIcon);
           return packageIcon;
         }
-        const image = await getFileIcon(processPath);
+        const image = await getFileIcon(artworkPath);
         const dataUrl = image.toDataURL();
         if (Buffer.byteLength(dataUrl, 'utf8') > 256 * 1024) return null;
         iconCache.set(cacheKey, dataUrl);
@@ -815,7 +816,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   async function nativeIconFor(observation: WindowObservation): Promise<string | null> {
     // Packaged apps commonly expose a generic HWND/class icon. Their own
     // AppxManifest logo is the app identity shown by Windows.
-    const packageIcon = packagedAppLogo(observation.processPath ?? '');
+    const packageIcon = packagedAppLogo(observation.iconProcessPath ?? observation.processPath ?? '');
     if (packageIcon) return packageIcon;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {

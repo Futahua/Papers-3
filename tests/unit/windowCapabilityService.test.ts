@@ -196,6 +196,28 @@ describe('windowCapabilityService candidates', () => {
     }
   });
 
+  it('uses a frame child app path only for artwork, keeping frame identity', async () => {
+    const frame = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      processId: 1001,
+      processPath: 'C:\\Windows\\System32\\ApplicationFrameHost.exe',
+      iconProcessPath: 'C:\\Apps\\Store.exe',
+    });
+    const paths: string[] = [];
+    const service = createWindowCapabilityService({
+      createFactory: () => fakeFactory({ list: async () => ({ outcome: 'success', windows: [frame] }) }),
+      currentPid: 9999,
+      getFileIcon: async (filePath) => {
+        paths.push(filePath);
+        return { toDataURL: () => 'data:image/png;base64,STORE' } as never;
+      },
+    });
+    const listed = await service.listCandidates();
+    expect(paths).toEqual(['C:\\Apps\\Store.exe']);
+    if (listed.outcome === 'success') expect(listed.candidates[0]?.icon).toBe('data:image/png;base64,STORE');
+    await service.stop();
+  });
+
   it('shares one in-flight file icon for windows from the same process', async () => {
     const oneIcon = deferred<{ toDataURL: () => string }>();
     const read = vi.fn(() => oneIcon.promise as never);

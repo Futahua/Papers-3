@@ -273,6 +273,7 @@ function Get-WhResponseObservation {
     state = $obs.State
     bounds = (Get-WhWireBounds $obs.Bounds)
   }
+  if ($obs.PSObject.Properties['IconProcessPath'] -and $obs.IconProcessPath) { $wire['iconProcessPath'] = $obs.IconProcessPath }
   $startTicks = Get-WhProcessStartTicks $obs
   if ($startTicks -match '^\d{1,20}$') { $wire['processStartTicks'] = $startTicks }
   if ($obs.ProcessId -gt 0 -and $startTicks -match '^\d{1,20}$') {
@@ -506,6 +507,7 @@ function Invoke-WhRequest {
           state = $observation.State
           bounds = (Get-WhWireBounds $observation.Bounds)
         }
+        if ($observation.PSObject.Properties['IconProcessPath'] -and $observation.IconProcessPath) { $wire['iconProcessPath'] = $observation.IconProcessPath }
         if ($startTicks -match '^\d{1,20}$') { $wire['processStartTicks'] = $startTicks }
         if ([int]$observation.ProcessId -gt 0 -and $startTicks -match '^\d{1,20}$') {
           $wire['windowInstanceId'] = Get-WhWindowInstanceId ([long]$observation.RuntimeId.ToInt64()) ([int]$observation.ProcessId) $startTicks ([string]$observation.ClassName)
@@ -535,6 +537,7 @@ function Invoke-WhRequest {
         state = $observation.State
         bounds = (Get-WhWireBounds $observation.Bounds)
       }
+      if ($observation.PSObject.Properties['IconProcessPath'] -and $observation.IconProcessPath) { $wire['iconProcessPath'] = $observation.IconProcessPath }
       if ($startTicks -match '^\d{1,20}$') { $wire['processStartTicks'] = $startTicks }
       if ([int]$observation.ProcessId -gt 0 -and $startTicks -match '^\d{1,20}$') {
         $wire['windowInstanceId'] = Get-WhWindowInstanceId ([long]$observation.RuntimeId.ToInt64()) ([int]$observation.ProcessId) $startTicks ([string]$observation.ClassName)

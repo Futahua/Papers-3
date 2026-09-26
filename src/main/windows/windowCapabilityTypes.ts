@@ -70,6 +70,8 @@ export interface WindowObservation {
   title: string;
   processId: number | null;
   processPath: string | null;
+  /** Artwork metadata for a packaged app inside an ApplicationFrameHost window. */
+  iconProcessPath?: string;
   windowInstanceId?: string;
   processStartTicks?: string;
   /**
@@ -295,6 +297,8 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
     && !(typeof processId === 'number' && Number.isSafeInteger(processId) && processId >= 0)) return undefined;
   const processPath = raw['processPath'];
   if (processPath !== null && typeof processPath !== 'string') return undefined;
+  const iconProcessPath = raw['iconProcessPath'];
+  if (iconProcessPath !== undefined && (typeof iconProcessPath !== 'string' || iconProcessPath.length > 1024)) return undefined;
   const windowInstanceId = raw['windowInstanceId'];
   if (windowInstanceId !== undefined && (typeof windowInstanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(windowInstanceId))) return undefined;
   const processStartTicks = raw['processStartTicks'];
@@ -313,6 +317,7 @@ function parseWindowObservation(raw: unknown): WindowObservation | undefined {
     title: raw['title'],
     processId,
     processPath,
+    ...(iconProcessPath !== undefined ? { iconProcessPath } : {}),
     ...(windowInstanceId !== undefined ? { windowInstanceId } : {}),
     ...(processStartTicks !== undefined ? { processStartTicks } : {}),
     ...(windowClass !== undefined ? { windowClass } : {}),
