@@ -124,11 +124,21 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
     }
     policyAcks.clear();
   };
+  const abortNativeHandoff = (): void => {
+    if (overlayReady) {
+      clearTimeout(overlayReady.timer);
+      overlayReady.reject(new Error('Quick Run input delivery failed'));
+      overlayReady = null;
+    }
+    send('OVERLAY\t0');
+  };
   const trackNativeInput = (senderId: number, captureId: string, text: string, callback: HoverInputBridgeOptions['onCaptured']): void => {
     Promise.resolve().then(() => callback(senderId, captureId, text)).then(() => {
       send(`ACK\t${captureId}`);
     }).catch((error: unknown) => {
       options.onError?.(`native hover input was not delivered: ${error instanceof Error ? error.message : String(error)}`);
+      send(`ACK\t${captureId}`);
+      abortNativeHandoff();
     });
   };
   const trackNativeAppend = (senderId: number, captureId: string, text: string): void => {
@@ -136,6 +146,8 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
       send(`ACK\t${captureId}`);
     }).catch((error: unknown) => {
       options.onError?.(`native hover input append was not delivered: ${error instanceof Error ? error.message : String(error)}`);
+      send(`ACK\t${captureId}`);
+      abortNativeHandoff();
     });
   };
   child.stdout.setEncoding('utf8');

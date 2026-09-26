@@ -15,7 +15,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function harness() {
+function harness(onCaptured: HoverInputBridgeOptions['onCaptured'] = vi.fn()) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'papers-hover-policy-'));
   roots.push(root);
   const sourcePath = path.join(root, 'helper.cs');
@@ -38,7 +38,7 @@ function harness() {
     sourcePath,
     spawn: spawn as unknown as HoverInputBridgeOptions['spawn'],
     onAltQ: vi.fn(),
-    onCaptured: vi.fn(),
+    onCaptured,
   };
   const bridge = createHoverInputBridge(options);
   if (!bridge) throw new Error('expected a Windows helper bridge');
@@ -46,6 +46,17 @@ function harness() {
 }
 
 describe('hover input policy helper acknowledgement', () => {
+  it('releases a failed captured key and resets the native handoff for a later try', async () => {
+    const { bridge, child, stdin } = harness(async () => { throw new Error('launcher unavailable'); });
+    child.stdout.write('CAPTURE\t7\t41\tQQ==\n');
+    await vi.waitFor(() => {
+      expect(stdin.write.mock.calls.map(([record]) => record)).toContain('ACK\t41\n');
+      expect(stdin.write.mock.calls.map(([record]) => record)).toContain('OVERLAY\t0\n');
+    });
+    bridge.close();
+    child.emit('exit', 0);
+  });
+
   it('resolves only when the matching request ID receives a positive helper acknowledgement', async () => {
     const { bridge, child, stdin } = harness();
     const policy = bridge.setPolicy(7, true, ['A', 'Shift+B']);

@@ -235,6 +235,7 @@ export interface WindowPickSessionDependencies {
 export interface PickService {
   hoverAt(x: number, y: number): Promise<WindowHoverResult>;
   pickAt(x: number, y: number, candidateId: string): Promise<WindowBindResult & { candidate?: WindowCandidate }>;
+  bindCandidate(candidateId: string): Promise<WindowBindResult>;
   resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<
     | { outcome: 'success'; capability: WindowRuntimeCapability; descriptor: PersistedWindowMemberDescriptor }
     | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string }
@@ -527,20 +528,25 @@ export function createWindowPickSession({
     const adds: PickCommittedAdd[] = [];
     const removes: PickCommittedRemove[] = [];
     for (const staged of stagedAdds.values()) {
-      const cx = staged.bounds.x + Math.floor(staged.bounds.width / 2);
-      const cy = staged.bounds.y + Math.floor(staged.bounds.height / 2);
-      const bound = await service.pickAt(cx, cy, staged.candidate.id).catch(() => null);
+      // The window was chosen when staged. Requiring it to remain topmost at
+      // its old centre silently drops earlier picks after overlapping windows
+      // move or come forward. Bind the exact recorded candidate identity now.
+      const bound = await service.bindCandidate(staged.candidate.id).catch(() => null);
       if (!active) return;
       if (bound && bound.outcome === 'success' && bound.capability && bound.descriptor) {
         adds.push({
           descriptor: bound.descriptor,
           capability: bound.capability,
-          candidate: bound.candidate ?? staged.candidate,
+          candidate: staged.candidate,
         });
       }
       // A failed staged add is skipped (typed partial semantics).
     }
     for (const descriptor of stagedRemovals.values()) removes.push({ descriptor });
+    if (stagedAdds.size > 0 && adds.length === 0 && removes.length === 0) {
+      endWith({ outcome: 'failed', error: 'the selected windows could not be verified; try Direct Pick again' });
+      return;
+    }
     endWith({ outcome: 'committed', adds, removes });
   }
 
@@ -833,6 +839,7 @@ export function createPickSessionFromService(service: WindowCapabilityService): 
   const pickService: PickService = {
     hoverAt: (x, y) => service.hoverAt(x, y),
     pickAt: (x, y, candidateId) => service.pickAt(x, y, candidateId),
+    bindCandidate: (candidateId) => service.bindCandidate(candidateId),
     resolvePersisted: (descriptor) => service.resolvePersisted(descriptor),
     observeCapability: (capability) => service.observeCapability(capability).then((result) => {
       if (result.outcome === 'success' && result.observation) {

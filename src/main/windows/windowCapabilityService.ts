@@ -396,6 +396,19 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   let stopped = false;
   let candidateIdCounter = 0;
   const candidatesByListedId = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }>();
+  const rememberCandidate = (entry: { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }): void => {
+    const id = entry.candidate.id;
+    candidatesByListedId.delete(id);
+    candidatesByListedId.set(id, entry);
+    // Background lists must not erase a Direct Pick's staged exact identity.
+    // The helper still re-observes the token before binding, and this bounded
+    // LRU prevents old candidates from accumulating across a long session.
+    while (candidatesByListedId.size > 256) {
+      const oldest = candidatesByListedId.keys().next().value;
+      if (oldest === undefined) break;
+      candidatesByListedId.delete(oldest);
+    }
+  };
   const bindings = new Map<string, { helperToken: RuntimeWindowId; touched: number }>();
   const bindingObservations = new Map<string, WindowObservation>();
   const bindingDescriptors = new Map<string, PersistedWindowMemberDescriptor>();
@@ -605,8 +618,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         candidates.push(entry.candidate);
         listed.set(entry.candidate.id, entry);
       }
-      candidatesByListedId.clear();
-      for (const [id, entry] of listed) candidatesByListedId.set(id, entry);
+      for (const entry of listed.values()) rememberCandidate(entry);
       return { outcome: 'success', candidates };
     } finally {
       if (nativeIcons) {
@@ -784,22 +796,35 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const artworkPath = observation.iconProcessPath ?? processPath;
     const cacheKey = `${observation.processId}|${artworkPath}`;
     const cached = iconCache.get(cacheKey);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      // Keep recent artwork resident; a long session sees more than 64
+      // processes, and a permanently full cache used to make every new icon
+      // fail until Papers restarted.
+      iconCache.delete(cacheKey);
+      iconCache.set(cacheKey, cached);
+      return cached;
+    }
     const pending = iconReadsInFlight.get(cacheKey);
     if (pending) return pending;
-    if (iconCache.size >= WINDOW_CAPABILITY_MAX_ICON_CACHE) return null;
+    const rememberIcon = (icon: string): string => {
+      iconCache.set(cacheKey, icon);
+      while (iconCache.size > WINDOW_CAPABILITY_MAX_ICON_CACHE) {
+        const oldest = iconCache.keys().next().value;
+        if (oldest === undefined) break;
+        iconCache.delete(oldest);
+      }
+      return icon;
+    };
     const read = (async () => {
       try {
         const packageIcon = packagedAppLogo(artworkPath);
         if (packageIcon) {
-          iconCache.set(cacheKey, packageIcon);
-          return packageIcon;
+          return rememberIcon(packageIcon);
         }
         const image = await getFileIcon(artworkPath);
         const dataUrl = image.toDataURL();
         if (Buffer.byteLength(dataUrl, 'utf8') > 256 * 1024) return null;
-        iconCache.set(cacheKey, dataUrl);
-        return dataUrl;
+        return rememberIcon(dataUrl);
       } catch {
         return null;
       } finally {
@@ -891,7 +916,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const icon = await iconFor(result.window);
     entry.candidate.icon = icon;
     if (!result.window.bounds) return { outcome: 'success', candidate: null, bounds: null, descriptor: entry.descriptor };
-    candidatesByListedId.set(entry.candidate.id, entry);
+    rememberCandidate(entry);
     return { outcome: 'success', candidate: entry.candidate, bounds: result.window.bounds, descriptor: entry.descriptor };
   }
 

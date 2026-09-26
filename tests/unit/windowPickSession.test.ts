@@ -173,6 +173,11 @@ function fakeService(overrides: Partial<PickService> = {}): PickService {
       descriptor: DESCRIPTOR_A,
       candidate: { id: 'wl-candidate-Taaaa', title: 'Window A', applicationLabel: 'A', icon: null, state: 'normal' },
     }),
+    bindCandidate: async () => ({
+      outcome: 'success',
+      capability: { version: 1, bindingId: 'wl-binding-1' },
+      descriptor: DESCRIPTOR_A,
+    }),
     resolvePersisted: async (descriptor) => ({
       outcome: 'success',
       capability: { version: 1, bindingId: 'wl-binding-member' },
@@ -361,7 +366,7 @@ describe('window pick session (019B live picker)', () => {
       bounds: { x: x < 400 ? 100 : 500, y: 100, width: 300, height: 200 },
       descriptor: x < 400 ? w2 : w1,
     }));
-    const pickAt = vi.fn(async () => ({
+    const bindCandidate = vi.fn(async () => ({
       outcome: 'success' as const,
       capability: { version: 1 as const, bindingId: 'binding-w2' },
       descriptor: w2,
@@ -369,7 +374,7 @@ describe('window pick session (019B live picker)', () => {
     }));
     const { session, created } = sessionWithOverlays(fakeService({
       hoverAt: hoverAt as unknown as PickService['hoverAt'],
-      pickAt: pickAt as unknown as PickService['pickAt'],
+      bindCandidate: bindCandidate as unknown as PickService['bindCandidate'],
     }));
     let result: unknown = null;
     await session.begin({ memberDescriptors: [w1], onResult: (next) => { result = next; } });
@@ -419,13 +424,13 @@ describe('window pick session (019B live picker)', () => {
   });
 
   it('Enter commits the complete staged set in one typed result', async () => {
-    const pickAt = vi.fn(async () => ({
+    const bindCandidate = vi.fn(async () => ({
       outcome: 'success' as const,
       capability: { version: 1 as const, bindingId: 'wl-binding-1' },
       descriptor: DESCRIPTOR_A,
       candidate: { id: 'wl-candidate-Taaaa', title: 'Window A', applicationLabel: 'A', icon: null, state: 'normal' as const },
     }));
-    const { session, created } = sessionWithOverlays(fakeService({ pickAt: pickAt as unknown as PickService['pickAt'] }));
+    const { session, created } = sessionWithOverlays(fakeService({ bindCandidate: bindCandidate as unknown as PickService['bindCandidate'] }));
     let result: unknown = null;
     await session.begin({ memberDescriptors: [DESCRIPTOR_B], onResult: (next) => { result = next; } });
     created[0]!.pointerMoveAt(250, 250); // unselected A -> add
@@ -433,7 +438,7 @@ describe('window pick session (019B live picker)', () => {
     created[0]!.clickAt(250, 250); // stage add A
     created[0]!.commitPick();
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(pickAt).toHaveBeenCalledTimes(1);
+    expect(bindCandidate).toHaveBeenCalledExactlyOnceWith('wl-candidate-Taaaa');
     expect(result).toEqual({
       outcome: 'committed',
       adds: [

@@ -542,6 +542,32 @@ function Get-WhWindowObservation([IntPtr]$hWnd) {
       return $true
     }
     [void][WH.Win32]::EnumChildWindows($hWnd, $childCallback, [IntPtr]::Zero)
+    if ($appPids.Count -eq 0 -and $title.Length -gt 0) {
+      # Recent Windows builds expose the app CoreWindow as a separate
+      # top-level peer, not a child of ApplicationFrameWindow. Correlate only
+      # a CoreWindow whose title identifies this exact frame's app. Artwork
+      # is the sole use of this path; the frame remains the action target.
+      $frameTitle = $title.ToString()
+      $peerCallback = [WH.EnumWindowsProc]{
+        param([IntPtr]$peerHwnd, [IntPtr]$ignored)
+        $peerClass = New-Object System.Text.StringBuilder 256
+        [void][WH.Win32]::GetClassName($peerHwnd, $peerClass, $peerClass.Capacity)
+        if ($peerClass.ToString() -ne 'Windows.UI.Core.CoreWindow') { return $true }
+        $peerTitle = New-Object System.Text.StringBuilder 512
+        [void][WH.Win32]::GetWindowText($peerHwnd, $peerTitle, $peerTitle.Capacity)
+        $name = $peerTitle.ToString()
+        $suffixMatches = $frameTitle.EndsWith($name, [System.StringComparison]::OrdinalIgnoreCase)
+        $prefix = if ($suffixMatches) { $frameTitle.Substring(0, $frameTitle.Length - $name.Length).TrimEnd() } else { '' }
+        # UWP frames can insert a directional mark before their title dash.
+        $appSuffix = $suffixMatches -and $prefix.Length -gt 0 -and $prefix.EndsWith('-')
+        if ($name.Length -eq 0 -or ($frameTitle -ne $name -and -not $appSuffix)) { return $true }
+        $peerPid = [uint32]0
+        [void][WH.Win32]::GetWindowThreadProcessId($peerHwnd, [ref]$peerPid)
+        if ($peerPid -gt 0 -and $peerPid -ne $pidValue) { [void]$appPids.Add($peerPid) }
+        return $true
+      }
+      [void][WH.Win32]::EnumWindows($peerCallback, [IntPtr]::Zero)
+    }
     if ($appPids.Count -eq 1) {
       try {
         $appPath = (Get-Process -Id ([int]@($appPids)[0]) -ErrorAction Stop).Path

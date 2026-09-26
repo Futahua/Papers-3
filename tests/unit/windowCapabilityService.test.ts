@@ -174,6 +174,28 @@ describe('windowCapabilityService candidates', () => {
     expect(result.candidates[0]!.icon).toBe('data:image/png;base64,ICON');
   });
 
+  it('keeps reading icons after a long session fills the bounded artwork cache', async () => {
+    let sequence = 0;
+    const factory = fakeFactory({
+      list: async () => {
+        sequence += 1;
+        return { outcome: 'success', windows: [observation({
+          runtimeId: `T${sequence.toString(16).padStart(32, '0')}` as RuntimeWindowId,
+          processId: 1000 + sequence,
+          processPath: `C:\\Apps\\app-${sequence}.exe`,
+        })] };
+      },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'data:image/png;base64,ICON' }) as never,
+    });
+    let newest: Awaited<ReturnType<typeof service.listCandidates>> | null = null;
+    for (let index = 0; index < 66; index += 1) newest = await service.listCandidates();
+    expect(newest).toMatchObject({ outcome: 'success', candidates: [{ icon: 'data:image/png;base64,ICON' }] });
+  });
+
   it('starts independent file-icon reads together before the list waits for them', async () => {
     const firstIcon = deferred<{ toDataURL: () => string }>();
     const requested: string[] = [];
@@ -417,6 +439,29 @@ describe('windowCapabilityService native picker snapshots', () => {
 });
 
 describe('windowCapabilityService bind and capabilities', () => {
+  it('retains a staged candidate across a background list refresh while revalidating it on bind', async () => {
+    const first = observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Window A' });
+    const second = observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Window B', processId: 2002, processPath: 'C:\\Apps\\b.exe' });
+    let current = [first];
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: current }),
+      observe: async (id) => id === TOKEN_A
+        ? { outcome: 'success', observation: first }
+        : { outcome: 'missing', error: 'gone' },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('list failed');
+    const stagedId = listed.candidates[0]!.id;
+    current = [second];
+    await service.listCandidates();
+    expect((await service.bindCandidate(stagedId)).outcome).toBe('success');
+  });
+
   it('binds only a currently listed host-issued candidate id into capability + descriptor', async () => {
     const { service } = harness();
     const listed = await service.listCandidates();
