@@ -204,7 +204,15 @@ export interface NativePickerWindowIdentity extends WindowBounds {
 }
 
 export type NativePickerSeedResult =
-  | { outcome: 'success'; seeds: NativePickerWindowIdentity[] }
+  | {
+    outcome: 'success';
+    seeds: Array<NativePickerWindowIdentity & { seedId: number }>;
+    /** Which of the requested members were actually presented to the picker, by
+     * their index in the request. A member that could not be matched is NOT
+     * seeded and therefore never shown as green - so its absence from the final
+     * set is not a removal gesture, and the commit must not read it as one. */
+    seededIndices: number[];
+  }
   | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string };
 
 export type NativePickerBindResult =
@@ -276,7 +284,10 @@ export interface WindowCapabilityService {
   /** SlopTop local picker: bind one final AHK-owned green-set snapshot in one
    * helper enumeration. Every identity must match exactly once or the complete
    * commit fails closed. */
-  bindNativePickerSelection(selections: NativePickerWindowIdentity[]): Promise<NativePickerBindResult>;
+  bindNativePickerSelection(
+    selections: NativePickerWindowIdentity[],
+    unchangedMembers?: PersistedWindowMemberDescriptor[],
+  ): Promise<NativePickerBindResult>;
   stop(): Promise<void>;
 }
 
@@ -452,6 +463,37 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
    * enumeration yields, and the last one to settle runs the usual single
    * catch-up. */
   let thumbnailsInFlight = 0;
+  /** Diagnostic: an observation that could not be served at all. A pick's ADD is
+   * dropped by the project when the capability it was handed cannot be observed,
+   * and the creator sees only "nothing happened" - so the refusal is recorded. */
+  function recordObserveFailure(capability: WindowRuntimeCapability, reason: string): void {
+    try {
+      geometryJournal.record({
+        kind: 'observe-fail',
+        detail: reason,
+        title: capability.bindingId ?? '',
+        outcome: 'failed',
+      });
+    } catch {
+      /* diagnostics never fail the action they describe */
+    }
+  }
+
+  /** Diagnostic: a real minimize/restore, with the window it touched. A burst of
+   * these right after a restart is the layout-recording replay restoring members. */
+  function recordStateChange(kind: 'minimize' | 'restore', capability: WindowRuntimeCapability, result: WindowCapabilityResult): void {
+    try {
+      geometryJournal.record({
+        kind,
+        title: descriptorForBinding(capability.bindingId ?? '')?.title ?? '',
+        observed: result.observation?.bounds ?? null,
+        outcome: result.outcome,
+      });
+    } catch {
+      /* diagnostics never fail the action they describe */
+    }
+  }
+
   /** Durable record of the rectangles Papers applies, so a window that ends up
    * tiny in a corner can be traced to the request or to the clamp. */
   const geometryJournal = options.geometryJournal ?? defaultWindowGeometryJournal();
@@ -1107,8 +1149,14 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   async function observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const token = tokenFor(capability);
-    if (!token) return { outcome: 'missing', error: 'binding is not issued' };
-    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    if (!token) {
+      recordObserveFailure(capability, 'binding is not issued');
+      return { outcome: 'missing', error: 'binding is not issued' };
+    }
+    if (!(await ensureStarted())) {
+      recordObserveFailure(capability, 'window helper is unavailable');
+      return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    }
     const bindingId = capability.bindingId ?? '';
     const previous = observations.get(bindingId);
     if (previous) return previous;
@@ -1131,7 +1179,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const token = tokenFor(capability);
     if (!token) return { outcome: 'missing', error: 'binding is not issued' };
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
-    return factory.minimize(token);
+    const result = await factory.minimize(token);
+    recordStateChange('minimize', capability, result);
+    return result;
   }
 
   async function toggleCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
@@ -1157,7 +1207,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const token = tokenFor(capability);
     if (!token) return { outcome: 'missing', error: 'binding is not issued' };
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
-    return factory.restore(token);
+    const result = await factory.restore(token);
+    recordStateChange('restore', capability, result);
+    return result;
   }
 
   async function closeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
@@ -1543,9 +1595,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     }
     const snapshot = await nativePickerSnapshot();
     if (snapshot.outcome !== 'success') return snapshot;
-    const seeds: NativePickerWindowIdentity[] = [];
+    const seeds: Array<NativePickerWindowIdentity & { seedId: number }> = [];
+    const seededIndices: number[] = [];
     const claimed = new Set<string>();
-    for (const descriptor of memberDescriptors) {
+    for (const [memberIndex, descriptor] of memberDescriptors.entries()) {
       if (descriptor.windowInstanceId !== undefined
         && (typeof descriptor.windowInstanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(descriptor.windowInstanceId))) {
         return { outcome: 'ambiguous', error: `layout member identity is invalid: ${descriptor.title}` };
@@ -1584,12 +1637,18 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       // direct-pick session.
       if (claimed.has(key)) continue;
       claimed.add(key);
-      seeds.push(identity);
+      // The seed carries its member index: a removal is then a session-local id,
+      // valid even if that window moves or closes before Enter is pressed.
+      seeds.push({ ...identity, seedId: memberIndex });
+      seededIndices.push(memberIndex);
     }
-    return { outcome: 'success', seeds };
+    return { outcome: 'success', seeds, seededIndices };
   }
 
-  async function bindNativePickerSelection(selections: NativePickerWindowIdentity[]): Promise<NativePickerBindResult> {
+  async function bindNativePickerSelection(
+    selections: NativePickerWindowIdentity[],
+    unchangedMembers: PersistedWindowMemberDescriptor[] = [],
+  ): Promise<NativePickerBindResult> {
     if (selections.length > WINDOW_CAPABILITY_MAX_CANDIDATES) {
       return { outcome: 'ambiguous', error: 'picker selection exceeds the bounded native selection limit' };
     }
@@ -1604,6 +1663,17 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       // is represented by multiple logical observations, the first is the
       // window AHK actually hit; rejecting the complete set would make Direct
       // Pick permanently unavailable for that desktop state.
+      const first = matches[0]!;
+      // A window that is ALREADY a member needs nothing: the project holds its
+      // capability and its icon, and the commit only has to name the new ones.
+      // Binding the whole final set made every commit pay one icon read plus one
+      // bind per member through the single helper - thirteen members meant
+      // twenty-six ordered calls, and the creator waited seconds for a pick that
+      // added one window.
+      if (unchangedMembers.some((member) =>
+        compareWindowMemberIdentity(member, candidateForObservation(first).descriptor) === 'same')) {
+        continue;
+      }
       if (claimedTokens.has(matches[0]!.runtimeId)) return { outcome: 'ambiguous', error: 'the final picker set contains a duplicate window' };
       claimedTokens.add(matches[0]!.runtimeId);
       matched.push(matches[0]!);

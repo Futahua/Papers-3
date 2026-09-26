@@ -317,7 +317,8 @@ describe('windowCapabilityService native picker snapshots', () => {
     const prepared = await service.prepareNativePicker([original.descriptor]);
     expect(prepared).toEqual({
       outcome: 'success',
-      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200 }],
+      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200, seedId: 0 }],
+      seededIndices: [0],
     });
     if (prepared.outcome !== 'success') return;
 
@@ -344,7 +345,10 @@ describe('windowCapabilityService native picker snapshots', () => {
       { version: 1, title: 'Closed Window', executableFingerprint: 'f'.repeat(64) },
     ])).resolves.toEqual({
       outcome: 'success',
-      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200 }],
+      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200, seedId: 0 }],
+      // The closed member is NOT seeded, and the indices say so: the picker
+      // never showed it, so its absence from the final set is not a removal.
+      seededIndices: [0],
     });
   });
 
@@ -384,7 +388,8 @@ describe('windowCapabilityService native picker snapshots', () => {
     const prepared = await service.prepareNativePicker([memberW1]);
     expect(prepared).toEqual({
       outcome: 'success',
-      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200 }],
+      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200, seedId: 0 }],
+      seededIndices: [0],
     });
   });
 
@@ -419,7 +424,8 @@ describe('windowCapabilityService native picker snapshots', () => {
     const prepared = await service.prepareNativePicker(descriptors);
     expect(prepared).toEqual({
       outcome: 'success',
-      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200 }],
+      seeds: [{ processId: 1001, x: 10, y: 20, width: 300, height: 200, seedId: 0 }],
+      seededIndices: [0],
     });
     if (prepared.outcome !== 'success') return;
     const rebound = await service.bindNativePickerSelection(prepared.seeds);

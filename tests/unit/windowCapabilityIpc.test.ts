@@ -46,7 +46,7 @@ function fakeService(): WindowCapabilityService {
     resolvePersisted: async () => ({ outcome: 'missing', error: 'no match' }),
     hoverAt: async () => ({ outcome: 'success', candidate: null, bounds: null, descriptor: null }),
     pickAt: async () => ({ outcome: 'missing', error: 'changed' }),
-    prepareNativePicker: async () => ({ outcome: 'success', seeds: [] }),
+    prepareNativePicker: async () => ({ outcome: 'success', seeds: [], seededIndices: [] }),
     bindNativePickerSelection: async () => ({ outcome: 'success', windows: [] }),
     stop: async () => undefined,
   };

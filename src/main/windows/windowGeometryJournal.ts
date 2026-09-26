@@ -27,7 +27,7 @@ export interface WindowGeometryJournalEntry {
   at: number;
   /** 'apply' is a rectangle Papers set; the surface kinds are the Quick Run
    * overlay opening and closing, with the reason it closed. */
-  kind: 'apply' | 'surface-open' | 'surface-close';
+  kind: 'apply' | 'surface-open' | 'surface-close' | 'restore' | 'minimize' | 'picker-open' | 'picker-fail' | 'picker-commit' | 'observe-fail';
   title: string;
   /** Free-form reason: the close reason for a surface, the outcome otherwise. */
   detail: string;
@@ -81,7 +81,11 @@ function readEntries(file: string): WindowGeometryJournalEntry[] {
     return parsed.entries.flatMap((candidate): WindowGeometryJournalEntry[] => {
       if (!candidate || typeof candidate !== 'object') return [];
       const raw = candidate as Record<string, unknown>;
-      const kind = raw['kind'] === 'surface-open' || raw['kind'] === 'surface-close' ? raw['kind'] : 'apply';
+      const rawKind = raw['kind'];
+      const kind = rawKind === 'surface-open' || rawKind === 'surface-close' || rawKind === 'restore' || rawKind === 'minimize'
+        || rawKind === 'picker-open' || rawKind === 'picker-fail' || rawKind === 'picker-commit' || rawKind === 'observe-fail'
+        ? rawKind
+        : 'apply';
       return [{
         at: typeof raw['at'] === 'number' ? raw['at'] : 0,
         kind,
