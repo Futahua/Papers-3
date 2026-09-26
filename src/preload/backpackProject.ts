@@ -401,6 +401,33 @@ window.addEventListener('message', (event) => {
     const bounds = parseBounds(request.bounds);
     task = ipcRenderer.invoke('papers:window-capability:apply', { capability, bounds });
   }
+  if (request.type === 'papers:project:window-preview-show') {
+    // A project hover preview shown in Papers' own always-on-top preview window,
+    // so it cannot be hidden behind another application's window. The anchor is
+    // the hovered element's screen rectangle.
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'imageUrl', 'title', 'width', 'height', 'anchor'])) {
+      throw new Error('window preview show request contains unknown fields');
+    }
+    task = ipcRenderer.invoke('papers:window-capability:preview-show', {
+      imageUrl: request.imageUrl,
+      title: request.title,
+      width: request.width,
+      height: request.height,
+      anchor: request.anchor,
+    });
+  }
+  if (request.type === 'papers:project:window-preview-hide') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window preview hide request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:preview-hide', {});
+  }
+  if (request.type === 'papers:project:window-preview-hold') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window preview hold request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:preview-hold', {});
+  }
+  if (request.type === 'papers:project:window-preview-release') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window preview release request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:preview-release', {});
+  }
   if (request.type === 'papers:project:window-resolve-descriptor') {
     const descriptor = parseDescriptor(request.descriptor);
     task = ipcRenderer.invoke('papers:window-capability:resolve', descriptor);

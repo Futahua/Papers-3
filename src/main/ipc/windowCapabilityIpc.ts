@@ -50,6 +50,18 @@ export interface WindowCapabilityIpcDependencies {
   /** Resolves only the trusted native host that owns this already-authorized
    * Backpack surface. The raw HWND never crosses the renderer boundary. */
   resolveCallerHwnd?: (sender: WebContents) => string | null;
+  /** A project surface showing a hover preview in Papers' own always-on-top,
+   * never-focused preview window instead of an in-page popover. The anchor is
+   * the hovered element's screen rectangle, so the window is placed beside the
+   * thing being hovered rather than beside the whole project window. */
+  showProjectPreview?: (sender: WebContents, preview: {
+    imageUrl: string;
+    title: string;
+    width: number;
+    height: number;
+    anchor: { x: number; y: number; width: number; height: number };
+  }) => void;
+  hideProjectPreview?: (senderId: number) => void;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -181,9 +193,21 @@ export function registerWindowCapabilityIpc({
   isSender,
   waitForAuthority,
   resolveCallerHwnd,
+  showProjectPreview,
+  hideProjectPreview,
 }: WindowCapabilityIpcDependencies): void {
   let nativePeekActive = false;
   const lifecycleUnsubscribers = new Map<number, () => void>();
+  // Preview intent: a project holds the periodic enumeration off from the moment
+  // it schedules a member hover preview, so a scan cannot start during the
+  // preview dwell and land in front of the capture. One hold per sender.
+  const previewHolds = new Map<number, () => void>();
+  const releasePreviewHold = (senderId: number): void => {
+    const release = previewHolds.get(senderId);
+    if (release === undefined) return;
+    previewHolds.delete(senderId);
+    release();
+  };
   function handle<TInput>(
     channel: string,
     parse: (raw: unknown) => TInput,
@@ -282,7 +306,92 @@ export function registerWindowCapabilityIpc({
     },
     (input) => service.applyCapability(input.capability, input.bounds),
   );
+  handle(
+    'papers:window-capability:preview-show',
+    (raw) => {
+      if (!isPlainObject(raw)) throw new Error('preview payload must be an object');
+      const keys = Object.keys(raw).sort();
+      const expected = ['anchor', 'height', 'imageUrl', 'title', 'width'].sort();
+      if (keys.length !== expected.length || !keys.every((key, index) => key === expected[index])) {
+        throw new Error('preview payload must contain exactly imageUrl, title, width, height and anchor');
+      }
+      const imageUrl = raw['imageUrl'];
+      const title = raw['title'];
+      const width = raw['width'];
+      const height = raw['height'];
+      const anchor = raw['anchor'];
+      if (typeof imageUrl !== 'string' || !imageUrl.startsWith('data:image/') || imageUrl.length > 512 * 1024) {
+        throw new Error('preview image must be a bounded data URL');
+      }
+      if (typeof title !== 'string' || Buffer.byteLength(title, 'utf8') > 512) throw new Error('preview title is malformed');
+      if (!Number.isInteger(width) || !Number.isInteger(height) || (width as number) < 1 || (height as number) < 1
+        || (width as number) > 640 || (height as number) > 480) {
+        throw new Error('preview dimensions are out of range');
+      }
+      if (!isPlainObject(anchor)) throw new Error('preview anchor must be an object');
+      const numbers = ['x', 'y', 'width', 'height'].map((key) => anchor[key]);
+      if (!numbers.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+        throw new Error('preview anchor must be finite numbers');
+      }
+      return {
+        imageUrl,
+        title,
+        width: width as number,
+        height: height as number,
+        anchor: {
+          x: numbers[0] as number,
+          y: numbers[1] as number,
+          width: numbers[2] as number,
+          height: numbers[3] as number,
+        },
+      };
+    },
+    (_input, event) => {
+      showProjectPreview?.(event.sender, _input);
+      return Promise.resolve({ outcome: 'success' });
+    },
+  );
+  handle(
+    'papers:window-capability:preview-hide',
+    (raw) => {
+      if (raw === undefined) return undefined;
+      if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('preview hide payload must be empty');
+      return undefined;
+    },
+    (_input, event) => {
+      hideProjectPreview?.(event.sender.id);
+      return Promise.resolve({ outcome: 'success' });
+    },
+  );
   handle('papers:window-capability:resolve', parsePersistedDescriptor, (descriptor) => service.resolvePersisted(descriptor));
+  handle(
+    'papers:window-capability:preview-hold',
+    (raw) => {
+      if (raw === undefined) return undefined;
+      if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('preview hold payload must be empty');
+      return undefined;
+    },
+    (_input, event) => {
+      if (!previewHolds.has(event.sender.id)) {
+        previewHolds.set(event.sender.id, service.holdWindowLifecycleRefresh().release);
+        // A project that goes away mid-hover must not strand the hold.
+        event.sender.once('destroyed', () => releasePreviewHold(event.sender.id));
+      }
+      return Promise.resolve({ outcome: 'success' });
+    },
+  );
+  handle(
+    'papers:window-capability:preview-release',
+    (raw) => {
+      if (raw === undefined) return undefined;
+      if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('preview release payload must be empty');
+      return undefined;
+    },
+    (_input, event) => {
+      releasePreviewHold(event.sender.id);
+      return Promise.resolve({ outcome: 'success' });
+    },
+  );
   handle(
     'papers:window-capability:thumbnail',
     (raw) => {

@@ -631,6 +631,301 @@ describe('windowCapabilityService lifecycle', () => {
     await service.stop();
   });
 
+  it('holds lifecycle refresh for the whole life of a candidate chooser and catches up exactly once', async () => {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W1111111111111111', processStartTicks: '638945344001234567' });
+    let listCalls = 0;
+    const factory = fakeFactory({
+      list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+
+    const hold = service.holdWindowLifecycleRefresh();
+    const first = service.windowLifecycleSnapshot();
+    const second = service.windowLifecycleSnapshot();
+    // Long enough for at least one 500 ms watcher tick to have tried, so this
+    // asserts the periodic path is blocked, not merely that nothing ran yet.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(listCalls).toBe(1);
+
+    // An authoritative candidate list is a different path and is not blocked.
+    expect((await service.listCandidates()).outcome).toBe('success');
+    expect(listCalls).toBe(2);
+
+    hold.release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.snapshot.complete).toBe(true);
+    expect(b.snapshot.complete).toBe(true);
+    // One catch-up for every caller that shared the wait.
+    expect(listCalls).toBe(3);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(listCalls).toBe(3);
+    stop();
+    await service.stop();
+  });
+
+  it('nested chooser holds refresh only on the last idempotent release', async () => {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W1111111111111111', processStartTicks: '638945344001234567' });
+    let listCalls = 0;
+    const factory = fakeFactory({
+      list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+
+    const outer = service.holdWindowLifecycleRefresh();
+    const inner = service.holdWindowLifecycleRefresh();
+    const waiting = service.windowLifecycleSnapshot();
+    outer.release();
+    outer.release(); // an idempotent release must not decrement twice
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(listCalls).toBe(1); // still held by the inner chooser
+
+    inner.release();
+    const settled = await waiting;
+    expect(settled.snapshot.complete).toBe(true);
+    expect(listCalls).toBe(2); // exactly one catch-up, not one per hold
+    stop();
+    await service.stop();
+  });
+
+  it('answers a caller stranded on a deferred snapshot when the service stops', async () => {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W1111111111111111', processStartTicks: '638945344001234567' });
+    let listCalls = 0;
+    const factory = fakeFactory({ list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; } });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+
+    const hold = service.holdWindowLifecycleRefresh();
+    const waiting = service.windowLifecycleSnapshot();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(listCalls).toBe(1); // deferred, so nothing reached the helper
+    await service.stop();
+    const settled = await waiting;
+    expect(settled.snapshot.complete).toBe(false);
+    expect(settled.snapshot.error).toMatch(/stopped/i);
+    hold.release();
+    stop();
+  });
+
+  it('drains an enumeration that was already running when the chooser opened', async () => {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W1111111111111111', processStartTicks: '638945344001234567' });
+    const firstList = deferred<WindowCapabilityResult>();
+    let listCalls = 0;
+    const factory = fakeFactory({
+      list: async () => {
+        listCalls += 1;
+        return listCalls === 1 ? firstList.promise : { outcome: 'success', windows: [target] };
+      },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1)); // the watcher's first enumeration is in flight
+
+    const hold = service.holdWindowLifecycleRefresh();
+    let drained = false;
+    void hold.drained.then(() => { drained = true; });
+    // Longer than a watcher tick: new enumerations must not start...
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(listCalls).toBe(1);
+    // ...and the hold must report itself undrained while that one is running.
+    expect(drained).toBe(false);
+
+    firstList.resolve({ outcome: 'success', windows: [target] });
+    await vi.waitFor(() => expect(drained).toBe(true));
+    expect(listCalls).toBe(1);
+
+    hold.release();
+    await vi.waitFor(() => expect(listCalls).toBe(2)); // exactly one fresh catch-up
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listCalls).toBe(2);
+    stop();
+    await service.stop();
+  });
+
+  it('resolves a native icon once per window identity and serves later lists from the cache', async () => {
+    const first = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W1111111111111111', processStartTicks: '638945344001234567' });
+    const recycled = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W2222222222222222', processStartTicks: '638945344009999999' });
+    let current = first;
+    let thumbnailCalls = 0;
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [current] }),
+      thumbnail: async () => {
+        thumbnailCalls += 1;
+        return { outcome: 'success', thumbnail: { image: pngWithSize(48, 48), width: 48, height: 48, source: 'icon' } };
+      },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const firstList = await service.listCandidates({ includeNativeIcons: true });
+    const secondList = await service.listCandidates({ includeNativeIcons: true });
+    // The second list must not spend a helper round-trip on the same window.
+    expect(thumbnailCalls).toBe(1);
+    if (firstList.outcome !== 'success' || secondList.outcome !== 'success') throw new Error('candidate listing failed');
+    expect(secondList.candidates[0]!.icon).toBe(`data:image/png;base64,${pngWithSize(48, 48)}`);
+    expect(secondList.candidates[0]!.icon).toBe(firstList.candidates[0]!.icon);
+
+    // A recycled handle carries a different identity and must not inherit it.
+    current = recycled;
+    const third = await service.listCandidates({ includeNativeIcons: true });
+    expect(thumbnailCalls).toBe(2);
+    expect(third.outcome).toBe('success');
+    await service.stop();
+  });
+
+  it('shares one native icon read between two lists opened together', async () => {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W3333333333333333', processStartTicks: '638945344001234567' });
+    const iconRead = deferred<WindowCapabilityResult>();
+    let thumbnailCalls = 0;
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [target] }),
+      thumbnail: async () => { thumbnailCalls += 1; return iconRead.promise; },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const first = service.listCandidates({ includeNativeIcons: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const second = service.listCandidates({ includeNativeIcons: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    iconRead.resolve({ outcome: 'success', thumbnail: { image: pngWithSize(48, 48), width: 48, height: 48, source: 'icon' } });
+    const [a, b] = await Promise.all([first, second]);
+    expect(thumbnailCalls).toBe(1);
+    expect(a.outcome).toBe('success');
+    expect(b.outcome).toBe('success');
+    await service.stop();
+  });
+
+  it('shows the chooser from the last enumeration instead of queueing behind a running one', async () => {
+    const target = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      windowInstanceId: 'W4444444444444444',
+      processStartTicks: '638945344001234567',
+    });
+    let clock = 1000;
+    let listCalls = 0;
+    const held = deferred<WindowCapabilityResult>();
+    const factory = fakeFactory({
+      list: async () => {
+        listCalls += 1;
+        // The second enumeration is the watcher's, and it is still running when
+        // the chooser asks for its rows.
+        if (listCalls === 2) return held.promise;
+        return { outcome: 'success', windows: [target] };
+      },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      now: () => clock,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+    });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1)); // one complete enumeration cached
+    // A cold first hover: the cached enumeration is already stale, and the
+    // watcher has just started another one that is still running.
+    clock += 5000;
+    const running = service.windowLifecycleSnapshot();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(listCalls).toBe(2);
+    const listed = await service.listCandidates({ includeNativeIcons: false });
+    expect(listed.outcome).toBe('success');
+    expect(listCalls).toBe(2); // served from the cache instead of queueing
+
+    held.resolve({ outcome: 'success', windows: [target] });
+    await running;
+    // With nothing running, a stale cache still means a fresh enumeration.
+    clock += 5000;
+    expect((await service.listCandidates({ includeNativeIcons: false })).outcome).toBe('success');
+    expect(listCalls).toBe(3);
+    stop();
+    await service.stop();
+  });
+
+  it('holds the periodic enumeration off for the whole peek session', async () => {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W5555555555555555', processStartTicks: '638945344001234567' });
+    let listCalls = 0;
+    const factory = fakeFactory({
+      list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; },
+      livePreview: async () => ({ outcome: 'success' }),
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    if (bound.outcome !== 'success') throw new Error('candidate bind failed');
+    const before = listCalls;
+
+    expect((await service.beginLivePreviewCapability!(bound.capability, '424242')).outcome).toBe('success');
+    // Longer than a watcher tick: a Shift sweep must not queue behind one.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(listCalls).toBe(before);
+
+    expect((await service.endLivePreview!()).outcome).toBe('success');
+    await vi.waitFor(() => expect(listCalls).toBe(before + 1)); // one catch-up
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listCalls).toBe(before + 1);
+    stop();
+    await service.stop();
+  });
+
+  it('releases the peek hold even when the service stops mid-peek', async () => {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W6666666666666666', processStartTicks: '638945344001234567' });
+    let listCalls = 0;
+    const factory = fakeFactory({
+      list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; },
+      livePreview: async () => ({ outcome: 'success' }),
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    if (bound.outcome !== 'success') throw new Error('candidate bind failed');
+    expect((await service.beginLivePreviewCapability!(bound.capability, '424242')).outcome).toBe('success');
+
+    const waiting = service.windowLifecycleSnapshot();
+    await service.stop();
+    const settled = await waiting;
+    expect(settled.snapshot.complete).toBe(false);
+    expect(settled.snapshot.error).toMatch(/stopped/i);
+    stop();
+  });
+
+  it('lets the periodic enumeration yield to an outstanding capture', async () => {
+    const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W7777777777777777', processStartTicks: '638945344001234567' });
+    const capture = deferred<WindowCapabilityResult>();
+    let listCalls = 0;
+    const factory = fakeFactory({
+      list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; },
+      thumbnail: async () => capture.promise,
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const bound = await service.bindCandidate(listed.candidates[0]!.id);
+    if (bound.outcome !== 'success') throw new Error('candidate bind failed');
+    const before = listCalls;
+
+    // A hover preview capture is outstanding: the watcher must not put a
+    // desktop enumeration in front of it, or the capture lands stale.
+    const thumb = service.thumbnailCapability(bound.capability, { maxWidth: 240, maxHeight: 135 });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(listCalls).toBe(before);
+
+    capture.resolve({ outcome: 'success', thumbnail: { image: pngWithSize(240, 135), width: 240, height: 135, source: 'capture' } });
+    const captured = await thumb;
+    expect(captured.outcome).toBe('success');
+    await vi.waitFor(() => expect(listCalls).toBe(before + 1)); // one catch-up
+    stop();
+    await service.stop();
+  });
+
   it('retains live-preview release intent when disable fails and retries it', async () => {
     let disables = 0;
     const calls: boolean[] = [];

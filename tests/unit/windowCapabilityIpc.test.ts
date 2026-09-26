@@ -31,6 +31,7 @@ function fakeService(): WindowCapabilityService {
     windowLifecycleSnapshot: async () => ({ snapshot: { complete: true, trackerSessionId: 'test-session', sequence: 0, windows: [] } }),
     resolveWindowInstance: async () => ({ outcome: 'missing', error: 'gone' }),
     watchWindowLifecycle: () => () => undefined,
+    holdWindowLifecycleRefresh: () => ({ release: () => undefined, drained: Promise.resolve() }),
     bindCandidate: async () => ({ outcome: 'missing', error: 'not listed' }),
     observeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     minimizeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
@@ -91,7 +92,11 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:peek-begin',
       'papers:window-capability:peek-end',
       'papers:window-capability:apply',
+      'papers:window-capability:preview-show',
+      'papers:window-capability:preview-hide',
       'papers:window-capability:resolve',
+      'papers:window-capability:preview-hold',
+      'papers:window-capability:preview-release',
       'papers:window-capability:thumbnail',
     ]);
   });

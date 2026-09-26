@@ -78,6 +78,7 @@ import {
 } from './backpacks/commandSurfaceRegistry';
 import { createLauncherNominationStore } from './backpacks/launcherNominationStore';
 import { bringFirstWindowToFront, bringWindowToFront } from './windows/windowFront';
+import { defaultWindowGeometryJournal } from './windows/windowGeometryJournal';
 import {
   COMMAND_SURFACE_HEIGHT as COMMAND_SURFACE_OVERLAY_HEIGHT,
   COMMAND_SURFACE_INVOKE_CHANNEL,
@@ -1517,6 +1518,12 @@ async function bootstrap(): Promise<void> {
     service: windowCapabilityService,
     isSender: isProjectSurfaceSender,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
+    // A project hover preview uses Papers' own always-on-top preview window
+    // instead of an in-page popover, which could only ever be as visible as the
+    // project window itself. Same primitive the compact widget uses; placed
+    // from the hovered element rather than from the whole window.
+    showProjectPreview: (sender, preview) => showPreviewWindow(sender, preview, 'anchor'),
+    hideProjectPreview: (senderId) => hideWidgetPreview(senderId),
     resolveCallerHwnd: (sender) => {
       const owner = BrowserWindow.fromWebContents(sender);
       if (!owner || owner.isDestroyed()) return null;
@@ -1983,6 +1990,85 @@ async function bootstrap(): Promise<void> {
     widgetPreviewWindows.delete(senderId);
     if (preview && !preview.isDestroyed()) preview.destroy();
   };
+  /** Papers' own preview window: transparent, never focused, always on top, and
+   * never in the page - so a hover preview cannot be hidden behind another
+   * window. A widget preview hangs above or below the whole compact widget; a
+   * project preview sits beside the hovered element's own screen rectangle. */
+  const showPreviewWindow = (sender: Electron.WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }, placement: 'widget' | 'anchor'): void => {
+
+      hideWidgetPreview(sender.id);
+      const pad = 4;
+      const titleHeight = 24;
+      const width = preview.width + (pad * 2);
+      const height = preview.height + titleHeight + (pad * 2);
+      const display = screen.getDisplayMatching({
+        x: Math.round(preview.anchor.x),
+        y: Math.round(preview.anchor.y),
+        width: Math.max(1, Math.round(preview.anchor.width)),
+        height: Math.max(1, Math.round(preview.anchor.height)),
+      });
+      const area = display.workArea;
+      let x = Math.round(preview.anchor.x + (preview.anchor.width / 2) - (width / 2));
+      // A widget preview hangs above or below the WHOLE widget, not the hovered
+      // icon: at the screen top the fallback begins below the widget's bottom
+      // edge, so the name surface can never sit over the preview. A project
+      // preview has no owner to hang from - it sits beside the hovered element's
+      // own screen rectangle.
+      const owner = BrowserWindow.fromWebContents(sender);
+      const ownerBounds = owner && !owner.isDestroyed()
+        ? owner.getBounds()
+        : { x: preview.anchor.x, y: preview.anchor.y, width: preview.anchor.width, height: preview.anchor.height };
+      let y: number;
+      if (placement === 'anchor') {
+        y = Math.round(preview.anchor.y + preview.anchor.height + 8);
+        if (y + height > area.y + area.height) y = Math.round(preview.anchor.y - height - 8);
+      } else {
+        y = Math.round(ownerBounds.y - height - 8);
+        if (y < area.y) y = Math.round(ownerBounds.y + ownerBounds.height + 8);
+      }
+      x = Math.max(area.x, Math.min(area.x + area.width - width, x));
+      y = Math.max(area.y, Math.min(area.y + area.height - height, y));
+      const previewWindow = new BrowserWindow({
+        x, y, width, height,
+        frame: false,
+        transparent: true,
+        backgroundColor: '#00000000',
+        resizable: false,
+        movable: false,
+        focusable: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        show: false,
+        hasShadow: true,
+        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+      });
+      widgetPreviewWindows.set(sender.id, previewWindow);
+      previewWindow.setIgnoreMouseEvents(true);
+      previewWindow.setAlwaysOnTop(true, 'floating');
+      previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      previewWindow.on('closed', () => {
+        if (widgetPreviewWindows.get(sender.id) === previewWindow) widgetPreviewWindows.delete(sender.id);
+      });
+      sender.once('destroyed', () => hideWidgetPreview(sender.id));
+      const safeTitle = preview.title
+        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+      const html = `<!doctype html><meta charset="utf-8"><style>
+        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+        .preview{box-sizing:border-box;margin:${pad}px;width:${preview.width}px;height:${preview.height + titleHeight}px;
+          border:1px solid rgba(140,132,116,.72);border-radius:7px;overflow:hidden;
+          background:#26231f;box-shadow:0 3px 10px rgba(0,0,0,.38);
+          animation:rise 180ms cubic-bezier(.2,.8,.2,1) both}
+        .title{box-sizing:border-box;height:${titleHeight}px;padding:5px 7px;color:#eee9df;
+          font:11px/14px system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        img{display:block;width:${preview.width}px;height:${preview.height}px;object-fit:contain;background:#26231f}
+        @keyframes rise{from{transform:translateY(12px)}to{transform:translateY(0)}}
+      </style><div class="preview"><div class="title">${safeTitle}</div><img src="${preview.imageUrl}" alt=""></div>`;
+      void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => {
+        if (!previewWindow.isDestroyed()) previewWindow.showInactive();
+      }).catch(() => hideWidgetPreview(sender.id));
+  };
+
   registerCompactWidgetIpc({
     ipcMain,
     registry: widgetRegistry,
@@ -2068,6 +2154,12 @@ async function bootstrap(): Promise<void> {
         },
       });
       picker.setAlwaysOnTop(true, 'pop-up-menu');
+      // A live chooser holds the periodic desktop enumeration off: hover work
+      // shares the helper's single request slot with it, and the chooser's own
+      // list already carries the snapshot it needs. The release is registered
+      // here, not later, so a synchronous failure during setup cannot strand it.
+      const lifecycleHold = windowCapabilityService.holdWindowLifecycleRefresh();
+      picker.once('closed', lifecycleHold.release);
       const encoded = JSON.stringify(candidates).replace(/</g, '\\u003c');
       const html = `<!doctype html><meta charset="utf-8"><title>Papers Window Chooser</title><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
@@ -2256,6 +2348,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (input.key === 'Escape') { event.preventDefault(); closePicker(); }
         });
         picker.once('closed', () => {
+          // Belt and braces with the release registered at acquisition; both are
+          // idempotent. Release first, unconditionally: closePicker() deletes the
+          // session before destroying the window, so a session check above this
+          // line would silently strand the hold.
+          lifecycleHold.release();
           if (pickerPointerWatch) { clearInterval(pickerPointerWatch); pickerPointerWatch = null; }
           if (pickerShowAnimation) { clearInterval(pickerShowAnimation); pickerShowAnimation = null; }
           ipcMain.removeListener('papers:candidate-picker:signal', pickerSignal);
@@ -2269,6 +2366,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         });
         picker.once('ready-to-show', () => {
           if (picker.isDestroyed()) return;
+          // Show immediately. Gating this on the drained enumeration measured
+          // ~1.1 s of invisible window on the creator's machine, and it also let
+          // the native pointer watcher treat a hidden chooser as entered and
+          // dismiss it. The lifecycle hold itself is what removed the between-item
+          // lag, and it is untouched here.
           const finalBounds = picker.getBounds();
           const startY = Math.min(area.y + area.height - finalBounds.height, finalBounds.y + 12);
           picker.setPosition(finalBounds.x, startY, false);
@@ -2295,71 +2397,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         void picker.loadURL(`data:text/html;base64,${Buffer.from(html).toString('base64')}`).catch(() => closePicker());
       });
     },
-    showPreview: (sender, preview) => {
-      hideWidgetPreview(sender.id);
-      const pad = 4;
-      const titleHeight = 24;
-      const width = preview.width + (pad * 2);
-      const height = preview.height + titleHeight + (pad * 2);
-      const display = screen.getDisplayMatching({
-        x: Math.round(preview.anchor.x),
-        y: Math.round(preview.anchor.y),
-        width: Math.max(1, Math.round(preview.anchor.width)),
-        height: Math.max(1, Math.round(preview.anchor.height)),
-      });
-      const area = display.workArea;
-      let x = Math.round(preview.anchor.x + (preview.anchor.width / 2) - (width / 2));
-      // Position relative to the WHOLE widget, not the hovered icon/name card.
-      // At the screen top the fallback begins below the widget's bottom edge,
-      // so the name surface can never sit over the preview.
-      const owner = BrowserWindow.fromWebContents(sender);
-      const ownerBounds = owner && !owner.isDestroyed()
-        ? owner.getBounds()
-        : { x: preview.anchor.x, y: preview.anchor.y, width: preview.anchor.width, height: preview.anchor.height };
-      let y = Math.round(ownerBounds.y - height - 8);
-      if (y < area.y) y = Math.round(ownerBounds.y + ownerBounds.height + 8);
-      x = Math.max(area.x, Math.min(area.x + area.width - width, x));
-      y = Math.max(area.y, Math.min(area.y + area.height - height, y));
-      const previewWindow = new BrowserWindow({
-        x, y, width, height,
-        frame: false,
-        transparent: true,
-        backgroundColor: '#00000000',
-        resizable: false,
-        movable: false,
-        focusable: false,
-        alwaysOnTop: true,
-        skipTaskbar: true,
-        show: false,
-        hasShadow: true,
-        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
-      });
-      widgetPreviewWindows.set(sender.id, previewWindow);
-      previewWindow.setIgnoreMouseEvents(true);
-      previewWindow.setAlwaysOnTop(true, 'floating');
-      previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-      previewWindow.on('closed', () => {
-        if (widgetPreviewWindows.get(sender.id) === previewWindow) widgetPreviewWindows.delete(sender.id);
-      });
-      sender.once('destroyed', () => hideWidgetPreview(sender.id));
-      const safeTitle = preview.title
-        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-      const html = `<!doctype html><meta charset="utf-8"><style>
-        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
-        .preview{box-sizing:border-box;margin:${pad}px;width:${preview.width}px;height:${preview.height + titleHeight}px;
-          border:1px solid rgba(140,132,116,.72);border-radius:7px;overflow:hidden;
-          background:#26231f;box-shadow:0 3px 10px rgba(0,0,0,.38);
-          animation:rise 180ms cubic-bezier(.2,.8,.2,1) both}
-        .title{box-sizing:border-box;height:${titleHeight}px;padding:5px 7px;color:#eee9df;
-          font:11px/14px system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        img{display:block;width:${preview.width}px;height:${preview.height}px;object-fit:contain;background:#26231f}
-        @keyframes rise{from{transform:translateY(12px)}to{transform:translateY(0)}}
-      </style><div class="preview"><div class="title">${safeTitle}</div><img src="${preview.imageUrl}" alt=""></div>`;
-      void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => {
-        if (!previewWindow.isDestroyed()) previewWindow.showInactive();
-      }).catch(() => hideWidgetPreview(sender.id));
-    },
+    showPreview: (sender, preview) => { showPreviewWindow(sender, preview, 'widget'); },
     isWorkspaceSender: (sender, projectId) => {
       if (!runtimeForSender(sender.id)?.isSender(sender)) return false;
       try {
@@ -3005,7 +3043,12 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       const target = await commandSurfaceRegistry.resolveProject(projectId);
       return target ? { ok: true, target } : null;
     },
-    onClosed: () => {
+    onClosed: (closeReason) => {
+      // Diagnostic: the Quick Run surface closing is the moment the creator sees
+      // as 'it got cancelled immediately', so the reason and time are recorded.
+      try {
+        defaultWindowGeometryJournal().record({ kind: 'surface-close', detail: String(closeReason ?? ''), outcome: 'closed' });
+      } catch { /* diagnostics never fail the close */ }
       for (const pending of pendingHoverCaptures.values()) {
         for (const item of pending.buffer) item.resolve?.({ ok: false, detail: 'the command surface closed during Quick Run handoff' });
         for (const wake of pending.wake) wake();
@@ -3192,6 +3235,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     if (!commandSurfaceOverlay) {
       return { ok: false, detail: 'the command surface overlay is not available in this build' };
     }
+    try {
+      defaultWindowGeometryJournal().record({ kind: 'surface-open', detail: 'command surface', outcome: 'opening' });
+    } catch { /* diagnostics never fail the open */ }
     return commandSurfaceOverlay.open();
   };
   if (TEST_INVOKE_ENABLED) {

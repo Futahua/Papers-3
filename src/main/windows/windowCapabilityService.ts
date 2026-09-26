@@ -28,6 +28,7 @@
  */
 
 import { createWindowHelperFactory, type WindowHelperFactory } from './windowHelperFactory';
+import { defaultWindowGeometryJournal, monitorWorkAreas, type WindowGeometryJournal } from './windowGeometryJournal';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
@@ -50,6 +51,10 @@ import {
 
 export const WINDOW_CAPABILITY_MAX_CANDIDATES = 64;
 export const WINDOW_CAPABILITY_MAX_ICON_CACHE = 64;
+/** Native (helper-resolved) icons are the expensive ones — identity revalidation,
+ * up to three WM_GETICON probes, GDI capture, PNG and base64 — so they are kept
+ * per stable window identity for the whole helper session, not per list. */
+export const WINDOW_CAPABILITY_MAX_NATIVE_ICON_CACHE = 128;
 export const WINDOW_CAPABILITY_MAX_SUBSCRIBERS = 8;
 export const WINDOW_CAPABILITY_OBSERVE_CADENCE_MS = 500;
 export const WINDOW_CAPABILITY_MAX_TITLE_BYTES = 256;
@@ -214,6 +219,14 @@ export interface WindowCapabilityService {
     onEvent: (event: WindowLifecycleEvent) => void;
     onBaseline: (snapshot: WindowInstanceSnapshot) => void;
   }): () => void;
+  /** Hold the periodic lifecycle enumeration off while a native candidate
+   * chooser is on screen, so the chooser's hover work is not queued behind a
+   * desktop enumeration on the same single-request helper. Ref-counted and
+   * deliberately separate from the candidate-list in-flight guard. `drained`
+   * settles once an enumeration already running at acquisition has finished;
+   * the last `release` runs exactly one catch-up enumeration and resolves every
+   * caller that was waiting on a deferred snapshot. */
+  holdWindowLifecycleRefresh(): { release: () => void; drained: Promise<void> };
   bindCandidate(candidateId: string): Promise<WindowBindResult>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
@@ -268,6 +281,8 @@ export interface WindowCapabilityService {
 }
 
 export interface WindowCapabilityServiceOptions {
+  /** Private DI for tests; default is the machine-local geometry journal. */
+  geometryJournal?: WindowGeometryJournal;
   /** Private DI for tests; default lazily builds the 014 factory. */
   createFactory?: () => WindowHelperFactory;
   /** Private DI for tests; default is the real current process pid. */
@@ -425,6 +440,21 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   let lifecycleRefresh: Promise<WindowInstanceSnapshot> | null = null;
   let lifecycleBaselinePending = false;
   let nativeCandidateListsInFlight = 0;
+  /** Live candidate choosers. Kept separate from the in-flight list guard on
+   * purpose: pretending an open picker is an enumeration would make one
+   * counter mean two different things, and the chooser outlives its list. */
+  let candidatePickerHolds = 0;
+  /** Interactive captures in flight. The client deliberately holds a thumbnail
+   * back while ANY control request is pending, and the periodic lifecycle
+   * enumeration is one of those - so a preview requested during a watcher tick
+   * waits for it and is usually discarded as stale by the time it runs, which
+   * reads as "this preview never showed". While a capture is outstanding the
+   * enumeration yields, and the last one to settle runs the usual single
+   * catch-up. */
+  let thumbnailsInFlight = 0;
+  /** Durable record of the rectangles Papers applies, so a window that ends up
+   * tiny in a corner can be traced to the request or to the clamp. */
+  const geometryJournal = options.geometryJournal ?? defaultWindowGeometryJournal();
   let lifecycleCatchupRequired = false;
   let lifecycleRefreshDeferred: Promise<WindowInstanceSnapshot> | null = null;
   let resolveLifecycleRefreshDeferred: ((snapshot: WindowInstanceSnapshot) => void) | null = null;
@@ -452,6 +482,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   /** The factory session revision the current thumbnail cache was built
    * against; any change invalidates the ENTIRE cache before lookup. */
   let thumbnailCacheRevision = -1;
+  /** Native icons by stable window identity, plus their in-flight reads so two
+   * lists opened together cannot ask the single-request helper twice. */
+  const nativeIconCache = new Map<string, string>();
+  const nativeIconReadsInFlight = new Map<string, Promise<string | null>>();
   let peekGeneration = 0;
   let peekRestoreTokens: RuntimeWindowId[] = [];
   let peekMinimizedTarget: RuntimeWindowId | null = null;
@@ -562,6 +596,76 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return outcome === 'ready';
   }
 
+  /** Lifecycle refresh is blocked while a native candidate enumeration is in
+   * flight, a candidate chooser is alive, or an interactive capture is
+   * outstanding. All three put work on the same single-request helper, and all
+   * three are temporary. Priority, in order: real control, interactive capture,
+   * periodic enumeration. */
+  function lifecycleRefreshBlocked(): boolean {
+    return nativeCandidateListsInFlight > 0 || candidatePickerHolds > 0 || thumbnailsInFlight > 0;
+  }
+
+  /** One deferred catch-up enumeration, run only once nothing blocks refresh.
+   * Every caller that shared the deferred promise is resolved by that single
+   * enumeration, so the helper sees one list instead of one per waiter. */
+  function runLifecycleCatchupIfUnblocked(): void {
+    if (lifecycleRefreshBlocked() || !lifecycleCatchupRequired) return;
+    lifecycleCatchupRequired = false;
+    const runCatchup = (): void => {
+      const refresh = refreshWindowLifecycle(lifecycleBaselinePending);
+      void refresh.then((snapshot) => resolveLifecycleRefreshDeferred?.(snapshot), () => {
+        resolveLifecycleRefreshDeferred?.(lifecycleSnapshot(false, 'window enumeration failed'));
+      }).finally(() => {
+        lifecycleRefreshDeferred = null;
+        resolveLifecycleRefreshDeferred = null;
+      });
+    };
+    // Let the blocking request settle first, then take one fresh baseline/diff
+    // so Auto observes any windows opened during the chooser without
+    // interleaving helper RPCs among native icon reads.
+    queueMicrotask(() => {
+      if (lifecycleRefresh) void lifecycleRefresh.then(runCatchup, runCatchup);
+      else runCatchup();
+    });
+  }
+
+  /** Called once per live candidate chooser. Blocking starts immediately; the
+   * returned `drained` settles when an enumeration that was ALREADY running at
+   * acquisition has finished, because that one cannot be cancelled and would
+   * otherwise sit in front of the chooser's first hover. `release` is
+   * idempotent, and the final one triggers the catch-up. */
+  function holdWindowLifecycleRefresh(): { release: () => void; drained: Promise<void> } {    candidatePickerHolds += 1;
+    if (lifecycleSubscribers.size > 0) lifecycleCatchupRequired = true;
+    // Capture the in-flight enumeration directly. Asking refreshWindowLifecycle()
+    // here would return the deferred promise, which settles only on release.
+    const inFlight = lifecycleRefresh;
+    const drained = inFlight === null
+      ? Promise.resolve()
+      : inFlight.then(() => undefined, () => undefined);
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      candidatePickerHolds = Math.max(0, candidatePickerHolds - 1);
+      runLifecycleCatchupIfUnblocked();
+    };
+    return { release, drained };
+  }
+
+  /** One hold per peek session, however many preview requests it makes. A
+   * session is a Shift sweep across icons or a chooser row hover, and it ends
+   * through endLivePreview(), endPeek() or stop(). */
+  let peekLifecycleRelease: (() => void) | null = null;
+  function holdLifecycleForPeek(): void {
+    if (peekLifecycleRelease !== null) return;
+    peekLifecycleRelease = holdWindowLifecycleRefresh().release;
+  }
+  function releaseLifecycleForPeek(): void {
+    const release = peekLifecycleRelease;
+    peekLifecycleRelease = null;
+    release?.();
+  }
+
   async function listCandidates(options: { includeNativeIcons?: boolean } = {}): Promise<WindowCandidateListResult> {
     const nativeIcons = options.includeNativeIcons === true;
     const preferRecentLifecycle = options.includeNativeIcons === false;
@@ -576,9 +680,17 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       // Bind/act still re-observe the clicked token, so a vanished window can
       // never be acted on from this presentation cache. Other callers retain
       // a fresh list, and the cache expires after two watcher intervals.
+      //
+      // The exception is contention: the helper serves one request at a time, so
+      // a chooser request that arrives while the 500 ms watcher is already
+      // enumerating waits behind it, and that is what made the first hover after
+      // a focus change appear seconds late. Presentation takes the last complete
+      // enumeration instead of queueing, because the identity of every row is
+      // revalidated before anything is done with it.
+      const helperBusy = lifecycleRefresh !== null || nativeCandidateListsInFlight > 0;
       const recent = preferRecentLifecycle && lifecycleLastObservations !== null
         && factory.revision === lifecycleRevision
-        && stamp() - lifecycleLastObservedAt <= 1000;
+        && (stamp() - lifecycleLastObservedAt <= 1000 || helperBusy);
       let result: WindowCapabilityResult = recent
         ? { outcome: 'success', windows: lifecycleLastObservations! }
         : await factory.list();
@@ -623,25 +735,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     } finally {
       if (nativeIcons) {
         nativeCandidateListsInFlight -= 1;
-        if (nativeCandidateListsInFlight === 0 && lifecycleCatchupRequired) {
-          lifecycleCatchupRequired = false;
-          const runCatchup = (): void => {
-            const refresh = refreshWindowLifecycle(lifecycleBaselinePending);
-            void refresh.then((snapshot) => resolveLifecycleRefreshDeferred?.(snapshot), () => {
-              resolveLifecycleRefreshDeferred?.(lifecycleSnapshot(false, 'window enumeration failed'));
-            }).finally(() => {
-              lifecycleRefreshDeferred = null;
-              resolveLifecycleRefreshDeferred = null;
-            });
-          };
-          // Let the candidate request settle first, then take one fresh
-          // baseline/diff so Auto observes any windows opened during the
-          // picker without interleaving helper RPCs among native icon reads.
-          queueMicrotask(() => {
-            if (lifecycleRefresh) void lifecycleRefresh.then(runCatchup, runCatchup);
-            else runCatchup();
-          });
-        }
+        runLifecycleCatchupIfUnblocked();
       }
     }
   }
@@ -723,7 +817,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   }
 
   function refreshWindowLifecycle(pushBaseline = false): Promise<WindowInstanceSnapshot> {
-    if (nativeCandidateListsInFlight > 0) {
+    if (lifecycleRefreshBlocked()) {
       lifecycleCatchupRequired = true;
       if (pushBaseline) lifecycleBaselinePending = true;
       if (!lifecycleRefreshDeferred) {
@@ -837,27 +931,63 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
 
   /** Resolve the exact window/class icon for a trusted observation. The
    * helper's bounded 48x48 request is strictly correlated to this runtime
-   * identity and falls back to the executable icon. */
+   * identity and falls back to the executable icon.
+   *
+   * The round-trip is the expensive part, and an icon does not change for a
+   * stable window identity, so it is resolved once per identity and every later
+   * list is served from memory. Identity carries process start ticks, so a
+   * recycled handle cannot inherit a stale icon. */
   async function nativeIconFor(observation: WindowObservation): Promise<string | null> {
     // Packaged apps commonly expose a generic HWND/class icon. Their own
     // AppxManifest logo is the app identity shown by Windows.
     const packageIcon = packagedAppLogo(observation.iconProcessPath ?? observation.processPath ?? '');
     if (packageIcon) return packageIcon;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        const result = await factory.thumbnail(observation.runtimeId, 48, 48);
-        if (result.outcome === 'success' && result.thumbnail?.source === 'icon') {
-          return `data:image/png;base64,${result.thumbnail.image}`;
-        }
-      } catch {
-        // Retry one transient helper failure before taking a fallback.
+    const identity = observation.windowInstanceId;
+    const cacheable = typeof identity === 'string' && /^W[0-9a-f]{16}$/i.test(identity);
+    if (cacheable) {
+      const cached = nativeIconCache.get(identity);
+      if (cached !== undefined) {
+        nativeIconCache.delete(identity);
+        nativeIconCache.set(identity, cached);
+        return cached;
       }
+      const pending = nativeIconReadsInFlight.get(identity);
+      if (pending !== undefined) return pending;
     }
-    // Electron's executable fallback is not reliable for packaged Windows
-    // apps such as Notepad. Leave these unresolved for the widget to retry
-    // rather than caching a misleading generic glyph as the member icon.
-    if (/(?:^|[\\/])WindowsApps(?:[\\/]|$)/i.test(observation.processPath ?? '')) return null;
-    return iconFor(observation);
+    const read = (async (): Promise<string | null> => {
+      try {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            const result = await factory.thumbnail(observation.runtimeId, 48, 48);
+            if (result.outcome === 'success' && result.thumbnail?.source === 'icon') {
+              const icon = `data:image/png;base64,${result.thumbnail.image}`;
+              if (cacheable) rememberNativeIcon(identity, icon);
+              return icon;
+            }
+          } catch {
+            // Retry one transient helper failure before taking a fallback.
+          }
+        }
+        // Electron's executable fallback is not reliable for packaged Windows
+        // apps such as Notepad. Leave these unresolved for the widget to retry
+        // rather than caching a misleading generic glyph as the member icon.
+        if (/(?:^|[\\/])WindowsApps(?:[\\/]|$)/i.test(observation.processPath ?? '')) return null;
+        return await iconFor(observation);
+      } finally {
+        if (cacheable) nativeIconReadsInFlight.delete(identity);
+      }
+    })();
+    if (cacheable) nativeIconReadsInFlight.set(identity, read);
+    return read;
+  }
+
+  function rememberNativeIcon(identity: string, icon: string): void {
+    nativeIconCache.set(identity, icon);
+    while (nativeIconCache.size > WINDOW_CAPABILITY_MAX_NATIVE_ICON_CACHE) {
+      const oldest = nativeIconCache.keys().next().value;
+      if (oldest === undefined) break;
+      nativeIconCache.delete(oldest);
+    }
   }
 
   function listedEntry(candidateId: string): { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate } | null {
@@ -1067,6 +1197,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
 
   async function endPeek(): Promise<WindowCapabilityResult> {
     peekGeneration += 1;
+    // Release first and unconditionally, like endLivePreview: an end with
+    // nothing to restore must still let the periodic enumeration resume.
+    releaseLifecycleForPeek();
     const restore = [...peekRestoreTokens];
     const reminimize = peekMinimizedTarget;
     if (!factoryBuilt || stopped) return { outcome: 'success' };
@@ -1103,6 +1236,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const target = tokenFor(capability);
     if (!target) return { outcome: 'missing', error: 'binding is not issued' };
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    // A cloak peek also holds the periodic enumeration off for its session, so
+    // shifting across icons does not queue behind the 500 ms watcher.
+    holdLifecycleForPeek();
 
     const generation = ++peekGeneration;
 
@@ -1162,6 +1298,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   }
 
   async function endLivePreview(): Promise<WindowCapabilityResult> {
+    // Release first and unconditionally: an end with no recorded preview, or an
+    // end after a failed begin, must never strand the peek's hold.
+    releaseLifecycleForPeek();
     const activePreview = livePreview;
     if (!activePreview || !factory.livePreview || stopped) return { outcome: 'success' };
     let result: WindowCapabilityResult;
@@ -1178,6 +1317,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (!/^[1-9][0-9]{0,19}$/.test(caller)) return { outcome: 'malformed', error: 'caller window is malformed' };
     if (!(await ensureStarted()) || !factory.livePreview) return { outcome: 'helper-unavailable', error: 'DWM live preview is unavailable' };
     if (livePreview?.target === target && livePreview.caller === caller) return { outcome: 'success' };
+    // A peek session holds the periodic enumeration off exactly like a chooser
+    // does: shifting across member icons drives one preview request per icon,
+    // and every one of them shares the helper with the 500 ms watcher.
+    holdLifecycleForPeek();
     // DWM replaces the active preview when enabled for another target. An
     // explicit disable here exposed the entire desktop between list rows.
     // Record release intent before the helper call. If begin times out after
@@ -1198,7 +1341,23 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const token = tokenFor(capability);
     if (!token) return { outcome: 'missing', error: 'binding is not issued' };
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
-    return factory.apply(token, bounds);
+    const result = await factory.apply(token, bounds);
+    // Diagnostic: what was asked for versus what the window actually had after
+    // the helper's offscreen clamp. This is what tells a bad remembered
+    // rectangle apart from a clamp that produced a tiny window in a corner.
+    try {
+      geometryJournal.record({
+        kind: 'apply',
+        title: descriptorForBinding(capability.bindingId ?? '')?.title ?? '',
+        requested: bounds,
+        observed: result.observation?.bounds ?? null,
+        workAreas: monitorWorkAreas(),
+        outcome: result.outcome,
+      });
+    } catch {
+      /* diagnostics never fail the action they describe */
+    }
+    return result;
   }
 
   /** Strictly validates one thumbnail dimension: absent -> the contract
@@ -1255,6 +1414,8 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       // from a previous session can ever be served.
       thumbnailCache.clear();
       lastFrameCache.clear();
+      // Native icons are tied to a helper session's window identities too.
+      nativeIconCache.clear();
       thumbnailCacheRevision = revision;
     }
     const cached = thumbnailCache.get(key);
@@ -1270,7 +1431,14 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       }
     }
 
-    const result = await factory.thumbnail(token, maxWidth.value, maxHeight.value);
+    thumbnailsInFlight += 1;
+    let result: WindowCapabilityResult;
+    try {
+      result = await factory.thumbnail(token, maxWidth.value, maxHeight.value);
+    } finally {
+      thumbnailsInFlight = Math.max(0, thumbnailsInFlight - 1);
+      runLifecycleCatchupIfUnblocked();
+    }
     if (result.outcome === 'success' && result.thumbnail && isValidThumbnail(result.thumbnail)) {
       // 025/028: a minimized TERMINAL icon preview must never supersede a
       // retained real-content frame. Serve the DURABLE validated frame, then
@@ -1471,6 +1639,16 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     await endPeek().catch(() => undefined);
     if (stopped) return;
     stopped = true;
+    // A peek session's hold must not outlive the service.
+    releaseLifecycleForPeek();
+    // Shutdown must not strand a caller waiting on a deferred snapshot: answer
+    // it with an honest stopped snapshot and clear the blocker state.
+    candidatePickerHolds = 0;
+    lifecycleCatchupRequired = false;
+    const strandedResolve = resolveLifecycleRefreshDeferred;
+    lifecycleRefreshDeferred = null;
+    resolveLifecycleRefreshDeferred = null;
+    strandedResolve?.(lifecycleSnapshot(false, 'service is stopped'));
     if (lifecycleTimer) clearInterval(lifecycleTimer);
     lifecycleTimer = null;
     lifecycleSubscribers.clear();
@@ -1484,6 +1662,8 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     observations.clear();
     thumbnailCache.clear();
     lastFrameCache.clear();
+    nativeIconCache.clear();
+    nativeIconReadsInFlight.clear();
     frameSeedAt.clear();
     frameSeedInFlight.clear();
     thumbnailCacheRevision = -1;
@@ -1497,6 +1677,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     windowLifecycleSnapshot,
     resolveWindowInstance,
     watchWindowLifecycle,
+    holdWindowLifecycleRefresh,
     bindCandidate,
     observeCapability,
     minimizeCapability,
