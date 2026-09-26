@@ -364,12 +364,14 @@ internal static class HoverInputBridge
     {
         POINT point;
         if (!GetCursorPos(out point)) return null;
-        IntPtr top = GetAncestor(WindowFromPoint(point), GA_ROOT);
-        if (top == IntPtr.Zero) return null;
         foreach (WidgetPolicy item in Snapshot())
         {
             if (!item.Enabled || unchecked(Environment.TickCount - item.UpdatedAt) > 1200) continue;
-            if (item.Handle != top || !IsWindow(item.Handle) || !IsWindowVisible(item.Handle) || IsIconic(item.Handle)) continue;
+            // Electron's translucent widget can be visually and DOM-hovered
+            // while WindowFromPoint reports the window beneath a transparent
+            // pixel. The renderer's renewed policy is the hover authority;
+            // the native rectangle keeps capture confined to this widget.
+            if (!IsWindow(item.Handle) || !IsWindowVisible(item.Handle) || IsIconic(item.Handle)) continue;
             RECT rect;
             if (!GetWindowRect(item.Handle, out rect)) continue;
             if (point.x < rect.left || point.x >= rect.right || point.y < rect.top || point.y >= rect.bottom) continue;
