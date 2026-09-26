@@ -29,6 +29,8 @@
 
 import { createWindowHelperFactory, type WindowHelperFactory } from './windowHelperFactory';
 import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, existsSync } from 'node:fs';
+import path from 'node:path';
 import {
   createThumbnailFrameStore,
   pngDimensions,
@@ -302,6 +304,40 @@ function fingerprint(path: string): string {
 function appLabel(path: string): string {
   const leaf = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? 'Application';
   return boundedTitle(leaf.replace(/\.[^.]+$/, '') || 'Application');
+}
+
+/** Prefer the package's declared app-list art over a generic executable or
+ * window-class glyph. The path comes from the trusted native observation. */
+function packagedAppLogo(processPath: string): string | null {
+  const marker = /^(.*?[\\/]WindowsApps[\\/][^\\/]+)[\\/]/i.exec(processPath);
+  if (!marker) return null;
+  const packageRoot = marker[1]!;
+  try {
+    const manifest = readFileSync(path.join(packageRoot, 'AppxManifest.xml'));
+    if (manifest.length > 1024 * 1024) return null;
+    const logo = /\bSquare44x44Logo\s*=\s*"([^"]+)"/i.exec(manifest.toString('utf8'))?.[1];
+    if (!logo || !/\.png$/i.test(logo)) return null;
+    const relative = logo.replace(/[\\/]/g, path.sep);
+    const base = path.resolve(packageRoot, relative);
+    const root = path.resolve(packageRoot) + path.sep;
+    if (!base.toLowerCase().startsWith(root.toLowerCase())) return null;
+    const stem = base.slice(0, -4);
+    const candidates = [
+      `${stem}.targetsize-48.png`,
+      `${stem}_targetsize-48.png`,
+      `${stem}.scale-100.png`,
+      `${stem}.scale-200.png`,
+      base,
+    ];
+    for (const candidate of candidates) {
+      if (!existsSync(candidate)) continue;
+      const bytes = readFileSync(candidate);
+      if (bytes.length > 0 && bytes.length <= 192 * 1024) {
+        return `data:image/png;base64,${bytes.toString('base64')}`;
+      }
+    }
+  } catch { /* unavailable package metadata falls through to native icons */ }
+  return null;
 }
 
 /** 028 P3: default durable frame store under the app userData directory.
@@ -753,6 +789,11 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (iconCache.size >= WINDOW_CAPABILITY_MAX_ICON_CACHE) return null;
     const read = (async () => {
       try {
+        const packageIcon = packagedAppLogo(processPath);
+        if (packageIcon) {
+          iconCache.set(cacheKey, packageIcon);
+          return packageIcon;
+        }
         const image = await getFileIcon(processPath);
         const dataUrl = image.toDataURL();
         if (Buffer.byteLength(dataUrl, 'utf8') > 256 * 1024) return null;
@@ -772,6 +813,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
    * helper's bounded 48x48 request is strictly correlated to this runtime
    * identity and falls back to the executable icon. */
   async function nativeIconFor(observation: WindowObservation): Promise<string | null> {
+    // Packaged apps commonly expose a generic HWND/class icon. Their own
+    // AppxManifest logo is the app identity shown by Windows.
+    const packageIcon = packagedAppLogo(observation.processPath ?? '');
+    if (packageIcon) return packageIcon;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const result = await factory.thumbnail(observation.runtimeId, 48, 48);
