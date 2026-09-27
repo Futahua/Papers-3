@@ -8,6 +8,7 @@
  * ignored without satisfying any request.
  */
 
+import { defaultWindowGeometryJournal } from './windowGeometryJournal';
 import {
   parseWindowResponse,
   type RuntimeWindowId,
@@ -32,6 +33,8 @@ interface PendingEntry {
   /** The runtime id the request was issued for; a response carrying an
    * observation for a DIFFERENT id must never satisfy this request. */
   target: RuntimeWindowId | undefined;
+  /** When this request entered the helper lane, for the timeout ledger. */
+  startedAt: number;
 }
 
 export interface WindowCapabilityClient {
@@ -85,8 +88,29 @@ export function createWindowCapabilityClient({
   function dispatch(entry: PendingEntry): void {
     if (stopped || entry.dispatched || !pending.has(entry.message.requestId)) return;
     entry.dispatched = true;
+    entry.startedAt = Date.now();
     entry.timer = setTimeout(() => {
       if (!pending.has(entry.message.requestId)) return;
+      // WHEN ONE REQUEST GIVES UP, SAY WHAT WAS AHEAD OF IT. The helper serves one
+      // request at a time, so a single timed-out list means either the helper is
+      // stuck or something older is still occupying the lane - and those two look
+      // identical from the outside. The in-flight methods and their ages tell them
+      // apart, which is the difference between fixing the caller and fixing the
+      // helper.
+      try {
+        const now = Date.now();
+        const inFlight = [...pending.values()]
+          .filter((other) => other.dispatched)
+          .map((other) => other.method + '@' + (now - (other.startedAt || now)) + 'ms')
+          .slice(0, 8)
+          .join(', ');
+        defaultWindowGeometryJournal().record({
+          kind: 'observe-fail',
+          title: entry.method,
+          detail: 'timeout ' + entry.message.requestId + '; in flight: ' + (inFlight || 'none'),
+          outcome: 'timeout',
+        });
+      } catch { /* diagnostics never fail the request they describe */ }
       finish(entry.message.requestId, {
         outcome: 'timeout',
         error: `request ${entry.message.requestId} (${entry.method}) timed out`,
@@ -173,7 +197,7 @@ export function createWindowCapabilityClient({
       ...(detail.maxHeight !== undefined ? { maxHeight: detail.maxHeight } : {}),
     };
     const result = new Promise<WindowCapabilityResult>((resolve) => {
-      const entry: PendingEntry = { resolve, timer: null, method, message, dispatched: false, target: detail.target };
+      const entry: PendingEntry = { resolve, timer: null, method, message, dispatched: false, startedAt: Date.now(), target: detail.target };
       pending.set(requestId, entry);
       if (method === 'thumbnail') {
         deferredThumbnails.push(requestId);
@@ -188,11 +212,28 @@ export function createWindowCapabilityClient({
   }
 
   function handleMessage(raw: unknown): void {
+    // A DROPPED RESPONSE IS A FACT, NOT SILENCE. Every branch below used to return
+    // quietly, so "the helper never answered" and "the helper answered and we threw
+    // it away" looked identical from the outside - and that is precisely the
+    // distinction this work has repeatedly needed.
+    const noteDrop = (why: string): void => {
+      try {
+        defaultWindowGeometryJournal().record({
+          kind: 'observe-fail',
+          title: 'response-dropped',
+          detail: why.slice(0, 80),
+          outcome: 'dropped',
+        });
+      } catch { /* diagnostics never fail the request they describe */ }
+    };
     const response = parseWindowResponse(raw);
-    if (!response) return; // malformed / unknown: ignored, nothing satisfied
+    if (!response) { noteDrop('unparseable: ' + JSON.stringify(raw)?.slice(0, 60)); return; }
     const entry = pending.get(response.requestId);
-    if (!entry) return; // stale, duplicate or unknown id: ignored
-    if (entry.method !== response.method) return; // mismatched: never satisfy the wrong request
+    if (!entry) { noteDrop('unknown request ' + response.requestId + ' (' + response.method + ')'); return; }
+    if (entry.method !== response.method) {
+      noteDrop('method mismatch: asked ' + entry.method + ', got ' + response.method);
+      return;
+    }
     if (entry.method === 'thumbnail') {
       // 019GR3: a thumbnail response resolves ONLY when the echoed helper
       // target matches the token the request was issued for. A wrong-target

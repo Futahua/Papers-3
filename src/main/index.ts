@@ -90,6 +90,7 @@ import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './win
 import { createHoverInputBridge, resolveHoverInputBridgeSourcePath, type HoverInputBridge } from './windows/hoverInputBridge';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
+import { createWindowControlBroker, resolveWindowControlSourcePath } from './windows/windowControlBroker';
 import { createWindowCandidatePeekController } from './windows/windowCandidatePeekController';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
 import { createWindowDetachSession, isAllowedDetachedNavigation, type WindowDetachSession } from './windows/windowDetachSession';
@@ -1518,11 +1519,35 @@ async function bootstrap(): Promise<void> {
     // instead of raising the window.
     foregroundBridge: () => foregroundBridge,
   });
+  const windowControlBroker = createWindowControlBroker({
+    cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
+    sourcePath: resolveWindowControlSourcePath({
+      appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged,
+    }),
+    onUnavailable: (reason) => {
+      for (const sender of webContents.getAllWebContents()) {
+        if (isProjectSurfaceSender(sender) && !sender.isDestroyed()) {
+          sender.send('papers:window-control:unavailable', reason);
+        }
+      }
+    },
+  });
   registerWindowCapabilityIpc({
     ipcMain,
     service: windowCapabilityService,
     isSender: isProjectSurfaceSender,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
+    controlBroker: windowControlBroker,
+    resolveControlSurface: (sender, rect) => {
+      const owner = BrowserWindow.fromWebContents(sender);
+      if (!owner || owner.isDestroyed() || !owner.isVisible()) return null;
+      const handle = owner.getNativeWindowHandle();
+      const ownerHwnd = Number(handle.length >= 8 ? handle.readBigUInt64LE(0) : BigInt(handle.readUInt32LE(0)));
+      const content = owner.getContentBounds();
+      const a = screen.dipToScreenPoint({ x: Math.round(content.x + rect.x), y: Math.round(content.y + rect.y) });
+      const b = screen.dipToScreenPoint({ x: Math.round(content.x + rect.x + rect.width), y: Math.round(content.y + rect.y + rect.height) });
+      return { ownerHwnd, hit: { x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y } };
+    },
     // A project hover preview uses Papers' own always-on-top preview window
     // instead of an in-page popover, which could only ever be as visible as the
     // project window itself. Same primitive the compact widget uses; placed
@@ -2899,6 +2924,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           detachSession!.closeAll().catch(() => undefined),
           widgetSession!.closeAll().catch(() => undefined),
           windowCapabilityService.stop().catch(() => undefined),
+          Promise.resolve(windowControlBroker.stop()),
         ]))
         .then(() => {
         hermesSurface.shutdown();

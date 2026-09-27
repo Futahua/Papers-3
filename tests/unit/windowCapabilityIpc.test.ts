@@ -36,6 +36,7 @@ function fakeService(): WindowCapabilityService {
     observeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     minimizeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     activateCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    observeInstances: async () => new Map(),
     restoreCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     toggleCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     closeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
@@ -84,6 +85,8 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:resolve-instance',
       'papers:window-capability:subscribe-lifecycle',
       'papers:window-capability:bind',
+      'papers:window-control:sync',
+      'papers:window-control:group',
       'papers:window-capability:observe',
       'papers:window-capability:minimize',
       'papers:window-capability:toggle',
@@ -103,15 +106,24 @@ describe('windowCapabilityIpc', () => {
     ]);
   });
 
-  it('waits for staged authority before running capability operations', async () => {
+  it('answers READ-ONLY capability operations without waiting for write authority', async () => {
+    // The compact widget is not the writer, so waiting for document-write
+    // authority parked its descriptor resolution forever - and a surface that
+    // only needs to LOOK was starved. That starvation left the native control
+    // broker with no slots at all. Reads answer; mutations still wait.
     const ipc = fakeIpcMain();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    let calls = 0;
+    let listCalls = 0;
+    let minimizeCalls = 0;
     const service = fakeService();
     service.listCandidates = async () => {
-      calls += 1;
+      listCalls += 1;
       return { outcome: 'success', candidates: [] };
+    };
+    service.minimizeCapability = async () => {
+      minimizeCalls += 1;
+      return { outcome: 'success' };
     };
     registerWindowCapabilityIpc({
       ipcMain: ipc.ipcMain,
@@ -120,12 +132,18 @@ describe('windowCapabilityIpc', () => {
       waitForAuthority: () => gate,
     });
 
-    const pending = ipc.invoke('papers:window-capability:list', 41, undefined);
+    // A read answers immediately, with the authority gate still closed.
+    await expect(ipc.invoke('papers:window-capability:list', 41, undefined))
+      .resolves.toEqual({ outcome: 'success', candidates: [] });
+    expect(listCalls).toBe(1);
+
+    // A mutation still waits for the gate.
+    const pending = ipc.invoke('papers:window-capability:minimize', 41, { version: 1, bindingId: 'binding-1' });
     await Promise.resolve();
-    expect(calls).toBe(0);
+    expect(minimizeCalls).toBe(0);
     release();
-    await expect(pending).resolves.toEqual({ outcome: 'success', candidates: [] });
-    expect(calls).toBe(1);
+    await expect(pending).resolves.toEqual({ outcome: 'success' });
+    expect(minimizeCalls).toBe(1);
   });
 
   it('uses native DWM live preview for widget Shift-hover when its trusted host HWND resolves', async () => {

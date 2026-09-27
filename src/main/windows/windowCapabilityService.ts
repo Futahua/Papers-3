@@ -175,6 +175,17 @@ export type WindowResolveResult =
   | { outcome: 'success'; capability: WindowRuntimeCapability; descriptor: PersistedWindowMemberDescriptor }
   | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string };
 
+/** An EXISTENCE answer, and it deliberately carries no capability.
+ *
+ * The periodic sweep asks only whether a window is still there. Answering that
+ * used to allocate a binding per member per sweep - about five a second, which
+ * exhausts the 128-entry binding table in half a minute and turns every
+ * capability the page holds into "binding is not issued". Existence is not a
+ * capability, so nothing is allocated here. */
+export type WindowInstanceProbe =
+  | { outcome: 'success'; descriptor: PersistedWindowMemberDescriptor }
+  | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string };
+
 export interface WindowMemberUpdate {
   state: WindowState;
   bounds: WindowBounds | null;
@@ -223,7 +234,7 @@ export type NativePickerBindResult =
 export interface WindowCapabilityService {
   listCandidates(options?: { includeNativeIcons?: boolean }): Promise<WindowCandidateListResult>;
   windowLifecycleSnapshot(): Promise<{ snapshot: WindowInstanceSnapshot }>;
-  resolveWindowInstance(windowInstanceId: string): Promise<WindowResolveResult>;
+  resolveWindowInstance(windowInstanceId: string): Promise<WindowInstanceProbe>;
   watchWindowLifecycle(callbacks: {
     onEvent: (event: WindowLifecycleEvent) => void;
     onBaseline: (snapshot: WindowInstanceSnapshot) => void;
@@ -237,8 +248,10 @@ export interface WindowCapabilityService {
    * caller that was waiting on a deferred snapshot. */
   holdWindowLifecycleRefresh(): { release: () => void; drained: Promise<void> };
   bindCandidate(candidateId: string): Promise<WindowBindResult>;
-  observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  observeCapability(capability: WindowRuntimeCapability, options?: { seedFrame?: boolean }): Promise<WindowCapabilityResult>;
   minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  /** One enumeration answering many members at once. */
+  observeInstances(instanceIds: string[]): Promise<Map<string, WindowObservation>>;
   /** Bring a window to the front. Success means the foreground actually moved. */
   activateCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   restoreCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
@@ -426,6 +439,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   const stamp = options.now ?? (() => Date.now());
   let factory: WindowHelperFactory;
   let factoryBuilt = false;
+  /** The second helper process, used only for captures. */
   let stopped = false;
   let candidateIdCounter = 0;
   const candidatesByListedId = new Map<string, { helperToken: RuntimeWindowId; descriptor: PersistedWindowMemberDescriptor; candidate: WindowCandidate }>();
@@ -627,6 +641,13 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const electron = require('electron') as { app?: { getFileIcon(filePath: string): Promise<Electron.NativeImage> } };
     return electron?.app?.getFileIcon(filePath) ?? Promise.reject(new Error('electron app unavailable'));
   });
+
+  function ensureCaptureFactory(): WindowHelperFactory {
+    ensureFactory();
+    // Runtime IDs belong to one helper session. A separate capture helper
+    // cannot resolve a token issued by the discovery helper.
+    return factory;
+  }
 
   function ensureFactory(): WindowHelperFactory {
     if (!factoryBuilt) {
@@ -889,7 +910,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return { snapshot: await refreshWindowLifecycle() };
   }
 
-  async function resolveWindowInstance(windowInstanceId: string): Promise<WindowResolveResult> {
+  async function resolveWindowInstance(windowInstanceId: string): Promise<WindowInstanceProbe> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     if (!/^W[0-9a-f]{16}$/i.test(windowInstanceId)) return { outcome: 'missing', error: 'window instance is not recognized' };
     let current = lifecycleCurrent.get(windowInstanceId);
@@ -952,9 +973,17 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       return { outcome: 'missing', error: 'window instance identity changed' };
     }
     const entry = candidateForObservation(observed.observation);
-    const capability = issueBinding(entry.helperToken, observed.observation);
-    bindingDescriptors.set(capability.bindingId!, entry.descriptor);
-    return { outcome: 'success', capability, descriptor: { ...entry.descriptor, windowInstanceId } };
+    // EXISTENCE IS NOT A CAPABILITY.
+    //
+    // This used to mint a fresh binding on every successful resolve. The project's
+    // closed-window sweep asks "is this window still there?" for every member every
+    // two seconds and throws the answer's capability away - roughly five bindings a
+    // second, which exhausts the 128-entry binding table in about half a minute.
+    // After that, every capability the page holds has been evicted and answers
+    // "binding is not issued": the broker sync had nothing to register, and the
+    // legacy path failed at the same time. A probe now reports existence and
+    // allocates nothing.
+    return { outcome: 'success', descriptor: { ...entry.descriptor, windowInstanceId } };
   }
 
   function watchWindowLifecycle(callbacks: {
@@ -1054,7 +1083,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       try {
         for (let attempt = 0; attempt < 2; attempt += 1) {
           try {
-            const result = await factory.thumbnail(observation.runtimeId, 48, 48);
+            const result = await ensureCaptureFactory().thumbnail(observation.runtimeId, 48, 48);
             if (result.outcome === 'success' && result.thumbnail?.source === 'icon') {
               const icon = `data:image/png;base64,${result.thumbnail.image}`;
               if (cacheable) rememberNativeIcon(identity, icon);
@@ -1226,6 +1255,26 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const bindingId = capability.bindingId ?? '';
     const previous = observations.get(bindingId);
     if (previous) return previous;
+    // ANSWER FROM THE ENUMERATION THE WATCHER ALREADY MADE.
+    //
+    // The project observes every member on a timer to paint its live state, and the
+    // helper serves ONE request at a time. Sixteen members meant sixteen requests
+    // queued behind each other, so icons, peek, preview, picking from the window list
+    // and the control broker's own registration all starved together and the app
+    // looked dead. The watcher already enumerates the whole desktop every 500ms and
+    // its snapshot carries exactly what an observation needs. Only a fresh snapshot
+    // from the current helper session is used; anything else falls through to a real
+    // observation.
+    const descriptor = descriptorForBinding(bindingId);
+    const wantedInstance = descriptor?.windowInstanceId;
+    if (typeof wantedInstance === 'string'
+      && lifecycleLastObservations !== null
+      && factory.revision === lifecycleRevision
+      && stamp() - lifecycleLastObservedAt <= 2000) {
+      const cached = lifecycleLastObservations.find(
+        (observation) => observation.windowInstanceId === wantedInstance);
+      if (cached) return { outcome: 'success', observation: cached };
+    }
     const request = factory.observe(token).then((result) => {
       // 028 P3 capture-before-minimize: while the member is observed NORMAL and
       // has no fresh retained real frame, seed one bounded background capture so
@@ -1655,7 +1704,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     thumbnailsInFlight += 1;
     let result: WindowCapabilityResult;
     try {
-      result = await factory.thumbnail(token, maxWidth.value, maxHeight.value);
+      result = await ensureCaptureFactory().thumbnail(token, maxWidth.value, maxHeight.value);
     } finally {
       thumbnailsInFlight = Math.max(0, thumbnailsInFlight - 1);
       runLifecycleCatchupIfUnblocked();
@@ -1709,9 +1758,16 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const listed = await listCandidates();
     if (listed.outcome !== 'success') return { outcome: 'helper-unavailable', error: listed.error };
-    const matches = [...candidatesByListedId.entries()].filter(([, entry]) =>
-      entry.descriptor.executableFingerprint === descriptor.executableFingerprint
-      && entry.descriptor.title === descriptor.title);
+    // EXACT IDENTITY FIRST. A descriptor that carries a windowInstanceId names one
+    // specific window; matching only on fingerprint + title makes two Chrome-like
+    // windows ambiguous even though the caller said exactly which one it means.
+    // Fingerprint + title stay the fallback for legacy descriptors.
+    const matches = descriptor.windowInstanceId !== undefined
+      ? [...candidatesByListedId.entries()].filter(([, entry]) =>
+        entry.descriptor.windowInstanceId === descriptor.windowInstanceId)
+      : [...candidatesByListedId.entries()].filter(([, entry]) =>
+        entry.descriptor.executableFingerprint === descriptor.executableFingerprint
+        && entry.descriptor.title === descriptor.title);
     if (matches.length === 0) return { outcome: 'missing', error: 'no visible window matches the descriptor' };
     if (matches.length > 1) return { outcome: 'ambiguous', error: 'more than one visible window matches the descriptor' };
     const bound = await bindCandidate(matches[0]![0]);
@@ -1719,6 +1775,57 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       return { outcome: bound.outcome, error: bound.error };
     }
     return { outcome: 'success', capability: bound.capability, descriptor: bound.descriptor };
+  }
+
+  /** ONE enumeration for a whole registration wave.
+   *
+   * Registering sixteen members used to mean sixteen resolvePersisted() calls,
+   * each doing its own full desktop enumeration - against a helper that serves one
+   * request at a time. The later ones spent most of their ten-second deadline
+   * waiting behind the earlier ones, timed out, and collapsed into
+   * "helper-unavailable" while the helper was perfectly alive. One snapshot
+   * answers every member, and the native broker revalidates each identity itself.
+   */
+  async function observeInstances(instanceIds: string[]): Promise<Map<string, WindowObservation>> {
+    const found = new Map<string, WindowObservation>();
+    if (instanceIds.length === 0) return found;
+    const wanted = new Set(instanceIds);
+    // ANY COMPLETE SNAPSHOT FROM THE CURRENT HELPER REVISION WILL DO, however old.
+    // The native broker revalidates hwnd, pid, process start time and class before
+    // it touches anything, so a stale identity cannot cause a wrong action - it can
+    // only fail closed. Waiting for a FRESH one is what kept registration empty:
+    // the helper serves one request at a time, and a single slow observe held the
+    // lane for ten seconds while the lists queued behind it.
+    // A BOUNDED stale snapshot is allowed, and the bound is enforced ALWAYS: an
+    // arbitrarily old snapshot never counts merely because a refresh happens to be
+    // running. 30s is safe here because the native broker revalidates hwnd, pid,
+    // process start time and class before it touches a window - and this snapshot is
+    // never used to conclude that a window is GONE.
+    const REGISTRATION_MAX_SNAPSHOT_AGE_MS = 30_000;
+    if (lifecycleLastObservations !== null
+      && factory.revision === lifecycleRevision
+      && stamp() - lifecycleLastObservedAt <= REGISTRATION_MAX_SNAPSHOT_AGE_MS) {
+      for (const observation of lifecycleLastObservations) {
+        const instanceId = observation.windowInstanceId;
+        if (typeof instanceId !== 'string' || !wanted.has(instanceId)) continue;
+        if (!found.has(instanceId)) found.set(instanceId, observation);
+      }
+      if (found.size > 0) return found;
+    }
+    // NOTHING USABLE EXISTS: coalesce with the watcher's own single-flight refresh.
+    // It MUST be refreshWindowLifecycle - the wrapper - and not
+    // refreshWindowLifecycleOnce. Calling the inner function directly is what let
+    // two cold registration workers start two overlapping enumerations against a
+    // helper that serves one request at a time, which is how three lists ended up
+    // in flight at once. If this yields nothing the caller stays PENDING rather
+    // than claiming the window is gone.
+    await refreshWindowLifecycle(false).catch(() => null);
+    for (const observation of lifecycleLastObservations ?? []) {
+      const instanceId = observation.windowInstanceId;
+      if (typeof instanceId !== 'string' || !wanted.has(instanceId)) continue;
+      if (!found.has(instanceId)) found.set(instanceId, observation);
+    }
+    return found;
   }
 
   async function nativePickerSnapshot(): Promise<
@@ -1921,6 +2028,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     observeCapability,
     minimizeCapability,
     activateCapability,
+    observeInstances,
     restoreCapability,
     toggleCapability,
     closeCapability,

@@ -10,7 +10,10 @@
  * HWND, process command, path input or arbitrary launch crosses here.
  */
 
-import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
+import { webContents, type IpcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import type { WindowControlBroker } from '../windows/windowControlBroker';
+import type { WindowObservation } from '../windows/windowCapabilityTypes';
+import { defaultWindowGeometryJournal } from '../windows/windowGeometryJournal';
 
 import {
   type PersistedWindowMemberDescriptor,
@@ -62,6 +65,11 @@ export interface WindowCapabilityIpcDependencies {
     anchor: { x: number; y: number; width: number; height: number };
   }) => void;
   hideProjectPreview?: (senderId: number) => void;
+  controlBroker?: WindowControlBroker;
+  resolveControlSurface?: (sender: WebContents, rect: WindowBounds) => {
+    ownerHwnd: number;
+    hit: WindowBounds;
+  } | null;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -107,11 +115,28 @@ function parseBounds(raw: unknown): WindowBounds {
 
 function parsePersistedDescriptor(raw: unknown): PersistedWindowMemberDescriptor {
   if (!isPlainObject(raw)) throw new Error('descriptor must be an object');
-  if (!exactKeys(raw, ['version', 'title', 'executableFingerprint'])) throw new Error('descriptor contains unknown fields');
+  // A MODERN descriptor carries windowInstanceId, and this parser rejected it as
+  // an unknown field while the preload's parser accepted it. One such entry made
+  // the whole control sync reject before any registration began: the widget sent
+  // sixteen members, the main side received zero, and the broker was never given
+  // a slot. The two parsers must accept the same grammar.
+  const hasWindowInstanceId = Object.prototype.hasOwnProperty.call(raw, 'windowInstanceId');
+  if (!exactKeys(raw, hasWindowInstanceId
+    ? ['version', 'title', 'executableFingerprint', 'windowInstanceId']
+    : ['version', 'title', 'executableFingerprint'])) {
+    throw new Error('descriptor contains unknown fields');
+  }
   if (raw['version'] !== 1) throw new Error('unsupported descriptor version');
   const title = parseBoundedString(raw['title'], 'descriptor.title');
   const executableFingerprint = parseBoundedString(raw['executableFingerprint'], 'descriptor.executableFingerprint');
   if (!/^[a-f0-9]{64}$/i.test(executableFingerprint)) throw new Error('descriptor.executableFingerprint is invalid');
+  if (hasWindowInstanceId) {
+    const windowInstanceId = raw['windowInstanceId'];
+    if (typeof windowInstanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(windowInstanceId)) {
+      throw new Error('descriptor.windowInstanceId is invalid');
+    }
+    return { version: 1, title, executableFingerprint, windowInstanceId };
+  }
   return { version: 1, title, executableFingerprint };
 }
 
@@ -181,7 +206,8 @@ function toPageThumbnailResult(result: WindowCapabilityResult): WindowThumbnailR
   return { outcome: result.outcome, ...(result.error !== undefined ? { error: boundPageError(result.error) } : {}) };
 }
 
-type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult | { snapshot: WindowInstanceSnapshot };
+type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult | { snapshot: WindowInstanceSnapshot }
+  | { outcome: 'success'; results: Array<{ layoutId: string; memberId: string; ready: boolean }> };
 
 function resultPayload(result: IpcResult): IpcResult {
   return result;
@@ -195,6 +221,8 @@ export function registerWindowCapabilityIpc({
   resolveCallerHwnd,
   showProjectPreview,
   hideProjectPreview,
+  controlBroker,
+  resolveControlSurface,
 }: WindowCapabilityIpcDependencies): void {
   let nativePeekActive = false;
   const lifecycleUnsubscribers = new Map<number, () => void>();
@@ -202,6 +230,117 @@ export function registerWindowCapabilityIpc({
   // it schedules a member hover preview, so a scan cannot start during the
   // preview dwell and land in front of the capture. One hold per sender.
   const previewHolds = new Map<number, () => void>();
+  const controlIds = new Map<string, number>();
+  const controlFingerprints = new Map<string, string>();
+  /** The geometry half of a registration, so an unchanged member is answered
+   * ready without touching the helper at all. */
+  const controlFingerprintGeometry = new Map<string, string>();
+  const controlRegistrationsPending = new Set<string>();
+
+  /** Registrations are BACKGROUND work and they are BOUNDED. Seventeen of them
+   * fired at once and saturated the helper client's pending-request queue, so
+   * every one failed with 'pending-request limit reached' - which is what left
+   * the broker empty even after the sync itself worked. */
+  const registrationQueue: Array<() => Promise<void>> = [];
+  let registrationActive = 0;
+  const REGISTRATION_CONCURRENCY = 2;
+  function pumpRegistrations(): void {
+    while (registrationActive < REGISTRATION_CONCURRENCY && registrationQueue.length > 0) {
+      const task = registrationQueue.shift()!;
+      registrationActive += 1;
+      void task().catch(() => undefined).finally(() => {
+        registrationActive -= 1;
+        pumpRegistrations();
+      });
+    }
+  }
+  function enqueueRegistration(task: () => Promise<void>): void {
+    registrationQueue.push(task);
+    pumpRegistrations();
+  }
+
+  /** Resolve one member's identity into a live window and register it with the
+   * resident broker. Background work: the caller has already answered. */
+  async function registerControlSlot(
+    sender: Electron.WebContents,
+    id: number,
+    key: string,
+    entry: { layoutId: string; memberId: string; descriptor: PersistedWindowMemberDescriptor; restore: { x: number; y: number; width: number; height: number } | null },
+    surface: { ownerHwnd: number; hit: { x: number; y: number; width: number; height: number } } | null,
+  ): Promise<void> {
+    const meta = controlMeta.get(id);
+    const report = (result: string): void => {
+      if (!meta) return;
+      const live = webContents.fromId(meta.senderId);
+      if (live && !live.isDestroyed()) {
+        live.send('papers:window-control:event', {
+          layoutId: meta.layoutId, memberId: meta.memberId, result,
+        });
+      }
+    };
+    if (!surface) { report('no-surface'); return; }
+    // NO resolve, NO bind, NO second observation. The wave's ONE enumeration
+    // already carries the handle, process identity, start time and class the
+    // broker needs, and the broker revalidates all of them itself. Sixteen
+    // per-member resolutions against a serial helper was the whole reason every
+    // registration timed out while the helper sat there alive.
+    // THE WATCHER'S SNAPSHOT, never a private list. The helper serves one request
+    // at a time, so a registration wave that enumerates on its own competes with
+    // the app's own work and loses - measured as a ten-second timeout while the
+    // helper was alive. If no complete same-revision snapshot exists yet, this
+    // stays PENDING instead of claiming the window is gone.
+    const instanceId = entry.descriptor.windowInstanceId;
+    const observation = typeof instanceId === 'string'
+      ? (await service.observeInstances([instanceId]).catch(() => new Map())).get(instanceId) ?? null
+      : null;
+    if (!observation) { report('pending:no-snapshot'); return; }
+    const restore = entry.restore ?? observation.bounds ?? null;
+    const ready = !!(typeof observation.handle === 'number'
+      && typeof observation.processId === 'number' && typeof observation.processStartTicks === 'string'
+      && typeof observation.windowClass === 'string'
+      && restore && restore.width > 0 && restore.height > 0)
+      && await controlBroker!.register({
+        id, hwnd: observation.handle, pid: observation.processId,
+        processStartTicks: observation.processStartTicks, windowClass: observation.windowClass,
+        ownerHwnd: surface.ownerHwnd, hit: surface.hit, restore: restore!,
+      });
+    if (ready) {
+      controlFingerprints.set(key, JSON.stringify([entry.descriptor, surface, restore]));
+      controlFingerprintGeometry.set(key, JSON.stringify([surface, entry.restore]));
+      report('ready');
+    } else {
+      controlBroker!.clear(id);
+      controlFingerprints.delete(key);
+      controlFingerprintGeometry.delete(key);
+      report('refused');
+    }
+  }
+  const controlMeta = new Map<number, { senderId: number; layoutId: string; memberId: string; projectHost: string }>();
+  const controlsBySender = new Map<number, Set<string>>();
+  const controlCleanupSenders = new Set<number>();
+  let nextControlId = 0;
+  controlBroker?.onEvent((controlEvent) => {
+    const meta = controlMeta.get(controlEvent.id);
+    if (!meta) return;
+    if (controlEvent.result === 'stale') {
+      controlFingerprints.delete(meta.senderId + ':' + meta.layoutId + ':' + meta.memberId);
+    }
+    // The icon surface owns the broker slot, while the workspace owns persisted
+    // layout state. Deliver the broker's result to both surfaces in this project.
+    for (const recipient of webContents.getAllWebContents()) {
+      if (recipient.isDestroyed()) continue;
+      try {
+        if (new URL(recipient.getURL()).host !== meta.projectHost) continue;
+        recipient.send('papers:window-control:event', { ...controlEvent, ...meta });
+      } catch { /* unrelated surfaces have no project URL */ }
+    }
+  });
+  controlBroker?.onShift((held) => {
+    for (const senderId of controlsBySender.keys()) {
+      const sender = webContents.fromId(senderId);
+      if (sender && !sender.isDestroyed()) sender.send('papers:window-control:shift', held);
+    }
+  });
   const releasePreviewHold = (senderId: number): void => {
     const release = previewHolds.get(senderId);
     if (release === undefined) return;
@@ -213,8 +352,34 @@ export function registerWindowCapabilityIpc({
     parse: (raw: unknown) => TInput,
     invoke: (input: TInput, event: IpcMainInvokeEvent) => Promise<IpcResult>,
   ): void {
+    handleInternal(channel, parse, invoke, true);
+  }
+
+  /** A READ-ONLY channel does not wait for document-write authority.
+   *
+   * The compact widget is not the writer, so `waitForAuthority` parks its request
+   * indefinitely - and every channel went through it. Resolving a descriptor or an
+   * instance, and listing windows, change nothing in the document: they must answer
+   * whoever asks, or a surface that only needs to LOOK is starved. That starvation
+   * is what left the broker with no slots at all: the widget's handle resolution
+   * never returned, so no member ever became registerable.
+   */
+  function handleRead<TInput>(
+    channel: string,
+    parse: (raw: unknown) => TInput,
+    invoke: (input: TInput, event: IpcMainInvokeEvent) => Promise<IpcResult>,
+  ): void {
+    handleInternal(channel, parse, invoke, false);
+  }
+
+  function handleInternal<TInput>(
+    channel: string,
+    parse: (raw: unknown) => TInput,
+    invoke: (input: TInput, event: IpcMainInvokeEvent) => Promise<IpcResult>,
+    needsAuthority: boolean,
+  ): void {
     ipcMain.handle(channel, async (event, raw) => {
-      await waitForAuthority?.(event.sender);
+      if (needsAuthority) await waitForAuthority?.(event.sender);
       if (!isSender(event.sender)) {
         throw new Error('denied: not a Backpack project sender');
       }
@@ -223,18 +388,18 @@ export function registerWindowCapabilityIpc({
     });
   }
 
-  handle('papers:window-capability:list', (raw) => {
+  handleRead('papers:window-capability:list', (raw) => {
     if (raw === undefined) return undefined;
     if (!isPlainObject(raw) || Object.keys(raw).some((key) => key !== 'includeNativeIcons')) throw new Error('list payload contains unknown fields');
     if (raw['includeNativeIcons'] !== undefined && typeof raw['includeNativeIcons'] !== 'boolean') throw new Error('includeNativeIcons must be boolean');
     return { includeNativeIcons: raw['includeNativeIcons'] !== false };
   }, (options) => service.listCandidates(options ?? { includeNativeIcons: true }));
-  handle('papers:window-capability:lifecycle-snapshot', (raw) => {
+  handleRead('papers:window-capability:lifecycle-snapshot', (raw) => {
     if (raw === undefined) return undefined;
     if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('lifecycle snapshot payload must be empty');
     return undefined;
   }, () => service.windowLifecycleSnapshot());
-  handle('papers:window-capability:resolve-instance', (raw) => {
+  handleRead('papers:window-capability:resolve-instance', (raw) => {
     if (!isPlainObject(raw) || !exactKeys(raw, ['windowInstanceId'])
       || typeof raw['windowInstanceId'] !== 'string' || !/^W[0-9a-f]{16}$/i.test(raw['windowInstanceId'])) {
       throw new Error('window instance payload is malformed');
@@ -259,6 +424,114 @@ export function registerWindowCapabilityIpc({
     return { outcome: 'success' };
   });
   handle('papers:window-capability:bind', (raw) => parseBoundedString(raw, 'candidateId'), (candidateId) => service.bindCandidate(candidateId));
+  handleRead('papers:window-control:sync', (raw) => {
+    if (!Array.isArray(raw) || raw.length > 32) throw new Error('control list exceeds the bound');
+    return raw.map((entry) => {
+      // A DESCRIPTOR, not a capability. The surface that renders the icons knows
+      // each member's persisted identity; only Papers can turn that into a live
+      // window. Asking the widget to resolve a capability first meant its request
+      // was parked behind a document-write authority it does not hold, so no
+      // member ever became registerable and the broker was never given a slot.
+      if (!isPlainObject(entry) || !exactKeys(entry, ['layoutId', 'memberId', 'descriptor', 'rect', 'restore'])) {
+        throw new Error('control entry is malformed');
+      }
+      const layoutId = parseBoundedString(entry['layoutId'], 'layoutId');
+      const memberId = parseBoundedString(entry['memberId'], 'memberId');
+      const descriptor = parsePersistedDescriptor(entry['descriptor']);
+      const rect = parseBounds(entry['rect']);
+      const restore = entry['restore'] === null ? null : parseBounds(entry['restore']);
+      return { layoutId, memberId, descriptor, rect, restore };
+    });
+  }, async (entries, event) => {
+    if (!controlBroker?.ready || !resolveControlSurface) {
+      return { outcome: 'helper-unavailable', error: 'Native window control is unavailable' };
+    }
+    const old = controlsBySender.get(event.sender.id) ?? new Set<string>();
+    const next = new Set<string>();
+    const results: Array<{ layoutId: string; memberId: string; ready: boolean }> = [];
+    for (const entry of entries) {
+      const key = event.sender.id + ':' + entry.layoutId + ':' + entry.memberId;
+      next.add(key);
+      let id = controlIds.get(key);
+      if (!id) { id = ++nextControlId; controlIds.set(key, id); }
+      controlMeta.set(id, { senderId: event.sender.id, layoutId: entry.layoutId, memberId: entry.memberId,
+        projectHost: new URL(event.sender.getURL()).host });
+      const surface = resolveControlSurface(event.sender, entry.rect);
+      // Registration is BACKGROUND work. Resolving seventeen descriptors inline
+      // means seventeen enumerations, which blew the request's own timeout - so
+      // the sync never answered at all and nothing was ever registered. The sync
+      // now answers immediately and the answer arrives as an event per member.
+      const registered = controlFingerprints.get(key);
+      if (registered && controlFingerprintGeometry.get(key) === JSON.stringify([surface, entry.restore])) {
+        results.push({ layoutId: entry.layoutId, memberId: entry.memberId, ready: true });
+        continue;
+      }
+      results.push({ layoutId: entry.layoutId, memberId: entry.memberId, ready: false });
+      if (!controlRegistrationsPending.has(key)) {
+        controlRegistrationsPending.add(key);
+        enqueueRegistration(async () => {
+          try { await registerControlSlot(event.sender, id, key, entry, surface); }
+          finally { controlRegistrationsPending.delete(key); }
+        });
+      }
+    }
+    for (const key of old) if (!next.has(key)) {
+      const id = controlIds.get(key);
+      if (id) { controlBroker.clear(id); controlMeta.delete(id); }
+      controlIds.delete(key);
+      controlFingerprints.delete(key);
+    }
+    controlsBySender.set(event.sender.id, next);
+    if (!controlCleanupSenders.has(event.sender.id)) {
+      controlCleanupSenders.add(event.sender.id);
+      event.sender.once('destroyed', () => {
+        const live = controlsBySender.get(event.sender.id);
+        for (const key of live ?? []) {
+          const id = controlIds.get(key);
+          if (id) { controlBroker.clear(id); controlMeta.delete(id); }
+          controlIds.delete(key);
+          controlFingerprints.delete(key);
+        }
+        controlsBySender.delete(event.sender.id);
+        controlCleanupSenders.delete(event.sender.id);
+      });
+    }
+    // The page reports `resp null`, so record what THIS side returns: whether the
+    // handler ran at all, and with how many members. A response that never
+    // arrives is otherwise indistinguishable from one that arrives empty.
+    try {
+      defaultWindowGeometryJournal().record({
+        kind: 'picker-open',
+        detail: 'control sync: in ' + entries.length + ', out ' + results.length,
+        outcome: 'success',
+      });
+    } catch { /* diagnostics never fail the action they describe */ }
+    return { outcome: 'success', results };
+  });
+  handle('papers:window-control:group', (raw) => {
+    if (!isPlainObject(raw) || !exactKeys(raw, ['layoutId', 'actions'])) throw new Error('group request is malformed');
+    const layoutId = parseBoundedString(raw['layoutId'], 'layoutId');
+    if (!Array.isArray(raw['actions']) || raw['actions'].length > 32) throw new Error('group action list is malformed');
+    const actions = raw['actions'].map((value) => {
+      if (!isPlainObject(value) || !exactKeys(value, ['memberId', 'operation'])) throw new Error('group action is malformed');
+      const memberId = parseBoundedString(value['memberId'], 'memberId');
+      const operation = value['operation'];
+      if (operation !== 'minimize' && operation !== 'restore' && operation !== 'foreground' && operation !== 'toggle') throw new Error('group operation is malformed');
+      return { memberId, operation: operation as 'minimize' | 'restore' | 'foreground' | 'toggle' };
+    });
+    return { layoutId, actions };
+  }, async (request, event) => {
+    const projectHost = new URL(event.sender.getURL()).host;
+    const actions = request.actions.map(({ memberId, operation }) => ({
+      id: controlIds.get(event.sender.id + ':' + request.layoutId + ':' + memberId)
+        ?? [...controlMeta.entries()].find(([, meta]) => meta.projectHost === projectHost
+          && meta.layoutId === request.layoutId && meta.memberId === memberId)?.[0],
+      operation,
+    }));
+    if (!controlBroker?.ready || actions.some(({ id }) => !id)) return { outcome: 'helper-unavailable' };
+    return { outcome: controlBroker.group(actions as Array<{ id: number; operation: 'minimize' | 'restore' | 'foreground' | 'toggle' }>)
+      ? 'success' : 'helper-unavailable' };
+  });
   handle('papers:window-capability:observe', parseRuntimeCapability, (capability) => service.observeCapability(capability));
   handle('papers:window-capability:minimize', parseRuntimeCapability, (capability) => service.minimizeCapability(capability));
   // One request instead of observe-then-mutate: the helper reads the live state
@@ -366,7 +639,7 @@ export function registerWindowCapabilityIpc({
       return Promise.resolve({ outcome: 'success' });
     },
   );
-  handle('papers:window-capability:resolve', parsePersistedDescriptor, (descriptor) => service.resolvePersisted(descriptor));
+  handleRead('papers:window-capability:resolve', parsePersistedDescriptor, (descriptor) => service.resolvePersisted(descriptor));
   handle(
     'papers:window-capability:preview-hold',
     (raw) => {
