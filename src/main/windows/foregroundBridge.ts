@@ -25,6 +25,34 @@ import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+/** One activation attempt, as the native bridge reported it. */
+export interface ForegroundAttempt {
+  handle: number;
+  raised: boolean;
+  setForeground: boolean;
+  foregroundBefore: string | null;
+  foregroundAfter: string | null;
+  moved: boolean;
+  /** Stability of the activation, present only when the diagnostic switch is on.
+   * A successful call proves one instant; these say whether it HELD. */
+  stability?: {
+    foregroundAt100Ms: string | null;
+    foregroundAt300Ms: string | null;
+    occluder: string | null;
+    occluderTopmost: boolean;
+    occluderPercent: number;
+    cloaked: boolean;
+    monitor: string | null;
+  };
+  /** 
+   * >= 0  SetForegroundWindow was accepted AND the target was observed, after
+   *         this many milliseconds.
+   * -1    SetForegroundWindow was refused: a genuine foreground-lock refusal.
+   * -2    Accepted but never observed inside the settle deadline.
+   */
+  foregroundSettleMs: number;
+}
+
 export interface ForegroundBridge {
   /** The window that currently has the foreground, or null. Returns null for
    * the shell/desktop, which is not an application to hand focus back to. */
@@ -34,6 +62,8 @@ export interface ForegroundBridge {
   /** Try to put the foreground back on that exact window. Resolves true only
    * when the foreground genuinely moved. */
   setForegroundWindow(handle: number): Promise<boolean>;
+  /** Optional, so an older bridge object stays valid. */
+  setForegroundWindowDetailed?(handle: number): Promise<ForegroundAttempt>;
   /** Whether that exact window currently owns the foreground. Lets the toggle
    * answer "is the window the creator is looking at a Papers window" instead of
    * guessing from visibility. */
@@ -223,6 +253,61 @@ export function createForegroundBridge(options: ForegroundBridgeOptions): Foregr
       // became the target. A `set=1` alone is the false success this whole
       // module exists to avoid.
       return /(?:^|\s)moved=1(?:\s|$)/.test(out);
+    },
+
+    /** The same call, with everything the bridge actually reported.
+     *
+     * `raised` and `set` are the two halves that used to collapse into one
+     * boolean: a window can be raised to the top of the z-order while Windows
+     * refuses to hand it the foreground, which is exactly what "sometimes it
+     * works and sometimes it takes four clicks" looks like from outside. The
+     * before/after foreground handles make a refusal attributable.
+     */
+    async setForegroundWindowDetailed(handle: number): Promise<ForegroundAttempt> {
+      const attempt: ForegroundAttempt = {
+        handle,
+        raised: false,
+        setForeground: false,
+        foregroundBefore: null,
+        foregroundAfter: null,
+        moved: false,
+        foregroundSettleMs: -1,
+      };
+      if (!Number.isSafeInteger(handle) || handle <= 0) return attempt;
+      const out = await run(['set', String(handle)]);
+      if (!out) return attempt;
+      const flag = (name: string): boolean => new RegExp(`(?:^|\\s)${name}=1(?:\\s|$)`).test(out);
+      const field = (name: string): string | null => {
+        const found = new RegExp(`(?:^|\\s)${name}=(\\d+)`).exec(out);
+        return found ? found[1]! : null;
+      };
+      // The bridge answers lready=1 moved=1 when the target ALREADY has the
+      // foreground: there is nothing to raise, and reporting raised=0/set=0 made a
+      // success read as a refusal in the record.
+      const already = flag('already');
+      attempt.raised = flag('raised') || already;
+      attempt.setForeground = flag('set') || already;
+      // The bridge prints the foreground it ENDED with as `fg`; the foreground
+      // it started from is what the caller last knew. `before` is accepted too,
+      // because an older bridge printed that name.
+      attempt.foregroundAfter = field('fg') ?? field('after');
+      attempt.foregroundBefore = field('before');
+      attempt.moved = flag('moved') || flag('already');
+      const settle = field('settle');
+      attempt.foregroundSettleMs = settle === null ? (attempt.moved ? 0 : -1) : Number(settle);
+      const fg100 = field('fg100');
+      if (fg100 !== null) {
+        attempt.stability = {
+          foregroundAt100Ms: fg100,
+          foregroundAt300Ms: field('fg300'),
+          occluder: field('occ'),
+          occluderTopmost: flag('occTop'),
+          occluderPercent: Number(field('occPct') ?? '0'),
+          cloaked: flag('cloaked'),
+          monitor: field('mon'),
+        };
+      }
+      return attempt;
     },
 
     async isForegroundWindow(handle: number): Promise<boolean> {

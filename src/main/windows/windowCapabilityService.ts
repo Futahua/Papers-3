@@ -48,6 +48,7 @@ import {
   type WindowObservation,
   type WindowState,
 } from './windowCapabilityTypes';
+import type { ForegroundBridge } from './foregroundBridge';
 
 export const WINDOW_CAPABILITY_MAX_CANDIDATES = 64;
 export const WINDOW_CAPABILITY_MAX_ICON_CACHE = 64;
@@ -204,7 +205,15 @@ export interface NativePickerWindowIdentity extends WindowBounds {
 }
 
 export type NativePickerSeedResult =
-  | { outcome: 'success'; seeds: NativePickerWindowIdentity[] }
+  | {
+    outcome: 'success';
+    seeds: Array<NativePickerWindowIdentity & { seedId: number }>;
+    /** Which of the requested members were actually presented to the picker, by
+     * their index in the request. A member that could not be matched is NOT
+     * seeded and therefore never shown as green - so its absence from the final
+     * set is not a removal gesture, and the commit must not read it as one. */
+    seededIndices: number[];
+  }
   | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string };
 
 export type NativePickerBindResult =
@@ -230,6 +239,8 @@ export interface WindowCapabilityService {
   bindCandidate(candidateId: string): Promise<WindowBindResult>;
   observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
+  /** Bring a window to the front. Success means the foreground actually moved. */
+  activateCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   restoreCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult>;
   /** One helper request that reads the live state and minimizes or restores
    * accordingly, returning the direction taken plus the PRE-mutation
@@ -276,7 +287,10 @@ export interface WindowCapabilityService {
   /** SlopTop local picker: bind one final AHK-owned green-set snapshot in one
    * helper enumeration. Every identity must match exactly once or the complete
    * commit fails closed. */
-  bindNativePickerSelection(selections: NativePickerWindowIdentity[]): Promise<NativePickerBindResult>;
+  bindNativePickerSelection(
+    selections: NativePickerWindowIdentity[],
+    unchangedMembers?: PersistedWindowMemberDescriptor[],
+  ): Promise<NativePickerBindResult>;
   stop(): Promise<void>;
 }
 
@@ -290,6 +304,10 @@ export interface WindowCapabilityServiceOptions {
   /** Explicitly admits one trusted Papers-owned top-level window (the main
    * Papers shell) while every picker/widget/preview surface stays excluded. */
   allowCurrentProcessWindow?: (observation: WindowObservation) => boolean;
+  /** The native foreground bridge. Bringing a window forward must come from the
+   * process that owns the click: Windows refuses a foreground switch from a
+   * background worker, and a refusal flashes the taskbar button instead. */
+  foregroundBridge?: () => ForegroundBridge | null;
   /** Private DI for tests; default is app.getFileIcon. */
   getFileIcon?: (path: string) => Promise<Electron.NativeImage>;
   /** Private DI for tests; default is the bounded cadence constant. */
@@ -452,6 +470,37 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
    * enumeration yields, and the last one to settle runs the usual single
    * catch-up. */
   let thumbnailsInFlight = 0;
+  /** Diagnostic: an observation that could not be served at all. A pick's ADD is
+   * dropped by the project when the capability it was handed cannot be observed,
+   * and the creator sees only "nothing happened" - so the refusal is recorded. */
+  function recordObserveFailure(capability: WindowRuntimeCapability, reason: string): void {
+    try {
+      geometryJournal.record({
+        kind: 'observe-fail',
+        detail: reason,
+        title: capability.bindingId ?? '',
+        outcome: 'failed',
+      });
+    } catch {
+      /* diagnostics never fail the action they describe */
+    }
+  }
+
+  /** Diagnostic: a real minimize/restore, with the window it touched. A burst of
+   * these right after a restart is the layout-recording replay restoring members. */
+  function recordStateChange(kind: 'minimize' | 'restore', capability: WindowRuntimeCapability, result: WindowCapabilityResult): void {
+    try {
+      geometryJournal.record({
+        kind,
+        title: descriptorForBinding(capability.bindingId ?? '')?.title ?? '',
+        observed: result.observation?.bounds ?? null,
+        outcome: result.outcome,
+      });
+    } catch {
+      /* diagnostics never fail the action they describe */
+    }
+  }
+
   /** Durable record of the rectangles Papers applies, so a window that ends up
    * tiny in a corner can be traced to the request or to the clamp. */
   const geometryJournal = options.geometryJournal ?? defaultWindowGeometryJournal();
@@ -843,12 +892,59 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   async function resolveWindowInstance(windowInstanceId: string): Promise<WindowResolveResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     if (!/^W[0-9a-f]{16}$/i.test(windowInstanceId)) return { outcome: 'missing', error: 'window instance is not recognized' };
-    const current = lifecycleCurrent.get(windowInstanceId);
-    if (!current || current.observation.windowInstanceId !== windowInstanceId) return { outcome: 'missing', error: 'window instance is no longer live' };
+    let current = lifecycleCurrent.get(windowInstanceId);
+    if (!current || current.observation.windowInstanceId !== windowInstanceId) {
+      // A CACHE MISS IS NOT EVIDENCE OF ABSENCE.
+      //
+      // This returned 'missing' whenever the lifecycle cache had no entry - and
+      // that cache is cleared whenever one enumeration fails, and is not
+      // refreshed while any hold is active. The project's periodic sweep retires
+      // a member on a positive 'missing', so a single failed enumeration made it
+      // delete live members ONE BY ONE until the layout was empty.
+      //
+      // The refresh goes through refreshWindowLifecycle(), which is the
+      // serialized path: it respects an active hold and keeps overlapping
+      // enumerations from applying stale snapshots out of order. A background
+      // sweep has no urgency, so when the helper is owned by an interactive
+      // session the answer is 'I cannot tell' - never 'gone'.
+      if (lifecycleRefreshBlocked()) {
+        return { outcome: 'helper-unavailable', error: 'window enumeration is held by another operation' };
+      }
+      const refreshed = await refreshWindowLifecycle();
+      if (refreshed.complete !== true) {
+        return { outcome: 'helper-unavailable', error: 'window enumeration failed' };
+      }
+      current = lifecycleCurrent.get(windowInstanceId);
+      if (!current || current.observation.windowInstanceId !== windowInstanceId) {
+        return { outcome: 'missing', error: 'window instance is no longer live' };
+      }
+    }
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
     const observed = await factory.observe(current.token);
     if (observed.outcome !== 'success' || !observed.observation) {
-      return { outcome: observed.outcome === 'timeout' ? 'timeout' : observed.outcome === 'missing' ? 'missing' : 'helper-unavailable', error: observed.error };
+      if (observed.outcome === 'missing') {
+        // A helper-level miss on a CACHED session token is not native death: the
+        // token can be stale after a helper restart while the window is alive.
+        // Corroborate with a fresh enumeration before saying the window is gone.
+        if (lifecycleRefreshBlocked()) {
+          return { outcome: 'helper-unavailable', error: 'window enumeration is held by another operation' };
+        }
+        const corroborated = await refreshWindowLifecycle();
+        if (corroborated.complete !== true) {
+          return { outcome: 'helper-unavailable', error: 'window enumeration failed' };
+        }
+        const stillThere = lifecycleCurrent.get(windowInstanceId);
+        if (stillThere && stillThere.observation.windowInstanceId === windowInstanceId) {
+          // Reverted: this re-bound a live window whose cached token had gone
+          // stale. It was written for a report that turned out to be mistaken -
+          // the member was never missing - and it added a helper round trip on a
+          // path that had no business growing one. The corroboration below stays,
+          // because "the token is stale" must still never mean "the window died".
+          return { outcome: 'helper-unavailable', error: 'the cached session token was stale; the window is still present' };
+        }
+        return { outcome: 'missing', error: 'window instance is no longer live' };
+      }
+      return { outcome: observed.outcome === 'timeout' ? 'timeout' : 'helper-unavailable', error: observed.error };
     }
     if (trustedProcessId(observed.observation, currentPid, allowCurrentProcessWindow) === null
       || !observed.observation.bounds || observed.observation.windowInstanceId !== windowInstanceId
@@ -1104,11 +1200,29 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return { outcome: 'success', capability, descriptor };
   }
 
-  async function observeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
+  /** Observe a capability.
+   *
+   * `seedFrame` exists because observation used to have an INVISIBLE side effect:
+   * a normal window observation started a background thumbnail capture on the
+   * single-request helper. The activation path observes to revalidate the
+   * capability and get the live HWND, and that capture then sat in front of the
+   * window list - work the list cannot jump, because it is already inside the
+   * helper. Callers that genuinely want retained preview content ask for it.
+   */
+  async function observeCapability(
+    capability: WindowRuntimeCapability,
+    { seedFrame = true }: { seedFrame?: boolean } = {},
+  ): Promise<WindowCapabilityResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const token = tokenFor(capability);
-    if (!token) return { outcome: 'missing', error: 'binding is not issued' };
-    if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    if (!token) {
+      recordObserveFailure(capability, 'binding is not issued');
+      return { outcome: 'missing', error: 'binding is not issued' };
+    }
+    if (!(await ensureStarted())) {
+      recordObserveFailure(capability, 'window helper is unavailable');
+      return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+    }
     const bindingId = capability.bindingId ?? '';
     const previous = observations.get(bindingId);
     if (previous) return previous;
@@ -1126,12 +1240,117 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return request;
   }
 
+  /** Bring a window to the front, and report success only when the foreground
+   * actually moved.
+   *
+   * The restore path used to be the only way to raise a window, and its raise
+   * counts as success when EITHER of its two calls worked - so Papers could be
+   * told the window came forward while Windows had in fact refused the
+   * foreground switch and flashed the taskbar button instead. That is what the
+   * creator saw: sometimes one click, sometimes four, and the taskbar glowing.
+   *
+   * The call is made from Papers' side of the world, on the click's own thread of
+   * control, rather than from the long-lived background window helper: a
+   * background worker is refused, and owning input hooks does not grant
+   * foreground rights. It currently executes inside a short-lived
+   * papers-fg-bridge.exe child, which is measured below - a process spawn on the
+   * click path is the next thing to remove if that number is large.
+   */
+  async function activateCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const token = tokenFor(capability);
+    if (!token) return { outcome: 'missing', error: 'binding is not issued' };
+    // NEVER seed a capture here: this observation is on the click's own path, and
+    // its capture would queue in front of the window list on the shared helper.
+    const observed = await observeCapability(capability, { seedFrame: false });
+    if (observed.outcome !== 'success' || !observed.observation) return observed;
+    const handle = observed.observation.handle;
+    if (typeof handle !== 'number' || !Number.isSafeInteger(handle) || handle <= 0) {
+      return { outcome: 'missing', error: 'the window handle is unavailable' };
+    }
+    const bridge = options.foregroundBridge?.() ?? null;
+    if (!bridge) return { outcome: 'helper-unavailable', error: 'the foreground bridge is unavailable' };
+    let moved = false;
+    let detail = '';
+    const bridgeStartedAt = stamp();
+    try {
+      if (typeof bridge.setForegroundWindowDetailed === 'function') {
+        const attempt = await bridge.setForegroundWindowDetailed(handle);
+        moved = attempt.moved;
+        // Raised and foregrounded are different halves: a window can come to the
+        // top of the z-order while Windows keeps the foreground where it is, and
+        // that is what "sometimes it takes four clicks" looks like from outside.
+        // Terse on purpose: the journal bounds this field, and the stability
+        // numbers are the whole point of the record - they must survive.
+        detail = ' r' + (attempt.raised ? 1 : 0)
+          + ' s' + (attempt.setForeground ? 1 : 0)
+          + ' t' + attempt.foregroundSettleMs
+          + ' was' + String(attempt.foregroundBefore ?? '?')
+          + ' now' + String(attempt.foregroundAfter ?? '?')
+          + (attempt.stability
+            ? ' h100=' + String(attempt.stability.foregroundAt100Ms ?? '?')
+              + ' h300=' + String(attempt.stability.foregroundAt300Ms ?? '?')
+              + ' occ=' + String(attempt.stability.occluder ?? '0')
+              + (attempt.stability.occluderTopmost ? 'T' : '')
+              + ' pct=' + attempt.stability.occluderPercent
+              + ' ck=' + (attempt.stability.cloaked ? 1 : 0)
+            : '');
+      } else {
+        moved = await bridge.setForegroundWindow(handle);
+      }
+    } catch {
+      moved = false;
+    }
+    const bridgeRoundTripMs = stamp() - bridgeStartedAt;
+    try {
+      geometryJournal.record({
+        kind: moved ? 'activate' : 'activate-refused',
+        title: observed.observation.title,
+        detail: 'h' + handle + ' b' + bridgeRoundTripMs + 'ms' + detail,
+        outcome: moved ? 'success' : 'refused',
+      });
+    } catch {
+      /* diagnostics never fail the action they describe */
+    }
+    if (!moved) return { outcome: 'denied', error: 'Windows refused the foreground switch' };
+    // The click that asked for this window ALSO activates the widget it was
+    // clicked on, and the widget - always-on-top, owned by us - takes the
+    // foreground back a moment later. Measured: the target held at +100ms and
+    // was gone by +300ms, which is why the same icon worked on the second click.
+    // Re-assert ONCE, and only if the target actually lost it.
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      const stillTarget = typeof bridge.isForegroundWindow === 'function'
+        ? await bridge.isForegroundWindow(handle).catch(() => true)
+        : true;
+      if (stillTarget === false) {
+        await bridge.setForegroundWindow(handle).catch(() => undefined);
+        // Recorded because it costs nothing and it is the only always-on evidence
+        // that the widget still steals the foreground back in ordinary use.
+        try {
+          geometryJournal.record({
+            kind: 'activate',
+            title: observed.observation.title,
+            detail: 're-asserted after losing the foreground',
+            outcome: 'success',
+          });
+        } catch {
+          /* diagnostics never fail the action they describe */
+        }
+      }
+    } catch {
+      /* the switch already succeeded once; a failed re-assert must not undo that */
+    }
+    return { outcome: 'success', observation: observed.observation };
+  }
   async function minimizeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const token = tokenFor(capability);
     if (!token) return { outcome: 'missing', error: 'binding is not issued' };
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
-    return factory.minimize(token);
+    const result = await factory.minimize(token);
+    recordStateChange('minimize', capability, result);
+    return result;
   }
 
   async function toggleCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
@@ -1157,7 +1376,9 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     const token = tokenFor(capability);
     if (!token) return { outcome: 'missing', error: 'binding is not issued' };
     if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
-    return factory.restore(token);
+    const result = await factory.restore(token);
+    recordStateChange('restore', capability, result);
+    return result;
   }
 
   async function closeCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult> {
@@ -1543,9 +1764,10 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     }
     const snapshot = await nativePickerSnapshot();
     if (snapshot.outcome !== 'success') return snapshot;
-    const seeds: NativePickerWindowIdentity[] = [];
+    const seeds: Array<NativePickerWindowIdentity & { seedId: number }> = [];
+    const seededIndices: number[] = [];
     const claimed = new Set<string>();
-    for (const descriptor of memberDescriptors) {
+    for (const [memberIndex, descriptor] of memberDescriptors.entries()) {
       if (descriptor.windowInstanceId !== undefined
         && (typeof descriptor.windowInstanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(descriptor.windowInstanceId))) {
         return { outcome: 'ambiguous', error: `layout member identity is invalid: ${descriptor.title}` };
@@ -1584,12 +1806,18 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       // direct-pick session.
       if (claimed.has(key)) continue;
       claimed.add(key);
-      seeds.push(identity);
+      // The seed carries its member index: a removal is then a session-local id,
+      // valid even if that window moves or closes before Enter is pressed.
+      seeds.push({ ...identity, seedId: memberIndex });
+      seededIndices.push(memberIndex);
     }
-    return { outcome: 'success', seeds };
+    return { outcome: 'success', seeds, seededIndices };
   }
 
-  async function bindNativePickerSelection(selections: NativePickerWindowIdentity[]): Promise<NativePickerBindResult> {
+  async function bindNativePickerSelection(
+    selections: NativePickerWindowIdentity[],
+    unchangedMembers: PersistedWindowMemberDescriptor[] = [],
+  ): Promise<NativePickerBindResult> {
     if (selections.length > WINDOW_CAPABILITY_MAX_CANDIDATES) {
       return { outcome: 'ambiguous', error: 'picker selection exceeds the bounded native selection limit' };
     }
@@ -1604,6 +1832,17 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       // is represented by multiple logical observations, the first is the
       // window AHK actually hit; rejecting the complete set would make Direct
       // Pick permanently unavailable for that desktop state.
+      const first = matches[0]!;
+      // A window that is ALREADY a member needs nothing: the project holds its
+      // capability and its icon, and the commit only has to name the new ones.
+      // Binding the whole final set made every commit pay one icon read plus one
+      // bind per member through the single helper - thirteen members meant
+      // twenty-six ordered calls, and the creator waited seconds for a pick that
+      // added one window.
+      if (unchangedMembers.some((member) =>
+        compareWindowMemberIdentity(member, candidateForObservation(first).descriptor) === 'same')) {
+        continue;
+      }
       if (claimedTokens.has(matches[0]!.runtimeId)) return { outcome: 'ambiguous', error: 'the final picker set contains a duplicate window' };
       claimedTokens.add(matches[0]!.runtimeId);
       matched.push(matches[0]!);
@@ -1681,6 +1920,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     bindCandidate,
     observeCapability,
     minimizeCapability,
+    activateCapability,
     restoreCapability,
     toggleCapability,
     closeCapability,

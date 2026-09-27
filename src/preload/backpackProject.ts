@@ -374,7 +374,10 @@ window.addEventListener('message', (event) => {
     const capability = parseCapability(request.capability);
     task = ipcRenderer.invoke('papers:window-capability:minimize', capability);
   }
-  if (request.type === 'papers:project:window-restore-capability') {
+  if (request.type === 'papers:project:window-activate-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:activate', capability);
+  }  if (request.type === 'papers:project:window-restore-capability') {
     const capability = parseCapability(request.capability);
     task = ipcRenderer.invoke('papers:window-capability:restore', capability);
   }

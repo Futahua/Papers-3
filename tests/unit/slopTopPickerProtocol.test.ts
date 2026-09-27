@@ -9,7 +9,9 @@ import {
 const descriptor = { version: 1 as const, title: 'Target', executableFingerprint: 'a'.repeat(64) };
 const existing = { version: 1 as const, title: 'Existing', executableFingerprint: 'b'.repeat(64) };
 const candidate = { id: 'candidate-1', title: 'Target', applicationLabel: 'Target', icon: null, state: 'normal' as const };
-const seed = { processId: 123, x: 100, y: 100, width: 400, height: 300 };
+const seed = { processId: 123, x: 100, y: 100, width: 400, height: 300, seedId: 0 };
+// The committed result carries plain identities; only the activation seeds carry seedId.
+const identity = { processId: 123, x: 100, y: 100, width: 400, height: 300 };
 
 function waitFor(predicate: () => boolean): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -35,7 +37,7 @@ function harness() {
   const transport: SlopTopPickerTransport = {
     activate: (next) => {
       activation = next;
-      ack = { version: 2, token: next.token, active: true };
+      ack = { version: 3, token: next.token, active: true };
     },
     readAck: () => ack,
     readResult: () => result,
@@ -43,7 +45,7 @@ function harness() {
     cleanup: (token) => { cleanedToken = token; },
   };
   const service = {
-    prepareNativePicker: async () => ({ outcome: 'success' as const, seeds: [seed] }),
+    prepareNativePicker: async () => ({ outcome: 'success' as const, seeds: [seed], seededIndices: [0] }),
     bindNativePickerSelection: async () => ({
       outcome: 'success' as const,
       windows: [{ descriptor, capability: { version: 1 as const, bindingId: 'binding-1' }, candidate }],
@@ -68,8 +70,8 @@ describe('SlopTop local picker protocol', () => {
     await expect(session.begin({ memberDescriptors: [], onResult: (next) => { delivered = next; } }))
       .resolves.toEqual({ outcome: 'started' });
     const activation = test.activation();
-    expect(activation).toMatchObject({ version: 2, seeds: [seed] });
-    test.setResult({ version: 2, token: activation!.token, outcome: 'committed', windows: [seed] });
+    expect(activation).toMatchObject({ version: 3, seeds: [seed] });
+    test.setResult({ version: 3, token: activation!.token, outcome: 'committed', windows: [identity], deselectedSeedIds: [] });
     await waitFor(() => delivered !== null);
     expect(delivered).toEqual({
       outcome: 'committed',
@@ -80,20 +82,68 @@ describe('SlopTop local picker protocol', () => {
     expect(test.cleanedToken()).toBe(activation!.token);
   });
 
-  it('derives removals from the final complete set instead of click events', async () => {
+  it('removes only a member the picker reports as explicitly deselected', async () => {
     const test = harness();
-    test.service.prepareNativePicker = async () => ({ outcome: 'success' as const, seeds: [seed] });
+    test.service.prepareNativePicker = async () => ({ outcome: 'success' as const, seeds: [seed], seededIndices: [0] });
     const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });
     let delivered: unknown = null;
     await session.begin({ memberDescriptors: [existing], onResult: (next) => { delivered = next; } });
     const activation = test.activation()!;
-    test.setResult({ version: 2, token: activation.token, outcome: 'committed', windows: [seed] });
+    test.setResult({ version: 3, token: activation.token, outcome: 'committed', windows: [identity], deselectedSeedIds: [0] });
     await waitFor(() => delivered !== null);
     expect(delivered).toMatchObject({
       outcome: 'committed',
       adds: [{ descriptor }],
       removes: [{ descriptor: existing }],
     });
+  });
+
+  it('never removes a member the picker was never shown', async () => {
+    const test = harness();
+    // The requested member could not be matched against the live desktop, so it
+    // was not seeded and never painted green. Its absence from the final set is
+    // not a removal gesture - reading it as one deleted eight members the moment
+    // the creator picked a single new window.
+    test.service.prepareNativePicker = async () => ({ outcome: 'success' as const, seeds: [seed], seededIndices: [] });
+    const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });
+    let delivered: unknown = null;
+    await session.begin({ memberDescriptors: [existing], onResult: (next) => { delivered = next; } });
+    const activation = test.activation()!;
+    test.setResult({ version: 3, token: activation.token, outcome: 'committed', windows: [identity], deselectedSeedIds: [] });
+    await waitFor(() => delivered !== null);
+    expect(delivered).toMatchObject({
+      outcome: 'committed',
+      adds: [{ descriptor }],
+      removes: [],
+    });
+  });
+
+  it('fails the whole commit when a removal names a member the picker was never shown', async () => {
+    const test = harness();
+    // Only member 0 was seeded, so a deselection of member 1 cannot be honest.
+    test.service.prepareNativePicker = async () => ({ outcome: 'success' as const, seeds: [seed], seededIndices: [0] });
+    const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });
+    let delivered: unknown = null;
+    await session.begin({ memberDescriptors: [existing], onResult: (next) => { delivered = next; } });
+    const activation = test.activation()!;
+    test.setResult({ version: 3, token: activation.token, outcome: 'committed', windows: [identity], deselectedSeedIds: [1] });
+    await waitFor(() => delivered !== null);
+    expect(delivered).toEqual({ outcome: 'failed', error: 'the picker reported a removal for a member it was never shown' });
+  });
+
+  it('fails when the same member is reported as both removed and selected', async () => {
+    const test = harness();
+    test.service.bindNativePickerSelection = async () => ({
+      outcome: 'success' as const,
+      windows: [{ descriptor: existing, capability: { version: 1 as const, bindingId: 'binding-existing' }, candidate }],
+    });
+    const session = createSlopTopPickerSession(test.service as never, test.transport, { resultPollMs: 2 });
+    let delivered: unknown = null;
+    await session.begin({ memberDescriptors: [existing], onResult: (next) => { delivered = next; } });
+    const activation = test.activation()!;
+    test.setResult({ version: 3, token: activation.token, outcome: 'committed', windows: [identity], deselectedSeedIds: [0] });
+    await waitFor(() => delivered !== null);
+    expect(delivered).toEqual({ outcome: 'failed', error: 'the picker reported a member as both removed and selected' });
   });
 
   it('keeps same-title, same-executable W1 removal exact while adding W2', async () => {
@@ -109,7 +159,7 @@ describe('SlopTop local picker protocol', () => {
     let delivered: unknown = null;
     await session.begin({ memberDescriptors: [w1], onResult: (next) => { delivered = next; } });
     const activation = test.activation()!;
-    test.setResult({ version: 2, token: activation.token, outcome: 'committed', windows: [seed] });
+    test.setResult({ version: 3, token: activation.token, outcome: 'committed', windows: [identity], deselectedSeedIds: [0] });
     await waitFor(() => delivered !== null);
     expect(delivered).toEqual({
       outcome: 'committed',
@@ -134,7 +184,7 @@ describe('SlopTop local picker protocol', () => {
     let delivered: unknown = null;
     await session.begin({ memberDescriptors: [legacy], onResult: (next) => { delivered = next; } });
     const activation = test.activation()!;
-    test.setResult({ version: 2, token: activation.token, outcome: 'committed', windows: [seed, { ...seed, x: 600 }] });
+    test.setResult({ version: 3, token: activation.token, outcome: 'committed', deselectedSeedIds: [], windows: [identity, { ...identity, x: 600 }] });
     await waitFor(() => delivered !== null);
     expect(delivered).toEqual({ outcome: 'failed', error: 'the final picker set has ambiguous window identities' });
   });
@@ -151,7 +201,7 @@ describe('SlopTop local picker protocol', () => {
     let delivered: unknown = null;
     await session.begin({ memberDescriptors: [legacy], onResult: (next) => { delivered = next; } });
     const activation = test.activation()!;
-    test.setResult({ version: 2, token: activation.token, outcome: 'committed', windows: [seed] });
+    test.setResult({ version: 3, token: activation.token, outcome: 'committed', windows: [identity], deselectedSeedIds: [] });
     await waitFor(() => delivered !== null);
     expect(delivered).toEqual({ outcome: 'committed', adds: [], removes: [] });
   });
@@ -162,10 +212,10 @@ describe('SlopTop local picker protocol', () => {
     let delivered: unknown = null;
     await session.begin({ memberDescriptors: [], onResult: (next) => { delivered = next; } });
     const activation = test.activation()!;
-    test.setResult({ version: 2, token: `${activation.token}-stale`, outcome: 'committed', windows: [seed] });
+    test.setResult({ version: 3, token: `${activation.token}-stale`, outcome: 'committed', windows: [identity], deselectedSeedIds: [] });
     await new Promise((resolve) => setTimeout(resolve, 15));
     expect(delivered).toBeNull();
-    test.setResult({ version: 2, token: activation.token, outcome: 'committed', windows: [{ ...seed, width: 0 }] });
+    test.setResult({ version: 3, token: activation.token, outcome: 'committed', deselectedSeedIds: [], windows: [{ ...identity, width: 0 }] });
     await new Promise((resolve) => setTimeout(resolve, 15));
     expect(delivered).toBeNull();
     await session.cancel();
@@ -175,7 +225,7 @@ describe('SlopTop local picker protocol', () => {
 
   it('fails closed when AHK does not acknowledge activation', async () => {
     const test = harness();
-    test.transport.activate = (next) => { test.setAck({ version: 2, token: `${next.token}-wrong`, active: true }); };
+    test.transport.activate = (next) => { test.setAck({ version: 3, token: `${next.token}-wrong`, active: true }); };
     const session = createSlopTopPickerSession(test.service as never, test.transport, { ackTimeoutMs: 15, resultPollMs: 2 });
     let delivered: unknown = null;
     await expect(session.begin({ memberDescriptors: [], onResult: (next) => { delivered = next; } }))

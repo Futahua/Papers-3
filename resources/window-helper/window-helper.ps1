@@ -270,6 +270,11 @@ function Get-WhResponseObservation {
     processId = $obs.ProcessId
     processPath = $obs.ProcessPath
     windowClass = $obs.ClassName
+    # The native handle, so the process that owns the click can take the
+    # foreground itself: Windows refuses a foreground switch from a background
+    # worker, and a refused switch is what flashes the taskbar button instead of
+    # bringing the window forward.
+    handle = [int64]$entry.hwnd
     state = $obs.State
     bounds = (Get-WhWireBounds $obs.Bounds)
   }

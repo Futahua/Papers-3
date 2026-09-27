@@ -17,28 +17,56 @@ import type {
 } from './windowCapabilityService';
 import { canFallbackLegacyWindowIdentity, compareWindowMemberIdentity } from './windowCapabilityService';
 import type { WindowPickResult, WindowPickSession } from './windowPickSession';
+import { defaultWindowGeometryJournal } from './windowGeometryJournal';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-export const SLOPTOP_PICKER_PROTOCOL_VERSION = 2;
+/** Every Direct Pick outcome that is not a commit lands in the same bounded
+ * journal as the rectangles, so "nothing happened" can be read afterwards
+ * instead of guessed at. */
+function notePickerOutcome(kind: 'picker-open' | 'picker-fail' | 'picker-commit', detail: string): void {
+  try {
+    defaultWindowGeometryJournal().record({ kind, detail, outcome: kind });
+  } catch {
+    /* diagnostics never fail the action they describe */
+  }
+}
+
+/** v3: a committed pick carries POSITIVE removal intent. The final green set is
+ * no longer compared against the original members to infer removals, because a
+ * member the picker never showed is absent from that set without anyone asking
+ * for its removal - which deleted eight members in one gesture. Removals now
+ * come only from `deselectedSeedIds`: session-local seed ids the human actually
+ * toggled off. */
+export const SLOPTOP_PICKER_PROTOCOL_VERSION = 3;
 const DEFAULT_ACK_TIMEOUT_MS = 3000;
 const DEFAULT_RESULT_POLL_MS = 25;
 const MAX_NATIVE_WINDOWS = 64;
 const COORDINATE_LIMIT = 65536;
 
 export interface SlopTopPickerActivation {
-  version: 2;
+  version: 3;
   token: string;
-  seeds: NativePickerWindowIdentity[];
+  seeds: NativePickerSeedIdentity[];
+}
+
+/** A seed carries the index of the member it came from, so the picker can name
+ * a removal without re-resolving a native identity that may have moved or
+ * closed by the time Enter is pressed. */
+export interface NativePickerSeedIdentity extends NativePickerWindowIdentity {
+  seedId: number;
 }
 
 interface SlopTopPickerCommittedResult {
-  version: 2;
+  version: 3;
   token: string;
   outcome: 'committed';
   windows: NativePickerWindowIdentity[];
+  deselectedSeedIds: number[];
 }
 
 interface SlopTopPickerCancelledResult {
-  version: 2;
+  version: 3;
   token: string;
   outcome: 'cancelled';
 }
@@ -76,12 +104,19 @@ function boundedInteger(value: unknown): value is number {
 
 function nativeIdentity(value: unknown): NativePickerWindowIdentity | null {
   if (!object(value) || !exactKeys(value, ['processId', 'x', 'y', 'width', 'height'])) return null;
-  if (!boundedInteger(value['processId']) || value['processId'] <= 0) return null;
+  // A process id is a Windows DWORD, NOT a coordinate. Reusing the coordinate
+  // bound here capped it at 65536, and this machine has pids above that (78852,
+  // 79240, 75788 in the creator's own captured payload) - so any pick whose
+  // selection included such a window was refused as malformed, and Direct Pick
+  // appeared to stop working entirely.
+  const processId = value['processId'];
+  if (typeof processId !== 'number' || !Number.isSafeInteger(processId)
+    || processId <= 0 || processId > 0xFFFFFFFF) return null;
   if (!boundedInteger(value['x']) || !boundedInteger(value['y'])) return null;
   if (!boundedInteger(value['width']) || !boundedInteger(value['height'])) return null;
   if (value['width'] <= 0 || value['height'] <= 0) return null;
   return {
-    processId: value['processId'],
+    processId,
     x: value['x'],
     y: value['y'],
     width: value['width'],
@@ -89,14 +124,74 @@ function nativeIdentity(value: unknown): NativePickerWindowIdentity | null {
   };
 }
 
+/** WHY a result was rejected, for the diagnostic record only. A rejected result
+ * used to be reported as "did not parse as protocol v3", which named none of the
+ * checks that could have refused it - and the record was written on every 25ms
+ * poll, so the flood pushed the useful history out of the bounded journal. */
+export function parseResultReason(value: unknown, token: string): string {
+  if (!object(value)) return 'not an object';
+  if (value['version'] !== SLOPTOP_PICKER_PROTOCOL_VERSION) return 'version ' + String(value['version']);
+  if (value['token'] !== token) return 'token belonged to another session';
+  const outcome = value['outcome'];
+  if (outcome === 'cancelled') return exactKeys(value, ['version', 'token', 'outcome']) ? 'ok' : 'cancelled with extra keys: ' + Object.keys(value).sort().join(',');
+  if (outcome !== 'committed') return 'outcome ' + String(outcome);
+  if (!exactKeys(value, ['version', 'token', 'outcome', 'windows', 'deselectedSeedIds'])) {
+    return 'keys: ' + Object.keys(value).sort().join(',');
+  }
+  const windows = value['windows'];
+  if (!Array.isArray(windows)) return 'windows is not an array';
+  if (windows.length > MAX_NATIVE_WINDOWS) return 'too many windows: ' + windows.length;
+  const seen = new Set<string>();
+  for (const raw of windows) {
+    const identity = nativeIdentity(raw);
+    if (!identity) {
+      // Name the FIELD, not the object: the object was truncated in the record
+      // and told me nothing about which check refused it.
+      if (!object(raw)) return 'a window entry is not an object';
+      const pid = raw['processId'];
+      if (!(typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0 && pid <= 0xFFFFFFFF)) return 'window entry has a bad processId: ' + String(pid);
+      for (const field of ['x', 'y', 'width', 'height']) {
+        const value = raw[field];
+        if (typeof value !== 'number' || !Number.isSafeInteger(value)) return 'window entry has a bad ' + field + ': ' + String(value);
+        if (field === 'width' || field === 'height') {
+          if (value <= 0) return 'window entry has a non-positive ' + field + ': ' + String(value);
+          if (value > COORDINATE_LIMIT) return 'window entry ' + field + ' is out of range: ' + String(value);
+        } else if (Math.abs(value) > COORDINATE_LIMIT) {
+          return 'window entry ' + field + ' is out of range: ' + String(value);
+        }
+      }
+      // Every field is valid, so the refusal is the SHAPE: an extra key the
+      // protocol does not allow. Name it.
+      // Report ONLY the keys that are not allowed: the full list does not fit
+      // the record's bound, and the extra key is the whole answer.
+      const allowed = ['processId', 'x', 'y', 'width', 'height'];
+      const extra = Object.keys(raw).filter((key) => !allowed.includes(key));
+      return 'window entry has extra keys: ' + extra.sort().join(',');
+    }
+    const key = `${identity.processId}|${identity.x}|${identity.y}|${identity.width}|${identity.height}`;
+    if (seen.has(key)) return 'duplicate window identity: ' + key;
+    seen.add(key);
+  }
+  const deselected = value['deselectedSeedIds'];
+  if (!Array.isArray(deselected)) return 'deselectedSeedIds is not an array';
+  if (deselected.length > MAX_NATIVE_WINDOWS) return 'too many deselections: ' + deselected.length;
+  const ids = new Set<number>();
+  for (const raw of deselected) {
+    if (!Number.isSafeInteger(raw) || (raw as number) < 0 || (raw as number) >= MAX_NATIVE_WINDOWS) return 'bad deselected id: ' + String(raw);
+    if (ids.has(raw as number)) return 'duplicate deselected id: ' + String(raw);
+    ids.add(raw as number);
+  }
+  return 'ok';
+}
 function parseResult(value: unknown, token: string): SlopTopPickerResult | null {
   if (!object(value) || value['version'] !== SLOPTOP_PICKER_PROTOCOL_VERSION || value['token'] !== token) return null;
   if (value['outcome'] === 'cancelled') {
     return exactKeys(value, ['version', 'token', 'outcome'])
-      ? { version: 2, token, outcome: 'cancelled' }
+      ? { version: 3, token, outcome: 'cancelled' }
       : null;
   }
-  if (value['outcome'] !== 'committed' || !exactKeys(value, ['version', 'token', 'outcome', 'windows'])) return null;
+  if (value['outcome'] !== 'committed'
+    || !exactKeys(value, ['version', 'token', 'outcome', 'windows', 'deselectedSeedIds'])) return null;
   if (!Array.isArray(value['windows']) || value['windows'].length > MAX_NATIVE_WINDOWS) return null;
   const windows: NativePickerWindowIdentity[] = [];
   const seen = new Set<string>();
@@ -108,7 +203,20 @@ function parseResult(value: unknown, token: string): SlopTopPickerResult | null 
     seen.add(key);
     windows.push(identity);
   }
-  return { version: 2, token, outcome: 'committed', windows };
+  // Positive removal intent only. A malformed id fails the WHOLE commit rather
+  // than being filtered out: a partially understood removal is exactly the kind
+  // of guess that removed members nobody asked to remove.
+  const rawDeselected = value['deselectedSeedIds'];
+  if (!Array.isArray(rawDeselected) || rawDeselected.length > MAX_NATIVE_WINDOWS) return null;
+  const deselectedSeedIds: number[] = [];
+  const seenIds = new Set<number>();
+  for (const raw of rawDeselected) {
+    if (!Number.isSafeInteger(raw) || (raw as number) < 0 || (raw as number) >= MAX_NATIVE_WINDOWS) return null;
+    if (seenIds.has(raw as number)) return null;
+    seenIds.add(raw as number);
+    deselectedSeedIds.push(raw as number);
+  }
+  return { version: 3, token, outcome: 'committed', windows, deselectedSeedIds };
 }
 
 function ackMatches(value: unknown, token: string): boolean {
@@ -153,9 +261,20 @@ export function createSlopTopPickerSession(
   let active = false;
   let token = '';
   let memberDescriptors: PersistedWindowMemberDescriptor[] = [];
+  /** Members the picker was actually shown. Only these can be removed by their
+   * absence from the final set; see the removal rule in consumeResult(). */
+  let seededMemberIndices = new Set<number>();
   let onResult: ((result: WindowPickResult) => void) | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let resultInFlight = false;
+  /** One refusal per session: the poll runs every 25ms, and a record per poll
+   * flooded the bounded journal with the same failure. */
+  let parseFailureReported = false;
+  /** The periodic desktop scan is held off for the whole pick. It shares the one
+   * control helper with the picker, and a commit that had to queue behind a scan
+   * took twelve seconds to land - the creator pressed a key and watched nothing
+   * happen. Released in finish(), whatever the outcome. */
+  let lifecycleHold: (() => void) | null = null;
 
   function clearPoll(): void {
     if (pollTimer) clearInterval(pollTimer);
@@ -171,7 +290,10 @@ export function createSlopTopPickerSession(
     token = '';
     memberDescriptors = [];
     onResult = null;
+    parseFailureReported = false;
     clearPoll();
+    lifecycleHold?.();
+    lifecycleHold = null;
     void Promise.resolve(transport.cleanup(finishedToken)).catch(() => undefined);
     callback?.(result);
   }
@@ -181,30 +303,79 @@ export function createSlopTopPickerSession(
     resultInFlight = true;
     const expectedToken = token;
     try {
-      const parsed = parseResult(await transport.readResult(expectedToken), expectedToken);
+      const raw = await transport.readResult(expectedToken);
+      const parsed = parseResult(raw, expectedToken);
+      if (!parsed && raw !== null && raw !== undefined && !parseFailureReported) {
+        parseFailureReported = true;
+        notePickerOutcome('picker-fail', 'the picker result was refused: ' + parseResultReason(raw, expectedToken));
+        // The exact payload, on disk, because reasoning about which check refused
+        // it produced two wrong answers in a row. Bounded and overwritten.
+        try {
+          const dir = path.join(process.env['PUBLIC'] ?? 'C:\\Users\\Public', 'Documents', 'PapersNativeBridgeReceipts');
+          fs.writeFileSync(path.join(dir, 'last-picker-result.json'), JSON.stringify(raw).slice(0, 8192), 'utf8');
+        } catch {
+          /* the record is a diagnostic; losing it must not change behavior */
+        }
+      }
       if (!active || token !== expectedToken || !parsed) return;
       if (parsed.outcome === 'cancelled') {
         finish({ outcome: 'cancelled' });
         return;
       }
-      const bound = await service.bindNativePickerSelection(parsed.windows);
+      // Only the genuinely new windows are bound: an unchanged member already
+      // has its capability and icon in the project, and binding the whole final
+      // set made every commit pay one helper round trip per member.
+      const bound = await service.bindNativePickerSelection(parsed.windows, memberDescriptors);
       if (!active || token !== expectedToken) return;
       if (bound.outcome !== 'success') {
+        notePickerOutcome('picker-fail', 'the final native picker set could not be resolved: ' + (bound.error ?? bound.outcome));
         finish({ outcome: 'failed', error: bound.error ?? 'the final native picker set could not be resolved' });
         return;
       }
       const diff = descriptorDiff(memberDescriptors, bound.windows);
       if (!diff) {
+        notePickerOutcome('picker-fail', 'the final picker set has ambiguous window identities');
         finish({ outcome: 'failed', error: 'the final picker set has ambiguous window identities' });
         return;
       }
+      // REMOVALS ARE POSITIVE INTENT, NOT ABSENCE.
+      //
+      // `deselectedSeedIds` names the seeded members the human actually toggled
+      // off. Absence from the final green set is never a removal: a member the
+      // picker never showed is absent without anyone asking, and reading that as
+      // a removal deleted eight members the moment the creator picked one new
+      // window. Every id must resolve to a member that was seeded, and must not
+      // also be present in the final set - a contradictory result fails whole.
+      const removes: Array<{ descriptor: PersistedWindowMemberDescriptor }> = [];
+      for (const seedId of parsed.deselectedSeedIds) {
+        if (!seededMemberIndices.has(seedId)) {
+          notePickerOutcome('picker-fail', 'the picker reported a removal for a member it was never shown');
+        finish({ outcome: 'failed', error: 'the picker reported a removal for a member it was never shown' });
+          return;
+        }
+        const descriptor = memberDescriptors[seedId];
+        if (!descriptor) {
+          notePickerOutcome('picker-fail', 'the picker reported a removal for an unknown member');
+        finish({ outcome: 'failed', error: 'the picker reported a removal for an unknown member' });
+          return;
+        }
+        const stillSelected = bound.windows.some((window) =>
+          compareWindowMemberIdentity(descriptor, window.descriptor) === 'same');
+        if (stillSelected) {
+          notePickerOutcome('picker-fail', 'the picker reported a member as both removed and selected');
+        finish({ outcome: 'failed', error: 'the picker reported a member as both removed and selected' });
+          return;
+        }
+        removes.push({ descriptor });
+      }
+      notePickerOutcome('picker-commit', 'adds ' + diff.adds.length + ', removes ' + removes.length);
       finish({
         outcome: 'committed',
         adds: diff.adds.map((index) => {
           const window = bound.windows[index]!;
           return { descriptor: window.descriptor, capability: window.capability, candidate: window.candidate };
         }),
-        removes: diff.removes.map((index) => ({ descriptor: memberDescriptors[index]! })),
+        removes,
       });
     } catch (caught) {
       // A missing result file is the normal idle state. Any other local
@@ -239,18 +410,30 @@ export function createSlopTopPickerSession(
     async begin(request) {
       if (active) return { outcome: 'failed', error: 'another native picker session is already active' };
       const prepared = await service.prepareNativePicker(request.memberDescriptors);
+      if (prepared.outcome === 'success') notePickerOutcome('picker-open', 'seeded ' + prepared.seeds.length + ' of ' + request.memberDescriptors.length + ' members');
+      else notePickerOutcome('picker-fail', 'the picker could not be prepared: ' + String(prepared.error ?? prepared.outcome));
       if (prepared.outcome !== 'success') {
         return { outcome: 'failed', error: prepared.error ?? 'current layout members could not be prepared for native picking' };
       }
       active = true;
       token = randomUUID();
       memberDescriptors = [...request.memberDescriptors];
+      seededMemberIndices = new Set(prepared.seededIndices);
       onResult = request.onResult;
+      // Hold the periodic scan off for the whole pick: the picker's own list
+      // calls share that one helper, and a commit queued behind a scan took
+      // twelve seconds to reach the creator.
+      try {
+        lifecycleHold = service.holdWindowLifecycleRefresh?.().release ?? null;
+      } catch {
+        lifecycleHold = null;
+      }
       const beginToken = token;
       try {
-        await transport.activate({ version: 2, token: beginToken, seeds: prepared.seeds });
+        await transport.activate({ version: 3, token: beginToken, seeds: prepared.seeds });
         pollTimer = setInterval(() => { void consumeResult(); }, resultPollMs);
         if (!(await awaitAck(beginToken))) {
+          notePickerOutcome('picker-fail', 'the picker never acknowledged the activation');
           finish({ outcome: 'failed', error: 'SlopTop did not acknowledge the picker activation.' });
           return { outcome: 'failed', error: 'SlopTop did not acknowledge the picker activation.' };
         }

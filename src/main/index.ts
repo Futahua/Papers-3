@@ -1512,6 +1512,11 @@ async function bootstrap(): Promise<void> {
     // shell by its fixed native title; same-process picker, widget, preview and
     // overlay utility windows retain empty/data titles and remain ineligible.
     allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
+    // Bringing a member's window forward is done by Papers itself, because
+    // Papers owns the click that asked for it. Windows refuses a foreground
+    // switch from a background worker, and a refusal flashes the taskbar button
+    // instead of raising the window.
+    foregroundBridge: () => foregroundBridge,
   });
   registerWindowCapabilityIpc({
     ipcMain,
@@ -1754,6 +1759,18 @@ async function bootstrap(): Promise<void> {
         // Codex-pet behavior: the detached control remains available above
         // ordinary application windows without stealing focus.
         alwaysOnTop: true,
+        // NON-ACTIVATING, which is what "without stealing focus" actually means
+        // and what the project already assumes ("the detached widget is
+        // deliberately non-focusable"; Shift Peek reads modifier state from
+        // pointer events because widget keydown is unreliable). Electron defaults
+        // this to true, so a click on the widget made it the FOREGROUND - and the
+        // widget then took the foreground back from the window the click had just
+        // asked for, between 100ms and 300ms later. Windows decides mouse
+        // activation at WM_MOUSEACTIVATE, before the page ever sees the click, so
+        // this cannot be fixed per-gesture. Being in front and taking the keyboard
+        // are independent: the widget stays topmost and every mouse gesture still
+        // lands.
+        focusable: false,
         skipTaskbar: true,
         minWidth: COMPACT_WIDGET_MIN_WIDTH,
         minHeight: COMPACT_WIDGET_MIN_HEIGHT,
@@ -1781,7 +1798,17 @@ async function bootstrap(): Promise<void> {
         }
       });
       widgetWindow.once('ready-to-show', () => {
-        if (!widgetWindow.isDestroyed()) widgetWindow.showInactive();
+        if (!widgetWindow.isDestroyed()) {
+          widgetWindow.showInactive();
+          // Re-assert topmost AFTER the window is shown. `alwaysOnTop: true` and
+          // the setAlwaysOnTop call at construction stopped taking effect once
+          // the window became non-activating: measured with the native styles,
+          // the widget came up with NOACTIVATE set and TOPMOST CLEARED, so it
+          // sank behind ordinary windows and clicks landed on whatever was in
+          // front of it. Being in front and being focusable are independent, and
+          // this is the pair the creator actually wants.
+          widgetWindow.setAlwaysOnTop(true, 'floating');
+        }
       });
       bindOwnedProjectSurface(widgetWindow, projectId, 'widget', owningWindowId);
       return widgetWindow;
@@ -1988,13 +2015,20 @@ async function bootstrap(): Promise<void> {
   const hideWidgetPreview = (senderId: number): void => {
     const preview = widgetPreviewWindows.get(senderId);
     widgetPreviewWindows.delete(senderId);
+    // The signature goes with the window: a later hover must paint, not be
+    // skipped as "already showing".
+    lastPreviewSignature.delete(senderId);
     if (preview && !preview.isDestroyed()) preview.destroy();
   };
   /** Papers' own preview window: transparent, never focused, always on top, and
    * never in the page - so a hover preview cannot be hidden behind another
    * window. A widget preview hangs above or below the whole compact widget; a
    * project preview sits beside the hovered element's own screen rectangle. */
+  /** What the preview currently shows per sender, so an identical repaint is
+   * skipped rather than flashed again. */
+  const lastPreviewSignature = new Map<number, string>();
   const showPreviewWindow = (sender: Electron.WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }, placement: 'widget' | 'anchor'): void => {
+    const previewSignature = `${preview.imageUrl.length}|${preview.width}x${preview.height}|${preview.title}`;
 
       hideWidgetPreview(sender.id);
       const pad = 4;
@@ -2064,6 +2098,26 @@ async function bootstrap(): Promise<void> {
         img{display:block;width:${preview.width}px;height:${preview.height}px;object-fit:contain;background:#26231f}
         @keyframes rise{from{transform:translateY(12px)}to{transform:translateY(0)}}
       </style><div class="preview"><div class="title">${safeTitle}</div><img src="${preview.imageUrl}" alt=""></div>`;
+      // ONE window per sender, updated in place. This used to hide and destroy the
+      // previous window on every show, so a hover that painted the remembered
+      // image and then the fresh capture created TWO windows in a row - which is
+      // the double flash the creator sees. Reusing the window and swapping its
+      // content is one visible change instead of two, and an identical image is
+      // not repainted at all.
+      const existing = widgetPreviewWindows.get(sender.id);
+      if (existing && !existing.isDestroyed()) {
+        if (existing.getBounds().x !== x || existing.getBounds().y !== y
+          || existing.getBounds().width !== width || existing.getBounds().height !== height) {
+          existing.setBounds({ x, y, width, height });
+        }
+        if (lastPreviewSignature.get(sender.id) === previewSignature) return;
+        lastPreviewSignature.set(sender.id, previewSignature);
+        void existing.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+          .then(() => { if (!existing.isDestroyed()) existing.showInactive(); })
+          .catch(() => hideWidgetPreview(sender.id));
+        return;
+      }
+      lastPreviewSignature.set(sender.id, previewSignature);
       void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => {
         if (!previewWindow.isDestroyed()) previewWindow.showInactive();
       }).catch(() => hideWidgetPreview(sender.id));
