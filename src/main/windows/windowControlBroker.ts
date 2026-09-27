@@ -29,6 +29,8 @@ export interface ControlEvent {
 
 export interface WindowControlBroker {
   readonly ready: boolean;
+  /** The identity of the resident process that granted any readiness. */
+  readonly sessionId: string;
   register(slot: ControlRegistration): Promise<boolean>;
   clear(id: number): void;
   group(actions: Array<{ id: number; operation: 'minimize' | 'restore' | 'foreground' | 'toggle' }>): boolean;
@@ -53,6 +55,8 @@ export function createWindowControlBroker(input: {
   let restartTimes: number[] = [];
   let retryTimer: NodeJS.Timeout | null = null;
   let generation = 0;
+  /** Changes on every broker start. Readiness is only ever valid for one session. */
+  let sessionId = '';
   const listeners = new Set<(event: ControlEvent) => void>();
   const shiftListeners = new Set<(held: boolean) => void>();
   const pending = new Map<number, (ok: boolean) => void>();
@@ -129,6 +133,14 @@ export function createWindowControlBroker(input: {
   function start(): void {
     if (stopped || !compile()) return;
     const instance = ++generation;
+    // A BROKER SESSION IDENTITY, not just an internal callback guard.
+    //
+    // `generation` only stopped callbacks from a dead child. Nothing downstream
+    // could tell readiness granted by the PREVIOUS process from readiness in the
+    // current one, so a restarted broker could inherit a page's stale readiness.
+    // The session id is that identity: it changes on every start, readiness is
+    // reported against it, and a restart invalidates everything the old one said.
+    sessionId = 'broker-' + instance;
     child = spawn(executable, [telemetryFile], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
     child.once('error', (error) => {
       if (instance !== generation) return;
@@ -154,7 +166,12 @@ export function createWindowControlBroker(input: {
             pending.delete(id);
           } else if (parts[0] === 'EVENT' && parts.length === 8) {
             const operation = parts[3];
-            if (operation !== 'minimize' && operation !== 'restore' && operation !== 'foreground') return;
+            // 'toggle' arrives here only when the broker could NOT resolve it - a
+            // stale slot or a command for a slot it does not hold. Dropping it meant
+            // a failed toggle vanished, which is exactly the silence this work is
+            // supposed to have removed.
+            if (operation !== 'minimize' && operation !== 'restore'
+              && operation !== 'foreground' && operation !== 'toggle') return;
             const event: ControlEvent = {
               seq: Number(parts[1]), id: Number(parts[2]), operation,
               inputQpc: parts[4]!, dispatchQpc: parts[5]!, confirmedQpc: parts[6]!,
@@ -171,6 +188,7 @@ export function createWindowControlBroker(input: {
   start();
   return {
     get ready() { return ready; },
+    get sessionId() { return sessionId; },
     register(slot) {
       registrations.set(slot.id, slot);
       const line = registerLine(slot);

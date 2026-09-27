@@ -12,6 +12,7 @@
 
 import { webContents, type IpcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type { WindowControlBroker } from '../windows/windowControlBroker';
+import type { ForegroundBridge } from '../windows/foregroundBridge';
 import type { WindowObservation } from '../windows/windowCapabilityTypes';
 import { defaultWindowGeometryJournal } from '../windows/windowGeometryJournal';
 
@@ -66,6 +67,10 @@ export interface WindowCapabilityIpcDependencies {
   }) => void;
   hideProjectPreview?: (senderId: number) => void;
   controlBroker?: WindowControlBroker;
+  /** The native foreground bridge, which takes a handle directly. */
+  activateForeground?: () => ForegroundBridge | null;
+  /** Focus the surface for one press and return a release; eligibility for the child. */
+  focusForActivation?: (sender: WebContents) => Promise<(() => void) | null>;
   resolveControlSurface?: (sender: WebContents, rect: WindowBounds) => {
     ownerHwnd: number;
     hit: WindowBounds;
@@ -207,7 +212,10 @@ function toPageThumbnailResult(result: WindowCapabilityResult): WindowThumbnailR
 }
 
 type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult | { snapshot: WindowInstanceSnapshot }
-  | { outcome: 'success'; results: Array<{ layoutId: string; memberId: string; ready: boolean }> };
+  | { outcome: 'success'; results: Array<{ layoutId: string; memberId: string; ready: boolean }> }
+  /** The activation seam's answer. efused means the native attempt ran and Windows
+   * did not give the foreground up - a completed attempt, not a failure to try. */
+  | { outcome: 'activated' | 'refused'; foreground: string; raised: boolean; moved: boolean; accepted: boolean };
 
 function resultPayload(result: IpcResult): IpcResult {
   return result;
@@ -223,6 +231,8 @@ export function registerWindowCapabilityIpc({
   hideProjectPreview,
   controlBroker,
   resolveControlSurface,
+  activateForeground,
+  focusForActivation,
 }: WindowCapabilityIpcDependencies): void {
   let nativePeekActive = false;
   const lifecycleUnsubscribers = new Map<number, () => void>();
@@ -237,6 +247,20 @@ export function registerWindowCapabilityIpc({
   const controlFingerprintGeometry = new Map<string, string>();
   const controlRegistrationsPending = new Set<string>();
 
+  /** The surface rounded to whole pixels. The broker matches whole pixels, and a
+   * sub-pixel wobble in a button's DOM rectangle was enough to make every sync look
+   * like a change - so each member was re-registered and cleared forever, which is
+   * what the slot-cleared churn in the broker log was. */
+  function quantizedSurface(surface: { ownerHwnd: number; hit: { x: number; y: number; width: number; height: number } } | null) {
+    if (!surface) return null;
+    return {
+      ownerHwnd: surface.ownerHwnd,
+      hit: {
+        x: Math.round(surface.hit.x), y: Math.round(surface.hit.y),
+        width: Math.round(surface.hit.width), height: Math.round(surface.hit.height),
+      },
+    };
+  }
   /** Registrations are BACKGROUND work and they are BOUNDED. Seventeen of them
    * fired at once and saturated the helper client's pending-request queue, so
    * every one failed with 'pending-request limit reached' - which is what left
@@ -267,6 +291,7 @@ export function registerWindowCapabilityIpc({
     key: string,
     entry: { layoutId: string; memberId: string; descriptor: PersistedWindowMemberDescriptor; restore: { x: number; y: number; width: number; height: number } | null },
     surface: { ownerHwnd: number; hit: { x: number; y: number; width: number; height: number } } | null,
+    generation: number,
   ): Promise<void> {
     const meta = controlMeta.get(id);
     const report = (result: string): void => {
@@ -295,17 +320,53 @@ export function registerWindowCapabilityIpc({
       : null;
     if (!observation) { report('pending:no-snapshot'); return; }
     const restore = entry.restore ?? observation.bounds ?? null;
-    const ready = !!(typeof observation.handle === 'number'
-      && typeof observation.processId === 'number' && typeof observation.processStartTicks === 'string'
-      && typeof observation.windowClass === 'string'
-      && restore && restore.width > 0 && restore.height > 0)
-      && await controlBroker!.register({
+    const registered = await (async (): Promise<boolean> => {
+      if (!(typeof observation.handle === 'number'
+        && typeof observation.processId === 'number' && typeof observation.processStartTicks === 'string'
+        && typeof observation.windowClass === 'string'
+        && restore && restore.width > 0 && restore.height > 0)) return false;
+      return controlBroker!.register({
         id, hwnd: observation.handle, pid: observation.processId,
         processStartTicks: observation.processStartTicks, windowClass: observation.windowClass,
-        ownerHwnd: surface.ownerHwnd, hit: surface.hit, restore: restore!,
+        ownerHwnd: surface.ownerHwnd, hit: surface.hit, restore: restore,
       });
-    if (ready) {
-      controlFingerprints.set(key, JSON.stringify([entry.descriptor, surface, restore]));
+    })();
+    // A COMPLETION THAT NO LONGER OWNS ITS GENERATION MUST NOT MUTATE ANYTHING.
+    // Registration is asynchronous, so an older wave can finish after a newer one
+    // and would otherwise overwrite the newer readiness, fingerprint or slot with
+    // its own stale answer. The generation is bumped on every sync for every member,
+    // and only the wave that still owns it may report or record.
+    if (controlGenerations.get(key) !== generation) {
+      // Recorded, because a slot that clears itself is otherwise indistinguishable
+      // from a slot the broker refused or a sender that went away.
+      if (registered) {
+        controlBroker!.clear(id);
+        try {
+          defaultWindowGeometryJournal().record({
+            kind: 'observe-fail', title: 'control-register',
+            detail: 'reason=stale-generation id=' + id + ' dispatchedGen=' + generation
+              + ' currentGen=' + String(controlGenerations.get(key))
+              + ' session=' + String(controlBroker!.sessionId),
+            outcome: 'stale',
+          });
+        } catch { /* diagnostics never fail the action */ }
+      }
+      return;
+    }
+    if (registered) {
+      // The FULL identity that received the ACK, not geometry alone: the same member
+      // with the same rectangle can point at a different native window, and geometry
+      // equality must never be mistaken for the same target.
+      // Exactly the values the short-circuit compares, so a member that has not
+      // changed is answered ready instead of being re-registered and cleared on
+      // every sync - churn that showed up as slot-cleared lines in the broker log.
+      controlFingerprints.set(key, JSON.stringify([
+        entry.descriptor, quantizedSurface(surface), entry.restore, controlBroker!.sessionId,
+      ]));
+      {
+        const meta = controlMeta.get(id);
+        if (meta && observation.handle) meta.handle = observation.handle;
+      }
       controlFingerprintGeometry.set(key, JSON.stringify([surface, entry.restore]));
       report('ready');
     } else {
@@ -315,7 +376,16 @@ export function registerWindowCapabilityIpc({
       report('refused');
     }
   }
-  const controlMeta = new Map<number, { senderId: number; layoutId: string; memberId: string; projectHost: string }>();
+  /** Bumped for every member on every sync. A background wave may only act while it
+   * still owns the current one. */
+  const controlGenerations = new Map<string, number>();
+  /** The desire each pending generation was claimed for. */
+  const controlPendingDesired = new Map<string, string>();
+  let registrationGeneration = 0;
+  /** handle is the native HWND the broker ACKed for this member. It is kept here so
+   * activation needs no capability resolve: the native foreground bridge takes a
+   * handle directly. */
+  const controlMeta = new Map<number, { senderId: number; layoutId: string; memberId: string; projectHost: string; handle: number }>();
   const controlsBySender = new Map<number, Set<string>>();
   const controlCleanupSenders = new Set<number>();
   let nextControlId = 0;
@@ -454,28 +524,64 @@ export function registerWindowCapabilityIpc({
       next.add(key);
       let id = controlIds.get(key);
       if (!id) { id = ++nextControlId; controlIds.set(key, id); }
+      const existingMeta = controlMeta.get(id);
       controlMeta.set(id, { senderId: event.sender.id, layoutId: entry.layoutId, memberId: entry.memberId,
-        projectHost: new URL(event.sender.getURL()).host });
+        projectHost: new URL(event.sender.getURL()).host, handle: existingMeta?.handle ?? 0 });
       const surface = resolveControlSurface(event.sender, entry.rect);
       // Registration is BACKGROUND work. Resolving seventeen descriptors inline
       // means seventeen enumerations, which blew the request's own timeout - so
       // the sync never answered at all and nothing was ever registered. The sync
       // now answers immediately and the answer arrives as an event per member.
+      // A SHORT-CIRCUIT MUST PROVE THE SAME IDENTITY, NOT THE SAME RECTANGLE.
+      //
+      // This used to answer "ready" whenever SOME registration existed and the
+      // geometry was unchanged - so the same member, with the same rectangle,
+      // pointing at a DIFFERENT native window, stayed ready against a slot the
+      // broker had ACKed for the old one. The fingerprint now contains the full
+      // desired identity - descriptor, surface, requested and effective restore -
+      // and readiness is valid only for the exact broker session that ACKed it.
+      const desired = JSON.stringify([
+        entry.descriptor, quantizedSurface(surface), entry.restore, controlBroker?.sessionId ?? '',
+      ]);
       const registered = controlFingerprints.get(key);
-      if (registered && controlFingerprintGeometry.get(key) === JSON.stringify([surface, entry.restore])) {
+      if (registered && registered === desired) {
         results.push({ layoutId: entry.layoutId, memberId: entry.memberId, ready: true });
         continue;
+      }
+      // A GENERATION REPRESENTS A CHANGED DESIRE, NOT ANOTHER SYNC.
+      //
+      // This bumped on every 200ms pass, including passes where the member's
+      // registration was still in flight. The completing registration then judged
+      // ITSELF stale and cleared the slot it had just been given - which is exactly
+      // the churn the broker log showed: sixteen members accepted, sixteen cleared,
+      // sixteen accepted again. An identical sync while the same desire is pending
+      // now keeps the pending generation instead of invalidating its own work.
+      const pendingDesired = controlPendingDesired.get(key);
+      if (pendingDesired !== desired) {
+        controlPendingDesired.set(key, desired);
+        controlGenerations.set(key, ++registrationGeneration);
       }
       results.push({ layoutId: entry.layoutId, memberId: entry.memberId, ready: false });
       if (!controlRegistrationsPending.has(key)) {
         controlRegistrationsPending.add(key);
+        const dispatchedGeneration = controlGenerations.get(key)!;
         enqueueRegistration(async () => {
-          try { await registerControlSlot(event.sender, id, key, entry, surface); }
-          finally { controlRegistrationsPending.delete(key); }
+          try { await registerControlSlot(event.sender, id, key, entry, surface, dispatchedGeneration); }
+          finally { controlRegistrationsPending.delete(key); controlPendingDesired.delete(key); }
         });
       }
     }
-    for (const key of old) if (!next.has(key)) {
+    // AN EMPTY SYNC IS NOT A REMOVAL.
+    //
+    // A surface that is mid-render, collapsed, or between layouts legitimately
+    // publishes zero members for one pass. Reading that as "every member was
+    // removed" cleared all sixteen slots - which is exactly the churn the broker log
+    // showed: sixteen members accepted, then sixteen cleared, then accepted again.
+    // A sender's controls are dropped only when a NON-EMPTY sync omits them, which
+    // is a statement about members rather than about a moment.
+    for (const key of old) {
+      if (next.has(key)) continue;
+      if (next.size === 0) continue;
       const id = controlIds.get(key);
       if (id) { controlBroker.clear(id); controlMeta.delete(id); }
       controlIds.delete(key);
@@ -507,6 +613,64 @@ export function registerWindowCapabilityIpc({
       });
     } catch { /* diagnostics never fail the action they describe */ }
     return { outcome: 'success', results };
+  });
+  /** ACTIVATE A MEMBER THE BROKER HOLDS, using the native foreground bridge.
+   *
+   * The broker can only raise a window into the ordinary z-order, and the compact
+   * widget is TOPMOST - so a raised target stays beneath it and the creator sees
+   * nothing. Windows grants the foreground only to a process that is
+   * foreground-eligible, and the bridge is spawned BY Papers, which is why this
+   * takes the foreground for that one press first: the child then inherits the
+   * eligibility the resident background broker can never have.
+   *
+   * No capability is resolved and the window helper is never touched - the handle
+   * kept from the broker's own registration is all the bridge needs, so the gesture
+   * costs one native process and nothing else.
+   */
+  handleRead('papers:window-control:activate', (raw) => {
+    if (!isPlainObject(raw) || !exactKeys(raw, ['layoutId', 'memberId'])) throw new Error('activate request is malformed');
+    return { layoutId: parseBoundedString(raw['layoutId'], 'layoutId'), memberId: parseBoundedString(raw['memberId'], 'memberId') };
+  }, async (request, event) => {
+    // The page knows which member was clicked, not which control id it was given,
+    // and the slot may have been registered by ANOTHER surface of the same project -
+    // the widget registers, the workspace can ask. Same cross-surface lookup the
+    // group path already uses.
+    const projectHost = new URL(event.sender.getURL()).host;
+    const controlId = controlIds.get(event.sender.id + ':' + request.layoutId + ':' + request.memberId)
+      ?? [...controlMeta.entries()].find(([, meta]) => meta.projectHost === projectHost
+        && meta.layoutId === request.layoutId && meta.memberId === request.memberId)?.[0];
+    const meta = controlId ? controlMeta.get(controlId) : undefined;
+    if (!meta) return { outcome: 'helper-unavailable', error: 'unknown control' };
+    if (!meta.handle) return { outcome: 'helper-unavailable', error: 'no native handle for that member' };
+    const bridge = activateForeground?.();
+    if (!bridge) return { outcome: 'helper-unavailable', error: 'native foreground bridge is unavailable' };
+    // Papers takes the foreground for this single press so the bridge it spawns is
+    // eligible to hand it on. Released immediately afterwards, so the widget does not
+    // stay focusable and ordinary icon clicks still never steal focus.
+    let released: (() => void) | null = null;
+    try { released = (await focusForActivation?.(event.sender)) ?? null; } catch { released = null; }
+    try {
+      const attempt = typeof bridge.setForegroundWindowDetailed === 'function'
+        ? await bridge.setForegroundWindowDetailed(meta.handle)
+        : { setForeground: await bridge.setForegroundWindow(meta.handle), foregroundAfter: null, raised: false, moved: false };
+      // ACTIVATED MEANS THE TARGET WAS OBSERVED AS THE FOREGROUND.
+      //
+      // This said `setForeground === true`, which only means Windows ACCEPTED the
+      // call. The bridge distinguishes the two, and accepting the weaker one would
+      // report success while the creator never actually got the window - the exact
+      // false-success class the bridge was built to eliminate. `moved` is the
+      // bridge's own "the foreground really became this window" answer.
+      const ok = attempt.moved === true;
+      return {
+        outcome: ok ? 'activated' as const : 'refused' as const,
+        foreground: String(attempt.foregroundAfter ?? ''),
+        raised: attempt.raised === true,
+        moved: attempt.moved === true,
+        accepted: attempt.setForeground === true,
+      };
+    } finally {
+      try { released?.(); } catch { /* releasing focus never fails the action */ }
+    }
   });
   handle('papers:window-control:group', (raw) => {
     if (!isPlainObject(raw) || !exactKeys(raw, ['layoutId', 'actions'])) throw new Error('group request is malformed');

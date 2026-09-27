@@ -384,7 +384,15 @@ window.addEventListener('message', (event) => {
     });
     task = ipcRenderer.invoke('papers:window-control:sync', controls);
   }
-  if (request.type === 'papers:project:window-control-group') {
+  if (request.type === 'papers:project:window-control-activate') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutId', 'memberId'])) {
+      throw new Error('window control activate is malformed');
+    }
+    task = ipcRenderer.invoke('papers:window-control:activate', {
+      layoutId: parseBoundedString(request.layoutId),
+      memberId: parseBoundedString(request.memberId),
+    });
+  }  if (request.type === 'papers:project:window-control-group') {
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutId', 'actions'])
       || !Array.isArray(request.actions) || request.actions.length > 32) {
       throw new Error('window control group is malformed');

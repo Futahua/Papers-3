@@ -67,7 +67,16 @@ function fakeIpcMain() {
     invoke(channel: string, senderId: number, raw: unknown) {
       const handler = handlers.get(channel);
       if (!handler) throw new Error(`no handler for ${channel}`);
-      return handler({ sender: { id: senderId } }, raw);
+      return handler({
+      sender: {
+        id: senderId,
+        // The control sync resolves the sending surface, which needs a URL; other
+        // channels never look at it.
+        getURL: () => 'papers-project://as-you-go/index.html',
+        once: () => undefined,
+        isDestroyed: () => false,
+      },
+    }, raw);
     },
     channels: () => [...handlers.keys()],
   };
@@ -86,6 +95,7 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:subscribe-lifecycle',
       'papers:window-capability:bind',
       'papers:window-control:sync',
+      'papers:window-control:activate',
       'papers:window-control:group',
       'papers:window-capability:observe',
       'papers:window-capability:minimize',
@@ -106,6 +116,62 @@ describe('windowCapabilityIpc', () => {
     ]);
   });
 
+  it('does not treat an unchanged rectangle as the same window identity', async () => {
+    // Readiness used to be answered whenever SOME registration existed and the
+    // geometry was unchanged. The same member with the same rectangle can point at a
+    // DIFFERENT native window, and the old short-circuit would have kept it ready
+    // against a slot the broker ACKed for the previous one. Identity decides now.
+    const ipc = fakeIpcMain();
+    const service = fakeService();
+    const observed = {
+      windowInstanceId: 'W0000000000000001',
+      runtimeId: 'R1', processId: 1234, processStartTicks: '1', windowClass: 'Chrome_WidgetWin_1',
+      handle: 555, bounds: { x: 10, y: 10, width: 100, height: 100 }, state: 'normal',
+    } as never;
+    service.observeInstances = async (ids: string[]) => {
+      const map = new Map<string, never>();
+      for (const id of ids) map.set(id, observed);
+      return map as never;
+    };
+    const registrations: unknown[] = [];
+    const broker = {
+      ready: true,
+      sessionId: 'broker-1',
+      register: async (slot: unknown) => { registrations.push(slot); return true; },
+      clear: () => undefined,
+      group: () => true,
+      onEvent: () => () => undefined,
+      onShift: () => () => undefined,
+      stop: () => undefined,
+    };
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service,
+      isSender: () => true,
+      controlBroker: broker as never,
+      resolveControlSurface: () => ({ ownerHwnd: 999, hit: { x: 0, y: 0, width: 10, height: 10 } }),
+    });
+    const rect = { x: 1, y: 1, width: 10, height: 10 };
+    const descriptor = { version: 1, title: 'A', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W0000000000000001' };
+    const first = await ipc.invoke('papers:window-control:sync', 41, [
+      { layoutId: 'L', memberId: 'M', descriptor, rect, restore: rect },
+    ]);
+    expect((first as { outcome: string }).outcome).toBe('success');
+    // The registration is background work; give it a turn to settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(registrations.length).toBeGreaterThan(0);
+
+    // Same member, same rectangle, a DIFFERENT native window identity.
+    const other = { ...descriptor, windowInstanceId: 'W0000000000000002' };
+    const second = await ipc.invoke('papers:window-control:sync', 41, [
+      { layoutId: 'L', memberId: 'M', descriptor: other, rect, restore: rect },
+    ]);
+    const results = (second as { results?: Array<{ ready: boolean }> }).results ?? [];
+    expect(results.length).toBe(1);
+    // It must NOT be answered ready from the previous identity's registration.
+    expect(results[0]!.ready).toBe(false);
+  });
   it('answers READ-ONLY capability operations without waiting for write authority', async () => {
     // The compact widget is not the writer, so waiting for document-write
     // authority parked its descriptor resolution forever - and a surface that

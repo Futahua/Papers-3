@@ -1538,6 +1538,33 @@ async function bootstrap(): Promise<void> {
     isSender: isProjectSurfaceSender,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     controlBroker: windowControlBroker,
+    // The native foreground bridge takes a HANDLE, and the broker's registration has
+    // already proved one for every member - so activation costs one native process
+    // and never touches the window helper.
+    activateForeground: () => foregroundBridge,
+    // PAPERS TAKES THE FOREGROUND FOR THE ONE PRESS THAT NEEDS ACTIVATION.
+    //
+    // Windows hands the foreground only to a process that is foreground-eligible, and
+    // a resident background broker never is. The bridge is spawned BY Papers, so if
+    // Papers owns the foreground at that instant the child inherits the eligibility.
+    // Released immediately afterwards, so the widget does not stay focusable and
+    // ordinary icon clicks still never steal focus.
+    focusForActivation: async (sender) => {
+      const owner = BrowserWindow.fromWebContents(sender);
+      if (!owner || owner.isDestroyed()) return null;
+      const wasFocusable = owner.isFocusable();
+      try {
+        owner.setFocusable(true);
+        owner.focus();
+      } catch {
+        return null;
+      }
+      return () => {
+        try {
+          if (!owner.isDestroyed()) owner.setFocusable(wasFocusable);
+        } catch { /* releasing focus never fails the action */ }
+      };
+    },
     resolveControlSurface: (sender, rect) => {
       const owner = BrowserWindow.fromWebContents(sender);
       if (!owner || owner.isDestroyed() || !owner.isVisible()) return null;

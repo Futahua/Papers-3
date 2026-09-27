@@ -47,6 +47,14 @@ internal static class WindowControl
     [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG msg);
     [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint first, uint last,
         IntPtr module, WinEventProc callback, uint pid, uint tid, uint flags);
+    // Raising a window in the ordinary z-order needs no foreground and cannot
+    // produce the refusal flash that SetForegroundWindow does.
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter,
+        int x, int y, int width, int height, uint flags);
+    static readonly IntPtr HWND_TOP = IntPtr.Zero;
+    const uint SWP_NOSIZE = 0x0001;
+    const uint SWP_NOMOVE = 0x0002;
+    const uint SWP_NOACTIVATE = 0x0010;
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hook);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
@@ -132,8 +140,32 @@ internal static class WindowControl
         long dispatch = Tick();
         if (requested == "foreground") {
             op = "foreground";
-            BringWindowToTop(slot.Hwnd);
-            issued = SetForegroundWindow(slot.Hwnd);
+            // RAISE IT; DO NOT BEG FOR THE FOREGROUND.
+            //
+            // SetForegroundWindow from a process that does not own the foreground is
+            // refused by design, and the widget is deliberately non-activating - so
+            // nothing of ours holds the foreground to hand over. Windows answers the
+            // refusal by FLASHING the taskbar button, which is worse than doing
+            // nothing: the creator sees an attention flash and no raise.
+            //
+            // Bringing a window to the top of the ordinary z-order needs neither
+            // activation nor the foreground. The creator asked for bring-to-FRONT, not
+            // focus - and the standing rule here is to never force z-order or topmost.
+            // So the window is raised, activation is attempted ONLY when this process
+            // already owns the foreground (where it can actually succeed), and the
+            // result says exactly which of the two happened.
+            bool raised = BringWindowToTop(slot.Hwnd)
+                || SetWindowPos(slot.Hwnd, HWND_TOP, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            IntPtr foreground = GetForegroundWindow();
+            uint foregroundPid = 0;
+            if (foreground != IntPtr.Zero) GetWindowThreadProcessId(foreground, out foregroundPid);
+            if (foregroundPid == (uint)slot.Pid) {
+                // A window of the SAME process already holds the foreground, so this
+                // call is allowed and will not produce a refusal flash.
+                SetForegroundWindow(slot.Hwnd);
+            }
+            issued = raised;
         } else if (requested == "restore" || (requested == "toggle" && slot.Iconic)) {
             op = "restore";
             WINDOWPLACEMENT placement = slot.Restore;
@@ -146,7 +178,8 @@ internal static class WindowControl
         }
         long confirm = Tick();
         string result = !issued ? "native-refused" :
-            op == "foreground" ? (GetForegroundWindow() == slot.Hwnd ? "success" : "pending") :
+            op == "foreground" ? (GetForegroundWindow() == slot.Hwnd ? "success"
+                : IsWindowVisible(slot.Hwnd) ? "raised" : "pending") :
             op == "minimize" ? (IsIconic(slot.Hwnd) ? "success" : "pending") :
             (!IsIconic(slot.Hwnd) && IsWindowVisible(slot.Hwnd) ? "success" : "pending");
         Queue(slot, op, result, input, dispatch, confirm);
@@ -162,19 +195,47 @@ internal static class WindowControl
                 MSLLHOOKSTRUCT mouse = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
                 IntPtr owner = GetAncestor(WindowFromPoint(mouse.Point), GA_ROOT);
                 Slot[] snapshot = slots;
+                bool matched = false;
+                // WHICH OF THE TWO FAILURES IS IT? "The hook never fired" and "the hook
+                // fired and matched no slot" looked identical from outside - the broker
+                // logged nothing either way. A press inside a window this process KNOWS
+                // (one of the registered owners) that still matches nothing is the
+                // interesting case, and it is recorded with the point it happened at and
+                // the rectangle it was compared against.
+                bool overKnownOwner = false;
+                for (int i = 0; i < snapshot.Length; ++i) {
+                    Slot slot = snapshot[i];
+                    if (slot.Active && slot.Owner == owner) { overKnownOwner = true; break; }
+                }
                 for (int i = 0; i < snapshot.Length; ++i) {
                     Slot slot = snapshot[i];
                     if (slot.Active && slot.Owner == owner && mouse.Point.X >= slot.Hit.Left
                         && mouse.Point.X < slot.Hit.Right && mouse.Point.Y >= slot.Hit.Top
                         && mouse.Point.Y < slot.Hit.Bottom) {
+                        matched = true;
                         Telemetry("hook-hit|" + slot.Id + "|" + (message == WM_RBUTTONDOWN ? "foreground" : "toggle"));
                         // Right-click has no toggle side effect, so its foreground
                         // attempt can run at physical mouse-down. The widget is
                         // non-activating; an attempt delayed until DOM contextmenu
                         // loses the input-time foreground opportunity on Windows.
-                        if (message == WM_RBUTTONDOWN) Execute(slot, "foreground", input);
+                        // THE PAGE OWNS THE RIGHT-CLICK ATTEMPT NOW. It asked the broker
+                        // directly, which is one gesture and one attempt with one
+                        // reported answer. Letting the hook also actuate would be two
+                        // attempts for one press, and the reviewer's rule is explicit:
+                        // never a second activation after a final refusal.
+                        // Left-click is unaffected - the page has always been its actuator.
                         break;
                     }
+                }
+                if (!matched && overKnownOwner) {
+                    Slot first = snapshot[0];
+                    for (int i = 0; i < snapshot.Length; ++i) {
+                        if (snapshot[i].Active && snapshot[i].Owner == owner) { first = snapshot[i]; break; }
+                    }
+                    Telemetry("hook-miss|" + (message == WM_RBUTTONDOWN ? "foreground" : "toggle")
+                        + "|at=" + mouse.Point.X + "," + mouse.Point.Y
+                        + "|slot=" + first.Id + " owner=" + first.Owner.ToInt64() + " seen=" + owner.ToInt64()
+                        + " rect=" + first.Hit.Left + "," + first.Hit.Top + "," + first.Hit.Right + "," + first.Hit.Bottom);
                 }
             }
         }
@@ -327,6 +388,11 @@ internal static class WindowControl
                     lock (responseLock) if (response != null)
                         response.WriteLine("SHIFT|" + (held ? "1" : "0"));
                 } catch { }
+                // The shift channel had no way to be seen at all: it wrote one line
+                // to the pipe and nothing else. A transition is now a record, so
+                // "the broker never noticed" and "the broker noticed and the page
+                // dropped it" stop looking identical.
+                Telemetry("shift|" + (held ? "held" : "released"));
             }
             Thread.Sleep(20);
         }
