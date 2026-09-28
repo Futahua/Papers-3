@@ -1851,7 +1851,7 @@ async function bootstrap(): Promise<void> {
         }
       });
       widgetWindow.once('ready-to-show', () => {
-        if (!widgetWindow.isDestroyed()) {
+        if (!widgetWindow.isDestroyed() && !widgetWindow.isMinimized()) {
           widgetWindow.showInactive();
           // Re-assert topmost AFTER the window is shown. `alwaysOnTop: true` and
           // the setAlwaysOnTop call at construction stopped taking effect once
@@ -2041,12 +2041,15 @@ async function bootstrap(): Promise<void> {
   hoverInputBridge = createHoverInputBridge({
     cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
     sourcePath: resolveHoverInputBridgeSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
-    onAltQ: () => {
-      void widgetSession?.bringLatestToCursor().then((activated) => {
-        if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
-      }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
+    onAltQ: (widgetSenderId) => {
+      const activation = widgetSession?.beginAltQGesture(widgetSenderId);
+      if (activation) {
+        void activation.then((activated) => {
+          if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
+        }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
+      }
     },
-    onAltQRelease: () => widgetSession?.stopFollowing(),
+    onAltQRelease: () => widgetSession?.endAltQGesture(),
     onCaptured: async (senderId, _captureId, text) => {
       const result = await beginHoverCapture(senderId, text, true);
       if (!result.ok) throw new Error(result.detail);

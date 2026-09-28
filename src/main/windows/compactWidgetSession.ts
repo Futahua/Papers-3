@@ -32,6 +32,9 @@ interface WidgetEntry {
   owningWindowId: number;
   window: CompactWidgetWindow;
   closing: boolean;
+  /** A background `open(activate: false)` is reconciliation, not user intent;
+   * it must not undo an Alt+Q one-shot minimize. Explicit restore/focus clears it. */
+  altQMinimized: boolean;
 }
 
 export interface CompactWidgetWindow {
@@ -99,6 +102,9 @@ export interface CompactWidgetSession {
   minimize(projectId: string, layoutKey: string, owningWindowId: number): boolean;
   /** Restore the most recently opened/focused widget at the current pointer. */
   bringLatestToCursor(): Promise<boolean>;
+  /** Handle the start/end of one Alt+Q press, retaining its native hit widget. */
+  beginAltQGesture(widgetSenderId: number | null): Promise<boolean> | void;
+  endAltQGesture(): void;
   /** Stop the pointer-follow started by the most recent Alt+Q press. */
   stopFollowing(): void;
   close(projectId: string, layoutKey: string, owningWindowId: number): Promise<void>;
@@ -147,6 +153,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
   let latestWidgetKey: string | null = null;
   let followTimer: NodeJS.Timeout | null = null;
   let followedEntry: WidgetEntry | null = null;
+  let altQGesture: { kind: 'inside'; entry: WidgetEntry } | { kind: 'outside' } | null = null;
   let activeDrag: { senderId: number; token: string; offsetX: number; offsetY: number } | null = null;
   let registered = false;
   /**
@@ -172,6 +179,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     if (entry.window.isMinimized()) entry.window.restore();
     if (!entry.window.isVisible()) entry.window.show();
     entry.window.focus();
+    entry.altQMinimized = false;
     return true;
   };
 
@@ -202,6 +210,29 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       // could make a held Alt+Q appear not to follow (or jump by a scale ratio).
       placeAtCursor(entry);
     }, 16);
+  };
+
+  const isLiveEntry = (entry: WidgetEntry): boolean =>
+    entries.get(keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId)) === entry
+      && !entry.closing && !entry.window.isDestroyed();
+
+  const bringEntryToCursor = async (entry: WidgetEntry): Promise<boolean> => {
+    if (!isLiveEntry(entry)) return false;
+    if (!restoreAndFocus(entry)) return false;
+    followCursor(entry);
+    try {
+      return await deps.activateWindow(entry.window);
+    } catch {
+      return false;
+    }
+  };
+
+  const minimizeEntry = (entry: WidgetEntry, stopOtherFollow = true): boolean => {
+    if (!isLiveEntry(entry)) return false;
+    if (followedEntry === entry || (stopOtherFollow && followedEntry !== null)) stopFollowing();
+    latestWidgetKey = keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId);
+    entry.window.minimize();
+    return entry.window.isMinimized();
   };
 
   function clamp(bounds: WindowBounds | null): WindowBounds {
@@ -302,7 +333,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
         if (request.activate !== false) {
           latestWidgetKey = key;
           restoreAndFocus(existing);
-        } else if (existing.window.isMinimized() || !existing.window.isVisible()) {
+        } else if (!existing.altQMinimized && (existing.window.isMinimized() || !existing.window.isVisible())) {
           existing.window.showInactive();
         }
         return { ok: true, reused: true };
@@ -315,12 +346,16 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       let token: string;
       try { token = deps.registry.register(window.webContents.id, request.projectId, COMPACT_WIDGET_SURFACE_KIND, request.layoutKey); }
       catch { if (!window.isDestroyed()) window.destroy(); return { ok: false, error: 'widget surface registration failed' }; }
-      const entry: WidgetEntry = { projectId: request.projectId, layoutKey: request.layoutKey, entryUrl, owningWindowId: request.owningWindowId, window, closing: false };
+      const entry: WidgetEntry = { projectId: request.projectId, layoutKey: request.layoutKey, entryUrl, owningWindowId: request.owningWindowId, window, closing: false, altQMinimized: false };
       entries.set(key, entry);
       deps.onWidgetRegistered?.(window.webContents.id, window.getNativeWindowHandle());
       latestWidgetKey = key;
       window.on('focus', () => {
-        if (entries.get(key) === entry) latestWidgetKey = key;
+        if (entries.get(key) !== entry) return;
+        latestWidgetKey = key;
+        // A native restore/focus (taskbar or Alt-Tab included) is explicit
+        // user intent and releases the background-reconciliation suppression.
+        if (!entry.window.isMinimized() && entry.window.isVisible()) entry.altQMinimized = false;
       });
       window.on('closed', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));
       window.webContents.on('render-process-gone', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));
@@ -361,28 +396,38 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     minimize(projectId, layoutKey, owningWindowId) {
       const key = keyOf(projectId, layoutKey, owningWindowId);
       const entry = entries.get(key);
-      if (!entry || entry.closing || entry.window.isDestroyed()) return false;
-      stopFollowing();
-      // Docking is an explicit user action on this widget. Keep that exact
-      // instance as the Alt+Q target even if another widget was focused most
-      // recently (for example, while the AYG pill tray was handling the
-      // minimize request).
-      latestWidgetKey = key;
-      entry.window.minimize();
-      return entry.window.isMinimized();
+      return entry ? minimizeEntry(entry) : false;
     },
     async bringLatestToCursor() {
       const entry = latestWidgetKey === null ? undefined : entries.get(latestWidgetKey);
-      if (!entry || entry.closing || entry.window.isDestroyed()) return false;
-      // Restore/show before changing bounds: moving a minimized HWND can update
-      // its restore rectangle without making the native window visible. Do the
-      // visibility transition explicitly, then place it at the live pointer.
-      if (!restoreAndFocus(entry)) return false;
-      followCursor(entry);
-      try {
-        return await deps.activateWindow(entry.window);
-      } catch {
-        return false;
+      return entry ? bringEntryToCursor(entry) : false;
+    },
+    beginAltQGesture(widgetSenderId) {
+      if (altQGesture !== null) return;
+      // The native helper supplies the HWND hit by WindowFromPoint at chord
+      // start. Geometric bounds can select an overlapped or occluded widget.
+      const entry = typeof widgetSenderId === 'number'
+        ? [...entries.values()].find((candidate) => candidate.window.webContents.id === widgetSenderId
+          && isLiveEntry(candidate) && candidate.window.isVisible() && !candidate.window.isMinimized()) ?? null
+        : null;
+      if (entry === null) {
+        // Outside a widget, retain the established bring-latest-and-follow path.
+        altQGesture = { kind: 'outside' };
+        return session.bringLatestToCursor();
+      }
+      // A press that starts over a widget is a one-shot dock action. Hold and
+      // repeat input do not move it or repeat the minimize operation.
+      altQGesture = { kind: 'inside', entry };
+      // Electron may report minimize/focus notifications during this call.
+      // Commit the suppression after it returns so a stale focus cannot clear it.
+      entry.altQMinimized = minimizeEntry(entry, false);
+    },
+    endAltQGesture() {
+      const gesture = altQGesture;
+      if (gesture === null) return;
+      altQGesture = null;
+      if (gesture.kind === 'outside') {
+        stopFollowing();
       }
     },
     stopFollowing,
