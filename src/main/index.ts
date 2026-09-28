@@ -2541,7 +2541,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           const current = candidatePickerSessions.get(sender.id);
           if (current !== session || picker.isDestroyed()) return;
           session.documentReady = true;
-          void session.delivery?.markReady();
+          void session.delivery?.markReadyWithRetry().then((result) => {
+            // A buffered receipt has already been sent. If all bounded apply
+            // attempts fail, dismiss the loading shell instead of stranding it.
+            if (result === 'failed' && candidatePickerSessions.get(sender.id) === session) closePicker();
+          });
         });
         void picker.loadURL(`data:text/html;base64,${Buffer.from(html).toString('base64')}`).catch(() => closePicker());
       });

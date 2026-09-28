@@ -11,7 +11,7 @@ export function createCandidatePickerDelivery<T>(apply: (rows: T[]) => Promise<b
   async function flush(): Promise<CandidatePickerDeliveryResult> {
     if (closed) return 'stale';
     if (!ready) return 'buffered';
-    if (flushing) return 'buffered';
+    if (flushing) return flushing;
     const work = (async (): Promise<CandidatePickerDeliveryResult> => {
       while (!closed && pending !== null) {
         const rows = pending;
@@ -41,6 +41,15 @@ export function createCandidatePickerDelivery<T>(apply: (rows: T[]) => Promise<b
     markReady(): Promise<CandidatePickerDeliveryResult> {
       ready = true;
       return flush();
+    },
+    async markReadyWithRetry(maxAttempts = 3): Promise<CandidatePickerDeliveryResult> {
+      ready = true;
+      let result: CandidatePickerDeliveryResult = 'failed';
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        result = await flush();
+        if (result !== 'failed') return result;
+      }
+      return result;
     },
     close(): void { closed = true; pending = null; },
   };

@@ -50,9 +50,18 @@ describe('candidate picker page readiness', () => {
     });
     await delivery.markReady();
     const first = delivery.update(['old']);
-    expect(await delivery.update(['new'])).toBe('buffered');
+    const second = delivery.update(['new']);
     failFirst(false);
     expect(await first).toBe('applied');
+    expect(await second).toBe('applied');
     expect(painted).toEqual([['new']]);
+  });
+
+  it('retries a buffered update after readiness and surfaces terminal failure', async () => {
+    let attempts = 0;
+    const delivery = createCandidatePickerDelivery<string>(async () => { attempts++; return false; });
+    expect(await delivery.update(['candidate'])).toBe('buffered');
+    expect(await delivery.markReadyWithRetry(3)).toBe('failed');
+    expect(attempts).toBe(3);
   });
 });
