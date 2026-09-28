@@ -45,6 +45,7 @@ export const WINDOW_THUMBNAIL_PAGE_ERROR_MAX_BYTES = 256;
 export type WindowThumbnailResult =
   | { outcome: 'success'; imageUrl: string; width: number; height: number }
   | { outcome: 'minimized' | 'missing' | 'denied' | 'malformed' | 'helper-unavailable' | 'timeout'; error?: string };
+export type WindowCachedThumbnailResult = WindowThumbnailResult | { outcome: 'cache-miss' };
 
 export interface WindowCapabilityIpcDependencies {
   ipcMain: Pick<IpcMain, 'handle'>;
@@ -211,7 +212,13 @@ function toPageThumbnailResult(result: WindowCapabilityResult): WindowThumbnailR
   return { outcome: result.outcome, ...(result.error !== undefined ? { error: boundPageError(result.error) } : {}) };
 }
 
-type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult | { snapshot: WindowInstanceSnapshot }
+function toPageCachedThumbnailResult(
+  result: WindowCapabilityResult | { outcome: 'cache-miss' },
+): WindowCachedThumbnailResult {
+  return result.outcome === 'cache-miss' ? result : toPageThumbnailResult(result);
+}
+
+type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult | WindowCachedThumbnailResult | { snapshot: WindowInstanceSnapshot }
   | { outcome: 'success'; results: Array<{ layoutId: string; memberId: string; ready: boolean }> }
   /** The activation seam's answer. efused means the native attempt ran and Windows
    * did not give the foreground up - a completed attempt, not a failure to try. */
@@ -844,5 +851,15 @@ export function registerWindowCapabilityIpc({
       return { capability, options };
     },
     async (input) => toPageThumbnailResult(await service.thumbnailCapability(input.capability, input.options)),
+  );
+  handle(
+    'papers:window-capability:thumbnail-cache',
+    (raw) => {
+      if (!isPlainObject(raw) || !exactKeys(raw, ['capability'])) {
+        throw new Error('thumbnail-cache payload must contain exactly capability');
+      }
+      return { capability: parseRuntimeCapability(raw['capability']) };
+    },
+    async (input) => toPageCachedThumbnailResult(await service.cachedThumbnailCapability(input.capability)),
   );
 }

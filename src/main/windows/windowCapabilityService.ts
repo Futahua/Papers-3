@@ -76,6 +76,12 @@ export const WINDOW_CAPABILITY_THUMBNAIL_DEFAULT_WIDTH = 240;
 export const FRAME_SEED_MIN_INTERVAL_MS = 30000;
 export const WINDOW_CAPABILITY_THUMBNAIL_DEFAULT_HEIGHT = 135;
 
+function hasStableThumbnailIdentity(descriptor: PersistedWindowMemberDescriptor): boolean {
+  return typeof descriptor.windowInstanceId === 'string'
+    && /^W[0-9a-f]{16}$/i.test(descriptor.windowInstanceId)
+    && /^[a-f0-9]{64}$/i.test(descriptor.executableFingerprint ?? '');
+}
+
 export interface WindowCandidate {
   /** Host-issued opaque candidate id; never a helper token or HWND. */
   id: string;
@@ -285,6 +291,9 @@ export interface WindowCapabilityService {
     capability: WindowRuntimeCapability,
     options?: { maxWidth?: number; maxHeight?: number },
   ): Promise<WindowCapabilityResult>;
+  /** Read a durable frame without capturing. The binding is re-observed first,
+   * and a frame is returned only for a descriptor with a stable WID. */
+  cachedThumbnailCapability(capability: WindowRuntimeCapability): Promise<WindowCapabilityResult | { outcome: 'cache-miss' }>;
   resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<WindowResolveResult>;
   /** 016 direct pick: resolve the topmost task-worthy candidate at a screen
    * point. Candidate ids are stable per window identity. */
@@ -560,7 +569,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     }
     lastFrameCache.delete(bindingId);
     const descriptor = bindingDescriptors.get(bindingId);
-    if (descriptor) durableFrames.delete(thumbnailDescriptorKey(descriptor));
+    if (descriptor && hasStableThumbnailIdentity(descriptor)) durableFrames.delete(thumbnailDescriptorKey(descriptor));
     bindingDescriptors.delete(bindingId);
     frameSeedAt.delete(bindingId);
     frameSeedInFlight.delete(bindingId);
@@ -575,7 +584,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
    * durable is available. */
   function durableFrameResult(bindingId: string): WindowCapabilityResult | null {
     const descriptor = descriptorForBinding(bindingId);
-    if (!descriptor) return null;
+    if (!descriptor || !hasStableThumbnailIdentity(descriptor)) return null;
     const png = durableFrames.get(thumbnailDescriptorKey(descriptor));
     if (!png) return null;
     const dimensions = pngDimensions(png);
@@ -599,7 +608,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
    * on the optional volatile cache. Never awaited by the observer. */
   function seedFrameIfNeeded(capability: WindowRuntimeCapability, bindingId: string): void {
     const descriptor = descriptorForBinding(bindingId);
-    if (!descriptor) return;
+    if (!descriptor || !hasStableThumbnailIdentity(descriptor)) return;
     const key = thumbnailDescriptorKey(descriptor);
     const now = stamp();
     if (now - (frameSeedAt.get(bindingId) ?? -Infinity) < FRAME_SEED_MIN_INTERVAL_MS) return;
@@ -1280,7 +1289,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       // has no fresh retained real frame, seed one bounded background capture so
       // a later minimize serves real content without depending only on the
       // volatile cache.
-      if (result.outcome === 'success' && result.observation && result.observation.state !== 'minimized') {
+      if (seedFrame && result.outcome === 'success' && result.observation && result.observation.state !== 'minimized') {
         seedFrameIfNeeded(capability, bindingId);
       }
       return result;
@@ -1731,7 +1740,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       if (!isTerminalIcon) {
         retainLastFrame(bindingId, result);
         const descriptor = descriptorForBinding(bindingId);
-        if (descriptor) {
+        if (descriptor && hasStableThumbnailIdentity(descriptor)) {
           try {
             durableFrames.put(thumbnailDescriptorKey(descriptor), Buffer.from(result.thumbnail.image, 'base64'));
           } catch {
@@ -1752,6 +1761,28 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       if (lastFrame) return lastFrame;
     }
     return result;
+  }
+
+  async function cachedThumbnailCapability(
+    capability: WindowRuntimeCapability,
+  ): Promise<WindowCapabilityResult | { outcome: 'cache-miss' }> {
+    if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    const bindingId = capability.bindingId ?? '';
+    if (!tokenFor(capability)) {
+      purgeBindingThumbnails(bindingId);
+      return { outcome: 'missing', error: 'binding is not issued' };
+    }
+    const descriptor = descriptorForBinding(bindingId);
+    if (!descriptor || !hasStableThumbnailIdentity(descriptor)) return { outcome: 'cache-miss' };
+
+    // A runtime capability is session-local. Re-observe it before revealing a
+    // durable image so a stale/reused handle can never inherit old content.
+    const live = await observeCapability(capability, { seedFrame: false });
+    if (live.outcome !== 'success') return live;
+    if (live.observation?.windowInstanceId?.toLowerCase() !== descriptor.windowInstanceId?.toLowerCase()) {
+      return { outcome: 'missing', error: 'binding identity changed' };
+    }
+    return durableFrameResult(bindingId) ?? { outcome: 'cache-miss' };
   }
 
   async function resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<WindowResolveResult> {
@@ -2039,6 +2070,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     endLivePreview,
     applyCapability,
     thumbnailCapability,
+    cachedThumbnailCapability,
     resolvePersisted,
     hoverAt,
     pickAt,

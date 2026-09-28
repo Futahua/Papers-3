@@ -323,6 +323,25 @@ describe('Backpack project protocol alignment', () => {
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
   });
 
+  it('028: cached-thumbnail capability lookup forwards a capability-only request', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'cache-miss' });
+    const capability = { version: 1, bindingId: 'wl-binding-1' };
+    dispatch({ type: 'papers:project:window-thumbnail-cache', requestId: 'thumb-cache-1', capability });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:thumbnail-cache', { capability });
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'thumb-cache-1', ok: true, outcome: 'cache-miss',
+    }));
+    dispatch({ type: 'papers:project:window-thumbnail-cache', requestId: 'thumb-cache-bad', capability, extra: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'thumb-cache-bad', ok: false,
+    }));
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
   it('Direct Pick begin preserves one valid windowInstanceId and rejects malformed or unknown descriptor keys', async () => {
     await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));

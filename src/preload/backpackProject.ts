@@ -504,6 +504,20 @@ window.addEventListener('message', (event) => {
     }
     task = ipcRenderer.invoke('papers:window-capability:thumbnail', { capability, options });
   }
+  if (request.type === 'papers:project:window-thumbnail-cache') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'cached window thumbnail request is malformed');
+      return;
+    }
+    let capability: Record<string, unknown>;
+    try {
+      capability = parseCapability(request.capability);
+    } catch {
+      immediateHostError(request.requestId, event.origin, 'cached window thumbnail request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:window-capability:thumbnail-cache', { capability });
+  }
   if (request.type === 'papers:project:window-pick-begin') {
     console.info('[045-direct-pick] preload-begin-received');
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'members'])) {

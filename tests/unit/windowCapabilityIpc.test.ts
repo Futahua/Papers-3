@@ -45,6 +45,7 @@ function fakeService(): WindowCapabilityService {
     endPeek: async () => ({ outcome: 'success' }),
     applyCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     thumbnailCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    cachedThumbnailCapability: async () => ({ outcome: 'cache-miss' }),
     resolvePersisted: async () => ({ outcome: 'missing', error: 'no match' }),
     hoverAt: async () => ({ outcome: 'success', candidate: null, bounds: null, descriptor: null }),
     pickAt: async () => ({ outcome: 'missing', error: 'changed' }),
@@ -113,6 +114,7 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:preview-hold',
       'papers:window-capability:preview-release',
       'papers:window-capability:thumbnail',
+      'papers:window-capability:thumbnail-cache',
     ]);
   });
 
@@ -386,6 +388,28 @@ describe('windowCapabilityIpc', () => {
     // Absent options default to 240x135 (the service applies the default).
     await ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: {} });
     await ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: 240 } });
+  });
+
+  it('reads a cached thumbnail with only a live capability and exposes cache-miss without an image', async () => {
+    const ipc = fakeIpcMain();
+    const image = pngWithSize(120, 68);
+    let cached: Awaited<ReturnType<WindowCapabilityService['cachedThumbnailCapability']>> = {
+      outcome: 'success', thumbnail: { image, width: 120, height: 68 },
+    };
+    const service = new Proxy(fakeService(), {
+      get(target, property) {
+        if (property === 'cachedThumbnailCapability') return async () => cached;
+        return Reflect.get(target, property);
+      },
+    });
+    registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service, isSender: () => true });
+    expect(await ipc.invoke('papers:window-capability:thumbnail-cache', 42, { capability })).toEqual({
+      outcome: 'success', imageUrl: `data:image/png;base64,${image}`, width: 120, height: 68,
+    });
+    cached = { outcome: 'cache-miss' };
+    expect(await ipc.invoke('papers:window-capability:thumbnail-cache', 42, { capability })).toEqual({ outcome: 'cache-miss' });
+    await expect(ipc.invoke('papers:window-capability:thumbnail-cache', 42, { capability, extra: true }))
+      .rejects.toThrow('exactly capability');
   });
 
   it('maps typed fallback outcomes to payload-free page results (019G)', async () => {
