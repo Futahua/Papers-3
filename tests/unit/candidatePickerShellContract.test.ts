@@ -19,7 +19,7 @@ describe('native candidate picker immediate shell', () => {
     expect(source).toContain("e.textContent=loading?'Loading windows…':'No matching windows'");
     expect(source).toContain('window.__papersPickerUpdate=(next)=>{all=next;loading=false;document.body.classList.remove(\'busy\');render()};');
     expect(source).toContain('if(!loading&&!document.body.classList.contains(\'busy\'))list.querySelector(\'.row\')?.click()');
-    expect(source).toMatch(/active\.pickerId !== pickerId[\s\S]{0,100}return false/);
+    expect(source).toMatch(/active\.pickerId !== pickerId[\s\S]{0,100}return 'stale'/);
     // Updating rows leaves the search and filter controls in place; only list
     // children are replaced, so the active search value and keyboard focus live on.
     expect(source).toContain('list.replaceChildren()');

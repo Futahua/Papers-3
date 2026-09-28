@@ -1021,6 +1021,61 @@ describe('windowCapabilityService lifecycle', () => {
     await service.stop();
   });
 
+  it('releases both possible DWM previews when the second enable is denied', async () => {
+    const first = observation({ runtimeId: TOKEN_A as RuntimeWindowId });
+    const second = observation({ runtimeId: TOKEN_B as RuntimeWindowId, windowInstanceId: 'W2222222222222222', processStartTicks: '638945344001234568' });
+    const calls: string[] = [];
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [first, second] }),
+      observe: async (token) => ({ outcome: 'success', observation: token === first.runtimeId ? first : second }),
+      livePreview: async (target, _caller, enabled) => {
+        calls.push(`${enabled ? '+' : '-'}${target}`);
+        return enabled && target === second.runtimeId ? { outcome: 'denied' } : { outcome: 'success' };
+      },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const a = await service.bindCandidate(listed.candidates[0]!.id);
+    const b = await service.bindCandidate(listed.candidates[1]!.id);
+    if (a.outcome !== 'success' || b.outcome !== 'success') throw new Error('candidate bind failed');
+    expect((await service.beginLivePreviewCapability!(a.capability, '424242')).outcome).toBe('success');
+    expect((await service.beginLivePreviewCapability!(b.capability, '424242')).outcome).toBe('denied');
+    expect(calls).toEqual([`+${first.runtimeId}`, `+${second.runtimeId}`, `-${second.runtimeId}`, `-${first.runtimeId}`]);
+    expect((await service.endLivePreview!()).outcome).toBe('success');
+    expect(calls).toHaveLength(4);
+    await service.stop();
+  });
+
+  it('retries failed cleanup debt after a timed-out second enable', async () => {
+    const first = observation({ runtimeId: TOKEN_A as RuntimeWindowId });
+    const second = observation({ runtimeId: TOKEN_B as RuntimeWindowId, windowInstanceId: 'W2222222222222222', processStartTicks: '638945344001234568' });
+    const calls: string[] = [];
+    let secondDisables = 0;
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [first, second] }),
+      observe: async (token) => ({ outcome: 'success', observation: token === first.runtimeId ? first : second }),
+      livePreview: async (target, _caller, enabled) => {
+        calls.push(`${enabled ? '+' : '-'}${target}`);
+        if (enabled && target === second.runtimeId) return { outcome: 'timeout' };
+        if (!enabled && target === second.runtimeId && ++secondDisables === 1) return { outcome: 'denied' };
+        return { outcome: 'success' };
+      },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const a = await service.bindCandidate(listed.candidates[0]!.id);
+    const b = await service.bindCandidate(listed.candidates[1]!.id);
+    if (a.outcome !== 'success' || b.outcome !== 'success') throw new Error('candidate bind failed');
+    expect((await service.beginLivePreviewCapability!(a.capability, '424242')).outcome).toBe('success');
+    expect((await service.beginLivePreviewCapability!(b.capability, '424242')).outcome).toBe('timeout');
+    expect(calls).toEqual([`+${first.runtimeId}`, `+${second.runtimeId}`, `-${second.runtimeId}`, `-${first.runtimeId}`]);
+    expect((await service.endLivePreview!()).outcome).toBe('success');
+    expect(calls.at(-1)).toBe(`-${second.runtimeId}`);
+    await service.stop();
+  });
+
   it('attempts release after live-preview begin reports timeout', async () => {
     const calls: boolean[] = [];
     const factory = fakeFactory({

@@ -31,6 +31,7 @@ import { PapersUpdater } from './papersUpdater';
 import { createPapersControlEventHub, startPapersControlServer, type PapersControlEventHub, type PapersControlServer } from './control/papersControlServer';
 import { papersDataDirArgument } from './papersDataDir';
 import { createHash, randomUUID } from 'node:crypto';
+import { createCandidatePickerDelivery, type CandidatePickerDeliveryResult } from './windows/candidatePickerDelivery';
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
@@ -2057,14 +2058,26 @@ async function bootstrap(): Promise<void> {
     onError: (message) => console.warn(`[papers] ${message}`),
   });
   const widgetPreviewWindows = new Map<number, BrowserWindow>();
+  type PickerCandidate = { id: string; title: string; icon: string | null; current: boolean };
   type CandidatePickerSession = {
     window: BrowserWindow;
     pickerId: string;
     candidateIds: Set<string>;
+    documentReady: boolean;
+    delivery?: ReturnType<typeof createCandidatePickerDelivery<PickerCandidate>>;
     resolve: ((result: { action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }) => void) | null;
     dismiss?: () => void;
   };
   const candidatePickerSessions = new Map<number, CandidatePickerSession>();
+  const makeCandidatePickerDelivery = (senderId: number, session: CandidatePickerSession) =>
+    createCandidatePickerDelivery<PickerCandidate>(async (candidates) => {
+      if (candidatePickerSessions.get(senderId) !== session || session.window.isDestroyed()) return false;
+      const update = JSON.stringify(candidates).replace(/</g, '\\u003c');
+      const applied = await session.window.webContents.executeJavaScript(
+        `typeof window.__papersPickerUpdate === 'function' && (window.__papersPickerUpdate(${update}), true)`, true,
+      );
+      return applied === true && candidatePickerSessions.get(senderId) === session && !session.window.isDestroyed();
+    });
   const hideWidgetPreview = (senderId: number): void => {
     const preview = widgetPreviewWindows.get(senderId);
     widgetPreviewWindows.delete(senderId);
@@ -2260,12 +2273,17 @@ async function bootstrap(): Promise<void> {
     showCandidatePicker: async (sender, candidates, pickerId) => {
       const active = candidatePickerSessions.get(sender.id);
       if (active && !active.window.isDestroyed()) {
-        if (active.pickerId !== pickerId) active.resolve?.({ action: 'cancel', candidateId: null });
+        if (active.pickerId !== pickerId) {
+          active.resolve?.({ action: 'cancel', candidateId: null });
+          active.delivery?.close();
+          active.pickerId = pickerId;
+          active.delivery = makeCandidatePickerDelivery(sender.id, active);
+          if (active.documentReady) await active.delivery.markReady();
+        }
         active.pickerId = pickerId;
         active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
-        const update = JSON.stringify(candidates).replace(/</g, '\\u003c');
-        await active.window.webContents.executeJavaScript(
-          `window.__papersPickerUpdate?.(${update})`, true).catch(() => undefined);
+        const delivered = await active.delivery!.update(candidates);
+        if (delivered === 'failed' || delivered === 'stale') return { action: 'cancel', candidateId: null };
         if (!active.window.isVisible()) active.window.show();
         active.window.focus();
         return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
@@ -2373,8 +2391,10 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           window: picker,
           pickerId,
           candidateIds: new Set(candidates.map((candidate) => candidate.id)),
+          documentReady: false,
           resolve,
         };
+        session.delivery = makeCandidatePickerDelivery(sender.id, session);
         candidatePickerSessions.set(sender.id, session);
         const finishAction = (action: 'select' | 'close', candidateId: string): void => {
           const current = candidatePickerSessions.get(sender.id);
@@ -2494,6 +2514,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (input.key === 'Escape') { event.preventDefault(); closePicker(); }
         });
         picker.once('closed', () => {
+          session.delivery?.close();
           // Belt and braces with the release registered at acquisition; both are
           // idempotent. Release first, unconditionally: closePicker() deletes the
           // session before destroying the window, so a session check above this
@@ -2516,20 +2537,20 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           picker.show();
           picker.focus();
         });
+        picker.webContents.once('did-finish-load', () => {
+          const current = candidatePickerSessions.get(sender.id);
+          if (current !== session || picker.isDestroyed()) return;
+          session.documentReady = true;
+          void session.delivery?.markReady();
+        });
         void picker.loadURL(`data:text/html;base64,${Buffer.from(html).toString('base64')}`).catch(() => closePicker());
       });
     },
-    updateCandidatePicker: async (sender, candidates, pickerId) => {
+    updateCandidatePicker: async (sender, candidates, pickerId): Promise<CandidatePickerDeliveryResult> => {
       const active = candidatePickerSessions.get(sender.id);
-      if (!active || active.pickerId !== pickerId || active.window.isDestroyed()) return false;
+      if (!active || active.pickerId !== pickerId || active.window.isDestroyed()) return 'stale';
       active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
-      const update = JSON.stringify(candidates).replace(/</g, '\\u003c');
-      try {
-        await active.window.webContents.executeJavaScript(`window.__papersPickerUpdate?.(${update})`, true);
-        return candidatePickerSessions.get(sender.id) === active && active.pickerId === pickerId && !active.window.isDestroyed();
-      } catch {
-        return false;
-      }
+      return active.delivery!.update(candidates);
     },
     showPreview: (sender, preview) => { showPreviewWindow(sender, preview, 'widget'); },
     isWorkspaceSender: (sender, projectId) => {

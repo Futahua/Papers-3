@@ -29,7 +29,7 @@ export interface CompactWidgetIpcDependencies {
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
   showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>, pickerId: string) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
-  updateCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>, pickerId: string) => Promise<boolean> | boolean;
+  updateCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>, pickerId: string) => Promise<'applied' | 'buffered' | 'stale' | 'failed' | boolean> | 'applied' | 'buffered' | 'stale' | 'failed' | boolean;
   dismissCandidatePicker?: (sender: WebContents) => Promise<void> | void;
 }
 
@@ -329,8 +329,11 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
       if (typeof value.current !== 'boolean') throw new Error('candidate current state is malformed');
       return { id, title, icon, current: value.current };
     });
-    await updateCandidatePicker?.(event.sender, candidates, raw.pickerId);
-    return { outcome: 'success' };
+    const rawDelivery = await updateCandidatePicker?.(event.sender, candidates, raw.pickerId);
+    const delivery = rawDelivery === true ? 'applied' : rawDelivery === false ? 'stale' : rawDelivery ?? 'failed';
+    return delivery === 'applied' || delivery === 'buffered'
+      ? { outcome: 'success', delivery }
+      : { outcome: delivery };
   });
 
   ipcMain.handle('papers:backpack:window-candidate-picker-close', async (event, raw) => {

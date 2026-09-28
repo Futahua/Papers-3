@@ -566,7 +566,18 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   let peekGeneration = 0;
   let peekRestoreTokens: RuntimeWindowId[] = [];
   let peekMinimizedTarget: RuntimeWindowId | null = null;
-  let livePreview: { target: RuntimeWindowId; caller: string } | null = null;
+  type LivePreviewIntent = { target: RuntimeWindowId; caller: string };
+  let livePreview: LivePreviewIntent | null = null;
+  // A failed or timed-out enable can leave either the old or new DWM preview
+  // active. Keep both release obligations until each exact disable succeeds.
+  let livePreviewDebts: LivePreviewIntent[] = [];
+  let livePreviewOperation: Promise<void> = Promise.resolve();
+
+  function queueLivePreviewOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = livePreviewOperation.then(operation, operation);
+    livePreviewOperation = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
 
   function purgeBindingThumbnails(bindingId: string): void {
     for (const key of [...thumbnailCache.keys()]) {
@@ -1585,17 +1596,26 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     return { outcome: 'success' };
   }
 
+  async function releaseLivePreviewDebts(): Promise<WindowCapabilityResult> {
+    if (!factory.livePreview || stopped) return { outcome: 'success' };
+    let firstFailure: WindowCapabilityResult | null = null;
+    for (const preview of [...livePreviewDebts].reverse()) {
+      let result: WindowCapabilityResult;
+      try { result = await factory.livePreview(preview.target, preview.caller, false); }
+      catch (error) { result = { outcome: 'helper-unavailable', error: String(error) }; }
+      if (result.outcome === 'success') {
+        livePreviewDebts = livePreviewDebts.filter((debt) => debt !== preview);
+      } else firstFailure ??= result;
+    }
+    if (livePreview && !livePreviewDebts.includes(livePreview)) livePreview = null;
+    return firstFailure ?? { outcome: 'success' };
+  }
+
   async function endLivePreview(): Promise<WindowCapabilityResult> {
-    // Release first and unconditionally: an end with no recorded preview, or an
-    // end after a failed begin, must never strand the peek's hold.
+    // Release the watcher hold immediately; serialize native calls so an end
+    // cannot run before an outstanding enable has established its release debt.
     releaseLifecycleForPeek();
-    const activePreview = livePreview;
-    if (!activePreview || !factory.livePreview || stopped) return { outcome: 'success' };
-    let result: WindowCapabilityResult;
-    try { result = await factory.livePreview(activePreview.target, activePreview.caller, false); }
-    catch (error) { result = { outcome: 'helper-unavailable', error: String(error) }; }
-    if (result.outcome === 'success' && livePreview === activePreview) livePreview = null;
-    return result;
+    return queueLivePreviewOperation(releaseLivePreviewDebts);
   }
 
   async function beginLivePreviewCapability(capability: WindowRuntimeCapability, caller: string): Promise<WindowCapabilityResult> {
@@ -1604,24 +1624,30 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (!target) return { outcome: 'missing', error: 'binding is not issued' };
     if (!/^[1-9][0-9]{0,19}$/.test(caller)) return { outcome: 'malformed', error: 'caller window is malformed' };
     if (!(await ensureStarted()) || !factory.livePreview) return { outcome: 'helper-unavailable', error: 'DWM live preview is unavailable' };
-    if (livePreview?.target === target && livePreview.caller === caller) return { outcome: 'success' };
     // A peek session holds the periodic enumeration off exactly like a chooser
     // does: shifting across member icons drives one preview request per icon,
     // and every one of them shares the helper with the 500 ms watcher.
     holdLifecycleForPeek();
-    // DWM replaces the active preview when enabled for another target. An
-    // explicit disable here exposed the entire desktop between list rows.
-    // Record release intent before the helper call. If begin times out after
-    // DWM accepted it, a later picker cleanup still knows what to disable.
-    const preview = { target, caller };
-    livePreview = preview;
-    const result = await factory.livePreview(target, caller, true);
-    if (result.outcome !== 'success') {
-      // Begin can partially succeed (for example, after IPC timeout). Try to
-      // undo it now and retain the intent if that cleanup itself fails.
-      await endLivePreview();
-    }
-    return result;
+    return queueLivePreviewOperation(async () => {
+      if (livePreview?.target === target && livePreview.caller === caller) return { outcome: 'success' };
+      // Enabling B should replace A without an intervening desktop reveal.
+      // Until success is known, both A and B may still be active; a timeout
+      // can also mean B was accepted despite the missing reply.
+      const preview = { target, caller };
+      livePreviewDebts.push(preview);
+      let result: WindowCapabilityResult;
+      try { result = await factory.livePreview!(target, caller, true); }
+      catch (error) { result = { outcome: 'helper-unavailable', error: String(error) }; }
+      if (result.outcome === 'success') {
+        livePreview = preview;
+        livePreviewDebts = [preview];
+      } else {
+        // Disable B, then every predecessor that DWM may have left active.
+        // Failed disables remain as debt for a later picker/Peek end retry.
+        await releaseLivePreviewDebts();
+      }
+      return result;
+    });
   }
 
   async function applyCapability(capability: WindowRuntimeCapability, bounds: WindowBounds): Promise<WindowCapabilityResult> {
@@ -2039,6 +2065,12 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   }
 
   async function stop(): Promise<void> {
+    // Answer a waiting snapshot before serialized DWM release can yield to a
+    // watcher tick. Shutdown must not turn that wait into a complete baseline.
+    const strandedResolve = resolveLifecycleRefreshDeferred;
+    lifecycleRefreshDeferred = null;
+    resolveLifecycleRefreshDeferred = null;
+    strandedResolve?.(lifecycleSnapshot(false, 'service is stopped'));
     await endLivePreview().catch(() => undefined);
     await endPeek().catch(() => undefined);
     if (stopped) return;
@@ -2049,10 +2081,6 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     // it with an honest stopped snapshot and clear the blocker state.
     candidatePickerHolds = 0;
     lifecycleCatchupRequired = false;
-    const strandedResolve = resolveLifecycleRefreshDeferred;
-    lifecycleRefreshDeferred = null;
-    resolveLifecycleRefreshDeferred = null;
-    strandedResolve?.(lifecycleSnapshot(false, 'service is stopped'));
     if (lifecycleTimer) clearInterval(lifecycleTimer);
     lifecycleTimer = null;
     lifecycleSubscribers.clear();
