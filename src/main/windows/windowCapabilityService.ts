@@ -70,6 +70,7 @@ export const WINDOW_CAPABILITY_PICK_POINT_RANGE = 65536;
  * captured live on hover; leaving/canceling discards late responses. */
 export const WINDOW_CAPABILITY_THUMBNAIL_MAX_CACHE = 8;
 export const WINDOW_CAPABILITY_THUMBNAIL_TTL_MS = 750;
+const BIND_OBSERVATION_CACHE_TTL_MS = 250;
 export const WINDOW_CAPABILITY_THUMBNAIL_DEFAULT_WIDTH = 240;
 /** 028 P3 capture-before-minimize registration: minimum interval between
  * background frame seeds for one binding (bounded). */
@@ -466,7 +467,11 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     }
   };
   const bindings = new Map<string, { helperToken: RuntimeWindowId; touched: number }>();
-  const bindingObservations = new Map<string, WindowObservation>();
+  const bindingObservations = new Map<string, {
+    observation: WindowObservation;
+    observedAt: number;
+    helperRevision: number;
+  }>();
   const bindingDescriptors = new Map<string, PersistedWindowMemberDescriptor>();
   const observations = new Map<string, Promise<WindowCapabilityResult>>();
   const iconCache = new Map<string, string>();
@@ -1207,7 +1212,11 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
       if (oldest) { bindings.delete(oldest[0]); bindingObservations.delete(oldest[0]); bindingDescriptors.delete(oldest[0]); }
     }
     bindings.set(bindingId, { helperToken: token, touched: Date.now() });
-    if (observation) bindingObservations.set(bindingId, observation);
+    if (observation) bindingObservations.set(bindingId, {
+      observation,
+      observedAt: stamp(),
+      helperRevision: factory.revision,
+    });
     return { version: 1, bindingId };
   }
 
@@ -1451,7 +1460,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const token = tokenFor(capability);
     const bindingId = capability.bindingId ?? '';
-    const issued = bindingObservations.get(bindingId);
+    const issued = bindingObservations.get(bindingId)?.observation;
     if (!token || !issued) return { outcome: 'missing', error: 'binding is not issued' };
     if (issued.processId === currentPid) return { outcome: 'denied', error: 'the Papers process cannot be ended here' };
     if (typeof issued.processStartTicks !== 'string' || typeof issued.processPath !== 'string' || !issued.windowInstanceId) {
@@ -1777,7 +1786,21 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
 
     // A runtime capability is session-local. Re-observe it before revealing a
     // durable image so a stale/reused handle can never inherit old content.
-    const live = await observeCapability(capability, { seedFrame: false });
+    const issued = bindingObservations.get(bindingId);
+    const observationAge = issued ? stamp() - issued.observedAt : Number.POSITIVE_INFINITY;
+    // A just-issued capability already carries the exact helper observation
+    // that bindCandidate performed. Reuse it only briefly and only in the same
+    // ready helper revision; older bindings take the normal live observe path.
+    // The target identity check below is still mandatory before disk bytes leave
+    // this process.
+    const recentlyBound = issued
+      && issued.helperRevision === factory.revision
+      && factory.isReady()
+      && observationAge >= 0
+      && observationAge <= BIND_OBSERVATION_CACHE_TTL_MS
+      ? { outcome: 'success' as const, observation: issued.observation }
+      : null;
+    const live = recentlyBound ?? await observeCapability(capability, { seedFrame: false });
     if (live.outcome !== 'success') return live;
     if (live.observation?.windowInstanceId?.toLowerCase() !== descriptor.windowInstanceId?.toLowerCase()) {
       return { outcome: 'missing', error: 'binding identity changed' };
@@ -1787,7 +1810,11 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
 
   async function resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<WindowResolveResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
-    const listed = await listCandidates();
+    // Resolution is followed by bindCandidate(), which re-observes the exact
+    // selected token before issuing a capability. Use the watcher's recent
+    // complete snapshot for candidate discovery so this path does not queue a
+    // redundant desktop enumeration ahead of that authoritative bind.
+    const listed = await listCandidates({ includeNativeIcons: false });
     if (listed.outcome !== 'success') return { outcome: 'helper-unavailable', error: listed.error };
     // EXACT IDENTITY FIRST. A descriptor that carries a windowInstanceId names one
     // specific window; matching only on fingerprint + title makes two Chrome-like

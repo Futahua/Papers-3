@@ -15,6 +15,7 @@ import type { WindowControlBroker } from '../windows/windowControlBroker';
 import type { ForegroundBridge } from '../windows/foregroundBridge';
 import type { WindowObservation } from '../windows/windowCapabilityTypes';
 import { defaultWindowGeometryJournal } from '../windows/windowGeometryJournal';
+import { defaultWindowInteractionJournal, type WindowInteractionJournal, type WindowInteractionKind } from '../windows/windowInteractionJournal';
 
 import {
   type PersistedWindowMemberDescriptor,
@@ -38,6 +39,8 @@ export const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
 /** 019GR3: a page-facing fallback error is omitted or truncated to at most
  * this many UTF-8 bytes; arbitrary internal strings are never exposed. */
 export const WINDOW_THUMBNAIL_PAGE_ERROR_MAX_BYTES = 256;
+const AUTO_ADD_DIAGNOSTIC_STAGES = ['auto-add-resolve', 'auto-add-observe', 'auto-add-commit'] as const;
+const AUTO_ADD_DIAGNOSTIC_OUTCOMES = ['success', 'missing', 'ambiguous', 'helper-unavailable', 'timeout', 'failed', 'skipped'] as const;
 
 /** 019G page-facing thumbnail result: exactly success
  * `{ outcome:'success', imageUrl, width, height }` or a payload-free typed
@@ -76,6 +79,10 @@ export interface WindowCapabilityIpcDependencies {
     ownerHwnd: number;
     hit: WindowBounds;
   } | null;
+  /** Optional test seam for the bounded machine-local interaction journal. */
+  diagnosticJournal?: Pick<WindowInteractionJournal, 'record'>;
+  /** Optional test seam for resolving registered control recipients by id. */
+  controlSenderForId?: (senderId: number) => WebContents | null;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -240,7 +247,34 @@ export function registerWindowCapabilityIpc({
   resolveControlSurface,
   activateForeground,
   focusForActivation,
+  diagnosticJournal,
+  controlSenderForId,
 }: WindowCapabilityIpcDependencies): void {
+  const journal = diagnosticJournal ?? defaultWindowInteractionJournal();
+  const recordDiagnostic = (
+    kind: WindowInteractionKind,
+    detail: string,
+    outcome: string,
+  ): void => journal.record({ kind, detail, outcome });
+  const recordTimedDiagnostic = (
+    kind: WindowInteractionKind,
+    detail: string,
+    startedAt: number,
+    outcome: string,
+  ): void => {
+    const elapsed = Math.max(0, Date.now() - startedAt);
+    if ((kind.startsWith('thumbnail-') || kind === 'peek-begin' || kind === 'peek-end') && outcome === 'success' && elapsed < 100) return;
+    recordDiagnostic(kind, `${detail} ${elapsed}ms`, outcome);
+  };
+  const deliverLifecycle = (sender: WebContents, channel: string, payload: unknown): 'sent' | 'destroyed' | 'failed' => {
+    if (sender.isDestroyed()) return 'destroyed';
+    try {
+      sender.send(channel, payload);
+      return 'sent';
+    } catch {
+      return 'failed';
+    }
+  };
   let nativePeekActive = false;
   const lifecycleUnsubscribers = new Map<number, () => void>();
   // Preview intent: a project holds the periodic enumeration off from the moment
@@ -413,10 +447,19 @@ export function registerWindowCapabilityIpc({
     }
   });
   controlBroker?.onShift((held) => {
+    let sent = 0;
+    let failed = 0;
     for (const senderId of controlsBySender.keys()) {
-      const sender = webContents.fromId(senderId);
-      if (sender && !sender.isDestroyed()) sender.send('papers:window-control:shift', held);
+      const sender = controlSenderForId?.(senderId) ?? webContents.fromId(senderId);
+      if (!sender || sender.isDestroyed()) continue;
+      try {
+        sender.send('papers:window-control:shift', held);
+        sent += 1;
+      } catch {
+        failed += 1;
+      }
     }
+    recordDiagnostic('shift-delivery', held ? 'held' : 'released', `${sent}sent/${failed}failed`);
   });
   const releasePreviewHold = (senderId: number): void => {
     const release = previewHolds.get(senderId);
@@ -470,7 +513,12 @@ export function registerWindowCapabilityIpc({
     if (!isPlainObject(raw) || Object.keys(raw).some((key) => key !== 'includeNativeIcons')) throw new Error('list payload contains unknown fields');
     if (raw['includeNativeIcons'] !== undefined && typeof raw['includeNativeIcons'] !== 'boolean') throw new Error('includeNativeIcons must be boolean');
     return { includeNativeIcons: raw['includeNativeIcons'] !== false };
-  }, (options) => service.listCandidates(options ?? { includeNativeIcons: true }));
+  }, async (options) => {
+    const startedAt = Date.now();
+    const result = await service.listCandidates(options ?? { includeNativeIcons: true });
+    recordDiagnostic('candidate-list', `${result.outcome === 'success' ? result.candidates.length : 0} rows ${Math.max(0, Date.now() - startedAt)}ms`, result.outcome);
+    return result;
+  });
   handleRead('papers:window-capability:lifecycle-snapshot', (raw) => {
     if (raw === undefined) return undefined;
     if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('lifecycle snapshot payload must be empty');
@@ -483,6 +531,17 @@ export function registerWindowCapabilityIpc({
     }
     return raw['windowInstanceId'];
   }, (windowInstanceId) => service.resolveWindowInstance(windowInstanceId));
+  handleRead('papers:window-layout:diagnostic', (raw) => {
+    if (!isPlainObject(raw) || !exactKeys(raw, ['stage', 'outcome'])
+      || !AUTO_ADD_DIAGNOSTIC_STAGES.includes(raw['stage'] as typeof AUTO_ADD_DIAGNOSTIC_STAGES[number])
+      || !AUTO_ADD_DIAGNOSTIC_OUTCOMES.includes(raw['outcome'] as typeof AUTO_ADD_DIAGNOSTIC_OUTCOMES[number])) {
+      throw new Error('window layout diagnostic is malformed');
+    }
+    return { stage: raw['stage'] as typeof AUTO_ADD_DIAGNOSTIC_STAGES[number], outcome: raw['outcome'] as typeof AUTO_ADD_DIAGNOSTIC_OUTCOMES[number] };
+  }, ({ stage, outcome }) => {
+    recordDiagnostic('auto-add', stage, outcome);
+    return Promise.resolve({ outcome: 'success' });
+  });
   handle('papers:window-capability:subscribe-lifecycle', (raw) => {
     if (raw === undefined) return undefined;
     if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('lifecycle subscription payload must be empty');
@@ -490,9 +549,16 @@ export function registerWindowCapabilityIpc({
   }, async (_input, event) => {
     lifecycleUnsubscribers.get(event.sender.id)?.();
     const unsubscribe = service.watchWindowLifecycle({
-      onEvent: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('papers:window-lifecycle:event', payload); },
-      onBaseline: (payload) => { if (!event.sender.isDestroyed()) event.sender.send('papers:window-lifecycle:baseline', payload); },
+      onEvent: (payload) => {
+        const outcome = deliverLifecycle(event.sender, 'papers:window-lifecycle:event', payload);
+        recordDiagnostic('lifecycle-delivery', payload.kind, outcome);
+      },
+      onBaseline: (payload) => {
+        const outcome = deliverLifecycle(event.sender, 'papers:window-lifecycle:baseline', payload);
+        recordDiagnostic('lifecycle-delivery', 'baseline', outcome);
+      },
     });
+    recordDiagnostic('lifecycle-subscribe', 'accepted', 'success');
     lifecycleUnsubscribers.set(event.sender.id, unsubscribe);
     event.sender.once('destroyed', () => {
       if (lifecycleUnsubscribers.get(event.sender.id) === unsubscribe) lifecycleUnsubscribers.delete(event.sender.id);
@@ -716,28 +782,36 @@ export function registerWindowCapabilityIpc({
   handle('papers:window-capability:close', parseRuntimeCapability, (capability) => service.closeCapability(capability));
   handle('papers:window-capability:end-process', parseRuntimeCapability, (capability) => service.endProcessCapability(capability));
   handle('papers:window-capability:peek-begin', parseRuntimeCapability, async (capability, event) => {
+    const startedAt = Date.now();
     const caller = resolveCallerHwnd?.(event.sender) ?? null;
     if (caller && service.beginLivePreviewCapability) {
       // A failed/late begin can still have taken effect in DWM. Keep the
       // release route armed until a confirmed end succeeds.
       nativePeekActive = true;
       const result = await service.beginLivePreviewCapability(capability, caller);
+      recordTimedDiagnostic('peek-begin', 'live', startedAt, result.outcome);
       return result;
     }
     nativePeekActive = false;
-    return service.beginPeekCapability(capability);
+    const result = await service.beginPeekCapability(capability);
+    recordTimedDiagnostic('peek-begin', 'fallback', startedAt, result.outcome);
+    return result;
   });
   handle('papers:window-capability:peek-end', (raw) => {
     if (raw === undefined) return undefined;
     if (!isPlainObject(raw) || Object.keys(raw).length !== 0) throw new Error('peek-end payload must be empty');
     return undefined;
   }, async () => {
+    const startedAt = Date.now();
     if (nativePeekActive && service.endLivePreview) {
       const result = await service.endLivePreview();
       if (result.outcome === 'success') nativePeekActive = false;
+      recordTimedDiagnostic('peek-end', 'live', startedAt, result.outcome);
       return result;
     }
-    return service.endPeek();
+    const result = await service.endPeek();
+    recordTimedDiagnostic('peek-end', 'fallback', startedAt, result.outcome);
+    return result;
   });
   handle(
     'papers:window-capability:apply',
@@ -850,7 +924,12 @@ export function registerWindowCapabilityIpc({
       const options = parseThumbnailOptions(raw['options']);
       return { capability, options };
     },
-    async (input) => toPageThumbnailResult(await service.thumbnailCapability(input.capability, input.options)),
+    async (input) => {
+      const startedAt = Date.now();
+      const result = await service.thumbnailCapability(input.capability, input.options);
+      recordTimedDiagnostic('thumbnail-capture', 'fresh', startedAt, result.outcome);
+      return toPageThumbnailResult(result);
+    },
   );
   handle(
     'papers:window-capability:thumbnail-cache',
@@ -860,6 +939,11 @@ export function registerWindowCapabilityIpc({
       }
       return { capability: parseRuntimeCapability(raw['capability']) };
     },
-    async (input) => toPageCachedThumbnailResult(await service.cachedThumbnailCapability(input.capability)),
+    async (input) => {
+      const startedAt = Date.now();
+      const result = await service.cachedThumbnailCapability(input.capability);
+      recordTimedDiagnostic('thumbnail-cache', 'read', startedAt, result.outcome);
+      return toPageCachedThumbnailResult(result);
+    },
   );
 }

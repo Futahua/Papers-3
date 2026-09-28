@@ -4,6 +4,7 @@ import { WORKSPACE_SURFACE_KIND, MAX_REGISTERED_SURFACES } from '../backpacks/ba
 import type { CompactWidgetSession } from '../windows/compactWidgetSession';
 
 const MAX_BYTES = 512;
+const PICKER_SESSION_ID_PATTERN = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 
 export interface CompactWidgetIpcDependencies {
   ipcMain: Pick<IpcMain, 'handle'>;
@@ -27,7 +28,8 @@ export interface CompactWidgetIpcDependencies {
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
-  showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
+  showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>, pickerId: string) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
+  updateCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>, pickerId: string) => Promise<boolean> | boolean;
   dismissCandidatePicker?: (sender: WebContents) => Promise<void> | void;
 }
 
@@ -68,7 +70,7 @@ function ensureWorkspaceSurface(
   registry.register(senderId, projectId, WORKSPACE_SURFACE_KIND);
 }
 
-export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, setHoverPolicy, requestHoverQuickRun, acknowledgeHoverQuickRunSeal, showPreview, hidePreview, showContextMenu, showCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
+export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspaceSender, waitForAuthority, windowIdForWorkspaceSender, isWidgetSender, setHoverPolicy, requestHoverQuickRun, acknowledgeHoverQuickRunSeal, showPreview, hidePreview, showContextMenu, showCandidatePicker, updateCandidatePicker, dismissCandidatePicker }: CompactWidgetIpcDependencies): void {
   ipcMain.handle('papers:backpack:widget-open', async (event, raw) => {
     await waitForAuthority?.(event.sender);
     if (!object(raw) || !exact(raw, raw.activate === undefined
@@ -268,16 +270,17 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
 
   ipcMain.handle('papers:backpack:window-candidate-picker', async (event, raw) => {
     await waitForAuthority?.(event.sender);
-    if (!object(raw) || !Array.isArray(raw.candidates) || raw.candidates.length > 64) throw new Error('window candidate picker payload is malformed');
+    if (!object(raw) || !Array.isArray(raw.candidates) || raw.candidates.length > 64
+      || typeof raw.pickerId !== 'string' || !PICKER_SESSION_ID_PATTERN.test(raw.pickerId)) throw new Error('window candidate picker payload is malformed');
     let authorized = false;
-    if (exact(raw, ['projectId', 'candidates'])) {
+    if (exact(raw, ['projectId', 'pickerId', 'candidates'])) {
       const projectId = key(raw.projectId, 'projectId');
       if (isWorkspaceSender(event.sender, projectId)) {
         ensureWorkspaceSurface(registry, event.sender.id, projectId);
         const surface = registry.surface(event.sender.id);
         authorized = !!surface && surface.projectId === projectId && surface.kind === WORKSPACE_SURFACE_KIND;
       }
-    } else if (exact(raw, ['token', 'candidates'])) {
+    } else if (exact(raw, ['token', 'pickerId', 'candidates'])) {
       const surface = registry.surface(event.sender.id);
       const token = key(raw.token, 'token');
       authorized = !!surface && isWidgetSender(event.sender, surface.projectId)
@@ -295,8 +298,39 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
       return { id, title, icon, current: value.current };
     });
     return showCandidatePicker
-      ? showCandidatePicker(event.sender, candidates)
+      ? showCandidatePicker(event.sender, candidates, raw.pickerId)
       : { action: 'cancel', candidateId: null };
+  });
+
+  ipcMain.handle('papers:backpack:window-candidate-picker-update', async (event, raw) => {
+    await waitForAuthority?.(event.sender);
+    if (!object(raw) || !Array.isArray(raw.candidates) || raw.candidates.length > 64
+      || typeof raw.pickerId !== 'string' || !PICKER_SESSION_ID_PATTERN.test(raw.pickerId)) throw new Error('window candidate picker update is malformed');
+    let authorized = false;
+    if (exact(raw, ['projectId', 'pickerId', 'candidates'])) {
+      const projectId = key(raw.projectId, 'projectId');
+      const surface = registry.surface(event.sender.id);
+      authorized = isWorkspaceSender(event.sender, projectId) && !!surface
+        && surface.projectId === projectId && surface.kind === WORKSPACE_SURFACE_KIND;
+    } else if (exact(raw, ['token', 'pickerId', 'candidates'])) {
+      const surface = registry.surface(event.sender.id);
+      const token = key(raw.token, 'token');
+      authorized = !!surface && isWidgetSender(event.sender, surface.projectId)
+        && registry.validSender(event.sender.id, surface.projectId, token);
+    }
+    if (!authorized) throw new Error('denied: sender is not a registered project surface');
+    const candidates = raw.candidates.map((value) => {
+      if (!object(value) || !exact(value, ['id', 'title', 'icon', 'current'])) throw new Error('window candidate picker item is malformed');
+      const id = key(value.id, 'candidate id');
+      const title = key(value.title, 'candidate title');
+      const icon = value.icon;
+      if (icon !== null && (typeof icon !== 'string' || Buffer.byteLength(icon, 'utf8') > 256 * 1024
+        || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(icon))) throw new Error('candidate icon is malformed');
+      if (typeof value.current !== 'boolean') throw new Error('candidate current state is malformed');
+      return { id, title, icon, current: value.current };
+    });
+    await updateCandidatePicker?.(event.sender, candidates, raw.pickerId);
+    return { outcome: 'success' };
   });
 
   ipcMain.handle('papers:backpack:window-candidate-picker-close', async (event, raw) => {

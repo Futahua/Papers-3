@@ -59,6 +59,7 @@ function fakeService(): WindowCapabilityService {
  * with arbitrary events. */
 function fakeIpcMain() {
   const handlers = new Map<string, (event: unknown, raw: unknown) => Promise<unknown>>();
+  const sent: Array<{ senderId: number; channel: string; payload: unknown }> = [];
   return {
     ipcMain: {
       handle(channel: string, fn: (event: never, raw: unknown) => Promise<unknown>) {
@@ -76,10 +77,12 @@ function fakeIpcMain() {
         getURL: () => 'papers-project://as-you-go/index.html',
         once: () => undefined,
         isDestroyed: () => false,
+        send: (sentChannel: string, payload: unknown) => { sent.push({ senderId, channel: sentChannel, payload }); },
       },
     }, raw);
     },
     channels: () => [...handlers.keys()],
+    sent,
   };
 }
 
@@ -93,6 +96,7 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:list',
       'papers:window-capability:lifecycle-snapshot',
       'papers:window-capability:resolve-instance',
+      'papers:window-layout:diagnostic',
       'papers:window-capability:subscribe-lifecycle',
       'papers:window-capability:bind',
       'papers:window-control:sync',
@@ -116,6 +120,103 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:thumbnail',
       'papers:window-capability:thumbnail-cache',
     ]);
+  });
+
+  it('records only allowlisted auto-add stages and outcomes without member identity', async () => {
+    const ipc = fakeIpcMain();
+    const records: Array<Record<string, unknown>> = [];
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service: fakeService(),
+      isSender: () => true,
+      diagnosticJournal: { record: (entry) => records.push(entry) },
+    });
+
+    await expect(ipc.invoke('papers:window-layout:diagnostic', 42, {
+      stage: 'auto-add-resolve', outcome: 'ambiguous',
+    })).resolves.toEqual({ outcome: 'success' });
+    expect(records).toEqual([{
+      kind: 'auto-add', detail: 'auto-add-resolve', outcome: 'ambiguous',
+    }]);
+    await expect(ipc.invoke('papers:window-layout:diagnostic', 42, {
+      stage: 'auto-add-resolve', outcome: 'failed', memberId: 'private',
+    })).rejects.toThrow('window layout diagnostic is malformed');
+    await expect(ipc.invoke('papers:window-layout:diagnostic', 42, {
+      stage: 'arbitrary', outcome: 'failed',
+    })).rejects.toThrow('window layout diagnostic is malformed');
+    expect(records).toHaveLength(1);
+  });
+
+  it('records lifecycle delivery and Peek outcomes without sender or window identifiers', async () => {
+    const ipc = fakeIpcMain();
+    const records: Array<Record<string, unknown>> = [];
+    const service = fakeService();
+    service.watchWindowLifecycle = (callbacks) => {
+      callbacks.onBaseline({ complete: true, trackerSessionId: 'private-session', sequence: 1, windows: [] });
+      return () => undefined;
+    };
+    service.beginLivePreviewCapability = async () => ({ outcome: 'timeout', error: 'private error' });
+    service.endLivePreview = async () => ({ outcome: 'success' });
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service,
+      isSender: () => true,
+      resolveCallerHwnd: () => '12345',
+      diagnosticJournal: { record: (entry) => records.push(entry) },
+    });
+
+    await ipc.invoke('papers:window-capability:subscribe-lifecycle', 42, {});
+    expect(ipc.sent).toContainEqual(expect.objectContaining({ channel: 'papers:window-lifecycle:baseline' }));
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'lifecycle-delivery', detail: 'baseline', outcome: 'sent' }),
+      expect.objectContaining({ kind: 'lifecycle-subscribe', detail: 'accepted', outcome: 'success' }),
+    ]));
+
+    await expect(ipc.invoke('papers:window-capability:peek-begin', 42, capability)).resolves.toEqual({ outcome: 'timeout', error: 'private error' });
+    await expect(ipc.invoke('papers:window-capability:peek-end', 42, {})).resolves.toEqual({ outcome: 'success' });
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'peek-begin', detail: expect.stringMatching(/^live \d+ms$/), outcome: 'timeout' }),
+    ]));
+    expect(records.some((record) => record['kind'] === 'peek-end' && record['outcome'] === 'success')).toBe(false);
+    expect(JSON.stringify(records)).not.toContain('private-session');
+    expect(JSON.stringify(records)).not.toContain('12345');
+    expect(JSON.stringify(records)).not.toContain('private error');
+  });
+
+  it('records broker Shift delivery without serializing project or member identifiers', async () => {
+    const ipc = fakeIpcMain();
+    const records: Array<Record<string, unknown>> = [];
+    const shifts: Array<(held: boolean) => void> = [];
+    const broker = {
+      ready: true,
+      sessionId: 'private-session',
+      register: async () => true,
+      clear: () => undefined,
+      group: () => true,
+      onEvent: () => () => undefined,
+      onShift: (callback: (held: boolean) => void) => { shifts.push(callback); return () => undefined; },
+      stop: () => undefined,
+    };
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service: fakeService(),
+      isSender: () => true,
+      controlBroker: broker as never,
+      resolveControlSurface: () => ({ ownerHwnd: 999, hit: { x: 0, y: 0, width: 10, height: 10 } }),
+      diagnosticJournal: { record: (entry) => records.push(entry) },
+      controlSenderForId: (senderId) => ({
+        isDestroyed: () => false,
+        send: (channel: string, payload: unknown) => { ipc.sent.push({ senderId, channel, payload }); },
+      } as never),
+    });
+    await ipc.invoke('papers:window-control:sync', 42, []);
+    shifts[0]?.(true);
+    expect(records).toEqual([expect.objectContaining({
+      kind: 'shift-delivery', detail: 'held', outcome: '1sent/0failed',
+    })]);
+    expect(ipc.sent).toContainEqual({ senderId: 42, channel: 'papers:window-control:shift', payload: true });
+    expect(JSON.stringify(records)).not.toContain('private-session');
+    expect(JSON.stringify(records)).not.toContain('layoutId');
   });
 
   it('does not treat an unchanged rectangle as the same window identity', async () => {

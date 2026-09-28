@@ -135,7 +135,7 @@ ipcRenderer.on(VISUAL_FENCE_REQUEST_CHANNEL, (_event, payload) => {
   ipcRenderer.send(VISUAL_FENCE_RESPONSE_CHANNEL, { requestId, documentInstanceId, ready: true });
 });
 
-interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
+interface ProjectMessage { operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; pickerId?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; x?: unknown; y?: unknown; }
 
 const SCOPED_WORKSPACE_REQUESTS = new Set([
   'papers:project:as-you-go-load',
@@ -163,6 +163,7 @@ const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
 const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
 const WINDOW_THUMBNAIL_MAX_WIDTH = 320;
 const WINDOW_THUMBNAIL_MAX_HEIGHT = 180;
+const PICKER_SESSION_ID_PATTERN = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 let detachedToken: string | null = null;
 let detachedTransferId: string | null = null;
 let detachedPageReady = false;
@@ -529,6 +530,22 @@ window.addEventListener('message', (event) => {
     }
     task = ipcRenderer.invoke('papers:window-capability:thumbnail-cache', { capability });
   }
+  if (request.type === 'papers:project:window-diagnostic') {
+    const rawRequest = request as unknown as Record<string, unknown>;
+    const stages = ['auto-add-resolve', 'auto-add-observe', 'auto-add-commit'];
+    const outcomes = ['success', 'missing', 'ambiguous', 'helper-unavailable', 'timeout', 'failed', 'skipped'];
+    if (!exactKeys(rawRequest, ['type', 'requestId', 'stage', 'outcome'])
+      || !validRequestId(request.requestId)
+      || !stages.includes(String(rawRequest['stage']))
+      || !outcomes.includes(String(rawRequest['outcome']))) {
+      immediateHostError(request.requestId, event.origin, 'window diagnostic request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:window-layout:diagnostic', {
+      stage: rawRequest['stage'],
+      outcome: rawRequest['outcome'],
+    });
+  }
   if (request.type === 'papers:project:window-pick-begin') {
     console.info('[045-direct-pick] preload-begin-received');
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'members'])) {
@@ -680,16 +697,29 @@ window.addEventListener('message', (event) => {
       .then((payload) => ({ menu: payload }));
   }
   if (request.type === 'papers:project:window-candidate-picker') {
-    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'candidates'])
-      || !validRequestId(request.requestId) || !Array.isArray(request.candidates) || request.candidates.length > 64) {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'pickerId', 'candidates'])
+      || !validRequestId(request.requestId) || typeof request.pickerId !== 'string' || !PICKER_SESSION_ID_PATTERN.test(request.pickerId)
+      || !Array.isArray(request.candidates) || request.candidates.length > 64) {
       immediateHostError(request.requestId, event.origin, 'window candidate picker request is malformed');
       return;
     }
     const payload = widgetToken
-      ? { token: widgetToken, candidates: request.candidates }
-      : { projectId: projectIdFromOrigin(), candidates: request.candidates };
+      ? { token: widgetToken, pickerId: request.pickerId, candidates: request.candidates }
+      : { projectId: projectIdFromOrigin(), pickerId: request.pickerId, candidates: request.candidates };
     task = ipcRenderer.invoke('papers:backpack:window-candidate-picker', payload)
       .then((value) => ({ picker: value }));
+  }
+  if (request.type === 'papers:project:window-candidate-picker-update') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'pickerId', 'candidates'])
+      || !validRequestId(request.requestId) || typeof request.pickerId !== 'string' || !PICKER_SESSION_ID_PATTERN.test(request.pickerId)
+      || !Array.isArray(request.candidates) || request.candidates.length > 64) {
+      immediateHostError(request.requestId, event.origin, 'window candidate picker update request is malformed');
+      return;
+    }
+    const payload = widgetToken
+      ? { token: widgetToken, pickerId: request.pickerId, candidates: request.candidates }
+      : { projectId: projectIdFromOrigin(), pickerId: request.pickerId, candidates: request.candidates };
+    task = ipcRenderer.invoke('papers:backpack:window-candidate-picker-update', payload);
   }
   if (request.type === 'papers:project:window-candidate-picker-close') {
     if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !validRequestId(request.requestId)) {

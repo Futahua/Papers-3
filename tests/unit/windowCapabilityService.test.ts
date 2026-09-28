@@ -541,6 +541,40 @@ describe('windowCapabilityService bind and capabilities', () => {
 });
 
 describe('windowCapabilityService persisted re-resolution', () => {
+  it('uses the recent lifecycle snapshot for candidate discovery but re-observes before issuing a capability', async () => {
+    const target = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      windowInstanceId: 'W1111111111111111',
+      processStartTicks: '638945344001234567',
+    });
+    let listCalls = 0;
+    let observeCalls = 0;
+    const factory = fakeFactory({
+      list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; },
+      observe: async () => { observeCalls += 1; return { outcome: 'success', observation: target }; },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      observeCadenceMs: 500,
+    });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+
+    const resolved = await service.resolvePersisted({
+      version: 1,
+      title: target.title,
+      executableFingerprint: 'a'.repeat(64),
+      windowInstanceId: target.windowInstanceId,
+    });
+
+    expect(resolved.outcome).toBe('success');
+    expect(listCalls).toBe(1); // candidate discovery reused the complete recent lifecycle snapshot
+    expect(observeCalls).toBe(1); // capability issuance still revalidates the exact live token
+    stop();
+    await service.stop();
+  });
+
   it('resolves a visible window by exact pid+title into a fresh capability', async () => {
     const { service } = harness();
     const resolved = await service.resolvePersisted({ version: 1, title: 'Window A', executableFingerprint: '6a992db418ddfbdab5743ccd05f2eb7822b6c6d25e294987bebd5969f8143609' });
@@ -1553,6 +1587,45 @@ describe('windowCapabilityService thumbnail (019G)', () => {
     const terminal = await fresh.thumbnailCapability(bound2.capability, { maxWidth: 240, maxHeight: 135 });
     expect(terminal.outcome).toBe('success');
     if (terminal.outcome === 'success') expect(terminal.thumbnail?.source).toBe('icon');
+  });
+
+  it('reuses a just-observed bind for a cache read, then revalidates after its short TTL', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frames-bind-observation-'));
+    const durableFrames = createThumbnailFrameStore({ dir });
+    const target = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      windowInstanceId: 'W1111111111111111',
+      processStartTicks: '638945344001234567',
+    });
+    let clock = 1000;
+    let observeCalls = 0;
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [target] }),
+      observe: async () => { observeCalls += 1; return { outcome: 'success', observation: target }; },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      durableFrames,
+      now: () => clock,
+    });
+    try {
+      const listed = await service.listCandidates();
+      if (listed.outcome !== 'success' || listed.candidates.length === 0) throw new Error('candidate list failed');
+      const bound = await service.bindCandidate(listed.candidates[0]!.id);
+      if (bound.outcome !== 'success') throw new Error('binding failed');
+      durableFrames.put(thumbnailDescriptorKey(bound.descriptor), Buffer.from(pngWithSize(100, 50), 'base64'));
+
+      expect((await service.cachedThumbnailCapability(bound.capability)).outcome).toBe('success');
+      expect(observeCalls).toBe(1); // bind's identity observation validates the immediate cache read
+
+      clock += 251;
+      expect((await service.cachedThumbnailCapability(bound.capability)).outcome).toBe('success');
+      expect(observeCalls).toBe(2); // expired bind observations fall back to a live helper observe
+    } finally {
+      await service.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('028: a minimized member with a DURABLE frame serves real content instead of the terminal icon, across bindings/services', async () => {
