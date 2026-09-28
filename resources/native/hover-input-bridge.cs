@@ -9,27 +9,69 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
-internal sealed class AltQHoldTracker
+internal sealed class AltQChordTracker
 {
-    private bool active;
-
-    public bool Begin()
+    private sealed class Chord
     {
-        if (active) return false;
-        active = true;
+        public readonly int WidgetId;
+        public bool Released;
+        public bool Started;
+        public Chord(int widgetId) { WidgetId = widgetId; }
+    }
+
+    private bool qDown;
+    private Chord physicalChord;
+    private Chord activeChord;
+    private readonly ConcurrentQueue<Chord> pending = new ConcurrentQueue<Chord>();
+
+    public void ObserveQDown(bool isQ, bool altDown, Func<int> captureWidgetId)
+    {
+        if (!isQ || qDown) return;
+        qDown = true;
+        physicalChord = altDown ? new Chord(captureWidgetId()) : null;
+        if (physicalChord != null) pending.Enqueue(physicalChord);
+    }
+
+    public bool ObserveKeyUp(bool isQ, bool isAlt)
+    {
+        if (isQ) qDown = false;
+        if (!isQ && !isAlt) return false;
+        Chord chord = physicalChord;
+        if (chord == null || chord.Released) return false;
+        chord.Released = true;
+        physicalChord = null;
+        if (!chord.Started || activeChord != chord) return false;
+        activeChord = null;
         return true;
     }
 
-    public bool Release()
+    public bool TryStartNext(out int widgetId, out bool releasedBeforeStart)
     {
-        if (!active) return false;
-        active = false;
+        Chord chord;
+        if (!pending.TryDequeue(out chord))
+        {
+            widgetId = 0;
+            releasedBeforeStart = false;
+            return false;
+        }
+        widgetId = chord.WidgetId;
+        releasedBeforeStart = chord.Released;
+        if (!releasedBeforeStart)
+        {
+            chord.Started = true;
+            activeChord = chord;
+        }
         return true;
     }
 
     public bool ReleaseIfKeysAreUp(bool chordHeld)
     {
-        return !chordHeld && Release();
+        if (chordHeld || activeChord == null) return false;
+        activeChord.Released = true;
+        activeChord = null;
+        physicalChord = null;
+        qDown = false;
+        return true;
     }
 }
 
@@ -120,7 +162,8 @@ internal static class HoverInputBridge
     private static readonly HookProc hookCallback = KeyboardHook;
     private static IntPtr hookHandle = IntPtr.Zero;
     private static uint mainThreadId;
-    private static readonly AltQHoldTracker altQHold = new AltQHoldTracker();
+    private static readonly AltQChordTracker altQChords = new AltQChordTracker();
+    private static volatile bool altQHotkeyRegistered;
     private static volatile bool overlayOpen;
     private static volatile bool captureOpening;
     private static volatile int openingWidgetId;
@@ -174,7 +217,7 @@ internal static class HoverInputBridge
 
     private static void ReleaseAltQIfKeysAreUp()
     {
-        if (altQHold.ReleaseIfKeysAreUp(IsAltQPhysicallyHeld())) Emit("ALTQ_RELEASE");
+        if (altQChords.ReleaseIfKeysAreUp(IsAltQPhysicallyHeld())) Emit("ALTQ_RELEASE");
     }
 
     private static WidgetPolicy[] Snapshot()
@@ -381,6 +424,31 @@ internal static class HoverInputBridge
         return null;
     }
 
+    // Alt+Q docking asks which registered widget Windows actually hit at the
+    // cursor when the chord starts. Keep this separate from HitWidget(): that
+    // Quick Run policy intentionally excludes foreground widgets and applies
+    // capture-specific enablement checks.
+    private static WidgetPolicy WidgetForRootHit(IntPtr rootHit, WidgetPolicy[] snapshot)
+    {
+        if (rootHit == IntPtr.Zero) return null;
+        foreach (WidgetPolicy item in snapshot)
+        {
+            if (item.Handle == rootHit) return item;
+        }
+        return null;
+    }
+
+    private static int WidgetAtCursor()
+    {
+        POINT point;
+        if (!GetCursorPos(out point)) return 0;
+        IntPtr hit = GetAncestor(WindowFromPoint(point), GA_ROOT);
+        WidgetPolicy widget = WidgetForRootHit(hit, Snapshot());
+        if (widget == null || !IsWindow(widget.Handle)
+            || !IsWindowVisible(widget.Handle) || IsIconic(widget.Handle)) return 0;
+        return widget.Id;
+    }
+
     private static IntPtr KeyboardHook(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code < 0) return CallNextHookEx(hookHandle, code, wParam, lParam);
@@ -390,14 +458,19 @@ internal static class HoverInputBridge
         if (!down && !up) return CallNextHookEx(hookHandle, code, wParam, lParam);
         KBDLLHOOKSTRUCT key = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
         bool isAlt = key.vkCode == VK_MENU || key.vkCode == VK_LMENU || key.vkCode == VK_RMENU;
-        if (up && (key.vkCode == VK_Q || isAlt) && altQHold.Release())
+        bool injected = (key.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0;
+        if (up && !injected && altQChords.ObserveKeyUp(key.vkCode == VK_Q, isAlt))
         {
             Emit("ALTQ_RELEASE");
         }
         if (up && swallowedKeys.Remove(key.vkCode)) return new IntPtr(1);
         if (!down) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if (swallowedKeys.Contains(key.vkCode)) return new IntPtr(1); // suppress auto-repeat for consumed physical key
-        if ((key.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0) return CallNextHookEx(hookHandle, code, wParam, lParam);
+        if (injected) return CallNextHookEx(hookHandle, code, wParam, lParam);
+        if (altQHotkeyRegistered)
+            altQChords.ObserveQDown(key.vkCode == VK_Q,
+                (key.flags & LLKHF_ALTDOWN) != 0,
+                WidgetAtCursor);
         if ((key.flags & LLKHF_ALTDOWN) != 0 || key.vkCode == VK_Q || isAlt) return CallNextHookEx(hookHandle, code, wParam, lParam);
         WidgetPolicy policy = HitWidget();
         if (policy == null) return CallNextHookEx(hookHandle, code, wParam, lParam);
@@ -438,6 +511,7 @@ internal static class HoverInputBridge
         MSG queueMessage; PeekMessage(out queueMessage, IntPtr.Zero, 0, 0, PM_NOREMOVE);
         hookHandle = SetWindowsHookEx(WH_KEYBOARD_LL, hookCallback, IntPtr.Zero, 0);
         bool hotkey = RegisterHotKey(IntPtr.Zero, HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, VK_Q);
+        altQHotkeyRegistered = hotkey;
         var releaseWatchdog = new AltQReleaseWatchdog(ALTQ_RELEASE_WATCHDOG_ID, 12);
         if (hookHandle == IntPtr.Zero) Emit("ERROR\thook-install-failed");
         else Emit("READY\t" + (hotkey ? "1" : "0"));
@@ -451,11 +525,17 @@ internal static class HoverInputBridge
             if (message.message == WM_HOTKEY && message.wParam.ToUInt64() == HOTKEY_ID)
             {
                 // The registered hotkey can be dequeued after the physical key-up
-                // callback. The timer below repairs that ordering by polling the
-                // actual key state after the start record has been emitted.
-                if (altQHold.Begin())
+                // callback. Its widget identity was captured in the low-level hook
+                // on Q-down, before pointer movement can race this queue drain. The
+                // timer below repairs the delayed key-up after start is emitted.
+                int widgetId;
+                bool releasedBeforeStart;
+                // A missed hook event gives us no reliable cursor identity.
+                // Do not turn that into an outside press that restores a widget.
+                if (altQChords.TryStartNext(out widgetId, out releasedBeforeStart))
                 {
-                    Emit("ALTQ");
+                    Emit("ALTQ\t" + widgetId.ToString(CultureInfo.InvariantCulture));
+                    if (releasedBeforeStart) Emit("ALTQ_RELEASE");
                 }
             }
             else if (message.message == WM_TIMER && releaseWatchdog.IsTimerMessage(message.wParam))

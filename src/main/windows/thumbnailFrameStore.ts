@@ -4,8 +4,9 @@
  * non-uniform PNG) keeps that frame on disk so a MINIMIZED member can still
  * serve useful visual content even when the live DWM/PrintWindow capture fails
  * or the helper restarts - without depending only on the optional in-memory
- * cache. Frames are keyed by a SHA-256 of the STABLE member descriptor
- * (title + executableFingerprint), never by runtime ids/tokens/HWNDs; the PNG
+ * cache. Frames are keyed by a SHA-256 of the stable member descriptor
+ * (title + executableFingerprint + hashed windowInstanceId), never by raw
+ * runtime ids/tokens/HWNDs; the PNG
  * is strictly validated (signature + size bounds) on write and read; the store
  * is bounded (LRU frame count + total bytes) with atomic temp+rename writes.
  */
@@ -136,9 +137,13 @@ export function createThumbnailFrameStore(options: ThumbnailFrameStoreOptions): 
 
 /** Stable, bounded, non-identifying key for a persisted member descriptor.
  * Never contains a runtime id, token, HWND, process path, or title text. */
-export function thumbnailDescriptorKey(descriptor: { title: string; executableFingerprint?: string }): string {
+export function thumbnailDescriptorKey(descriptor: { title: string; executableFingerprint?: string; windowInstanceId?: string }): string {
+  const windowInstanceId = typeof descriptor.windowInstanceId === 'string'
+    && /^W[0-9a-f]{16}$/i.test(descriptor.windowInstanceId)
+    ? descriptor.windowInstanceId.toLowerCase()
+    : '';
   return createHash('sha256')
-    .update(`${descriptor.title}\u0000${descriptor.executableFingerprint ?? ''}`, 'utf8')
+    .update(`${descriptor.title}\u0000${descriptor.executableFingerprint ?? ''}\u0000${windowInstanceId}`, 'utf8')
     .digest('hex');
 }
 

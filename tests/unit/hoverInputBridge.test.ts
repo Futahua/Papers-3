@@ -42,10 +42,20 @@ function harness(onCaptured: HoverInputBridgeOptions['onCaptured'] = vi.fn()) {
   };
   const bridge = createHoverInputBridge(options);
   if (!bridge) throw new Error('expected a Windows helper bridge');
-  return { bridge, child, stdin };
+  return { bridge, child, stdin, options };
 }
 
 describe('hover input policy helper acknowledgement', () => {
+  it('preserves the native Alt+Q hit widget identity and represents foreign hits as outside', () => {
+    const { bridge, child, options } = harness();
+    child.stdout.write('ALTQ\t17\n');
+    child.stdout.write('ALTQ\t0\n');
+    expect(options.onAltQ).toHaveBeenNthCalledWith(1, 17);
+    expect(options.onAltQ).toHaveBeenNthCalledWith(2, null);
+    bridge.close();
+    child.emit('exit', 0);
+  });
+
   it('releases a failed captured key and resets the native handoff for a later try', async () => {
     const { bridge, child, stdin } = harness(async () => { throw new Error('launcher unavailable'); });
     child.stdout.write('CAPTURE\t7\t41\tQQ==\n');

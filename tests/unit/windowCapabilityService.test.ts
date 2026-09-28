@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { createWindowCapabilityService } from '../../src/main/windows/windowCapabilityService';
-import { createThumbnailFrameStore } from '../../src/main/windows/thumbnailFrameStore';
+import { createThumbnailFrameStore, thumbnailDescriptorKey } from '../../src/main/windows/thumbnailFrameStore';
 import type { WindowHelperFactory } from '../../src/main/windows/windowHelperFactory';
 import type { WindowCapabilityResult, WindowObservation, RuntimeWindowId } from '../../src/main/windows/windowCapabilityTypes';
 
@@ -541,6 +541,40 @@ describe('windowCapabilityService bind and capabilities', () => {
 });
 
 describe('windowCapabilityService persisted re-resolution', () => {
+  it('uses the recent lifecycle snapshot for candidate discovery but re-observes before issuing a capability', async () => {
+    const target = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      windowInstanceId: 'W1111111111111111',
+      processStartTicks: '638945344001234567',
+    });
+    let listCalls = 0;
+    let observeCalls = 0;
+    const factory = fakeFactory({
+      list: async () => { listCalls += 1; return { outcome: 'success', windows: [target] }; },
+      observe: async () => { observeCalls += 1; return { outcome: 'success', observation: target }; },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      observeCadenceMs: 500,
+    });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+
+    const resolved = await service.resolvePersisted({
+      version: 1,
+      title: target.title,
+      executableFingerprint: 'a'.repeat(64),
+      windowInstanceId: target.windowInstanceId,
+    });
+
+    expect(resolved.outcome).toBe('success');
+    expect(listCalls).toBe(1); // candidate discovery reused the complete recent lifecycle snapshot
+    expect(observeCalls).toBe(1); // capability issuance still revalidates the exact live token
+    stop();
+    await service.stop();
+  });
+
   it('resolves a visible window by exact pid+title into a fresh capability', async () => {
     const { service } = harness();
     const resolved = await service.resolvePersisted({ version: 1, title: 'Window A', executableFingerprint: '6a992db418ddfbdab5743ccd05f2eb7822b6c6d25e294987bebd5969f8143609' });
@@ -987,6 +1021,61 @@ describe('windowCapabilityService lifecycle', () => {
     await service.stop();
   });
 
+  it('releases both possible DWM previews when the second enable is denied', async () => {
+    const first = observation({ runtimeId: TOKEN_A as RuntimeWindowId });
+    const second = observation({ runtimeId: TOKEN_B as RuntimeWindowId, windowInstanceId: 'W2222222222222222', processStartTicks: '638945344001234568' });
+    const calls: string[] = [];
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [first, second] }),
+      observe: async (token) => ({ outcome: 'success', observation: token === first.runtimeId ? first : second }),
+      livePreview: async (target, _caller, enabled) => {
+        calls.push(`${enabled ? '+' : '-'}${target}`);
+        return enabled && target === second.runtimeId ? { outcome: 'denied' } : { outcome: 'success' };
+      },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const a = await service.bindCandidate(listed.candidates[0]!.id);
+    const b = await service.bindCandidate(listed.candidates[1]!.id);
+    if (a.outcome !== 'success' || b.outcome !== 'success') throw new Error('candidate bind failed');
+    expect((await service.beginLivePreviewCapability!(a.capability, '424242')).outcome).toBe('success');
+    expect((await service.beginLivePreviewCapability!(b.capability, '424242')).outcome).toBe('denied');
+    expect(calls).toEqual([`+${first.runtimeId}`, `+${second.runtimeId}`, `-${second.runtimeId}`, `-${first.runtimeId}`]);
+    expect((await service.endLivePreview!()).outcome).toBe('success');
+    expect(calls).toHaveLength(4);
+    await service.stop();
+  });
+
+  it('retries failed cleanup debt after a timed-out second enable', async () => {
+    const first = observation({ runtimeId: TOKEN_A as RuntimeWindowId });
+    const second = observation({ runtimeId: TOKEN_B as RuntimeWindowId, windowInstanceId: 'W2222222222222222', processStartTicks: '638945344001234568' });
+    const calls: string[] = [];
+    let secondDisables = 0;
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [first, second] }),
+      observe: async (token) => ({ outcome: 'success', observation: token === first.runtimeId ? first : second }),
+      livePreview: async (target, _caller, enabled) => {
+        calls.push(`${enabled ? '+' : '-'}${target}`);
+        if (enabled && target === second.runtimeId) return { outcome: 'timeout' };
+        if (!enabled && target === second.runtimeId && ++secondDisables === 1) return { outcome: 'denied' };
+        return { outcome: 'success' };
+      },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const listed = await service.listCandidates();
+    if (listed.outcome !== 'success') throw new Error('candidate listing failed');
+    const a = await service.bindCandidate(listed.candidates[0]!.id);
+    const b = await service.bindCandidate(listed.candidates[1]!.id);
+    if (a.outcome !== 'success' || b.outcome !== 'success') throw new Error('candidate bind failed');
+    expect((await service.beginLivePreviewCapability!(a.capability, '424242')).outcome).toBe('success');
+    expect((await service.beginLivePreviewCapability!(b.capability, '424242')).outcome).toBe('timeout');
+    expect(calls).toEqual([`+${first.runtimeId}`, `+${second.runtimeId}`, `-${second.runtimeId}`, `-${first.runtimeId}`]);
+    expect((await service.endLivePreview!()).outcome).toBe('success');
+    expect(calls.at(-1)).toBe(`-${second.runtimeId}`);
+    await service.stop();
+  });
+
   it('attempts release after live-preview begin reports timeout', async () => {
     const calls: boolean[] = [];
     const factory = fakeFactory({
@@ -1183,8 +1272,8 @@ describe('windowCapabilityService thumbnail (019G)', () => {
    * are all observable. */
   function thumbnailHarness(fallback?: WindowCapabilityResult) {
     const windows: WindowObservation[] = [
-      observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Window A', processId: 1001, processPath: 'C:\\Apps\\a.exe', state: 'normal' }),
-      observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Window B', processId: 2002, processPath: 'C:\\Apps\\b.exe', state: 'minimized' }),
+      observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Window A', processId: 1001, processPath: 'C:\\Apps\\a.exe', windowInstanceId: 'Waaaaaaaaaaaaaaaa', state: 'normal' }),
+      observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Window B', processId: 2002, processPath: 'C:\\Apps\\b.exe', windowInstanceId: 'Wbbbbbbbbbbbbbbbb', state: 'minimized' }),
     ];
     const calls: Array<{ token: string; width: number; height: number }> = [];
     let revision = 0;
@@ -1555,12 +1644,52 @@ describe('windowCapabilityService thumbnail (019G)', () => {
     if (terminal.outcome === 'success') expect(terminal.thumbnail?.source).toBe('icon');
   });
 
+  it('reuses a just-observed bind for a cache read, then revalidates after its short TTL', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frames-bind-observation-'));
+    const durableFrames = createThumbnailFrameStore({ dir });
+    const target = observation({
+      runtimeId: TOKEN_A as RuntimeWindowId,
+      windowInstanceId: 'W1111111111111111',
+      processStartTicks: '638945344001234567',
+    });
+    let clock = 1000;
+    let observeCalls = 0;
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [target] }),
+      observe: async () => { observeCalls += 1; return { outcome: 'success', observation: target }; },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      durableFrames,
+      now: () => clock,
+    });
+    try {
+      const listed = await service.listCandidates();
+      if (listed.outcome !== 'success' || listed.candidates.length === 0) throw new Error('candidate list failed');
+      const bound = await service.bindCandidate(listed.candidates[0]!.id);
+      if (bound.outcome !== 'success') throw new Error('binding failed');
+      durableFrames.put(thumbnailDescriptorKey(bound.descriptor), Buffer.from(pngWithSize(100, 50), 'base64'));
+
+      expect((await service.cachedThumbnailCapability(bound.capability)).outcome).toBe('success');
+      expect(observeCalls).toBe(1); // bind's identity observation validates the immediate cache read
+
+      clock += 251;
+      expect((await service.cachedThumbnailCapability(bound.capability)).outcome).toBe('success');
+      expect(observeCalls).toBe(2); // expired bind observations fall back to a live helper observe
+    } finally {
+      await service.stop();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('028: a minimized member with a DURABLE frame serves real content instead of the terminal icon, across bindings/services', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frames-'));
     const durableFrames = createThumbnailFrameStore({ dir });
     let mode: 'normal' | 'icon' = 'normal';
+    let thumbnailCalls = 0;
     const windows: WindowObservation[] = [
-      observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Window A', processId: 1001, processPath: 'C:\\Apps\\a.exe', state: 'normal' }),
+      observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Window A', processId: 1001, processPath: 'C:\\Apps\\a.exe', windowInstanceId: 'W0123456789abcdef', state: 'normal' }),
     ];
     const factory: WindowHelperFactory = {
       start: async () => 'ready',
@@ -1577,6 +1706,7 @@ describe('windowCapabilityService thumbnail (019G)', () => {
       close: async () => ({ outcome: 'success' }),
       hover: async () => ({ outcome: 'success', window: null }),
       thumbnail: async (runtimeId, maxWidth = 240, maxHeight = 135) => {
+        thumbnailCalls += 1;
         if (mode === 'icon') return { outcome: 'success', thumbnail: { image: pngWithSize(maxWidth, maxHeight), width: maxWidth, height: maxHeight, source: 'icon', minimized: true } };
         return { outcome: 'success', thumbnail: { image: pngWithSize(maxWidth, maxHeight), width: maxWidth, height: maxHeight, source: 'capture', minimized: false } };
       },
@@ -1588,12 +1718,13 @@ describe('windowCapabilityService thumbnail (019G)', () => {
       if (listed.outcome !== 'success' || listed.candidates.length === 0) throw new Error('no candidates');
       const bound = await service.bindCandidate(listed.candidates[0]!.id);
       if (bound.outcome !== 'success') throw new Error('bind failed');
-      return bound.capability;
+      return bound;
     }
     try {
       // Service 1 captures real content while normal (writes the durable frame).
       const service = make(0);
-      const capability = await bind(service);
+      const bound = await bind(service);
+      const capability = bound.capability;
       const real = await service.thumbnailCapability(capability, { maxWidth: 240, maxHeight: 135 });
       expect(real.outcome).toBe('success');
       if (real.outcome === 'success') expect(real.thumbnail?.source).toBe('capture');
@@ -1602,10 +1733,82 @@ describe('windowCapabilityService thumbnail (019G)', () => {
       // supplies real content instead of the icon.
       mode = 'icon';
       const service2 = make(100000);
-      const capability2 = await bind(service2);
+      const bound2 = await bind(service2);
+      const capability2 = bound2.capability;
+      const callsBeforeCachedRead = thumbnailCalls;
+      const cached = await service2.cachedThumbnailCapability(capability2);
+      expect(cached.outcome).toBe('success');
+      if (cached.outcome === 'success') {
+        expect(cached.thumbnail?.image).toBe(real.outcome === 'success' ? real.thumbnail?.image : undefined);
+      }
+      expect(thumbnailCalls).toBe(callsBeforeCachedRead); // cache lookup revalidates by observe, never captures
       const minimized = await service2.thumbnailCapability(capability2, { maxWidth: 240, maxHeight: 135 });
       expect(minimized.outcome).toBe('success');
       if (minimized.outcome === 'success') expect(minimized.thumbnail?.source).toBe('dwm');
+
+      const descriptor = bound2.descriptor;
+      const framePath = path.join(dir, `${thumbnailDescriptorKey(descriptor)}.png`);
+      fs.writeFileSync(framePath, Buffer.from('corrupt frame'));
+      const service3 = make(200000);
+      const capability3 = (await bind(service3)).capability;
+      const callsBeforeCorruptRead = thumbnailCalls;
+      expect((await service3.cachedThumbnailCapability(capability3)).outcome).toBe('cache-miss');
+      expect(thumbnailCalls).toBe(callsBeforeCorruptRead);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('028 cached preview distinguishes same-title siblings by stable WID and misses when the frame is absent', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'frames-wid-'));
+    const durableFrames = createThumbnailFrameStore({ dir });
+    const siblingA = observation({ runtimeId: TOKEN_A as RuntimeWindowId, title: 'Same Title', processId: 1001, processPath: 'C:\\Apps\\shared.exe', windowInstanceId: 'W1111111111111111' });
+    const siblingB = observation({ runtimeId: TOKEN_B as RuntimeWindowId, title: 'Same Title', processId: 1002, processPath: 'C:\\Apps\\shared.exe', windowInstanceId: 'W2222222222222222' });
+    const legacyMember = observation({ runtimeId: TOKEN_C as RuntimeWindowId, title: 'Same Title', processId: 1003, processPath: 'C:\\Apps\\shared.exe' });
+    let thumbnailCalls = 0;
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [siblingA, siblingB, legacyMember] }),
+      observe: async (runtimeId) => {
+        const match = [siblingA, siblingB, legacyMember].find((entry) => entry.runtimeId === runtimeId);
+        return match ? { outcome: 'success', observation: match } : { outcome: 'missing', error: 'gone' };
+      },
+      thumbnail: async () => {
+        thumbnailCalls += 1;
+        return { outcome: 'missing', error: 'cache reads must not capture' };
+      },
+    });
+    const service = createWindowCapabilityService({
+      createFactory: () => factory,
+      currentPid: 9999,
+      getFileIcon: async () => ({ toDataURL: () => 'icon' }) as never,
+      durableFrames,
+    });
+    try {
+      const listed = await service.listCandidates();
+      if (listed.outcome !== 'success') throw new Error('list failed');
+      const rowA = listed.candidates.find((candidate) => candidate.windowInstanceId === siblingA.windowInstanceId);
+      const rowB = listed.candidates.find((candidate) => candidate.windowInstanceId === siblingB.windowInstanceId);
+      const rowLegacy = listed.candidates.find((candidate) => candidate.title === 'Same Title' && candidate.windowInstanceId === undefined);
+      if (!rowA || !rowB || !rowLegacy) throw new Error('duplicate-title candidates missing');
+      const boundA = await service.bindCandidate(rowA.id);
+      const boundB = await service.bindCandidate(rowB.id);
+      const boundLegacy = await service.bindCandidate(rowLegacy.id);
+      if (boundA.outcome !== 'success' || boundB.outcome !== 'success' || boundLegacy.outcome !== 'success') throw new Error('bind failed');
+      durableFrames.put(thumbnailDescriptorKey(boundA.descriptor), Buffer.from(pngWithSize(100, 50), 'base64'));
+      durableFrames.put(thumbnailDescriptorKey(boundB.descriptor), Buffer.from(pngWithSize(200, 100), 'base64'));
+      durableFrames.put(thumbnailDescriptorKey(boundLegacy.descriptor), Buffer.from(pngWithSize(150, 75), 'base64'));
+
+      const cacheA = await service.cachedThumbnailCapability(boundA.capability);
+      const cacheB = await service.cachedThumbnailCapability(boundB.capability);
+      expect(cacheA).toMatchObject({ outcome: 'success', thumbnail: { width: 100, height: 50 } });
+      expect(cacheB).toMatchObject({ outcome: 'success', thumbnail: { width: 200, height: 100 } });
+      expect(thumbnailCalls).toBe(0);
+      siblingA.windowInstanceId = 'W3333333333333333';
+      expect((await service.cachedThumbnailCapability(boundA.capability)).outcome).toBe('missing');
+      durableFrames.delete(thumbnailDescriptorKey(boundB.descriptor));
+      expect((await service.cachedThumbnailCapability(boundB.capability)).outcome).toBe('cache-miss');
+      expect((await service.cachedThumbnailCapability(boundLegacy.capability)).outcome).toBe('cache-miss');
+      expect(thumbnailCalls).toBe(0);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

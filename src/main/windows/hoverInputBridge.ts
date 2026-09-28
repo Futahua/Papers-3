@@ -20,7 +20,8 @@ export interface HoverInputBridgeOptions {
   sourcePath: string;
   compilerPath?: string;
   spawn?: typeof spawnProcess;
-  onAltQ: () => void;
+  /** Native topmost widget sender at chord start, or null when the cursor hit another window. */
+  onAltQ: (widgetSenderId: number | null) => void;
   onAltQRelease?: () => void;
   onCaptured: (senderId: number, captureId: string, text: string) => void | Promise<void>;
   onAppended?: (senderId: number, captureId: string, text: string) => void | Promise<void>;
@@ -159,7 +160,10 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
       const line = buffered.slice(0, newline).replace(/\r$/, '');
       buffered = buffered.slice(newline + 1);
       const parts = line.split('\t');
-      if (parts[0] === 'ALTQ') options.onAltQ();
+      if (parts[0] === 'ALTQ') {
+        const senderId = parts.length === 2 && /^\d+$/.test(parts[1] ?? '') ? Number(parts[1]) : 0;
+        options.onAltQ(Number.isSafeInteger(senderId) && senderId > 0 ? senderId : null);
+      }
       else if (parts[0] === 'ALTQ_RELEASE') options.onAltQRelease?.();
       else if (parts[0] === 'OPENING_READY' && parts.length === 2) {
         const senderId = Number(parts[1]);

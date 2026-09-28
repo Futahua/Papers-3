@@ -213,17 +213,10 @@ internal static class WindowControl
                         && mouse.Point.X < slot.Hit.Right && mouse.Point.Y >= slot.Hit.Top
                         && mouse.Point.Y < slot.Hit.Bottom) {
                         matched = true;
-                        Telemetry("hook-hit|" + slot.Id + "|" + (message == WM_RBUTTONDOWN ? "foreground" : "toggle"));
-                        // Right-click has no toggle side effect, so its foreground
-                        // attempt can run at physical mouse-down. The widget is
-                        // non-activating; an attempt delayed until DOM contextmenu
-                        // loses the input-time foreground opportunity on Windows.
-                        // THE PAGE OWNS THE RIGHT-CLICK ATTEMPT NOW. It asked the broker
-                        // directly, which is one gesture and one attempt with one
-                        // reported answer. Letting the hook also actuate would be two
-                        // attempts for one press, and the reviewer's rule is explicit:
-                        // never a second activation after a final refusal.
-                        // Left-click is unaffected - the page has always been its actuator.
+                        Telemetry("hook-hit|" + slot.Id + "|" + (message == WM_LBUTTONDOWN ? "foreground" : "toggle"));
+                        // Match diagnostics to the widget's current gesture mapping:
+                        // left-button down is foreground and right-button down is toggle.
+                        // This hook only labels a hit; the renderer owns both actions.
                         break;
                     }
                 }
@@ -232,7 +225,7 @@ internal static class WindowControl
                     for (int i = 0; i < snapshot.Length; ++i) {
                         if (snapshot[i].Active && snapshot[i].Owner == owner) { first = snapshot[i]; break; }
                     }
-                    Telemetry("hook-miss|" + (message == WM_RBUTTONDOWN ? "foreground" : "toggle")
+                    Telemetry("hook-miss|" + (message == WM_LBUTTONDOWN ? "foreground" : "toggle")
                         + "|at=" + mouse.Point.X + "," + mouse.Point.Y
                         + "|slot=" + first.Id + " owner=" + first.Owner.ToInt64() + " seen=" + owner.ToInt64()
                         + " rect=" + first.Hit.Left + "," + first.Hit.Top + "," + first.Hit.Right + "," + first.Hit.Bottom);

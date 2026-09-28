@@ -61,6 +61,10 @@ describe('thumbnailFrameStore', () => {
     expect(key).not.toContain('Window A');
     const other = thumbnailDescriptorKey({ title: 'Window B', executableFingerprint: 'f'.repeat(64) });
     expect(key).not.toEqual(other);
+    const instanceA = thumbnailDescriptorKey({ title: 'Window A', executableFingerprint: 'f'.repeat(64), windowInstanceId: 'W0123456789abcdef' });
+    const instanceB = thumbnailDescriptorKey({ title: 'Window A', executableFingerprint: 'f'.repeat(64), windowInstanceId: 'Wfedcba9876543210' });
+    expect(instanceA).not.toEqual(instanceB);
+    expect(thumbnailDescriptorKey({ title: 'Window A', executableFingerprint: 'f'.repeat(64), windowInstanceId: 'w0123456789ABCDEF' })).toBe(instanceA);
   });
 
   it('bounded LRU eviction and total-size cap', () => {

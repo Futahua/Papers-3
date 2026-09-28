@@ -30,7 +30,8 @@ import { PapersHostFacade } from './hostFacade';
 import { PapersUpdater } from './papersUpdater';
 import { createPapersControlEventHub, startPapersControlServer, type PapersControlEventHub, type PapersControlServer } from './control/papersControlServer';
 import { papersDataDirArgument } from './papersDataDir';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { createCandidatePickerDelivery, type CandidatePickerDeliveryResult } from './windows/candidatePickerDelivery';
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
@@ -1850,7 +1851,7 @@ async function bootstrap(): Promise<void> {
         }
       });
       widgetWindow.once('ready-to-show', () => {
-        if (!widgetWindow.isDestroyed()) {
+        if (!widgetWindow.isDestroyed() && !widgetWindow.isMinimized()) {
           widgetWindow.showInactive();
           // Re-assert topmost AFTER the window is shown. `alwaysOnTop: true` and
           // the setAlwaysOnTop call at construction stopped taking effect once
@@ -2040,12 +2041,15 @@ async function bootstrap(): Promise<void> {
   hoverInputBridge = createHoverInputBridge({
     cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
     sourcePath: resolveHoverInputBridgeSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
-    onAltQ: () => {
-      void widgetSession?.bringLatestToCursor().then((activated) => {
-        if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
-      }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
+    onAltQ: (widgetSenderId) => {
+      const activation = widgetSession?.beginAltQGesture(widgetSenderId);
+      if (activation) {
+        void activation.then((activated) => {
+          if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
+        }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
+      }
     },
-    onAltQRelease: () => widgetSession?.stopFollowing(),
+    onAltQRelease: () => widgetSession?.endAltQGesture(),
     onCaptured: async (senderId, _captureId, text) => {
       const result = await beginHoverCapture(senderId, text, true);
       if (!result.ok) throw new Error(result.detail);
@@ -2057,19 +2061,33 @@ async function bootstrap(): Promise<void> {
     onError: (message) => console.warn(`[papers] ${message}`),
   });
   const widgetPreviewWindows = new Map<number, BrowserWindow>();
+  type PickerCandidate = { id: string; title: string; icon: string | null; current: boolean };
   type CandidatePickerSession = {
     window: BrowserWindow;
+    pickerId: string;
     candidateIds: Set<string>;
+    documentReady: boolean;
+    delivery?: ReturnType<typeof createCandidatePickerDelivery<PickerCandidate>>;
     resolve: ((result: { action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }) => void) | null;
     dismiss?: () => void;
   };
   const candidatePickerSessions = new Map<number, CandidatePickerSession>();
+  const makeCandidatePickerDelivery = (senderId: number, session: CandidatePickerSession) =>
+    createCandidatePickerDelivery<PickerCandidate>(async (candidates) => {
+      if (candidatePickerSessions.get(senderId) !== session || session.window.isDestroyed()) return false;
+      const update = JSON.stringify(candidates).replace(/</g, '\\u003c');
+      const applied = await session.window.webContents.executeJavaScript(
+        `typeof window.__papersPickerUpdate === 'function' && (window.__papersPickerUpdate(${update}), true)`, true,
+      );
+      return applied === true && candidatePickerSessions.get(senderId) === session && !session.window.isDestroyed();
+    });
   const hideWidgetPreview = (senderId: number): void => {
     const preview = widgetPreviewWindows.get(senderId);
     widgetPreviewWindows.delete(senderId);
     // The signature goes with the window: a later hover must paint, not be
     // skipped as "already showing".
     lastPreviewSignature.delete(senderId);
+    previewRevisions.delete(senderId);
     if (preview && !preview.isDestroyed()) preview.destroy();
   };
   /** Papers' own preview window: transparent, never focused, always on top, and
@@ -2079,10 +2097,10 @@ async function bootstrap(): Promise<void> {
   /** What the preview currently shows per sender, so an identical repaint is
    * skipped rather than flashed again. */
   const lastPreviewSignature = new Map<number, string>();
+  const previewRevisions = new Map<number, number>();
   const showPreviewWindow = (sender: Electron.WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }, placement: 'widget' | 'anchor'): void => {
-    const previewSignature = `${preview.imageUrl.length}|${preview.width}x${preview.height}|${preview.title}`;
-
-      hideWidgetPreview(sender.id);
+    const previewSignature = createHash('sha256').update(preview.imageUrl).digest('hex')
+      + `|${preview.width}x${preview.height}|${preview.title}`;
       const pad = 4;
       const titleHeight = 24;
       const width = preview.width + (pad * 2);
@@ -2114,6 +2132,67 @@ async function bootstrap(): Promise<void> {
       }
       x = Math.max(area.x, Math.min(area.x + area.width - width, x));
       y = Math.max(area.y, Math.min(area.y + area.height - height, y));
+      const safeTitle = preview.title
+        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+      const html = `<!doctype html><meta charset="utf-8"><style>
+        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+        .preview{box-sizing:border-box;margin:${pad}px;width:${preview.width}px;height:${preview.height + titleHeight}px;
+          border:1px solid rgba(140,132,116,.72);border-radius:7px;overflow:hidden;
+          background:#26231f;box-shadow:0 3px 10px rgba(0,0,0,.38);
+          animation:rise 180ms cubic-bezier(.2,.8,.2,1) both}
+        .title{box-sizing:border-box;height:${titleHeight}px;padding:5px 7px;color:#eee9df;
+          font:11px/14px system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        img{display:block;width:${preview.width}px;height:${preview.height}px;object-fit:contain;background:#26231f}
+        @keyframes rise{from{transform:translateY(12px)}to{transform:translateY(0)}}
+      </style><div class="preview"><div class="title">${safeTitle}</div><img src="${preview.imageUrl}" alt=""></div>`;
+      const existing = widgetPreviewWindows.get(sender.id);
+      if (existing && !existing.isDestroyed()) {
+        if (existing.getBounds().x !== x || existing.getBounds().y !== y) {
+          existing.setPosition(x, y);
+        }
+        if (lastPreviewSignature.get(sender.id) === previewSignature) return;
+        lastPreviewSignature.set(sender.id, previewSignature);
+        const revision = (previewRevisions.get(sender.id) ?? 0) + 1;
+        previewRevisions.set(sender.id, revision);
+        const paint = (): void => {
+          if (existing.isDestroyed() || widgetPreviewWindows.get(sender.id) !== existing
+            || previewRevisions.get(sender.id) !== revision) return;
+          const payload = JSON.stringify({ imageUrl: preview.imageUrl, title: preview.title,
+            width: preview.width, height: preview.height, revision });
+          // Decode offscreen, then swap only the image node. The cached frame
+          // stays visible until the fresh frame is ready; the native window and
+          // its one-time entrance animation are never recreated.
+          void existing.webContents.executeJavaScript(`(() => {
+            const next = ${payload}; window.__previewRevision = next.revision;
+            const image = new Image(); image.src = next.imageUrl;
+            return image.decode().then(() => {
+              if (window.__previewRevision !== next.revision) return false;
+              const visible = document.querySelector('img');
+              const title = document.querySelector('.title');
+              const frame = document.querySelector('.preview');
+              if (!visible || !title || !frame) return false;
+              title.textContent = next.title;
+              visible.src = next.imageUrl;
+              visible.style.width = next.width + 'px';
+              visible.style.height = next.height + 'px';
+              frame.style.width = next.width + 'px';
+              frame.style.height = (next.height + ${titleHeight}) + 'px';
+              return true;
+            }).catch(() => false);
+          })();`).then((painted) => {
+            if (!painted || existing.isDestroyed() || widgetPreviewWindows.get(sender.id) !== existing
+              || previewRevisions.get(sender.id) !== revision) return;
+            const bounds = existing.getBounds();
+            if (bounds.x !== x || bounds.y !== y || bounds.width !== width || bounds.height !== height) {
+              existing.setBounds({ x, y, width, height });
+            }
+          }).catch(() => undefined);
+        };
+        if (existing.webContents.isLoadingMainFrame()) existing.webContents.once('did-finish-load', paint);
+        else paint();
+        return;
+      }
       const previewWindow = new BrowserWindow({
         x, y, width, height,
         frame: false,
@@ -2136,42 +2215,17 @@ async function bootstrap(): Promise<void> {
         if (widgetPreviewWindows.get(sender.id) === previewWindow) widgetPreviewWindows.delete(sender.id);
       });
       sender.once('destroyed', () => hideWidgetPreview(sender.id));
-      const safeTitle = preview.title
-        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-      const html = `<!doctype html><meta charset="utf-8"><style>
-        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
-        .preview{box-sizing:border-box;margin:${pad}px;width:${preview.width}px;height:${preview.height + titleHeight}px;
-          border:1px solid rgba(140,132,116,.72);border-radius:7px;overflow:hidden;
-          background:#26231f;box-shadow:0 3px 10px rgba(0,0,0,.38);
-          animation:rise 180ms cubic-bezier(.2,.8,.2,1) both}
-        .title{box-sizing:border-box;height:${titleHeight}px;padding:5px 7px;color:#eee9df;
-          font:11px/14px system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        img{display:block;width:${preview.width}px;height:${preview.height}px;object-fit:contain;background:#26231f}
-        @keyframes rise{from{transform:translateY(12px)}to{transform:translateY(0)}}
-      </style><div class="preview"><div class="title">${safeTitle}</div><img src="${preview.imageUrl}" alt=""></div>`;
-      // ONE window per sender, updated in place. This used to hide and destroy the
-      // previous window on every show, so a hover that painted the remembered
-      // image and then the fresh capture created TWO windows in a row - which is
-      // the double flash the creator sees. Reusing the window and swapping its
-      // content is one visible change instead of two, and an identical image is
-      // not repainted at all.
-      const existing = widgetPreviewWindows.get(sender.id);
-      if (existing && !existing.isDestroyed()) {
-        if (existing.getBounds().x !== x || existing.getBounds().y !== y
-          || existing.getBounds().width !== width || existing.getBounds().height !== height) {
-          existing.setBounds({ x, y, width, height });
-        }
-        if (lastPreviewSignature.get(sender.id) === previewSignature) return;
-        lastPreviewSignature.set(sender.id, previewSignature);
-        void existing.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
-          .then(() => { if (!existing.isDestroyed()) existing.showInactive(); })
-          .catch(() => hideWidgetPreview(sender.id));
-        return;
-      }
       lastPreviewSignature.set(sender.id, previewSignature);
-      void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => {
-        if (!previewWindow.isDestroyed()) previewWindow.showInactive();
+      void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(async () => {
+        if (previewWindow.isDestroyed() || widgetPreviewWindows.get(sender.id) !== previewWindow) return;
+        // The first frame is the cached preview. Wait for its image decode so
+        // the preview appears already painted instead of flashing an empty box.
+        await previewWindow.webContents.executeJavaScript(
+          'document.querySelector("img")?.decode().then(() => true, () => false) ?? false',
+        ).catch(() => false);
+        if (!previewWindow.isDestroyed() && widgetPreviewWindows.get(sender.id) === previewWindow) {
+          previewWindow.showInactive();
+        }
       }).catch(() => hideWidgetPreview(sender.id));
   };
 
@@ -2219,13 +2273,20 @@ async function bootstrap(): Promise<void> {
         menu.popup({ window: owner, callback: () => finish('cancel') });
       });
     },
-    showCandidatePicker: async (sender, candidates) => {
+    showCandidatePicker: async (sender, candidates, pickerId) => {
       const active = candidatePickerSessions.get(sender.id);
       if (active && !active.window.isDestroyed()) {
+        if (active.pickerId !== pickerId) {
+          active.resolve?.({ action: 'cancel', candidateId: null });
+          active.delivery?.close();
+          active.pickerId = pickerId;
+          active.delivery = makeCandidatePickerDelivery(sender.id, active);
+          if (active.documentReady) await active.delivery.markReady();
+        }
+        active.pickerId = pickerId;
         active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
-        const update = JSON.stringify(candidates).replace(/</g, '\\u003c');
-        await active.window.webContents.executeJavaScript(
-          `window.__papersPickerUpdate?.(${update})`, true).catch(() => undefined);
+        const delivered = await active.delivery!.update(candidates);
+        if (delivered === 'failed' || delivered === 'stale') return { action: 'cancel', candidateId: null };
         if (!active.window.isVisible()) active.window.show();
         active.window.focus();
         return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
@@ -2270,21 +2331,20 @@ async function bootstrap(): Promise<void> {
       const html = `<!doctype html><meta charset="utf-8"><title>Papers Window Chooser</title><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
  *{box-sizing:border-box}html,body{margin:0;height:100%;background:#161b22;color:#dbe7f3;font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}body{border:1px solid #465462;border-radius:12px;display:flex;flex-direction:column;box-shadow:0 14px 38px #0009}.head{padding:7px 13px 10px;border-bottom:1px solid #2b3742}.titleline{display:flex;align-items:center;justify-content:space-between;min-height:27px;margin-bottom:4px;-webkit-app-region:drag}.close,.search,.row,.empty,.filters,.state-filter,.direct-pick,.list{-webkit-app-region:no-drag}.filters{display:flex;align-items:center;gap:8px}.state-filter{display:grid;place-items:center;width:18px;height:18px;margin:0;border:1px solid currentColor;border-radius:4px;background:transparent;cursor:pointer;appearance:none}.state-filter:checked::after{content:'✓';font-size:13px;font-weight:800;line-height:1;color:currentColor}.state-filter.current-filter{color:#ef9c77}.state-filter.available-filter{color:#72a7d5}.state-filter:hover,.state-filter:focus-visible{background:currentColor;box-shadow:0 0 0 2px #ffffff18;outline:none}.state-filter:hover::after,.state-filter:focus-visible::after{color:#161b22}.direct-pick{display:grid;place-items:center;width:18px;height:18px;margin:0 0 0 2px;padding:0;border:1px solid #b782f0;border-radius:4px;background:#8f4bd129;color:#d9b8ff;cursor:pointer}.direct-pick:hover,.direct-pick:focus-visible{background:#8f4bd152;color:#fff;box-shadow:0 0 9px #9d55f699;outline:none}.direct-pick svg{display:block;width:12px;height:12px}.close{border:0;background:transparent;color:#9cacba;font-size:19px;line-height:20px;border-radius:5px;cursor:pointer}.close:hover{background:#31404b;color:#fff}.search{width:100%;height:34px;border:1px solid #536372;border-radius:8px;background:#0e141a;color:#f3f8fc;padding:0 11px;outline:none}.search:focus{border-color:#72a7d5;box-shadow:0 0 0 2px #72a7d533}.list{padding:7px;overflow:auto;flex:1;scrollbar-color:#4b5b68 transparent;display:flex;flex-direction:column}.row,.empty{flex:0 0 auto}.row{width:100%;border:0;background:transparent;color:inherit;display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px;border-radius:8px;text-align:left;cursor:pointer}.row:hover,.row:focus-visible{background:#273540;outline:none}.busy .row{pointer-events:none;opacity:.68}.icon{width:20px;height:20px;object-fit:contain}.fallback{width:16px;height:16px;border:1px solid #83919d;border-radius:3px}.label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#72a7d5}.state{font-size:11px;color:#72a7d5}.current .label,.current .state{color:#ef9c77}.empty{padding:24px;text-align:center;color:#8898a7}.drag-space{flex:1 0 28px;min-height:28px;-webkit-app-region:drag}
-</style><div class="head"><div class="titleline"><div class="filters" aria-label="Filter window states"><input class="state-filter current-filter" type="checkbox" aria-label="Show layout members" title="Show layout members (remove)"><input class="state-filter available-filter" type="checkbox" aria-label="Show available windows" title="Show available windows (add)"><button class="direct-pick" type="button" aria-label="Pick windows directly" title="Pick windows directly"><svg viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(-1 1)" d="M6.5 3.5l13.5 6.5-6.3 2.1-2.1 6.3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></button></div><button class="close" aria-label="Close">×</button></div><input class="search" type="search" placeholder="Search windows…" autocomplete="off" spellcheck="false"></div><div class="list"></div><script id="data" type="application/json">${encoded}</script><script>
- let all=JSON.parse(document.getElementById('data').textContent);const list=document.querySelector('.list'),search=document.querySelector('.search'),currentFilter=document.querySelector('.current-filter'),availableFilter=document.querySelector('.available-filter');
+</style><div class="head"><div class="titleline"><div class="filters" aria-label="Filter window states"><input class="state-filter current-filter" type="checkbox" aria-label="Show layout members" title="Show layout members (remove)"><input class="state-filter available-filter" type="checkbox" aria-label="Show available windows" title="Show available windows (add)"><button class="direct-pick" type="button" aria-label="Pick windows directly" title="Pick windows directly"><svg viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(-1 1)" d="M6.5 3.5l13.5 6.5-6.3 2.1-2.1 6.3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></button></div><button class="close" aria-label="Close">×</button></div><input class="search" type="search" placeholder="Search windows…" autocomplete="off" spellcheck="false"></div><div class="list" aria-live="polite"></div><script id="data" type="application/json">${encoded}</script><script>
+ let all=JSON.parse(document.getElementById('data').textContent),loading=${candidates.length === 0};const list=document.querySelector('.list'),search=document.querySelector('.search'),currentFilter=document.querySelector('.current-filter'),availableFilter=document.querySelector('.available-filter');
 function signal(path,id=''){window.candidatePicker.signal(path,id)}
  function appendDragSpace(){const d=document.createElement('div');d.className='drag-space';d.setAttribute('aria-hidden','true');list.append(d)}
- function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onclick=()=>{document.body.classList.add('busy');signal('select',c.id)};b.onmousedown=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};b.onmouseup=e=>{if(e.button!==1)return;e.preventDefault();e.stopPropagation();document.body.classList.add('busy');signal('close',c.id)};b.onauxclick=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};list.append(b)}appendDragSpace()}
+function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent=loading?'Loading windows…':'No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onclick=()=>{if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('select',c.id)};b.onmousedown=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};b.onmouseup=e=>{if(e.button!==1)return;e.preventDefault();e.stopPropagation();if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('close',c.id)};b.onauxclick=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};list.append(b)}appendDragSpace()}
  list.onpointerleave=()=>signal('peek-end');
- window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
-const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=false;render()};const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;document.querySelector('.direct-pick').onclick=()=>{document.body.classList.add('busy');signal('direct-pick')};search.oninput=render;currentFilter.onchange=()=>setExclusiveFilter(currentFilter,availableFilter);availableFilter.onchange=()=>setExclusiveFilter(availableFilter,currentFilter);document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
+ window.__papersPickerUpdate=(next)=>{all=next;loading=false;document.body.classList.remove('busy');render()};
+const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=false;render()};const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;document.querySelector('.direct-pick').onclick=()=>{document.body.classList.add('busy');signal('direct-pick')};search.oninput=render;currentFilter.onchange=()=>setExclusiveFilter(currentFilter,availableFilter);availableFilter.onchange=()=>setExclusiveFilter(availableFilter,currentFilter);document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='Enter'&&document.activeElement===search){e.preventDefault();if(!loading&&!document.body.classList.contains('busy'))list.querySelector('.row')?.click()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
       return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
         const pickerOpenedAt = Date.now();
         let pickerPointerEntered = false;
         let pickerOutsideSince: number | null = null;
         let pickerPointerWatch: NodeJS.Timeout | null = null;
-        let pickerShowAnimation: NodeJS.Timeout | null = null;
         let peekGeneration = 0;
         let peekTimer: NodeJS.Timeout | null = null;
         let peekEndTimer: NodeJS.Timeout | null = null;
@@ -2332,9 +2392,12 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         };
         const session: CandidatePickerSession = {
           window: picker,
+          pickerId,
           candidateIds: new Set(candidates.map((candidate) => candidate.id)),
+          documentReady: false,
           resolve,
         };
+        session.delivery = makeCandidatePickerDelivery(sender.id, session);
         candidatePickerSessions.set(sender.id, session);
         const finishAction = (action: 'select' | 'close', candidateId: string): void => {
           const current = candidatePickerSessions.get(sender.id);
@@ -2454,13 +2517,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (input.key === 'Escape') { event.preventDefault(); closePicker(); }
         });
         picker.once('closed', () => {
+          session.delivery?.close();
           // Belt and braces with the release registered at acquisition; both are
           // idempotent. Release first, unconditionally: closePicker() deletes the
           // session before destroying the window, so a session check above this
           // line would silently strand the hold.
           lifecycleHold.release();
           if (pickerPointerWatch) { clearInterval(pickerPointerWatch); pickerPointerWatch = null; }
-          if (pickerShowAnimation) { clearInterval(pickerShowAnimation); pickerShowAnimation = null; }
           ipcMain.removeListener('papers:candidate-picker:signal', pickerSignal);
           const current = candidatePickerSessions.get(sender.id);
           if (!current || current.window !== picker) return;
@@ -2472,36 +2535,29 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         });
         picker.once('ready-to-show', () => {
           if (picker.isDestroyed()) return;
-          // Show immediately. Gating this on the drained enumeration measured
-          // ~1.1 s of invisible window on the creator's machine, and it also let
-          // the native pointer watcher treat a hidden chooser as entered and
-          // dismiss it. The lifecycle hold itself is what removed the between-item
-          // lag, and it is untouched here.
-          const finalBounds = picker.getBounds();
-          const startY = Math.min(area.y + area.height - finalBounds.height, finalBounds.y + 12);
-          picker.setPosition(finalBounds.x, startY, false);
-          picker.setOpacity(0);
+          // Present the picker as soon as its document is ready. A slide/fade
+          // added another ~260 ms before it felt usable on the creator's machine.
           picker.show();
           picker.focus();
-          const startedAt = Date.now();
-          pickerShowAnimation = setInterval(() => {
-            if (picker.isDestroyed()) return;
-            const progress = Math.min(1, (Date.now() - startedAt) / 120);
-            const eased = 1 - ((1 - progress) ** 3);
-            const animatedY = Math.round(startY + ((finalBounds.y - startY) * eased));
-            picker.setPosition(finalBounds.x, animatedY, false);
-            picker.setOpacity(Math.max(0.01, eased));
-            if (progress >= 1 && pickerShowAnimation) {
-              clearInterval(pickerShowAnimation);
-              pickerShowAnimation = null;
-              picker.setPosition(finalBounds.x, finalBounds.y, false);
-              picker.setOpacity(1);
-            }
-          }, 16);
-          pickerShowAnimation.unref?.();
+        });
+        picker.webContents.once('did-finish-load', () => {
+          const current = candidatePickerSessions.get(sender.id);
+          if (current !== session || picker.isDestroyed()) return;
+          session.documentReady = true;
+          void session.delivery?.markReadyWithRetry().then((result) => {
+            // A buffered receipt has already been sent. If all bounded apply
+            // attempts fail, dismiss the loading shell instead of stranding it.
+            if (result === 'failed' && candidatePickerSessions.get(sender.id) === session) closePicker();
+          });
         });
         void picker.loadURL(`data:text/html;base64,${Buffer.from(html).toString('base64')}`).catch(() => closePicker());
       });
+    },
+    updateCandidatePicker: async (sender, candidates, pickerId): Promise<CandidatePickerDeliveryResult> => {
+      const active = candidatePickerSessions.get(sender.id);
+      if (!active || active.pickerId !== pickerId || active.window.isDestroyed()) return 'stale';
+      active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
+      return active.delivery!.update(candidates);
     },
     showPreview: (sender, preview) => { showPreviewWindow(sender, preview, 'widget'); },
     isWorkspaceSender: (sender, projectId) => {

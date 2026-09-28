@@ -247,7 +247,7 @@ export function createForegroundBridge(options: ForegroundBridgeOptions): Foregr
 
     async setForegroundWindow(handle: number): Promise<boolean> {
       if (!Number.isSafeInteger(handle) || handle <= 0) return false;
-      const out = await run(['set', String(handle)]);
+      const out = await run(['set', String(handle), String(process.pid)]);
       if (!out) return false;
       // The bridge prints "moved=1" only when GetForegroundWindow() really
       // became the target. A `set=1` alone is the false success this whole
@@ -274,7 +274,7 @@ export function createForegroundBridge(options: ForegroundBridgeOptions): Foregr
         foregroundSettleMs: -1,
       };
       if (!Number.isSafeInteger(handle) || handle <= 0) return attempt;
-      const out = await run(['set', String(handle)]);
+      const out = await run(['set', String(handle), String(process.pid)]);
       if (!out) return attempt;
       const flag = (name: string): boolean => new RegExp(`(?:^|\\s)${name}=1(?:\\s|$)`).test(out);
       const field = (name: string): string | null => {

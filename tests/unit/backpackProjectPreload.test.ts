@@ -57,6 +57,28 @@ describe('Backpack project protocol alignment', () => {
     expect(() => dispatch({ type: 'papers:project:window-candidates', requestId: 'candidate-list-bad', includeNativeIcons: 'yes' })).toThrow('invalid fields');
   });
 
+  it('opens and updates an authenticated picker session without exposing its widget token', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    tokenHandler({}, { token: 'private-widget-token' });
+    mocks.invoke.mockResolvedValue({ action: 'cancel', candidateId: null });
+    const pickerId = '12345678-1234-1234-1234-123456789abc';
+    const candidates = [{ id: 'candidate-1', title: 'Window', icon: null, current: false }];
+    dispatch({ type: 'papers:project:window-candidate-picker', requestId: 'picker-open', pickerId, candidates: [] });
+    dispatch({ type: 'papers:project:window-candidate-picker-update', requestId: 'picker-update', pickerId, candidates });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:window-candidate-picker', {
+      token: 'private-widget-token', pickerId, candidates: [],
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:window-candidate-picker-update', {
+      token: 'private-widget-token', pickerId, candidates,
+    });
+    expect(posts).not.toContainEqual(expect.objectContaining({ token: 'private-widget-token' }));
+    dispatch({ type: 'papers:project:window-candidate-picker-update', requestId: 'bad', pickerId: 'short', candidates });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'bad', ok: false }));
+  });
+
   it('0A: a refused checked save travels as a delivered result, not a failed request', async () => {
     await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
@@ -320,6 +342,42 @@ describe('Backpack project protocol alignment', () => {
     for (const id of ['thumb-bad-1', 'thumb-bad-2', 'thumb-bad-3', 'thumb-bad-4', 'thumb-bad-5', 'thumb-bad-6']) {
       expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: id, ok: false }));
     }
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('028: cached-thumbnail capability lookup forwards a capability-only request', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'cache-miss' });
+    const capability = { version: 1, bindingId: 'wl-binding-1' };
+    dispatch({ type: 'papers:project:window-thumbnail-cache', requestId: 'thumb-cache-1', capability });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:thumbnail-cache', { capability });
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'thumb-cache-1', ok: true, outcome: 'cache-miss',
+    }));
+    dispatch({ type: 'papers:project:window-thumbnail-cache', requestId: 'thumb-cache-bad', capability, extra: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'thumb-cache-bad', ok: false,
+    }));
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards only allowlisted redacted window diagnostic stages and outcomes', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'success' });
+    dispatch({ type: 'papers:project:window-diagnostic', requestId: 'diag-1', stage: 'auto-add-resolve', outcome: 'ambiguous' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-layout:diagnostic', {
+      stage: 'auto-add-resolve', outcome: 'ambiguous',
+    });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'diag-1', ok: true }));
+
+    dispatch({ type: 'papers:project:window-diagnostic', requestId: 'diag-bad', stage: 'auto-add-resolve', outcome: 'secret', title: 'private' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'diag-bad', ok: false }));
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
   });
 

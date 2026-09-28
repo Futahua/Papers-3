@@ -271,6 +271,10 @@ public class FgBridge
             }
 
             string command = args[0].ToLowerInvariant();
+            // The caller's own process id, so the bridge can tell whether the privilege
+            // to hand the foreground over actually exists before it asks for it.
+            uint parentPid = 0;
+            if (args.Length >= 3) UInt32.TryParse(args[2], out parentPid);
 
             if (command == "activate-papers")
             {
@@ -392,8 +396,32 @@ public class FgBridge
                 // transfer: if it is already a Papers window, the widget did hold
                 // the foreground; if it is another application, the refusal is a
                 // genuine foreground-lock refusal and not our own bug.
-                long before = GetForegroundWindow().ToInt64();
+                IntPtr foregroundBefore = GetForegroundWindow();
+                long before = foregroundBefore.ToInt64();
+                // A REFUSED SetForegroundWindow IS WHAT FLASHES THE TASKBAR. That is
+                // Windows' own feedback for "a background process asked for the
+                // foreground", and the creator sees a red flash on every repeated
+                // right-click while nothing activates. Rather than make the flash
+                // unlikely, make it impossible: only ask when the privilege actually
+                // exists. A process may take the foreground when it, or the process
+                // that spawned it, already holds it - so the caller passes its own pid
+                // and the request is skipped entirely when that is not who owns the
+                // foreground. A skipped call cannot flash.
+                uint foregroundPid = 0;
+                if (foregroundBefore != IntPtr.Zero)
+                    GetWindowThreadProcessId(foregroundBefore, out foregroundPid);
                 bool raised = BringWindowToTop(target);
+                bool eligible = parentPid == 0 || foregroundPid == parentPid
+                    || foregroundPid == (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+                if (!eligible)
+                {
+                    // Raised, but deliberately not asked for the foreground: asking
+                    // would flash and would fail.
+                    Console.WriteLine("before=" + before + " raised=" + (raised ? 1 : 0)
+                        + " set=0 moved=0 foregroundAfter=" + before
+                        + " not-eligible=1 parent=" + parentPid + " fgPid=" + foregroundPid);
+                    return 0;
+                }
                 bool foregrounded = SetForegroundWindow(target);
                 // An accepted switch is not an observed one: Windows documents
                 // that GetForegroundWindow() can read NULL while activation is
