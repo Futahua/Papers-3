@@ -541,6 +541,28 @@ describe('windowCapabilityService bind and capabilities', () => {
 });
 
 describe('windowCapabilityService persisted re-resolution', () => {
+  it('rebinds an exact live instance after its cached helper token goes stale', async () => {
+    const instanceId = 'W1111111111111111';
+    const oldWindow = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: instanceId, processStartTicks: '638945344001234567' });
+    const rebound = { ...oldWindow, runtimeId: TOKEN_B as RuntimeWindowId };
+    let listCalls = 0;
+    const factory = fakeFactory({
+      list: async () => ({ outcome: 'success', windows: [++listCalls === 1 ? oldWindow : rebound] }),
+      observe: async (token) => token === TOKEN_A
+        ? { outcome: 'missing', error: 'stale helper token' }
+        : { outcome: 'success', observation: rebound },
+    });
+    const service = createWindowCapabilityService({ createFactory: () => factory, currentPid: 9999 });
+    const stop = service.watchWindowLifecycle({ onEvent: () => undefined, onBaseline: () => undefined });
+    await vi.waitFor(() => expect(listCalls).toBe(1));
+    const result = await service.resolvePersisted({ version: 1, title: oldWindow.title,
+      executableFingerprint: 'a'.repeat(64), windowInstanceId: instanceId });
+    expect(result.outcome).toBe('success');
+    expect(listCalls).toBe(2);
+    stop();
+    await service.stop();
+  });
+
   it('uses the recent lifecycle snapshot for candidate discovery but re-observes before issuing a capability', async () => {
     const target = observation({
       runtimeId: TOKEN_A as RuntimeWindowId,

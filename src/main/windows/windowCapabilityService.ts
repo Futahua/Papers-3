@@ -1836,6 +1836,42 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
 
   async function resolvePersisted(descriptor: PersistedWindowMemberDescriptor): Promise<WindowResolveResult> {
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
+    if (descriptor.windowInstanceId) {
+      // Auto's lifecycle event already names an exact instance. The chooser
+      // list is presentation state: its cached token can be stale or its row
+      // can be absent while a new window is settling. Bind the live lifecycle
+      // identity directly, and refresh once if its helper token went stale.
+      const instanceId = descriptor.windowInstanceId;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0 || !lifecycleCurrent.has(instanceId)) {
+          if (lifecycleRefreshBlocked()) return { outcome: 'helper-unavailable', error: 'window enumeration is held by another operation' };
+          const snapshot = await refreshWindowLifecycle();
+          if (!snapshot.complete) return { outcome: 'helper-unavailable', error: 'window enumeration failed' };
+        }
+        const current = lifecycleCurrent.get(instanceId);
+        if (!current) return { outcome: 'missing', error: 'window instance is no longer live' };
+        if (!(await ensureStarted())) return { outcome: 'helper-unavailable', error: 'window helper is unavailable' };
+        const observed = await factory.observe(current.token);
+        if (observed.outcome !== 'success' || !observed.observation) {
+          if (observed.outcome === 'missing' && attempt === 0) continue;
+          return { outcome: observed.outcome === 'timeout' ? 'timeout'
+            : observed.outcome === 'missing' ? 'missing' : 'helper-unavailable', error: observed.error };
+        }
+        const live = observed.observation;
+        if (live.windowInstanceId !== instanceId
+          || live.processStartTicks !== current.observation.processStartTicks
+          || trustedProcessId(live, currentPid, allowCurrentProcessWindow) === null
+          || !live.bounds) {
+          if (attempt === 0) continue;
+          return { outcome: 'missing', error: 'window instance identity changed' };
+        }
+        const freshDescriptor = candidateForObservation(live).descriptor;
+        const capability = issueBinding(current.token, live);
+        if (!capability.bindingId) return { outcome: 'helper-unavailable', error: 'binding failed' };
+        bindingDescriptors.set(capability.bindingId, freshDescriptor);
+        return { outcome: 'success', capability, descriptor: freshDescriptor };
+      }
+    }
     // Resolution is followed by bindCandidate(), which re-observes the exact
     // selected token before issuing a capability. Use the watcher's recent
     // complete snapshot for candidate discovery so this path does not queue a
