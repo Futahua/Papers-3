@@ -1779,16 +1779,6 @@ async function bootstrap(): Promise<void> {
     // Owner-scoped: the entry URL comes from that window's own runtime.
     resolveEntryUrl: (projectId, owningWindowId) =>
       papersWindows.get(owningWindowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null,
-    activateWindow: async (window) => {
-      const result = await bringWindowToFront(window, {
-        platform: process.platform,
-        nativeForeground: foregroundBridge ?? undefined,
-        nativeActivationAttempts: 10,
-        nativeActivationRetryDelayMs: 75,
-      });
-      if (!result.ok) console.warn(`[papers] Alt+Q widget activation failed: ${result.detail}`);
-      return result.ok;
-    },
     createWindow: ({ bounds, preloadPath: widgetPreloadPath, projectId, owningWindowId }) => {
       const widgetWindow = new BrowserWindow({
         x: bounds.x,
