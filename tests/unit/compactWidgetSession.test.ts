@@ -20,6 +20,7 @@ class FakeWindow {
   isMinimized = vi.fn(() => this.minimized);
   restore = vi.fn(() => { this.minimized = false; this.visible = true; });
   minimize = vi.fn(() => { this.minimized = true; this.visible = false; });
+  hide = vi.fn(() => { this.visible = false; });
   isVisible = vi.fn(() => this.visible);
   show = vi.fn(() => { this.visible = true; });
   showInactive = vi.fn(() => { this.visible = true; this.minimized = false; });
@@ -211,7 +212,7 @@ describe('compact widget session', () => {
     expect(window.setBounds.mock.calls).toHaveLength(calls);
   });
 
-  it('Alt+Q starting inside a visible widget minimizes it once and never follows while held', async () => {
+  it('Alt+Q starting inside a visible widget hides it once and never follows while held', async () => {
     vi.useFakeTimers();
     try {
       const cursor = { x: 100, y: 50 };
@@ -232,7 +233,7 @@ describe('compact widget session', () => {
       expect(ensureReachedSession).toBe(false);
 
       h.session.beginAltQGesture(target.webContents.id);
-      expect(target.minimize).toHaveBeenCalledOnce();
+      expect(target.hide).toHaveBeenCalledOnce();
       // A startup/writer-takeover ensure already in flight can reach the host
       // after this one-shot input. It reuses the entry but must not show it.
       releaseAuthority();
@@ -240,25 +241,25 @@ describe('compact widget session', () => {
         .resolves.toEqual({ ok: true, reused: true });
       expect(ensureReachedSession).toBe(true);
       expect(target.showInactive).not.toHaveBeenCalled();
-      expect(target.isMinimized()).toBe(true);
+      expect(target.isVisible()).toBe(false);
 
       h.session.beginAltQGesture(target.webContents.id);
       cursor.x = 300;
       cursor.y = 150;
       await vi.advanceTimersByTimeAsync(200);
-      expect(target.minimize).toHaveBeenCalledOnce();
+      expect(target.hide).toHaveBeenCalledOnce();
       expect(target.setBounds).not.toHaveBeenCalled();
 
       h.session.endAltQGesture();
       h.session.endAltQGesture();
       await vi.advanceTimersByTimeAsync(100);
-      expect(target.minimize).toHaveBeenCalledOnce();
+      expect(target.hide).toHaveBeenCalledOnce();
       expect(target.getBounds()).toEqual(initialBounds);
-      expect(target.isMinimized()).toBe(true);
+      expect(target.isVisible()).toBe(false);
 
       // A deliberate open still restores and focuses the exact existing widget.
       await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
-      expect(target.restore).toHaveBeenCalledOnce();
+      expect(target.show).toHaveBeenCalledOnce();
       expect(target.focus).toHaveBeenCalled();
       expect(target.isVisible()).toBe(true);
     } finally {
@@ -266,46 +267,91 @@ describe('compact widget session', () => {
     }
   });
 
-  it('native focus clears Alt+Q suppression for a later background ensure', async () => {
+  it('stale native focus does not release Alt+Q suppression; explicit restore does', async () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     const target = h.windows[0]!;
 
     h.session.beginAltQGesture(target.webContents.id);
-    expect(target.isMinimized()).toBe(true);
+    expect(target.isVisible()).toBe(false);
 
-    // Model a shell/taskbar or Alt-Tab restore followed by its native focus
-    // event; the live entry should no longer retain the Alt+Q suppression.
-    target.minimized = false;
-    target.visible = true;
+    // A delayed focus report must not undo the explicit Alt+Q hide.
     target.focusHandlers[0]!();
 
-    expect(h.session.minimize('bp-a', 'layout-a', 1)).toBe(true);
     await expect(h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false }))
       .resolves.toEqual({ ok: true, reused: true });
-    expect(target.showInactive).toHaveBeenCalledOnce();
-    expect(target.isMinimized()).toBe(false);
+    expect(target.showInactive).not.toHaveBeenCalled();
+    expect(target.isVisible()).toBe(false);
+
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     expect(target.isVisible()).toBe(true);
+    target.minimize();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false });
+    expect(target.showInactive).toHaveBeenCalledOnce();
   });
 
-  it('keeps Alt+Q minimized across a focus notification during minimize', async () => {
+  it('uses an immediate Alt+Q hide without entering native minimize state', async () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     const target = h.windows[0]!;
-    target.minimize.mockImplementation(() => {
+
+    h.session.beginAltQGesture(target.webContents.id);
+    expect(target.hide).toHaveBeenCalledOnce();
+    expect(target.minimize).not.toHaveBeenCalled();
+    expect(target.isMinimized()).toBe(false);
+    expect(target.isVisible()).toBe(false);
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false });
+    expect(target.showInactive).not.toHaveBeenCalled();
+  });
+
+  it('alternates inside hide and outside restore through rapid presses without native minimize', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const target = h.windows[0]!;
+    for (let i = 0; i < 20; i += 1) {
+      h.session.beginAltQGesture(target.webContents.id);
+      h.session.endAltQGesture();
+      expect(target.isVisible()).toBe(false);
+      await expect(h.session.beginAltQGesture(null)).resolves.toBe(true);
+      h.session.endAltQGesture();
+      expect(target.isVisible()).toBe(true);
+    }
+    expect(target.hide).toHaveBeenCalledTimes(20);
+    expect(target.show).toHaveBeenCalledTimes(20);
+    expect(target.minimize).not.toHaveBeenCalled();
+  });
+
+  it('honors a native inside hit even if Electron state changes before delivery', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const target = h.windows[0]!;
+    target.minimized = true;
+    target.visible = false;
+
+    h.session.beginAltQGesture(target.webContents.id);
+    expect(target.restore).not.toHaveBeenCalled();
+    expect(target.hide).toHaveBeenCalledOnce();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false });
+    expect(target.showInactive).not.toHaveBeenCalled();
+  });
+
+  it('keeps Alt+Q hidden across a focus notification during hide', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const target = h.windows[0]!;
+    target.hide.mockImplementation(() => {
       for (const handler of target.focusHandlers) handler();
-      target.minimized = true;
       target.visible = false;
     });
 
     h.session.beginAltQGesture(target.webContents.id);
-    target.focusHandlers[0]!(); // delayed focus from before the minimize
+    target.focusHandlers[0]!(); // delayed focus from before the hide
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false });
-    expect(target.isMinimized()).toBe(true);
+    expect(target.isVisible()).toBe(false);
     expect(target.showInactive).not.toHaveBeenCalled();
   });
 
-  it('Alt+Q minimizes the exact widget under the starting cursor even if another becomes latest', async () => {
+  it('Alt+Q hides the exact widget under the starting cursor even if another becomes latest', async () => {
     const cursor = { x: 100, y: 50 };
     const h = harness(cursor);
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
@@ -319,8 +365,8 @@ describe('compact widget session', () => {
     h.session.focus('bp-a', 'layout-b', 1);
     h.session.endAltQGesture();
 
-    expect(target.minimize).toHaveBeenCalledOnce();
-    expect(other.minimize).not.toHaveBeenCalled();
+    expect(target.hide).toHaveBeenCalledOnce();
+    expect(other.hide).not.toHaveBeenCalled();
   });
 
   it('Alt+Q outside widgets keeps bringing the latest widget to the cursor and stops on release', async () => {
@@ -335,7 +381,7 @@ describe('compact widget session', () => {
       await expect(h.session.beginAltQGesture(null)).resolves.toBe(true);
       expect(target.setBounds).toHaveBeenLastCalledWith({ x: 890, y: 531, width: 420, height: 180 });
       expect(target.focus).toHaveBeenCalled();
-      expect(target.minimize).not.toHaveBeenCalled();
+      expect(target.hide).not.toHaveBeenCalled();
       h.session.endAltQGesture();
 
       const callsAtRelease = target.setBounds.mock.calls.length;
@@ -369,7 +415,7 @@ describe('compact widget session', () => {
       cursor.y = 500;
       await vi.advanceTimersByTimeAsync(16);
 
-      expect(inside.minimize).toHaveBeenCalledOnce();
+      expect(inside.hide).toHaveBeenCalledOnce();
       expect(followed.setBounds.mock.calls.length).toBeGreaterThan(beforeMove);
     } finally {
       vi.useRealTimers();

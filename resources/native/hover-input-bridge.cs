@@ -129,6 +129,7 @@ internal static class HoverInputBridge
     private const uint MOD_ALT = 0x0001;
     private const uint MOD_NOREPEAT = 0x4000;
     private const uint GA_ROOT = 2;
+    private const uint GW_HWNDPREV = 3;
     private const uint ALTQ_RELEASE_WATCHDOG_ID = 0x5042;
     private const int HOTKEY_ID = 0x5041;
     private const uint PM_NOREMOVE = 0x0000;
@@ -187,6 +188,7 @@ internal static class HoverInputBridge
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT point);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr window, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr window, uint command);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
     [DllImport("user32.dll")] private static extern IntPtr GetKeyboardLayout(uint threadId);
@@ -438,15 +440,49 @@ internal static class HoverInputBridge
         return null;
     }
 
+    // WindowFromPoint skips a translucent Electron pixel and can report the
+    // ordinary window underneath the visible widget. Walk upward from that
+    // root hit: only a registered widget above it can claim its own rectangle.
+    // A foreign window above the widget remains the root hit and wins.
+    private static WidgetPolicy WidgetForTransparentHit(IntPtr rootHit, WidgetPolicy[] snapshot,
+        Func<IntPtr, bool> containsPoint, Func<IntPtr, IntPtr> previousWindow)
+    {
+        if (rootHit == IntPtr.Zero) return null;
+        WidgetPolicy match = null;
+        IntPtr current = rootHit;
+        for (int depth = 0; depth < 512; ++depth)
+        {
+            current = previousWindow(current);
+            if (current == IntPtr.Zero || current == rootHit) break;
+            WidgetPolicy candidate = WidgetForRootHit(current, snapshot);
+            if (candidate != null && containsPoint(candidate.Handle)) match = candidate;
+        }
+        return match;
+    }
+
+    private static bool VisibleWidgetContains(IntPtr handle, POINT point, bool requireRestored)
+    {
+        if (!IsWindow(handle) || !IsWindowVisible(handle) || (requireRestored && IsIconic(handle))) return false;
+        RECT rect;
+        return GetWindowRect(handle, out rect)
+            && point.x >= rect.left && point.x < rect.right
+            && point.y >= rect.top && point.y < rect.bottom;
+    }
+
     private static int WidgetAtCursor()
     {
         POINT point;
         if (!GetCursorPos(out point)) return 0;
         IntPtr hit = GetAncestor(WindowFromPoint(point), GA_ROOT);
-        WidgetPolicy widget = WidgetForRootHit(hit, Snapshot());
-        if (widget == null || !IsWindow(widget.Handle)
-            || !IsWindowVisible(widget.Handle) || IsIconic(widget.Handle)) return 0;
-        return widget.Id;
+        WidgetPolicy[] snapshot = Snapshot();
+        WidgetPolicy widget = WidgetForRootHit(hit, snapshot);
+        // A restore can briefly report iconic while the widget is already
+        // visible and WindowFromPoint directly hits it. Trust that exact hit.
+        if (widget != null && VisibleWidgetContains(widget.Handle, point, false)) return widget.Id;
+        widget = WidgetForTransparentHit(hit, snapshot,
+            handle => VisibleWidgetContains(handle, point, true),
+            window => GetWindow(window, GW_HWNDPREV));
+        return widget == null ? 0 : widget.Id;
     }
 
     private static IntPtr KeyboardHook(int code, IntPtr wParam, IntPtr lParam)
