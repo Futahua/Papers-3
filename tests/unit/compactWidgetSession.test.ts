@@ -62,13 +62,6 @@ function harness(cursor = { x: 537, y: 284 }) {
     ipcMain,
     preloadPath: 'backpack.cjs',
     resolveEntryUrl: () => 'papers-backpack://bp-a/_papers-open/a/public/index.html',
-    activateWindow: async (window) => {
-      if (window.isMinimized()) window.restore();
-      if (!window.isVisible()) window.show();
-      window.focus();
-      window.moveTop();
-      return true;
-    },
     createWindow: (options) => {
       const window = new FakeWindow();
       windows.push(window);
@@ -150,7 +143,6 @@ describe('compact widget session', () => {
       ipcMain,
       preloadPath: 'backpack.cjs',
       resolveEntryUrl: () => 'papers-backpack://bp-other/_papers-open/a/public/index.html',
-      activateWindow: async () => false,
       createWindow: (options) => {
         const window = new FakeWindow();
         windows.push(window);
@@ -166,7 +158,6 @@ describe('compact widget session', () => {
       ipcMain,
       preloadPath: 'backpack.cjs',
       resolveEntryUrl: () => 'https://evil.example/',
-      activateWindow: async () => false,
       createWindow: (options) => new FakeWindow() as unknown as CompactWidgetWindow,
     }).open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     expect(badScheme).toEqual({ ok: false, error: 'widget entry is not a bound project surface' });
@@ -317,7 +308,7 @@ describe('compact widget session', () => {
       expect(target.isVisible()).toBe(true);
     }
     expect(target.hide).toHaveBeenCalledTimes(20);
-    expect(target.show).toHaveBeenCalledTimes(20);
+    expect(target.showInactive).toHaveBeenCalledTimes(20);
     expect(target.minimize).not.toHaveBeenCalled();
   });
 
@@ -380,7 +371,7 @@ describe('compact widget session', () => {
 
       await expect(h.session.beginAltQGesture(null)).resolves.toBe(true);
       expect(target.setBounds).toHaveBeenLastCalledWith({ x: 890, y: 531, width: 420, height: 180 });
-      expect(target.focus).toHaveBeenCalled();
+      expect(target.focus).not.toHaveBeenCalled();
       expect(target.hide).not.toHaveBeenCalled();
       h.session.endAltQGesture();
 
@@ -422,7 +413,7 @@ describe('compact widget session', () => {
     }
   });
 
-  it('moves the most recently focused widget to the exact pointer and activates it when minimized', async () => {
+  it('moves the most recently focused widget to the exact pointer and raises it when minimized', async () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 1 });
@@ -435,9 +426,9 @@ describe('compact widget session', () => {
     expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 115, width: 420, height: 180 });
     expect(target.restore).toHaveBeenCalledOnce();
     expect(target.show).not.toHaveBeenCalled();
-    expect(target.restore.mock.invocationCallOrder[0]).toBeLessThan(target.setBounds.mock.invocationCallOrder[0]!);
+    expect(target.setBounds.mock.invocationCallOrder[0]).toBeLessThan(target.restore.mock.invocationCallOrder[0]!);
     expect(target.isVisible()).toBe(true);
-    expect(target.focus).toHaveBeenCalled();
+    expect(target.focus).not.toHaveBeenCalled();
     expect(target.moveTop).toHaveBeenCalledOnce();
     expect(h.windows[1]!.restore).not.toHaveBeenCalled();
     h.session.stopFollowing();
@@ -531,27 +522,17 @@ describe('compact widget session', () => {
     h.session.stopFollowing();
   });
 
-  it('reports a refused activation instead of claiming Alt+Q succeeded', async () => {
+  it('reveals a hidden widget once without attempting foreground activation', async () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
-    // Simulate Windows refusing foreground activation.
-    const session = createCompactWidgetSession({
-      registry: h.registry,
-      screen: {
-        getAllDisplays: () => [{ x: 0, y: 0, width: 1200, height: 800 }],
-        getPrimaryDisplay: () => ({ x: 0, y: 0, width: 1200, height: 800 }),
-        getCursorScreenPoint: () => ({ x: 537, y: 284 }),
-        on: vi.fn(), removeListener: vi.fn(),
-      },
-      ipcMain: { on: vi.fn(), removeListener: vi.fn() },
-      preloadPath: 'backpack.cjs',
-      resolveEntryUrl: () => 'papers-backpack://bp-a/_papers-open/a/public/index.html',
-      createWindow: () => h.windows[0]!,
-      activateWindow: async () => false,
-    });
-    await session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 1 });
-    expect(await session.bringLatestToCursor()).toBe(false);
-    session.stopFollowing();
+    const target = h.windows[0]!;
+    target.visible = false;
+    expect(await h.session.bringLatestToCursor()).toBe(true);
+    expect(target.showInactive).toHaveBeenCalledOnce();
+    expect(target.focus).not.toHaveBeenCalled();
+    expect(target.moveTop).toHaveBeenCalledOnce();
+    expect(target.setBounds.mock.invocationCallOrder[0]).toBeLessThan(target.showInactive.mock.invocationCallOrder[0]!);
+    h.session.stopFollowing();
   });
 });
 

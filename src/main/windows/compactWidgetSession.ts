@@ -77,9 +77,6 @@ export interface CompactWidgetSessionDependencies {
     removeListener(channel: string, handler: (event: { sender: { id: number } }, payload?: unknown) => void): void;
   };
   createWindow: (options: { bounds: WindowBounds; preloadPath: string; projectId: string; layoutKey: string; owningWindowId: number }) => CompactWidgetWindow;
-  /** Activate a widget after positioning it. Must report whether it actually
-   * became the foreground window, rather than trusting Electron's focus call. */
-  activateWindow: (window: CompactWidgetWindow) => Promise<boolean>;
   preloadPath: string;
   /** Owner-scoped: two Papers windows may show one project, and each has its
    * own project runtime, so the entry URL cannot be derived from the project
@@ -219,13 +216,16 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
 
   const bringEntryToCursor = async (entry: WidgetEntry): Promise<boolean> => {
     if (!isLiveEntry(entry)) return false;
-    if (!restoreAndFocus(entry)) return false;
+    // The widget is intentionally non-activating. A foreground activation
+    // retry loop cannot focus it and can make one reveal visibly flash again.
+    // Position while hidden, reveal once without activation, then raise once.
+    if (!entry.window.isVisible() || entry.window.isMinimized()) placeAtCursor(entry);
+    if (entry.window.isMinimized()) entry.window.restore();
+    if (!entry.window.isVisible()) entry.window.showInactive();
+    entry.altQHidden = false;
+    entry.window.moveTop();
     followCursor(entry);
-    try {
-      return await deps.activateWindow(entry.window);
-    } catch {
-      return false;
-    }
+    return entry.window.isVisible() && !entry.window.isMinimized();
   };
 
   const minimizeEntry = (entry: WidgetEntry, stopOtherFollow = true): boolean => {
