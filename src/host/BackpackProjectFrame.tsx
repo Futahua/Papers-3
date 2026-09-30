@@ -22,9 +22,18 @@ export function BackpackProjectFrame(props: {
   const syncBoundsRef = useRef<(() => void) | null>(null);
 
   useLayoutEffect(() => {
-    if (!surfaceId || !visible) return undefined;
+    if (!surfaceId) return undefined;
     const frame = frameRef.current;
     if (!frame) return undefined;
+    // A restored logical project surface is live even before its tab is first
+    // selected. Start that renderer without composing it, matching the state of
+    // a tab that was visited once and then concealed. Background project work
+    // (for example an elected document writer) must not depend on whether the
+    // user happened to click the tab since Papers launched.
+    if (!visible) {
+      void host().backpackProject.showSurface(surfaceId, url, false);
+      return () => { void host().backpackProject.hideSurface(surfaceId); };
+    }
     const syncBounds = (): void => {
       const rect = frame.getBoundingClientRect();
       void host().backpackProject.setSurfaceBounds(surfaceId, {
@@ -38,7 +47,7 @@ export function BackpackProjectFrame(props: {
     syncBounds();
     const observer = new ResizeObserver(syncBounds);
     observer.observe(frame);
-    void host().backpackProject.showSurface(surfaceId, url).then(syncBounds);
+    void host().backpackProject.showSurface(surfaceId, url, true).then(syncBounds);
     return () => {
       observer.disconnect();
       syncBoundsRef.current = null;

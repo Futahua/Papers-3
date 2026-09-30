@@ -1370,7 +1370,7 @@ async function bootstrap(): Promise<void> {
     windowIdForSender: (senderId) => papersWindows.windowForSender(senderId)
       ?? surfaceContexts.contextForSender(senderId)?.windowId
       ?? null,
-    showBackpackProjectSurface: async (senderId, surfaceId, url) => {
+    showBackpackProjectSurface: async (senderId, surfaceId, url, present = true) => {
       const runtime = runtimeForHostSurface(senderId, surfaceId);
       if (!runtime) throw new Error('This surface has no Papers window.');
       const owningWindowId = papersWindows.windowForSender(senderId)
@@ -1379,6 +1379,7 @@ async function bootstrap(): Promise<void> {
       let stagedFrameSender: number | null = null;
       try {
         await runtime.show(url, {
+          present,
           beforeLoad: (nextFrameSender) => {
             stagedFrameSender = nextFrameSender;
             const projectId = runtime.liveProjectId;

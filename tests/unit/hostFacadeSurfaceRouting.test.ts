@@ -23,7 +23,9 @@ function createFacade(delegateWave?: FacadeDeps['delegateWave']) {
   let n = 0;
   const logicalSurfaces = createLogicalSurfaceRegistry(() => `sf-${++n}`);
   const hideBackpackProjectSurface = vi.fn((_senderId: number, _surfaceId: string) => {});
-  const showBackpackProjectSurface = vi.fn(async (_senderId: number, _surfaceId: string, _url: string) => {});
+  const showBackpackProjectSurface = vi.fn(async (
+    _senderId: number, _surfaceId: string, _url: string, _present = true,
+  ) => {});
   const closeAttachedProjectSurface = vi.fn();
   const closeBackpackProjectSurface = vi.fn();
   const openProject = vi.fn(async (id: string) => id === PROJECT || id === OTHER ? { url: `papers-backpack://${id}/open` } : null);
@@ -489,6 +491,19 @@ describe('surface routing in the host facade', () => {
     // Both calls carry the asking sender, so they act on that window's runtime.
     expect(showBackpackProjectSurface.mock.calls.every(([sender]) => sender === HOST)).toBe(true);
     expect(surfaces.projectForSender(HOST)).toBe(PROJECT);
+  });
+
+  it('can start an authorized hidden project renderer without presenting its native view', async () => {
+    const { facade, surfaces, logicalSurfaces, showBackpackProjectSurface, setActiveSurfaceId } = createFacade();
+    surfaces.bind(HOST, { projectId: PROJECT, windowId: 1, kind: 'host' });
+    const surface = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const url = `papers-backpack://${PROJECT}/ns/1/public/index.html`;
+
+    await facade.showBackpackProjectSurface(HOST, surface.surfaceId, url, false);
+
+    expect(showBackpackProjectSurface).toHaveBeenCalledWith(HOST, surface.surfaceId, url, false);
+    expect(setActiveSurfaceId).not.toHaveBeenCalled();
+    expect(logicalSurfaces.get(surface.surfaceId)).not.toBeNull();
   });
 
   it('hiding the workspace leaves a live compact widget bound and usable', () => {

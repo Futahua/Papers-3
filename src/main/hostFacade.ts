@@ -187,7 +187,7 @@ export interface FacadeDeps {
   ) => 'allow' | 'not-a-project-sender' | 'capability-not-granted';
   /** Phase 1B: both take the asking sender, so they act on THAT window's
    * project runtime instead of implicitly meaning "the one runtime". */
-  showBackpackProjectSurface: (senderId: number, surfaceId: string, url: string) => Promise<void>;
+  showBackpackProjectSurface: (senderId: number, surfaceId: string, url: string, present?: boolean) => Promise<void>;
   hideBackpackProjectSurface: (senderId: number, surfaceId: string) => void;
   setBackpackProjectSurfaceBounds: (
     senderId: number,
@@ -1043,7 +1043,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * The frame binding that follows is then a consequence of an identity
    * already checked, not a second source of truth.
    */
-  async showBackpackProjectSurface(senderId: number, surfaceId: string, url: string): Promise<void> {
+  async showBackpackProjectSurface(senderId: number, surfaceId: string, url: string, present = true): Promise<void> {
     const { projectId } = this.requireHostSurfaceTarget(senderId, surfaceId);
     let parsed: URL;
     try {
@@ -1054,7 +1054,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || parsed.host !== projectId) {
       throw new Error('This surface may not show another Backpack project.');
     }
-    await this.deps.showBackpackProjectSurface(senderId, surfaceId, url);
+    await this.deps.showBackpackProjectSurface(senderId, surfaceId, url, present);
   }
 
   /**
