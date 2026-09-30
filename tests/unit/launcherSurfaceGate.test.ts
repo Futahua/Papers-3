@@ -280,6 +280,14 @@ describe('every channel a project page can reach is classified', () => {
     }
   });
 
+  it('keeps machine-wide file access off the transient launcher', () => {
+    expect(capabilityForChannel('host:backpack-project:file-capability')).toBe('file');
+    expect(projectCapabilityDecision(LAUNCHER_SURFACE_KIND, 'file')).toBe(false);
+    for (const kind of ['project', DETACHED_SURFACE_KIND, 'widget']) {
+      expect(projectCapabilityDecision(kind, 'file')).toBe(true);
+    }
+  });
+
   it('distinguishes opening a surface from writing the project document', () => {
     // Both change the workspace; only one is a launcher writing state it cannot
     // take back.

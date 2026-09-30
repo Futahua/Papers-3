@@ -87,6 +87,7 @@ export interface HostFacade {
   grantBackpackProjectNativeSource(senderId: number, target: string): Promise<string>;
   openBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
   revealBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
+  callBackpackProjectFileCapability(senderId: number, request: unknown, workspaceOrigin?: string): Promise<unknown>;
   openBackpackProjectWebLink(senderId: number, url: string, workspaceOrigin?: string): Promise<void>;
   resolveBackpackProjectDroppedTargets(
     senderId: number,
@@ -177,6 +178,10 @@ const backpackProjectNativeSourceRefSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const backpackProjectWriterLeaseTokenSchema = backpackProjectNativeSourceRefSchema;
+const backpackProjectFileCapabilitySchema = z.object({
+  operation: z.string().min(1).max(64),
+  params: z.record(z.string(), z.unknown()).optional(),
+}).strict();
 export const hostWorkspaceSurfaceMoveTargetSchema = z.object({
   surfaceId: surfaceIdSchema,
   targetWindowId: z.number().int().nonnegative(),
@@ -401,6 +406,13 @@ export function registerHostIpc(facade: HostFacade): void {
     facade.revealBackpackProjectNativeSource(
       event.sender.id,
       backpackProjectNativeSourceRefSchema.parse(sourceRef),
+    ),
+  );
+  handle('host:backpack-project:file-capability', (event, request, workspaceOrigin) =>
+    facade.callBackpackProjectFileCapability(
+      event.sender.id,
+      backpackProjectFileCapabilitySchema.parse(request),
+      backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
     ),
   );
   handle('host:backpack-project:open-web-link', (event, url, workspaceOrigin) =>

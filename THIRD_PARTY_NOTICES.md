@@ -32,6 +32,14 @@ Every dependency and reused asset with provenance and license.
 | OpenCode CLI | 1.14.28 | CLI, invoked by Hermes | Not bundled |
 | Git | 2.53.0.windows.2 | `git` CLI via execFile, structured args | Not bundled |
 | LibreOffice | installed at `C:\Program Files\LibreOffice` | `soffice.exe` launch with validated path arguments | Not bundled |
+| Everything | 1.4.1.1032 observed | Official local IPC/SDK query interface | Everything owns the live file index; the application itself is not bundled |
+| Directory Opus | 13.23 observed | Supported `dopusrt.exe /cmd` command interface | Not bundled; Directory Opus owns copy/move/rename/delete behavior |
+
+## Bundled native SDK components
+
+| Component | License | Role | Provenance |
+|---|---|---|---|
+| Everything SDK x64 DLL (`resources/native/everything/Everything64.dll`) | MIT | Local IPC client used by the bounded Everything search helper | Official voidtools Everything SDK download; SHA-256 `81B5BE18126ACD2C2B913F8F4A821E476B18393CDD3DEBD03387C50AFD8DB88F`; license text beside the DLL |
 
 ## External demonstration fixture (never part of Papers)
 
@@ -41,4 +49,4 @@ Every dependency and reused asset with provenance and license.
 
 ## Copied assets
 
-None so far. Any future copied asset or utility must be recorded here with source commit, license, and reason.
+The Everything SDK DLL above is the only bundled third-party native component currently recorded here. Any future copied asset or utility must be recorded with source, license, and reason.

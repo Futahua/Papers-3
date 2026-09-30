@@ -41,9 +41,10 @@ export function registerBackpackProjectSchemePrivileges(): void {
 /**
  * `connect-src` is the ONE relaxation, and it is deliberately narrow.
  *
- * Every other directive stays as tight as it was: no remote scripts, no remote
- * styles, no frames, no forms, no base. What changes is that a project page may
- * open a connection to a service on THIS MACHINE.
+ * Remote scripts/styles/forms/base remain denied. Project pages may connect
+ * only to loopback services. Rich local previews use in-memory `blob:` URLs for
+ * media and PDF frames; `data:` frames and remote frame origins remain denied
+ * unless an embedded Backpack origin was explicitly registered.
  *
  * Why loopback rather than 'none': a Backpack that talks to a service the
  * creator runs is a legitimate shape, and the alternative - a bespoke hole per
@@ -70,12 +71,13 @@ export function contentSecurityPolicy(origin: string, frameOrigins: readonly str
     `script-src ${origin}`,
     `style-src ${origin} 'unsafe-inline'`,
     `img-src ${origin} data:`,
+    `media-src blob:`,
     `font-src ${origin}`,
     `connect-src http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*`,
     `object-src 'none'`,
     `base-uri 'none'`,
     `form-action 'none'`,
-    `frame-src ${allowedFrames}`,
+    `frame-src ${allowedFrames === "'none'" ? 'blob:' : `${allowedFrames} blob:`}`,
   ].join('; ');
 }
 

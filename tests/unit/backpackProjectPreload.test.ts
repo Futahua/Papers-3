@@ -79,6 +79,34 @@ describe('Backpack project protocol alignment', () => {
     expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'bad', ok: false }));
   });
 
+  it('routes file capability calls from a scoped child with its exact workspace origin', async () => {
+    await loadPreloadForTest();
+    const child = {};
+    mocks.invoke.mockResolvedValue({ ok: true, providers: { everything: true, directoryOpus: true } });
+    for (const handler of messageHandlers) {
+      handler({
+        source: child,
+        origin: 'papers-backpack://ayg-child',
+        data: {
+          type: 'papers:project:file-capability',
+          requestId: 'file-child-1',
+          operation: 'providers',
+          params: {},
+        },
+      });
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      'host:backpack-project:file-capability',
+      { operation: 'providers', params: {} },
+      'papers-backpack://ayg-child',
+    );
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'file-child-1', ok: true,
+      fileCapability: { ok: true, providers: { everything: true, directoryOpus: true } },
+    }));
+  });
+
   it('0A: a refused checked save travels as a delivered result, not a failed request', async () => {
     await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));

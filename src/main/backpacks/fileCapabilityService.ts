@@ -1,0 +1,355 @@
+import { execFile, execFileSync } from 'node:child_process';
+import { promises as fs, statSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import type { EverythingSearchBridge } from './everythingSearchBridge';
+
+const MAX_PATH_BYTES = 32_768;
+const MAX_SEARCH_BYTES = 2_048;
+const MAX_BATCH = 64;
+const MAX_LIST = 500;
+const MAX_SEARCH = 500;
+const MAX_RICH_PREVIEW_BYTES = 24 * 1024 * 1024;
+const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
+const MAX_BINARY_HEAD_BYTES = 32 * 1024;
+
+const TEXT_EXTENSIONS = new Set([
+  '.txt', '.md', '.markdown', '.json', '.jsonl', '.ndjson', '.yaml', '.yml', '.toml', '.ini', '.cfg',
+  '.log', '.csv', '.tsv', '.xml', '.html', '.htm', '.css', '.scss', '.less', '.js', '.mjs', '.cjs',
+  '.ts', '.tsx', '.jsx', '.py', '.rb', '.rs', '.go', '.java', '.kt', '.kts', '.c', '.h', '.cpp', '.hpp',
+  '.cs', '.fs', '.fsx', '.vb', '.ps1', '.psm1', '.bat', '.cmd', '.sh', '.zsh', '.fish', '.sql', '.diff',
+  '.patch', '.gitignore', '.gitattributes', '.editorconfig', '.env', '.vue', '.svelte', '.tex', '.bib',
+]);
+const OFFICE_EXTENSIONS = new Set(['.doc', '.docx', '.docm', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx', '.pptm', '.odt', '.ods', '.odp', '.rtf', '.wps']);
+const IMAGE_MIME = new Map([['.png','image/png'],['.jpg','image/jpeg'],['.jpeg','image/jpeg'],['.gif','image/gif'],['.webp','image/webp'],['.bmp','image/bmp'],['.svg','image/svg+xml'],['.ico','image/x-icon'],['.avif','image/avif']]);
+const AUDIO_MIME = new Map([['.mp3','audio/mpeg'],['.wav','audio/wav'],['.ogg','audio/ogg'],['.m4a','audio/mp4'],['.aac','audio/aac'],['.flac','audio/flac'],['.opus','audio/ogg']]);
+const VIDEO_MIME = new Map([['.mp4','video/mp4'],['.m4v','video/mp4'],['.webm','video/webm'],['.ogv','video/ogg'],['.mov','video/quicktime']]);
+
+export interface FileCapabilityEntry {
+  path: string; name: string; parent: string; kind: 'file' | 'folder'; extension: string;
+  size: number | null; createdAt: number | null; modifiedAt: number | null; identity: string | null;
+}
+export interface FileCapabilityDeps {
+  everythingSearch: EverythingSearchBridge | null;
+  dopusrtPath: string | null;
+  libreOfficePath: string | null;
+  openPath: (target: string) => Promise<string | void>;
+  revealPath: (target: string) => void;
+}
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function boundedString(value: unknown, label: string, maxBytes: number): string {
+  if (typeof value !== 'string') throw new Error(`${label} must be a string.`);
+  const text = value.trim();
+  if (!text || Buffer.byteLength(text, 'utf8') > maxBytes) throw new Error(`${label} is outside the allowed size.`);
+  return text;
+}
+function absolutePath(value: unknown, label = 'path'): string {
+  const target = boundedString(value, label, MAX_PATH_BYTES);
+  if (!path.isAbsolute(target)) throw new Error(`${label} must be an absolute path.`);
+  return path.normalize(target);
+}
+function pathList(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_BATCH) throw new Error(`paths must contain between 1 and ${MAX_BATCH} items.`);
+  return value.map((entry, index) => absolutePath(entry, `paths[${index}]`));
+}
+function boundedLimit(value: unknown, fallback: number, max: number): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > max) throw new Error(`limit must be an integer from 1 to ${max}.`);
+  return value;
+}
+function safeName(value: unknown): string {
+  const name = boundedString(value, 'newName', 1_024);
+  if (name === '.' || name === '..' || /[\\/:*?"<>|\u0000-\u001f]/.test(name)) throw new Error('newName is not a valid Windows file name.');
+  return name;
+}
+
+function numberFromBigInt(value: bigint): number | null {
+  const max = BigInt(Number.MAX_SAFE_INTEGER);
+  if (value < 0n || value > max) return null;
+  return Number(value);
+}
+async function describe(target: string): Promise<FileCapabilityEntry> {
+  const stats = await fs.stat(target, { bigint: true });
+  const kind = stats.isDirectory() ? 'folder' : 'file';
+  return {
+    path: target,
+    name: path.basename(target) || target,
+    parent: path.dirname(target),
+    kind,
+    extension: kind === 'file' ? path.extname(target).toLowerCase() : '',
+    size: kind === 'folder' ? null : numberFromBigInt(stats.size),
+    createdAt: numberFromBigInt(stats.birthtimeMs),
+    modifiedAt: numberFromBigInt(stats.mtimeMs),
+    identity: stats.dev >= 0n && stats.ino >= 0n ? `${stats.dev.toString(16)}:${stats.ino.toString(16)}` : null,
+  };
+}
+async function listDirectory(target: string, limit: number) {
+  const entry = await describe(target);
+  if (entry.kind !== 'folder') throw new Error('That path is not a folder.');
+  const names = await fs.readdir(target);
+  names.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  const selected = names.slice(0, limit);
+  const settled = await Promise.allSettled(selected.map((name) => describe(path.join(target, name))));
+  const items = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+  items.sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  return { entry, items, truncated: names.length > selected.length };
+}
+function mostlyText(buffer: Buffer): boolean {
+  if (buffer.length === 0) return true;
+  let printable = 0;
+  for (const byte of buffer) {
+    if (byte === 0) return false;
+    if (byte === 9 || byte === 10 || byte === 13 || byte >= 32) printable += 1;
+  }
+  return printable / buffer.length >= 0.88;
+}
+function hexDump(buffer: Buffer): string {
+  const rows: string[] = [];
+  for (let offset = 0; offset < buffer.length; offset += 16) {
+    const slice = buffer.subarray(offset, offset + 16);
+    const hex = [...slice].map((byte) => byte.toString(16).padStart(2, '0')).join(' ').padEnd(47, ' ');
+    const ascii = [...slice].map((byte) => byte >= 32 && byte < 127 ? String.fromCharCode(byte) : '.').join('');
+    rows.push(`${offset.toString(16).padStart(8, '0')}  ${hex}  |${ascii}|`);
+  }
+  return rows.join('\n');
+}
+function extractStrings(buffer: Buffer): string[] {
+  return (buffer.toString('latin1').match(/[ -~]{4,}/g) ?? []).slice(0, 80);
+}
+function dataUrl(mime: string, buffer: Buffer): string {
+  return `data:${mime};base64,${buffer.toString('base64')}`;
+}
+
+async function convertOfficeToPdf(source: string, soffice: string): Promise<Buffer | null> {
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-file-preview-'));
+  try {
+    const outputName = `${path.parse(source).name}.pdf`;
+    await new Promise<void>((resolve, reject) => {
+      execFile(soffice, ['--headless', '--convert-to', 'pdf', '--outdir', tempRoot, source], {
+        windowsHide: true,
+        timeout: 30_000,
+      }, (error) => error ? reject(error) : resolve());
+    });
+    const output = path.join(tempRoot, outputName);
+    const stats = await fs.stat(output);
+    if (stats.size > MAX_RICH_PREVIEW_BYTES) return null;
+    return await fs.readFile(output);
+  } catch {
+    return null;
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+async function previewFile(target: string, deps: FileCapabilityDeps): Promise<Record<string, unknown>> {
+  const entry = await describe(target);
+  if (entry.kind === 'folder') {
+    const listing = await listDirectory(target, 200);
+    return { ok: true, entry, preview: { kind: 'directory', items: listing.items, truncated: listing.truncated } };
+  }
+  const extension = entry.extension;
+  const stats = await fs.stat(target);
+  if (stats.size <= MAX_RICH_PREVIEW_BYTES) {
+    const mime = IMAGE_MIME.get(extension) ?? AUDIO_MIME.get(extension) ?? VIDEO_MIME.get(extension);
+    if (mime) {
+      const bytes = await fs.readFile(target);
+      const kind = IMAGE_MIME.has(extension) ? 'image' : AUDIO_MIME.has(extension) ? 'audio' : 'video';
+      return { ok: true, entry, preview: { kind, mime, dataUrl: dataUrl(mime, bytes) } };
+    }
+    if (extension === '.pdf') {
+      const bytes = await fs.readFile(target);
+      return { ok: true, entry, preview: { kind: 'pdf', mime: 'application/pdf', dataUrl: dataUrl('application/pdf', bytes) } };
+    }
+  }
+  if (OFFICE_EXTENSIONS.has(extension) && deps.libreOfficePath) {
+    const pdf = await convertOfficeToPdf(target, deps.libreOfficePath);
+    if (pdf) return { ok: true, entry, preview: { kind: 'pdf', mime: 'application/pdf', dataUrl: dataUrl('application/pdf', pdf), convertedBy: 'libreoffice' } };
+  }
+  const headHandle = await fs.open(target, 'r');
+  let head: Buffer;
+  try {
+    const length = Math.min(MAX_BINARY_HEAD_BYTES, stats.size);
+    head = Buffer.alloc(length);
+    await headHandle.read(head, 0, length, 0);
+  } finally {
+    await headHandle.close();
+  }
+  if (TEXT_EXTENSIONS.has(extension) || mostlyText(head)) {
+    const toRead = Math.min(MAX_TEXT_PREVIEW_BYTES, stats.size);
+    const handle = await fs.open(target, 'r');
+    let bytes: Buffer;
+    try {
+      bytes = Buffer.alloc(toRead);
+      await handle.read(bytes, 0, toRead, 0);
+    } finally {
+      await handle.close();
+    }
+    return { ok: true, entry, preview: { kind: 'text', text: bytes.toString('utf8'), truncated: stats.size > toRead } };
+  }
+  return { ok: true, entry, preview: { kind: 'binary', hex: hexDump(head), strings: extractStrings(head), truncated: stats.size > head.length } };
+}
+
+function parseDopusAppPath(stdout: string): string | null {
+  for (const line of stdout.split(/\r?\n/)) {
+    const marker = line.indexOf('REG_SZ');
+    if (marker < 0) continue;
+    const value = line.slice(marker + 'REG_SZ'.length).trim();
+    if (value.toLowerCase().endsWith('\\dopus.exe')) return value;
+  }
+  return null;
+}
+
+export function resolveDirectoryOpusRtPath(): string | null {
+  for (const hive of ['HKLM', 'HKCU']) {
+    try {
+      const stdout = execFileSync('reg.exe', [
+        'query',
+        `${hive}\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\dopus.exe`,
+        '/ve',
+      ], { encoding: 'utf8', windowsHide: true, timeout: 3_000 });
+      const dopus = parseDopusAppPath(stdout);
+      if (!dopus) continue;
+      const rt = path.join(path.dirname(dopus), 'dopusrt.exe');
+      if (statSync(rt).isFile()) return rt;
+    } catch {
+      // Try the next hive.
+    }
+  }
+  return null;
+}
+
+export function resolveLibreOfficePath(): string | null {
+  const candidates = [
+    path.join(process.env['ProgramFiles'] ?? 'C:\\Program Files', 'LibreOffice', 'program', 'soffice.exe'),
+    path.join(process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)', 'LibreOffice', 'program', 'soffice.exe'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Try the next path.
+    }
+  }
+  return null;
+}
+
+function runOpus(dopusrtPath: string, command: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(dopusrtPath, ['/cmd', ...command], { windowsHide: true, timeout: 10_000 }, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+async function operationViaOpus(
+  deps: FileCapabilityDeps,
+  operation: 'copy' | 'move' | 'rename' | 'delete',
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  if (operation === 'copy' || operation === 'move') {
+    const sources = pathList(params.paths);
+    const destination = absolutePath(params.destination, 'destination');
+    if (!deps.dopusrtPath) return { ok: false, code: 'DOPUS_UNAVAILABLE', message: 'Directory Opus is unavailable.' };
+    const command = ['Copy', ...sources];
+    if (operation === 'move') command.push('MOVE');
+    command.push('TO', destination, 'WHENEXISTS=ask');
+    await runOpus(deps.dopusrtPath, command);
+    return { ok: true, provider: 'directory-opus', operation };
+  }
+
+  if (operation === 'rename') {
+    const target = absolutePath(params.path);
+    const newName = safeName(params.newName);
+    if (!deps.dopusrtPath) return { ok: false, code: 'DOPUS_UNAVAILABLE', message: 'Directory Opus is unavailable.' };
+    await runOpus(deps.dopusrtPath, ['Rename', target, 'TO', newName, 'WHENEXISTS=ask']);
+    return {
+      ok: true,
+      provider: 'directory-opus',
+      operation,
+      path: path.join(path.dirname(target), newName),
+    };
+  }
+
+  const targets = pathList(params.paths);
+  if (!deps.dopusrtPath) return { ok: false, code: 'DOPUS_UNAVAILABLE', message: 'Directory Opus is unavailable.' };
+  await runOpus(deps.dopusrtPath, ['Delete', ...targets, 'RECYCLE', 'QUIET']);
+  return { ok: true, provider: 'directory-opus', operation, recycle: true };
+}
+
+export function createFileCapabilityService(deps: FileCapabilityDeps): {
+  call(request: unknown): Promise<Record<string, unknown>>;
+} {
+  return {
+    async call(raw) {
+      if (!isRecord(raw)) {
+        return { ok: false, code: 'REQUEST_INVALID', message: 'File capability request must be an object.' };
+      }
+      const operation = typeof raw.operation === 'string' ? raw.operation : '';
+      const params = isRecord(raw.params) ? raw.params : {};
+      try {
+        switch (operation) {
+          case 'providers':
+            return {
+              ok: true,
+              providers: {
+                everything: Boolean(deps.everythingSearch),
+                directoryOpus: Boolean(deps.dopusrtPath),
+                libreOffice: Boolean(deps.libreOfficePath),
+              },
+            };
+          case 'stat':
+            return { ok: true, entry: await describe(absolutePath(params.path)) };
+          case 'list':
+            return {
+              ok: true,
+              ...(await listDirectory(
+                absolutePath(params.path),
+                boundedLimit(params.limit, 200, MAX_LIST),
+              )),
+            };
+          case 'search': {
+            const query = boundedString(params.query, 'query', MAX_SEARCH_BYTES);
+            const limit = boundedLimit(params.limit, 100, MAX_SEARCH);
+            if (!deps.everythingSearch) {
+              return {
+                ok: false,
+                code: 'EVERYTHING_UNAVAILABLE',
+                message: 'Everything search is unavailable.',
+                results: [],
+              };
+            }
+            return await deps.everythingSearch.search(query, limit);
+          }
+          case 'preview':
+            return await previewFile(absolutePath(params.path), deps);
+          case 'open': {
+            const error = await deps.openPath(absolutePath(params.path));
+            return typeof error === 'string' && error
+              ? { ok: false, code: 'OPEN_FAILED', message: error }
+              : { ok: true };
+          }
+          case 'reveal':
+            deps.revealPath(absolutePath(params.path));
+            return { ok: true };
+          case 'copy':
+          case 'move':
+          case 'rename':
+          case 'delete':
+            return await operationViaOpus(deps, operation, params);
+          default:
+            return { ok: false, code: 'OPERATION_UNKNOWN', message: 'Unknown file capability operation.' };
+        }
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        return {
+          ok: false,
+          code: typeof code === 'string' ? code : 'FILE_OPERATION_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  };
+}

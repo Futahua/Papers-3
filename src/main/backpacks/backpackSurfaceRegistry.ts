@@ -51,7 +51,8 @@ export type ProjectCapability =
   | 'native'
   | 'delegate'
   | 'surface'
-  | 'service';
+  | 'service'
+  | 'file';
 
 /** Channels, by what they do. Anything not listed is not a project channel. */
 const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.freeze({
@@ -101,6 +102,10 @@ const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.f
   // credential the project declared. Its own capability because it is its own
   // kind of reach: not the project's document, and not the creator's desktop.
   'host:backpack-project:local-service-fetch': 'service',
+
+  // Machine-local file inspection/search/operations. Full project surfaces may
+  // use it; transient launchers deliberately cannot reach arbitrary paths.
+  'host:backpack-project:file-capability': 'file',
 });
 
 /** What each kind of owned surface is granted. Not listed means nothing. */

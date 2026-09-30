@@ -161,6 +161,7 @@ const SCOPED_WORKSPACE_REQUESTS = new Set([
   'papers:project:resolve-dropped-targets',
   'papers:project:open-web-link',
   'papers:project:resolve-web-link-icon',
+  'papers:project:file-capability',
 ]);
 
 function scopedWorkspaceOrigin(event: MessageEvent, request: ProjectMessage): string | undefined {
@@ -269,6 +270,21 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (request.type === 'papers:project:copy-text' && typeof request.text === 'string') task = ipcRenderer.invoke('host:backpack-project:copy-text', request.text);
+  if (request.type === 'papers:project:file-capability') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'operation', 'params'])
+      || !validRequestId(request.requestId)
+      || typeof request.operation !== 'string'
+      || request.operation.length < 1
+      || request.operation.length > 64
+      || !isPlainObject(request.params)) {
+      immediateHostError(request.requestId, event.origin, 'file capability request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('host:backpack-project:file-capability', {
+      operation: request.operation,
+      params: request.params,
+    }, ...workspaceOriginArgs).then((result) => ({ fileCapability: result }));
+  }
   // The local-service capability: this page asking Papers to reach an HTTP
   // service the creator runs on this machine. The page supplies an address, a
   // method, headers and a body; it never supplies a credential, and the answer

@@ -7,6 +7,8 @@ import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
+import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from './backpacks/everythingSearchBridge';
+import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
 import { BackpackProjectSurfaceCollection } from './backpacks/backpackProjectSurfaceCollection';
@@ -638,6 +640,24 @@ async function bootstrap(): Promise<void> {
     },
   );
   installBackpackProjectProtocol(backpackProjects);
+
+  const everythingPaths = resolveEverythingSearchBridgePaths({
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    packaged: app.isPackaged,
+  });
+  const everythingSearch = createEverythingSearchBridge({
+    cacheDirectory: path.join(paths.root, 'native', 'file-capability'),
+    sourcePath: everythingPaths.sourcePath,
+    dllPath: everythingPaths.dllPath,
+  });
+  const fileCapability = createFileCapabilityService({
+    everythingSearch,
+    dopusrtPath: resolveDirectoryOpusRtPath(),
+    libreOfficePath: resolveLibreOfficePath(),
+    openPath: (target) => shell.openPath(target),
+    revealPath: (target) => shell.showItemInFolder(target),
+  });
 
   const permissionStore = new PermissionStore(paths);
   await permissionStore.initialize();
@@ -1334,6 +1354,7 @@ async function bootstrap(): Promise<void> {
     updater,
     registry,
     backpackProjects,
+    fileCapability,
     // Environment-only: URL, operator token and the one permitted Backpack id
     // live in main and are never persisted, logged or exposed to a renderer.
     delegateWave: new DelegateWaveRelay(
