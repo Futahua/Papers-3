@@ -45,10 +45,26 @@ internal static class HoverInputBridgeAltQTests
         object hit = resolve.Invoke(null, new object[] { new System.IntPtr(1001), policies });
         Require((int)policyType.GetField("Id").GetValue(hit) == 17, "native root hit must select its exact widget registration");
 
-        // A foreign occluder's root HWND has no registered widget and therefore
-        // selects the outside-Alt+Q path, even if a widget rectangle is beneath it.
+        // A foreign root HWND has no direct widget registration.
         object foreign = resolve.Invoke(null, new object[] { new System.IntPtr(9999), policies });
-        Require(foreign == null, "foreign topmost hit must not be mapped to an occluded widget");
+        Require(foreign == null, "foreign root hit must not map directly to a widget");
+
+        var transparent = bridge.GetMethod("WidgetForTransparentHit", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        System.Func<System.IntPtr, bool> contains = handle => handle == new System.IntPtr(1001) || handle == new System.IntPtr(1002);
+        // WindowFromPoint can pass through a translucent widget pixel and hit
+        // the ordinary window below both widgets. Pick the highest live widget.
+        System.Func<System.IntPtr, System.IntPtr> previous = handle =>
+            handle == new System.IntPtr(9999) ? new System.IntPtr(1001) :
+            handle == new System.IntPtr(1001) ? new System.IntPtr(1002) : System.IntPtr.Zero;
+        object behindTransparent = transparent.Invoke(null, new object[] { new System.IntPtr(9999), policies, contains, previous });
+        Require((int)policyType.GetField("Id").GetValue(behindTransparent) == 18,
+            "a translucent hit must choose the highest registered widget above the root hit");
+
+        // If WindowFromPoint hits a foreign window above the widget, nothing
+        // registered is above that root and Alt+Q remains an outside press.
+        System.Func<System.IntPtr, System.IntPtr> noWidgetAbove = handle => System.IntPtr.Zero;
+        object occluded = transparent.Invoke(null, new object[] { new System.IntPtr(9999), policies, contains, noWidgetAbove });
+        Require(occluded == null, "a foreign occluder above the widget must remain an outside hit");
     }
 
     private static void VerifyChordStartHitSurvivesDelayedHotkeyAndRelease()

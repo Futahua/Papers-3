@@ -1370,7 +1370,7 @@ async function bootstrap(): Promise<void> {
     windowIdForSender: (senderId) => papersWindows.windowForSender(senderId)
       ?? surfaceContexts.contextForSender(senderId)?.windowId
       ?? null,
-    showBackpackProjectSurface: async (senderId, surfaceId, url) => {
+    showBackpackProjectSurface: async (senderId, surfaceId, url, present = true) => {
       const runtime = runtimeForHostSurface(senderId, surfaceId);
       if (!runtime) throw new Error('This surface has no Papers window.');
       const owningWindowId = papersWindows.windowForSender(senderId)
@@ -1379,6 +1379,7 @@ async function bootstrap(): Promise<void> {
       let stagedFrameSender: number | null = null;
       try {
         await runtime.show(url, {
+          present,
           beforeLoad: (nextFrameSender) => {
             stagedFrameSender = nextFrameSender;
             const projectId = runtime.liveProjectId;
@@ -1779,16 +1780,6 @@ async function bootstrap(): Promise<void> {
     // Owner-scoped: the entry URL comes from that window's own runtime.
     resolveEntryUrl: (projectId, owningWindowId) =>
       papersWindows.get(owningWindowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null,
-    activateWindow: async (window) => {
-      const result = await bringWindowToFront(window, {
-        platform: process.platform,
-        nativeForeground: foregroundBridge ?? undefined,
-        nativeActivationAttempts: 10,
-        nativeActivationRetryDelayMs: 75,
-      });
-      if (!result.ok) console.warn(`[papers] Alt+Q widget activation failed: ${result.detail}`);
-      return result.ok;
-    },
     createWindow: ({ bounds, preloadPath: widgetPreloadPath, projectId, owningWindowId }) => {
       const widgetWindow = new BrowserWindow({
         x: bounds.x,
