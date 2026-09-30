@@ -211,6 +211,10 @@ export interface WindowLifecycleEvent {
   windowInstanceId: string;
   trackerSessionId: string;
   sequence: number;
+  /** Persisted-safe identity captured by the same enumeration that discovered
+   * an open window. It lets a project bind that exact lifecycle identity
+   * without racing a second existence probe against a later snapshot. */
+  descriptor?: PersistedWindowMemberDescriptor;
   observation?: { bounds: WindowBounds; state: WindowState };
 }
 
@@ -891,6 +895,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
         const event: WindowLifecycleEvent = {
           kind: 'open', windowInstanceId, trackerSessionId: lifecycleTrackerSessionId,
           sequence: ++lifecycleSequence,
+          descriptor: candidateForObservation(current.observation).descriptor,
           observation: { bounds: current.observation.bounds!, state: current.observation.state },
         };
         for (const subscriber of lifecycleSubscribers) {

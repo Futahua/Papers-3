@@ -1141,7 +1141,17 @@ describe('windowCapabilityService lifecycle', () => {
     expect(baselines[0]).toMatchObject({ complete: true, windows: [{ windowInstanceId: 'W1111111111111111' }] });
     windows = [first, second];
     await service.windowLifecycleSnapshot();
-    expect(events).toContainEqual(expect.objectContaining({ kind: 'open', windowInstanceId: 'W2222222222222222', sequence: 1 }));
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: 'open',
+      windowInstanceId: 'W2222222222222222',
+      sequence: 1,
+      descriptor: expect.objectContaining({
+        version: 1,
+        title: second.title,
+        windowInstanceId: 'W2222222222222222',
+        executableFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    }));
     complete = false;
     expect((await service.windowLifecycleSnapshot()).snapshot.complete).toBe(false);
     expect(events).not.toContainEqual(expect.objectContaining({ kind: 'gone', windowInstanceId: 'W1111111111111111' }));
