@@ -9,6 +9,7 @@ import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
 import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from './backpacks/everythingSearchBridge';
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
+import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
 import { BackpackProjectSurfaceCollection } from './backpacks/backpackProjectSurfaceCollection';
@@ -647,13 +648,23 @@ async function bootstrap(): Promise<void> {
     resourcesPath: process.resourcesPath,
     packaged: app.isPackaged,
   });
+  const fileCapabilityCacheDirectory = path.join(paths.root, 'native', 'file-capability');
   const everythingSearch = createEverythingSearchBridge({
-    cacheDirectory: path.join(paths.root, 'native', 'file-capability'),
+    cacheDirectory: fileCapabilityCacheDirectory,
     sourcePath: everythingPaths.sourcePath,
     dllPath: everythingPaths.dllPath,
   });
+  const revitPreview = createRevitPreviewBridge({
+    cacheDirectory: fileCapabilityCacheDirectory,
+    sourcePath: resolveRevitPreviewBridgeSourcePath({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
+    }),
+  });
   const fileCapability = createFileCapabilityService({
     everythingSearch,
+    revitPreview,
     dopusrtPath: resolveDirectoryOpusRtPath(),
     libreOfficePath: resolveLibreOfficePath(),
     openPath: (target) => shell.openPath(target),

@@ -40,6 +40,7 @@ Every dependency and reused asset with provenance and license.
 | Component | License | Role | Provenance |
 |---|---|---|---|
 | Everything SDK x64 DLL (`resources/native/everything/Everything64.dll`) | MIT | Local IPC client used by the bounded Everything search helper | Official voidtools Everything SDK download; SHA-256 `81B5BE18126ACD2C2B913F8F4A821E476B18393CDD3DEBD03387C50AFD8DB88F`; license text beside the DLL |
+| Revit embedded-preview extraction reference (`resources/native/revit-preview.cs`) | MIT reference | Read-only extraction of the PNG stored in the `RevitPreview4.0` OLE stream for RVT/RFA/RTE/RFT previews | Format/extraction behavior referenced from `CodeCavePro/revitless-toolkit` commit `56e26d1186031fc65cd67260975f675abf2547fd`; upstream copyright/license preserved in `resources/native/revit-preview.LICENSE.txt` |
 
 ## External demonstration fixture (never part of Papers)
 

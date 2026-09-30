@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { EverythingSearchBridge } from './everythingSearchBridge';
+import type { RevitPreviewBridge } from './revitPreviewBridge';
 
 const MAX_PATH_BYTES = 32_768;
 const MAX_SEARCH_BYTES = 2_048;
@@ -22,6 +23,7 @@ const TEXT_EXTENSIONS = new Set([
   '.patch', '.gitignore', '.gitattributes', '.editorconfig', '.env', '.vue', '.svelte', '.tex', '.bib',
 ]);
 const OFFICE_EXTENSIONS = new Set(['.doc', '.docx', '.docm', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx', '.pptm', '.odt', '.ods', '.odp', '.rtf', '.wps']);
+const REVIT_EXTENSIONS = new Set(['.rvt', '.rfa', '.rte', '.rft']);
 const IMAGE_MIME = new Map([['.png','image/png'],['.jpg','image/jpeg'],['.jpeg','image/jpeg'],['.gif','image/gif'],['.webp','image/webp'],['.bmp','image/bmp'],['.svg','image/svg+xml'],['.ico','image/x-icon'],['.avif','image/avif']]);
 const AUDIO_MIME = new Map([['.mp3','audio/mpeg'],['.wav','audio/wav'],['.ogg','audio/ogg'],['.m4a','audio/mp4'],['.aac','audio/aac'],['.flac','audio/flac'],['.opus','audio/ogg']]);
 const VIDEO_MIME = new Map([['.mp4','video/mp4'],['.m4v','video/mp4'],['.webm','video/webm'],['.ogv','video/ogg'],['.mov','video/quicktime']]);
@@ -32,6 +34,7 @@ export interface FileCapabilityEntry {
 }
 export interface FileCapabilityDeps {
   everythingSearch: EverythingSearchBridge | null;
+  revitPreview: RevitPreviewBridge | null;
   dopusrtPath: string | null;
   libreOfficePath: string | null;
   openPath: (target: string) => Promise<string | void>;
@@ -161,6 +164,21 @@ async function previewFile(target: string, deps: FileCapabilityDeps): Promise<Re
     if (extension === '.pdf') {
       const bytes = await fs.readFile(target);
       return { ok: true, entry, preview: { kind: 'pdf', mime: 'application/pdf', dataUrl: dataUrl('application/pdf', bytes) } };
+    }
+  }
+  if (REVIT_EXTENSIONS.has(extension) && deps.revitPreview) {
+    const extracted = await deps.revitPreview.preview(target);
+    if (extracted.ok) {
+      return {
+        ok: true,
+        entry,
+        preview: {
+          kind: 'image',
+          mime: 'image/png',
+          dataUrl: dataUrl('image/png', extracted.png),
+          extractedBy: 'revit-embedded-preview',
+        },
+      };
     }
   }
   if (OFFICE_EXTENSIONS.has(extension) && deps.libreOfficePath) {
@@ -296,6 +314,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               ok: true,
               providers: {
                 everything: Boolean(deps.everythingSearch),
+                revitPreview: Boolean(deps.revitPreview),
                 directoryOpus: Boolean(deps.dopusrtPath),
                 libreOffice: Boolean(deps.libreOfficePath),
               },

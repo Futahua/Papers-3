@@ -5,6 +5,7 @@ import * as path from 'node:path';
 
 import { createFileCapabilityService } from '../../src/main/backpacks/fileCapabilityService';
 import type { EverythingSearchBridge } from '../../src/main/backpacks/everythingSearchBridge';
+import type { RevitPreviewBridge } from '../../src/main/backpacks/revitPreviewBridge';
 
 let root: string;
 
@@ -16,9 +17,13 @@ afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
-function service(everythingSearch: EverythingSearchBridge | null = null) {
+function service(
+  everythingSearch: EverythingSearchBridge | null = null,
+  revitPreview: RevitPreviewBridge | null = null,
+) {
   return createFileCapabilityService({
     everythingSearch,
+    revitPreview,
     dopusrtPath: null,
     libreOfficePath: null,
     openPath: vi.fn(async () => ''),
@@ -63,6 +68,25 @@ describe('file capability service', () => {
     expect(binary.ok).toBe(true);
     expect(binary.preview).toMatchObject({ kind: 'binary', truncated: false });
     expect((binary.preview as { hex: string }).hex).toContain('00000000');
+  });
+
+  it('uses an embedded Revit preview before the binary fallback', async () => {
+    const target = path.join(root, 'model.rvt');
+    await fs.writeFile(target, Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const preview = vi.fn(async () => ({ ok: true as const, png }));
+    const bridge: RevitPreviewBridge = { preview };
+
+    const result = await service(null, bridge).call({ operation: 'preview', params: { path: target } });
+
+    expect(preview).toHaveBeenCalledWith(target);
+    expect(result.ok).toBe(true);
+    expect(result.preview).toMatchObject({
+      kind: 'image',
+      mime: 'image/png',
+      extractedBy: 'revit-embedded-preview',
+      dataUrl: `data:image/png;base64,${png.toString('base64')}`,
+    });
   });
 
   it('delegates global search to the Everything bridge', async () => {
