@@ -10,6 +10,7 @@ import {
   BACKPACK_PROJECT_SCHEME,
   type BackpackProjectService,
 } from '../backpacks/backpackProjectService';
+import { FILE_PREVIEW_SCHEME } from '../backpacks/filePreviewResources';
 
 const mimeByExtension: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -33,6 +34,16 @@ export function registerBackpackProjectSchemePrivileges(): void {
         secure: true,
         supportFetchAPI: true,
         corsEnabled: false,
+      },
+    },
+    {
+      scheme: FILE_PREVIEW_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: false,
+        stream: true,
       },
     },
   ]);
@@ -66,18 +77,19 @@ export function registerBackpackProjectSchemePrivileges(): void {
  */
 export function contentSecurityPolicy(origin: string, frameOrigins: readonly string[] = []): string {
   const allowedFrames = frameOrigins.length > 0 ? frameOrigins.join(' ') : "'none'";
+  const previewOrigin = `${FILE_PREVIEW_SCHEME}://${new URL(origin).hostname}`;
   return [
     `default-src 'none'`,
     `script-src ${origin}`,
     `style-src ${origin} 'unsafe-inline'`,
-    `img-src ${origin} data:`,
-    `media-src blob:`,
+    `img-src ${origin} ${previewOrigin} data:`,
+    `media-src ${previewOrigin} blob:`,
     `font-src ${origin}`,
     `connect-src http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*`,
     `object-src 'none'`,
     `base-uri 'none'`,
     `form-action 'none'`,
-    `frame-src ${allowedFrames === "'none'" ? 'blob:' : `${allowedFrames} blob:`}`,
+    `frame-src ${allowedFrames === "'none'" ? `${previewOrigin} blob:` : `${allowedFrames} ${previewOrigin} blob:`}`,
   ].join('; ');
 }
 

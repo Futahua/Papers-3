@@ -171,7 +171,7 @@ export interface FacadeDeps {
   updater: PapersUpdater;
   registry: BackpackRegistry;
   backpackProjects: BackpackProjectService;
-  fileCapability: { call(request: unknown): Promise<Record<string, unknown>> };
+  fileCapability: { call(request: unknown, context: { backpackId: string }): Promise<Record<string, unknown>> };
   delegateWave: DelegateWaveRelay;
   isBackpackProjectSender: (sender: WebContents) => boolean;
   /**
@@ -1298,9 +1298,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     request: unknown,
     workspaceOrigin?: string,
   ): Promise<Record<string, unknown>> {
-    this.scopedWorkspaceForSender(senderId, workspaceOrigin);
-    if (workspaceOrigin === undefined) this.requireProjectForSender(senderId);
-    return this.deps.fileCapability.call(request);
+    const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    const backpackId = scope?.backpackId ?? this.requireProjectForSender(senderId);
+    return this.deps.fileCapability.call(request, { backpackId });
   }
 
   async openBackpackProjectWebLink(senderId: number, url: string, workspaceOrigin?: string): Promise<void> {

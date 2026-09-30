@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { EverythingSearchBridge } from './everythingSearchBridge';
+import type { FilePreviewResourceRegistry } from './filePreviewResources';
 import type { RevitPreviewBridge } from './revitPreviewBridge';
 
 const MAX_PATH_BYTES = 32_768;
@@ -11,9 +12,10 @@ const MAX_SEARCH_BYTES = 2_048;
 const MAX_BATCH = 64;
 const MAX_LIST = 500;
 const MAX_SEARCH = 500;
-const MAX_RICH_PREVIEW_BYTES = 24 * 1024 * 1024;
-const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
-const MAX_BINARY_HEAD_BYTES = 32 * 1024;
+const TEXT_PREVIEW_CHUNK_BYTES = 2 * 1024 * 1024;
+const MAX_TEXT_CHUNK_BYTES = 8 * 1024 * 1024;
+const BINARY_SAMPLE_BYTES = 32 * 1024;
+const PREVIEW_RESOURCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const TEXT_EXTENSIONS = new Set([
   '.txt', '.md', '.markdown', '.json', '.jsonl', '.ndjson', '.yaml', '.yml', '.toml', '.ini', '.cfg',
@@ -34,11 +36,15 @@ export interface FileCapabilityEntry {
 }
 export interface FileCapabilityDeps {
   everythingSearch: EverythingSearchBridge | null;
+  previewResources: FilePreviewResourceRegistry;
   revitPreview: RevitPreviewBridge | null;
   dopusrtPath: string | null;
   libreOfficePath: string | null;
   openPath: (target: string) => Promise<string | void>;
   revealPath: (target: string) => void;
+}
+export interface FileCapabilityContext {
+  backpackId: string;
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -126,7 +132,12 @@ function dataUrl(mime: string, buffer: Buffer): string {
   return `data:${mime};base64,${buffer.toString('base64')}`;
 }
 
-async function convertOfficeToPdf(source: string, soffice: string): Promise<Buffer | null> {
+interface ConvertedPreviewFile {
+  filePath: string;
+  cleanup: () => Promise<void>;
+}
+
+async function convertOfficeToPdf(source: string, soffice: string): Promise<ConvertedPreviewFile | null> {
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-file-preview-'));
   try {
     const outputName = `${path.parse(source).name}.pdf`;
@@ -138,15 +149,77 @@ async function convertOfficeToPdf(source: string, soffice: string): Promise<Buff
     });
     const output = path.join(tempRoot, outputName);
     const stats = await fs.stat(output);
-    if (stats.size > MAX_RICH_PREVIEW_BYTES) return null;
-    return await fs.readFile(output);
+    if (!stats.isFile()) throw new Error('LibreOffice did not create a PDF preview.');
+    return {
+      filePath: output,
+      cleanup: () => fs.rm(tempRoot, { recursive: true, force: true }),
+    };
   } catch {
-    return null;
-  } finally {
     await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+    return null;
   }
 }
-async function previewFile(target: string, deps: FileCapabilityDeps): Promise<Record<string, unknown>> {
+
+function resourcePreview(
+  deps: FileCapabilityDeps,
+  context: FileCapabilityContext,
+  filePath: string,
+  kind: 'image' | 'audio' | 'video' | 'pdf',
+  mime: string,
+  cleanup?: () => void | Promise<void>,
+  extra: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const grant = deps.previewResources.grant(context.backpackId, filePath, mime, cleanup);
+  return {
+    kind,
+    mime,
+    url: grant.url,
+    resourceId: grant.id,
+    transport: 'stream',
+    ...extra,
+  };
+}
+
+function safeUtf8End(bytes: Buffer): number {
+  if (bytes.length === 0) return 0;
+  let lead = bytes.length - 1;
+  while (lead >= 0 && (bytes[lead]! & 0xc0) === 0x80) lead -= 1;
+  if (lead < 0) return 0;
+  const first = bytes[lead]!;
+  const width = first < 0x80 ? 1
+    : (first & 0xe0) === 0xc0 ? 2
+      : (first & 0xf0) === 0xe0 ? 3
+        : (first & 0xf8) === 0xf0 ? 4
+          : 1;
+  return lead + width <= bytes.length ? bytes.length : lead;
+}
+
+async function readTextChunk(target: string, offset: number, maxBytes: number): Promise<Record<string, unknown>> {
+  const stats = await fs.stat(target);
+  if (!stats.isFile()) throw new Error('That path is not a file.');
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > stats.size) throw new Error('offset is outside the file.');
+  const length = Math.min(maxBytes, Math.max(0, stats.size - offset));
+  if (length === 0) return { text: '', byteOffset: offset, nextOffset: offset, eof: true };
+  const handle = await fs.open(target, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, offset);
+    const chunk = buffer.subarray(0, bytesRead);
+    const safeEnd = offset + bytesRead < stats.size ? safeUtf8End(chunk) : chunk.length;
+    const usable = safeEnd > 0 ? chunk.subarray(0, safeEnd) : chunk;
+    const nextOffset = offset + usable.length;
+    return {
+      text: usable.toString('utf8'),
+      byteOffset: offset,
+      nextOffset,
+      eof: nextOffset >= stats.size,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function previewFile(target: string, deps: FileCapabilityDeps, context: FileCapabilityContext): Promise<Record<string, unknown>> {
   const entry = await describe(target);
   if (entry.kind === 'folder') {
     const listing = await listDirectory(target, 200);
@@ -154,17 +227,13 @@ async function previewFile(target: string, deps: FileCapabilityDeps): Promise<Re
   }
   const extension = entry.extension;
   const stats = await fs.stat(target);
-  if (stats.size <= MAX_RICH_PREVIEW_BYTES) {
-    const mime = IMAGE_MIME.get(extension) ?? AUDIO_MIME.get(extension) ?? VIDEO_MIME.get(extension);
-    if (mime) {
-      const bytes = await fs.readFile(target);
-      const kind = IMAGE_MIME.has(extension) ? 'image' : AUDIO_MIME.has(extension) ? 'audio' : 'video';
-      return { ok: true, entry, preview: { kind, mime, dataUrl: dataUrl(mime, bytes) } };
-    }
-    if (extension === '.pdf') {
-      const bytes = await fs.readFile(target);
-      return { ok: true, entry, preview: { kind: 'pdf', mime: 'application/pdf', dataUrl: dataUrl('application/pdf', bytes) } };
-    }
+  const mime = IMAGE_MIME.get(extension) ?? AUDIO_MIME.get(extension) ?? VIDEO_MIME.get(extension);
+  if (mime) {
+    const kind = IMAGE_MIME.has(extension) ? 'image' : AUDIO_MIME.has(extension) ? 'audio' : 'video';
+    return { ok: true, entry, preview: resourcePreview(deps, context, target, kind, mime) };
+  }
+  if (extension === '.pdf') {
+    return { ok: true, entry, preview: resourcePreview(deps, context, target, 'pdf', 'application/pdf') };
   }
   if (REVIT_EXTENSIONS.has(extension) && deps.revitPreview) {
     const extracted = await deps.revitPreview.preview(target);
@@ -183,28 +252,34 @@ async function previewFile(target: string, deps: FileCapabilityDeps): Promise<Re
   }
   if (OFFICE_EXTENSIONS.has(extension) && deps.libreOfficePath) {
     const pdf = await convertOfficeToPdf(target, deps.libreOfficePath);
-    if (pdf) return { ok: true, entry, preview: { kind: 'pdf', mime: 'application/pdf', dataUrl: dataUrl('application/pdf', pdf), convertedBy: 'libreoffice' } };
+    if (pdf) {
+      return {
+        ok: true,
+        entry,
+        preview: resourcePreview(
+          deps,
+          context,
+          pdf.filePath,
+          'pdf',
+          'application/pdf',
+          pdf.cleanup,
+          { convertedBy: 'libreoffice' },
+        ),
+      };
+    }
   }
   const headHandle = await fs.open(target, 'r');
   let head: Buffer;
   try {
-    const length = Math.min(MAX_BINARY_HEAD_BYTES, stats.size);
+    const length = Math.min(BINARY_SAMPLE_BYTES, stats.size);
     head = Buffer.alloc(length);
     await headHandle.read(head, 0, length, 0);
   } finally {
     await headHandle.close();
   }
   if (TEXT_EXTENSIONS.has(extension) || mostlyText(head)) {
-    const toRead = Math.min(MAX_TEXT_PREVIEW_BYTES, stats.size);
-    const handle = await fs.open(target, 'r');
-    let bytes: Buffer;
-    try {
-      bytes = Buffer.alloc(toRead);
-      await handle.read(bytes, 0, toRead, 0);
-    } finally {
-      await handle.close();
-    }
-    return { ok: true, entry, preview: { kind: 'text', text: bytes.toString('utf8'), truncated: stats.size > toRead } };
+    const chunk = await readTextChunk(target, 0, TEXT_PREVIEW_CHUNK_BYTES);
+    return { ok: true, entry, preview: { kind: 'text', ...chunk } };
   }
   return { ok: true, entry, preview: { kind: 'binary', hex: hexDump(head), strings: extractStrings(head), truncated: stats.size > head.length } };
 }
@@ -298,10 +373,10 @@ async function operationViaOpus(
 }
 
 export function createFileCapabilityService(deps: FileCapabilityDeps): {
-  call(request: unknown): Promise<Record<string, unknown>>;
+  call(request: unknown, context: FileCapabilityContext): Promise<Record<string, unknown>>;
 } {
   return {
-    async call(raw) {
+    async call(raw, context) {
       if (!isRecord(raw)) {
         return { ok: false, code: 'REQUEST_INVALID', message: 'File capability request must be an object.' };
       }
@@ -343,7 +418,18 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             return await deps.everythingSearch.search(query, limit);
           }
           case 'preview':
-            return await previewFile(absolutePath(params.path), deps);
+            return await previewFile(absolutePath(params.path), deps, context);
+          case 'preview-text-chunk': {
+            const target = absolutePath(params.path);
+            const offset = params.offset === undefined ? 0 : Number(params.offset);
+            const maxBytes = boundedLimit(params.maxBytes, TEXT_PREVIEW_CHUNK_BYTES, MAX_TEXT_CHUNK_BYTES);
+            return { ok: true, ...(await readTextChunk(target, offset, maxBytes)) };
+          }
+          case 'preview-release': {
+            const resourceId = boundedString(params.resourceId, 'resourceId', 64);
+            if (!PREVIEW_RESOURCE_ID_PATTERN.test(resourceId)) throw new Error('resourceId is not a valid preview resource.');
+            return { ok: true, released: deps.previewResources.revoke(context.backpackId, resourceId) };
+          }
           case 'open': {
             const error = await deps.openPath(absolutePath(params.path));
             return typeof error === 'string' && error

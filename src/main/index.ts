@@ -1,7 +1,7 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, globalShortcut, ipcMain, nativeImage, net, screen, session, shell, webContents, type WebContents } from 'electron';
+import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell, webContents, type WebContents } from 'electron';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -9,6 +9,7 @@ import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
 import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from './backpacks/everythingSearchBridge';
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
+import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
@@ -642,6 +643,9 @@ async function bootstrap(): Promise<void> {
     },
   );
   installBackpackProjectProtocol(backpackProjects);
+  const filePreviewResources = createFilePreviewResourceRegistry();
+  protocol.handle(FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler(filePreviewResources));
+  app.once('will-quit', () => { void filePreviewResources.dispose(); });
 
   const everythingPaths = resolveEverythingSearchBridgePaths({
     appPath: app.getAppPath(),
@@ -664,6 +668,7 @@ async function bootstrap(): Promise<void> {
   });
   const fileCapability = createFileCapabilityService({
     everythingSearch,
+    previewResources: filePreviewResources,
     revitPreview,
     dopusrtPath: resolveDirectoryOpusRtPath(),
     libreOfficePath: resolveLibreOfficePath(),

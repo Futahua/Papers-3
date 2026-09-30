@@ -4,10 +4,12 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import { createFileCapabilityService } from '../../src/main/backpacks/fileCapabilityService';
+import { createFilePreviewResourceRegistry } from '../../src/main/backpacks/filePreviewResources';
 import type { EverythingSearchBridge } from '../../src/main/backpacks/everythingSearchBridge';
 import type { RevitPreviewBridge } from '../../src/main/backpacks/revitPreviewBridge';
 
 let root: string;
+const CONTEXT = { backpackId: 'bp-11111111-2222-4333-8444-555555555555' };
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-file-capability-'));
@@ -21,14 +23,20 @@ function service(
   everythingSearch: EverythingSearchBridge | null = null,
   revitPreview: RevitPreviewBridge | null = null,
 ) {
-  return createFileCapabilityService({
+  const previewResources = createFilePreviewResourceRegistry();
+  const inner = createFileCapabilityService({
     everythingSearch,
+    previewResources,
     revitPreview,
     dopusrtPath: null,
     libreOfficePath: null,
     openPath: vi.fn(async () => ''),
     revealPath: vi.fn(),
   });
+  return {
+    call: (request: unknown) => inner.call(request, CONTEXT),
+    previewResources,
+  };
 }
 
 describe('file capability service', () => {
@@ -62,12 +70,73 @@ describe('file capability service', () => {
 
     const text = await service().call({ operation: 'preview', params: { path: textFile } });
     expect(text.ok).toBe(true);
-    expect(text.preview).toMatchObject({ kind: 'text', text: '# hello\nworld', truncated: false });
+    expect(text.preview).toMatchObject({
+      kind: 'text',
+      text: '# hello\nworld',
+      byteOffset: 0,
+      nextOffset: Buffer.byteLength('# hello\nworld'),
+      eof: true,
+    });
 
     const binary = await service().call({ operation: 'preview', params: { path: binaryFile } });
     expect(binary.ok).toBe(true);
     expect(binary.preview).toMatchObject({ kind: 'binary', truncated: false });
     expect((binary.preview as { hex: string }).hex).toContain('00000000');
+  });
+
+  it('streams rich previews regardless of file size instead of imposing the old IPC ceiling', async () => {
+    const target = path.join(root, 'large.png');
+    await fs.writeFile(target, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await fs.truncate(target, 32 * 1024 * 1024);
+
+    const previewService = service();
+    const result = await previewService.call({ operation: 'preview', params: { path: target } });
+
+    expect(result.ok).toBe(true);
+    expect(result.preview).toMatchObject({
+      kind: 'image',
+      mime: 'image/png',
+      transport: 'stream',
+    });
+    const preview = result.preview as { url: string; resourceId: string; dataUrl?: string };
+    expect(preview.url).toMatch(/^papers-file-preview:\/\/bp-11111111-2222-4333-8444-555555555555\//);
+    expect(preview.dataUrl).toBeUndefined();
+
+    const released = await previewService.call({
+      operation: 'preview-release',
+      params: { resourceId: preview.resourceId },
+    });
+    expect(released).toEqual({ ok: true, released: true });
+  });
+
+  it('treats the text preview size as a chunk size and can continue through the file', async () => {
+    const target = path.join(root, 'large.log');
+    const chunkBytes = 2 * 1024 * 1024;
+    const tail = 'TAIL-CONTINUES';
+    await fs.writeFile(target, 'a'.repeat(chunkBytes) + tail);
+
+    const previewService = service();
+    const first = await previewService.call({ operation: 'preview', params: { path: target } });
+    expect(first.ok).toBe(true);
+    expect(first.preview).toMatchObject({
+      kind: 'text',
+      byteOffset: 0,
+      nextOffset: chunkBytes,
+      eof: false,
+    });
+    expect((first.preview as { text: string }).text.length).toBe(chunkBytes);
+
+    const second = await previewService.call({
+      operation: 'preview-text-chunk',
+      params: { path: target, offset: chunkBytes },
+    });
+    expect(second).toMatchObject({
+      ok: true,
+      byteOffset: chunkBytes,
+      nextOffset: chunkBytes + Buffer.byteLength(tail),
+      eof: true,
+      text: tail,
+    });
   });
 
   it('uses an embedded Revit preview before the binary fallback', async () => {
