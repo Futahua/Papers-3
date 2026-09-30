@@ -76,6 +76,18 @@ function boundedId(value: unknown): string {
   return value;
 }
 
+function boundedSessionId(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_ID) {
+    throw new RelayInputError('an identifier is required');
+  }
+  if (/^[A-Za-z0-9._-]+$/.test(value)) return value;
+  // External ChatGPT workstreams are projected by Delegate Wave as a deliberately
+  // narrow virtual-session namespace. Admit exactly that namespace here without
+  // widening the alphabet for project/job/proposal ids.
+  if (/^chatgpt:[a-f0-9]{24}$/.test(value)) return value;
+  throw new RelayInputError('an identifier contains unsupported characters');
+}
+
 function boundedText(max: number) {
   return (value: unknown): string => {
     if (typeof value !== 'string' || value.trim().length === 0 || value.length > max) {
@@ -110,6 +122,11 @@ function optionalText(max: number) {
 function optionalBoundedId(value: unknown): string | undefined {
   if (value === null || value === undefined || value === '') return undefined;
   return boundedId(value);
+}
+
+function optionalBoundedSessionId(value: unknown): string | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  return boundedSessionId(value);
 }
 
 function optionalSpanId(value: unknown): string | undefined {
@@ -147,7 +164,7 @@ const OPERATIONS: Readonly<Record<DelegateWaveOperation, OperationSpec>> = Objec
         if (typeof value !== 'string' || !['rename','move','archive','restore','delete','group.create','group.rename','group.delete'].includes(value)) throw new RelayInputError('Unknown organization action');
         return value;
       },
-      sessionId: optionalBoundedId,
+      sessionId: optionalBoundedSessionId,
       groupId: (value) => value == null ? null : optionalSpanId(value),
       name: optionalText(240),
       confirm: (value) => value === true,
@@ -290,7 +307,11 @@ export class DelegateWaveRelay {
     let body: Record<string, unknown> | undefined;
     try {
       const pathParams: Record<string, string> = {};
-      for (const name of spec.pathParams) pathParams[name] = boundedId(supplied[name]);
+      for (const name of spec.pathParams) {
+        pathParams[name] = operation === 'session.timeline' && name === 'sessionId'
+          ? boundedSessionId(supplied[name])
+          : boundedId(supplied[name]);
+      }
       path = spec.path(pathParams);
       if (spec.query) {
         const query = new URLSearchParams();

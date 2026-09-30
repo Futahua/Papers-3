@@ -84,6 +84,26 @@ describe('DelegateWaveRelay', () => {
     expect(isDelegateWaveOperation('session.timeline')).toBe(true);
   });
 
+  it('admits only the exact ChatGPT virtual-session namespace for session ids', async () => {
+    const { instance, captured } = relay();
+    const sessionId = 'chatgpt:a9e1dced0752db18e0261121';
+    const timeline = await instance.call(BOUND, 'session.timeline', { sessionId });
+    const organization = await instance.call(BOUND, 'organization.change', { action: 'archive', sessionId });
+    expect(timeline.ok).toBe(true);
+    expect(organization.ok).toBe(true);
+    expect(captured[0]!.url).toBe('http://127.0.0.1:47321/v1/sessions/chatgpt%3Aa9e1dced0752db18e0261121/timeline');
+    expect(JSON.parse(captured[1]!.body!)).toMatchObject({ sessionId });
+
+    for (const invalid of [
+      'chatgpt:../escape',
+      'chatgpt:a9e1dced0752db18e026112',
+      'chatgpt:A9E1DCED0752DB18E0261121',
+      'other:a9e1dced0752db18e0261121',
+    ]) {
+      expect((await instance.call(BOUND, 'session.timeline', { sessionId: invalid })).code).toBe('INVALID_REQUEST');
+    }
+  });
+
   it('rejects unbounded session paging inputs before network access', async () => {
     const { instance, captured } = relay();
     expect((await instance.call(BOUND, 'session.list', { limit: 501 })).code).toBe('INVALID_REQUEST');
