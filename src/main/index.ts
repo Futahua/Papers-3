@@ -90,6 +90,7 @@ import {
   type CommandSurfaceOverlaySession,
 } from './windows/commandSurfaceOverlay';
 import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './windows/foregroundBridge';
+import { focusSurfaceForForeignActivation } from './windows/activationSurfaceFocus';
 import { createHoverInputBridge, resolveHoverInputBridgeSourcePath, type HoverInputBridge } from './windows/hoverInputBridge';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
@@ -1575,18 +1576,7 @@ async function bootstrap(): Promise<void> {
     focusForActivation: async (sender) => {
       const owner = BrowserWindow.fromWebContents(sender);
       if (!owner || owner.isDestroyed()) return null;
-      const wasFocusable = owner.isFocusable();
-      try {
-        owner.setFocusable(true);
-        owner.focus();
-      } catch {
-        return null;
-      }
-      return () => {
-        try {
-          if (!owner.isDestroyed()) owner.setFocusable(wasFocusable);
-        } catch { /* releasing focus never fails the action */ }
-      };
+      return focusSurfaceForForeignActivation(owner);
     },
     resolveControlSurface: (sender, rect) => {
       const owner = BrowserWindow.fromWebContents(sender);
