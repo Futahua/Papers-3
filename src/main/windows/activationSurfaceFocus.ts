@@ -24,6 +24,16 @@ function restoreSurface(
   }
 }
 
+function reassertTopmost(owner: ActivationSurfaceWindow, wasAlwaysOnTop: boolean): void {
+  if (!wasAlwaysOnTop || owner.isDestroyed()) return;
+  try {
+    owner.setAlwaysOnTop(true, 'floating');
+    owner.moveTop();
+  } catch {
+    /* best effort: activation already succeeded */
+  }
+}
+
 /**
  * Temporarily let one Papers surface take foreground eligibility for a foreign
  * activation. The returned release restores the surface's original activation
@@ -51,5 +61,14 @@ export async function focusSurfaceForForeignActivation(
 
   return () => {
     try { restoreSurface(owner, wasFocusable, wasAlwaysOnTop); } catch { /* best effort */ }
+    if (!wasAlwaysOnTop) return;
+
+    // A fullscreen app can promote/re-stack its own topmost presentation window
+    // shortly AFTER SetForegroundWindow returns. The immediate restore above is
+    // therefore necessary but not sufficient: the target can still overtake the
+    // widget on the next compositor/window-manager turn. Reassert twice inside a
+    // short bounded settle window; neither call takes focus.
+    setTimeout(() => reassertTopmost(owner, wasAlwaysOnTop), 120);
+    setTimeout(() => reassertTopmost(owner, wasAlwaysOnTop), 360);
   };
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { focusSurfaceForForeignActivation } from '../../src/main/windows/activationSurfaceFocus';
 
@@ -36,6 +36,12 @@ function fakeWindow(options: { focusable: boolean; alwaysOnTop: boolean; focusTh
 }
 
 describe('focusSurfaceForForeignActivation', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
   it('restores a non-focusable topmost widget above the activated target', async () => {
     const fake = fakeWindow({ focusable: false, alwaysOnTop: true });
     const release = await focusSurfaceForForeignActivation(fake.window);
@@ -53,6 +59,19 @@ describe('focusSurfaceForForeignActivation', () => {
     ]);
     expect(fake.window.isFocusable()).toBe(false);
     expect(fake.window.isAlwaysOnTop()).toBe(true);
+
+    vi.advanceTimersByTime(400);
+    expect(fake.calls).toEqual([
+      'focusable:true',
+      'focus',
+      'focusable:false',
+      'topmost:true:floating',
+      'moveTop',
+      'topmost:true:floating',
+      'moveTop',
+      'topmost:true:floating',
+      'moveTop',
+    ]);
   });
 
   it('does not accidentally pin an ordinary project surface', async () => {
@@ -83,6 +102,7 @@ describe('focusSurfaceForForeignActivation', () => {
     const release = await focusSurfaceForForeignActivation(fake.window);
     fake.destroy();
     release?.();
+    vi.advanceTimersByTime(400);
 
     expect(fake.calls).toEqual(['focusable:true', 'focus']);
   });
