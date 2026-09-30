@@ -7,6 +7,7 @@ import { createFileCapabilityService } from '../../src/main/backpacks/fileCapabi
 import { createFilePreviewResourceRegistry } from '../../src/main/backpacks/filePreviewResources';
 import type { EverythingSearchBridge } from '../../src/main/backpacks/everythingSearchBridge';
 import type { RevitPreviewBridge } from '../../src/main/backpacks/revitPreviewBridge';
+import type { WindowsPreviewHandlerBridge } from '../../src/main/backpacks/windowsPreviewHandlerBridge';
 
 let root: string;
 const CONTEXT = { backpackId: 'bp-11111111-2222-4333-8444-555555555555' };
@@ -22,19 +23,22 @@ afterEach(async () => {
 function service(
   everythingSearch: EverythingSearchBridge | null = null,
   revitPreview: RevitPreviewBridge | null = null,
+  windowsPreview: WindowsPreviewHandlerBridge | null = null,
+  context: Record<string, unknown> = CONTEXT,
 ) {
   const previewResources = createFilePreviewResourceRegistry();
   const inner = createFileCapabilityService({
     everythingSearch,
     previewResources,
     revitPreview,
+    windowsPreview,
     dopusrtPath: null,
     libreOfficePath: null,
     openPath: vi.fn(async () => ''),
     revealPath: vi.fn(),
   });
   return {
-    call: (request: unknown) => inner.call(request, CONTEXT),
+    call: (request: unknown) => inner.call(request, context as typeof CONTEXT),
     previewResources,
   };
 }
@@ -156,6 +160,42 @@ describe('file capability service', () => {
       extractedBy: 'revit-embedded-preview',
       dataUrl: `data:image/png;base64,${png.toString('base64')}`,
     });
+  });
+
+  it('prefers an installed Windows preview handler for non-text files and controls one sender-owned live host', async () => {
+    const target = path.join(root, 'document.docx');
+    await fs.writeFile(target, 'office-placeholder');
+    const probe = vi.fn(async () => ({ available: true, clsid: '{84f66100-ff7c-4fb4-b0c0-02cd7fb668fe}' }));
+    const open = vi.fn(async () => ({ ok: true as const, sessionId: '11111111-2222-4333-8444-555555555555', clsid: '{84f66100-ff7c-4fb4-b0c0-02cd7fb668fe}' }));
+    const move = vi.fn(() => true);
+    const focus = vi.fn(() => true);
+    const close = vi.fn(() => true);
+    const bridge: WindowsPreviewHandlerBridge = {
+      probe, open, move, focus, close,
+      setOwnerSurfaceBounds: vi.fn(), setOwnerVisible: vi.fn(), closeOwner: vi.fn(), dispose: vi.fn(),
+    };
+    const nativePreviewHost = {
+      ownerKey: '7:surface-a',
+      parentHwnd: '12345',
+      surfaceBounds: { x: 40, y: 70, width: 800, height: 600 },
+    };
+    const previewService = service(null, null, bridge, { ...CONTEXT, nativePreviewHost });
+
+    const preview = await previewService.call({ operation: 'preview', params: { path: target } });
+    expect(probe).toHaveBeenCalledWith(target);
+    expect(preview.preview).toMatchObject({ kind: 'windows-preview-handler', provider: 'windows-preview-handler' });
+
+    const rect = { x: 300, y: 80, width: 420, height: 460 };
+    const opened = await previewService.call({ operation: 'preview-native-open', params: { path: target, rect } });
+    expect(opened.ok).toBe(true);
+    expect(open).toHaveBeenCalledWith(nativePreviewHost, target, rect);
+    const sessionId = (opened as { sessionId: string }).sessionId;
+    expect((await previewService.call({ operation: 'preview-native-move', params: { sessionId, rect } })).ok).toBe(true);
+    expect(move).toHaveBeenCalledWith(nativePreviewHost.ownerKey, sessionId, rect);
+    expect((await previewService.call({ operation: 'preview-native-focus', params: { sessionId } })).ok).toBe(true);
+    expect(focus).toHaveBeenCalledWith(nativePreviewHost.ownerKey, sessionId);
+    expect((await previewService.call({ operation: 'preview-native-close', params: { sessionId } })).ok).toBe(true);
+    expect(close).toHaveBeenCalledWith(nativePreviewHost.ownerKey, sessionId);
   });
 
   it('delegates global search to the Everything bridge', async () => {

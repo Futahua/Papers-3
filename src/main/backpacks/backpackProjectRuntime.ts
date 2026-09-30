@@ -75,6 +75,12 @@ export class BackpackProjectRuntime {
     return this.presented;
   }
 
+  get currentBounds(): { x: number; y: number; width: number; height: number } | null {
+    if (!this.view) return null;
+    const bounds = this.view.getBounds();
+    return { ...bounds };
+  }
+
   /** Focus the existing native project presentation without inventing a
    * surface or changing its URL. Callers must have already authorized the
    * logical surface identity. */

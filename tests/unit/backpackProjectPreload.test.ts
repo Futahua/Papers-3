@@ -107,6 +107,39 @@ describe('Backpack project protocol alignment', () => {
     }));
   });
 
+  it('translates an embedded AYG native preview rect through its exact iframe before IPC', async () => {
+    await loadPreloadForTest();
+    const child = {};
+    globalThis.document = {
+      querySelectorAll: () => [{
+        contentWindow: child,
+        getBoundingClientRect: () => ({ x: 120, y: 45, width: 900, height: 700 }),
+      }],
+    } as unknown as Document;
+    mocks.invoke.mockResolvedValue({ ok: true, sessionId: '11111111-2222-4333-8444-555555555555' });
+    for (const handler of messageHandlers) {
+      handler({
+        source: child,
+        origin: 'papers-backpack://ayg-child',
+        data: {
+          type: 'papers:project:file-capability',
+          requestId: 'native-preview-child',
+          operation: 'preview-native-open',
+          params: { path: 'D:\\sample.docx', rect: { x: 300, y: 80, width: 420, height: 460 } },
+        },
+      });
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      'host:backpack-project:file-capability',
+      {
+        operation: 'preview-native-open',
+        params: { path: 'D:\\sample.docx', rect: { x: 420, y: 125, width: 420, height: 460 } },
+      },
+      'papers-backpack://ayg-child',
+    );
+  });
+
   it('0A: a refused checked save travels as a delivered result, not a failed request', async () => {
     await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));

@@ -11,6 +11,7 @@ import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
+import { createWindowsPreviewHandlerBridge, resolveWindowsPreviewHostSourcePath } from './backpacks/windowsPreviewHandlerBridge';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
 import { BackpackProjectSurfaceCollection } from './backpacks/backpackProjectSurfaceCollection';
@@ -666,10 +667,20 @@ async function bootstrap(): Promise<void> {
       packaged: app.isPackaged,
     }),
   });
+  const windowsPreview = createWindowsPreviewHandlerBridge({
+    cacheDirectory: fileCapabilityCacheDirectory,
+    sourcePath: resolveWindowsPreviewHostSourcePath({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
+    }),
+  });
+  app.once('will-quit', () => windowsPreview?.dispose());
   const fileCapability = createFileCapabilityService({
     everythingSearch,
     previewResources: filePreviewResources,
     revitPreview,
+    windowsPreview,
     dopusrtPath: resolveDirectoryOpusRtPath(),
     libreOfficePath: resolveLibreOfficePath(),
     openPath: (target) => shell.openPath(target),
@@ -1354,13 +1365,17 @@ async function bootstrap(): Promise<void> {
       ]);
     },
     closeAttachedProjectSurface: async (windowId, surfaceId, options) => {
+      windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
       await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
     projectEntryUrlForSurface: (windowId, surfaceId) =>
       papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForSurface(surfaceId) ?? null,
     closeBackpackProjectSurface: async (senderId, surfaceId) => {
       const windowId = papersWindows.windowForSender(senderId);
-      if (windowId !== null) await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
+      if (windowId !== null) {
+        windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
+        await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
+      }
     },
     restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
     setHermesDockOwner: (windowId) => papersWindows.setHermesDockOwner(windowId),
@@ -1372,6 +1387,17 @@ async function bootstrap(): Promise<void> {
     registry,
     backpackProjects,
     fileCapability,
+    filePreviewHostForSender: (senderId) => {
+      const context = surfaceContexts.contextForSender(senderId);
+      if (!context?.surfaceId) return null;
+      const owner = papersWindows.get(context.windowId)?.owned;
+      const runtime = owner?.projectSurfaces.get(context.surfaceId);
+      const surfaceBounds = runtime?.currentBounds;
+      if (!owner || !surfaceBounds || owner.window.isDestroyed()) return null;
+      const handle = owner.window.getNativeWindowHandle();
+      const parentHwnd = handle.length >= 8 ? handle.readBigUInt64LE(0).toString() : BigInt(handle.readUInt32LE(0)).toString();
+      return { ownerKey: `${context.windowId}:${context.surfaceId}`, parentHwnd, surfaceBounds };
+    },
     // Environment-only: URL, operator token and the one permitted Backpack id
     // live in main and are never persisted, logged or exposed to a renderer.
     delegateWave: new DelegateWaveRelay(
@@ -1435,6 +1461,7 @@ async function bootstrap(): Promise<void> {
             bindVisualSemanticKeySender(owningWindowId, surfaceId, nextFrameSender);
           },
         });
+        if (owningWindowId !== null) windowsPreview?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
       } catch (caught) {
         if (stagedFrameSender !== null) surfaceContexts.unbind(stagedFrameSender);
         throw caught;
@@ -1472,11 +1499,17 @@ async function bootstrap(): Promise<void> {
       // The facade has already validated the target; resolve it again here so
       // one host can never hide another surface in the same native window.
       const windowId = papersWindows.windowForSender(senderId);
-      if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
+      if (windowId !== null) {
+        papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
+        windowsPreview?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+      }
     },
     setBackpackProjectSurfaceBounds: (senderId, surfaceId, bounds) => {
       const windowId = papersWindows.windowForSender(senderId);
-      if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
+      if (windowId !== null) {
+        papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
+        windowsPreview?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+      }
     },
     setHostOverlayActive: (windowId, active, owner = 'legacy') => {
       const context = papersWindows.get(windowId);

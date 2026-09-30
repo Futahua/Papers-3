@@ -170,6 +170,26 @@ function scopedWorkspaceOrigin(event: MessageEvent, request: ProjectMessage): st
     : undefined;
 }
 
+function nativePreviewParams(event: MessageEvent, operation: string, params: Record<string, unknown>): Record<string, unknown> {
+  if (operation !== 'preview-native-open' && operation !== 'preview-native-move') return params;
+  if (event.source === window) return params;
+  const rect = params['rect'];
+  if (!isPlainObject(rect)) throw new Error('native preview rect is malformed');
+  let frameRect: DOMRect | null = null;
+  for (const frame of document.querySelectorAll('iframe')) {
+    if (frame.contentWindow === event.source) { frameRect = frame.getBoundingClientRect(); break; }
+  }
+  if (!frameRect) throw new Error('native preview source frame is unavailable');
+  return {
+    ...params,
+    rect: {
+      ...rect,
+      x: Number(rect['x']) + frameRect.x,
+      y: Number(rect['y']) + frameRect.y,
+    },
+  };
+}
+
 window.addEventListener('message', (event) => {
   const request = event.data as ProjectMessage;
   if (!request || typeof request.type !== 'string') return;
@@ -280,9 +300,16 @@ window.addEventListener('message', (event) => {
       immediateHostError(request.requestId, event.origin, 'file capability request is malformed');
       return;
     }
+    let params: Record<string, unknown>;
+    try {
+      params = nativePreviewParams(event, request.operation, request.params);
+    } catch (caught) {
+      immediateHostError(request.requestId, event.origin, caught instanceof Error ? caught.message : String(caught));
+      return;
+    }
     task = ipcRenderer.invoke('host:backpack-project:file-capability', {
       operation: request.operation,
-      params: request.params,
+      params,
     }, ...workspaceOriginArgs).then((result) => ({ fileCapability: result }));
   }
   // The local-service capability: this page asking Papers to reach an HTTP

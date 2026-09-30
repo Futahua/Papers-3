@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import type { EverythingSearchBridge } from './everythingSearchBridge';
 import type { FilePreviewResourceRegistry } from './filePreviewResources';
 import type { RevitPreviewBridge } from './revitPreviewBridge';
+import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
 
 const MAX_PATH_BYTES = 32_768;
 const MAX_SEARCH_BYTES = 2_048;
@@ -38,6 +39,7 @@ export interface FileCapabilityDeps {
   everythingSearch: EverythingSearchBridge | null;
   previewResources: FilePreviewResourceRegistry;
   revitPreview: RevitPreviewBridge | null;
+  windowsPreview: WindowsPreviewHandlerBridge | null;
   dopusrtPath: string | null;
   libreOfficePath: string | null;
   openPath: (target: string) => Promise<string | void>;
@@ -45,6 +47,7 @@ export interface FileCapabilityDeps {
 }
 export interface FileCapabilityContext {
   backpackId: string;
+  nativePreviewHost?: PreviewHostContext;
 }
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -68,6 +71,20 @@ function boundedLimit(value: unknown, fallback: number, max: number): number {
   if (value === undefined) return fallback;
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > max) throw new Error(`limit must be an integer from 1 to ${max}.`);
   return value;
+}
+function previewRect(value: unknown): PreviewRect {
+  if (!isRecord(value)) throw new Error('rect must be an object.');
+  const rect = { x: Number(value.x), y: Number(value.y), width: Number(value.width), height: Number(value.height) };
+  if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+    || rect.width <= 0 || rect.height <= 0
+    || Math.abs(rect.x) > 100_000 || Math.abs(rect.y) > 100_000
+    || rect.width > 100_000 || rect.height > 100_000) throw new Error('rect is outside the allowed bounds.');
+  return rect;
+}
+function previewSessionId(value: unknown): string {
+  const id = boundedString(value, 'sessionId', 64);
+  if (!PREVIEW_RESOURCE_ID_PATTERN.test(id)) throw new Error('sessionId is not valid.');
+  return id;
 }
 function safeName(value: unknown): string {
   const name = boundedString(value, 'newName', 1_024);
@@ -250,6 +267,16 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
       };
     }
   }
+  if (TEXT_EXTENSIONS.has(extension)) {
+    const chunk = await readTextChunk(target, 0, TEXT_PREVIEW_CHUNK_BYTES);
+    return { ok: true, entry, preview: { kind: 'text', ...chunk } };
+  }
+  if (deps.windowsPreview) {
+    const available = await deps.windowsPreview.probe(target);
+    if (available.available) {
+      return { ok: true, entry, preview: { kind: 'windows-preview-handler', provider: 'windows-preview-handler', clsid: available.clsid } };
+    }
+  }
   if (OFFICE_EXTENSIONS.has(extension) && deps.libreOfficePath) {
     const pdf = await convertOfficeToPdf(target, deps.libreOfficePath);
     if (pdf) {
@@ -277,7 +304,7 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
   } finally {
     await headHandle.close();
   }
-  if (TEXT_EXTENSIONS.has(extension) || mostlyText(head)) {
+  if (mostlyText(head)) {
     const chunk = await readTextChunk(target, 0, TEXT_PREVIEW_CHUNK_BYTES);
     return { ok: true, entry, preview: { kind: 'text', ...chunk } };
   }
@@ -390,6 +417,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               providers: {
                 everything: Boolean(deps.everythingSearch),
                 revitPreview: Boolean(deps.revitPreview),
+                windowsPreview: Boolean(deps.windowsPreview),
                 directoryOpus: Boolean(deps.dopusrtPath),
                 libreOffice: Boolean(deps.libreOfficePath),
               },
@@ -419,6 +447,22 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'preview':
             return await previewFile(absolutePath(params.path), deps, context);
+          case 'preview-native-open': {
+            if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
+            return await deps.windowsPreview.open(context.nativePreviewHost, absolutePath(params.path), previewRect(params.rect));
+          }
+          case 'preview-native-move': {
+            if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
+            return { ok: deps.windowsPreview.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect)) };
+          }
+          case 'preview-native-focus': {
+            if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
+            return { ok: deps.windowsPreview.focus(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
+          }
+          case 'preview-native-close': {
+            if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
+            return { ok: deps.windowsPreview.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
+          }
           case 'preview-text-chunk': {
             const target = absolutePath(params.path);
             const offset = params.offset === undefined ? 0 : Number(params.offset);
