@@ -10,8 +10,11 @@ import type { RevitPreviewBridge } from './revitPreviewBridge';
 import type { ShellThumbnailBridge } from './shellThumbnailBridge';
 import type { CalibrePreviewBridge } from './calibrePreviewBridge';
 import type { AutoCadPreviewBridge } from './autoCadPreviewBridge';
+import type { MlightCadPreviewBridge } from './mlightCadPreviewBridge';
 import type { HtmlPreviewHostBridge } from './htmlPreviewHostBridge';
+import type { PowerPointPreviewBridge } from './powerPointPreviewBridge';
 import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
+import { getOrCreateDerivedArtifact } from './derivedPreviewCache';
 
 const MAX_PATH_BYTES = 32_768;
 const MAX_SEARCH_BYTES = 2_048;
@@ -32,6 +35,7 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 const INTERACTIVE_HTML_EXTENSIONS = new Set(['.html', '.htm']);
 const OFFICE_EXTENSIONS = new Set(['.doc', '.docx', '.docm', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx', '.pptm', '.odt', '.ods', '.odp', '.rtf', '.wps']);
+const PRESENTATION_EXTENSIONS = new Set(['.ppt', '.pptx', '.pptm', '.odp']);
 const REVIT_EXTENSIONS = new Set(['.rvt', '.rfa', '.rte', '.rft']);
 const IMAGE_MIME = new Map([['.png','image/png'],['.jpg','image/jpeg'],['.jpeg','image/jpeg'],['.gif','image/gif'],['.webp','image/webp'],['.bmp','image/bmp'],['.svg','image/svg+xml'],['.ico','image/x-icon'],['.avif','image/avif']]);
 const AUDIO_MIME = new Map([['.mp3','audio/mpeg'],['.wav','audio/wav'],['.ogg','audio/ogg'],['.m4a','audio/mp4'],['.aac','audio/aac'],['.flac','audio/flac'],['.opus','audio/ogg']]);
@@ -49,8 +53,11 @@ export interface FileCapabilityDeps {
   shellThumbnail: ShellThumbnailBridge | null;
   calibrePreview: CalibrePreviewBridge | null;
   autoCadPreview: AutoCadPreviewBridge | null;
+  mlightCadPreview: MlightCadPreviewBridge | null;
   htmlPreview: HtmlPreviewHostBridge | null;
+  powerPointPreview: PowerPointPreviewBridge | null;
   windowsPreview: WindowsPreviewHandlerBridge | null;
+  cacheDirectory?: string;
   dopusrtPath: string | null;
   libreOfficePath: string | null;
   openPath: (target: string) => Promise<string | void>;
@@ -169,9 +176,67 @@ function dataUrl(mime: string, buffer: Buffer): string {
 interface ConvertedPreviewFile {
   filePath: string;
   cleanup: () => Promise<void>;
+  stateKey?: string;
+  cached?: boolean;
 }
 
-async function convertOfficeToPdf(source: string, soffice: string): Promise<ConvertedPreviewFile | null> {
+async function validPdfFile(target: string): Promise<boolean> {
+  try {
+    const handle = await fs.open(target, 'r');
+    try {
+      const magic = Buffer.alloc(5);
+      const { bytesRead } = await handle.read(magic, 0, magic.length, 0);
+      return bytesRead === 5 && magic.toString('ascii') === '%PDF-';
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
+async function convertOfficeToPdf(
+  source: string,
+  soffice: string,
+  cacheDirectory?: string,
+): Promise<ConvertedPreviewFile | null> {
+  if (cacheDirectory) {
+    try {
+      const stats = statSync(soffice);
+      const artifact = await getOrCreateDerivedArtifact({
+        cacheDirectory,
+        source,
+        providerKey: `libreoffice-pdf:${stats.size}:${stats.mtimeMs}`,
+        extension: '.pdf',
+        validate: validPdfFile,
+        create: async (tempPath) => {
+          const tempRoot = await fs.mkdtemp(path.join(cacheDirectory, 'libreoffice-preview-'));
+          try {
+            const outputName = `${path.parse(source).name}.pdf`;
+            await new Promise<void>((resolve, reject) => {
+              execFile(soffice, ['--headless', '--convert-to', 'pdf', '--outdir', tempRoot, source], {
+                windowsHide: true,
+                timeout: 30_000,
+              }, (error) => error ? reject(error) : resolve());
+            });
+            const output = path.join(tempRoot, outputName);
+            if (!await validPdfFile(output)) throw new Error('LibreOffice did not create a valid PDF preview.');
+            await fs.rename(output, tempPath);
+          } finally {
+            await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+          }
+        },
+      });
+      return {
+        filePath: artifact.filePath,
+        cleanup: async () => {},
+        stateKey: artifact.key,
+        cached: artifact.cached,
+      };
+    } catch {
+      return null;
+    }
+  }
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-file-preview-'));
   try {
     const outputName = `${path.parse(source).name}.pdf`;
@@ -290,14 +355,32 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
     const chunk = await readTextChunk(target, 0, TEXT_PREVIEW_CHUNK_BYTES);
     return { ok: true, entry, preview: { kind: 'text', ...chunk } };
   }
-  if (deps.windowsPreview) {
-    const available = await deps.windowsPreview.probe(target);
-    if (available.available) {
-      return { ok: true, entry, preview: { kind: 'windows-preview-handler', provider: 'windows-preview-handler', clsid: available.clsid } };
+  if (PRESENTATION_EXTENSIONS.has(extension)) {
+    if (deps.powerPointPreview?.supports(extension)) {
+      const pdf = await deps.powerPointPreview.convertToPdf(target);
+      if (pdf.ok) {
+        return {
+          ok: true,
+          entry,
+          preview: resourcePreview(
+            deps,
+            context,
+            pdf.filePath,
+            deps.pdfPreview && context.nativePreviewHost ? 'hosted-pdf' : 'pdf',
+            'application/pdf',
+            pdf.cleanup,
+            {
+              convertedBy: 'powerpoint',
+              previewStateKey: pdf.stateKey,
+              cached: pdf.cached,
+            },
+          ),
+        };
+      }
     }
-  }
-  if (OFFICE_EXTENSIONS.has(extension) && deps.libreOfficePath) {
-    const pdf = await convertOfficeToPdf(target, deps.libreOfficePath);
+    const pdf = deps.libreOfficePath
+      ? await convertOfficeToPdf(target, deps.libreOfficePath, deps.cacheDirectory)
+      : null;
     if (pdf) {
       return {
         ok: true,
@@ -309,7 +392,62 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
           deps.pdfPreview && context.nativePreviewHost ? 'hosted-pdf' : 'pdf',
           'application/pdf',
           pdf.cleanup,
-          { convertedBy: 'libreoffice' },
+          {
+            convertedBy: 'libreoffice',
+            previewStateKey: pdf.stateKey,
+            cached: pdf.cached,
+          },
+        ),
+      };
+    }
+  }
+  if (deps.mlightCadPreview?.supports(extension) && deps.htmlPreview && context.nativePreviewHost) {
+    const rendered = await deps.mlightCadPreview.convertToHtml(target);
+    if (rendered.ok) {
+      return {
+        ok: true,
+        entry,
+        preview: resourcePreview(
+          deps,
+          context,
+          rendered.filePath,
+          'hosted-html',
+          'text/html',
+          undefined,
+          {
+            convertedBy: 'mlightcad',
+            provider: rendered.provider,
+            previewStateKey: rendered.stateKey,
+            cached: rendered.cached,
+          },
+        ),
+      };
+    }
+  }
+  if (deps.windowsPreview) {
+    const available = await deps.windowsPreview.probe(target);
+    if (available.available) {
+      return { ok: true, entry, preview: { kind: 'windows-preview-handler', provider: 'windows-preview-handler', clsid: available.clsid } };
+    }
+  }
+  if (OFFICE_EXTENSIONS.has(extension) && deps.libreOfficePath) {
+    const pdf = await convertOfficeToPdf(target, deps.libreOfficePath, deps.cacheDirectory);
+    if (pdf) {
+      return {
+        ok: true,
+        entry,
+        preview: resourcePreview(
+          deps,
+          context,
+          pdf.filePath,
+          deps.pdfPreview && context.nativePreviewHost ? 'hosted-pdf' : 'pdf',
+          'application/pdf',
+          pdf.cleanup,
+          {
+            convertedBy: 'libreoffice',
+            previewStateKey: pdf.stateKey,
+            cached: pdf.cached,
+          },
         ),
       };
     }
@@ -351,6 +489,7 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
           provider: rendered.provider,
           width: rendered.width,
           height: rendered.height,
+          cached: rendered.cached,
         },
       };
     }
@@ -368,6 +507,7 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
           extractedBy: 'windows-shell-thumbnail',
           width: thumbnail.width,
           height: thumbnail.height,
+          cached: thumbnail.cached,
         },
       };
     }
@@ -513,7 +653,9 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
                 calibrePreview: Boolean(deps.calibrePreview),
                 calibreFormats: deps.calibrePreview?.formats ?? [],
                 autoCadPreview: Boolean(deps.autoCadPreview),
+                mlightCadPreview: Boolean(deps.mlightCadPreview),
                 htmlPreview: Boolean(deps.htmlPreview),
+                powerPointPreview: Boolean(deps.powerPointPreview),
                 windowsPreview: Boolean(deps.windowsPreview),
                 directoryOpus: Boolean(deps.dopusrtPath),
                 libreOffice: Boolean(deps.libreOfficePath),

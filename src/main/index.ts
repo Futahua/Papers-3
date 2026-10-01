@@ -16,6 +16,8 @@ import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from '.
 import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
 import { createCalibrePreviewBridge } from './backpacks/calibrePreviewBridge';
 import { createAutoCadPreviewBridge } from './backpacks/autoCadPreviewBridge';
+import { createMlightCadPreviewBridge } from './backpacks/mlightCadPreviewBridge';
+import { createPowerPointPreviewBridge } from './backpacks/powerPointPreviewBridge';
 import { createWindowsPreviewHandlerBridge, resolveWindowsPreviewHostSourcePath } from './backpacks/windowsPreviewHandlerBridge';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
@@ -682,6 +684,8 @@ async function bootstrap(): Promise<void> {
   });
   const calibrePreview = createCalibrePreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
   const autoCadPreview = createAutoCadPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
+  const mlightCadPreview = createMlightCadPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
+  const powerPointPreview = createPowerPointPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
   const windowsPreview = createWindowsPreviewHandlerBridge({
     cacheDirectory: fileCapabilityCacheDirectory,
     sourcePath: resolveWindowsPreviewHostSourcePath({
@@ -713,6 +717,7 @@ async function bootstrap(): Promise<void> {
   });
   app.once('will-quit', () => htmlPreview.dispose());
   const fileCapability = createFileCapabilityService({
+    cacheDirectory: fileCapabilityCacheDirectory,
     everythingSearch,
     previewResources: filePreviewResources,
     pdfPreview,
@@ -720,7 +725,9 @@ async function bootstrap(): Promise<void> {
     shellThumbnail,
     calibrePreview,
     autoCadPreview,
+    mlightCadPreview,
     htmlPreview,
+    powerPointPreview,
     windowsPreview,
     dopusrtPath: resolveDirectoryOpusRtPath(),
     libreOfficePath: resolveLibreOfficePath(),

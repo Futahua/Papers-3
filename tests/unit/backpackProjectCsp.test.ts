@@ -59,7 +59,7 @@ describe('backpack project content security policy', () => {
     expect(directive(policy, 'object-src')).toBe("object-src 'none'");
     expect(directive(policy, 'base-uri')).toBe("base-uri 'none'");
     expect(directive(policy, 'form-action')).toBe("form-action 'none'");
-    expect(directive(policy, 'img-src')).toBe(`img-src ${ORIGIN} ${PREVIEW_ORIGIN} data:`);
+    expect(directive(policy, 'img-src')).toBe(`img-src ${ORIGIN} ${PREVIEW_ORIGIN} data: blob:`);
     expect(directive(policy, 'media-src')).toBe(`media-src ${PREVIEW_ORIGIN} blob:`);
     expect(directive(policy, 'frame-src')).toBe(`frame-src ${PREVIEW_ORIGIN} blob:`);
     expect(directive(policy, 'frame-src')).not.toContain('data:');

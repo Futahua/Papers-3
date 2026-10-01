@@ -21,7 +21,7 @@ function fakeConnection() {
 describe('bounded visual incident transcript', () => {
   it('captures exact-target events, deduplicates the snapshot, and reconciles gaps', async () => {
     const connection = fakeConnection();
-    const pending = collectIncidentTranscript(connection, target, { durationMs: 30, maxRecords: 8, maxBytes: 16 * 1024 });
+    const pending = collectIncidentTranscript(connection, target, { durationMs: 100, maxRecords: 8, maxBytes: 16 * 1024 });
     connection.emit({ event: 'visual.diagnostic', payload: { sequence: 1, target, payload: { kind: 'uncaught-error', message: 'boom' } } });
     connection.emit({ event: 'visual.diagnostic', payload: { sequence: 3, target, payload: { kind: 'unhandled-rejection', message: 'later' } } });
     connection.emit({ event: 'visual.diagnostic', payload: { sequence: 9, target: { windowId: 99, surfaceId: 'other' }, payload: { kind: 'uncaught-error' } } });

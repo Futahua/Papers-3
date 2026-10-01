@@ -55,6 +55,12 @@ internal static class WindowControl
     const uint SWP_NOSIZE = 0x0001;
     const uint SWP_NOMOVE = 0x0002;
     const uint SWP_NOACTIVATE = 0x0010;
+    // For the honest z-order check below.
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hwnd, int index);
+    const uint GW_HWNDPREV = 3;
+    const int GWL_EXSTYLE = -20;
+    const int WS_EX_TOPMOST = 0x00000008;
     [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hook);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
@@ -154,18 +160,45 @@ internal static class WindowControl
             // So the window is raised, activation is attempted ONLY when this process
             // already owns the foreground (where it can actually succeed), and the
             // result says exactly which of the two happened.
-            bool raised = BringWindowToTop(slot.Hwnd)
-                || SetWindowPos(slot.Hwnd, HWND_TOP, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            // RESTORE, THEN RAISE - and nothing about focus.
+            //
+            // "Raise" alone changes nothing the creator can see when the window is
+            // already visible at the top of the ordinary z-order, and switching the
+            // keyboard foreground to a foreign window is not available to us: the
+            // call must come from a process Windows considers foreground-eligible,
+            // and Papers cannot make native calls from its own process. So this does
+            // the two things it CAN do visibly - bring a minimized window back, and
+            // lift it above other ordinary windows - with no activation, no topmost
+            // forcing, and no refusal flash.
+            int raised = 0;
+            if (IsIconic(slot.Hwnd)) {
+                WINDOWPLACEMENT placement = slot.Restore;
+                if (SetWindowPlacement(slot.Hwnd, ref placement)) {
+                    raised = 1;
+                    slot.Iconic = false;
+                }
+            }
+            bool placed = SetWindowPos(slot.Hwnd, HWND_TOP, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            if (placed) raised = 1;
+            // THE RAISE ITSELF IS FAILING, and "foreground-refused" said only that
+            // something did not work - not what. The last Win32 error is recorded, with
+            // the window's own state, so "Windows refused the raise" can be told apart
+            // from "the call was never valid for this window".
+            if (!placed) {
+                Telemetry("foreground-fail|id=" + slot.Id + " hwnd=" + slot.Hwnd.ToInt64()
+                    + " iconic=" + (IsIconic(slot.Hwnd) ? 1 : 0)
+                    + " visible=" + (IsWindowVisible(slot.Hwnd) ? 1 : 0)
+                    + " err=" + Marshal.GetLastWin32Error()
+                    + " owner=" + slot.Owner.ToInt64());
+            }
+            // A window of the SAME process already holding the foreground can be
+            // activated without refusal; that is the only activation attempted.
             IntPtr foreground = GetForegroundWindow();
             uint foregroundPid = 0;
             if (foreground != IntPtr.Zero) GetWindowThreadProcessId(foreground, out foregroundPid);
-            if (foregroundPid == (uint)slot.Pid) {
-                // A window of the SAME process already holds the foreground, so this
-                // call is allowed and will not produce a refusal flash.
-                SetForegroundWindow(slot.Hwnd);
-            }
-            issued = raised;
+            if (foregroundPid == (uint)slot.Pid) SetForegroundWindow(slot.Hwnd);
+            issued = raised != 0;
         } else if (requested == "restore" || (requested == "toggle" && slot.Iconic)) {
             op = "restore";
             WINDOWPLACEMENT placement = slot.Restore;
@@ -179,10 +212,25 @@ internal static class WindowControl
         long confirm = Tick();
         string result = !issued ? "native-refused" :
             op == "foreground" ? (GetForegroundWindow() == slot.Hwnd ? "success"
-                : IsWindowVisible(slot.Hwnd) ? "raised" : "pending") :
+                // A REAL z-order check, not a claim: the window above this one must be
+                // a TOPMOST window (or none at all) for this to count as raised to the
+                // top of the ordinary band. The old check was IsWindowVisible, which is
+                // true for a window that never moved - so "raised" meant nothing and
+                // the creator was told it worked while nothing on screen changed.
+                : IsAtTopOfBand(slot.Hwnd) ? "raised" : "pending") :
             op == "minimize" ? (IsIconic(slot.Hwnd) ? "success" : "pending") :
             (!IsIconic(slot.Hwnd) && IsWindowVisible(slot.Hwnd) ? "success" : "pending");
         Queue(slot, op, result, input, dispatch, confirm);
+    }
+    /** True when nothing ordinary sits above this window: the only things above it may
+     * be TOPMOST windows, which an ordinary raise is not allowed to pass. */
+    static bool IsAtTopOfBand(IntPtr hwnd) {
+        IntPtr above = GetWindow(hwnd, GW_HWNDPREV);
+        while (above != IntPtr.Zero) {
+            if ((GetWindowLong(above, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0) return false;
+            above = GetWindow(above, GW_HWNDPREV);
+        }
+        return true;
     }
     static IntPtr OnMouse(int code, IntPtr wParam, IntPtr lParam) {
         int message = wParam.ToInt32();
@@ -213,10 +261,17 @@ internal static class WindowControl
                         && mouse.Point.X < slot.Hit.Right && mouse.Point.Y >= slot.Hit.Top
                         && mouse.Point.Y < slot.Hit.Bottom) {
                         matched = true;
-                        Telemetry("hook-hit|" + slot.Id + "|" + (message == WM_LBUTTONDOWN ? "foreground" : "toggle"));
-                        // Match diagnostics to the widget's current gesture mapping:
-                        // left-button down is foreground and right-button down is toggle.
-                        // This hook only labels a hit; the renderer owns both actions.
+                        Telemetry("hook-hit|" + slot.Id + "|" + (message == WM_RBUTTONDOWN ? "foreground" : "toggle"));
+                        // Right-click has no toggle side effect, so its foreground
+                        // attempt can run at physical mouse-down. The widget is
+                        // non-activating; an attempt delayed until DOM contextmenu
+                        // loses the input-time foreground opportunity on Windows.
+                        // THE PAGE OWNS THE RIGHT-CLICK ATTEMPT NOW. It asked the broker
+                        // directly, which is one gesture and one attempt with one
+                        // reported answer. Letting the hook also actuate would be two
+                        // attempts for one press, and the reviewer's rule is explicit:
+                        // never a second activation after a final refusal.
+                        // Left-click is unaffected - the page has always been its actuator.
                         break;
                     }
                 }
@@ -225,7 +280,7 @@ internal static class WindowControl
                     for (int i = 0; i < snapshot.Length; ++i) {
                         if (snapshot[i].Active && snapshot[i].Owner == owner) { first = snapshot[i]; break; }
                     }
-                    Telemetry("hook-miss|" + (message == WM_LBUTTONDOWN ? "foreground" : "toggle")
+                    Telemetry("hook-miss|" + (message == WM_RBUTTONDOWN ? "foreground" : "toggle")
                         + "|at=" + mouse.Point.X + "," + mouse.Point.Y
                         + "|slot=" + first.Id + " owner=" + first.Owner.ToInt64() + " seen=" + owner.ToInt64()
                         + " rect=" + first.Hit.Left + "," + first.Hit.Top + "," + first.Hit.Right + "," + first.Hit.Bottom);

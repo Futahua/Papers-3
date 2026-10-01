@@ -154,8 +154,12 @@ async function restoreReadingState(view: WebContentsView, state: PdfReadingState
   try {
     await frame.executeJavaScript(`(async()=>{
       const state=${payload};
-      const viewer=document.querySelector('pdf-viewer');
-      for(let i=0;i<80 && (!viewer?.viewport || Number(viewer.loadProgress_)<100);i++) await new Promise(r=>setTimeout(r,50));
+      let viewer=null;
+      for(let i=0;i<80;i++) {
+        viewer=document.querySelector('pdf-viewer');
+        if(viewer?.viewport && Number(viewer.loadProgress_)>=100) break;
+        await new Promise(r=>setTimeout(r,50));
+      }
       const viewport=viewer?.viewport;
       if(!viewport) return false;
       if(Number.isFinite(state.zoom)&&state.zoom>0) viewport.setZoom(state.zoom);
@@ -280,7 +284,7 @@ export function createPdfPreviewHostBridge(input: {
         place(session);
         const savedState = await loadReadingState(input.stateDirectory, stateKey);
         await view.webContents.loadURL(parsed.toString());
-        if (savedState) void restoreReadingState(view, savedState);
+        if (savedState) await restoreReadingState(view, savedState);
         if (stateKey) {
           session.checkpointTimer = setInterval(() => {
             void captureReadingState(view)

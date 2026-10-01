@@ -11,7 +11,9 @@ import type { RevitPreviewBridge } from '../../src/main/backpacks/revitPreviewBr
 import type { ShellThumbnailBridge } from '../../src/main/backpacks/shellThumbnailBridge';
 import type { CalibrePreviewBridge } from '../../src/main/backpacks/calibrePreviewBridge';
 import type { AutoCadPreviewBridge } from '../../src/main/backpacks/autoCadPreviewBridge';
+import type { MlightCadPreviewBridge } from '../../src/main/backpacks/mlightCadPreviewBridge';
 import type { HtmlPreviewHostBridge } from '../../src/main/backpacks/htmlPreviewHostBridge';
+import type { PowerPointPreviewBridge } from '../../src/main/backpacks/powerPointPreviewBridge';
 import type { WindowsPreviewHandlerBridge } from '../../src/main/backpacks/windowsPreviewHandlerBridge';
 
 let root: string;
@@ -35,6 +37,8 @@ function service(
   calibrePreview: CalibrePreviewBridge | null = null,
   autoCadPreview: AutoCadPreviewBridge | null = null,
   htmlPreview: HtmlPreviewHostBridge | null = null,
+  powerPointPreview: PowerPointPreviewBridge | null = null,
+  mlightCadPreview: MlightCadPreviewBridge | null = null,
 ) {
   const previewResources = createFilePreviewResourceRegistry();
   const inner = createFileCapabilityService({
@@ -45,7 +49,9 @@ function service(
     shellThumbnail,
     calibrePreview,
     autoCadPreview,
+    mlightCadPreview,
     htmlPreview,
+    powerPointPreview,
     windowsPreview,
     dopusrtPath: null,
     libreOfficePath: null,
@@ -275,6 +281,93 @@ describe('file capability service', () => {
     });
   });
 
+  it('prefers cached interactive MLightCAD HTML over Windows and AutoCAD fallbacks for DWG', async () => {
+    const target = path.join(root, 'drawing.dwg');
+    const html = path.join(root, 'drawing-preview.html');
+    await fs.writeFile(target, Buffer.from('AC1032'));
+    await fs.writeFile(html, '<!doctype html><html><body><canvas></canvas></body></html>');
+    const convertToHtml = vi.fn(async () => ({
+      ok: true as const,
+      filePath: html,
+      stateKey: 'c'.repeat(64),
+      cached: true,
+      provider: 'mlightcad-1.7.3',
+    }));
+    const mlight: MlightCadPreviewBridge = {
+      supports: vi.fn((extension: string) => extension === '.dwg'),
+      convertToHtml,
+    };
+    const probe = vi.fn(async () => ({ available: true, clsid: '{11111111-1111-1111-1111-111111111111}' }));
+    const windowsPreview: WindowsPreviewHandlerBridge = {
+      probe,
+      open: vi.fn(async () => ({ ok: false as const })),
+      move: vi.fn(() => false),
+      focus: vi.fn(() => false),
+      close: vi.fn(() => false),
+      setOwnerSurfaceBounds: vi.fn(),
+      setOwnerVisible: vi.fn(),
+      closeOwner: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const cadPreview = vi.fn(async () => ({
+      ok: true as const,
+      png: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+      width: 1,
+      height: 1,
+      provider: 'AutoCAD 2023',
+    }));
+    const autoCad: AutoCadPreviewBridge = {
+      supports: vi.fn((extension: string) => extension === '.dwg'),
+      preview: cadPreview,
+    };
+    const htmlPreview: HtmlPreviewHostBridge = {
+      open: vi.fn(async () => ({ ok: true as const, sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' })),
+      move: vi.fn(() => true),
+      close: vi.fn(() => true),
+      setOwnerSurfaceBounds: vi.fn(),
+      setOwnerVisible: vi.fn(),
+      closeOwner: vi.fn(),
+      raiseWindow: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const context = {
+      ...CONTEXT,
+      nativePreviewHost: {
+        ownerKey: '7:surface-a',
+        parentHwnd: '12345',
+        surfaceBounds: { x: 0, y: 0, width: 800, height: 600 },
+      },
+    };
+    const previewService = service(
+      null,
+      null,
+      windowsPreview,
+      context,
+      null,
+      null,
+      null,
+      autoCad,
+      htmlPreview,
+      null,
+      mlight,
+    );
+
+    const result = await previewService.call({ operation: 'preview', params: { path: target } });
+
+    expect(convertToHtml).toHaveBeenCalledWith(target);
+    expect(probe).not.toHaveBeenCalled();
+    expect(cadPreview).not.toHaveBeenCalled();
+    expect(result.preview).toMatchObject({
+      kind: 'hosted-html',
+      mime: 'text/html',
+      transport: 'stream',
+      convertedBy: 'mlightcad',
+      provider: 'mlightcad-1.7.3',
+      previewStateKey: 'c'.repeat(64),
+      cached: true,
+    });
+  });
+
   it('uses Calibre capabilities for readable ebook formats instead of the binary fallback', async () => {
     const target = path.join(root, 'book.epub');
     const converted = path.join(root, 'book-preview.pdf');
@@ -312,6 +405,64 @@ describe('file capability service', () => {
     const resourceId = (result.preview as { resourceId: string }).resourceId;
     expect((await previewService.call({ operation: 'preview-release', params: { resourceId } })).released).toBe(true);
     expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers native PowerPoint conversion for presentation files before Windows preview handlers', async () => {
+    const target = path.join(root, 'slides.pptx');
+    const converted = path.join(root, 'slides-preview.pdf');
+    await fs.writeFile(target, 'pptx-placeholder');
+    await fs.writeFile(converted, '%PDF-1.7\nslides');
+    const cleanup = vi.fn(async () => {});
+    const powerPoint: PowerPointPreviewBridge = {
+      supports: vi.fn((extension: string) => extension === '.pptx'),
+      convertToPdf: vi.fn(async () => ({
+        ok: true as const,
+        filePath: converted,
+        cleanup,
+        stateKey: 'b'.repeat(64),
+        cached: true,
+      })),
+    };
+    const probe = vi.fn(async () => ({
+      available: true,
+      clsid: '{11111111-1111-1111-1111-111111111111}',
+    }));
+    const windowsPreview: WindowsPreviewHandlerBridge = {
+      probe,
+      open: vi.fn(async () => ({ ok: false as const })),
+      move: vi.fn(() => false),
+      focus: vi.fn(() => false),
+      close: vi.fn(() => false),
+      setOwnerSurfaceBounds: vi.fn(),
+      setOwnerVisible: vi.fn(),
+      closeOwner: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const previewService = service(
+      null,
+      null,
+      windowsPreview,
+      CONTEXT,
+      null,
+      null,
+      null,
+      null,
+      null,
+      powerPoint,
+    );
+
+    const result = await previewService.call({ operation: 'preview', params: { path: target } });
+
+    expect(powerPoint.supports).toHaveBeenCalledWith('.pptx');
+    expect(powerPoint.convertToPdf).toHaveBeenCalledWith(target);
+    expect(probe).not.toHaveBeenCalled();
+    expect(result.preview).toMatchObject({
+      kind: 'pdf',
+      mime: 'application/pdf',
+      convertedBy: 'powerpoint',
+      previewStateKey: 'b'.repeat(64),
+      cached: true,
+    });
   });
 
   it('prefers an installed Windows preview handler for non-text files and controls one sender-owned live host', async () => {

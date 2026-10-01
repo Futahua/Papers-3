@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { resolveWindowsCscPath } from '../windows/foregroundBridge';
+import { getOrCreateDerivedArtifact } from './derivedPreviewCache';
 
 const EXECUTABLE = 'papers-shell-thumbnail.exe';
 const STAMP = 'papers-shell-thumbnail.stamp';
@@ -13,7 +14,7 @@ export interface ShellThumbnailBridge {
   preview(
     target: string,
     size?: number,
-  ): Promise<{ ok: true; png: Buffer; width: number; height: number } | { ok: false; error?: string }>;
+  ): Promise<{ ok: true; png: Buffer; width: number; height: number; cached?: boolean } | { ok: false; error?: string }>;
 }
 
 export function resolveShellThumbnailSourcePath(input: {
@@ -32,7 +33,7 @@ function boundedError(error: unknown): string {
 }
 
 function validPng(buffer: Buffer): boolean {
-  return buffer.length >= 8
+  return buffer.length >= 24
     && buffer.length <= MAX_PNG_BYTES
     && buffer[0] === 0x89
     && buffer[1] === 0x50
@@ -136,24 +137,47 @@ export function createShellThumbnailBridge(input: {
   }
 
   return {
-    preview(target, size = 1600) {
+    async preview(target, size = 1600) {
       const boundedSize = Math.min(Math.max(Math.round(size), 64), 4096);
-      return new Promise((resolve) => {
-        execFile(executable, [target, String(boundedSize)], {
-          cwd: input.cacheDirectory,
-          timeout: timeoutMs,
-          windowsHide: true,
-          maxBuffer: 48 * 1024 * 1024,
-          encoding: 'utf8',
-        }, (error, stdout) => {
-          const parsed = parseOutput(typeof stdout === 'string' ? stdout : '');
-          if (error && !parsed.ok && !parsed.error) {
-            resolve({ ok: false, error: boundedError(error) });
-            return;
-          }
-          resolve(parsed);
+      try {
+        const artifact = await getOrCreateDerivedArtifact({
+          cacheDirectory: input.cacheDirectory,
+          source: target,
+          providerKey: `windows-shell-thumbnail:${stamp}:${boundedSize}`,
+          extension: '.png',
+          validate: async (candidate) => {
+            try { return validPng(await fs.promises.readFile(candidate)); } catch { return false; }
+          },
+          create: (output) => new Promise<void>((resolve, reject) => {
+            execFile(executable, [target, String(boundedSize)], {
+              cwd: input.cacheDirectory,
+              timeout: timeoutMs,
+              windowsHide: true,
+              maxBuffer: 48 * 1024 * 1024,
+              encoding: 'utf8',
+            }, (error, stdout) => {
+              const parsed = parseOutput(typeof stdout === 'string' ? stdout : '');
+              if (!parsed.ok) {
+                reject(new Error(parsed.error || boundedError(error || 'Windows did not provide a thumbnail.')));
+                return;
+              }
+              fs.promises.writeFile(output, parsed.png).then(() => resolve(), reject);
+            });
+          }),
         });
-      });
+        const png = await fs.promises.readFile(artifact.filePath);
+        if (!validPng(png)) return { ok: false, error: 'Cached Windows thumbnail is invalid.' };
+        // PNG IHDR stores dimensions in big-endian bytes 16..23.
+        return {
+          ok: true,
+          png,
+          width: png.readUInt32BE(16),
+          height: png.readUInt32BE(20),
+          cached: artifact.cached,
+        };
+      } catch (error) {
+        return { ok: false, error: boundedError(error) };
+      }
     },
   };
 }

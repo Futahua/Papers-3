@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promises as fs, readdirSync, statSync } from 'node:fs';
 import * as path from 'node:path';
+import { getOrCreateDerivedArtifact } from './derivedPreviewCache';
 
 const AUTOCAD_EXTENSIONS = new Set(['.dwg', '.dxf', '.dws', '.dwt']);
 const MAX_PNG_BYTES = 64 * 1024 * 1024;
@@ -8,7 +9,7 @@ const MAX_PNG_BYTES = 64 * 1024 * 1024;
 export interface AutoCadPreviewBridge {
   supports(extension: string): boolean;
   preview(target: string): Promise<
-    { ok: true; png: Buffer; width: number; height: number; provider: string }
+    { ok: true; png: Buffer; width: number; height: number; provider: string; cached?: boolean }
     | { ok: false; error?: string }
   >;
 }
@@ -69,44 +70,56 @@ export function createAutoCadPreviewBridge(input: {
   const executable = input.executablePath ?? findCoreConsole();
   if (!executable || !isFile(executable)) return null;
   const timeoutMs = input.timeoutMs ?? 45_000;
+  const executableStats = statSync(executable);
+  const providerKey = `autocad-png:${executableStats.size}:${executableStats.mtimeMs}`;
 
   return {
     supports(extension) {
       return AUTOCAD_EXTENSIONS.has(extension.trim().toLowerCase());
     },
     async preview(target) {
-      await fs.mkdir(input.cacheDirectory, { recursive: true });
-      const tempRoot = await fs.mkdtemp(path.join(input.cacheDirectory, 'autocad-preview-'));
-      const output = path.join(tempRoot, 'preview.png');
-      const script = path.join(tempRoot, 'preview.scr');
       try {
-        const scriptText = [
-          'FILEDIA',
-          '0',
-          'CMDDIA',
-          '0',
-          '_.ZOOM',
-          '_E',
-          '_.PNGOUT',
-          quoteScriptPath(output),
-          '_ALL',
-          '',
-          '_.QUIT',
-          '_Y',
-          '',
-        ].join('\r\n');
-        await fs.writeFile(script, scriptText, 'utf8');
-
-        await new Promise<void>((resolve, reject) => {
-          execFile(executable, ['/i', target, '/s', script, '/l', 'en-US'], {
-            windowsHide: true,
-            timeout: timeoutMs,
-            maxBuffer: 8 * 1024 * 1024,
-            encoding: 'buffer',
-          }, (error) => error ? reject(error) : resolve());
+        const artifact = await getOrCreateDerivedArtifact({
+          cacheDirectory: input.cacheDirectory,
+          source: target,
+          providerKey,
+          extension: '.png',
+          validate: async (candidate) => {
+            try { return readPngDimensions(await fs.readFile(candidate)) !== null; } catch { return false; }
+          },
+          create: async (output) => {
+            const script = `${output}.scr`;
+            const scriptText = [
+              'FILEDIA',
+              '0',
+              'CMDDIA',
+              '0',
+              '_.ZOOM',
+              '_E',
+              '_.PNGOUT',
+              quoteScriptPath(output),
+              '_ALL',
+              '',
+              '_.QUIT',
+              '_Y',
+              '',
+            ].join('\r\n');
+            await fs.writeFile(script, scriptText, 'utf8');
+            try {
+              await new Promise<void>((resolve, reject) => {
+                execFile(executable, ['/i', target, '/s', script, '/l', 'en-US'], {
+                  windowsHide: true,
+                  timeout: timeoutMs,
+                  maxBuffer: 8 * 1024 * 1024,
+                  encoding: 'buffer',
+                }, (error) => error ? reject(error) : resolve());
+              });
+            } finally {
+              await fs.rm(script, { force: true }).catch(() => undefined);
+            }
+          },
         });
-
-        const png = await fs.readFile(output);
+        const png = await fs.readFile(artifact.filePath);
         const dimensions = readPngDimensions(png);
         if (!dimensions) throw new Error('AutoCAD did not create a valid PNG preview.');
         return {
@@ -115,11 +128,10 @@ export function createAutoCadPreviewBridge(input: {
           width: dimensions.width,
           height: dimensions.height,
           provider: path.basename(path.dirname(executable)),
+          cached: artifact.cached,
         };
       } catch (error) {
         return { ok: false, error: boundedError(error) };
-      } finally {
-        await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
       }
     },
   };
