@@ -164,6 +164,15 @@ const SCOPED_WORKSPACE_REQUESTS = new Set([
   'papers:project:file-capability',
 ]);
 
+const POSITIONED_PREVIEW_OPERATIONS = new Set([
+  'preview-native-open',
+  'preview-native-move',
+  'preview-pdf-open',
+  'preview-pdf-move',
+  'preview-html-open',
+  'preview-html-move',
+]);
+
 function scopedWorkspaceOrigin(event: MessageEvent, request: ProjectMessage): string | undefined {
   return event.source !== window && typeof request.type === 'string' && SCOPED_WORKSPACE_REQUESTS.has(request.type)
     ? event.origin
@@ -171,7 +180,7 @@ function scopedWorkspaceOrigin(event: MessageEvent, request: ProjectMessage): st
 }
 
 function nativePreviewParams(event: MessageEvent, operation: string, params: Record<string, unknown>): Record<string, unknown> {
-  if (operation !== 'preview-native-open' && operation !== 'preview-native-move') return params;
+  if (!POSITIONED_PREVIEW_OPERATIONS.has(operation)) return params;
   if (event.source === window) return params;
   const rect = params['rect'];
   if (!isPlainObject(rect)) throw new Error('native preview rect is malformed');
