@@ -239,18 +239,18 @@ static class Program {
             Native.SetParent(hwnd, parent);
 
             uint dpi = Native.GetDpiForWindow(parent);
-            Action<int,int,int,int> place = (dx,dy,dw,dh) => {
+            Action<int,int,int,int,bool> place = (dx,dy,dw,dh,initializeHandlerWindow) => {
                 int px = DipToPixel(dx, dpi);
                 int py = DipToPixel(dy, dpi);
                 int pw = Math.Max(1, DipToPixel(dw, dpi));
                 int ph = Math.Max(1, DipToPixel(dh, dpi));
                 Native.SetWindowPos(hwnd, IntPtr.Zero, px, py, pw, ph, Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW);
                 RECT rect = new RECT { left = 0, top = 0, right = pw, bottom = ph };
-                handler.SetWindow(hwnd, ref rect);
+                if (initializeHandlerWindow) handler.SetWindow(hwnd, ref rect);
                 handler.SetRect(ref rect);
             };
 
-            place(x, y, width, height);
+            place(x, y, width, height, true);
             handler.DoPreview();
             host.Show();
             Console.WriteLine("READY\t" + clsidText.ToLowerInvariant());
@@ -262,19 +262,24 @@ static class Program {
                     string command = line;
                     try {
                         host.BeginInvoke(new Action(() => {
-                            if (command == "CLOSE") { host.Close(); return; }
-                            if (command == "HIDE") { host.Hide(); return; }
-                            if (command == "SHOW") { host.Show(); return; }
-                            if (command == "FOCUS") { try { handler.SetFocus(); } catch {} return; }
-                            if (command.StartsWith("MOVE\t", StringComparison.Ordinal)) {
-                                string[] parts = command.Split('\t');
-                                int mx,my,mw,mh;
-                                if (parts.Length == 5
-                                    && Int32.TryParse(parts[1], out mx)
-                                    && Int32.TryParse(parts[2], out my)
-                                    && Int32.TryParse(parts[3], out mw)
-                                    && Int32.TryParse(parts[4], out mh)
-                                    && mw > 0 && mh > 0) place(mx,my,mw,mh);
+                            try {
+                                if (command == "CLOSE") { host.Close(); return; }
+                                if (command == "HIDE") { host.Hide(); return; }
+                                if (command == "SHOW") { host.Show(); return; }
+                                if (command == "FOCUS") { try { handler.SetFocus(); } catch {} return; }
+                                if (command.StartsWith("MOVE\t", StringComparison.Ordinal)) {
+                                    string[] parts = command.Split('\t');
+                                    int mx,my,mw,mh;
+                                    if (parts.Length == 5
+                                        && Int32.TryParse(parts[1], out mx)
+                                        && Int32.TryParse(parts[2], out my)
+                                        && Int32.TryParse(parts[3], out mw)
+                                        && Int32.TryParse(parts[4], out mh)
+                                        && mw > 0 && mh > 0) place(mx,my,mw,mh, false);
+                                }
+                            } catch (Exception error) {
+                                WriteError(error.GetType().Name + ": " + error.Message);
+                                try { host.Close(); } catch {}
                             }
                         }));
                     } catch { break; }
