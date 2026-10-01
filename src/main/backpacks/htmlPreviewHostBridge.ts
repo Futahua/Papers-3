@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { BaseWindow, WebContentsView, type Session, type WebContents } from 'electron';
 
@@ -80,6 +80,12 @@ function boundedError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 500);
 }
 
+function previewPartition(filePath: string): string {
+  const identity = filePath.replace(/\//g, '\\').toLowerCase();
+  const digest = createHash('sha256').update(identity, 'utf8').digest('hex').slice(0, 32);
+  return `persist:papers-html-preview-${digest}`;
+}
+
 export function createHtmlPreviewHostBridge(input: {
   resolveWindow(ownerKey: string): BaseWindow | null;
 }): HtmlPreviewHostBridge {
@@ -128,7 +134,7 @@ export function createHtmlPreviewHostBridge(input: {
           contextIsolation: true,
           sandbox: true,
           webSecurity: true,
-          partition: 'persist:papers-html-preview',
+          partition: previewPartition(filePath),
         },
       });
       const contents = view.webContents;
