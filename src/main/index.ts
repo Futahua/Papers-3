@@ -12,6 +12,9 @@ import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOf
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
+import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
+import { createCalibrePreviewBridge } from './backpacks/calibrePreviewBridge';
+import { createAutoCadPreviewBridge } from './backpacks/autoCadPreviewBridge';
 import { createWindowsPreviewHandlerBridge, resolveWindowsPreviewHostSourcePath } from './backpacks/windowsPreviewHandlerBridge';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
@@ -668,6 +671,16 @@ async function bootstrap(): Promise<void> {
       packaged: app.isPackaged,
     }),
   });
+  const shellThumbnail = createShellThumbnailBridge({
+    cacheDirectory: fileCapabilityCacheDirectory,
+    sourcePath: resolveShellThumbnailSourcePath({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
+    }),
+  });
+  const calibrePreview = createCalibrePreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
+  const autoCadPreview = createAutoCadPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
   const windowsPreview = createWindowsPreviewHandlerBridge({
     cacheDirectory: fileCapabilityCacheDirectory,
     sourcePath: resolveWindowsPreviewHostSourcePath({
@@ -692,6 +705,9 @@ async function bootstrap(): Promise<void> {
     previewResources: filePreviewResources,
     pdfPreview,
     revitPreview,
+    shellThumbnail,
+    calibrePreview,
+    autoCadPreview,
     windowsPreview,
     dopusrtPath: resolveDirectoryOpusRtPath(),
     libreOfficePath: resolveLibreOfficePath(),

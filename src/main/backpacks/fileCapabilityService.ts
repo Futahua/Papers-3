@@ -7,6 +7,9 @@ import type { EverythingSearchBridge } from './everythingSearchBridge';
 import { FILE_PREVIEW_SCHEME, type FilePreviewResourceRegistry } from './filePreviewResources';
 import type { PdfPreviewHostBridge } from './pdfPreviewHostBridge';
 import type { RevitPreviewBridge } from './revitPreviewBridge';
+import type { ShellThumbnailBridge } from './shellThumbnailBridge';
+import type { CalibrePreviewBridge } from './calibrePreviewBridge';
+import type { AutoCadPreviewBridge } from './autoCadPreviewBridge';
 import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
 
 const MAX_PATH_BYTES = 32_768;
@@ -41,6 +44,9 @@ export interface FileCapabilityDeps {
   previewResources: FilePreviewResourceRegistry;
   pdfPreview: PdfPreviewHostBridge | null;
   revitPreview: RevitPreviewBridge | null;
+  shellThumbnail: ShellThumbnailBridge | null;
+  calibrePreview: CalibrePreviewBridge | null;
+  autoCadPreview: AutoCadPreviewBridge | null;
   windowsPreview: WindowsPreviewHandlerBridge | null;
   dopusrtPath: string | null;
   libreOfficePath: string | null;
@@ -264,21 +270,6 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
       ),
     };
   }
-  if (REVIT_EXTENSIONS.has(extension) && deps.revitPreview) {
-    const extracted = await deps.revitPreview.preview(target);
-    if (extracted.ok) {
-      return {
-        ok: true,
-        entry,
-        preview: {
-          kind: 'image',
-          mime: 'image/png',
-          dataUrl: dataUrl('image/png', extracted.png),
-          extractedBy: 'revit-embedded-preview',
-        },
-      };
-    }
-  }
   if (TEXT_EXTENSIONS.has(extension)) {
     const chunk = await readTextChunk(target, 0, TEXT_PREVIEW_CHUNK_BYTES);
     return { ok: true, entry, preview: { kind: 'text', ...chunk } };
@@ -304,6 +295,74 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
           pdf.cleanup,
           { convertedBy: 'libreoffice' },
         ),
+      };
+    }
+  }
+  if (deps.calibrePreview?.supports(extension)) {
+    const pdf = await deps.calibrePreview.convertToPdf(target);
+    if (pdf.ok) {
+      return {
+        ok: true,
+        entry,
+        preview: resourcePreview(
+          deps,
+          context,
+          pdf.filePath,
+          deps.pdfPreview && context.nativePreviewHost ? 'hosted-pdf' : 'pdf',
+          'application/pdf',
+          pdf.cleanup,
+          { convertedBy: 'calibre', sourceFormat: extension },
+        ),
+      };
+    }
+  }
+  if (deps.autoCadPreview?.supports(extension)) {
+    const rendered = await deps.autoCadPreview.preview(target);
+    if (rendered.ok) {
+      return {
+        ok: true,
+        entry,
+        preview: {
+          kind: 'image',
+          mime: 'image/png',
+          dataUrl: dataUrl('image/png', rendered.png),
+          extractedBy: 'autocad-core-console',
+          provider: rendered.provider,
+          width: rendered.width,
+          height: rendered.height,
+        },
+      };
+    }
+  }
+  if (deps.shellThumbnail) {
+    const thumbnail = await deps.shellThumbnail.preview(target, 1600);
+    if (thumbnail.ok) {
+      return {
+        ok: true,
+        entry,
+        preview: {
+          kind: 'image',
+          mime: 'image/png',
+          dataUrl: dataUrl('image/png', thumbnail.png),
+          extractedBy: 'windows-shell-thumbnail',
+          width: thumbnail.width,
+          height: thumbnail.height,
+        },
+      };
+    }
+  }
+  if (REVIT_EXTENSIONS.has(extension) && deps.revitPreview) {
+    const extracted = await deps.revitPreview.preview(target);
+    if (extracted.ok) {
+      return {
+        ok: true,
+        entry,
+        preview: {
+          kind: 'image',
+          mime: 'image/png',
+          dataUrl: dataUrl('image/png', extracted.png),
+          extractedBy: 'revit-embedded-preview',
+        },
       };
     }
   }
@@ -429,6 +488,10 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               providers: {
                 everything: Boolean(deps.everythingSearch),
                 revitPreview: Boolean(deps.revitPreview),
+                shellThumbnail: Boolean(deps.shellThumbnail),
+                calibrePreview: Boolean(deps.calibrePreview),
+                calibreFormats: deps.calibrePreview?.formats ?? [],
+                autoCadPreview: Boolean(deps.autoCadPreview),
                 windowsPreview: Boolean(deps.windowsPreview),
                 directoryOpus: Boolean(deps.dopusrtPath),
                 libreOffice: Boolean(deps.libreOfficePath),

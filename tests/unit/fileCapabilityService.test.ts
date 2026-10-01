@@ -8,6 +8,9 @@ import { createFilePreviewResourceRegistry } from '../../src/main/backpacks/file
 import type { EverythingSearchBridge } from '../../src/main/backpacks/everythingSearchBridge';
 import type { PdfPreviewHostBridge } from '../../src/main/backpacks/pdfPreviewHostBridge';
 import type { RevitPreviewBridge } from '../../src/main/backpacks/revitPreviewBridge';
+import type { ShellThumbnailBridge } from '../../src/main/backpacks/shellThumbnailBridge';
+import type { CalibrePreviewBridge } from '../../src/main/backpacks/calibrePreviewBridge';
+import type { AutoCadPreviewBridge } from '../../src/main/backpacks/autoCadPreviewBridge';
 import type { WindowsPreviewHandlerBridge } from '../../src/main/backpacks/windowsPreviewHandlerBridge';
 
 let root: string;
@@ -27,6 +30,9 @@ function service(
   windowsPreview: WindowsPreviewHandlerBridge | null = null,
   context: Record<string, unknown> = CONTEXT,
   pdfPreview: PdfPreviewHostBridge | null = null,
+  shellThumbnail: ShellThumbnailBridge | null = null,
+  calibrePreview: CalibrePreviewBridge | null = null,
+  autoCadPreview: AutoCadPreviewBridge | null = null,
 ) {
   const previewResources = createFilePreviewResourceRegistry();
   const inner = createFileCapabilityService({
@@ -34,6 +40,9 @@ function service(
     previewResources,
     pdfPreview,
     revitPreview,
+    shellThumbnail,
+    calibrePreview,
+    autoCadPreview,
     windowsPreview,
     dopusrtPath: null,
     libreOfficePath: null,
@@ -163,6 +172,139 @@ describe('file capability service', () => {
       extractedBy: 'revit-embedded-preview',
       dataUrl: `data:image/png;base64,${png.toString('base64')}`,
     });
+  });
+
+  it('prefers a high-resolution Windows Shell thumbnail over the embedded Revit fallback', async () => {
+    const target = path.join(root, 'model.rvt');
+    await fs.writeFile(target, Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+    const shellPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 8, 7]);
+    const embeddedPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+    const shellPreview = vi.fn(async () => ({
+      ok: true as const,
+      png: shellPng,
+      width: 1600,
+      height: 1600,
+    }));
+    const embeddedPreview = vi.fn(async () => ({ ok: true as const, png: embeddedPng }));
+    const shell: ShellThumbnailBridge = { preview: shellPreview };
+    const revit: RevitPreviewBridge = { preview: embeddedPreview };
+
+    const result = await service(null, revit, null, CONTEXT, null, shell).call({
+      operation: 'preview',
+      params: { path: target },
+    });
+
+    expect(shellPreview).toHaveBeenCalledWith(target, 1600);
+    expect(embeddedPreview).not.toHaveBeenCalled();
+    expect(result.preview).toMatchObject({
+      kind: 'image',
+      mime: 'image/png',
+      extractedBy: 'windows-shell-thumbnail',
+      width: 1600,
+      height: 1600,
+      dataUrl: `data:image/png;base64,${shellPng.toString('base64')}`,
+    });
+  });
+
+  it('uses a generic Windows Shell thumbnail for installed-format renderers such as DWG', async () => {
+    const target = path.join(root, 'drawing.dwg');
+    await fs.writeFile(target, Buffer.from([0x41, 0x43, 0x31, 0x30, 0x33, 0x32, 0]));
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 4, 5, 6]);
+    const preview = vi.fn(async () => ({
+      ok: true as const,
+      png,
+      width: 256,
+      height: 126,
+    }));
+    const shell: ShellThumbnailBridge = { preview };
+
+    const result = await service(null, null, null, CONTEXT, null, shell).call({
+      operation: 'preview',
+      params: { path: target },
+    });
+
+    expect(result.preview).toMatchObject({
+      kind: 'image',
+      extractedBy: 'windows-shell-thumbnail',
+      width: 256,
+      height: 126,
+    });
+  });
+
+  it('prefers AutoCAD rendering over the lower-resolution Shell thumbnail for DWG', async () => {
+    const target = path.join(root, 'drawing.dwg');
+    await fs.writeFile(target, Buffer.from([0x41, 0x43, 0x31, 0x30, 0x33, 0x32, 0]));
+    const cadPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 8, 8, 8]);
+    const shellPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 1, 1]);
+    const cadPreview = vi.fn(async () => ({
+      ok: true as const,
+      png: cadPng,
+      width: 942,
+      height: 534,
+      provider: 'AutoCAD 2023',
+    }));
+    const autoCad: AutoCadPreviewBridge = {
+      supports: vi.fn((extension: string) => extension === '.dwg'),
+      preview: cadPreview,
+    };
+    const shellPreview = vi.fn(async () => ({
+      ok: true as const,
+      png: shellPng,
+      width: 256,
+      height: 126,
+    }));
+    const shell: ShellThumbnailBridge = { preview: shellPreview };
+
+    const result = await service(null, null, null, CONTEXT, null, shell, null, autoCad).call({
+      operation: 'preview',
+      params: { path: target },
+    });
+
+    expect(cadPreview).toHaveBeenCalledWith(target);
+    expect(shellPreview).not.toHaveBeenCalled();
+    expect(result.preview).toMatchObject({
+      kind: 'image',
+      extractedBy: 'autocad-core-console',
+      provider: 'AutoCAD 2023',
+      width: 942,
+      height: 534,
+      dataUrl: `data:image/png;base64,${cadPng.toString('base64')}`,
+    });
+  });
+
+  it('uses Calibre capabilities for readable ebook formats instead of the binary fallback', async () => {
+    const target = path.join(root, 'book.epub');
+    const converted = path.join(root, 'book-preview.pdf');
+    await fs.writeFile(target, 'epub-placeholder');
+    await fs.writeFile(converted, '%PDF-1.7\nbook');
+    const cleanup = vi.fn(async () => {});
+    const supports = vi.fn((extension: string) => extension === '.epub');
+    const convertToPdf = vi.fn(async () => ({
+      ok: true as const,
+      filePath: converted,
+      cleanup,
+    }));
+    const calibre: CalibrePreviewBridge = {
+      supports,
+      convertToPdf,
+      formats: Object.freeze(['.azw3', '.cbz', '.epub', '.mobi']),
+    };
+    const previewService = service(null, null, null, CONTEXT, null, null, calibre);
+
+    const result = await previewService.call({ operation: 'preview', params: { path: target } });
+
+    expect(supports).toHaveBeenCalledWith('.epub');
+    expect(convertToPdf).toHaveBeenCalledWith(target);
+    expect(result.preview).toMatchObject({
+      kind: 'pdf',
+      mime: 'application/pdf',
+      transport: 'stream',
+      convertedBy: 'calibre',
+      sourceFormat: '.epub',
+    });
+    const resourceId = (result.preview as { resourceId: string }).resourceId;
+    expect((await previewService.call({ operation: 'preview-release', params: { resourceId } })).released).toBe(true);
+    expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
   it('prefers an installed Windows preview handler for non-text files and controls one sender-owned live host', async () => {
