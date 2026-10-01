@@ -720,26 +720,26 @@ input:focus-visible {
   object-fit: contain;
 }
 .workspace-dock .dv-tab[data-backpack-project="bp-a5d07080-7210-45e6-b3f1-93978873a2fe"] {
-  background: #7fd4a4;
-  color: #14231a;
+  background: #26332e;
+  color: #f2eee6;
   border-color: #668b72;
   font-weight: 650;
 }
 .workspace-dock .dv-tab[data-backpack-project="bp-a5d07080-7210-45e6-b3f1-93978873a2fe"].dv-active-tab {
-  background: #7fd4a4;
-  color: #0f1b14;
-  box-shadow: inset 0 -3px #26332e, 0 0 0 1px rgb(20 35 26 / 28%);
+  background: #2c3733;
+  color: #ffffff;
+  box-shadow: inset 0 -3px #7fd4a4, 0 0 0 1px rgb(127 212 164 / 28%);
 }
 .workspace-dock .dv-tab[data-backpack-project="bp-759cd960-26ee-4560-90b0-1ef6678802c4"] {
-  background: #9fc9e4;
-  color: #17202a;
+  background: #334052;
+  color: #f0f7fc;
   border-color: #6fa8dc;
   font-weight: 650;
 }
 .workspace-dock .dv-tab[data-backpack-project="bp-759cd960-26ee-4560-90b0-1ef6678802c4"].dv-active-tab {
-  background: #9fc9e4;
-  color: #111923;
-  box-shadow: inset 0 -3px #334052, 0 0 0 1px rgb(23 32 42 / 24%);
+  background: #3b4a60;
+  color: #ffffff;
+  box-shadow: inset 0 -3px #9fc9e4, 0 0 0 1px rgb(159 201 228 / 24%);
 }
 .workspace-interaction-shield {
   position: absolute;
