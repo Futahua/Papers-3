@@ -114,6 +114,28 @@ describe('file capability service', () => {
     expect(loadUrl).toBeGreaterThan(sameUrlGuard);
   });
 
+  it('limits self-signed certificate exceptions to loopback web previews', async () => {
+    const source = await fs.readFile(
+      new URL('../../src/main/backpacks/webBrowserHostBridge.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain("hostname === '127.0.0.1'");
+    expect(source).toContain("hostname === '::1'");
+    expect(source).toContain("hostname === 'localhost'");
+    expect(source).toContain('request.errorCode === -202');
+    expect(source).toContain('callback(loopback && authorityOnly ? 0 : -3)');
+  });
+
+  it('offers Obsidian-rendered Markdown as an optional preview capability', async () => {
+    const source = await fs.readFile(
+      new URL('../../src/main/backpacks/fileCapabilityService.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain("case 'preview-markdown-obsidian'");
+    expect(source).toContain('papers-markdown-bridge');
+    expect(source).toContain('renderMarkdownWithObsidian');
+  });
+
   it('previews text and never leaves an unknown binary unsupported', async () => {
     const textFile = path.join(root, 'notes.md');
     const binaryFile = path.join(root, 'sample.weird');

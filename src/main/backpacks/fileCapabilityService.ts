@@ -28,6 +28,7 @@ const MAX_TEXT_CHUNK_BYTES = 8 * 1024 * 1024;
 const BINARY_SAMPLE_BYTES = 32 * 1024;
 const PREVIEW_RESOURCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PREVIEW_LAUNCH_TTL_MS = 10 * 60 * 1000;
+const OBSIDIAN_RENDER_MAX_BYTES = 8 * 1024 * 1024;
 
 const TEXT_EXTENSIONS = new Set([
   '.txt', '.md', '.markdown', '.json', '.jsonl', '.ndjson', '.yaml', '.yml', '.toml', '.ini', '.cfg',
@@ -85,6 +86,84 @@ function absolutePath(value: unknown, label = 'path'): string {
   const target = boundedString(value, label, MAX_PATH_BYTES);
   if (!path.isAbsolute(target)) throw new Error(`${label} must be an absolute path.`);
   return path.normalize(target);
+}
+let cachedObsidianExecutable: string | null | undefined;
+function existingExecutable(candidate: string | undefined): string | null {
+  if (!candidate) return null;
+  try {
+    const stats = statSync(candidate);
+    return stats.isFile() ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+function findObsidianExecutable(): string | null {
+  if (cachedObsidianExecutable !== undefined) return cachedObsidianExecutable;
+  const candidates = [
+    process.env.OBSIDIAN_PATH,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Obsidian', 'Obsidian.exe') : undefined,
+    process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Obsidian', 'Obsidian.exe') : undefined,
+  ];
+  try {
+    const output = execFileSync('reg.exe', ['query', 'HKCU\\Software\\Classes\\obsidian\\shell\\open\\command', '/ve'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 2_000,
+    });
+    const match = output.match(/REG_SZ\s+"([^"]*Obsidian\.exe)"/i)
+      ?? output.match(/REG_SZ\s+([^\r\n]*Obsidian\.exe)/i);
+    if (match?.[1]) candidates.unshift(match[1].trim());
+  } catch { /* optional registry discovery */ }
+  cachedObsidianExecutable = candidates.map(existingExecutable).find(Boolean) ?? null;
+  return cachedObsidianExecutable;
+}
+function execFileCompleted(file: string, args: string[], timeout = 5_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { windowsHide: true, timeout, maxBuffer: 2 * 1024 * 1024 }, (error) => {
+      if (error) reject(error); else resolve();
+    });
+  });
+}
+async function renderMarkdownWithObsidian(target: string, cacheDirectory?: string): Promise<Record<string, unknown>> {
+  const executable = findObsidianExecutable();
+  if (!executable) {
+    return { ok: false, code: 'OBSIDIAN_UNAVAILABLE', message: 'Obsidian is not installed or its CLI is unavailable.' };
+  }
+  const tempRoot = cacheDirectory || os.tmpdir();
+  await fs.mkdir(tempRoot, { recursive: true });
+  const outputPath = path.join(tempRoot, `papers-obsidian-render-${randomUUID()}.json`);
+  const code = `app.plugins.plugins["papers-markdown-bridge"]?.renderForPapers(${JSON.stringify(target.replace(/\\/g, '/'))},${JSON.stringify(outputPath.replace(/\\/g, '/'))})`;
+  try {
+    await execFileCompleted(executable, ['eval', `code=${code}`], 4_000);
+    let raw: string | null = null;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        const stats = await fs.stat(outputPath);
+        if (stats.isFile() && stats.size > 0 && stats.size <= OBSIDIAN_RENDER_MAX_BYTES) {
+          raw = await fs.readFile(outputPath, 'utf8');
+          break;
+        }
+        if (stats.size > OBSIDIAN_RENDER_MAX_BYTES) {
+          return { ok: false, code: 'OBSIDIAN_RENDER_TOO_LARGE', message: 'Obsidian rendered output is too large.' };
+        }
+      } catch { /* renderer may still be writing */ }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (!raw) {
+      return { ok: false, code: 'OBSIDIAN_BRIDGE_UNAVAILABLE', message: 'Obsidian Markdown bridge is unavailable.' };
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) throw new Error('Obsidian renderer returned invalid data.');
+    return parsed;
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'OBSIDIAN_RENDER_FAILED',
+      message: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    await fs.rm(outputPath, { force: true }).catch(() => undefined);
+  }
 }
 function pathList(value: unknown): string[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > MAX_BATCH) throw new Error(`paths must contain between 1 and ${MAX_BATCH} items.`);
@@ -786,6 +865,14 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'preview':
             return await previewFile(absolutePath(params.path), deps, context);
+          case 'preview-markdown-obsidian': {
+            const target = absolutePath(params.path);
+            const extension = path.extname(target).toLocaleLowerCase();
+            if (extension !== '.md' && extension !== '.markdown') {
+              return { ok: false, code: 'NOT_MARKDOWN', message: 'Obsidian rendering is available only for Markdown files.' };
+            }
+            return await renderMarkdownWithObsidian(target, deps.cacheDirectory);
+          }
           case 'preview-native-open': {
             if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
             return await deps.windowsPreview.open(context.nativePreviewHost, absolutePath(params.path), previewRect(params.rect));

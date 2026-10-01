@@ -38,6 +38,14 @@ function hardenBrowserSession(browserSession: Session): void {
   browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   browserSession.setPermissionCheckHandler(() => false);
   browserSession.on('will-download', (event) => event.preventDefault());
+  browserSession.setCertificateVerifyProc((request, callback) => {
+    const hostname = request.hostname.toLocaleLowerCase().replace(/^\[|\]$/g, '');
+    const loopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
+    const authorityOnly = request.errorCode === -202
+      || request.verificationResult === 'net::ERR_CERT_AUTHORITY_INVALID'
+      || request.verificationResult === 'CERT_AUTHORITY_INVALID';
+    callback(loopback && authorityOnly ? 0 : -3);
+  });
 }
 
 function validRect(rect: PreviewRect): boolean {
