@@ -11,6 +11,7 @@ interface LiveWebBrowser {
   localRect: PreviewRect;
   surfaceBounds: PreviewRect;
   presented: boolean;
+  sourceUrl: string;
 }
 
 export interface WebBrowserHostBridge {
@@ -122,8 +123,12 @@ export function createWebBrowserHostBridge(input: {
           existing.presented = true;
         }
         place(existing);
+        if (existing.sourceUrl === url) {
+          return { ok: true, sessionId: existing.id, url };
+        }
         try {
           await existing.view.webContents.loadURL(url);
+          existing.sourceUrl = url;
           return { ok: true, sessionId: existing.id, url };
         } catch (error) {
           return { ok: false, error: boundedError(error) };
@@ -165,6 +170,7 @@ export function createWebBrowserHostBridge(input: {
         localRect: { ...localRect },
         surfaceBounds: { ...context.surfaceBounds },
         presented: false,
+        sourceUrl: url,
       };
       sessions.set(session.id, session);
       owners.set(session.ownerKey, session.id);

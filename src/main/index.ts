@@ -745,6 +745,10 @@ async function bootstrap(): Promise<void> {
     libreOfficePath: resolveLibreOfficePath(),
     openPath: (target) => shell.openPath(target),
     revealPath: (target) => shell.showItemInFolder(target),
+    fileIcon: async (target) => {
+      const icon = await app.getFileIcon(target, { size: 'small' });
+      return icon.isEmpty() ? null : icon.toDataURL();
+    },
   });
 
   const permissionStore = new PermissionStore(paths);

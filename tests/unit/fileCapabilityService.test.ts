@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -17,10 +17,12 @@ import type { PowerPointPreviewBridge } from '../../src/main/backpacks/powerPoin
 import type { WindowsPreviewHandlerBridge } from '../../src/main/backpacks/windowsPreviewHandlerBridge';
 
 let root: string;
+let fileIcon: Mock<(target: string) => Promise<string | null>>;
 const CONTEXT = { backpackId: 'bp-11111111-2222-4333-8444-555555555555' };
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-file-capability-'));
+  fileIcon = vi.fn(async (_target: string) => null);
 });
 
 afterEach(async () => {
@@ -58,6 +60,7 @@ function service(
     libreOfficePath: null,
     openPath: vi.fn(async () => ''),
     revealPath: vi.fn(),
+    fileIcon,
   });
   return {
     call: (request: unknown) => inner.call(request, context as typeof CONTEXT),
@@ -86,6 +89,29 @@ describe('file capability service', () => {
     const listed = await service().call({ operation: 'list', params: { path: folder } });
     expect(listed.ok).toBe(true);
     expect((listed.items as Array<{ path: string }>).map((entry) => entry.path)).toEqual([file]);
+  });
+
+  it('returns the native shell icon lazily for one exact filesystem path', async () => {
+    const file = path.join(root, 'alpha.txt');
+    await fs.writeFile(file, 'hello');
+    fileIcon.mockResolvedValue('data:image/png;base64,ICON');
+
+    const result = await service().call({ operation: 'icon', params: { path: file } });
+
+    expect(result).toEqual({ ok: true, icon: 'data:image/png;base64,ICON' });
+    expect(fileIcon).toHaveBeenCalledTimes(1);
+    expect(fileIcon).toHaveBeenCalledWith(file);
+  });
+
+  it('keeps an existing web viewer on the same source URL without reloading it', async () => {
+    const source = await fs.readFile(
+      new URL('../../src/main/backpacks/webBrowserHostBridge.ts', import.meta.url),
+      'utf8',
+    );
+    const sameUrlGuard = source.indexOf('if (existing.sourceUrl === url)');
+    const loadUrl = source.indexOf('await existing.view.webContents.loadURL(url)', sameUrlGuard);
+    expect(sameUrlGuard).toBeGreaterThan(-1);
+    expect(loadUrl).toBeGreaterThan(sameUrlGuard);
   });
 
   it('previews text and never leaves an unknown binary unsupported', async () => {

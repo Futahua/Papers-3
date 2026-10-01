@@ -64,6 +64,7 @@ export interface FileCapabilityDeps {
   libreOfficePath: string | null;
   openPath: (target: string) => Promise<string | void>;
   revealPath: (target: string) => void;
+  fileIcon: (target: string) => Promise<string | null>;
 }
 export interface FileCapabilityContext {
   backpackId: string;
@@ -700,6 +701,10 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
                 boundedLimit(params.limit, 200, MAX_LIST),
               )),
             };
+          case 'icon': {
+            const target = absolutePath(params.path);
+            return { ok: true, icon: await deps.fileIcon(target) };
+          }
           case 'search': {
             const query = boundedString(params.query, 'query', MAX_SEARCH_BYTES);
             const limit = boundedLimit(params.limit, 100, MAX_SEARCH);
