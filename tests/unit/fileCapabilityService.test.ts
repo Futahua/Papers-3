@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { createFileCapabilityService } from '../../src/main/backpacks/fileCapabilityService';
 import { createFilePreviewResourceRegistry } from '../../src/main/backpacks/filePreviewResources';
 import type { EverythingSearchBridge } from '../../src/main/backpacks/everythingSearchBridge';
+import type { PdfPreviewHostBridge } from '../../src/main/backpacks/pdfPreviewHostBridge';
 import type { RevitPreviewBridge } from '../../src/main/backpacks/revitPreviewBridge';
 import type { WindowsPreviewHandlerBridge } from '../../src/main/backpacks/windowsPreviewHandlerBridge';
 
@@ -25,11 +26,13 @@ function service(
   revitPreview: RevitPreviewBridge | null = null,
   windowsPreview: WindowsPreviewHandlerBridge | null = null,
   context: Record<string, unknown> = CONTEXT,
+  pdfPreview: PdfPreviewHostBridge | null = null,
 ) {
   const previewResources = createFilePreviewResourceRegistry();
   const inner = createFileCapabilityService({
     everythingSearch,
     previewResources,
+    pdfPreview,
     revitPreview,
     windowsPreview,
     dopusrtPath: null,
@@ -196,6 +199,74 @@ describe('file capability service', () => {
     expect(focus).toHaveBeenCalledWith(nativePreviewHost.ownerKey, sessionId);
     expect((await previewService.call({ operation: 'preview-native-close', params: { sessionId } })).ok).toBe(true);
     expect(close).toHaveBeenCalledWith(nativePreviewHost.ownerKey, sessionId);
+  });
+
+  it('routes PDFs through a sender-owned top-level preview host instead of the nested renderer iframe path', async () => {
+    const target = path.join(root, 'document.pdf');
+    await fs.writeFile(target, '%PDF-1.7\npreview');
+    const open = vi.fn(async (
+      _context,
+      _url: string,
+      _rect,
+      cleanup: () => void,
+    ) => {
+      (open as typeof open & { cleanup?: () => void }).cleanup = cleanup;
+      return { ok: true as const, sessionId: '11111111-2222-4333-8444-555555555555' };
+    });
+    const move = vi.fn(() => true);
+    const close = vi.fn(() => true);
+    const pdfPreview: PdfPreviewHostBridge = {
+      open,
+      move,
+      close,
+      setOwnerSurfaceBounds: vi.fn(),
+      setOwnerVisible: vi.fn(),
+      closeOwner: vi.fn(),
+      raiseWindow: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const nativePreviewHost = {
+      ownerKey: '7:surface-a',
+      parentHwnd: '12345',
+      surfaceBounds: { x: 40, y: 70, width: 800, height: 600 },
+    };
+    const previewService = service(
+      null,
+      null,
+      null,
+      { ...CONTEXT, nativePreviewHost },
+      pdfPreview,
+    );
+
+    const preview = await previewService.call({ operation: 'preview', params: { path: target } });
+    expect(preview.preview).toMatchObject({
+      kind: 'hosted-pdf',
+      mime: 'application/pdf',
+      transport: 'stream',
+    });
+    const resourceId = (preview.preview as { resourceId: string }).resourceId;
+    const rect = { x: 300, y: 80, width: 420, height: 460 };
+    const opened = await previewService.call({
+      operation: 'preview-pdf-open',
+      params: { resourceId, rect },
+    });
+    expect(opened).toMatchObject({ ok: true, sessionId: '11111111-2222-4333-8444-555555555555' });
+    expect(open).toHaveBeenCalledWith(
+      nativePreviewHost,
+      expect.stringMatching(/^papers-file-preview:\/\/bp-11111111-2222-4333-8444-555555555555\//),
+      rect,
+      expect.any(Function),
+    );
+
+    const sessionId = (opened as { sessionId: string }).sessionId;
+    expect((await previewService.call({ operation: 'preview-pdf-move', params: { sessionId, rect } })).ok).toBe(true);
+    expect(move).toHaveBeenCalledWith(nativePreviewHost.ownerKey, sessionId, rect);
+    expect((await previewService.call({ operation: 'preview-pdf-close', params: { sessionId } })).ok).toBe(true);
+    expect(close).toHaveBeenCalledWith(nativePreviewHost.ownerKey, sessionId);
+
+    (open as typeof open & { cleanup?: () => void }).cleanup?.();
+    const released = await previewService.call({ operation: 'preview-release', params: { resourceId } });
+    expect(released).toEqual({ ok: true, released: false });
   });
 
   it('delegates global search to the Everything bridge', async () => {

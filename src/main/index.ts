@@ -10,6 +10,7 @@ import { BackpackProjectService } from './backpacks/backpackProjectService';
 import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from './backpacks/everythingSearchBridge';
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
+import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createWindowsPreviewHandlerBridge, resolveWindowsPreviewHostSourcePath } from './backpacks/windowsPreviewHandlerBridge';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
@@ -676,9 +677,20 @@ async function bootstrap(): Promise<void> {
     }),
   });
   app.once('will-quit', () => windowsPreview?.dispose());
+  const pdfPreview = createPdfPreviewHostBridge({
+    resolveWindow: (ownerKey) => {
+      const separator = ownerKey.indexOf(':');
+      if (separator <= 0) return null;
+      const windowId = Number(ownerKey.slice(0, separator));
+      if (!Number.isSafeInteger(windowId)) return null;
+      return papersWindows.get(windowId)?.owned.window ?? null;
+    },
+  });
+  app.once('will-quit', () => pdfPreview.dispose());
   const fileCapability = createFileCapabilityService({
     everythingSearch,
     previewResources: filePreviewResources,
+    pdfPreview,
     revitPreview,
     windowsPreview,
     dopusrtPath: resolveDirectoryOpusRtPath(),
@@ -1366,6 +1378,7 @@ async function bootstrap(): Promise<void> {
     },
     closeAttachedProjectSurface: async (windowId, surfaceId, options) => {
       windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
+      pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
       await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
     projectEntryUrlForSurface: (windowId, surfaceId) =>
@@ -1374,6 +1387,7 @@ async function bootstrap(): Promise<void> {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) {
         windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
+        pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
         await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
       }
     },
@@ -1461,7 +1475,10 @@ async function bootstrap(): Promise<void> {
             bindVisualSemanticKeySender(owningWindowId, surfaceId, nextFrameSender);
           },
         });
-        if (owningWindowId !== null) windowsPreview?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+        if (owningWindowId !== null) {
+          windowsPreview?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+          pdfPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+        }
       } catch (caught) {
         if (stagedFrameSender !== null) surfaceContexts.unbind(stagedFrameSender);
         throw caught;
@@ -1502,6 +1519,7 @@ async function bootstrap(): Promise<void> {
       if (windowId !== null) {
         papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
         windowsPreview?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+        pdfPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
       }
     },
     setBackpackProjectSurfaceBounds: (senderId, surfaceId, bounds) => {
@@ -1509,6 +1527,7 @@ async function bootstrap(): Promise<void> {
       if (windowId !== null) {
         papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
         windowsPreview?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+        pdfPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
       }
     },
     setHostOverlayActive: (windowId, active, owner = 'legacy') => {
@@ -1522,7 +1541,10 @@ async function bootstrap(): Promise<void> {
 
       applyHostViewBackground(windowId, context.owned.hostView);
       if (owners.size > 0) context.owned.window.contentView.addChildView(context.owned.hostView);
-      else context.owned.projectSurfaces.raisePresented();
+      else {
+        context.owned.projectSurfaces.raisePresented();
+        pdfPreview.raiseWindow(windowId);
+      }
     },
     runtime,
     canvasState,

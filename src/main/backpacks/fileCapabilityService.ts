@@ -4,7 +4,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 import type { EverythingSearchBridge } from './everythingSearchBridge';
-import type { FilePreviewResourceRegistry } from './filePreviewResources';
+import { FILE_PREVIEW_SCHEME, type FilePreviewResourceRegistry } from './filePreviewResources';
+import type { PdfPreviewHostBridge } from './pdfPreviewHostBridge';
 import type { RevitPreviewBridge } from './revitPreviewBridge';
 import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
 
@@ -38,6 +39,7 @@ export interface FileCapabilityEntry {
 export interface FileCapabilityDeps {
   everythingSearch: EverythingSearchBridge | null;
   previewResources: FilePreviewResourceRegistry;
+  pdfPreview: PdfPreviewHostBridge | null;
   revitPreview: RevitPreviewBridge | null;
   windowsPreview: WindowsPreviewHandlerBridge | null;
   dopusrtPath: string | null;
@@ -181,7 +183,7 @@ function resourcePreview(
   deps: FileCapabilityDeps,
   context: FileCapabilityContext,
   filePath: string,
-  kind: 'image' | 'audio' | 'video' | 'pdf',
+  kind: 'image' | 'audio' | 'video' | 'pdf' | 'hosted-pdf',
   mime: string,
   cleanup?: () => void | Promise<void>,
   extra: Record<string, unknown> = {},
@@ -250,7 +252,17 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
     return { ok: true, entry, preview: resourcePreview(deps, context, target, kind, mime) };
   }
   if (extension === '.pdf') {
-    return { ok: true, entry, preview: resourcePreview(deps, context, target, 'pdf', 'application/pdf') };
+    return {
+      ok: true,
+      entry,
+      preview: resourcePreview(
+        deps,
+        context,
+        target,
+        deps.pdfPreview && context.nativePreviewHost ? 'hosted-pdf' : 'pdf',
+        'application/pdf',
+      ),
+    };
   }
   if (REVIT_EXTENSIONS.has(extension) && deps.revitPreview) {
     const extracted = await deps.revitPreview.preview(target);
@@ -287,7 +299,7 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
           deps,
           context,
           pdf.filePath,
-          'pdf',
+          deps.pdfPreview && context.nativePreviewHost ? 'hosted-pdf' : 'pdf',
           'application/pdf',
           pdf.cleanup,
           { convertedBy: 'libreoffice' },
@@ -462,6 +474,30 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'preview-native-close': {
             if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
             return { ok: deps.windowsPreview.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
+          }
+          case 'preview-pdf-open': {
+            if (!deps.pdfPreview || !context.nativePreviewHost) return { ok: false, code: 'PDF_PREVIEW_UNAVAILABLE', message: 'PDF preview hosting is unavailable.' };
+            const resourceId = boundedString(params.resourceId, 'resourceId', 64);
+            if (!PREVIEW_RESOURCE_ID_PATTERN.test(resourceId)) throw new Error('resourceId is not a valid preview resource.');
+            const record = deps.previewResources.resolve(context.backpackId, resourceId);
+            if (!record || record.mime !== 'application/pdf') {
+              return { ok: false, code: 'PDF_PREVIEW_UNAVAILABLE', message: 'PDF preview resource is unavailable.' };
+            }
+            const url = `${FILE_PREVIEW_SCHEME}://${context.backpackId}/${resourceId}/${encodeURIComponent(path.basename(record.filePath) || 'preview.pdf')}`;
+            return await deps.pdfPreview.open(
+              context.nativePreviewHost,
+              url,
+              previewRect(params.rect),
+              () => { deps.previewResources.revoke(context.backpackId, resourceId); },
+            );
+          }
+          case 'preview-pdf-move': {
+            if (!deps.pdfPreview || !context.nativePreviewHost) return { ok: false, code: 'PDF_PREVIEW_UNAVAILABLE', message: 'PDF preview hosting is unavailable.' };
+            return { ok: deps.pdfPreview.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect)) };
+          }
+          case 'preview-pdf-close': {
+            if (!deps.pdfPreview || !context.nativePreviewHost) return { ok: false, code: 'PDF_PREVIEW_UNAVAILABLE', message: 'PDF preview hosting is unavailable.' };
+            return { ok: deps.pdfPreview.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
           }
           case 'preview-text-chunk': {
             const target = absolutePath(params.path);
