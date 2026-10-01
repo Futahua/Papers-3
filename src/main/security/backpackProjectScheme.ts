@@ -44,6 +44,7 @@ export function registerBackpackProjectSchemePrivileges(): void {
         supportFetchAPI: true,
         corsEnabled: false,
         stream: true,
+        allowExtensions: true,
       },
     },
   ]);
@@ -53,8 +54,8 @@ export function registerBackpackProjectSchemePrivileges(): void {
  * `connect-src` is the ONE relaxation, and it is deliberately narrow.
  *
  * Remote scripts/styles/forms/base remain denied. Project pages may connect
- * only to loopback services. Rich local previews use in-memory `blob:` URLs for
- * media and PDF frames; `data:` frames and remote frame origins remain denied
+ * only to loopback services. Rich local previews may use in-memory `blob:` URLs;
+ * `data:` frames and remote frame origins remain denied
  * unless an embedded Backpack origin was explicitly registered.
  *
  * Why loopback rather than 'none': a Backpack that talks to a service the
@@ -82,7 +83,7 @@ export function contentSecurityPolicy(origin: string, frameOrigins: readonly str
     `default-src 'none'`,
     `script-src ${origin}`,
     `style-src ${origin} 'unsafe-inline'`,
-    `img-src ${origin} ${previewOrigin} data:`,
+    `img-src ${origin} ${previewOrigin} data: blob:`,
     `media-src ${previewOrigin} blob:`,
     `font-src ${origin}`,
     `connect-src http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*`,
