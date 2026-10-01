@@ -160,6 +160,7 @@ const SCOPED_WORKSPACE_REQUESTS = new Set([
   'papers:project:as-you-go-pick-target',
   'papers:project:resolve-dropped-targets',
   'papers:project:open-web-link',
+  'papers:project:open-new-surface',
   'papers:project:resolve-web-link-icon',
   'papers:project:file-capability',
 ]);
@@ -372,7 +373,7 @@ window.addEventListener('message', (event) => {
     }).then((payload) => ({ delegateWave: payload }));
   }
   if (request.type === 'papers:project:open-web-link' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-web-link', request.url, ...workspaceOriginArgs);
-  if (request.type === 'papers:project:open-new-surface' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-new-surface', request.url);
+  if (request.type === 'papers:project:open-new-surface' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-new-surface', request.url, ...workspaceOriginArgs);
   if (request.type === 'papers:project:command-surface-dismiss') {
     const keys = request.destination === undefined
       ? ['type', 'requestId']

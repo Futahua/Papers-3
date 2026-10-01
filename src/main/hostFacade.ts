@@ -869,11 +869,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.runProjectOwnership(id, () => this.openBackpackProjectUngated(senderId, id));
   }
 
-  /** Project-owned request for another Papers tab. The project may choose only
-   * a URL on its own authenticated backpack origin; Papers creates the generic
-   * workspace surface and routes the URL without understanding project data. */
-  async openBackpackProjectNewSurface(senderId: number, url: string): Promise<unknown> {
-    const projectId = this.requireProjectForSender(senderId);
+  /** Project-owned request for another Papers tab. A nested authorized
+   * workspace may open another tab on the scoped Backpack origin; otherwise
+   * the sender may choose only its own authenticated Backpack origin. */
+  async openBackpackProjectNewSurface(senderId: number, url: string, workspaceOrigin?: string): Promise<unknown> {
+    const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    const projectId = scope?.backpackId ?? this.requireProjectForSender(senderId);
     const context = this.deps.surfaces.contextForSender(senderId);
     if (!context) throw new Error('Enter a Backpack project before opening another tab.');
     let parsed: URL;

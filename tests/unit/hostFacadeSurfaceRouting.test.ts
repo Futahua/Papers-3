@@ -157,7 +157,17 @@ function createFacade(delegateWave?: FacadeDeps['delegateWave']) {
     showBackpackProjectSurface,
     hideBackpackProjectSurface,
     // Present only so the guard is what refuses, not a missing service.
-    backpackProjects: { open: openProject, saveState: vi.fn(async () => ({ ok: true, revision: 'r1' })) },
+    backpackProjects: {
+      open: openProject,
+      saveState: vi.fn(async () => ({ ok: true, revision: 'r1' })),
+      workspaceScope: vi.fn(async (_hostProjectId: string, projectKey: string) => projectKey === 'embedded-ayg'
+        ? {
+          backpackId: OTHER,
+          rootGroupId: 'g1',
+          url: `papers-backpack://${OTHER}/open/one/public/workspace-20260730b.html?as-you-go-folder=g1`,
+        }
+        : null),
+    },
     // Gate 10.2's default remains a terminal seam recorder. Gate 10.3 may
     // inject the real bounded relay without changing production composition.
     delegateWave: delegateWave ?? { call: delegateWaveCall },
@@ -265,6 +275,29 @@ describe('surface routing in the host facade', () => {
     expect(openedUrl.searchParams.get('papers-surface-key')).toBeTruthy();
     await expect(facade.openBackpackProjectNewSurface(FRAME, `papers-backpack://${OTHER}/open/one/public/workspace.js`))
       .rejects.toThrow(/own Papers tab/);
+  });
+
+  it('lets an authenticated embedded workspace open a new tab on its scoped project origin only', async () => {
+    const { facade, workspaceTopologies, sendToWindow, surfaces } = createFacade();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    const existing = await facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    surfaces.bind(FRAME, { surfaceId: existing.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project' });
+    const scope = await facade.resolveBackpackProjectWorkspaceScope(FRAME, 'embedded-ayg', 'Embedded AYG');
+    expect(scope).toMatchObject({ backpackId: OTHER, rootGroupId: 'g1' });
+    const origin = `papers-backpack://${OTHER}`;
+    const previewUrl = `papers-backpack://${OTHER}/open/one/public/workspace-20260730b.html?papers-file-preview=abc`;
+
+    await facade.openBackpackProjectNewSurface(FRAME, previewUrl, origin);
+    const event = sendToWindow.mock.calls.at(-1)?.[2] as { project: { projectId: string; url: string } };
+    expect(event.project.projectId).toBe(OTHER);
+    expect(new URL(event.project.url).searchParams.get('papers-file-preview')).toBe('abc');
+    await expect(facade.openBackpackProjectNewSurface(
+      FRAME,
+      `papers-backpack://${PROJECT}/open/one/public/workspace-20260730b.html`,
+      origin,
+    )).rejects.toThrow(/own Papers tab/);
+    await expect(facade.openBackpackProjectNewSurface(FRAME, previewUrl, 'papers-backpack://wrong'))
+      .rejects.toThrow(/embedded workspace is no longer authorized/);
   });
 
   it('uses the bound live project surface as Gate 10.2 host truth', async () => {

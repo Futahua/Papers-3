@@ -107,6 +107,32 @@ describe('Backpack project protocol alignment', () => {
     }));
   });
 
+  it('routes open-new-surface from a scoped child with its exact workspace origin', async () => {
+    await loadPreloadForTest();
+    const child = {};
+    mocks.invoke.mockResolvedValue({ surfaceId: 'sf-new' });
+    for (const handler of messageHandlers) {
+      handler({
+        source: child,
+        origin: 'papers-backpack://ayg-child',
+        data: {
+          type: 'papers:project:open-new-surface',
+          requestId: 'surface-child-1',
+          url: 'papers-backpack://ayg-child/open/one/public/workspace.html?papers-file-preview=abc',
+        },
+      });
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      'host:backpack-project:open-new-surface',
+      'papers-backpack://ayg-child/open/one/public/workspace.html?papers-file-preview=abc',
+      'papers-backpack://ayg-child',
+    );
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'surface-child-1', ok: true,
+    }));
+  });
+
   it('translates every positioned embedded AYG preview rect through its exact iframe before IPC', async () => {
     await loadPreloadForTest();
     const child = {};

@@ -51,7 +51,7 @@ export interface HostFacade {
 
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
   replaceBackpackProject(senderId: number, surfaceId: string, id: string): Promise<unknown>;
-  openBackpackProjectNewSurface(senderId: number, url: string): Promise<unknown>;
+  openBackpackProjectNewSurface(senderId: number, url: string, workspaceOrigin?: string): Promise<unknown>;
   dismissBackpackProjectCommandSurface(senderId: number, destination: 'restore' | 'external' | 'papers'): Promise<void>;
   closeBackpackProject(senderId: number, surfaceId: string): Promise<void>;
   activateBackpackProjectSurface(senderId: number, surfaceId: string): void;
@@ -262,8 +262,12 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:open', (event, id) =>
     facade.openBackpackProject(event.sender.id, backpackRemovalIdSchema.parse(id)),
   );
-  handle('host:backpack-project:open-new-surface', (event, url) =>
-    facade.openBackpackProjectNewSurface(event.sender.id, z.string().url().max(2_048).parse(url)),
+  handle('host:backpack-project:open-new-surface', (event, url, workspaceOrigin) =>
+    facade.openBackpackProjectNewSurface(
+      event.sender.id,
+      z.string().url().max(2_048).parse(url),
+      backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
+    ),
     true,
   );
   handle('host:backpack-project:command-surface-dismiss', (event, destination) =>

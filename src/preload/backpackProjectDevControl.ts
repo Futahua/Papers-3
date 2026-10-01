@@ -150,6 +150,7 @@ const SCOPED_WORKSPACE_REQUESTS = new Set([
   'papers:project:as-you-go-pick-target',
   'papers:project:resolve-dropped-targets',
   'papers:project:open-web-link',
+  'papers:project:open-new-surface',
   'papers:project:resolve-web-link-icon',
 ]);
 
@@ -446,7 +447,7 @@ window.addEventListener('message', (event) => {
     }).then((payload) => ({ delegateWave: payload }));
   }
   if (request.type === 'papers:project:open-web-link' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-web-link', request.url, ...workspaceOriginArgs);
-  if (request.type === 'papers:project:open-new-surface' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-new-surface', request.url);
+  if (request.type === 'papers:project:open-new-surface' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-new-surface', request.url, ...workspaceOriginArgs);
   if (request.type === 'papers:project:resolve-dropped-targets' && Array.isArray(request.files)) {
     const paths = request.files.filter((file): file is File => file instanceof File).map((file) => webUtils.getPathForFile(file)).filter(Boolean);
     if (paths.length) task = ipcRenderer.invoke('host:backpack-project:resolve-dropped-targets', paths, ...workspaceOriginArgs).then((targets) => ({ targets }));
