@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promises as fs, statSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -12,6 +13,8 @@ export interface CalibrePreviewResult {
   ok: true;
   filePath: string;
   cleanup: () => Promise<void>;
+  stateKey: string;
+  cached: boolean;
 }
 
 export interface CalibrePreviewBridge {
@@ -62,6 +65,23 @@ function boundedError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 500);
 }
 
+async function validPdf(target: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(target);
+    if (!stats.isFile() || stats.size < 5) return false;
+    const handle = await fs.open(target, 'r');
+    try {
+      const magic = Buffer.alloc(5);
+      const { bytesRead } = await handle.read(magic, 0, magic.length, 0);
+      return bytesRead === 5 && magic.toString('ascii') === '%PDF-';
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 export function createCalibrePreviewBridge(input: {
   cacheDirectory: string;
   timeoutMs?: number;
@@ -78,6 +98,10 @@ export function createCalibrePreviewBridge(input: {
 
   const formats = discoverFormats(debug);
   const timeoutMs = input.timeoutMs ?? 90_000;
+  const booksDirectory = path.join(input.cacheDirectory, 'calibre-books');
+  const convertStats = statSync(convert);
+  const converterIdentity = `${convertStats.size}:${convertStats.mtimeMs}`;
+  const inFlight = new Map<string, Promise<CalibrePreviewResult | { ok: false; error?: string }>>();
 
   return {
     formats: Object.freeze([...formats].sort()),
@@ -85,28 +109,65 @@ export function createCalibrePreviewBridge(input: {
       return formats.has(extension.trim().toLowerCase());
     },
     async convertToPdf(target) {
-      await fs.mkdir(input.cacheDirectory, { recursive: true });
-      const tempRoot = await fs.mkdtemp(path.join(input.cacheDirectory, 'calibre-preview-'));
-      const output = path.join(tempRoot, 'preview.pdf');
+      let sourceStats;
       try {
-        await new Promise<void>((resolve, reject) => {
-          execFile(convert!, [target, output], {
-            windowsHide: true,
-            timeout: timeoutMs,
-            maxBuffer: 2 * 1024 * 1024,
-            encoding: 'utf8',
-          }, (error) => error ? reject(error) : resolve());
-        });
-        const stats = await fs.stat(output);
-        if (!stats.isFile() || stats.size < 5) throw new Error('Calibre did not create a PDF preview.');
-        return {
-          ok: true,
-          filePath: output,
-          cleanup: () => fs.rm(tempRoot, { recursive: true, force: true }),
-        };
+        sourceStats = await fs.stat(target);
       } catch (error) {
-        await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
         return { ok: false, error: boundedError(error) };
+      }
+      if (!sourceStats.isFile()) return { ok: false, error: 'Book preview source is not a file.' };
+
+      const stateKey = createHash('sha256')
+        .update(path.resolve(target).toLocaleLowerCase('en-US'))
+        .update('\0')
+        .update(String(sourceStats.size))
+        .update('\0')
+        .update(String(sourceStats.mtimeMs))
+        .update('\0')
+        .update(converterIdentity)
+        .digest('hex');
+      const output = path.join(booksDirectory, `${stateKey}.pdf`);
+      if (await validPdf(output)) {
+        return { ok: true, filePath: output, cleanup: async () => {}, stateKey, cached: true };
+      }
+
+      const existing = inFlight.get(stateKey);
+      if (existing) return existing;
+
+      const work = (async (): Promise<CalibrePreviewResult | { ok: false; error?: string }> => {
+        await fs.mkdir(booksDirectory, { recursive: true });
+        const temp = path.join(
+          booksDirectory,
+          `${stateKey}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp.pdf`,
+        );
+        try {
+          await new Promise<void>((resolve, reject) => {
+            execFile(convert!, [target, temp], {
+              windowsHide: true,
+              timeout: timeoutMs,
+              maxBuffer: 2 * 1024 * 1024,
+              encoding: 'utf8',
+            }, (error) => error ? reject(error) : resolve());
+          });
+          if (!await validPdf(temp)) throw new Error('Calibre did not create a valid PDF preview.');
+          await fs.rename(temp, output).catch(async (error: NodeJS.ErrnoException) => {
+            if (error.code === 'EEXIST' && await validPdf(output)) {
+              await fs.rm(temp, { force: true });
+              return;
+            }
+            throw error;
+          });
+          return { ok: true, filePath: output, cleanup: async () => {}, stateKey, cached: false };
+        } catch (error) {
+          await fs.rm(temp, { force: true }).catch(() => undefined);
+          return { ok: false, error: boundedError(error) };
+        }
+      })();
+      inFlight.set(stateKey, work);
+      try {
+        return await work;
+      } finally {
+        if (inFlight.get(stateKey) === work) inFlight.delete(stateKey);
       }
     },
   };

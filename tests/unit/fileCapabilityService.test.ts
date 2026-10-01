@@ -11,6 +11,7 @@ import type { RevitPreviewBridge } from '../../src/main/backpacks/revitPreviewBr
 import type { ShellThumbnailBridge } from '../../src/main/backpacks/shellThumbnailBridge';
 import type { CalibrePreviewBridge } from '../../src/main/backpacks/calibrePreviewBridge';
 import type { AutoCadPreviewBridge } from '../../src/main/backpacks/autoCadPreviewBridge';
+import type { HtmlPreviewHostBridge } from '../../src/main/backpacks/htmlPreviewHostBridge';
 import type { WindowsPreviewHandlerBridge } from '../../src/main/backpacks/windowsPreviewHandlerBridge';
 
 let root: string;
@@ -33,6 +34,7 @@ function service(
   shellThumbnail: ShellThumbnailBridge | null = null,
   calibrePreview: CalibrePreviewBridge | null = null,
   autoCadPreview: AutoCadPreviewBridge | null = null,
+  htmlPreview: HtmlPreviewHostBridge | null = null,
 ) {
   const previewResources = createFilePreviewResourceRegistry();
   const inner = createFileCapabilityService({
@@ -43,6 +45,7 @@ function service(
     shellThumbnail,
     calibrePreview,
     autoCadPreview,
+    htmlPreview,
     windowsPreview,
     dopusrtPath: null,
     libreOfficePath: null,
@@ -283,6 +286,8 @@ describe('file capability service', () => {
       ok: true as const,
       filePath: converted,
       cleanup,
+      stateKey: 'a'.repeat(64),
+      cached: true,
     }));
     const calibre: CalibrePreviewBridge = {
       supports,
@@ -301,6 +306,8 @@ describe('file capability service', () => {
       transport: 'stream',
       convertedBy: 'calibre',
       sourceFormat: '.epub',
+      previewStateKey: 'a'.repeat(64),
+      cached: true,
     });
     const resourceId = (result.preview as { resourceId: string }).resourceId;
     expect((await previewService.call({ operation: 'preview-release', params: { resourceId } })).released).toBe(true);
@@ -356,7 +363,7 @@ describe('file capability service', () => {
       return { ok: true as const, sessionId: '11111111-2222-4333-8444-555555555555' };
     });
     const move = vi.fn(() => true);
-    const close = vi.fn(() => true);
+    const close = vi.fn(async () => true);
     const pdfPreview: PdfPreviewHostBridge = {
       open,
       move,
@@ -398,6 +405,7 @@ describe('file capability service', () => {
       expect.stringMatching(/^papers-file-preview:\/\/bp-11111111-2222-4333-8444-555555555555\//),
       rect,
       expect.any(Function),
+      null,
     );
 
     const sessionId = (opened as { sessionId: string }).sessionId;
@@ -409,6 +417,69 @@ describe('file capability service', () => {
     (open as typeof open & { cleanup?: () => void }).cleanup?.();
     const released = await previewService.call({ operation: 'preview-release', params: { resourceId } });
     expect(released).toEqual({ ok: true, released: false });
+  });
+
+  it('routes HTML through an interactive sender-owned host instead of source text', async () => {
+    const target = path.join(root, 'interactive.html');
+    await fs.writeFile(target, '<!doctype html><button onclick="this.textContent=\'clicked\'">click</button>');
+    const open = vi.fn(async (
+      _context,
+      _filePath: string,
+      _rect,
+      cleanup: () => void,
+    ) => {
+      (open as typeof open & { cleanup?: () => void }).cleanup = cleanup;
+      return { ok: true as const, sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' };
+    });
+    const move = vi.fn(() => true);
+    const close = vi.fn(() => true);
+    const htmlPreview: HtmlPreviewHostBridge = {
+      open,
+      move,
+      close,
+      setOwnerSurfaceBounds: vi.fn(),
+      setOwnerVisible: vi.fn(),
+      closeOwner: vi.fn(),
+      raiseWindow: vi.fn(),
+      dispose: vi.fn(),
+    };
+    const nativePreviewHost = {
+      ownerKey: '7:surface-a',
+      parentHwnd: '12345',
+      surfaceBounds: { x: 40, y: 70, width: 800, height: 600 },
+    };
+    const previewService = service(
+      null,
+      null,
+      null,
+      { ...CONTEXT, nativePreviewHost },
+      null,
+      null,
+      null,
+      null,
+      htmlPreview,
+    );
+
+    const preview = await previewService.call({ operation: 'preview', params: { path: target } });
+    expect(preview.preview).toMatchObject({
+      kind: 'hosted-html',
+      mime: 'text/html',
+      transport: 'stream',
+    });
+    expect(preview.preview).not.toHaveProperty('text');
+    const resourceId = (preview.preview as { resourceId: string }).resourceId;
+    const rect = { x: 200, y: 90, width: 500, height: 550 };
+    const opened = await previewService.call({
+      operation: 'preview-html-open',
+      params: { resourceId, rect },
+    });
+    expect(opened).toMatchObject({ ok: true, sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' });
+    expect(open).toHaveBeenCalledWith(nativePreviewHost, target, rect, expect.any(Function));
+    const sessionId = (opened as { sessionId: string }).sessionId;
+    expect((await previewService.call({ operation: 'preview-html-move', params: { sessionId, rect } })).ok).toBe(true);
+    expect(move).toHaveBeenCalledWith(nativePreviewHost.ownerKey, sessionId, rect);
+    expect((await previewService.call({ operation: 'preview-html-close', params: { sessionId } })).ok).toBe(true);
+    expect(close).toHaveBeenCalledWith(nativePreviewHost.ownerKey, sessionId);
   });
 
   it('delegates global search to the Everything bridge', async () => {

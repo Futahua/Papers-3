@@ -10,6 +10,7 @@ import type { RevitPreviewBridge } from './revitPreviewBridge';
 import type { ShellThumbnailBridge } from './shellThumbnailBridge';
 import type { CalibrePreviewBridge } from './calibrePreviewBridge';
 import type { AutoCadPreviewBridge } from './autoCadPreviewBridge';
+import type { HtmlPreviewHostBridge } from './htmlPreviewHostBridge';
 import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
 
 const MAX_PATH_BYTES = 32_768;
@@ -24,11 +25,12 @@ const PREVIEW_RESOURCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab
 
 const TEXT_EXTENSIONS = new Set([
   '.txt', '.md', '.markdown', '.json', '.jsonl', '.ndjson', '.yaml', '.yml', '.toml', '.ini', '.cfg',
-  '.log', '.csv', '.tsv', '.xml', '.html', '.htm', '.css', '.scss', '.less', '.js', '.mjs', '.cjs',
+  '.log', '.csv', '.tsv', '.xml', '.css', '.scss', '.less', '.js', '.mjs', '.cjs',
   '.ts', '.tsx', '.jsx', '.py', '.rb', '.rs', '.go', '.java', '.kt', '.kts', '.c', '.h', '.cpp', '.hpp',
   '.cs', '.fs', '.fsx', '.vb', '.ps1', '.psm1', '.bat', '.cmd', '.sh', '.zsh', '.fish', '.sql', '.diff',
   '.patch', '.gitignore', '.gitattributes', '.editorconfig', '.env', '.vue', '.svelte', '.tex', '.bib',
 ]);
+const INTERACTIVE_HTML_EXTENSIONS = new Set(['.html', '.htm']);
 const OFFICE_EXTENSIONS = new Set(['.doc', '.docx', '.docm', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx', '.pptm', '.odt', '.ods', '.odp', '.rtf', '.wps']);
 const REVIT_EXTENSIONS = new Set(['.rvt', '.rfa', '.rte', '.rft']);
 const IMAGE_MIME = new Map([['.png','image/png'],['.jpg','image/jpeg'],['.jpeg','image/jpeg'],['.gif','image/gif'],['.webp','image/webp'],['.bmp','image/bmp'],['.svg','image/svg+xml'],['.ico','image/x-icon'],['.avif','image/avif']]);
@@ -47,6 +49,7 @@ export interface FileCapabilityDeps {
   shellThumbnail: ShellThumbnailBridge | null;
   calibrePreview: CalibrePreviewBridge | null;
   autoCadPreview: AutoCadPreviewBridge | null;
+  htmlPreview: HtmlPreviewHostBridge | null;
   windowsPreview: WindowsPreviewHandlerBridge | null;
   dopusrtPath: string | null;
   libreOfficePath: string | null;
@@ -93,6 +96,12 @@ function previewSessionId(value: unknown): string {
   const id = boundedString(value, 'sessionId', 64);
   if (!PREVIEW_RESOURCE_ID_PATTERN.test(id)) throw new Error('sessionId is not valid.');
   return id;
+}
+function previewStateKey(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  const key = boundedString(value, 'stateKey', 64);
+  if (!/^[0-9a-f]{64}$/i.test(key)) throw new Error('stateKey is not valid.');
+  return key;
 }
 function safeName(value: unknown): string {
   const name = boundedString(value, 'newName', 1_024);
@@ -189,7 +198,7 @@ function resourcePreview(
   deps: FileCapabilityDeps,
   context: FileCapabilityContext,
   filePath: string,
-  kind: 'image' | 'audio' | 'video' | 'pdf' | 'hosted-pdf',
+  kind: 'image' | 'audio' | 'video' | 'pdf' | 'hosted-pdf' | 'hosted-html',
   mime: string,
   cleanup?: () => void | Promise<void>,
   extra: Record<string, unknown> = {},
@@ -270,6 +279,13 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
       ),
     };
   }
+  if (INTERACTIVE_HTML_EXTENSIONS.has(extension) && deps.htmlPreview && context.nativePreviewHost) {
+    return {
+      ok: true,
+      entry,
+      preview: resourcePreview(deps, context, target, 'hosted-html', 'text/html'),
+    };
+  }
   if (TEXT_EXTENSIONS.has(extension)) {
     const chunk = await readTextChunk(target, 0, TEXT_PREVIEW_CHUNK_BYTES);
     return { ok: true, entry, preview: { kind: 'text', ...chunk } };
@@ -311,7 +327,12 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
           deps.pdfPreview && context.nativePreviewHost ? 'hosted-pdf' : 'pdf',
           'application/pdf',
           pdf.cleanup,
-          { convertedBy: 'calibre', sourceFormat: extension },
+          {
+            convertedBy: 'calibre',
+            sourceFormat: extension,
+            previewStateKey: pdf.stateKey,
+            cached: pdf.cached,
+          },
         ),
       };
     }
@@ -492,6 +513,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
                 calibrePreview: Boolean(deps.calibrePreview),
                 calibreFormats: deps.calibrePreview?.formats ?? [],
                 autoCadPreview: Boolean(deps.autoCadPreview),
+                htmlPreview: Boolean(deps.htmlPreview),
                 windowsPreview: Boolean(deps.windowsPreview),
                 directoryOpus: Boolean(deps.dopusrtPath),
                 libreOffice: Boolean(deps.libreOfficePath),
@@ -552,6 +574,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               url,
               previewRect(params.rect),
               () => { deps.previewResources.revoke(context.backpackId, resourceId); },
+              previewStateKey(params.stateKey),
             );
           }
           case 'preview-pdf-move': {
@@ -560,7 +583,30 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'preview-pdf-close': {
             if (!deps.pdfPreview || !context.nativePreviewHost) return { ok: false, code: 'PDF_PREVIEW_UNAVAILABLE', message: 'PDF preview hosting is unavailable.' };
-            return { ok: deps.pdfPreview.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
+            return { ok: await deps.pdfPreview.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
+          }
+          case 'preview-html-open': {
+            if (!deps.htmlPreview || !context.nativePreviewHost) return { ok: false, code: 'HTML_PREVIEW_UNAVAILABLE', message: 'Interactive HTML preview hosting is unavailable.' };
+            const resourceId = boundedString(params.resourceId, 'resourceId', 64);
+            if (!PREVIEW_RESOURCE_ID_PATTERN.test(resourceId)) throw new Error('resourceId is not a valid preview resource.');
+            const record = deps.previewResources.resolve(context.backpackId, resourceId);
+            if (!record || record.mime !== 'text/html') {
+              return { ok: false, code: 'HTML_PREVIEW_UNAVAILABLE', message: 'Interactive HTML preview resource is unavailable.' };
+            }
+            return await deps.htmlPreview.open(
+              context.nativePreviewHost,
+              record.filePath,
+              previewRect(params.rect),
+              () => { deps.previewResources.revoke(context.backpackId, resourceId); },
+            );
+          }
+          case 'preview-html-move': {
+            if (!deps.htmlPreview || !context.nativePreviewHost) return { ok: false, code: 'HTML_PREVIEW_UNAVAILABLE', message: 'Interactive HTML preview hosting is unavailable.' };
+            return { ok: deps.htmlPreview.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect)) };
+          }
+          case 'preview-html-close': {
+            if (!deps.htmlPreview || !context.nativePreviewHost) return { ok: false, code: 'HTML_PREVIEW_UNAVAILABLE', message: 'Interactive HTML preview hosting is unavailable.' };
+            return { ok: deps.htmlPreview.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
           }
           case 'preview-text-chunk': {
             const target = absolutePath(params.path);
