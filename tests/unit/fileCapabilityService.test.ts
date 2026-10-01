@@ -685,6 +685,20 @@ describe('file capability service', () => {
     expect(result.total).toBe(1);
   });
 
+  it('allows Everything searches up to the native bridge 1000-result ceiling', async () => {
+    const search = vi.fn(async () => ({
+      ok: true as const,
+      provider: 'everything' as const,
+      version: '1.4.1.1032',
+      total: 0,
+      results: [],
+    }));
+    const bridge: EverythingSearchBridge = { search };
+
+    await service(bridge).call({ operation: 'search', params: { query: 'rvt', limit: 1000 } });
+    expect(search).toHaveBeenCalledWith('rvt', 1000);
+  });
+
   it('fails closed when Directory Opus is unavailable for mutations', async () => {
     const target = path.join(root, 'one.txt');
     await fs.writeFile(target, 'x');
