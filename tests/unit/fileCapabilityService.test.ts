@@ -51,6 +51,7 @@ function service(
     autoCadPreview,
     mlightCadPreview,
     htmlPreview,
+    webBrowser: null,
     powerPointPreview,
     windowsPreview,
     dopusrtPath: null,

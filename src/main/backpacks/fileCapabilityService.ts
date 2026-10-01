@@ -12,6 +12,7 @@ import type { CalibrePreviewBridge } from './calibrePreviewBridge';
 import type { AutoCadPreviewBridge } from './autoCadPreviewBridge';
 import type { MlightCadPreviewBridge } from './mlightCadPreviewBridge';
 import type { HtmlPreviewHostBridge } from './htmlPreviewHostBridge';
+import type { WebBrowserHostBridge } from './webBrowserHostBridge';
 import type { PowerPointPreviewBridge } from './powerPointPreviewBridge';
 import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
 import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
@@ -55,6 +56,7 @@ export interface FileCapabilityDeps {
   autoCadPreview: AutoCadPreviewBridge | null;
   mlightCadPreview: MlightCadPreviewBridge | null;
   htmlPreview: HtmlPreviewHostBridge | null;
+  webBrowser: WebBrowserHostBridge | null;
   powerPointPreview: PowerPointPreviewBridge | null;
   windowsPreview: WindowsPreviewHandlerBridge | null;
   cacheDirectory?: string;
@@ -681,6 +683,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
                 autoCadPreview: Boolean(deps.autoCadPreview),
                 mlightCadPreview: Boolean(deps.mlightCadPreview),
                 htmlPreview: Boolean(deps.htmlPreview),
+                webBrowser: Boolean(deps.webBrowser),
                 powerPointPreview: Boolean(deps.powerPointPreview),
                 windowsPreview: Boolean(deps.windowsPreview),
                 directoryOpus: Boolean(deps.dopusrtPath),
@@ -775,6 +778,19 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'preview-html-close': {
             if (!deps.htmlPreview || !context.nativePreviewHost) return { ok: false, code: 'HTML_PREVIEW_UNAVAILABLE', message: 'Interactive HTML preview hosting is unavailable.' };
             return { ok: deps.htmlPreview.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
+          }
+          case 'browser-open': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Link viewer hosting is unavailable.' };
+            const url = boundedString(params.url, 'url', 8_192);
+            return await deps.webBrowser.open(context.nativePreviewHost, url, previewRect(params.rect));
+          }
+          case 'browser-move': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Link viewer hosting is unavailable.' };
+            return { ok: deps.webBrowser.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect)) };
+          }
+          case 'browser-close': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Link viewer hosting is unavailable.' };
+            return { ok: deps.webBrowser.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
           }
           case 'preview-text-chunk': {
             const target = absolutePath(params.path);

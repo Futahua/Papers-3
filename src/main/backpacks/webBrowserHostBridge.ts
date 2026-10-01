@@ -1,58 +1,24 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
-import {
-  BaseWindow,
-  WebContentsView,
-  type Session,
-  type WebContents,
-} from 'electron';
+import { randomUUID } from 'node:crypto';
+import { BaseWindow, WebContentsView, type Session } from 'electron';
 
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
 
-const hardenedSessions = new WeakSet<Session>();
-const allowedDocuments = new Map<number, string>();
-
-function hardenHtmlPreviewSession(previewSession: Session): void {
-  if (hardenedSessions.has(previewSession)) return;
-  hardenedSessions.add(previewSession);
-  previewSession.setPermissionCheckHandler(() => false);
-  previewSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  previewSession.webRequest.onBeforeRequest(
-    { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'ftp://*/*', 'file://*/*'] },
-    (details, callback) => {
-      if (details.url.startsWith('file://')) {
-        const allowed = typeof details.webContentsId === 'number'
-          ? allowedDocuments.get(details.webContentsId)
-          : undefined;
-        callback({ cancel: details.url !== allowed });
-        return;
-      }
-      callback({ cancel: true });
-    },
-  );
-  previewSession.on('will-download', (event) => event.preventDefault());
-}
-
-interface LiveHtmlPreview {
+interface LiveWebBrowser {
   id: string;
   ownerKey: string;
   window: BaseWindow;
   view: WebContentsView;
-  webContents: WebContents;
-  webContentsId: number;
   localRect: PreviewRect;
   surfaceBounds: PreviewRect;
   presented: boolean;
-  cleanup: () => void;
 }
 
-export interface HtmlPreviewHostBridge {
+export interface WebBrowserHostBridge {
   open(
     context: PreviewHostContext,
-    filePath: string,
+    url: string,
     localRect: PreviewRect,
-    cleanup: () => void,
-  ): Promise<{ ok: true; sessionId: string } | { ok: false; error?: string }>;
+  ): Promise<{ ok: true; sessionId: string; url: string } | { ok: false; error?: string }>;
   move(ownerKey: string, sessionId: string, localRect: PreviewRect): boolean;
   close(ownerKey: string, sessionId: string): boolean;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
@@ -60,6 +26,17 @@ export interface HtmlPreviewHostBridge {
   closeOwner(ownerKey: string): void;
   raiseWindow(windowId: number): void;
   dispose(): void;
+}
+
+const BROWSER_PARTITION = 'persist:papers-web-browser';
+const hardenedBrowserSessions = new WeakSet<Session>();
+
+function hardenBrowserSession(browserSession: Session): void {
+  if (hardenedBrowserSessions.has(browserSession)) return;
+  hardenedBrowserSessions.add(browserSession);
+  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  browserSession.setPermissionCheckHandler(() => false);
+  browserSession.on('will-download', (event) => event.preventDefault());
 }
 
 function validRect(rect: PreviewRect): boolean {
@@ -81,55 +58,81 @@ function absoluteRect(surface: PreviewRect, local: PreviewRect): PreviewRect {
   };
 }
 
+function safeWebUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 function boundedError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 500);
 }
 
-function previewPartition(filePath: string): string {
-  const identity = filePath.replace(/\//g, '\\').toLowerCase();
-  const digest = createHash('sha256').update(identity, 'utf8').digest('hex').slice(0, 32);
-  return `persist:papers-html-preview-${digest}`;
-}
-
-export function createHtmlPreviewHostBridge(input: {
+export function createWebBrowserHostBridge(input: {
   resolveWindow(ownerKey: string): BaseWindow | null;
-}): HtmlPreviewHostBridge {
-  const sessions = new Map<string, LiveHtmlPreview>();
+}): WebBrowserHostBridge {
+  const sessions = new Map<string, LiveWebBrowser>();
   const owners = new Map<string, string>();
 
-  const forget = (session: LiveHtmlPreview): void => {
+  const forget = (session: LiveWebBrowser): void => {
     if (sessions.get(session.id) === session) sessions.delete(session.id);
     if (owners.get(session.ownerKey) === session.id) owners.delete(session.ownerKey);
   };
 
-  const cleanupSession = (session: LiveHtmlPreview): void => {
+  const cleanupSession = (session: LiveWebBrowser): void => {
     forget(session);
     if (session.presented && !session.window.isDestroyed()) {
       try { session.window.contentView.removeChildView(session.view); } catch { /* best effort */ }
     }
     session.presented = false;
-    if (!session.webContents.isDestroyed()) {
-      try { session.webContents.close(); } catch { /* best effort */ }
+    if (!session.view.webContents.isDestroyed()) {
+      try { session.view.webContents.close(); } catch { /* best effort */ }
     }
-    try { session.cleanup(); } catch { /* preview grant cleanup is idempotent */ }
   };
 
-  const place = (session: LiveHtmlPreview): void => {
-    if (session.window.isDestroyed() || session.webContents.isDestroyed()) return;
+  const place = (session: LiveWebBrowser): void => {
+    if (session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
     session.view.setBounds(absoluteRect(session.surfaceBounds, session.localRect));
+  };
+  const closeOwner = (ownerKey: string): void => {
+    const id = owners.get(ownerKey);
+    const session = id ? sessions.get(id) : undefined;
+    if (session) cleanupSession(session);
   };
 
   return {
-    async open(context, filePath, localRect, cleanup) {
+    async open(context, rawUrl, localRect) {
+      const url = safeWebUrl(rawUrl);
+      if (!url) return { ok: false, error: 'Only http and https links can open in the link viewer.' };
       if (!validRect(context.surfaceBounds) || !validRect(localRect)) {
-        cleanup();
-        return { ok: false, error: 'Invalid HTML preview geometry.' };
+        return { ok: false, error: 'Invalid link-viewer geometry.' };
       }
 
-      this.closeOwner(context.ownerKey);
+      const existingId = owners.get(context.ownerKey);
+      const existing = existingId ? sessions.get(existingId) : undefined;
+      if (existing && !existing.window.isDestroyed() && !existing.view.webContents.isDestroyed()) {
+        existing.localRect = { ...localRect };
+        existing.surfaceBounds = { ...context.surfaceBounds };
+        if (!existing.presented) {
+          existing.window.contentView.addChildView(existing.view);
+          existing.presented = true;
+        }
+        place(existing);
+        try {
+          await existing.view.webContents.loadURL(url);
+          return { ok: true, sessionId: existing.id, url };
+        } catch (error) {
+          return { ok: false, error: boundedError(error) };
+        }
+      }
+
+      closeOwner(context.ownerKey);
       const window = input.resolveWindow(context.ownerKey);
       if (!window || window.isDestroyed()) {
-        cleanup();
         return { ok: false, error: 'The owning Papers window is unavailable.' };
       }
 
@@ -139,64 +142,42 @@ export function createHtmlPreviewHostBridge(input: {
           contextIsolation: true,
           sandbox: true,
           webSecurity: true,
-          partition: previewPartition(filePath),
+          partition: BROWSER_PARTITION,
         },
       });
       const contents = view.webContents;
-      const contentsId = contents.id;
-      const previewSession = contents.session;
-      hardenHtmlPreviewSession(previewSession);
-      const allowedDocument = pathToFileURL(filePath).toString();
-      allowedDocuments.set(contentsId, allowedDocument);
-      contents.on('will-navigate', (event, url) => {
-        if (url === allowedDocument || url.startsWith(`${allowedDocument}#`)) return;
+      hardenBrowserSession(contents.session);
+      contents.on('will-navigate', (event, nextUrl) => {
+        if (safeWebUrl(nextUrl)) return;
         event.preventDefault();
       });
-      contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      contents.setWindowOpenHandler(({ url: nextUrl }) => {
+        const safe = safeWebUrl(nextUrl);
+        if (safe) void contents.loadURL(safe).catch(() => {});
+        return { action: 'deny' };
+      });
 
-      const session: LiveHtmlPreview = {
+      const session: LiveWebBrowser = {
         id: randomUUID(),
         ownerKey: context.ownerKey,
         window,
         view,
-        webContents: contents,
-        webContentsId: contentsId,
         localRect: { ...localRect },
         surfaceBounds: { ...context.surfaceBounds },
         presented: false,
-        cleanup,
       };
       sessions.set(session.id, session);
       owners.set(session.ownerKey, session.id);
       contents.once('destroyed', () => {
-        allowedDocuments.delete(contentsId);
-        if (sessions.get(session.id) !== session) return;
-        forget(session);
-        try { session.cleanup(); } catch { /* best effort */ }
+        if (sessions.get(session.id) === session) forget(session);
       });
 
       try {
         window.contentView.addChildView(view);
         session.presented = true;
         place(session);
-        await contents.loadFile(filePath);
-        await contents.executeJavaScript(`
-          (() => {
-            if (window.__papersCtrlWheelResizeInstalled) return;
-            window.__papersCtrlWheelResizeInstalled = true;
-            let scale = 1;
-            const apply = () => {
-              document.documentElement.style.zoom = String(scale);
-            };
-            window.addEventListener('wheel', (event) => {
-              if (!event.ctrlKey || !event.deltaY) return;
-              event.preventDefault();
-              scale = Math.max(0.25, Math.min(4, scale * (event.deltaY < 0 ? 1.1 : 1 / 1.1)));
-              apply();
-            }, { capture: true, passive: false });
-          })();
-        `, true);
-        return { ok: true, sessionId: session.id };
+        await contents.loadURL(url);
+        return { ok: true, sessionId: session.id, url };
       } catch (error) {
         cleanupSession(session);
         return { ok: false, error: boundedError(error) };
@@ -230,7 +211,7 @@ export function createHtmlPreviewHostBridge(input: {
     setOwnerVisible(ownerKey, visible) {
       const id = owners.get(ownerKey);
       const session = id ? sessions.get(id) : undefined;
-      if (!session || session.window.isDestroyed() || session.webContents.isDestroyed()) return;
+      if (!session || session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
       if (visible) {
         if (!session.presented) {
           session.window.contentView.addChildView(session.view);
@@ -244,15 +225,13 @@ export function createHtmlPreviewHostBridge(input: {
     },
 
     closeOwner(ownerKey) {
-      const id = owners.get(ownerKey);
-      const session = id ? sessions.get(id) : undefined;
-      if (session) cleanupSession(session);
+      closeOwner(ownerKey);
     },
 
     raiseWindow(windowId) {
       for (const session of sessions.values()) {
         if (session.window.id !== windowId || !session.presented
-          || session.window.isDestroyed() || session.webContents.isDestroyed()) continue;
+          || session.window.isDestroyed() || session.view.webContents.isDestroyed()) continue;
         session.window.contentView.addChildView(session.view);
         place(session);
       }

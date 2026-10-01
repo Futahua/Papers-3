@@ -12,6 +12,7 @@ import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOf
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
 import { createHtmlPreviewHostBridge } from './backpacks/htmlPreviewHostBridge';
+import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
 import { createCalibrePreviewBridge } from './backpacks/calibrePreviewBridge';
@@ -716,6 +717,16 @@ async function bootstrap(): Promise<void> {
     },
   });
   app.once('will-quit', () => htmlPreview.dispose());
+  const webBrowser = createWebBrowserHostBridge({
+    resolveWindow: (ownerKey) => {
+      const separator = ownerKey.indexOf(':');
+      if (separator <= 0) return null;
+      const windowId = Number(ownerKey.slice(0, separator));
+      if (!Number.isSafeInteger(windowId)) return null;
+      return papersWindows.get(windowId)?.owned.window ?? null;
+    },
+  });
+  app.once('will-quit', () => webBrowser.dispose());
   const fileCapability = createFileCapabilityService({
     cacheDirectory: fileCapabilityCacheDirectory,
     everythingSearch,
@@ -727,6 +738,7 @@ async function bootstrap(): Promise<void> {
     autoCadPreview,
     mlightCadPreview,
     htmlPreview,
+    webBrowser,
     powerPointPreview,
     windowsPreview,
     dopusrtPath: resolveDirectoryOpusRtPath(),
@@ -1416,6 +1428,7 @@ async function bootstrap(): Promise<void> {
       windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
       pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
       htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
+      webBrowser.closeOwner(`${windowId}:${surfaceId}`);
       await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
     projectEntryUrlForSurface: (windowId, surfaceId) =>
@@ -1426,6 +1439,7 @@ async function bootstrap(): Promise<void> {
         windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
         pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
         htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
+        webBrowser.closeOwner(`${windowId}:${surfaceId}`);
         await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
       }
     },
@@ -1517,6 +1531,7 @@ async function bootstrap(): Promise<void> {
           windowsPreview?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
           pdfPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
           htmlPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+          webBrowser.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
         }
       } catch (caught) {
         if (stagedFrameSender !== null) surfaceContexts.unbind(stagedFrameSender);
@@ -1560,6 +1575,7 @@ async function bootstrap(): Promise<void> {
         windowsPreview?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
         pdfPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
         htmlPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+        webBrowser.setOwnerVisible(`${windowId}:${surfaceId}`, false);
       }
     },
     setBackpackProjectSurfaceBounds: (senderId, surfaceId, bounds) => {
@@ -1569,6 +1585,7 @@ async function bootstrap(): Promise<void> {
         windowsPreview?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
         pdfPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
         htmlPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+        webBrowser.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
       }
     },
     setHostOverlayActive: (windowId, active, owner = 'legacy') => {
@@ -1586,6 +1603,7 @@ async function bootstrap(): Promise<void> {
         context.owned.projectSurfaces.raisePresented();
         pdfPreview.raiseWindow(windowId);
         htmlPreview.raiseWindow(windowId);
+        webBrowser.raiseWindow(windowId);
       }
     },
     runtime,
