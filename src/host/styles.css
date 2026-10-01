@@ -720,24 +720,26 @@ input:focus-visible {
   object-fit: contain;
 }
 .workspace-dock .dv-tab[data-backpack-project="bp-a5d07080-7210-45e6-b3f1-93978873a2fe"] {
-  background: #202725;
-  color: #b7d7c5;
-  border-color: #35403d;
+  background: #7fd4a4;
+  color: #14231a;
+  border-color: #668b72;
+  font-weight: 650;
 }
 .workspace-dock .dv-tab[data-backpack-project="bp-a5d07080-7210-45e6-b3f1-93978873a2fe"].dv-active-tab {
-  background: #2c3733;
-  color: #edf0e9;
-  box-shadow: inset 0 -2px #7fd4a4;
+  background: #7fd4a4;
+  color: #0f1b14;
+  box-shadow: inset 0 -3px #26332e, 0 0 0 1px rgb(20 35 26 / 28%);
 }
 .workspace-dock .dv-tab[data-backpack-project="bp-759cd960-26ee-4560-90b0-1ef6678802c4"] {
-  background: #272c37;
-  color: #e6e9ef;
-  border-color: #3a4150;
+  background: #9fc9e4;
+  color: #17202a;
+  border-color: #6fa8dc;
+  font-weight: 650;
 }
 .workspace-dock .dv-tab[data-backpack-project="bp-759cd960-26ee-4560-90b0-1ef6678802c4"].dv-active-tab {
-  background: #2e3440;
-  color: #fff;
-  box-shadow: inset 0 -2px #b8d04a;
+  background: #9fc9e4;
+  color: #111923;
+  box-shadow: inset 0 -3px #334052, 0 0 0 1px rgb(23 32 42 / 24%);
 }
 .workspace-interaction-shield {
   position: absolute;
