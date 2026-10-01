@@ -27,6 +27,7 @@ export interface OpenWorkspaceProject {
   projectId: string;
   title: string;
   url: string;
+  icon?: string | null;
 }
 
 interface WorkspacePanelParams {
@@ -748,6 +749,21 @@ export function WorkspaceDock(props: {
       if (tab) {
         tab.setAttribute('title', project.title);
         tab.setAttribute('aria-label', project.title);
+        tab.dataset.backpackProject = project.projectId;
+        let icon = tab.querySelector<HTMLImageElement>('.workspace-tab-icon');
+        if (project.icon) {
+          if (!icon) {
+            icon = document.createElement('img');
+            icon.className = 'workspace-tab-icon';
+            icon.alt = '';
+            const content = tab.querySelector('.dv-default-tab-content');
+            if (content) content.before(icon);
+            else tab.prepend(icon);
+          }
+          if (icon.src !== project.icon) icon.src = project.icon;
+        } else {
+          icon?.remove();
+        }
       }
     }
   }, []);

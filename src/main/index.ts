@@ -898,6 +898,12 @@ async function bootstrap(): Promise<void> {
   const onProjectTitleChanged = (windowId: number, surfaceId: string, senderId: number, title: string): void => {
     void facade.updateWorkspaceSurfaceTitle(windowId, surfaceId, senderId, title);
   };
+  const onProjectFaviconChanged = (windowId: number, surfaceId: string, senderId: number, urls: string[]): void => {
+    const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId);
+    if (!runtime || runtime.senderId !== senderId) return;
+    const icon = urls.find((url) => /^data:image\/(?:png|webp|svg\+xml);base64,/i.test(url) && url.length <= 256 * 1024) ?? null;
+    papersWindows.get(windowId)?.owned.hostView.webContents.send('host:event:workspace-project-icon', { surfaceId, icon });
+  };
   const makePapersWindow = (bounds?: WindowBounds) => {
     const instance = createPapersWindow({
       bounds,
@@ -913,6 +919,7 @@ async function bootstrap(): Promise<void> {
       onProjectLifecycleEvent,
       onProjectRendererGone,
       onProjectTitleChanged,
+      onProjectFaviconChanged,
     });
     if (process.env['PAPERS_DEV_CONTROL'] === '1') {
       const windowId = instance.window.id;

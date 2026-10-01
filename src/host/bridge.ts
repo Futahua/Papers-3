@@ -244,6 +244,7 @@ interface HostBridge {
       compensating?: boolean;
     }) => void): () => void;
     onWorkspaceProjectTitle(cb: (payload: { surfaceId: string; title: string }) => void): () => void;
+    onWorkspaceProjectIcon(cb: (payload: { surfaceId: string; icon: string | null }) => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;
