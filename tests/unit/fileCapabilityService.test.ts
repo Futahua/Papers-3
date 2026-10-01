@@ -699,6 +699,33 @@ describe('file capability service', () => {
     expect(search).toHaveBeenCalledWith('rvt', 1000);
   });
 
+  it('carries full-page preview launch state across renderer storage partitions', async () => {
+    const target = path.join(root, 'preview.png');
+    await fs.writeFile(target, 'x');
+    const svc = service();
+    const created = await svc.call({
+      operation: 'preview-launch-create',
+      params: {
+        path: target,
+        name: 'preview.png',
+        previewIcon: 'data:image/png;base64,AAAA',
+        workspaceTitle: '26-27',
+        workspaceIcon: 'data:image/svg+xml;base64,AAAA',
+      },
+    });
+    expect(created).toMatchObject({ ok: true, token: expect.any(String) });
+    const token = created.token as string;
+    const resolved = await svc.call({ operation: 'preview-launch-resolve', params: { token } });
+    expect(resolved).toMatchObject({
+      ok: true,
+      path: target,
+      name: 'preview.png',
+      previewIcon: 'data:image/png;base64,AAAA',
+      workspaceTitle: '26-27',
+      workspaceIcon: 'data:image/svg+xml;base64,AAAA',
+    });
+  });
+
   it('fails closed when Directory Opus is unavailable for mutations', async () => {
     const target = path.join(root, 'one.txt');
     await fs.writeFile(target, 'x');

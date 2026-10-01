@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { promises as fs, statSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -26,6 +27,7 @@ const TEXT_PREVIEW_CHUNK_BYTES = 2 * 1024 * 1024;
 const MAX_TEXT_CHUNK_BYTES = 8 * 1024 * 1024;
 const BINARY_SAMPLE_BYTES = 32 * 1024;
 const PREVIEW_RESOURCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PREVIEW_LAUNCH_TTL_MS = 10 * 60 * 1000;
 
 const TEXT_EXTENSIONS = new Set([
   '.txt', '.md', '.markdown', '.json', '.jsonl', '.ndjson', '.yaml', '.yml', '.toml', '.ini', '.cfg',
@@ -117,6 +119,18 @@ function safeName(value: unknown): string {
   const name = boundedString(value, 'newName', 1_024);
   if (name === '.' || name === '..' || /[\\/:*?"<>|\u0000-\u001f]/.test(name)) throw new Error('newName is not a valid Windows file name.');
   return name;
+}
+function optionalText(value: unknown, label: string, maxBytes: number): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  return boundedString(value, label, maxBytes);
+}
+function optionalImageDataUrl(value: unknown, label: string): string | null {
+  const text = optionalText(value, label, 256 * 1024);
+  if (text === null) return null;
+  if (!/^data:image\/(?:png|webp|gif|jpeg|svg\+xml|x-icon);base64,/i.test(text)) {
+    throw new Error(`${label} must be an image data URL.`);
+  }
+  return text;
 }
 
 function numberFromBigInt(value: bigint): number | null {
@@ -663,6 +677,26 @@ async function operationViaOpus(
 export function createFileCapabilityService(deps: FileCapabilityDeps): {
   call(request: unknown, context: FileCapabilityContext): Promise<Record<string, unknown>>;
 } {
+  const previewLaunches = new Map<string, {
+    backpackId: string;
+    createdAt: number;
+    path: string;
+    name: string;
+    previewIcon: string | null;
+    workspaceTitle: string | null;
+    workspaceIcon: string | null;
+  }>();
+  const prunePreviewLaunches = (): void => {
+    const cutoff = Date.now() - PREVIEW_LAUNCH_TTL_MS;
+    for (const [token, entry] of previewLaunches) {
+      if (entry.createdAt < cutoff) previewLaunches.delete(token);
+    }
+    while (previewLaunches.size > 256) {
+      const first = previewLaunches.keys().next().value as string | undefined;
+      if (!first) break;
+      previewLaunches.delete(first);
+    }
+  };
   return {
     async call(raw, context) {
       if (!isRecord(raw)) {
@@ -717,6 +751,38 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               };
             }
             return await deps.everythingSearch.search(query, limit);
+          }
+          case 'preview-launch-create': {
+            prunePreviewLaunches();
+            const target = absolutePath(params.path);
+            const token = randomUUID();
+            previewLaunches.set(token, {
+              backpackId: context.backpackId,
+              createdAt: Date.now(),
+              path: target,
+              name: optionalText(params.name, 'name', 1_024) ?? path.basename(target),
+              previewIcon: optionalImageDataUrl(params.previewIcon, 'previewIcon'),
+              workspaceTitle: optionalText(params.workspaceTitle, 'workspaceTitle', 1_024),
+              workspaceIcon: optionalImageDataUrl(params.workspaceIcon, 'workspaceIcon'),
+            });
+            return { ok: true, token };
+          }
+          case 'preview-launch-resolve': {
+            prunePreviewLaunches();
+            const token = boundedString(params.token, 'token', 64);
+            if (!PREVIEW_RESOURCE_ID_PATTERN.test(token)) throw new Error('token is not valid.');
+            const entry = previewLaunches.get(token);
+            if (!entry || entry.backpackId !== context.backpackId) {
+              return { ok: false, code: 'PREVIEW_LAUNCH_UNAVAILABLE', message: 'Preview launch state is unavailable.' };
+            }
+            return {
+              ok: true,
+              path: entry.path,
+              name: entry.name,
+              previewIcon: entry.previewIcon,
+              workspaceTitle: entry.workspaceTitle,
+              workspaceIcon: entry.workspaceIcon,
+            };
           }
           case 'preview':
             return await previewFile(absolutePath(params.path), deps, context);
