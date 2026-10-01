@@ -2,7 +2,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { promises as fs, statSync } from 'node:fs';
 import * as path from 'node:path';
-import { getOrCreateDerivedArtifact } from './derivedPreviewCache';
+import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 
 const FALLBACK_FORMATS = new Set([
   '.azw', '.azw3', '.azw4', '.cb7', '.cbc', '.cbr', '.cbz', '.chm', '.djv', '.djvu',
@@ -122,14 +122,20 @@ export function createCalibrePreviewBridge(input: {
           providerKey: `calibre-pdf:${converterIdentity}`,
           extension: '.pdf',
           validate: validPdf,
-          create: (output) => new Promise<void>((resolve, reject) => {
-            execFile(convert!, [target, output], {
+          create: async (output) => {
+            const snapshot = await getOrCreateSourceSnapshot({
+              cacheDirectory: input.cacheDirectory,
+              source: target,
+            });
+            await new Promise<void>((resolve, reject) => {
+            execFile(convert!, [snapshot.filePath, output], {
               windowsHide: true,
               timeout: timeoutMs,
               maxBuffer: 2 * 1024 * 1024,
               encoding: 'utf8',
             }, (error) => error ? reject(error) : resolve());
-          }),
+            });
+          },
         });
         return {
           ok: true,

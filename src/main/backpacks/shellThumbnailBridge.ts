@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { resolveWindowsCscPath } from '../windows/foregroundBridge';
-import { getOrCreateDerivedArtifact } from './derivedPreviewCache';
+import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 
 const EXECUTABLE = 'papers-shell-thumbnail.exe';
 const STAMP = 'papers-shell-thumbnail.stamp';
@@ -148,8 +148,13 @@ export function createShellThumbnailBridge(input: {
           validate: async (candidate) => {
             try { return validPng(await fs.promises.readFile(candidate)); } catch { return false; }
           },
-          create: (output) => new Promise<void>((resolve, reject) => {
-            execFile(executable, [target, String(boundedSize)], {
+          create: async (output) => {
+            const snapshot = await getOrCreateSourceSnapshot({
+              cacheDirectory: input.cacheDirectory,
+              source: target,
+            });
+            await new Promise<void>((resolve, reject) => {
+            execFile(executable, [snapshot.filePath, String(boundedSize)], {
               cwd: input.cacheDirectory,
               timeout: timeoutMs,
               windowsHide: true,
@@ -163,7 +168,8 @@ export function createShellThumbnailBridge(input: {
               }
               fs.promises.writeFile(output, parsed.png).then(() => resolve(), reject);
             });
-          }),
+            });
+          },
         });
         const png = await fs.promises.readFile(artifact.filePath);
         if (!validPng(png)) return { ok: false, error: 'Cached Windows thumbnail is invalid.' };

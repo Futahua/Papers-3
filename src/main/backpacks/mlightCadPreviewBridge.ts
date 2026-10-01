@@ -2,7 +2,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promises as fs, readFileSync, readdirSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 
-import { getOrCreateDerivedArtifact } from './derivedPreviewCache';
+import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 
 const CAD_EXTENSIONS = new Set(['.dwg', '.dxf']);
 const DEFAULT_ROOT = 'D:\\Programs\\MLightCADPreview';
@@ -145,13 +145,17 @@ export function createMlightCadPreviewBridge(input: {
           extension: '.html',
           validate: validHtml,
           create: async (output) => {
+            const snapshot = await getOrCreateSourceSnapshot({
+              cacheDirectory: input.cacheDirectory,
+              source: target,
+            });
             const work = `${output}.work-${process.pid}-${Date.now()}`;
             await fs.mkdir(work, { recursive: true });
             try {
               await new Promise<void>((resolve, reject) => {
                 execFile(
                   node,
-                  [cli, '-i', target, '-s', script, '-o', work, '--mode', 'read', '--open-view-mode', 'extents'],
+                  [cli, '-i', snapshot.filePath, '-s', script, '-o', work, '--mode', 'read', '--open-view-mode', 'extents'],
                   {
                     windowsHide: true,
                     timeout: timeoutMs,

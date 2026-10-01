@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createInterface } from 'node:readline';
 import { resolveWindowsCscPath } from '../windows/foregroundBridge';
+import { getOrCreateSourceSnapshot } from './derivedPreviewCache';
 
 const EXE = 'papers-windows-preview-host.exe';
 const STAMP = 'papers-windows-preview-host.stamp';
@@ -61,8 +62,14 @@ export function createWindowsPreviewHandlerBridge(input:{cacheDirectory:string;s
     }))},
     async open(context,target,localRect){
       if(!validRect(context.surfaceBounds)||!validRect(localRect)||!/^\d+$/.test(context.parentHwnd))return{ok:false,error:'Invalid native preview host geometry.'};
+      let safeTarget:string;
+      try {
+        safeTarget=(await getOrCreateSourceSnapshot({cacheDirectory:input.cacheDirectory,source:target})).filePath;
+      } catch(error) {
+        return{ok:false,error:error instanceof Error?error.message:String(error)};
+      }
       this.closeOwner(context.ownerKey); const r=absoluteRect(context.surfaceBounds,localRect);
-      const child=spawn(executable,['--host',target,context.parentHwnd,String(r.x),String(r.y),String(r.width),String(r.height)],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+      const child=spawn(executable,['--host',safeTarget,context.parentHwnd,String(r.x),String(r.y),String(r.width),String(r.height)],{windowsHide:true,stdio:['pipe','pipe','pipe']});
       const line=await new Promise<string>(resolve=>{let done=false;const finish=(v:string)=>{if(done)return;done=true;clearTimeout(timer);resolve(v)};createInterface({input:child.stdout}).once('line',finish);child.once('error',e=>finish('ERR\t'+Buffer.from(String(e)).toString('base64')));child.once('exit',()=>finish('NONE'));const timer=setTimeout(()=>finish('NONE'),7000);timer.unref?.()});
       const p=parseLine(line); if(p.kind!=='ready'||!p.value){try{child.kill()}catch{};return{ok:false,...(p.value?{error:p.value}:{})}};
       const s:Live={id:randomUUID(),ownerKey:context.ownerKey,process:child,localRect:{...localRect},surfaceBounds:{...context.surfaceBounds},clsid:p.value};

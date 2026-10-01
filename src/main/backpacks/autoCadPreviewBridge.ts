@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promises as fs, readdirSync, statSync } from 'node:fs';
 import * as path from 'node:path';
-import { getOrCreateDerivedArtifact } from './derivedPreviewCache';
+import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 
 const AUTOCAD_EXTENSIONS = new Set(['.dwg', '.dxf', '.dws', '.dwt']);
 const MAX_PNG_BYTES = 64 * 1024 * 1024;
@@ -88,6 +88,10 @@ export function createAutoCadPreviewBridge(input: {
             try { return readPngDimensions(await fs.readFile(candidate)) !== null; } catch { return false; }
           },
           create: async (output) => {
+            const snapshot = await getOrCreateSourceSnapshot({
+              cacheDirectory: input.cacheDirectory,
+              source: target,
+            });
             const script = `${output}.scr`;
             const scriptText = [
               'FILEDIA',
@@ -107,7 +111,7 @@ export function createAutoCadPreviewBridge(input: {
             await fs.writeFile(script, scriptText, 'utf8');
             try {
               await new Promise<void>((resolve, reject) => {
-                execFile(executable, ['/i', target, '/s', script, '/l', 'en-US'], {
+                execFile(executable, ['/i', snapshot.filePath, '/s', script, '/l', 'en-US'], {
                   windowsHide: true,
                   timeout: timeoutMs,
                   maxBuffer: 8 * 1024 * 1024,

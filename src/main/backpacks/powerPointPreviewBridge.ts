@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promises as fs, statSync } from 'node:fs';
 import * as path from 'node:path';
 
-import { getOrCreateDerivedArtifact } from './derivedPreviewCache';
+import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 
 const PRESENTATION_EXTENSIONS = new Set(['.ppt', '.pptx', '.pptm']);
 
@@ -102,24 +102,21 @@ export function createPowerPointPreviewBridge(input: {
           extension: '.pdf',
           validate: validPdf,
           create: async (output) => {
-            const sourceExtension = path.extname(target).toLowerCase() || '.pptx';
-            const safeSource = `${output}.source${sourceExtension}`;
-            await fs.copyFile(target, safeSource);
-            try {
-              await new Promise<void>((resolve, reject) => {
-                execFile(
-                  'powershell.exe',
-                  ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', powershellScript(safeSource, output)],
-                  { windowsHide: true, timeout: timeoutMs, maxBuffer: 512 * 1024, encoding: 'utf8' },
-                  (error, _stdout, stderr) => {
-                    if (error) reject(new Error(stderr?.trim() || error.message));
-                    else resolve();
-                  },
-                );
-              });
-            } finally {
-              await fs.rm(safeSource, { force: true }).catch(() => undefined);
-            }
+            const snapshot = await getOrCreateSourceSnapshot({
+              cacheDirectory: input.cacheDirectory,
+              source: target,
+            });
+            await new Promise<void>((resolve, reject) => {
+              execFile(
+                'powershell.exe',
+                ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', powershellScript(snapshot.filePath, output)],
+                { windowsHide: true, timeout: timeoutMs, maxBuffer: 512 * 1024, encoding: 'utf8' },
+                (error, _stdout, stderr) => {
+                  if (error) reject(new Error(stderr?.trim() || error.message));
+                  else resolve();
+                },
+              );
+            });
           },
         });
         return {

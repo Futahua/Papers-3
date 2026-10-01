@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import { resolveWindowsCscPath } from '../windows/foregroundBridge';
+import { getOrCreateSourceSnapshot } from './derivedPreviewCache';
 
 const EXECUTABLE = 'papers-revit-preview.exe';
 const STAMP = 'papers-revit-preview.stamp';
@@ -119,9 +120,14 @@ export function createRevitPreviewBridge(input: {
   }
 
   return {
-    preview(target) {
-      return new Promise((resolve) => {
-        execFile(executable, [target], {
+    async preview(target) {
+      try {
+        const snapshot = await getOrCreateSourceSnapshot({
+          cacheDirectory: input.cacheDirectory,
+          source: target,
+        });
+        return await new Promise((resolve) => {
+        execFile(executable, [snapshot.filePath], {
           cwd: input.cacheDirectory,
           timeout: timeoutMs,
           windowsHide: true,
@@ -142,6 +148,9 @@ export function createRevitPreviewBridge(input: {
           resolve(parsed);
         });
       });
+      } catch (error) {
+        return { ok: false, error: boundedError(error) };
+      }
     },
   };
 }

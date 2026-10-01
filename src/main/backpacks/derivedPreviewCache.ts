@@ -13,6 +13,10 @@ export interface DerivedArtifactResult {
   cached: boolean;
 }
 
+function sameSourceVersion(a: { size: number; mtimeMs: number }, b: { size: number; mtimeMs: number }): boolean {
+  return a.size === b.size && a.mtimeMs === b.mtimeMs;
+}
+
 async function sourceKey(source: string, providerKey: string): Promise<string> {
   const stats = await fs.stat(source);
   if (!stats.isFile()) throw new Error('Preview source is not a file.');
@@ -128,4 +132,29 @@ export async function getOrCreateDerivedArtifact(input: {
   } finally {
     if (inFlight.get(target) === work) inFlight.delete(target);
   }
+}
+
+export async function getOrCreateSourceSnapshot(input: {
+  cacheDirectory: string;
+  source: string;
+  maxAttempts?: number;
+}): Promise<DerivedArtifactResult> {
+  const maxAttempts = Math.max(1, Math.min(input.maxAttempts ?? 3, 5));
+  const extension = path.extname(input.source) || '.bin';
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const before = await fs.stat(input.source);
+    if (!before.isFile()) throw new Error('Preview source is not a file.');
+    const artifact = await getOrCreateDerivedArtifact({
+      cacheDirectory: input.cacheDirectory,
+      source: input.source,
+      providerKey: 'source-snapshot-v1',
+      extension,
+      create: async (target) => {
+        await fs.copyFile(input.source, target);
+      },
+    });
+    const after = await fs.stat(input.source);
+    if (sameSourceVersion(before, after)) return artifact;
+  }
+  throw new Error('Preview source changed while a safe snapshot was being created.');
 }

@@ -183,18 +183,20 @@ describe('file capability service', () => {
     });
   });
 
-  it('prefers a high-resolution Windows Shell thumbnail over the embedded Revit fallback', async () => {
+  it('prefers a 4096px Revit Shell thumbnail over the low-resolution embedded preview', async () => {
     const target = path.join(root, 'model.rvt');
     await fs.writeFile(target, Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
     const shellPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 9, 8, 7]);
-    const embeddedPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
     const shellPreview = vi.fn(async () => ({
       ok: true as const,
       png: shellPng,
-      width: 1600,
-      height: 1600,
+      width: 4096,
+      height: 4096,
     }));
-    const embeddedPreview = vi.fn(async () => ({ ok: true as const, png: embeddedPng }));
+    const embeddedPreview = vi.fn(async () => ({
+      ok: true as const,
+      png: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]),
+    }));
     const shell: ShellThumbnailBridge = { preview: shellPreview };
     const revit: RevitPreviewBridge = { preview: embeddedPreview };
 
@@ -203,14 +205,14 @@ describe('file capability service', () => {
       params: { path: target },
     });
 
-    expect(shellPreview).toHaveBeenCalledWith(target, 1600);
+    expect(shellPreview).toHaveBeenCalledWith(target, 4096);
     expect(embeddedPreview).not.toHaveBeenCalled();
     expect(result.preview).toMatchObject({
       kind: 'image',
       mime: 'image/png',
-      extractedBy: 'windows-shell-thumbnail',
-      width: 1600,
-      height: 1600,
+      extractedBy: 'revit-shell-thumbnail-highres',
+      width: 4096,
+      height: 4096,
       dataUrl: `data:image/png;base64,${shellPng.toString('base64')}`,
     });
   });

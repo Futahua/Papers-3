@@ -3,7 +3,11 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { getOrCreateDerivedArtifact, pruneDerivedPreviewCache } from '../../src/main/backpacks/derivedPreviewCache';
+import {
+  getOrCreateDerivedArtifact,
+  getOrCreateSourceSnapshot,
+  pruneDerivedPreviewCache,
+} from '../../src/main/backpacks/derivedPreviewCache';
 
 let root: string;
 let source: string;
@@ -83,5 +87,33 @@ describe('derived preview cache', () => {
     await expect(fs.stat(oldest)).rejects.toThrow();
     await expect(fs.stat(middle)).rejects.toThrow();
     expect((await fs.stat(newest)).size).toBe(10);
+  });
+
+  it('creates a reusable snapshot with the original extension and never aliases the live source path', async () => {
+    const sourceRvt = path.join(root, 'model.rvt');
+    await fs.writeFile(sourceRvt, 'model-v1');
+
+    const first = await getOrCreateSourceSnapshot({
+      cacheDirectory: root,
+      source: sourceRvt,
+    });
+    const second = await getOrCreateSourceSnapshot({
+      cacheDirectory: root,
+      source: sourceRvt,
+    });
+
+    expect(first.filePath).not.toBe(sourceRvt);
+    expect(path.extname(first.filePath)).toBe('.rvt');
+    expect(await fs.readFile(first.filePath, 'utf8')).toBe('model-v1');
+    expect(second.filePath).toBe(first.filePath);
+    expect(second.cached).toBe(true);
+
+    await fs.writeFile(sourceRvt, 'model-v2-expanded');
+    const changed = await getOrCreateSourceSnapshot({
+      cacheDirectory: root,
+      source: sourceRvt,
+    });
+    expect(changed.filePath).not.toBe(first.filePath);
+    expect(await fs.readFile(changed.filePath, 'utf8')).toBe('model-v2-expanded');
   });
 });

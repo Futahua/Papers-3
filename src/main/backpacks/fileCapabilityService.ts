@@ -14,7 +14,7 @@ import type { MlightCadPreviewBridge } from './mlightCadPreviewBridge';
 import type { HtmlPreviewHostBridge } from './htmlPreviewHostBridge';
 import type { PowerPointPreviewBridge } from './powerPointPreviewBridge';
 import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
-import { getOrCreateDerivedArtifact } from './derivedPreviewCache';
+import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 
 const MAX_PATH_BYTES = 32_768;
 const MAX_SEARCH_BYTES = 2_048;
@@ -210,11 +210,15 @@ async function convertOfficeToPdf(
         extension: '.pdf',
         validate: validPdfFile,
         create: async (tempPath) => {
+          const snapshot = await getOrCreateSourceSnapshot({
+            cacheDirectory,
+            source,
+          });
           const tempRoot = await fs.mkdtemp(path.join(cacheDirectory, 'libreoffice-preview-'));
           try {
-            const outputName = `${path.parse(source).name}.pdf`;
+            const outputName = `${path.parse(snapshot.filePath).name}.pdf`;
             await new Promise<void>((resolve, reject) => {
-              execFile(soffice, ['--headless', '--convert-to', 'pdf', '--outdir', tempRoot, source], {
+              execFile(soffice, ['--headless', '--convert-to', 'pdf', '--outdir', tempRoot, snapshot.filePath], {
                 windowsHide: true,
                 timeout: 30_000,
               }, (error) => error ? reject(error) : resolve());
@@ -239,9 +243,11 @@ async function convertOfficeToPdf(
   }
   const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-file-preview-'));
   try {
-    const outputName = `${path.parse(source).name}.pdf`;
+    const safeSource = path.join(tempRoot, `source${path.extname(source) || '.bin'}`);
+    await fs.copyFile(source, safeSource);
+    const outputName = `${path.parse(safeSource).name}.pdf`;
     await new Promise<void>((resolve, reject) => {
-      execFile(soffice, ['--headless', '--convert-to', 'pdf', '--outdir', tempRoot, source], {
+      execFile(soffice, ['--headless', '--convert-to', 'pdf', '--outdir', tempRoot, safeSource], {
         windowsHide: true,
         timeout: 30_000,
       }, (error) => error ? reject(error) : resolve());
@@ -424,6 +430,41 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
       };
     }
   }
+  if (REVIT_EXTENSIONS.has(extension)) {
+    if (deps.shellThumbnail) {
+      const thumbnail = await deps.shellThumbnail.preview(target, 4096);
+      if (thumbnail.ok) {
+        return {
+          ok: true,
+          entry,
+          preview: {
+            kind: 'image',
+            mime: 'image/png',
+            dataUrl: dataUrl('image/png', thumbnail.png),
+            extractedBy: 'revit-shell-thumbnail-highres',
+            width: thumbnail.width,
+            height: thumbnail.height,
+            cached: thumbnail.cached,
+          },
+        };
+      }
+    }
+    if (deps.revitPreview) {
+      const extracted = await deps.revitPreview.preview(target);
+      if (extracted.ok) {
+        return {
+          ok: true,
+          entry,
+          preview: {
+            kind: 'image',
+            mime: 'image/png',
+            dataUrl: dataUrl('image/png', extracted.png),
+            extractedBy: 'revit-embedded-preview',
+          },
+        };
+      }
+    }
+  }
   if (deps.windowsPreview) {
     const available = await deps.windowsPreview.probe(target);
     if (available.available) {
@@ -508,21 +549,6 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
           width: thumbnail.width,
           height: thumbnail.height,
           cached: thumbnail.cached,
-        },
-      };
-    }
-  }
-  if (REVIT_EXTENSIONS.has(extension) && deps.revitPreview) {
-    const extracted = await deps.revitPreview.preview(target);
-    if (extracted.ok) {
-      return {
-        ok: true,
-        entry,
-        preview: {
-          kind: 'image',
-          mime: 'image/png',
-          dataUrl: dataUrl('image/png', extracted.png),
-          extractedBy: 'revit-embedded-preview',
         },
       };
     }
