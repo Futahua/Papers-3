@@ -119,11 +119,10 @@ describe('file capability service', () => {
       new URL('../../src/main/backpacks/webBrowserHostBridge.ts', import.meta.url),
       'utf8',
     );
-    expect(source).toContain("contents.on('before-mouse-event'");
-    expect(source).toContain("mouse.type !== 'mouseWheel'");
-    expect(source).toContain("modifiers.includes('control')");
-    expect(source).toContain('event.preventDefault()');
+    expect(source).toContain("contents.on('zoom-changed'");
+    expect(source).toContain("direction === 'in'");
     expect(source).toContain('contents.setZoomFactor(session.zoomFactor)');
+    expect(source).not.toContain("contents.on('before-mouse-event'");
   });
 
   it('limits self-signed certificate exceptions to loopback web previews', async () => {
