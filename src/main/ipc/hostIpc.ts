@@ -2,7 +2,7 @@
  * IPC surface for the trusted host frame renderer. Only the host view's
  * WebContents may call these channels.
  */
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { app, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { z } from 'zod';
 
 import { backpackNameSchema } from '@shared/schemas';
@@ -190,6 +190,7 @@ export const hostWorkspaceSurfaceMoveTargetSchema = z.object({
 }).strict();
 export const commandSurfaceDismissDestinationSchema = z.enum(['restore', 'external', 'papers']);
 const backpackProjectDroppedPathsSchema = z.array(z.string().min(1).max(32_768)).min(1).max(64);
+const backpackProjectNativeDragPathsSchema = backpackProjectDroppedPathsSchema;
 const delegateWaveRequestSchema = z
   .object({
     backpackId: z.string().min(1).max(256),
@@ -412,13 +413,30 @@ export function registerHostIpc(facade: HostFacade): void {
       backpackProjectNativeSourceRefSchema.parse(sourceRef),
     ),
   );
-  handle('host:backpack-project:file-capability', (event, request, workspaceOrigin) =>
-    facade.callBackpackProjectFileCapability(
+  handle('host:backpack-project:file-capability', async (event, request, workspaceOrigin) => {
+    const parsedRequest = backpackProjectFileCapabilitySchema.parse(request);
+    const parsedWorkspaceOrigin = backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin);
+    if (parsedRequest.operation === 'native-drag') {
+      const paths = backpackProjectNativeDragPathsSchema.parse(parsedRequest.params?.['paths']);
+      for (const target of paths) {
+        const checked = await facade.callBackpackProjectFileCapability(
+          event.sender.id,
+          { operation: 'stat', params: { path: target } },
+          parsedWorkspaceOrigin,
+        ) as { ok?: boolean };
+        if (checked?.ok !== true) return checked;
+      }
+      const firstTarget = paths[0]!;
+      const icon = await app.getFileIcon(firstTarget, { size: 'small' });
+      event.sender.startDrag({ file: firstTarget, files: paths, icon });
+      return { ok: true, count: paths.length };
+    }
+    return facade.callBackpackProjectFileCapability(
       event.sender.id,
-      backpackProjectFileCapabilitySchema.parse(request),
-      backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
-    ),
-  );
+      parsedRequest,
+      parsedWorkspaceOrigin,
+    );
+  });
   handle('host:backpack-project:open-web-link', (event, url, workspaceOrigin) =>
     facade.openBackpackProjectWebLink(event.sender.id, backpackProjectWebUrlSchema.parse(url), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );
