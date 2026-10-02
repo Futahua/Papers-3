@@ -7,6 +7,10 @@ Papers is a personal layer across Windows. Its authoritative product definition 
 [`docs/PRODUCT.md`](docs/PRODUCT.md); current implementation and historical projects are
 not substitutes for that definition.
 
+**Current product correction:** the old Apers/Hermes integration is retired. Historical
+Apers code, docs, screenshots or commits that describe Hermes-backed Apers behavior are
+legacy evidence only and must not be treated as current Papers product direction.
+
 ## Documentation map
 
 ### Start here

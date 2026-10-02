@@ -25,6 +25,10 @@ The ordinary flow is prompt, optional file or image attachments, and reply. The 
 may explicitly name a folder or path when it is useful. Selecting or entering a Backpack
 must not silently change Hermes's conversation, working directory or context.
 
+The former Apers/Hermes integration is retired. References to Apers as a Hermes-backed
+remote client belong to historical implementation context and do not define current Papers
+or mobile product behavior.
+
 ### Backpacks
 
 A Backpack is a named environment or lens for a way of working with the machine. It may
