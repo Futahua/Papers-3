@@ -2,13 +2,58 @@
  * IPC surface for the trusted host frame renderer. Only the host view's
  * WebContents may call these channels.
  */
-import { app, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { createHash } from 'node:crypto';
+import { app, clipboard, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { z } from 'zod';
 
 import { backpackNameSchema } from '@shared/schemas';
 import type { PermissionDecision } from '@shared/types';
 import type { HostWorkspaceSurfaceMoveTarget } from '../hostFacade';
 import { parseWorkspaceTopology, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+
+export function parseWindowsClipboardFileDrop(buffer: Buffer): string[] {
+  if (buffer.length < 20) return [];
+  const offset = buffer.readUInt32LE(0);
+  const wide = buffer.readUInt32LE(16) !== 0;
+  if (offset < 20 || offset >= buffer.length) return [];
+  const payload = buffer.subarray(offset);
+  const text = wide ? payload.toString('utf16le') : payload.toString('latin1');
+  return text.split('\0').map((entry) => entry.trim()).filter(Boolean);
+}
+
+export function parseWindowsClipboardFileNameW(buffer: Buffer): string[] {
+  if (buffer.length < 2) return [];
+  return buffer.toString('utf16le').split('\0').map((entry) => entry.trim()).filter(Boolean);
+}
+
+function clipboardPathCandidates(formats: string[]): string[] {
+  const paths: string[] = [];
+  if (formats.includes('FileDrop')) {
+    paths.push(...parseWindowsClipboardFileDrop(clipboard.readBuffer('FileDrop')));
+  }
+  if (paths.length === 0 && formats.includes('FileNameW')) {
+    paths.push(...parseWindowsClipboardFileNameW(clipboard.readBuffer('FileNameW')));
+  }
+  if (paths.length === 0 && formats.includes('FileName')) {
+    const single = clipboard.readBuffer('FileName').toString('utf8').split('\0')[0]?.trim();
+    if (single) paths.push(single);
+  }
+  return [...new Set(paths)].slice(0, 64);
+}
+
+function unquoteClipboardPath(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function clipboardFingerprint(formats: string[], paths: string[], text: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ formats: [...formats].sort(), paths, text }))
+    .digest('hex');
+}
 
 export interface HostFacade {
   /**
@@ -416,6 +461,43 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:file-capability', async (event, request, workspaceOrigin) => {
     const parsedRequest = backpackProjectFileCapabilitySchema.parse(request);
     const parsedWorkspaceOrigin = backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin);
+    if (parsedRequest.operation === 'clipboard-read') {
+      const formats = clipboard.availableFormats();
+      const paths = clipboardPathCandidates(formats);
+      const text = clipboard.readText().trim().slice(0, 32_768);
+      const fingerprint = clipboardFingerprint(formats, paths, text);
+
+      if (paths.length > 0) {
+        try {
+          const targets = await facade.resolveBackpackProjectDroppedTargets(
+            event.sender.id,
+            paths,
+            parsedWorkspaceOrigin,
+          );
+          if (targets.length > 0) return { ok: true, kind: 'files', targets, fingerprint };
+        } catch {
+          // Some clipboard providers expose stale/virtual FileDrop entries.
+          // Fall through to text, which may still contain a usable path or URL.
+        }
+      }
+
+      if (text) {
+        const possiblePath = unquoteClipboardPath(text);
+        try {
+          const targets = await facade.resolveBackpackProjectDroppedTargets(
+            event.sender.id,
+            [possiblePath],
+            parsedWorkspaceOrigin,
+          );
+          if (targets.length > 0) return { ok: true, kind: 'files', targets, fingerprint };
+        } catch {
+          // Not a live machine path: AYG deliberately treats it as a web link.
+        }
+        return { ok: true, kind: 'text', text, fingerprint };
+      }
+
+      return { ok: true, kind: 'empty', fingerprint };
+    }
     if (parsedRequest.operation === 'native-drag') {
       const paths = backpackProjectNativeDragPathsSchema.parse(parsedRequest.params?.['paths']);
       for (const target of paths) {

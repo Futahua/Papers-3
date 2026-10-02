@@ -20,6 +20,26 @@ let detachedReadySent = false;
 let widgetToken: string | null = null;
 let widgetPageReady = false;
 let widgetReadySent = false;
+const CLIPBOARD_READ_GESTURE_MS = 1_500;
+let clipboardReadGestureExpiresAt = 0;
+
+function armClipboardReadGesture(event: Event): void {
+  if (!event.isTrusted) return;
+  clipboardReadGestureExpiresAt = performance.now() + CLIPBOARD_READ_GESTURE_MS;
+}
+
+function consumeClipboardReadGesture(): boolean {
+  const allowed = performance.now() <= clipboardReadGestureExpiresAt;
+  clipboardReadGestureExpiresAt = 0;
+  return allowed;
+}
+
+window.addEventListener('pointerdown', armClipboardReadGesture, true);
+window.addEventListener('paste', armClipboardReadGesture, true);
+window.addEventListener('keydown', (event) => {
+  if (!event.isTrusted || (!event.ctrlKey && !event.metaKey)) return;
+  if (['c', 'x', 'v'].includes(event.key.toLowerCase())) armClipboardReadGesture(event);
+}, true);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -308,6 +328,10 @@ window.addEventListener('message', (event) => {
       || request.operation.length > 64
       || !isPlainObject(request.params)) {
       immediateHostError(request.requestId, event.origin, 'file capability request is malformed');
+      return;
+    }
+    if (request.operation === 'clipboard-read' && !consumeClipboardReadGesture()) {
+      immediateHostError(request.requestId, event.origin, 'clipboard read requires a recent user gesture');
       return;
     }
     let params: Record<string, unknown>;

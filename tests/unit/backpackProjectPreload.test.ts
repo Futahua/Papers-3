@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -77,6 +78,13 @@ describe('Backpack project protocol alignment', () => {
     expect(posts).not.toContainEqual(expect.objectContaining({ token: 'private-widget-token' }));
     dispatch({ type: 'papers:project:window-candidate-picker-update', requestId: 'bad', pickerId: 'short', candidates });
     expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'bad', ok: false }));
+  });
+
+  it('keeps native clipboard reads behind a short trusted-user-gesture gate', async () => {
+    const source = await readFile(new URL('../../src/preload/backpackProject.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/CLIPBOARD_READ_GESTURE_MS = 1_500/);
+    expect(source).toMatch(/window\.addEventListener\('pointerdown', armClipboardReadGesture, true\)/);
+    expect(source).toMatch(/request\.operation === 'clipboard-read' && !consumeClipboardReadGesture\(\)/);
   });
 
   it('routes file capability calls from a scoped child with its exact workspace origin', async () => {
