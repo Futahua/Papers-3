@@ -29,6 +29,27 @@ The former Apers/Hermes integration is retired. References to Apers as a Hermes-
 remote client belong to historical implementation context and do not define current Papers
 or mobile product behavior.
 
+### Mobile Backpack access
+
+The creator's PC is the server and execution authority for mobile Backpack use. Android is a
+portable live client for Backpacks served from that PC; it is not a separate copy of Papers
+and does not require Backpack state or Windows-side machinery to be synchronized onto the
+phone.
+
+The mobile goal is to make the creator's Backpacks genuinely usable away from the desktop.
+For this path, **low interaction latency and phone-native usability take priority over
+pixel-faithful desktop mirroring**. A Backpack may present a phone-adapted layout, controls,
+navigation and touch behavior while remaining the same live Backpack on the PC.
+
+The PC continues to own the Backpack's execution, files, integrations and authoritative
+state unless a later creator request explicitly assigns something to the phone. Android
+should send interaction to that live PC-hosted Backpack and receive its current interface
+and state with as little perceptible delay as practical.
+
+This does not define one universal Backpack UI or force every Backpack through the same
+implementation. Mobile behavior should preserve each Backpack's actual experience while
+adapting it deliberately for a small touch screen.
+
 ### Backpacks
 
 A Backpack is a named environment or lens for a way of working with the machine. It may
