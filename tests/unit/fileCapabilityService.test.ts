@@ -120,8 +120,10 @@ describe('file capability service', () => {
       'utf8',
     );
     expect(source).toContain('const ownerVisibility = new Map<string, boolean>()');
-    expect(source).toContain('const visible = ownerVisibility.get(session.ownerKey) === true');
+    expect(source).toContain('const visible = ownerVisibility.get(session.ownerKey) === true && session.previewVisible');
     expect(source).toContain('ownerVisibility.set(ownerKey, visible)');
+    expect(source).toContain('existing.previewVisible = true');
+    expect(source).toContain('session.previewVisible = visible');
     expect(source).toContain('syncPresentation(existing)');
     expect(source).toContain('syncPresentation(session)');
   });

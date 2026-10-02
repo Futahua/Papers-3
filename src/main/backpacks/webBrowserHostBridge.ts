@@ -13,6 +13,7 @@ interface LiveWebBrowser {
   presented: boolean;
   sourceUrl: string;
   zoomFactor: number;
+  previewVisible: boolean;
 }
 
 export interface WebBrowserHostBridge {
@@ -23,6 +24,7 @@ export interface WebBrowserHostBridge {
   ): Promise<{ ok: true; sessionId: string; url: string } | { ok: false; error?: string }>;
   move(ownerKey: string, sessionId: string, localRect: PreviewRect): boolean;
   close(ownerKey: string, sessionId: string): boolean;
+  setPreviewVisible(ownerKey: string, sessionId: string, visible: boolean): boolean;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
   closeOwner(ownerKey: string): void;
@@ -115,7 +117,7 @@ export function createWebBrowserHostBridge(input: {
   };
   const syncPresentation = (session: LiveWebBrowser): void => {
     if (session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
-    const visible = ownerVisibility.get(session.ownerKey) === true;
+    const visible = ownerVisibility.get(session.ownerKey) === true && session.previewVisible;
     if (visible) {
       if (!session.presented) {
         session.window.contentView.addChildView(session.view);
@@ -148,6 +150,7 @@ export function createWebBrowserHostBridge(input: {
       if (existing && !existing.window.isDestroyed() && !existing.view.webContents.isDestroyed()) {
         existing.localRect = { ...localRect };
         existing.surfaceBounds = { ...context.surfaceBounds };
+        existing.previewVisible = true;
         syncPresentation(existing);
         if (existing.sourceUrl === url) {
           return { ok: true, sessionId: existing.id, url };
@@ -198,6 +201,7 @@ export function createWebBrowserHostBridge(input: {
         presented: false,
         sourceUrl: url,
         zoomFactor: 1,
+        previewVisible: true,
       };
       contents.on('before-mouse-event', (event, mouse) => {
         if (mouse.type !== 'mouseWheel') return;
@@ -239,6 +243,14 @@ export function createWebBrowserHostBridge(input: {
       const session = sessions.get(sessionId);
       if (!session || session.ownerKey !== ownerKey) return false;
       cleanupSession(session);
+      return true;
+    },
+
+    setPreviewVisible(ownerKey, sessionId, visible) {
+      const session = sessions.get(sessionId);
+      if (!session || session.ownerKey !== ownerKey) return false;
+      session.previewVisible = visible;
+      syncPresentation(session);
       return true;
     },
 
