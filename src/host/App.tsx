@@ -20,20 +20,6 @@ import {
   splitWorkspaceSurfaceAtTarget,
 } from '@shared/workspaceTopology';
 
-/** Papers content-relative docked-Hermes rectangle. Must match the main
- *  process dock geometry (the slim title-bar height) so the host UI reserves
- *  the same strip. */
-const TOP_BAR_HEIGHT = 40;
-function dockWidthOf(w: number): number {
-  return Math.max(380, Math.min(620, Math.round(w * 0.4)));
-}
-function dockBounds(): { x: number; y: number; width: number; height: number } {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  const width = dockWidthOf(w);
-  return { x: Math.max(0, w - width), y: TOP_BAR_HEIGHT, width, height: Math.max(400, h - TOP_BAR_HEIGHT) };
-}
-
 type BasicView = 'backpacks' | 'tools' | 'settings';
 
 const VIEW_LABEL: Record<BasicView, string> = {
@@ -52,10 +38,9 @@ function closeTopologySurface(topology: ReturnType<typeof createWorkspaceTopolog
  * Papers production shell.
  *
  * Basic is the permanent control that reaches Backpacks, Tools and Settings.
- * Hermes is global — the real Hermes Desktop in two placements, docked beside
- * Papers or detached, driven by the two symbol toggles in the top bar (D-011,
- * D-015). Nothing here starts a Backpack conversation, changes Hermes's working
- * directory, or fabricates Backpack contents.
+ * Legacy Hermes surface state is still observed while retirement proceeds, but
+ * the Papers-side dock/panel entry point is no longer exposed. The remaining
+ * detached-window control does not change Backpack context or contents.
  */
 export function App(): React.JSX.Element {
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });
@@ -303,14 +288,6 @@ export function App(): React.JSX.Element {
       },
     ]);
   }, []);
-
-  const toggleDock = useCallback(() => {
-    if (hermes.placement === 'docked' && hermes.ownedByThisWindow) {
-      void host().hermes.hideDock().catch(reportHermesFailure);
-    } else {
-      void host().hermes.dock(dockBounds()).then(setHermes);
-    }
-  }, [hermes.placement, hermes.ownedByThisWindow, reportHermesFailure]);
 
   const toggleWindow = useCallback(() => {
     if (hermes.placement === 'detached') void host().hermes.hideWindow().catch(reportHermesFailure);
@@ -609,7 +586,6 @@ export function App(): React.JSX.Element {
           <HermesControls
             placement={hermes.placement}
             busy={hermesBusy}
-            onToggleDock={toggleDock}
             onToggleWindow={toggleWindow}
           />
           {/* Reserved inset the OS paints the native min/maximize/close over. */}

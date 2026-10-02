@@ -3,38 +3,21 @@ import React from 'react';
 import type { HermesPlacement } from './bridge';
 
 /**
- * Two compact SVG-symbol controls for the one global Hermes experience:
+ * One compact control remains for the detached Hermes window.
  *
- * - sidebar toggle — docks / hides the real Hermes Desktop as a Papers sidebar;
- * - window toggle — detaches / hides the same Hermes as a floating window.
- *
- * Docked and detached are two placements of the SAME Hermes, never two Hermes
- * products. Each control shows its active/inactive state, carries a tooltip and
- * an accessible name, and toggles on repeated clicks. State is driven by the
- * real surface placement so the symbols stay honest after Hermes closes,
- * crashes, docks or detaches by any path.
+ * The retired Papers-side Hermes panel/sidebar entry point is intentionally
+ * absent. State still follows the real surface placement so the remaining
+ * window control stays honest if legacy Hermes machinery changes placement.
  */
 export function HermesControls(props: {
   placement: HermesPlacement;
   busy: boolean;
-  onToggleDock: () => void;
   onToggleWindow: () => void;
 }): React.JSX.Element {
-  const docked = props.placement === 'docked';
   const detached = props.placement === 'detached';
 
   return (
     <div className="hermes-controls" role="group" aria-label="Hermes placement">
-      <button
-        type="button"
-        className={`hermes-toggle${docked ? ' active' : ''}${props.busy ? ' busy' : ''}`}
-        aria-pressed={docked}
-        aria-label={docked ? 'Hide the Hermes sidebar' : 'Dock Hermes as a sidebar'}
-        title={docked ? 'Hide the Hermes sidebar' : 'Dock Hermes as a sidebar'}
-        onClick={props.onToggleDock}
-      >
-        <SidebarSymbol active={docked} />
-      </button>
       <button
         type="button"
         className={`hermes-toggle${detached ? ' active' : ''}${props.busy ? ' busy' : ''}`}
@@ -46,24 +29,6 @@ export function HermesControls(props: {
         <WindowSymbol active={detached} />
       </button>
     </div>
-  );
-}
-
-/** A panel with a highlighted right-hand column — the docked sidebar idea. */
-function SidebarSymbol({ active }: { active: boolean }): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false">
-      <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
-      <rect
-        x="12"
-        y="4"
-        width="5"
-        height="12"
-        rx="1.5"
-        fill="currentColor"
-        opacity={active ? 0.9 : 0.28}
-      />
-    </svg>
   );
 }
 

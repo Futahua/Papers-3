@@ -527,14 +527,13 @@ describe('production Papers shell', () => {
       'Backpack name retained',
     );
 
-    // Hermes controls: exactly two compact SVG toggles (sidebar + window),
-    // and NONE of the old redundant controls — no dotted status pill, no
-    // "Hermes window" / "Hermes" text buttons, no embedded /chat surface.
+    // Hermes panel/sidebar control is retired. Only the detached-window
+    // control remains, with NONE of the old redundant controls.
     expect(
       await evalInHost<number>(app, `document.querySelectorAll('.hermes-controls .hermes-toggle').length`),
-    ).toBe(2);
+    ).toBe(1);
 
-    // Each toggle carries an accessible name and starts inactive (Hermes closed).
+    // The remaining window toggle carries an accessible name and starts inactive.
     const toggleState = await evalInHost<{ labels: string[]; pressed: string[] }>(
       app,
       `(() => {
@@ -545,9 +544,9 @@ describe('production Papers shell', () => {
         };
       })()`,
     );
-    expect(toggleState.labels.some((l) => /sidebar/i.test(l))).toBe(true);
+    expect(toggleState.labels.some((l) => /sidebar/i.test(l))).toBe(false);
     expect(toggleState.labels.some((l) => /window/i.test(l))).toBe(true);
-    expect(toggleState.pressed).toEqual(['false', 'false']);
+    expect(toggleState.pressed).toEqual(['false']);
 
     // The obsolete duplicate Hermes UI is gone from the shell.
     expect(
