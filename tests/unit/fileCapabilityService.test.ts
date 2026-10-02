@@ -114,6 +114,18 @@ describe('file capability service', () => {
     expect(loadUrl).toBeGreaterThan(sameUrlGuard);
   });
 
+  it('keeps background-tab web viewers hidden until that surface is visible', async () => {
+    const source = await fs.readFile(
+      new URL('../../src/main/backpacks/webBrowserHostBridge.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain('const ownerVisibility = new Map<string, boolean>()');
+    expect(source).toContain('const visible = ownerVisibility.get(session.ownerKey) === true');
+    expect(source).toContain('ownerVisibility.set(ownerKey, visible)');
+    expect(source).toContain('syncPresentation(existing)');
+    expect(source).toContain('syncPresentation(session)');
+  });
+
   it('uses Ctrl+wheel to resize live web-page UI without reloading the page', async () => {
     const source = await fs.readFile(
       new URL('../../src/main/backpacks/webBrowserHostBridge.ts', import.meta.url),
