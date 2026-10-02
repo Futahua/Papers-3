@@ -527,34 +527,17 @@ describe('production Papers shell', () => {
       'Backpack name retained',
     );
 
-    // Hermes panel/sidebar control is retired. Only the detached-window
-    // control remains, with NONE of the old redundant controls.
+    // Hermes integration is retired: Papers exposes no Hermes launch or placement controls.
     expect(
       await evalInHost<number>(app, `document.querySelectorAll('.hermes-controls .hermes-toggle').length`),
-    ).toBe(1);
-
-    // The remaining window toggle carries an accessible name and starts inactive.
-    const toggleState = await evalInHost<{ labels: string[]; pressed: string[] }>(
-      app,
-      `(() => {
-        const btns = [...document.querySelectorAll('.hermes-controls .hermes-toggle')];
-        return {
-          labels: btns.map((b) => b.getAttribute('aria-label') ?? ''),
-          pressed: btns.map((b) => b.getAttribute('aria-pressed') ?? ''),
-        };
-      })()`,
-    );
-    expect(toggleState.labels.some((l) => /sidebar/i.test(l))).toBe(false);
-    expect(toggleState.labels.some((l) => /window/i.test(l))).toBe(true);
-    expect(toggleState.pressed).toEqual(['false']);
-
-    // The obsolete duplicate Hermes UI is gone from the shell.
+    ).toBe(0);
     expect(
       await evalInHost<boolean>(
         app,
         `document.querySelector('.hermes-badge') === null &&
          document.querySelector('.hermes-dock') === null &&
-         ![...document.querySelectorAll('button')].some((b) => (b.textContent ?? '').trim() === 'Hermes window')`,
+         ![...document.querySelectorAll('button')].some((b) =>
+           /Hermes/i.test((b.textContent ?? '') + ' ' + (b.getAttribute('aria-label') ?? '')))`,
       ),
     ).toBe(true);
   }, 240_000);

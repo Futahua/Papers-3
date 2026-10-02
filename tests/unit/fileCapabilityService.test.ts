@@ -114,6 +114,18 @@ describe('file capability service', () => {
     expect(loadUrl).toBeGreaterThan(sameUrlGuard);
   });
 
+  it('uses Ctrl+wheel to resize live web-page UI without reloading the page', async () => {
+    const source = await fs.readFile(
+      new URL('../../src/main/backpacks/webBrowserHostBridge.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain("contents.on('before-mouse-event'");
+    expect(source).toContain("mouse.type !== 'mouseWheel'");
+    expect(source).toContain("modifiers.includes('control')");
+    expect(source).toContain('event.preventDefault()');
+    expect(source).toContain('contents.setZoomFactor(session.zoomFactor)');
+  });
+
   it('limits self-signed certificate exceptions to loopback web previews', async () => {
     const source = await fs.readFile(
       new URL('../../src/main/backpacks/webBrowserHostBridge.ts', import.meta.url),

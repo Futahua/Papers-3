@@ -231,7 +231,6 @@ input:focus-visible {
 .titlebar .pill-button,
 .titlebar .basic-menu,
 .titlebar .backpack-sidebar,
-.titlebar .hermes-controls,
 .titlebar button {
   -webkit-app-region: no-drag;
 }
@@ -279,56 +278,6 @@ input:focus-visible {
 
 .pill-button.solid:hover {
   background: var(--paper-deep);
-}
-
-/* Two compact SVG placement toggles for the one global Hermes experience. */
-.hermes-controls {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--control-surface);
-}
-
-.hermes-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
-}
-
-.hermes-toggle:hover {
-  background: var(--raised-strong);
-  color: var(--ink);
-}
-
-.hermes-toggle.active {
-  background: var(--raised-strong);
-  border-color: var(--green);
-  color: var(--green);
-}
-
-.hermes-toggle.busy {
-  opacity: 0.6;
-  cursor: progress;
-}
-
-.hermes-toggle:focus-visible {
-  outline: 2px solid var(--green);
-  outline-offset: 1px;
 }
 
 /* --------------------------------------------------------------- Basic menu */

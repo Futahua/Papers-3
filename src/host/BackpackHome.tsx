@@ -30,7 +30,6 @@ export function BackpackHome(props: {
       <header className="home-bar">
         <h1>Papers</h1>
         <span className="spacer" />
-        <button onClick={() => void host().hermes.showWindow()}>Hermes window</button>
       </header>
       <div className="home-intro">
         <h2>Backpacks</h2>

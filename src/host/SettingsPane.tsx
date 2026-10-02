@@ -8,7 +8,7 @@ import { host, type BuildIdentity, type UpdateState } from './bridge';
  * Papers checks its GitHub releases shortly after launch. This card stays quiet
  * unless something is actually happening: a newer version downloading, or one
  * downloaded and waiting for the creator to restart. Papers never restarts
- * itself, because it may be managing a live Hermes at the time.
+ * itself while the creator may have live work open.
  */
 function UpdatesCard(): React.JSX.Element {
   const [update, setUpdate] = React.useState<UpdateState>({ stage: 'idle' });
@@ -280,21 +280,6 @@ export function SettingsPane(): React.JSX.Element {
               Backpack names persist on this machine and are restored when you reopen Papers. Papers
               stores only the names you create — no folders, covers or contents are invented.
             </small>
-          </div>
-
-          <div className="settings-card">
-            <span className="label">Hermes</span>
-            <strong>The existing Hermes product</strong>
-            <small>
-              Hermes is global and runs as its own application. Papers shows the real Hermes Desktop
-              in two placements — docked as a sidebar or as a detached window — using the two symbol
-              controls in the top bar. Its models, permissions and tools are configured inside Hermes.
-            </small>
-            <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-              <button className="secondary" onClick={() => void host().hermes.showWindow()}>
-                Open Hermes window
-              </button>
-            </div>
           </div>
 
           <div className="settings-card">

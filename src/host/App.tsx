@@ -1,12 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { host, type BackpacksList, type HermesSurfaceStatus, type HostErrorPayload } from './bridge';
+import { host, type BackpacksList, type HostErrorPayload } from './bridge';
 import { BackpacksPane } from './BackpacksPane';
 import { BackpackSidebar } from './BackpackSidebar';
 import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
 import { EmptyBackpackWarning } from './EmptyBackpackWarning';
-import { HermesControls } from './HermesControls';
 import { WorkspaceDock, type OpenWorkspaceProject } from './WorkspaceDock';
 import {
   activateWorkspaceSurface,
@@ -38,9 +37,9 @@ function closeTopologySurface(topology: ReturnType<typeof createWorkspaceTopolog
  * Papers production shell.
  *
  * Basic is the permanent control that reaches Backpacks, Tools and Settings.
- * Legacy Hermes surface state is still observed while retirement proceeds, but
- * the Papers-side dock/panel entry point is no longer exposed. The remaining
- * detached-window control does not change Backpack context or contents.
+ * The retired Hermes integration exposes no launch or placement controls in
+ * the Papers shell. Legacy host machinery may remain during retirement, but it
+ * is not part of the active Papers UI.
  */
 export function App(): React.JSX.Element {
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });
@@ -92,7 +91,6 @@ export function App(): React.JSX.Element {
   /** Read inside subscriptions that outlive a render. */
   const surfaceIdRef = useRef<string | null>(null);
   surfaceIdRef.current = surfaceId;
-  const [hermes, setHermes] = useState<HermesSurfaceStatus>({ placement: 'closed', status: 'idle', ownedByThisWindow: false });
   const [hostErrors, setHostErrors] = useState<HostErrorPayload[]>([]);
   const basicRef = useRef<HTMLDivElement | null>(null);
 
@@ -125,11 +123,6 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const bridge = host();
     void bridge.backpacks.list().then(setBackpacks).catch(() => undefined);
-    void bridge
-      .hermes.surfaceStatus()
-      .then(setHermes)
-      .catch(() => undefined);
-
     const subs = [
       bridge.events.onBackpacksChanged(setBackpacks),
       bridge.events.onBackpackProjectCloseRequest((payload) => {
@@ -238,7 +231,6 @@ export function App(): React.JSX.Element {
           ? { ...project, icon }
           : project));
       }),
-      bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),
     ];
     void bridge.layout.hydrateStartupWorkspace()
@@ -268,31 +260,6 @@ export function App(): React.JSX.Element {
     media.addEventListener('change', apply);
     return () => media.removeEventListener('change', apply);
   }, []);
-
-  // True toggles: dock/hide the sidebar and detach/hide the window. Hiding
-  // never terminates Hermes; the same session returns on the next open.
-  // Hiding only applies to a Hermes this window owns. When Hermes is docked to
-  // another Papers window, pressing Dock here TAKES it -- an explicit transfer
-  // the creator asked for -- rather than hiding a dock they cannot see.
-  const reportHermesFailure = useCallback((caught: unknown): void => {
-    setHostErrors((previous) => [
-      ...previous,
-      {
-        component: 'Hermes',
-        what: 'The Hermes window could not be hidden.',
-        known: String(caught instanceof Error ? caught.message : caught),
-        intact: 'Hermes and its current placement were not changed.',
-        retryUseful: true,
-        inspect: 'The Hermes window remains available in its current placement.',
-        recover: 'Try hiding Hermes again.',
-      },
-    ]);
-  }, []);
-
-  const toggleWindow = useCallback(() => {
-    if (hermes.placement === 'detached') void host().hermes.hideWindow().catch(reportHermesFailure);
-    else void host().hermes.showWindow().then(setHermes);
-  }, [hermes.placement, reportHermesFailure]);
 
   const createNewWindow = useCallback((): void => {
     void host().app.newWindow().catch((caught) => {
@@ -499,8 +466,6 @@ export function App(): React.JSX.Element {
     setBasicOpen((open) => !open);
   };
 
-  const hermesBusy = hermes.status === 'starting';
-
   return (
     <div className={`app${sidebarOpen ? ' backpack-sidebar-open' : ''}`}>
       {/* Slim title bar: the whole band is an invisible OS drag region (so the
@@ -583,11 +548,6 @@ export function App(): React.JSX.Element {
           >
             ⊞
           </button>
-          <HermesControls
-            placement={hermes.placement}
-            busy={hermesBusy}
-            onToggleWindow={toggleWindow}
-          />
           {/* Reserved inset the OS paints the native min/maximize/close over. */}
           <div className="titlebar-window-controls" aria-hidden="true" />
         </div>
@@ -622,18 +582,6 @@ export function App(): React.JSX.Element {
             onDismiss={leaveEnteredBackpack}
           />
         )}
-
-      {hermes.status === 'error' && hermes.detail && (
-        <div className="error-banner hermes-error">
-          <div className="content">
-            <div className="title">Hermes</div>
-            <div className="detail">{hermes.detail}</div>
-          </div>
-          <button className="secondary" onClick={() => void host().hermes.showWindow().then(setHermes)}>
-            Retry
-          </button>
-        </div>
-      )}
 
       {hostErrors.length > 0 && hostErrors[0] && (
         <div className="error-banner">

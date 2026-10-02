@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { BaseWindow, WebContentsView, type Session } from 'electron';
+import { BaseWindow, WebContentsView, type MouseWheelInputEvent, type Session } from 'electron';
 
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
 
@@ -12,6 +12,7 @@ interface LiveWebBrowser {
   surfaceBounds: PreviewRect;
   presented: boolean;
   sourceUrl: string;
+  zoomFactor: number;
 }
 
 export interface WebBrowserHostBridge {
@@ -179,7 +180,20 @@ export function createWebBrowserHostBridge(input: {
         surfaceBounds: { ...context.surfaceBounds },
         presented: false,
         sourceUrl: url,
+        zoomFactor: 1,
       };
+      contents.on('before-mouse-event', (event, mouse) => {
+        if (mouse.type !== 'mouseWheel') return;
+        const modifiers = mouse.modifiers ?? [];
+        if (!modifiers.includes('control') && !modifiers.includes('ctrl')) return;
+        const wheel = mouse as MouseWheelInputEvent;
+        const delta = wheel.deltaY ?? wheel.wheelTicksY ?? 0;
+        if (!Number.isFinite(delta) || delta === 0) return;
+        event.preventDefault();
+        const factor = delta < 0 ? 1.1 : (1 / 1.1);
+        session.zoomFactor = Math.max(0.5, Math.min(2.5, Number((session.zoomFactor * factor).toFixed(3))));
+        contents.setZoomFactor(session.zoomFactor);
+      });
       sessions.set(session.id, session);
       owners.set(session.ownerKey, session.id);
       contents.once('destroyed', () => {
