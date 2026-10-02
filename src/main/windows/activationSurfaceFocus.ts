@@ -1,3 +1,5 @@
+export const COMPACT_WIDGET_TOPMOST_LEVEL = 'screen-saver';
+
 export interface ActivationSurfaceWindow {
   isDestroyed(): boolean;
   isFocusable(): boolean;
@@ -12,22 +14,23 @@ function restoreSurface(
   owner: ActivationSurfaceWindow,
   wasFocusable: boolean,
   wasAlwaysOnTop: boolean,
+  topmostLevel: string,
 ): void {
   if (owner.isDestroyed()) return;
   owner.setFocusable(wasFocusable);
   if (wasAlwaysOnTop) {
     // On Windows, switching a BrowserWindow back to non-focusable/NOACTIVATE can
     // clear or demote its TOPMOST state. Reassert both the flag and its position
-    // within the topmost band after the foreign target has taken foreground.
-    owner.setAlwaysOnTop(true, 'floating');
+    // within the SAME topmost band after the foreign target has taken foreground.
+    owner.setAlwaysOnTop(true, topmostLevel);
     owner.moveTop();
   }
 }
 
-function reassertTopmost(owner: ActivationSurfaceWindow, wasAlwaysOnTop: boolean): void {
+function reassertTopmost(owner: ActivationSurfaceWindow, wasAlwaysOnTop: boolean, topmostLevel: string): void {
   if (!wasAlwaysOnTop || owner.isDestroyed()) return;
   try {
-    owner.setAlwaysOnTop(true, 'floating');
+    owner.setAlwaysOnTop(true, topmostLevel);
     owner.moveTop();
   } catch {
     /* best effort: activation already succeeded */
@@ -37,10 +40,13 @@ function reassertTopmost(owner: ActivationSurfaceWindow, wasAlwaysOnTop: boolean
 /**
  * Temporarily let one Papers surface take foreground eligibility for a foreign
  * activation. The returned release restores the surface's original activation
- * policy and, if it was topmost, restores that z-order contract too.
+ * policy and, if it was topmost, restores that z-order contract too. Callers
+ * that own a stronger persistent topmost band must pass it explicitly so the
+ * temporary focusability transition cannot silently downgrade that contract.
  */
 export async function focusSurfaceForForeignActivation(
   owner: ActivationSurfaceWindow,
+  topmostLevel = 'floating',
 ): Promise<(() => void) | null> {
   if (owner.isDestroyed()) return null;
 
@@ -54,13 +60,13 @@ export async function focusSurfaceForForeignActivation(
     owner.focus();
   } catch {
     if (changed) {
-      try { restoreSurface(owner, wasFocusable, wasAlwaysOnTop); } catch { /* best effort */ }
+      try { restoreSurface(owner, wasFocusable, wasAlwaysOnTop, topmostLevel); } catch { /* best effort */ }
     }
     return null;
   }
 
   return () => {
-    try { restoreSurface(owner, wasFocusable, wasAlwaysOnTop); } catch { /* best effort */ }
+    try { restoreSurface(owner, wasFocusable, wasAlwaysOnTop, topmostLevel); } catch { /* best effort */ }
     if (!wasAlwaysOnTop) return;
 
     // A fullscreen app can promote/re-stack its own topmost presentation window
@@ -68,7 +74,7 @@ export async function focusSurfaceForForeignActivation(
     // therefore necessary but not sufficient: the target can still overtake the
     // widget on the next compositor/window-manager turn. Reassert twice inside a
     // short bounded settle window; neither call takes focus.
-    setTimeout(() => reassertTopmost(owner, wasAlwaysOnTop), 120);
-    setTimeout(() => reassertTopmost(owner, wasAlwaysOnTop), 360);
+    setTimeout(() => reassertTopmost(owner, wasAlwaysOnTop, topmostLevel), 120);
+    setTimeout(() => reassertTopmost(owner, wasAlwaysOnTop, topmostLevel), 360);
   };
 }

@@ -101,7 +101,7 @@ import {
   type CommandSurfaceOverlaySession,
 } from './windows/commandSurfaceOverlay';
 import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './windows/foregroundBridge';
-import { focusSurfaceForForeignActivation } from './windows/activationSurfaceFocus';
+import { COMPACT_WIDGET_TOPMOST_LEVEL, focusSurfaceForForeignActivation } from './windows/activationSurfaceFocus';
 import { createHoverInputBridge, resolveHoverInputBridgeSourcePath, type HoverInputBridge } from './windows/hoverInputBridge';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
@@ -1718,7 +1718,11 @@ async function bootstrap(): Promise<void> {
     focusForActivation: async (sender) => {
       const owner = BrowserWindow.fromWebContents(sender);
       if (!owner || owner.isDestroyed()) return null;
-      return focusSurfaceForForeignActivation(owner);
+      const surface = widgetRegistry.surface(sender.id);
+      return focusSurfaceForForeignActivation(
+        owner,
+        surface?.kind === COMPACT_WIDGET_SURFACE_KIND ? COMPACT_WIDGET_TOPMOST_LEVEL : 'floating',
+      );
     },
     resolveControlSurface: (sender, rect) => {
       const owner = BrowserWindow.fromWebContents(sender);
@@ -1981,7 +1985,7 @@ async function bootstrap(): Promise<void> {
         },
       });
       widgetWindow.setMenuBarVisibility(false);
-      widgetWindow.setAlwaysOnTop(true, 'floating');
+      widgetWindow.setAlwaysOnTop(true, COMPACT_WIDGET_TOPMOST_LEVEL);
       widgetWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       // 019F: fail-closed widget navigation guard - allow ONLY the exact
       // papers-backpack: scheme with the exact registered project host; every
@@ -2004,7 +2008,7 @@ async function bootstrap(): Promise<void> {
           // sank behind ordinary windows and clicks landed on whatever was in
           // front of it. Being in front and being focusable are independent, and
           // this is the pair the creator actually wants.
-          widgetWindow.setAlwaysOnTop(true, 'floating');
+          widgetWindow.setAlwaysOnTop(true, COMPACT_WIDGET_TOPMOST_LEVEL);
         }
       });
       bindOwnedProjectSurface(widgetWindow, projectId, 'widget', owningWindowId);

@@ -1,6 +1,7 @@
+import { readFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { focusSurfaceForForeignActivation } from '../../src/main/windows/activationSurfaceFocus';
+import { COMPACT_WIDGET_TOPMOST_LEVEL, focusSurfaceForForeignActivation } from '../../src/main/windows/activationSurfaceFocus';
 
 function fakeWindow(options: { focusable: boolean; alwaysOnTop: boolean; focusThrows?: boolean }) {
   let destroyed = false;
@@ -44,8 +45,9 @@ describe('focusSurfaceForForeignActivation', () => {
 
   it('restores a non-focusable topmost widget above the activated target', async () => {
     const fake = fakeWindow({ focusable: false, alwaysOnTop: true });
-    const release = await focusSurfaceForForeignActivation(fake.window);
+    const release = await focusSurfaceForForeignActivation(fake.window, COMPACT_WIDGET_TOPMOST_LEVEL);
 
+    expect(COMPACT_WIDGET_TOPMOST_LEVEL).toBe('screen-saver');
     expect(release).toBeTypeOf('function');
     expect(fake.calls).toEqual(['focusable:true', 'focus']);
 
@@ -54,7 +56,7 @@ describe('focusSurfaceForForeignActivation', () => {
       'focusable:true',
       'focus',
       'focusable:false',
-      'topmost:true:floating',
+      'topmost:true:screen-saver',
       'moveTop',
     ]);
     expect(fake.window.isFocusable()).toBe(false);
@@ -65,13 +67,28 @@ describe('focusSurfaceForForeignActivation', () => {
       'focusable:true',
       'focus',
       'focusable:false',
-      'topmost:true:floating',
+      'topmost:true:screen-saver',
       'moveTop',
-      'topmost:true:floating',
+      'topmost:true:screen-saver',
       'moveTop',
-      'topmost:true:floating',
+      'topmost:true:screen-saver',
       'moveTop',
     ]);
+  });
+
+  it('wires compact widget creation and activation to the strongest topmost band', async () => {
+    const source = await readFile(new URL('../../src/main/index.ts', import.meta.url), 'utf8');
+    expect(source.match(/setAlwaysOnTop\(true, COMPACT_WIDGET_TOPMOST_LEVEL\)/g)).toHaveLength(2);
+    expect(source).toMatch(/surface\?\.kind === COMPACT_WIDGET_SURFACE_KIND \? COMPACT_WIDGET_TOPMOST_LEVEL : 'floating'/);
+  });
+
+  it('keeps the old floating default for unrelated topmost surfaces', async () => {
+    const fake = fakeWindow({ focusable: false, alwaysOnTop: true });
+    const release = await focusSurfaceForForeignActivation(fake.window);
+    release?.();
+
+    expect(fake.calls).toContain('topmost:true:floating');
+    expect(fake.calls).not.toContain('topmost:true:screen-saver');
   });
 
   it('does not accidentally pin an ordinary project surface', async () => {
@@ -85,14 +102,14 @@ describe('focusSurfaceForForeignActivation', () => {
 
   it('restores the original policy if taking focus itself fails', async () => {
     const fake = fakeWindow({ focusable: false, alwaysOnTop: true, focusThrows: true });
-    const release = await focusSurfaceForForeignActivation(fake.window);
+    const release = await focusSurfaceForForeignActivation(fake.window, COMPACT_WIDGET_TOPMOST_LEVEL);
 
     expect(release).toBeNull();
     expect(fake.calls).toEqual([
       'focusable:true',
       'focus',
       'focusable:false',
-      'topmost:true:floating',
+      'topmost:true:screen-saver',
       'moveTop',
     ]);
   });
