@@ -108,6 +108,18 @@ export function createWebBrowserHostBridge(input: {
     if (session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
     session.view.setBounds(absoluteRect(session.surfaceBounds, session.localRect));
   };
+
+  // A browser view may be physically reused across repeated opens, but the
+  // caller's sessionId is a lease, not the lifetime identity of that view.
+  // Rotate the lease on every reuse so an async close from an older render
+  // cannot tear down the browser now owned by a newer render.
+  const renewLease = (session: LiveWebBrowser): void => {
+    const previousId = session.id;
+    if (sessions.get(previousId) === session) sessions.delete(previousId);
+    session.id = randomUUID();
+    sessions.set(session.id, session);
+    owners.set(session.ownerKey, session.id);
+  };
   const closeOwner = (ownerKey: string): void => {
     const id = owners.get(ownerKey);
     const session = id ? sessions.get(id) : undefined;
@@ -132,6 +144,7 @@ export function createWebBrowserHostBridge(input: {
           existing.presented = true;
         }
         place(existing);
+        renewLease(existing);
         if (existing.sourceUrl === url) {
           return { ok: true, sessionId: existing.id, url };
         }
@@ -140,6 +153,7 @@ export function createWebBrowserHostBridge(input: {
           existing.sourceUrl = url;
           return { ok: true, sessionId: existing.id, url };
         } catch (error) {
+          cleanupSession(existing);
           return { ok: false, error: boundedError(error) };
         }
       }
