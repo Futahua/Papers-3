@@ -10,6 +10,7 @@ import {
   BACKPACK_PROJECT_SCHEME,
   type BackpackProjectService,
 } from '../backpacks/backpackProjectService';
+import { FILE_PREVIEW_SCHEME } from '../backpacks/filePreviewResources';
 
 const mimeByExtension: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -35,15 +36,27 @@ export function registerBackpackProjectSchemePrivileges(): void {
         corsEnabled: false,
       },
     },
+    {
+      scheme: FILE_PREVIEW_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: false,
+        stream: true,
+        allowExtensions: true,
+      },
+    },
   ]);
 }
 
 /**
  * `connect-src` is the ONE relaxation, and it is deliberately narrow.
  *
- * Every other directive stays as tight as it was: no remote scripts, no remote
- * styles, no frames, no forms, no base. What changes is that a project page may
- * open a connection to a service on THIS MACHINE.
+ * Remote scripts/styles/forms/base remain denied. Project pages may connect
+ * only to loopback services. Rich local previews may use in-memory `blob:` URLs;
+ * `data:` frames and remote frame origins remain denied
+ * unless an embedded Backpack origin was explicitly registered.
  *
  * Why loopback rather than 'none': a Backpack that talks to a service the
  * creator runs is a legitimate shape, and the alternative - a bespoke hole per
@@ -65,17 +78,19 @@ export function registerBackpackProjectSchemePrivileges(): void {
  */
 export function contentSecurityPolicy(origin: string, frameOrigins: readonly string[] = []): string {
   const allowedFrames = frameOrigins.length > 0 ? frameOrigins.join(' ') : "'none'";
+  const previewOrigin = `${FILE_PREVIEW_SCHEME}://${new URL(origin).hostname}`;
   return [
     `default-src 'none'`,
     `script-src ${origin}`,
     `style-src ${origin} 'unsafe-inline'`,
-    `img-src ${origin} data:`,
+    `img-src ${origin} ${previewOrigin} data: blob:`,
+    `media-src ${previewOrigin} blob:`,
     `font-src ${origin}`,
     `connect-src http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*`,
     `object-src 'none'`,
     `base-uri 'none'`,
     `form-action 'none'`,
-    `frame-src ${allowedFrames}`,
+    `frame-src ${allowedFrames === "'none'" ? `${previewOrigin} blob:` : `${allowedFrames} ${previewOrigin} blob:`}`,
   ].join('; ');
 }
 

@@ -4,7 +4,7 @@ import { BackpackSurfaceRegistry, COMPACT_WIDGET_SURFACE_KIND, WORKSPACE_SURFACE
 import { registerCompactWidgetIpc } from '../../src/main/ipc/compactWidgetIpc';
 import type { CompactWidgetSession } from '../../src/main/windows/compactWidgetSession';
 
-function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => Promise<void>, dismissCandidatePicker?: () => Promise<void>) {
+function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, setHoverPolicy?: (senderId: number, enabled: boolean, blockedBindings: readonly string[]) => Promise<void>, dismissCandidatePicker?: () => Promise<void>, updateCandidatePicker?: (sender: { id: number }, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>, pickerId: string) => Promise<boolean | 'applied' | 'buffered' | 'stale' | 'failed'> | boolean | 'applied' | 'buffered' | 'stale' | 'failed') {
   const handlers = new Map<string, (event: { sender: { id: number } }, raw: unknown) => Promise<unknown>>();
   const ipcMain = { handle: vi.fn((channel: string, handler: (event: { sender: { id: number } }, raw: unknown) => Promise<unknown>) => handlers.set(channel, handler)) };
   const registry = new BackpackSurfaceRegistry();
@@ -30,6 +30,7 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, s
     requestHoverQuickRun,
     acknowledgeHoverQuickRunSeal,
     dismissCandidatePicker,
+    updateCandidatePicker,
   });
   const invoke = (channel: string, senderId: number, raw: unknown) => {
     const handler = handlers.get(channel);
@@ -52,6 +53,35 @@ describe('compact widget IPC', () => {
     expect(acknowledged).toBe(false);
     release();
     await expect(pending).resolves.toEqual({ ok: true });
+  });
+
+  it('updates only the matching authenticated picker session', async () => {
+    const updates: unknown[] = [];
+    const h = harness(undefined, undefined, undefined, (sender, candidates, pickerId) => {
+      updates.push({ sender: sender.id, candidates, pickerId });
+      return pickerId === '12345678-1234-1234-1234-123456789abc';
+    });
+    const token = h.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    const candidates = [{ id: 'c1', title: 'Window', icon: null, current: false }];
+    await expect(h.invoke('papers:backpack:window-candidate-picker-update', 2, {
+      token, pickerId: '12345678-1234-1234-1234-123456789abc', candidates,
+    })).resolves.toEqual({ outcome: 'success', delivery: 'applied' });
+    await expect(h.invoke('papers:backpack:window-candidate-picker-update', 2, {
+      token, pickerId: 'ffffffff-ffff-ffff-ffff-ffffffffffff', candidates,
+    })).resolves.toEqual({ outcome: 'stale' });
+    await expect(h.invoke('papers:backpack:window-candidate-picker-update', 1, {
+      projectId: 'bp-a', pickerId: '12345678-1234-1234-1234-123456789abc', candidates,
+    })).rejects.toThrow('denied');
+    expect(updates).toHaveLength(2);
+    expect(updates[0]).toMatchObject({ sender: 2, pickerId: '12345678-1234-1234-1234-123456789abc' });
+  });
+
+  it('acknowledges a pre-load row update as buffered rather than painted', async () => {
+    const h = harness(undefined, undefined, undefined, () => 'buffered');
+    const token = h.registry.register(2, 'bp-a', COMPACT_WIDGET_SURFACE_KIND, 'layout-a');
+    await expect(h.invoke('papers:backpack:window-candidate-picker-update', 2, {
+      token, pickerId: '12345678-1234-1234-1234-123456789abc', candidates: [],
+    })).resolves.toEqual({ outcome: 'success', delivery: 'buffered' });
   });
 
   it('waits for staged authority before widget-open can execute', async () => {

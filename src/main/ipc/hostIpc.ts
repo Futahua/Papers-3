@@ -2,13 +2,58 @@
  * IPC surface for the trusted host frame renderer. Only the host view's
  * WebContents may call these channels.
  */
-import { ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { createHash } from 'node:crypto';
+import { app, clipboard, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { z } from 'zod';
 
 import { backpackNameSchema } from '@shared/schemas';
 import type { PermissionDecision } from '@shared/types';
 import type { HostWorkspaceSurfaceMoveTarget } from '../hostFacade';
 import { parseWorkspaceTopology, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+
+export function parseWindowsClipboardFileDrop(buffer: Buffer): string[] {
+  if (buffer.length < 20) return [];
+  const offset = buffer.readUInt32LE(0);
+  const wide = buffer.readUInt32LE(16) !== 0;
+  if (offset < 20 || offset >= buffer.length) return [];
+  const payload = buffer.subarray(offset);
+  const text = wide ? payload.toString('utf16le') : payload.toString('latin1');
+  return text.split('\0').map((entry) => entry.trim()).filter(Boolean);
+}
+
+export function parseWindowsClipboardFileNameW(buffer: Buffer): string[] {
+  if (buffer.length < 2) return [];
+  return buffer.toString('utf16le').split('\0').map((entry) => entry.trim()).filter(Boolean);
+}
+
+function clipboardPathCandidates(formats: string[]): string[] {
+  const paths: string[] = [];
+  if (formats.includes('FileDrop')) {
+    paths.push(...parseWindowsClipboardFileDrop(clipboard.readBuffer('FileDrop')));
+  }
+  if (paths.length === 0 && formats.includes('FileNameW')) {
+    paths.push(...parseWindowsClipboardFileNameW(clipboard.readBuffer('FileNameW')));
+  }
+  if (paths.length === 0 && formats.includes('FileName')) {
+    const single = clipboard.readBuffer('FileName').toString('utf8').split('\0')[0]?.trim();
+    if (single) paths.push(single);
+  }
+  return [...new Set(paths)].slice(0, 64);
+}
+
+function unquoteClipboardPath(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function clipboardFingerprint(formats: string[], paths: string[], text: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ formats: [...formats].sort(), paths, text }))
+    .digest('hex');
+}
 
 export interface HostFacade {
   /**
@@ -51,11 +96,11 @@ export interface HostFacade {
 
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
   replaceBackpackProject(senderId: number, surfaceId: string, id: string): Promise<unknown>;
-  openBackpackProjectNewSurface(senderId: number, url: string): Promise<unknown>;
+  openBackpackProjectNewSurface(senderId: number, url: string, workspaceOrigin?: string): Promise<unknown>;
   dismissBackpackProjectCommandSurface(senderId: number, destination: 'restore' | 'external' | 'papers'): Promise<void>;
   closeBackpackProject(senderId: number, surfaceId: string): Promise<void>;
   activateBackpackProjectSurface(senderId: number, surfaceId: string): void;
-  showBackpackProjectSurface(senderId: number, surfaceId: string, url: string): Promise<void>;
+  showBackpackProjectSurface(senderId: number, surfaceId: string, url: string, present?: boolean): Promise<void>;
   hideBackpackProjectSurface(senderId: number, surfaceId: string): void;
   setBackpackProjectSurfaceBounds(senderId: number, surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): void;
   requestCloseBackpackProject(senderId: number): Promise<void>;
@@ -87,6 +132,7 @@ export interface HostFacade {
   grantBackpackProjectNativeSource(senderId: number, target: string): Promise<string>;
   openBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
   revealBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
+  callBackpackProjectFileCapability(senderId: number, request: unknown, workspaceOrigin?: string): Promise<unknown>;
   openBackpackProjectWebLink(senderId: number, url: string, workspaceOrigin?: string): Promise<void>;
   resolveBackpackProjectDroppedTargets(
     senderId: number,
@@ -177,6 +223,10 @@ const backpackProjectNativeSourceRefSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const backpackProjectWriterLeaseTokenSchema = backpackProjectNativeSourceRefSchema;
+const backpackProjectFileCapabilitySchema = z.object({
+  operation: z.string().min(1).max(64),
+  params: z.record(z.string(), z.unknown()).optional(),
+}).strict();
 export const hostWorkspaceSurfaceMoveTargetSchema = z.object({
   surfaceId: surfaceIdSchema,
   targetWindowId: z.number().int().nonnegative(),
@@ -185,6 +235,7 @@ export const hostWorkspaceSurfaceMoveTargetSchema = z.object({
 }).strict();
 export const commandSurfaceDismissDestinationSchema = z.enum(['restore', 'external', 'papers']);
 const backpackProjectDroppedPathsSchema = z.array(z.string().min(1).max(32_768)).min(1).max(64);
+const backpackProjectNativeDragPathsSchema = backpackProjectDroppedPathsSchema;
 const delegateWaveRequestSchema = z
   .object({
     backpackId: z.string().min(1).max(256),
@@ -257,8 +308,12 @@ export function registerHostIpc(facade: HostFacade): void {
   handle('host:backpack-project:open', (event, id) =>
     facade.openBackpackProject(event.sender.id, backpackRemovalIdSchema.parse(id)),
   );
-  handle('host:backpack-project:open-new-surface', (event, url) =>
-    facade.openBackpackProjectNewSurface(event.sender.id, z.string().url().max(2_048).parse(url)),
+  handle('host:backpack-project:open-new-surface', (event, url, workspaceOrigin) =>
+    facade.openBackpackProjectNewSurface(
+      event.sender.id,
+      z.string().url().max(2_048).parse(url),
+      backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
+    ),
     true,
   );
   handle('host:backpack-project:command-surface-dismiss', (event, destination) =>
@@ -276,11 +331,12 @@ export function registerHostIpc(facade: HostFacade): void {
   );
   // A0.2: the host names its target. No inference from "the window's only
   // surface" -- that would work until a second one existed.
-  handle('host:backpack-project:show-surface', (event, surfaceId, url) =>
+  handle('host:backpack-project:show-surface', (event, surfaceId, url, present = true) =>
     facade.showBackpackProjectSurface(
       event.sender.id,
       surfaceIdSchema.parse(surfaceId),
       z.string().url().max(2_048).parse(url),
+      z.boolean().parse(present),
     ),
   );
   handle('host:backpack-project:set-surface-bounds', (event, surfaceId, bounds) =>
@@ -402,6 +458,67 @@ export function registerHostIpc(facade: HostFacade): void {
       backpackProjectNativeSourceRefSchema.parse(sourceRef),
     ),
   );
+  handle('host:backpack-project:file-capability', async (event, request, workspaceOrigin) => {
+    const parsedRequest = backpackProjectFileCapabilitySchema.parse(request);
+    const parsedWorkspaceOrigin = backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin);
+    if (parsedRequest.operation === 'clipboard-read') {
+      const formats = clipboard.availableFormats();
+      const paths = clipboardPathCandidates(formats);
+      const text = clipboard.readText().trim().slice(0, 32_768);
+      const fingerprint = clipboardFingerprint(formats, paths, text);
+
+      if (paths.length > 0) {
+        try {
+          const targets = await facade.resolveBackpackProjectDroppedTargets(
+            event.sender.id,
+            paths,
+            parsedWorkspaceOrigin,
+          );
+          if (targets.length > 0) return { ok: true, kind: 'files', targets, fingerprint };
+        } catch {
+          // Some clipboard providers expose stale/virtual FileDrop entries.
+          // Fall through to text, which may still contain a usable path or URL.
+        }
+      }
+
+      if (text) {
+        const possiblePath = unquoteClipboardPath(text);
+        try {
+          const targets = await facade.resolveBackpackProjectDroppedTargets(
+            event.sender.id,
+            [possiblePath],
+            parsedWorkspaceOrigin,
+          );
+          if (targets.length > 0) return { ok: true, kind: 'files', targets, fingerprint };
+        } catch {
+          // Not a live machine path: AYG deliberately treats it as a web link.
+        }
+        return { ok: true, kind: 'text', text, fingerprint };
+      }
+
+      return { ok: true, kind: 'empty', fingerprint };
+    }
+    if (parsedRequest.operation === 'native-drag') {
+      const paths = backpackProjectNativeDragPathsSchema.parse(parsedRequest.params?.['paths']);
+      for (const target of paths) {
+        const checked = await facade.callBackpackProjectFileCapability(
+          event.sender.id,
+          { operation: 'stat', params: { path: target } },
+          parsedWorkspaceOrigin,
+        ) as { ok?: boolean };
+        if (checked?.ok !== true) return checked;
+      }
+      const firstTarget = paths[0]!;
+      const icon = await app.getFileIcon(firstTarget, { size: 'small' });
+      event.sender.startDrag({ file: firstTarget, files: paths, icon });
+      return { ok: true, count: paths.length };
+    }
+    return facade.callBackpackProjectFileCapability(
+      event.sender.id,
+      parsedRequest,
+      parsedWorkspaceOrigin,
+    );
+  });
   handle('host:backpack-project:open-web-link', (event, url, workspaceOrigin) =>
     facade.openBackpackProjectWebLink(event.sender.id, backpackProjectWebUrlSchema.parse(url), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
   );

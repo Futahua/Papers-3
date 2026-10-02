@@ -248,6 +248,11 @@ export function App(): React.JSX.Element {
             : surface),
         }));
       }),
+      bridge.events.onWorkspaceProjectIcon(({ surfaceId: changedSurfaceId, icon }) => {
+        setOpenProjects((projects) => projects.map((project) => project.surfaceId === changedSurfaceId
+          ? { ...project, icon }
+          : project));
+      }),
       bridge.events.onHermesSurface(setHermes),
       bridge.events.onHostError((e) => setHostErrors((prev) => [...prev, e])),
     ];

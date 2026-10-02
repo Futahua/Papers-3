@@ -171,6 +171,8 @@ export interface FacadeDeps {
   updater: PapersUpdater;
   registry: BackpackRegistry;
   backpackProjects: BackpackProjectService;
+  fileCapability: { call(request: unknown, context: { backpackId: string; nativePreviewHost?: { ownerKey: string; parentHwnd: string; surfaceBounds: { x: number; y: number; width: number; height: number } } }): Promise<Record<string, unknown>> };
+  filePreviewHostForSender?: (senderId: number) => { ownerKey: string; parentHwnd: string; surfaceBounds: { x: number; y: number; width: number; height: number } } | null;
   delegateWave: DelegateWaveRelay;
   isBackpackProjectSender: (sender: WebContents) => boolean;
   /**
@@ -187,7 +189,7 @@ export interface FacadeDeps {
   ) => 'allow' | 'not-a-project-sender' | 'capability-not-granted';
   /** Phase 1B: both take the asking sender, so they act on THAT window's
    * project runtime instead of implicitly meaning "the one runtime". */
-  showBackpackProjectSurface: (senderId: number, surfaceId: string, url: string) => Promise<void>;
+  showBackpackProjectSurface: (senderId: number, surfaceId: string, url: string, present?: boolean) => Promise<void>;
   hideBackpackProjectSurface: (senderId: number, surfaceId: string) => void;
   setBackpackProjectSurfaceBounds: (
     senderId: number,
@@ -867,11 +869,12 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.runProjectOwnership(id, () => this.openBackpackProjectUngated(senderId, id));
   }
 
-  /** Project-owned request for another Papers tab. The project may choose only
-   * a URL on its own authenticated backpack origin; Papers creates the generic
-   * workspace surface and routes the URL without understanding project data. */
-  async openBackpackProjectNewSurface(senderId: number, url: string): Promise<unknown> {
-    const projectId = this.requireProjectForSender(senderId);
+  /** Project-owned request for another Papers tab. A nested authorized
+   * workspace may open another tab on the scoped Backpack origin; otherwise
+   * the sender may choose only its own authenticated Backpack origin. */
+  async openBackpackProjectNewSurface(senderId: number, url: string, workspaceOrigin?: string): Promise<unknown> {
+    const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    const projectId = scope?.backpackId ?? this.requireProjectForSender(senderId);
     const context = this.deps.surfaces.contextForSender(senderId);
     if (!context) throw new Error('Enter a Backpack project before opening another tab.');
     let parsed: URL;
@@ -1043,7 +1046,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
    * The frame binding that follows is then a consequence of an identity
    * already checked, not a second source of truth.
    */
-  async showBackpackProjectSurface(senderId: number, surfaceId: string, url: string): Promise<void> {
+  async showBackpackProjectSurface(senderId: number, surfaceId: string, url: string, present = true): Promise<void> {
     const { projectId } = this.requireHostSurfaceTarget(senderId, surfaceId);
     let parsed: URL;
     try {
@@ -1054,7 +1057,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || parsed.host !== projectId) {
       throw new Error('This surface may not show another Backpack project.');
     }
-    await this.deps.showBackpackProjectSurface(senderId, surfaceId, url);
+    await this.deps.showBackpackProjectSurface(senderId, surfaceId, url, present);
   }
 
   /**
@@ -1290,6 +1293,17 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
   async revealBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void> {
     await this.deps.backpackProjects.revealNativeSource(this.requireProjectForSender(senderId), sourceRef);
+  }
+
+  async callBackpackProjectFileCapability(
+    senderId: number,
+    request: unknown,
+    workspaceOrigin?: string,
+  ): Promise<Record<string, unknown>> {
+    const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
+    const backpackId = scope?.backpackId ?? this.requireProjectForSender(senderId);
+    const nativePreviewHost = this.deps.filePreviewHostForSender?.(senderId) ?? undefined;
+    return this.deps.fileCapability.call(request, { backpackId, ...(nativePreviewHost ? { nativePreviewHost } : {}) });
   }
 
   async openBackpackProjectWebLink(senderId: number, url: string, workspaceOrigin?: string): Promise<void> {

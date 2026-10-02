@@ -517,11 +517,26 @@ function Get-WhWindowObservation([IntPtr]$hWnd) {
   elseif ([WH.Win32]::IsIconic($hWnd)) { $state = 'minimized' }
   $processPath = $null
   $processStartTicks = $null
-  try {
-    $process = Get-Process -Id ([int]$pidValue) -ErrorAction Stop
-    $processPath = $process.Path
-    $processStartTicks = [string]$process.StartTime.ToUniversalTime().Ticks
-  } catch { }
+  # ONE PROCESS QUERY PER PID PER REQUEST, not one per window. Opening a fresh
+  # process object for every window - and asking it for StartTime and Path - is what
+  # made an enumeration outlast the caller's own deadline: the answers arrived after
+  # the client had already given up and forgotten the request. Most windows on this
+  # desktop share a handful of processes, so this is the same answer for a fraction
+  # of the work. The cache is cleared at the start of every request, so a recycled
+  # pid can never be reported with a dead process's identity.
+  if ($script:WhProcessInfo -and $script:WhProcessInfo.ContainsKey([int]$pidValue)) {
+    $cachedInfo = $script:WhProcessInfo[[int]$pidValue]
+    $processPath = $cachedInfo.path
+    $processStartTicks = $cachedInfo.ticks
+  } else {
+    try {
+      $process = Get-Process -Id ([int]$pidValue) -ErrorAction Stop
+      $processPath = $process.Path
+      $processStartTicks = [string]$process.StartTime.ToUniversalTime().Ticks
+    } catch { }
+    if (-not $script:WhProcessInfo) { $script:WhProcessInfo = @{} }
+    $script:WhProcessInfo[[int]$pidValue] = @{ path = $processPath; ticks = $processStartTicks }
+  }
   # UWP frame windows belong to ApplicationFrameHost, whose executable icon
   # is generic. The exact frame's CoreWindow child belongs to the app itself.
   # This path is artwork metadata only; operation authority stays on the

@@ -1,12 +1,25 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, globalShortcut, ipcMain, nativeImage, net, screen, session, shell, webContents, type WebContents } from 'electron';
+import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell, webContents, type WebContents } from 'electron';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
+import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from './backpacks/everythingSearchBridge';
+import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
+import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
+import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
+import { createHtmlPreviewHostBridge } from './backpacks/htmlPreviewHostBridge';
+import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
+import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
+import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
+import { createCalibrePreviewBridge } from './backpacks/calibrePreviewBridge';
+import { createAutoCadPreviewBridge } from './backpacks/autoCadPreviewBridge';
+import { createMlightCadPreviewBridge } from './backpacks/mlightCadPreviewBridge';
+import { createPowerPointPreviewBridge } from './backpacks/powerPointPreviewBridge';
+import { createWindowsPreviewHandlerBridge, resolveWindowsPreviewHostSourcePath } from './backpacks/windowsPreviewHandlerBridge';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
 import { BackpackProjectSurfaceCollection } from './backpacks/backpackProjectSurfaceCollection';
@@ -30,7 +43,8 @@ import { PapersHostFacade } from './hostFacade';
 import { PapersUpdater } from './papersUpdater';
 import { createPapersControlEventHub, startPapersControlServer, type PapersControlEventHub, type PapersControlServer } from './control/papersControlServer';
 import { papersDataDirArgument } from './papersDataDir';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { createCandidatePickerDelivery, type CandidatePickerDeliveryResult } from './windows/candidatePickerDelivery';
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
@@ -78,6 +92,7 @@ import {
 } from './backpacks/commandSurfaceRegistry';
 import { createLauncherNominationStore } from './backpacks/launcherNominationStore';
 import { bringFirstWindowToFront, bringWindowToFront } from './windows/windowFront';
+import { defaultWindowGeometryJournal } from './windows/windowGeometryJournal';
 import {
   COMMAND_SURFACE_HEIGHT as COMMAND_SURFACE_OVERLAY_HEIGHT,
   COMMAND_SURFACE_INVOKE_CHANNEL,
@@ -86,9 +101,11 @@ import {
   type CommandSurfaceOverlaySession,
 } from './windows/commandSurfaceOverlay';
 import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './windows/foregroundBridge';
+import { COMPACT_WIDGET_TOPMOST_LEVEL, focusSurfaceForForeignActivation } from './windows/activationSurfaceFocus';
 import { createHoverInputBridge, resolveHoverInputBridgeSourcePath, type HoverInputBridge } from './windows/hoverInputBridge';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
+import { createWindowControlBroker, resolveWindowControlSourcePath } from './windows/windowControlBroker';
 import { createWindowCandidatePeekController } from './windows/windowCandidatePeekController';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
 import { createWindowDetachSession, isAllowedDetachedNavigation, type WindowDetachSession } from './windows/windowDetachSession';
@@ -635,6 +652,104 @@ async function bootstrap(): Promise<void> {
     },
   );
   installBackpackProjectProtocol(backpackProjects);
+  const filePreviewResources = createFilePreviewResourceRegistry();
+  protocol.handle(FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler(filePreviewResources));
+  app.once('will-quit', () => { void filePreviewResources.dispose(); });
+
+  const everythingPaths = resolveEverythingSearchBridgePaths({
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath,
+    packaged: app.isPackaged,
+  });
+  const fileCapabilityCacheDirectory = path.join(paths.root, 'native', 'file-capability');
+  const everythingSearch = createEverythingSearchBridge({
+    cacheDirectory: fileCapabilityCacheDirectory,
+    sourcePath: everythingPaths.sourcePath,
+    dllPath: everythingPaths.dllPath,
+  });
+  const revitPreview = createRevitPreviewBridge({
+    cacheDirectory: fileCapabilityCacheDirectory,
+    sourcePath: resolveRevitPreviewBridgeSourcePath({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
+    }),
+  });
+  const shellThumbnail = createShellThumbnailBridge({
+    cacheDirectory: fileCapabilityCacheDirectory,
+    sourcePath: resolveShellThumbnailSourcePath({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
+    }),
+  });
+  const calibrePreview = createCalibrePreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
+  const autoCadPreview = createAutoCadPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
+  const mlightCadPreview = createMlightCadPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
+  const powerPointPreview = createPowerPointPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
+  const windowsPreview = createWindowsPreviewHandlerBridge({
+    cacheDirectory: fileCapabilityCacheDirectory,
+    sourcePath: resolveWindowsPreviewHostSourcePath({
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      packaged: app.isPackaged,
+    }),
+  });
+  app.once('will-quit', () => windowsPreview?.dispose());
+  const pdfPreview = createPdfPreviewHostBridge({
+    resolveWindow: (ownerKey) => {
+      const separator = ownerKey.indexOf(':');
+      if (separator <= 0) return null;
+      const windowId = Number(ownerKey.slice(0, separator));
+      if (!Number.isSafeInteger(windowId)) return null;
+      return papersWindows.get(windowId)?.owned.window ?? null;
+    },
+    stateDirectory: path.join(paths.root, 'preview-state', 'pdf'),
+  });
+  app.once('will-quit', () => pdfPreview.dispose());
+  const htmlPreview = createHtmlPreviewHostBridge({
+    resolveWindow: (ownerKey) => {
+      const separator = ownerKey.indexOf(':');
+      if (separator <= 0) return null;
+      const windowId = Number(ownerKey.slice(0, separator));
+      if (!Number.isSafeInteger(windowId)) return null;
+      return papersWindows.get(windowId)?.owned.window ?? null;
+    },
+  });
+  app.once('will-quit', () => htmlPreview.dispose());
+  const webBrowser = createWebBrowserHostBridge({
+    resolveWindow: (ownerKey) => {
+      const separator = ownerKey.indexOf(':');
+      if (separator <= 0) return null;
+      const windowId = Number(ownerKey.slice(0, separator));
+      if (!Number.isSafeInteger(windowId)) return null;
+      return papersWindows.get(windowId)?.owned.window ?? null;
+    },
+  });
+  app.once('will-quit', () => webBrowser.dispose());
+  const fileCapability = createFileCapabilityService({
+    cacheDirectory: fileCapabilityCacheDirectory,
+    everythingSearch,
+    previewResources: filePreviewResources,
+    pdfPreview,
+    revitPreview,
+    shellThumbnail,
+    calibrePreview,
+    autoCadPreview,
+    mlightCadPreview,
+    htmlPreview,
+    webBrowser,
+    powerPointPreview,
+    windowsPreview,
+    dopusrtPath: resolveDirectoryOpusRtPath(),
+    libreOfficePath: resolveLibreOfficePath(),
+    openPath: (target) => shell.openPath(target),
+    revealPath: (target) => shell.showItemInFolder(target),
+    fileIcon: async (target) => {
+      const icon = await app.getFileIcon(target, { size: 'small' });
+      return icon.isEmpty() ? null : icon.toDataURL();
+    },
+  });
 
   const permissionStore = new PermissionStore(paths);
   await permissionStore.initialize();
@@ -783,6 +898,12 @@ async function bootstrap(): Promise<void> {
   const onProjectTitleChanged = (windowId: number, surfaceId: string, senderId: number, title: string): void => {
     void facade.updateWorkspaceSurfaceTitle(windowId, surfaceId, senderId, title);
   };
+  const onProjectFaviconChanged = (windowId: number, surfaceId: string, senderId: number, urls: string[]): void => {
+    const runtime = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId);
+    if (!runtime || runtime.senderId !== senderId) return;
+    const icon = urls.find((url) => /^data:image\/(?:png|webp|svg\+xml);base64,/i.test(url) && url.length <= 256 * 1024) ?? null;
+    papersWindows.get(windowId)?.owned.hostView.webContents.send('host:event:workspace-project-icon', { surfaceId, icon });
+  };
   const makePapersWindow = (bounds?: WindowBounds) => {
     const instance = createPapersWindow({
       bounds,
@@ -798,6 +919,7 @@ async function bootstrap(): Promise<void> {
       onProjectLifecycleEvent,
       onProjectRendererGone,
       onProjectTitleChanged,
+      onProjectFaviconChanged,
     });
     if (process.env['PAPERS_DEV_CONTROL'] === '1') {
       const windowId = instance.window.id;
@@ -1314,13 +1436,23 @@ async function bootstrap(): Promise<void> {
       ]);
     },
     closeAttachedProjectSurface: async (windowId, surfaceId, options) => {
+      windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
+      pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
+      htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
+      webBrowser.closeOwner(`${windowId}:${surfaceId}`);
       await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
     projectEntryUrlForSurface: (windowId, surfaceId) =>
       papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForSurface(surfaceId) ?? null,
     closeBackpackProjectSurface: async (senderId, surfaceId) => {
       const windowId = papersWindows.windowForSender(senderId);
-      if (windowId !== null) await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
+      if (windowId !== null) {
+        windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
+        pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
+        htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
+        webBrowser.closeOwner(`${windowId}:${surfaceId}`);
+        await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
+      }
     },
     restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
     setHermesDockOwner: (windowId) => papersWindows.setHermesDockOwner(windowId),
@@ -1331,6 +1463,18 @@ async function bootstrap(): Promise<void> {
     updater,
     registry,
     backpackProjects,
+    fileCapability,
+    filePreviewHostForSender: (senderId) => {
+      const context = surfaceContexts.contextForSender(senderId);
+      if (!context?.surfaceId) return null;
+      const owner = papersWindows.get(context.windowId)?.owned;
+      const runtime = owner?.projectSurfaces.get(context.surfaceId);
+      const surfaceBounds = runtime?.currentBounds;
+      if (!owner || !surfaceBounds || owner.window.isDestroyed()) return null;
+      const handle = owner.window.getNativeWindowHandle();
+      const parentHwnd = handle.length >= 8 ? handle.readBigUInt64LE(0).toString() : BigInt(handle.readUInt32LE(0)).toString();
+      return { ownerKey: `${context.windowId}:${context.surfaceId}`, parentHwnd, surfaceBounds };
+    },
     // Environment-only: URL, operator token and the one permitted Backpack id
     // live in main and are never persisted, logged or exposed to a renderer.
     delegateWave: new DelegateWaveRelay(
@@ -1367,7 +1511,7 @@ async function bootstrap(): Promise<void> {
     windowIdForSender: (senderId) => papersWindows.windowForSender(senderId)
       ?? surfaceContexts.contextForSender(senderId)?.windowId
       ?? null,
-    showBackpackProjectSurface: async (senderId, surfaceId, url) => {
+    showBackpackProjectSurface: async (senderId, surfaceId, url, present = true) => {
       const runtime = runtimeForHostSurface(senderId, surfaceId);
       if (!runtime) throw new Error('This surface has no Papers window.');
       const owningWindowId = papersWindows.windowForSender(senderId)
@@ -1376,6 +1520,7 @@ async function bootstrap(): Promise<void> {
       let stagedFrameSender: number | null = null;
       try {
         await runtime.show(url, {
+          present,
           beforeLoad: (nextFrameSender) => {
             stagedFrameSender = nextFrameSender;
             const projectId = runtime.liveProjectId;
@@ -1393,6 +1538,12 @@ async function bootstrap(): Promise<void> {
             bindVisualSemanticKeySender(owningWindowId, surfaceId, nextFrameSender);
           },
         });
+        if (owningWindowId !== null) {
+          windowsPreview?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+          pdfPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+          htmlPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+          webBrowser.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+        }
       } catch (caught) {
         if (stagedFrameSender !== null) surfaceContexts.unbind(stagedFrameSender);
         throw caught;
@@ -1430,11 +1581,23 @@ async function bootstrap(): Promise<void> {
       // The facade has already validated the target; resolve it again here so
       // one host can never hide another surface in the same native window.
       const windowId = papersWindows.windowForSender(senderId);
-      if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
+      if (windowId !== null) {
+        papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
+        windowsPreview?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+        pdfPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+        htmlPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+        webBrowser.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+      }
     },
     setBackpackProjectSurfaceBounds: (senderId, surfaceId, bounds) => {
       const windowId = papersWindows.windowForSender(senderId);
-      if (windowId !== null) papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
+      if (windowId !== null) {
+        papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
+        windowsPreview?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+        pdfPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+        htmlPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+        webBrowser.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+      }
     },
     setHostOverlayActive: (windowId, active, owner = 'legacy') => {
       const context = papersWindows.get(windowId);
@@ -1447,7 +1610,12 @@ async function bootstrap(): Promise<void> {
 
       applyHostViewBackground(windowId, context.owned.hostView);
       if (owners.size > 0) context.owned.window.contentView.addChildView(context.owned.hostView);
-      else context.owned.projectSurfaces.raisePresented();
+      else {
+        context.owned.projectSurfaces.raisePresented();
+        pdfPreview.raiseWindow(windowId);
+        htmlPreview.raiseWindow(windowId);
+        webBrowser.raiseWindow(windowId);
+      }
     },
     runtime,
     canvasState,
@@ -1511,12 +1679,67 @@ async function bootstrap(): Promise<void> {
     // shell by its fixed native title; same-process picker, widget, preview and
     // overlay utility windows retain empty/data titles and remain ineligible.
     allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
+    // Bringing a member's window forward is done by Papers itself, because
+    // Papers owns the click that asked for it. Windows refuses a foreground
+    // switch from a background worker, and a refusal flashes the taskbar button
+    // instead of raising the window.
+    foregroundBridge: () => foregroundBridge,
+  });
+  const windowControlBroker = createWindowControlBroker({
+    cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
+    sourcePath: resolveWindowControlSourcePath({
+      appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged,
+    }),
+    onUnavailable: (reason) => {
+      for (const sender of webContents.getAllWebContents()) {
+        if (isProjectSurfaceSender(sender) && !sender.isDestroyed()) {
+          sender.send('papers:window-control:unavailable', reason);
+        }
+      }
+    },
   });
   registerWindowCapabilityIpc({
     ipcMain,
     service: windowCapabilityService,
     isSender: isProjectSurfaceSender,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
+    controlBroker: windowControlBroker,
+    // The native foreground bridge takes a HANDLE, and the broker's registration has
+    // already proved one for every member - so activation costs one native process
+    // and never touches the window helper.
+    activateForeground: () => foregroundBridge,
+    // PAPERS TAKES THE FOREGROUND FOR THE ONE PRESS THAT NEEDS ACTIVATION.
+    //
+    // Windows hands the foreground only to a process that is foreground-eligible, and
+    // a resident background broker never is. The bridge is spawned BY Papers, so if
+    // Papers owns the foreground at that instant the child inherits the eligibility.
+    // Released immediately afterwards, so the widget does not stay focusable and
+    // ordinary icon clicks still never steal focus.
+    focusForActivation: async (sender) => {
+      const owner = BrowserWindow.fromWebContents(sender);
+      if (!owner || owner.isDestroyed()) return null;
+      const surface = widgetRegistry.surface(sender.id);
+      return focusSurfaceForForeignActivation(
+        owner,
+        surface?.kind === COMPACT_WIDGET_SURFACE_KIND ? COMPACT_WIDGET_TOPMOST_LEVEL : 'floating',
+      );
+    },
+    resolveControlSurface: (sender, rect) => {
+      const owner = BrowserWindow.fromWebContents(sender);
+      if (!owner || owner.isDestroyed() || !owner.isVisible()) return null;
+      const handle = owner.getNativeWindowHandle();
+      const ownerHwnd = Number(handle.length >= 8 ? handle.readBigUInt64LE(0) : BigInt(handle.readUInt32LE(0)));
+      const content = owner.getContentBounds();
+      const a = screen.dipToScreenPoint({ x: Math.round(content.x + rect.x), y: Math.round(content.y + rect.y) });
+      const b = screen.dipToScreenPoint({ x: Math.round(content.x + rect.x + rect.width), y: Math.round(content.y + rect.y + rect.height) });
+      return { ownerHwnd, hit: { x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y } };
+    },
+    // A project hover preview uses Papers' own always-on-top preview window
+    // instead of an in-page popover, which could only ever be as visible as the
+    // project window itself. Same primitive the compact widget uses; placed
+    // from the hovered element rather than from the whole window.
+    showProjectPreview: (sender, preview) => showPreviewWindow(sender, preview, 'anchor'),
+    hideProjectPreview: (senderId) => hideWidgetPreview(senderId),
     resolveCallerHwnd: (sender) => {
       const owner = BrowserWindow.fromWebContents(sender);
       if (!owner || owner.isDestroyed()) return null;
@@ -1714,16 +1937,6 @@ async function bootstrap(): Promise<void> {
     // Owner-scoped: the entry URL comes from that window's own runtime.
     resolveEntryUrl: (projectId, owningWindowId) =>
       papersWindows.get(owningWindowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null,
-    activateWindow: async (window) => {
-      const result = await bringWindowToFront(window, {
-        platform: process.platform,
-        nativeForeground: foregroundBridge ?? undefined,
-        nativeActivationAttempts: 10,
-        nativeActivationRetryDelayMs: 75,
-      });
-      if (!result.ok) console.warn(`[papers] Alt+Q widget activation failed: ${result.detail}`);
-      return result.ok;
-    },
     createWindow: ({ bounds, preloadPath: widgetPreloadPath, projectId, owningWindowId }) => {
       const widgetWindow = new BrowserWindow({
         x: bounds.x,
@@ -1747,6 +1960,18 @@ async function bootstrap(): Promise<void> {
         // Codex-pet behavior: the detached control remains available above
         // ordinary application windows without stealing focus.
         alwaysOnTop: true,
+        // NON-ACTIVATING, which is what "without stealing focus" actually means
+        // and what the project already assumes ("the detached widget is
+        // deliberately non-focusable"; Shift Peek reads modifier state from
+        // pointer events because widget keydown is unreliable). Electron defaults
+        // this to true, so a click on the widget made it the FOREGROUND - and the
+        // widget then took the foreground back from the window the click had just
+        // asked for, between 100ms and 300ms later. Windows decides mouse
+        // activation at WM_MOUSEACTIVATE, before the page ever sees the click, so
+        // this cannot be fixed per-gesture. Being in front and taking the keyboard
+        // are independent: the widget stays topmost and every mouse gesture still
+        // lands.
+        focusable: false,
         skipTaskbar: true,
         minWidth: COMPACT_WIDGET_MIN_WIDTH,
         minHeight: COMPACT_WIDGET_MIN_HEIGHT,
@@ -1760,7 +1985,7 @@ async function bootstrap(): Promise<void> {
         },
       });
       widgetWindow.setMenuBarVisibility(false);
-      widgetWindow.setAlwaysOnTop(true, 'floating');
+      widgetWindow.setAlwaysOnTop(true, COMPACT_WIDGET_TOPMOST_LEVEL);
       widgetWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       // 019F: fail-closed widget navigation guard - allow ONLY the exact
       // papers-backpack: scheme with the exact registered project host; every
@@ -1774,7 +1999,17 @@ async function bootstrap(): Promise<void> {
         }
       });
       widgetWindow.once('ready-to-show', () => {
-        if (!widgetWindow.isDestroyed()) widgetWindow.showInactive();
+        if (!widgetWindow.isDestroyed() && !widgetWindow.isMinimized()) {
+          widgetWindow.showInactive();
+          // Re-assert topmost AFTER the window is shown. `alwaysOnTop: true` and
+          // the setAlwaysOnTop call at construction stopped taking effect once
+          // the window became non-activating: measured with the native styles,
+          // the widget came up with NOACTIVATE set and TOPMOST CLEARED, so it
+          // sank behind ordinary windows and clicks landed on whatever was in
+          // front of it. Being in front and being focusable are independent, and
+          // this is the pair the creator actually wants.
+          widgetWindow.setAlwaysOnTop(true, COMPACT_WIDGET_TOPMOST_LEVEL);
+        }
       });
       bindOwnedProjectSurface(widgetWindow, projectId, 'widget', owningWindowId);
       return widgetWindow;
@@ -1954,12 +2189,15 @@ async function bootstrap(): Promise<void> {
   hoverInputBridge = createHoverInputBridge({
     cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
     sourcePath: resolveHoverInputBridgeSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
-    onAltQ: () => {
-      void widgetSession?.bringLatestToCursor().then((activated) => {
-        if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
-      }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
+    onAltQ: (widgetSenderId) => {
+      const activation = widgetSession?.beginAltQGesture(widgetSenderId);
+      if (activation) {
+        void activation.then((activated) => {
+          if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
+        }).catch((error: unknown) => console.warn('[papers] Alt+Q widget activation rejected', error));
+      }
     },
-    onAltQRelease: () => widgetSession?.stopFollowing(),
+    onAltQRelease: () => widgetSession?.endAltQGesture(),
     onCaptured: async (senderId, _captureId, text) => {
       const result = await beginHoverCapture(senderId, text, true);
       if (!result.ok) throw new Error(result.detail);
@@ -1971,18 +2209,174 @@ async function bootstrap(): Promise<void> {
     onError: (message) => console.warn(`[papers] ${message}`),
   });
   const widgetPreviewWindows = new Map<number, BrowserWindow>();
+  type PickerCandidate = { id: string; title: string; icon: string | null; current: boolean };
   type CandidatePickerSession = {
     window: BrowserWindow;
+    pickerId: string;
     candidateIds: Set<string>;
+    documentReady: boolean;
+    delivery?: ReturnType<typeof createCandidatePickerDelivery<PickerCandidate>>;
     resolve: ((result: { action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }) => void) | null;
     dismiss?: () => void;
   };
   const candidatePickerSessions = new Map<number, CandidatePickerSession>();
+  const makeCandidatePickerDelivery = (senderId: number, session: CandidatePickerSession) =>
+    createCandidatePickerDelivery<PickerCandidate>(async (candidates) => {
+      if (candidatePickerSessions.get(senderId) !== session || session.window.isDestroyed()) return false;
+      const update = JSON.stringify(candidates).replace(/</g, '\\u003c');
+      const applied = await session.window.webContents.executeJavaScript(
+        `typeof window.__papersPickerUpdate === 'function' && (window.__papersPickerUpdate(${update}), true)`, true,
+      );
+      return applied === true && candidatePickerSessions.get(senderId) === session && !session.window.isDestroyed();
+    });
   const hideWidgetPreview = (senderId: number): void => {
     const preview = widgetPreviewWindows.get(senderId);
     widgetPreviewWindows.delete(senderId);
+    // The signature goes with the window: a later hover must paint, not be
+    // skipped as "already showing".
+    lastPreviewSignature.delete(senderId);
+    previewRevisions.delete(senderId);
     if (preview && !preview.isDestroyed()) preview.destroy();
   };
+  /** Papers' own preview window: transparent, never focused, always on top, and
+   * never in the page - so a hover preview cannot be hidden behind another
+   * window. A widget preview hangs above or below the whole compact widget; a
+   * project preview sits beside the hovered element's own screen rectangle. */
+  /** What the preview currently shows per sender, so an identical repaint is
+   * skipped rather than flashed again. */
+  const lastPreviewSignature = new Map<number, string>();
+  const previewRevisions = new Map<number, number>();
+  const showPreviewWindow = (sender: Electron.WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }, placement: 'widget' | 'anchor'): void => {
+    const previewSignature = createHash('sha256').update(preview.imageUrl).digest('hex')
+      + `|${preview.width}x${preview.height}|${preview.title}`;
+      const pad = 4;
+      const titleHeight = 24;
+      const width = preview.width + (pad * 2);
+      const height = preview.height + titleHeight + (pad * 2);
+      const display = screen.getDisplayMatching({
+        x: Math.round(preview.anchor.x),
+        y: Math.round(preview.anchor.y),
+        width: Math.max(1, Math.round(preview.anchor.width)),
+        height: Math.max(1, Math.round(preview.anchor.height)),
+      });
+      const area = display.workArea;
+      let x = Math.round(preview.anchor.x + (preview.anchor.width / 2) - (width / 2));
+      // A widget preview hangs above or below the WHOLE widget, not the hovered
+      // icon: at the screen top the fallback begins below the widget's bottom
+      // edge, so the name surface can never sit over the preview. A project
+      // preview has no owner to hang from - it sits beside the hovered element's
+      // own screen rectangle.
+      const owner = BrowserWindow.fromWebContents(sender);
+      const ownerBounds = owner && !owner.isDestroyed()
+        ? owner.getBounds()
+        : { x: preview.anchor.x, y: preview.anchor.y, width: preview.anchor.width, height: preview.anchor.height };
+      let y: number;
+      if (placement === 'anchor') {
+        y = Math.round(preview.anchor.y + preview.anchor.height + 8);
+        if (y + height > area.y + area.height) y = Math.round(preview.anchor.y - height - 8);
+      } else {
+        y = Math.round(ownerBounds.y - height - 8);
+        if (y < area.y) y = Math.round(ownerBounds.y + ownerBounds.height + 8);
+      }
+      x = Math.max(area.x, Math.min(area.x + area.width - width, x));
+      y = Math.max(area.y, Math.min(area.y + area.height - height, y));
+      const safeTitle = preview.title
+        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+      const html = `<!doctype html><meta charset="utf-8"><style>
+        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
+        .preview{box-sizing:border-box;margin:${pad}px;width:${preview.width}px;height:${preview.height + titleHeight}px;
+          border:1px solid rgba(140,132,116,.72);border-radius:7px;overflow:hidden;
+          background:#26231f;box-shadow:0 3px 10px rgba(0,0,0,.38);
+          animation:rise 180ms cubic-bezier(.2,.8,.2,1) both}
+        .title{box-sizing:border-box;height:${titleHeight}px;padding:5px 7px;color:#eee9df;
+          font:11px/14px system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        img{display:block;width:${preview.width}px;height:${preview.height}px;object-fit:contain;background:#26231f}
+        @keyframes rise{from{transform:translateY(12px)}to{transform:translateY(0)}}
+      </style><div class="preview"><div class="title">${safeTitle}</div><img src="${preview.imageUrl}" alt=""></div>`;
+      const existing = widgetPreviewWindows.get(sender.id);
+      if (existing && !existing.isDestroyed()) {
+        if (existing.getBounds().x !== x || existing.getBounds().y !== y) {
+          existing.setPosition(x, y);
+        }
+        if (lastPreviewSignature.get(sender.id) === previewSignature) return;
+        lastPreviewSignature.set(sender.id, previewSignature);
+        const revision = (previewRevisions.get(sender.id) ?? 0) + 1;
+        previewRevisions.set(sender.id, revision);
+        const paint = (): void => {
+          if (existing.isDestroyed() || widgetPreviewWindows.get(sender.id) !== existing
+            || previewRevisions.get(sender.id) !== revision) return;
+          const payload = JSON.stringify({ imageUrl: preview.imageUrl, title: preview.title,
+            width: preview.width, height: preview.height, revision });
+          // Decode offscreen, then swap only the image node. The cached frame
+          // stays visible until the fresh frame is ready; the native window and
+          // its one-time entrance animation are never recreated.
+          void existing.webContents.executeJavaScript(`(() => {
+            const next = ${payload}; window.__previewRevision = next.revision;
+            const image = new Image(); image.src = next.imageUrl;
+            return image.decode().then(() => {
+              if (window.__previewRevision !== next.revision) return false;
+              const visible = document.querySelector('img');
+              const title = document.querySelector('.title');
+              const frame = document.querySelector('.preview');
+              if (!visible || !title || !frame) return false;
+              title.textContent = next.title;
+              visible.src = next.imageUrl;
+              visible.style.width = next.width + 'px';
+              visible.style.height = next.height + 'px';
+              frame.style.width = next.width + 'px';
+              frame.style.height = (next.height + ${titleHeight}) + 'px';
+              return true;
+            }).catch(() => false);
+          })();`).then((painted) => {
+            if (!painted || existing.isDestroyed() || widgetPreviewWindows.get(sender.id) !== existing
+              || previewRevisions.get(sender.id) !== revision) return;
+            const bounds = existing.getBounds();
+            if (bounds.x !== x || bounds.y !== y || bounds.width !== width || bounds.height !== height) {
+              existing.setBounds({ x, y, width, height });
+            }
+          }).catch(() => undefined);
+        };
+        if (existing.webContents.isLoadingMainFrame()) existing.webContents.once('did-finish-load', paint);
+        else paint();
+        return;
+      }
+      const previewWindow = new BrowserWindow({
+        x, y, width, height,
+        frame: false,
+        transparent: true,
+        backgroundColor: '#00000000',
+        resizable: false,
+        movable: false,
+        focusable: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        show: false,
+        hasShadow: true,
+        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+      });
+      widgetPreviewWindows.set(sender.id, previewWindow);
+      previewWindow.setIgnoreMouseEvents(true);
+      previewWindow.setAlwaysOnTop(true, 'floating');
+      previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      previewWindow.on('closed', () => {
+        if (widgetPreviewWindows.get(sender.id) === previewWindow) widgetPreviewWindows.delete(sender.id);
+      });
+      sender.once('destroyed', () => hideWidgetPreview(sender.id));
+      lastPreviewSignature.set(sender.id, previewSignature);
+      void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(async () => {
+        if (previewWindow.isDestroyed() || widgetPreviewWindows.get(sender.id) !== previewWindow) return;
+        // The first frame is the cached preview. Wait for its image decode so
+        // the preview appears already painted instead of flashing an empty box.
+        await previewWindow.webContents.executeJavaScript(
+          'document.querySelector("img")?.decode().then(() => true, () => false) ?? false',
+        ).catch(() => false);
+        if (!previewWindow.isDestroyed() && widgetPreviewWindows.get(sender.id) === previewWindow) {
+          previewWindow.showInactive();
+        }
+      }).catch(() => hideWidgetPreview(sender.id));
+  };
+
   registerCompactWidgetIpc({
     ipcMain,
     registry: widgetRegistry,
@@ -2027,13 +2421,20 @@ async function bootstrap(): Promise<void> {
         menu.popup({ window: owner, callback: () => finish('cancel') });
       });
     },
-    showCandidatePicker: async (sender, candidates) => {
+    showCandidatePicker: async (sender, candidates, pickerId) => {
       const active = candidatePickerSessions.get(sender.id);
       if (active && !active.window.isDestroyed()) {
+        if (active.pickerId !== pickerId) {
+          active.resolve?.({ action: 'cancel', candidateId: null });
+          active.delivery?.close();
+          active.pickerId = pickerId;
+          active.delivery = makeCandidatePickerDelivery(sender.id, active);
+          if (active.documentReady) await active.delivery.markReady();
+        }
+        active.pickerId = pickerId;
         active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
-        const update = JSON.stringify(candidates).replace(/</g, '\\u003c');
-        await active.window.webContents.executeJavaScript(
-          `window.__papersPickerUpdate?.(${update})`, true).catch(() => undefined);
+        const delivered = await active.delivery!.update(candidates);
+        if (delivered === 'failed' || delivered === 'stale') return { action: 'cancel', candidateId: null };
         if (!active.window.isVisible()) active.window.show();
         active.window.focus();
         return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
@@ -2068,25 +2469,30 @@ async function bootstrap(): Promise<void> {
         },
       });
       picker.setAlwaysOnTop(true, 'pop-up-menu');
+      // A live chooser holds the periodic desktop enumeration off: hover work
+      // shares the helper's single request slot with it, and the chooser's own
+      // list already carries the snapshot it needs. The release is registered
+      // here, not later, so a synchronous failure during setup cannot strand it.
+      const lifecycleHold = windowCapabilityService.holdWindowLifecycleRefresh();
+      picker.once('closed', lifecycleHold.release);
       const encoded = JSON.stringify(candidates).replace(/</g, '\\u003c');
       const html = `<!doctype html><meta charset="utf-8"><title>Papers Window Chooser</title><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
  *{box-sizing:border-box}html,body{margin:0;height:100%;background:#161b22;color:#dbe7f3;font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}body{border:1px solid #465462;border-radius:12px;display:flex;flex-direction:column;box-shadow:0 14px 38px #0009}.head{padding:7px 13px 10px;border-bottom:1px solid #2b3742}.titleline{display:flex;align-items:center;justify-content:space-between;min-height:27px;margin-bottom:4px;-webkit-app-region:drag}.close,.search,.row,.empty,.filters,.state-filter,.direct-pick,.list{-webkit-app-region:no-drag}.filters{display:flex;align-items:center;gap:8px}.state-filter{display:grid;place-items:center;width:18px;height:18px;margin:0;border:1px solid currentColor;border-radius:4px;background:transparent;cursor:pointer;appearance:none}.state-filter:checked::after{content:'✓';font-size:13px;font-weight:800;line-height:1;color:currentColor}.state-filter.current-filter{color:#ef9c77}.state-filter.available-filter{color:#72a7d5}.state-filter:hover,.state-filter:focus-visible{background:currentColor;box-shadow:0 0 0 2px #ffffff18;outline:none}.state-filter:hover::after,.state-filter:focus-visible::after{color:#161b22}.direct-pick{display:grid;place-items:center;width:18px;height:18px;margin:0 0 0 2px;padding:0;border:1px solid #b782f0;border-radius:4px;background:#8f4bd129;color:#d9b8ff;cursor:pointer}.direct-pick:hover,.direct-pick:focus-visible{background:#8f4bd152;color:#fff;box-shadow:0 0 9px #9d55f699;outline:none}.direct-pick svg{display:block;width:12px;height:12px}.close{border:0;background:transparent;color:#9cacba;font-size:19px;line-height:20px;border-radius:5px;cursor:pointer}.close:hover{background:#31404b;color:#fff}.search{width:100%;height:34px;border:1px solid #536372;border-radius:8px;background:#0e141a;color:#f3f8fc;padding:0 11px;outline:none}.search:focus{border-color:#72a7d5;box-shadow:0 0 0 2px #72a7d533}.list{padding:7px;overflow:auto;flex:1;scrollbar-color:#4b5b68 transparent;display:flex;flex-direction:column}.row,.empty{flex:0 0 auto}.row{width:100%;border:0;background:transparent;color:inherit;display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px;border-radius:8px;text-align:left;cursor:pointer}.row:hover,.row:focus-visible{background:#273540;outline:none}.busy .row{pointer-events:none;opacity:.68}.icon{width:20px;height:20px;object-fit:contain}.fallback{width:16px;height:16px;border:1px solid #83919d;border-radius:3px}.label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#72a7d5}.state{font-size:11px;color:#72a7d5}.current .label,.current .state{color:#ef9c77}.empty{padding:24px;text-align:center;color:#8898a7}.drag-space{flex:1 0 28px;min-height:28px;-webkit-app-region:drag}
-</style><div class="head"><div class="titleline"><div class="filters" aria-label="Filter window states"><input class="state-filter current-filter" type="checkbox" aria-label="Show layout members" title="Show layout members (remove)"><input class="state-filter available-filter" type="checkbox" aria-label="Show available windows" title="Show available windows (add)"><button class="direct-pick" type="button" aria-label="Pick windows directly" title="Pick windows directly"><svg viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(-1 1)" d="M6.5 3.5l13.5 6.5-6.3 2.1-2.1 6.3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></button></div><button class="close" aria-label="Close">×</button></div><input class="search" type="search" placeholder="Search windows…" autocomplete="off" spellcheck="false"></div><div class="list"></div><script id="data" type="application/json">${encoded}</script><script>
- let all=JSON.parse(document.getElementById('data').textContent);const list=document.querySelector('.list'),search=document.querySelector('.search'),currentFilter=document.querySelector('.current-filter'),availableFilter=document.querySelector('.available-filter');
+</style><div class="head"><div class="titleline"><div class="filters" aria-label="Filter window states"><input class="state-filter current-filter" type="checkbox" aria-label="Show layout members" title="Show layout members (remove)"><input class="state-filter available-filter" type="checkbox" aria-label="Show available windows" title="Show available windows (add)"><button class="direct-pick" type="button" aria-label="Pick windows directly" title="Pick windows directly"><svg viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(-1 1)" d="M6.5 3.5l13.5 6.5-6.3 2.1-2.1 6.3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></button></div><button class="close" aria-label="Close">×</button></div><input class="search" type="search" placeholder="Search windows…" autocomplete="off" spellcheck="false"></div><div class="list" aria-live="polite"></div><script id="data" type="application/json">${encoded}</script><script>
+ let all=JSON.parse(document.getElementById('data').textContent),loading=${candidates.length === 0};const list=document.querySelector('.list'),search=document.querySelector('.search'),currentFilter=document.querySelector('.current-filter'),availableFilter=document.querySelector('.available-filter');
 function signal(path,id=''){window.candidatePicker.signal(path,id)}
  function appendDragSpace(){const d=document.createElement('div');d.className='drag-space';d.setAttribute('aria-hidden','true');list.append(d)}
- function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent='No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onclick=()=>{document.body.classList.add('busy');signal('select',c.id)};b.onmousedown=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};b.onmouseup=e=>{if(e.button!==1)return;e.preventDefault();e.stopPropagation();document.body.classList.add('busy');signal('close',c.id)};b.onauxclick=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};list.append(b)}appendDragSpace()}
+function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent=loading?'Loading windows…':'No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onclick=()=>{if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('select',c.id)};b.onmousedown=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};b.onmouseup=e=>{if(e.button!==1)return;e.preventDefault();e.stopPropagation();if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('close',c.id)};b.onauxclick=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};list.append(b)}appendDragSpace()}
  list.onpointerleave=()=>signal('peek-end');
- window.__papersPickerUpdate=(next)=>{all=next;document.body.classList.remove('busy');render()};
-const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=false;render()};const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;document.querySelector('.direct-pick').onclick=()=>{document.body.classList.add('busy');signal('direct-pick')};search.oninput=render;currentFilter.onchange=()=>setExclusiveFilter(currentFilter,availableFilter);availableFilter.onchange=()=>setExclusiveFilter(availableFilter,currentFilter);document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
+ window.__papersPickerUpdate=(next)=>{all=next;loading=false;document.body.classList.remove('busy');render()};
+const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=false;render()};const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;document.querySelector('.direct-pick').onclick=()=>{document.body.classList.add('busy');signal('direct-pick')};search.oninput=render;currentFilter.onchange=()=>setExclusiveFilter(currentFilter,availableFilter);availableFilter.onchange=()=>setExclusiveFilter(availableFilter,currentFilter);document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='Enter'&&document.activeElement===search){e.preventDefault();if(!loading&&!document.body.classList.contains('busy'))list.querySelector('.row')?.click()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
       return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
         const pickerOpenedAt = Date.now();
         let pickerPointerEntered = false;
         let pickerOutsideSince: number | null = null;
         let pickerPointerWatch: NodeJS.Timeout | null = null;
-        let pickerShowAnimation: NodeJS.Timeout | null = null;
         let peekGeneration = 0;
         let peekTimer: NodeJS.Timeout | null = null;
         let peekEndTimer: NodeJS.Timeout | null = null;
@@ -2134,9 +2540,12 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         };
         const session: CandidatePickerSession = {
           window: picker,
+          pickerId,
           candidateIds: new Set(candidates.map((candidate) => candidate.id)),
+          documentReady: false,
           resolve,
         };
+        session.delivery = makeCandidatePickerDelivery(sender.id, session);
         candidatePickerSessions.set(sender.id, session);
         const finishAction = (action: 'select' | 'close', candidateId: string): void => {
           const current = candidatePickerSessions.get(sender.id);
@@ -2256,8 +2665,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (input.key === 'Escape') { event.preventDefault(); closePicker(); }
         });
         picker.once('closed', () => {
+          session.delivery?.close();
+          // Belt and braces with the release registered at acquisition; both are
+          // idempotent. Release first, unconditionally: closePicker() deletes the
+          // session before destroying the window, so a session check above this
+          // line would silently strand the hold.
+          lifecycleHold.release();
           if (pickerPointerWatch) { clearInterval(pickerPointerWatch); pickerPointerWatch = null; }
-          if (pickerShowAnimation) { clearInterval(pickerShowAnimation); pickerShowAnimation = null; }
           ipcMain.removeListener('papers:candidate-picker:signal', pickerSignal);
           const current = candidatePickerSessions.get(sender.id);
           if (!current || current.window !== picker) return;
@@ -2269,97 +2683,31 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         });
         picker.once('ready-to-show', () => {
           if (picker.isDestroyed()) return;
-          const finalBounds = picker.getBounds();
-          const startY = Math.min(area.y + area.height - finalBounds.height, finalBounds.y + 12);
-          picker.setPosition(finalBounds.x, startY, false);
-          picker.setOpacity(0);
+          // Present the picker as soon as its document is ready. A slide/fade
+          // added another ~260 ms before it felt usable on the creator's machine.
           picker.show();
           picker.focus();
-          const startedAt = Date.now();
-          pickerShowAnimation = setInterval(() => {
-            if (picker.isDestroyed()) return;
-            const progress = Math.min(1, (Date.now() - startedAt) / 120);
-            const eased = 1 - ((1 - progress) ** 3);
-            const animatedY = Math.round(startY + ((finalBounds.y - startY) * eased));
-            picker.setPosition(finalBounds.x, animatedY, false);
-            picker.setOpacity(Math.max(0.01, eased));
-            if (progress >= 1 && pickerShowAnimation) {
-              clearInterval(pickerShowAnimation);
-              pickerShowAnimation = null;
-              picker.setPosition(finalBounds.x, finalBounds.y, false);
-              picker.setOpacity(1);
-            }
-          }, 16);
-          pickerShowAnimation.unref?.();
+        });
+        picker.webContents.once('did-finish-load', () => {
+          const current = candidatePickerSessions.get(sender.id);
+          if (current !== session || picker.isDestroyed()) return;
+          session.documentReady = true;
+          void session.delivery?.markReadyWithRetry().then((result) => {
+            // A buffered receipt has already been sent. If all bounded apply
+            // attempts fail, dismiss the loading shell instead of stranding it.
+            if (result === 'failed' && candidatePickerSessions.get(sender.id) === session) closePicker();
+          });
         });
         void picker.loadURL(`data:text/html;base64,${Buffer.from(html).toString('base64')}`).catch(() => closePicker());
       });
     },
-    showPreview: (sender, preview) => {
-      hideWidgetPreview(sender.id);
-      const pad = 4;
-      const titleHeight = 24;
-      const width = preview.width + (pad * 2);
-      const height = preview.height + titleHeight + (pad * 2);
-      const display = screen.getDisplayMatching({
-        x: Math.round(preview.anchor.x),
-        y: Math.round(preview.anchor.y),
-        width: Math.max(1, Math.round(preview.anchor.width)),
-        height: Math.max(1, Math.round(preview.anchor.height)),
-      });
-      const area = display.workArea;
-      let x = Math.round(preview.anchor.x + (preview.anchor.width / 2) - (width / 2));
-      // Position relative to the WHOLE widget, not the hovered icon/name card.
-      // At the screen top the fallback begins below the widget's bottom edge,
-      // so the name surface can never sit over the preview.
-      const owner = BrowserWindow.fromWebContents(sender);
-      const ownerBounds = owner && !owner.isDestroyed()
-        ? owner.getBounds()
-        : { x: preview.anchor.x, y: preview.anchor.y, width: preview.anchor.width, height: preview.anchor.height };
-      let y = Math.round(ownerBounds.y - height - 8);
-      if (y < area.y) y = Math.round(ownerBounds.y + ownerBounds.height + 8);
-      x = Math.max(area.x, Math.min(area.x + area.width - width, x));
-      y = Math.max(area.y, Math.min(area.y + area.height - height, y));
-      const previewWindow = new BrowserWindow({
-        x, y, width, height,
-        frame: false,
-        transparent: true,
-        backgroundColor: '#00000000',
-        resizable: false,
-        movable: false,
-        focusable: false,
-        alwaysOnTop: true,
-        skipTaskbar: true,
-        show: false,
-        hasShadow: true,
-        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
-      });
-      widgetPreviewWindows.set(sender.id, previewWindow);
-      previewWindow.setIgnoreMouseEvents(true);
-      previewWindow.setAlwaysOnTop(true, 'floating');
-      previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-      previewWindow.on('closed', () => {
-        if (widgetPreviewWindows.get(sender.id) === previewWindow) widgetPreviewWindows.delete(sender.id);
-      });
-      sender.once('destroyed', () => hideWidgetPreview(sender.id));
-      const safeTitle = preview.title
-        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-      const html = `<!doctype html><meta charset="utf-8"><style>
-        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
-        .preview{box-sizing:border-box;margin:${pad}px;width:${preview.width}px;height:${preview.height + titleHeight}px;
-          border:1px solid rgba(140,132,116,.72);border-radius:7px;overflow:hidden;
-          background:#26231f;box-shadow:0 3px 10px rgba(0,0,0,.38);
-          animation:rise 180ms cubic-bezier(.2,.8,.2,1) both}
-        .title{box-sizing:border-box;height:${titleHeight}px;padding:5px 7px;color:#eee9df;
-          font:11px/14px system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        img{display:block;width:${preview.width}px;height:${preview.height}px;object-fit:contain;background:#26231f}
-        @keyframes rise{from{transform:translateY(12px)}to{transform:translateY(0)}}
-      </style><div class="preview"><div class="title">${safeTitle}</div><img src="${preview.imageUrl}" alt=""></div>`;
-      void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(() => {
-        if (!previewWindow.isDestroyed()) previewWindow.showInactive();
-      }).catch(() => hideWidgetPreview(sender.id));
+    updateCandidatePicker: async (sender, candidates, pickerId): Promise<CandidatePickerDeliveryResult> => {
+      const active = candidatePickerSessions.get(sender.id);
+      if (!active || active.pickerId !== pickerId || active.window.isDestroyed()) return 'stale';
+      active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
+      return active.delivery!.update(candidates);
     },
+    showPreview: (sender, preview) => { showPreviewWindow(sender, preview, 'widget'); },
     isWorkspaceSender: (sender, projectId) => {
       if (!runtimeForSender(sender.id)?.isSender(sender)) return false;
       try {
@@ -2807,6 +3155,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           detachSession!.closeAll().catch(() => undefined),
           widgetSession!.closeAll().catch(() => undefined),
           windowCapabilityService.stop().catch(() => undefined),
+          Promise.resolve(windowControlBroker.stop()),
         ]))
         .then(() => {
         hermesSurface.shutdown();
@@ -3005,7 +3354,12 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       const target = await commandSurfaceRegistry.resolveProject(projectId);
       return target ? { ok: true, target } : null;
     },
-    onClosed: () => {
+    onClosed: (closeReason) => {
+      // Diagnostic: the Quick Run surface closing is the moment the creator sees
+      // as 'it got cancelled immediately', so the reason and time are recorded.
+      try {
+        defaultWindowGeometryJournal().record({ kind: 'surface-close', detail: String(closeReason ?? ''), outcome: 'closed' });
+      } catch { /* diagnostics never fail the close */ }
       for (const pending of pendingHoverCaptures.values()) {
         for (const item of pending.buffer) item.resolve?.({ ok: false, detail: 'the command surface closed during Quick Run handoff' });
         for (const wake of pending.wake) wake();
@@ -3192,6 +3546,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     if (!commandSurfaceOverlay) {
       return { ok: false, detail: 'the command surface overlay is not available in this build' };
     }
+    try {
+      defaultWindowGeometryJournal().record({ kind: 'surface-open', detail: 'command surface', outcome: 'opening' });
+    } catch { /* diagnostics never fail the open */ }
     return commandSurfaceOverlay.open();
   };
   if (TEST_INVOKE_ENABLED) {

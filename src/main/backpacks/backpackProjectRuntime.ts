@@ -27,6 +27,7 @@ export class BackpackProjectRuntime {
     private readonly onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void,
     private readonly onRendererGone?: (senderId: number, reason: string) => void,
     private readonly onTitleChanged?: (senderId: number, title: string) => void,
+    private readonly onFaviconChanged?: (senderId: number, urls: string[]) => void,
   ) {
     this.transparent = transparent;
   }
@@ -73,6 +74,12 @@ export class BackpackProjectRuntime {
 
   get isPresented(): boolean {
     return this.presented;
+  }
+
+  get currentBounds(): { x: number; y: number; width: number; height: number } | null {
+    if (!this.view) return null;
+    const bounds = this.view.getBounds();
+    return { ...bounds };
   }
 
   /** Focus the existing native project presentation without inventing a
@@ -186,6 +193,9 @@ export class BackpackProjectRuntime {
     });
     view.webContents.on('page-title-updated', (_event, title) => {
       this.onTitleChanged?.(view.webContents.id, title);
+    });
+    view.webContents.on('page-favicon-updated', (_event, urls) => {
+      this.onFaviconChanged?.(view.webContents.id, urls);
     });
     view.webContents.on('console-message', (...args: unknown[]) => {
       const level = args[1];

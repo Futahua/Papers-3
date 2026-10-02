@@ -9,6 +9,17 @@ const HELPER_SOURCE = path.join(REPO_ROOT, 'resources', 'native', 'hover-input-b
 const STATE_TEST_SOURCE = path.join(__dirname, '../native/hover-input-bridge-altq.test.cs');
 
 describe('native Alt+Q hold release watchdog', () => {
+  it('admits injected Alt+Q into only the WM_HOTKEY-correlated tracker', () => {
+    const source = fs.readFileSync(HELPER_SOURCE, 'utf8');
+    const observeDown = source.indexOf('altQChords.ObserveQDown');
+    const injectedPassThrough = source.indexOf('if (injected) return CallNextHookEx', observeDown);
+    expect(observeDown).toBeGreaterThan(-1);
+    expect(injectedPassThrough).toBeGreaterThan(observeDown);
+    expect(source).toContain('if (up && altQHotkeyRegistered && altQChords.ObserveKeyUp');
+    expect(source).toMatch(/if \(message\.message == WM_HOTKEY[\s\S]*altQChords\.TryStartNext[\s\S]*Emit\("ALTQ\\t"/);
+    expect(source).toMatch(/if \(injected\) return CallNextHookEx[\s\S]*WidgetPolicy policy = HitWidget\(\)/);
+  });
+
   it('recovers a key-up that arrives before WM_HOTKEY and releases normally on either key-up', () => {
     if (process.platform !== 'win32') return;
     const systemRoot = process.env['SystemRoot'] ?? process.env['WINDIR'];

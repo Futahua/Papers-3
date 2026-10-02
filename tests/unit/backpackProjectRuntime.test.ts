@@ -173,6 +173,22 @@ describe('BackpackProjectRuntime.hide', () => {
     expect(rendererGone).toHaveBeenCalledWith(view.webContents.id, 'crashed');
   });
 
+  it('forwards page favicon updates from the live sender', async () => {
+    const faviconChanged = vi.fn();
+    const runtime = new BackpackProjectRuntime(
+      new BaseWindow(), '/tmp/preload.cjs', false,
+      undefined, undefined, undefined, undefined, undefined, faviconChanged,
+    );
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    const faviconListener = view.webContents.on.mock.calls.find(([event]) => event === 'page-favicon-updated')?.[1] as
+      ((event: unknown, urls: string[]) => void) | undefined;
+    expect(faviconListener).toBeTypeOf('function');
+    const urls = ['data:image/png;base64,AAAA'];
+    faviconListener?.({}, urls);
+    expect(faviconChanged).toHaveBeenCalledWith(view.webContents.id, urls);
+  });
+
   it('conceals and restores the same live renderer without closing it', async () => {
     const runtime = await shownRuntime();
     const view = soleView();

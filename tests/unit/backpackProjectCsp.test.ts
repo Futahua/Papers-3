@@ -3,9 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { contentSecurityPolicy } from '../../src/main/security/backpackProjectScheme';
 
 /**
- * The backpack project policy is a hard security boundary, and exactly one
- * directive was relaxed to let a project page reach a service on this machine.
- * These tests exist so that relaxation cannot quietly widen.
+ * The backpack project policy is a hard security boundary. Loopback remains
+ * the only network relaxation; rich local previews use an opaque, project-
+ * scoped local preview origin (plus blob: for in-memory specialist output).
+ * These tests keep both narrow.
  *
  * Measured before the change, against a real Papers with a listener on loopback:
  * with `connect-src 'none'` the listener received ZERO requests and the page saw
@@ -14,6 +15,7 @@ import { contentSecurityPolicy } from '../../src/main/security/backpackProjectSc
  * `Origin: papers-backpack://<projectId>`.
  */
 const ORIGIN = 'papers-backpack://bp-11111111-2222-4333-8444-555555555555';
+const PREVIEW_ORIGIN = 'papers-file-preview://bp-11111111-2222-4333-8444-555555555555';
 
 function directive(policy: string, name: string): string {
   const found = policy.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name} `));
@@ -49,7 +51,7 @@ describe('backpack project content security policy', () => {
     }
   });
 
-  it('keeps every OTHER directive as tight as it was', () => {
+  it('keeps preview sources local and every unrelated directive tight', () => {
     const policy = contentSecurityPolicy(ORIGIN);
 
     expect(directive(policy, 'default-src')).toBe("default-src 'none'");
@@ -57,7 +59,11 @@ describe('backpack project content security policy', () => {
     expect(directive(policy, 'object-src')).toBe("object-src 'none'");
     expect(directive(policy, 'base-uri')).toBe("base-uri 'none'");
     expect(directive(policy, 'form-action')).toBe("form-action 'none'");
-    expect(directive(policy, 'frame-src')).toBe("frame-src 'none'");
+    expect(directive(policy, 'img-src')).toBe(`img-src ${ORIGIN} ${PREVIEW_ORIGIN} data: blob:`);
+    expect(directive(policy, 'media-src')).toBe(`media-src ${PREVIEW_ORIGIN} blob:`);
+    expect(directive(policy, 'frame-src')).toBe(`frame-src ${PREVIEW_ORIGIN} blob:`);
+    expect(directive(policy, 'frame-src')).not.toContain('data:');
+    expect(directive(policy, 'media-src')).not.toContain('data:');
     // style-src keeps unsafe-inline, as it always had, and nothing more.
     expect(directive(policy, 'style-src')).toBe(`style-src ${ORIGIN} 'unsafe-inline'`);
     // No script may come from anywhere but the project's own origin.
@@ -65,12 +71,22 @@ describe('backpack project content security policy', () => {
     expect(directive(policy, 'script-src')).not.toContain('unsafe-eval');
   });
 
+  it('keeps an explicitly embedded Backpack origin plus local blob previews, and nothing wider', () => {
+    const child = 'papers-backpack://bp-22222222-3333-4444-8555-666666666666';
+    const policy = contentSecurityPolicy(ORIGIN, [child]);
+    expect(directive(policy, 'frame-src')).toBe(`frame-src ${child} ${PREVIEW_ORIGIN} blob:`);
+    expect(directive(policy, 'frame-src')).not.toMatch(/\bhttps?:/);
+    expect(directive(policy, 'frame-src')).not.toContain('data:');
+  });
+
   it('scopes every origin-bound directive to the project that asked for it', () => {
     const policy = contentSecurityPolicy(ORIGIN);
     const other = contentSecurityPolicy('papers-backpack://bp-99999999-2222-4333-8444-555555555555');
 
-    // One project's policy never names another project's origin.
+    // One project's policy never names another project's origin, including
+    // the opaque preview-resource origin.
     expect(policy).not.toContain('bp-99999999');
     expect(other).not.toContain('bp-11111111');
+    expect(policy).toContain(PREVIEW_ORIGIN);
   });
 });

@@ -84,6 +84,12 @@ open pull request and recent commits before continuing existing work.
 - Basic remains permanently reachable and contains Backpacks, Tools and Settings.
 - Hermes is global. Selecting or entering a Backpack must not automatically change
   Hermes's conversation, working directory or context.
+- The old Apers/Hermes integration is retired. Do not use historical Apers/Hermes behavior
+  as current architecture, restore it, or infer new Papers/mobile work from it.
+- For current mobile Backpack work, the creator's PC is the server and execution/state
+  authority; Android is a portable live client for the Backpacks served from that PC.
+  Prioritize low interaction latency and phone-native touch/layout behavior over exact
+  desktop mirroring. Do not reinterpret this as syncing entire Backpacks onto Android.
 - Creating a Backpack currently asks only for its name. Until real contents are built,
   entering it honestly says that nothing exists yet. This current empty state does not
   define future Backpack contents.

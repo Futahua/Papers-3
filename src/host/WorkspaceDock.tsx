@@ -27,6 +27,7 @@ export interface OpenWorkspaceProject {
   projectId: string;
   title: string;
   url: string;
+  icon?: string | null;
 }
 
 interface WorkspacePanelParams {
@@ -737,20 +738,60 @@ export function WorkspaceDock(props: {
     }
   }, [onClose]);
 
+  const decorateProjectTab = useCallback((project: OpenWorkspaceProject): void => {
+    const tab = workspaceRef.current?.querySelector<HTMLElement>(
+      `.dv-tab[data-tab-panel-id="${CSS.escape(project.surfaceId)}"]`,
+    );
+    if (!tab) return;
+    tab.setAttribute('title', project.title);
+    tab.setAttribute('aria-label', project.title);
+    tab.dataset.backpackProject = project.projectId;
+    const active = tab.getAttribute('aria-selected') === 'true';
+    if (project.projectId === 'bp-a5d07080-7210-45e6-b3f1-93978873a2fe') {
+      tab.style.setProperty('background', active ? '#2c3733' : '#26332e', 'important');
+      tab.style.setProperty('color', active ? '#ffffff' : '#f2eee6', 'important');
+      tab.style.setProperty('border-color', '#668b72', 'important');
+      tab.style.setProperty('font-weight', '650', 'important');
+      tab.style.setProperty('box-shadow', active ? 'inset 0 -3px #7fd4a4' : 'none', 'important');
+    } else if (project.projectId === 'bp-759cd960-26ee-4560-90b0-1ef6678802c4') {
+      tab.style.setProperty('background', active ? '#3b4a60' : '#334052', 'important');
+      tab.style.setProperty('color', active ? '#ffffff' : '#f0f7fc', 'important');
+      tab.style.setProperty('border-color', '#6fa8dc', 'important');
+      tab.style.setProperty('font-weight', '650', 'important');
+      tab.style.setProperty('box-shadow', active ? 'inset 0 -3px #9fc9e4' : 'none', 'important');
+    } else {
+      tab.style.removeProperty('background');
+      tab.style.removeProperty('color');
+      tab.style.removeProperty('border-color');
+      tab.style.removeProperty('font-weight');
+      tab.style.removeProperty('box-shadow');
+    }
+    const content = tab.querySelector<HTMLElement>('.dv-default-tab-content');
+    content?.style.setProperty('color', 'inherit', 'important');
+    let icon = tab.querySelector<HTMLImageElement>('.workspace-tab-icon');
+    if (project.icon) {
+      if (!icon) {
+        icon = document.createElement('img');
+        icon.className = 'workspace-tab-icon';
+        icon.alt = '';
+        if (content) content.before(icon);
+        else tab.prepend(icon);
+      }
+      if (icon.src !== project.icon) icon.src = project.icon;
+    } else {
+      icon?.remove();
+    }
+  }, []);
+
   const syncPanelTitles = useCallback((api: DockviewApi): void => {
     for (const project of projectsRef.current) {
       const panel = api.getPanel(project.surfaceId);
       if (!panel) continue;
       if (panel.api.title !== project.title) panel.api.setTitle(project.title);
-      const tab = workspaceRef.current?.querySelector<HTMLElement>(
-        `.dv-tab[data-tab-panel-id="${CSS.escape(project.surfaceId)}"]`,
-      );
-      if (tab) {
-        tab.setAttribute('title', project.title);
-        tab.setAttribute('aria-label', project.title);
-      }
+      decorateProjectTab(project);
+      requestAnimationFrame(() => decorateProjectTab(project));
     }
-  }, []);
+  }, [decorateProjectTab]);
 
   const onReady = useCallback((event: DockviewReadyEvent): void => {
     apiRef.current = event.api;
@@ -762,6 +803,7 @@ export function WorkspaceDock(props: {
       nativeEvent.preventDefault();
     }));
     apiSubscriptions.current.push(event.api.onDidActivePanelChange(({ panel, origin }) => {
+      requestAnimationFrame(() => syncPanelTitles(event.api));
       if (resizing.current) {
         const frozen = panel ? resizeSession.current?.activeByGroup.get(groupIds.current.get(panel.group.id) ?? '') : null;
         if (panel && frozen && frozen !== panel.id) {

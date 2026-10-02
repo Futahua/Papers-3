@@ -131,7 +131,10 @@ interface HostBridge {
     close(surfaceId: string): Promise<void>;
     /** Focus this already-open logical surface in its owning Papers window. */
     activateSurface(surfaceId: string): Promise<void>;
-    showSurface(surfaceId: string, url: string): Promise<void>;
+    /** Ensure this logical project's renderer is alive. `present:false` keeps
+     * the native view out of composition while preserving the same live
+     * renderer an already-visited hidden tab would retain. */
+    showSurface(surfaceId: string, url: string, present?: boolean): Promise<void>;
     setSurfaceBounds(surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     hideSurface(surfaceId: string): Promise<void>;
     // Project-scoped operations live on the project frame's own bridge; the
@@ -241,6 +244,7 @@ interface HostBridge {
       compensating?: boolean;
     }) => void): () => void;
     onWorkspaceProjectTitle(cb: (payload: { surfaceId: string; title: string }) => void): () => void;
+    onWorkspaceProjectIcon(cb: (payload: { surfaceId: string; icon: string | null }) => void): () => void;
     onProgramStatus(cb: (p: ProgramStatus) => void): () => void;
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;

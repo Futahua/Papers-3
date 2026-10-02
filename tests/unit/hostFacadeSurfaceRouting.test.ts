@@ -23,7 +23,9 @@ function createFacade(delegateWave?: FacadeDeps['delegateWave']) {
   let n = 0;
   const logicalSurfaces = createLogicalSurfaceRegistry(() => `sf-${++n}`);
   const hideBackpackProjectSurface = vi.fn((_senderId: number, _surfaceId: string) => {});
-  const showBackpackProjectSurface = vi.fn(async (_senderId: number, _surfaceId: string, _url: string) => {});
+  const showBackpackProjectSurface = vi.fn(async (
+    _senderId: number, _surfaceId: string, _url: string, _present = true,
+  ) => {});
   const closeAttachedProjectSurface = vi.fn();
   const closeBackpackProjectSurface = vi.fn();
   const openProject = vi.fn(async (id: string) => id === PROJECT || id === OTHER ? { url: `papers-backpack://${id}/open` } : null);
@@ -155,7 +157,17 @@ function createFacade(delegateWave?: FacadeDeps['delegateWave']) {
     showBackpackProjectSurface,
     hideBackpackProjectSurface,
     // Present only so the guard is what refuses, not a missing service.
-    backpackProjects: { open: openProject, saveState: vi.fn(async () => ({ ok: true, revision: 'r1' })) },
+    backpackProjects: {
+      open: openProject,
+      saveState: vi.fn(async () => ({ ok: true, revision: 'r1' })),
+      workspaceScope: vi.fn(async (_hostProjectId: string, projectKey: string) => projectKey === 'embedded-ayg'
+        ? {
+          backpackId: OTHER,
+          rootGroupId: 'g1',
+          url: `papers-backpack://${OTHER}/open/one/public/workspace-20260730b.html?as-you-go-folder=g1`,
+        }
+        : null),
+    },
     // Gate 10.2's default remains a terminal seam recorder. Gate 10.3 may
     // inject the real bounded relay without changing production composition.
     delegateWave: delegateWave ?? { call: delegateWaveCall },
@@ -263,6 +275,29 @@ describe('surface routing in the host facade', () => {
     expect(openedUrl.searchParams.get('papers-surface-key')).toBeTruthy();
     await expect(facade.openBackpackProjectNewSurface(FRAME, `papers-backpack://${OTHER}/open/one/public/workspace.js`))
       .rejects.toThrow(/own Papers tab/);
+  });
+
+  it('lets an authenticated embedded workspace open a new tab on its scoped project origin only', async () => {
+    const { facade, workspaceTopologies, sendToWindow, surfaces } = createFacade();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    const existing = await facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    surfaces.bind(FRAME, { surfaceId: existing.surfaceId, projectId: PROJECT, windowId: 1, kind: 'project' });
+    const scope = await facade.resolveBackpackProjectWorkspaceScope(FRAME, 'embedded-ayg', 'Embedded AYG');
+    expect(scope).toMatchObject({ backpackId: OTHER, rootGroupId: 'g1' });
+    const origin = `papers-backpack://${OTHER}`;
+    const previewUrl = `papers-backpack://${OTHER}/open/one/public/workspace-20260730b.html?papers-file-preview=abc`;
+
+    await facade.openBackpackProjectNewSurface(FRAME, previewUrl, origin);
+    const event = sendToWindow.mock.calls.at(-1)?.[2] as { project: { projectId: string; url: string } };
+    expect(event.project.projectId).toBe(OTHER);
+    expect(new URL(event.project.url).searchParams.get('papers-file-preview')).toBe('abc');
+    await expect(facade.openBackpackProjectNewSurface(
+      FRAME,
+      `papers-backpack://${PROJECT}/open/one/public/workspace-20260730b.html`,
+      origin,
+    )).rejects.toThrow(/own Papers tab/);
+    await expect(facade.openBackpackProjectNewSurface(FRAME, previewUrl, 'papers-backpack://wrong'))
+      .rejects.toThrow(/embedded workspace is no longer authorized/);
   });
 
   it('uses the bound live project surface as Gate 10.2 host truth', async () => {
@@ -489,6 +524,19 @@ describe('surface routing in the host facade', () => {
     // Both calls carry the asking sender, so they act on that window's runtime.
     expect(showBackpackProjectSurface.mock.calls.every(([sender]) => sender === HOST)).toBe(true);
     expect(surfaces.projectForSender(HOST)).toBe(PROJECT);
+  });
+
+  it('can start an authorized hidden project renderer without presenting its native view', async () => {
+    const { facade, surfaces, logicalSurfaces, showBackpackProjectSurface, setActiveSurfaceId } = createFacade();
+    surfaces.bind(HOST, { projectId: PROJECT, windowId: 1, kind: 'host' });
+    const surface = logicalSurfaces.create({ windowId: 1, projectId: PROJECT, kind: 'project' });
+    const url = `papers-backpack://${PROJECT}/ns/1/public/index.html`;
+
+    await facade.showBackpackProjectSurface(HOST, surface.surfaceId, url, false);
+
+    expect(showBackpackProjectSurface).toHaveBeenCalledWith(HOST, surface.surfaceId, url, false);
+    expect(setActiveSurfaceId).not.toHaveBeenCalled();
+    expect(logicalSurfaces.get(surface.surfaceId)).not.toBeNull();
   });
 
   it('hiding the workspace leaves a live compact widget bound and usable', () => {

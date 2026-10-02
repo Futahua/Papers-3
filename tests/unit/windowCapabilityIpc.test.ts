@@ -31,9 +31,12 @@ function fakeService(): WindowCapabilityService {
     windowLifecycleSnapshot: async () => ({ snapshot: { complete: true, trackerSessionId: 'test-session', sequence: 0, windows: [] } }),
     resolveWindowInstance: async () => ({ outcome: 'missing', error: 'gone' }),
     watchWindowLifecycle: () => () => undefined,
+    holdWindowLifecycleRefresh: () => ({ release: () => undefined, drained: Promise.resolve() }),
     bindCandidate: async () => ({ outcome: 'missing', error: 'not listed' }),
     observeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     minimizeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    activateCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    observeInstances: async () => new Map(),
     restoreCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     toggleCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     closeCapability: async () => ({ outcome: 'missing', error: 'gone' }),
@@ -42,10 +45,11 @@ function fakeService(): WindowCapabilityService {
     endPeek: async () => ({ outcome: 'success' }),
     applyCapability: async () => ({ outcome: 'missing', error: 'gone' }),
     thumbnailCapability: async () => ({ outcome: 'missing', error: 'gone' }),
+    cachedThumbnailCapability: async () => ({ outcome: 'cache-miss' }),
     resolvePersisted: async () => ({ outcome: 'missing', error: 'no match' }),
     hoverAt: async () => ({ outcome: 'success', candidate: null, bounds: null, descriptor: null }),
     pickAt: async () => ({ outcome: 'missing', error: 'changed' }),
-    prepareNativePicker: async () => ({ outcome: 'success', seeds: [] }),
+    prepareNativePicker: async () => ({ outcome: 'success', seeds: [], seededIndices: [] }),
     bindNativePickerSelection: async () => ({ outcome: 'success', windows: [] }),
     stop: async () => undefined,
   };
@@ -55,6 +59,7 @@ function fakeService(): WindowCapabilityService {
  * with arbitrary events. */
 function fakeIpcMain() {
   const handlers = new Map<string, (event: unknown, raw: unknown) => Promise<unknown>>();
+  const sent: Array<{ senderId: number; channel: string; payload: unknown }> = [];
   return {
     ipcMain: {
       handle(channel: string, fn: (event: never, raw: unknown) => Promise<unknown>) {
@@ -64,9 +69,20 @@ function fakeIpcMain() {
     invoke(channel: string, senderId: number, raw: unknown) {
       const handler = handlers.get(channel);
       if (!handler) throw new Error(`no handler for ${channel}`);
-      return handler({ sender: { id: senderId } }, raw);
+      return handler({
+      sender: {
+        id: senderId,
+        // The control sync resolves the sending surface, which needs a URL; other
+        // channels never look at it.
+        getURL: () => 'papers-project://as-you-go/index.html',
+        once: () => undefined,
+        isDestroyed: () => false,
+        send: (sentChannel: string, payload: unknown) => { sent.push({ senderId, channel: sentChannel, payload }); },
+      },
+    }, raw);
     },
     channels: () => [...handlers.keys()],
+    sent,
   };
 }
 
@@ -80,31 +96,203 @@ describe('windowCapabilityIpc', () => {
       'papers:window-capability:list',
       'papers:window-capability:lifecycle-snapshot',
       'papers:window-capability:resolve-instance',
+      'papers:window-layout:diagnostic',
       'papers:window-capability:subscribe-lifecycle',
       'papers:window-capability:bind',
+      'papers:window-control:sync',
+      'papers:window-control:activate',
+      'papers:window-control:group',
       'papers:window-capability:observe',
       'papers:window-capability:minimize',
       'papers:window-capability:toggle',
+      'papers:window-capability:activate',
       'papers:window-capability:restore',
       'papers:window-capability:close',
       'papers:window-capability:end-process',
       'papers:window-capability:peek-begin',
       'papers:window-capability:peek-end',
       'papers:window-capability:apply',
+      'papers:window-capability:preview-show',
+      'papers:window-capability:preview-hide',
       'papers:window-capability:resolve',
+      'papers:window-capability:preview-hold',
+      'papers:window-capability:preview-release',
       'papers:window-capability:thumbnail',
+      'papers:window-capability:thumbnail-cache',
     ]);
   });
 
-  it('waits for staged authority before running capability operations', async () => {
+  it('records only allowlisted auto-add stages and outcomes without member identity', async () => {
+    const ipc = fakeIpcMain();
+    const records: Array<Record<string, unknown>> = [];
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service: fakeService(),
+      isSender: () => true,
+      diagnosticJournal: { record: (entry) => records.push(entry) },
+    });
+
+    await expect(ipc.invoke('papers:window-layout:diagnostic', 42, {
+      stage: 'auto-add-resolve', outcome: 'ambiguous',
+    })).resolves.toEqual({ outcome: 'success' });
+    expect(records).toEqual([{
+      kind: 'auto-add', detail: 'auto-add-resolve', outcome: 'ambiguous',
+    }]);
+    await expect(ipc.invoke('papers:window-layout:diagnostic', 42, {
+      stage: 'auto-add-resolve', outcome: 'failed', memberId: 'private',
+    })).rejects.toThrow('window layout diagnostic is malformed');
+    await expect(ipc.invoke('papers:window-layout:diagnostic', 42, {
+      stage: 'arbitrary', outcome: 'failed',
+    })).rejects.toThrow('window layout diagnostic is malformed');
+    expect(records).toHaveLength(1);
+  });
+
+  it('records lifecycle delivery and Peek outcomes without sender or window identifiers', async () => {
+    const ipc = fakeIpcMain();
+    const records: Array<Record<string, unknown>> = [];
+    const service = fakeService();
+    service.watchWindowLifecycle = (callbacks) => {
+      callbacks.onBaseline({ complete: true, trackerSessionId: 'private-session', sequence: 1, windows: [] });
+      return () => undefined;
+    };
+    service.beginLivePreviewCapability = async () => ({ outcome: 'timeout', error: 'private error' });
+    service.endLivePreview = async () => ({ outcome: 'success' });
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service,
+      isSender: () => true,
+      resolveCallerHwnd: () => '12345',
+      diagnosticJournal: { record: (entry) => records.push(entry) },
+    });
+
+    await ipc.invoke('papers:window-capability:subscribe-lifecycle', 42, {});
+    expect(ipc.sent).toContainEqual(expect.objectContaining({ channel: 'papers:window-lifecycle:baseline' }));
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'lifecycle-delivery', detail: 'baseline', outcome: 'sent' }),
+      expect.objectContaining({ kind: 'lifecycle-subscribe', detail: 'accepted', outcome: 'success' }),
+    ]));
+
+    await expect(ipc.invoke('papers:window-capability:peek-begin', 42, capability)).resolves.toEqual({ outcome: 'timeout', error: 'private error' });
+    await expect(ipc.invoke('papers:window-capability:peek-end', 42, {})).resolves.toEqual({ outcome: 'success' });
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'peek-begin', detail: expect.stringMatching(/^live \d+ms$/), outcome: 'timeout' }),
+    ]));
+    expect(records.some((record) => record['kind'] === 'peek-end' && record['outcome'] === 'success')).toBe(false);
+    expect(JSON.stringify(records)).not.toContain('private-session');
+    expect(JSON.stringify(records)).not.toContain('12345');
+    expect(JSON.stringify(records)).not.toContain('private error');
+  });
+
+  it('records broker Shift delivery without serializing project or member identifiers', async () => {
+    const ipc = fakeIpcMain();
+    const records: Array<Record<string, unknown>> = [];
+    const shifts: Array<(held: boolean) => void> = [];
+    const broker = {
+      ready: true,
+      sessionId: 'private-session',
+      register: async () => true,
+      clear: () => undefined,
+      group: () => true,
+      onEvent: () => () => undefined,
+      onShift: (callback: (held: boolean) => void) => { shifts.push(callback); return () => undefined; },
+      stop: () => undefined,
+    };
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service: fakeService(),
+      isSender: () => true,
+      controlBroker: broker as never,
+      resolveControlSurface: () => ({ ownerHwnd: 999, hit: { x: 0, y: 0, width: 10, height: 10 } }),
+      diagnosticJournal: { record: (entry) => records.push(entry) },
+      controlSenderForId: (senderId) => ({
+        isDestroyed: () => false,
+        send: (channel: string, payload: unknown) => { ipc.sent.push({ senderId, channel, payload }); },
+      } as never),
+    });
+    await ipc.invoke('papers:window-control:sync', 42, []);
+    shifts[0]?.(true);
+    expect(records).toEqual([expect.objectContaining({
+      kind: 'shift-delivery', detail: 'held', outcome: '1sent/0failed',
+    })]);
+    expect(ipc.sent).toContainEqual({ senderId: 42, channel: 'papers:window-control:shift', payload: true });
+    expect(JSON.stringify(records)).not.toContain('private-session');
+    expect(JSON.stringify(records)).not.toContain('layoutId');
+  });
+
+  it('does not treat an unchanged rectangle as the same window identity', async () => {
+    // Readiness used to be answered whenever SOME registration existed and the
+    // geometry was unchanged. The same member with the same rectangle can point at a
+    // DIFFERENT native window, and the old short-circuit would have kept it ready
+    // against a slot the broker ACKed for the previous one. Identity decides now.
+    const ipc = fakeIpcMain();
+    const service = fakeService();
+    const observed = {
+      windowInstanceId: 'W0000000000000001',
+      runtimeId: 'R1', processId: 1234, processStartTicks: '1', windowClass: 'Chrome_WidgetWin_1',
+      handle: 555, bounds: { x: 10, y: 10, width: 100, height: 100 }, state: 'normal',
+    } as never;
+    service.observeInstances = async (ids: string[]) => {
+      const map = new Map<string, never>();
+      for (const id of ids) map.set(id, observed);
+      return map as never;
+    };
+    const registrations: unknown[] = [];
+    const broker = {
+      ready: true,
+      sessionId: 'broker-1',
+      register: async (slot: unknown) => { registrations.push(slot); return true; },
+      clear: () => undefined,
+      group: () => true,
+      onEvent: () => () => undefined,
+      onShift: () => () => undefined,
+      stop: () => undefined,
+    };
+    registerWindowCapabilityIpc({
+      ipcMain: ipc.ipcMain,
+      service,
+      isSender: () => true,
+      controlBroker: broker as never,
+      resolveControlSurface: () => ({ ownerHwnd: 999, hit: { x: 0, y: 0, width: 10, height: 10 } }),
+    });
+    const rect = { x: 1, y: 1, width: 10, height: 10 };
+    const descriptor = { version: 1, title: 'A', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W0000000000000001' };
+    const first = await ipc.invoke('papers:window-control:sync', 41, [
+      { layoutId: 'L', memberId: 'M', descriptor, rect, restore: rect },
+    ]);
+    expect((first as { outcome: string }).outcome).toBe('success');
+    // The registration is background work; give it a turn to settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(registrations.length).toBeGreaterThan(0);
+
+    // Same member, same rectangle, a DIFFERENT native window identity.
+    const other = { ...descriptor, windowInstanceId: 'W0000000000000002' };
+    const second = await ipc.invoke('papers:window-control:sync', 41, [
+      { layoutId: 'L', memberId: 'M', descriptor: other, rect, restore: rect },
+    ]);
+    const results = (second as { results?: Array<{ ready: boolean }> }).results ?? [];
+    expect(results.length).toBe(1);
+    // It must NOT be answered ready from the previous identity's registration.
+    expect(results[0]!.ready).toBe(false);
+  });
+  it('answers READ-ONLY capability operations without waiting for write authority', async () => {
+    // The compact widget is not the writer, so waiting for document-write
+    // authority parked its descriptor resolution forever - and a surface that
+    // only needs to LOOK was starved. That starvation left the native control
+    // broker with no slots at all. Reads answer; mutations still wait.
     const ipc = fakeIpcMain();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    let calls = 0;
+    let listCalls = 0;
+    let minimizeCalls = 0;
     const service = fakeService();
     service.listCandidates = async () => {
-      calls += 1;
+      listCalls += 1;
       return { outcome: 'success', candidates: [] };
+    };
+    service.minimizeCapability = async () => {
+      minimizeCalls += 1;
+      return { outcome: 'success' };
     };
     registerWindowCapabilityIpc({
       ipcMain: ipc.ipcMain,
@@ -113,12 +301,18 @@ describe('windowCapabilityIpc', () => {
       waitForAuthority: () => gate,
     });
 
-    const pending = ipc.invoke('papers:window-capability:list', 41, undefined);
+    // A read answers immediately, with the authority gate still closed.
+    await expect(ipc.invoke('papers:window-capability:list', 41, undefined))
+      .resolves.toEqual({ outcome: 'success', candidates: [] });
+    expect(listCalls).toBe(1);
+
+    // A mutation still waits for the gate.
+    const pending = ipc.invoke('papers:window-capability:minimize', 41, { version: 1, bindingId: 'binding-1' });
     await Promise.resolve();
-    expect(calls).toBe(0);
+    expect(minimizeCalls).toBe(0);
     release();
-    await expect(pending).resolves.toEqual({ outcome: 'success', candidates: [] });
-    expect(calls).toBe(1);
+    await expect(pending).resolves.toEqual({ outcome: 'success' });
+    expect(minimizeCalls).toBe(1);
   });
 
   it('uses native DWM live preview for widget Shift-hover when its trusted host HWND resolves', async () => {
@@ -295,6 +489,28 @@ describe('windowCapabilityIpc', () => {
     // Absent options default to 240x135 (the service applies the default).
     await ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: {} });
     await ipc.invoke('papers:window-capability:thumbnail', 42, { capability, options: { maxWidth: 240 } });
+  });
+
+  it('reads a cached thumbnail with only a live capability and exposes cache-miss without an image', async () => {
+    const ipc = fakeIpcMain();
+    const image = pngWithSize(120, 68);
+    let cached: Awaited<ReturnType<WindowCapabilityService['cachedThumbnailCapability']>> = {
+      outcome: 'success', thumbnail: { image, width: 120, height: 68 },
+    };
+    const service = new Proxy(fakeService(), {
+      get(target, property) {
+        if (property === 'cachedThumbnailCapability') return async () => cached;
+        return Reflect.get(target, property);
+      },
+    });
+    registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service, isSender: () => true });
+    expect(await ipc.invoke('papers:window-capability:thumbnail-cache', 42, { capability })).toEqual({
+      outcome: 'success', imageUrl: `data:image/png;base64,${image}`, width: 120, height: 68,
+    });
+    cached = { outcome: 'cache-miss' };
+    expect(await ipc.invoke('papers:window-capability:thumbnail-cache', 42, { capability })).toEqual({ outcome: 'cache-miss' });
+    await expect(ipc.invoke('papers:window-capability:thumbnail-cache', 42, { capability, extra: true }))
+      .rejects.toThrow('exactly capability');
   });
 
   it('maps typed fallback outcomes to payload-free page results (019G)', async () => {

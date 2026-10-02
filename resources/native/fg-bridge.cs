@@ -81,6 +81,94 @@ public class FgBridge
     [DllImport("user32.dll")]
     private static extern bool AllowSetForegroundWindow(uint processId);
 
+    /// <summary>
+    /// Set only when Papers asks for it (PAPERS_FG_DIAGNOSE=1 in the child's
+    /// environment). A normal click must never pay for this: it sleeps for the
+    /// stability window, which is the one thing that must not sit on the path the
+    /// creator feels.
+    /// </summary>
+    private static bool Diagnose =
+        Environment.GetEnvironmentVariable("PAPERS_FG_DIAGNOSE") == "1";
+
+    /// <summary>
+    /// What the activation looks like AFTER it succeeded.
+    ///
+    /// GetForegroundWindow() == target proves one instant, and the creator's
+    /// complaint is that the window does not stay in front. So: sample the
+    /// foreground again at +100ms and +300ms, and name the first VISIBLE window
+    /// above the target in z-order that overlaps it - with whether that window is
+    /// topmost, and how much of the target it covers. A topmost window is allowed
+    /// to sit above an ordinary one; the compact widget is exactly that, and it
+    /// must not be mistaken for a failure.
+    /// </summary>
+    private static string Stability(IntPtr target)
+    {
+        try
+        {
+            System.Threading.Thread.Sleep(100);
+            long fg100 = GetForegroundWindow().ToInt64();
+            System.Threading.Thread.Sleep(200);
+            long fg300 = GetForegroundWindow().ToInt64();
+
+            RECT targetRect;
+            if (!GetWindowRect(target, out targetRect)) return " fg100=" + fg100 + " fg300=" + fg300;
+            long area = (long)Math.Max(0, targetRect.Right - targetRect.Left)
+                * Math.Max(0, targetRect.Bottom - targetRect.Top);
+
+            // Walk UP the z-order from the target and take the first visible
+            // window that actually overlaps it. GW_HWNDPREV is documented as the
+            // window directly above in z-order.
+            long occluder = 0;
+            bool occluderTopmost = false;
+            long occluderArea = 0;
+            IntPtr walk = target;
+            for (int step = 0; step < 64; step++)
+            {
+                walk = GetWindow(walk, 3 /* GW_HWNDPREV */);
+                if (walk == IntPtr.Zero) break;
+                if (!IsWindowVisible(walk)) continue;
+                RECT other;
+                if (!GetWindowRect(walk, out other)) continue;
+                long overlapWidth = Math.Max(0, Math.Min(targetRect.Right, other.Right) - Math.Max(targetRect.Left, other.Left));
+                long overlapHeight = Math.Max(0, Math.Min(targetRect.Bottom, other.Bottom) - Math.Max(targetRect.Top, other.Top));
+                long overlap = overlapWidth * overlapHeight;
+                if (overlap <= 0) continue;
+                occluder = walk.ToInt64();
+                occluderTopmost = (GetWindowLong(walk, -20) & 0x00000008) != 0;
+                occluderArea = area > 0 ? (overlap * 100 / area) : 0;
+                break;
+            }
+
+            int cloaked = 0;
+            try { DwmGetWindowAttribute(target, 14 /* DWMWA_CLOAKED */, out cloaked, sizeof(int)); } catch { cloaked = 0; }
+            long monitor = MonitorFromWindow(target, 2 /* MONITOR_DEFAULTTONEAREST */).ToInt64();
+
+            return " fg100=" + fg100 + " fg300=" + fg300
+                + " occ=" + occluder + " occTop=" + (occluderTopmost ? "1" : "0")
+                + " occPct=" + occluderArea
+                + " cloaked=" + cloaked
+                + " mon=" + monitor;
+        }
+        catch
+        {
+            return "";
+        }
+    }
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
     private delegate bool EnumWindowsCallback(IntPtr hWnd, IntPtr lParam);
 
     private const int SW_RESTORE = 9;
@@ -183,6 +271,10 @@ public class FgBridge
             }
 
             string command = args[0].ToLowerInvariant();
+            // The caller's own process id, so the bridge can tell whether the privilege
+            // to hand the foreground over actually exists before it asks for it.
+            uint parentPid = 0;
+            if (args.Length >= 3) UInt32.TryParse(args[2], out parentPid);
 
             if (command == "activate-papers")
             {
@@ -299,18 +391,74 @@ public class FgBridge
                     return 0;
                 }
                 if (IsIconic(target)) ShowWindow(target, SW_RESTORE);
+                // What the foreground was BEFORE anything was attempted. This is
+                // the number that decides whether Papers had any privilege to
+                // transfer: if it is already a Papers window, the widget did hold
+                // the foreground; if it is another application, the refusal is a
+                // genuine foreground-lock refusal and not our own bug.
+                IntPtr foregroundBefore = GetForegroundWindow();
+                long before = foregroundBefore.ToInt64();
+                // A REFUSED SetForegroundWindow IS WHAT FLASHES THE TASKBAR. That is
+                // Windows' own feedback for "a background process asked for the
+                // foreground", and the creator sees a red flash on every repeated
+                // right-click while nothing activates. Rather than make the flash
+                // unlikely, make it impossible: only ask when the privilege actually
+                // exists. A process may take the foreground when it, or the process
+                // that spawned it, already holds it - so the caller passes its own pid
+                // and the request is skipped entirely when that is not who owns the
+                // foreground. A skipped call cannot flash.
+                uint foregroundPid = 0;
+                if (foregroundBefore != IntPtr.Zero)
+                    GetWindowThreadProcessId(foregroundBefore, out foregroundPid);
                 bool raised = BringWindowToTop(target);
+                bool eligible = parentPid == 0 || foregroundPid == parentPid
+                    || foregroundPid == (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+                if (!eligible)
+                {
+                    // Raised, but deliberately not asked for the foreground: asking
+                    // would flash and would fail.
+                    Console.WriteLine("before=" + before + " raised=" + (raised ? 1 : 0)
+                        + " set=0 moved=0 foregroundAfter=" + before
+                        + " not-eligible=1 parent=" + parentPid + " fgPid=" + foregroundPid);
+                    return 0;
+                }
                 bool foregrounded = SetForegroundWindow(target);
-                bool moved = GetForegroundWindow() == target;
+                // An accepted switch is not an observed one: Windows documents
+                // that GetForegroundWindow() can read NULL while activation is
+                // changing. Poll for the target on a monotonic clock instead of
+                // sampling once and calling a switch that worked a refusal. Do not
+                // call SetForegroundWindow again during the poll - a timer does
+                // not confer permission, it only makes noise.
+                long settleMs = -1;
+                bool moved = false;
+                if (foregrounded)
+                {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    while (clock.ElapsedMilliseconds <= 100)
+                    {
+                        if (GetForegroundWindow() == target)
+                        {
+                            settleMs = clock.ElapsedMilliseconds;
+                            moved = true;
+                            break;
+                        }
+                        System.Threading.Thread.Sleep(1);
+                    }
+                    if (!moved) settleMs = -2; // accepted, never observed
+                }
                 Console.WriteLine(
                     "raised=" + (raised ? "1" : "0")
                     + " set=" + (foregrounded ? "1" : "0")
                     + " moved=" + (moved ? "1" : "0")
-                    + " fg=" + GetForegroundWindow().ToInt64());
-                // Exit 0 only when the foreground REALLY moved. A caller must not
-                // be able to read a refusal as success - that false success is
-                // exactly what the PowerShell helper produced.
-                return moved ? 0 : 4;
+                    + " before=" + before
+                    + " settle=" + settleMs
+                    + " fg=" + GetForegroundWindow().ToInt64()
+                    + (Diagnose ? Stability(target) : ""));
+                // Exit 0 when the foreground really moved, and also when the switch
+                // was ACCEPTED but not yet observable: the caller must be able to
+                // tell "Windows refused" from "it is still settling". settle=-1 is
+                // the only genuine refusal.
+                return (moved || settleMs == -2) ? 0 : 4;
             }
 
             Console.WriteLine("unknown command");

@@ -270,6 +270,11 @@ function Get-WhResponseObservation {
     processId = $obs.ProcessId
     processPath = $obs.ProcessPath
     windowClass = $obs.ClassName
+    # The native handle, so the process that owns the click can take the
+    # foreground itself: Windows refuses a foreground switch from a background
+    # worker, and a refused switch is what flashes the taskbar button instead of
+    # bringing the window forward.
+    handle = [int64]$entry.hwnd
     state = $obs.State
     bounds = (Get-WhWireBounds $obs.Bounds)
   }
@@ -504,6 +509,12 @@ function Invoke-WhRequest {
           processId = $observation.ProcessId
           processPath = $observation.ProcessPath
           windowClass = $observation.ClassName
+          # THE NATIVE HANDLE BELONGS ON EVERY OBSERVATION, not only on a single
+          # one. It was added to the observe/hover wire and never to the list's, so
+          # anything built from an enumeration - the resident control broker's whole
+          # registration path - had no handle and could not register a single slot.
+          # The single-observation builder had it; this one did not.
+          handle = [int64]$observation.RuntimeId.ToInt64()
           state = $observation.State
           bounds = (Get-WhWireBounds $observation.Bounds)
         }
@@ -763,6 +774,11 @@ function Invoke-WhRequest {
 function Invoke-WhRequestLine {
   param([string]$Line)
   if ([string]::IsNullOrWhiteSpace($Line)) { return $null }
+  # A FRESH REQUEST GETS FRESH PROCESS FACTS. The per-pid cache below saves one
+  # process query per window within a single enumeration; clearing it here means a
+  # pid recycled between requests can never be answered with a dead process's
+  # identity.
+  $script:WhProcessInfo = @{}
   try {
     $parsed = $Line | ConvertFrom-Json
     $parsed = ConvertTo-PsHashtable $parsed
