@@ -495,18 +495,24 @@ internal static class HoverInputBridge
         KBDLLHOOKSTRUCT key = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
         bool isAlt = key.vkCode == VK_MENU || key.vkCode == VK_LMENU || key.vkCode == VK_RMENU;
         bool injected = (key.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0;
-        if (up && !injected && altQChords.ObserveKeyUp(key.vkCode == VK_Q, isAlt))
+        // Remote-control software such as Chrome Remote Desktop normally reaches
+        // WH_KEYBOARD_LL as injected input. Alt+Q is special: the hook only
+        // captures its start-time widget identity, while RegisterHotKey/WM_HOTKEY
+        // remains the authority that can actually start the gesture. Therefore
+        // injected Alt+Q may enter this tracker, but injected input still cannot
+        // enter the hover typing/capture path below.
+        if (up && altQHotkeyRegistered && altQChords.ObserveKeyUp(key.vkCode == VK_Q, isAlt))
         {
             Emit("ALTQ_RELEASE");
         }
         if (up && swallowedKeys.Remove(key.vkCode)) return new IntPtr(1);
         if (!down) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if (swallowedKeys.Contains(key.vkCode)) return new IntPtr(1); // suppress auto-repeat for consumed physical key
-        if (injected) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if (altQHotkeyRegistered)
             altQChords.ObserveQDown(key.vkCode == VK_Q,
                 (key.flags & LLKHF_ALTDOWN) != 0,
                 WidgetAtCursor);
+        if (injected) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if ((key.flags & LLKHF_ALTDOWN) != 0 || key.vkCode == VK_Q || isAlt) return CallNextHookEx(hookHandle, code, wParam, lParam);
         WidgetPolicy policy = HitWidget();
         if (policy == null) return CallNextHookEx(hookHandle, code, wParam, lParam);
