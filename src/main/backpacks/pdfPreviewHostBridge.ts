@@ -182,6 +182,7 @@ export function createPdfPreviewHostBridge(input: {
 }): PdfPreviewHostBridge {
   const sessions = new Map<string, LivePdfPreview>();
   const owners = new Map<string, string>();
+  const ownerVisibility = new Map<string, boolean>();
 
   const forget = (session: LivePdfPreview): void => {
     if (sessions.get(session.id) === session) sessions.delete(session.id);
@@ -217,6 +218,19 @@ export function createPdfPreviewHostBridge(input: {
   const place = (session: LivePdfPreview): void => {
     if (session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
     session.view.setBounds(absoluteRect(session.surfaceBounds, session.localRect));
+  };
+  const syncPresentation = (session: LivePdfPreview): void => {
+    if (session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
+    if (ownerVisibility.get(session.ownerKey) === true) {
+      if (!session.presented) {
+        session.window.contentView.addChildView(session.view);
+        session.presented = true;
+      }
+      place(session);
+    } else if (session.presented) {
+      session.window.contentView.removeChildView(session.view);
+      session.presented = false;
+    }
   };
 
   return {
@@ -279,9 +293,7 @@ export function createPdfPreviewHostBridge(input: {
       });
 
       try {
-        window.contentView.addChildView(view);
-        session.presented = true;
-        place(session);
+        syncPresentation(session);
         const savedState = await loadReadingState(input.stateDirectory, stateKey);
         await view.webContents.loadURL(parsed.toString());
         if (savedState) await restoreReadingState(view, savedState);
@@ -325,22 +337,14 @@ export function createPdfPreviewHostBridge(input: {
     },
 
     setOwnerVisible(ownerKey, visible) {
+      ownerVisibility.set(ownerKey, visible);
       const id = owners.get(ownerKey);
       const session = id ? sessions.get(id) : undefined;
-      if (!session || session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
-      if (visible) {
-        if (!session.presented) {
-          session.window.contentView.addChildView(session.view);
-          session.presented = true;
-        }
-        place(session);
-      } else if (session.presented) {
-        session.window.contentView.removeChildView(session.view);
-        session.presented = false;
-      }
+      if (session) syncPresentation(session);
     },
 
     closeOwner(ownerKey) {
+      ownerVisibility.delete(ownerKey);
       const id = owners.get(ownerKey);
       const session = id ? sessions.get(id) : undefined;
       if (session) void cleanupSession(session);
@@ -357,6 +361,7 @@ export function createPdfPreviewHostBridge(input: {
 
     dispose() {
       for (const session of [...sessions.values()]) void cleanupSession(session);
+      ownerVisibility.clear();
     },
   };
 }
