@@ -51,12 +51,10 @@ export function createWindowsPreviewHandlerBridge(input:{cacheDirectory:string;s
     fs.writeFileSync(stampFile,stamp,'utf8');
   }catch{try{fs.rmSync(executable,{force:true});fs.rmSync(stampFile,{force:true})}catch{};return null}}
 
-  const sessions=new Map<string,Live>(), owners=new Map<string,string>(), ownerVisibility=new Map<string,boolean>();
+  const sessions=new Map<string,Live>(), owners=new Map<string,string>();
   const forget=(s:Live)=>{if(sessions.get(s.id)===s)sessions.delete(s.id);if(owners.get(s.ownerKey)===s.id)owners.delete(s.ownerKey)};
   const stop=(s:Live)=>{forget(s);try{s.process.stdin.write('CLOSE\n')}catch{};const timer=setTimeout(()=>{try{s.process.kill()}catch{}},750);timer.unref?.()};
   const sendMove=(s:Live)=>{const r=absoluteRect(s.surfaceBounds,s.localRect);if(!validRect(r))return;try{s.process.stdin.write(`MOVE\t${r.x}\t${r.y}\t${r.width}\t${r.height}\n`)}catch{stop(s)}};
-  const syncVisibility=(s:Live)=>{try{s.process.stdin.write(ownerVisibility.get(s.ownerKey)===true?'SHOW\n':'HIDE\n')}catch{stop(s)}};
-  const closeOwnerSession=(ownerKey:string)=>{const id=owners.get(ownerKey),s=id?sessions.get(id):undefined;if(s)stop(s)};
 
   return {
     probe(target){return new Promise(resolve=>execFile(executable,['--probe',target],{timeout:4000,windowsHide:true,encoding:'utf8',maxBuffer:16384},(_e,stdout)=>{
@@ -70,19 +68,19 @@ export function createWindowsPreviewHandlerBridge(input:{cacheDirectory:string;s
       } catch(error) {
         return{ok:false,error:error instanceof Error?error.message:String(error)};
       }
-      closeOwnerSession(context.ownerKey); const r=absoluteRect(context.surfaceBounds,localRect);
+      this.closeOwner(context.ownerKey); const r=absoluteRect(context.surfaceBounds,localRect);
       const child=spawn(executable,['--host',safeTarget,context.parentHwnd,String(r.x),String(r.y),String(r.width),String(r.height)],{windowsHide:true,stdio:['pipe','pipe','pipe']});
       const line=await new Promise<string>(resolve=>{let done=false;const finish=(v:string)=>{if(done)return;done=true;clearTimeout(timer);resolve(v)};createInterface({input:child.stdout}).once('line',finish);child.once('error',e=>finish('ERR\t'+Buffer.from(String(e)).toString('base64')));child.once('exit',()=>finish('NONE'));const timer=setTimeout(()=>finish('NONE'),7000);timer.unref?.()});
       const p=parseLine(line); if(p.kind!=='ready'||!p.value){try{child.kill()}catch{};return{ok:false,...(p.value?{error:p.value}:{})}};
       const s:Live={id:randomUUID(),ownerKey:context.ownerKey,process:child,localRect:{...localRect},surfaceBounds:{...context.surfaceBounds},clsid:p.value};
-      sessions.set(s.id,s);owners.set(s.ownerKey,s.id);child.once('exit',()=>forget(s));child.once('error',()=>forget(s));syncVisibility(s);return{ok:true,sessionId:s.id,clsid:s.clsid};
+      sessions.set(s.id,s);owners.set(s.ownerKey,s.id);child.once('exit',()=>forget(s));child.once('error',()=>forget(s));return{ok:true,sessionId:s.id,clsid:s.clsid};
     },
     move(ownerKey,sessionId,localRect){const s=sessions.get(sessionId);if(!s||s.ownerKey!==ownerKey||!validRect(localRect))return false;s.localRect={...localRect};sendMove(s);return true},
     focus(ownerKey,sessionId){const s=sessions.get(sessionId);if(!s||s.ownerKey!==ownerKey)return false;try{s.process.stdin.write('FOCUS\n');return true}catch{stop(s);return false}},
     close(ownerKey,sessionId){const s=sessions.get(sessionId);if(!s||s.ownerKey!==ownerKey)return false;stop(s);return true},
     setOwnerSurfaceBounds(ownerKey,bounds){if(!validRect(bounds))return;const id=owners.get(ownerKey),s=id?sessions.get(id):undefined;if(!s)return;s.surfaceBounds={...bounds};sendMove(s)},
-    setOwnerVisible(ownerKey,visible){ownerVisibility.set(ownerKey,visible);const id=owners.get(ownerKey),s=id?sessions.get(id):undefined;if(s)syncVisibility(s)},
-    closeOwner(ownerKey){ownerVisibility.delete(ownerKey);closeOwnerSession(ownerKey)},
-    dispose(){for(const s of [...sessions.values()])stop(s);ownerVisibility.clear()}
+    setOwnerVisible(ownerKey,visible){const id=owners.get(ownerKey),s=id?sessions.get(id):undefined;if(!s)return;try{s.process.stdin.write(visible?'SHOW\n':'HIDE\n')}catch{stop(s)}},
+    closeOwner(ownerKey){const id=owners.get(ownerKey),s=id?sessions.get(id):undefined;if(s)stop(s)},
+    dispose(){for(const s of [...sessions.values()])stop(s)}
   };
 }

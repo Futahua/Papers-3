@@ -946,11 +946,6 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Link viewer hosting is unavailable.' };
             return { ok: deps.webBrowser.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect)) };
           }
-          case 'browser-visibility': {
-            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Link viewer hosting is unavailable.' };
-            if (typeof params.visible !== 'boolean') throw new Error('visible must be a boolean.');
-            return { ok: deps.webBrowser.setPreviewVisible(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), params.visible) };
-          }
           case 'browser-close': {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Link viewer hosting is unavailable.' };
             return { ok: deps.webBrowser.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };

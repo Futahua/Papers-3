@@ -13,7 +13,6 @@ interface LiveWebBrowser {
   presented: boolean;
   sourceUrl: string;
   zoomFactor: number;
-  previewVisible: boolean;
 }
 
 export interface WebBrowserHostBridge {
@@ -24,7 +23,6 @@ export interface WebBrowserHostBridge {
   ): Promise<{ ok: true; sessionId: string; url: string } | { ok: false; error?: string }>;
   move(ownerKey: string, sessionId: string, localRect: PreviewRect): boolean;
   close(ownerKey: string, sessionId: string): boolean;
-  setPreviewVisible(ownerKey: string, sessionId: string, visible: boolean): boolean;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
   closeOwner(ownerKey: string): void;
@@ -89,11 +87,6 @@ export function createWebBrowserHostBridge(input: {
 }): WebBrowserHostBridge {
   const sessions = new Map<string, LiveWebBrowser>();
   const owners = new Map<string, string>();
-  // Visibility is a property of the owning logical surface, not of an
-  // individual browser session. Hidden Backpack tabs boot their renderers in
-  // the background, so browser-open can arrive after setOwnerVisible(false).
-  // Persist the surface state even when no browser session exists yet.
-  const ownerVisibility = new Map<string, boolean>();
 
   const forget = (session: LiveWebBrowser): void => {
     if (sessions.get(session.id) === session) sessions.delete(session.id);
@@ -115,22 +108,6 @@ export function createWebBrowserHostBridge(input: {
     if (session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
     session.view.setBounds(absoluteRect(session.surfaceBounds, session.localRect));
   };
-  const syncPresentation = (session: LiveWebBrowser): void => {
-    if (session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
-    const visible = ownerVisibility.get(session.ownerKey) === true && session.previewVisible;
-    if (visible) {
-      if (!session.presented) {
-        session.window.contentView.addChildView(session.view);
-        session.presented = true;
-      }
-      place(session);
-      return;
-    }
-    if (session.presented) {
-      session.window.contentView.removeChildView(session.view);
-      session.presented = false;
-    }
-  };
   const closeOwner = (ownerKey: string): void => {
     const id = owners.get(ownerKey);
     const session = id ? sessions.get(id) : undefined;
@@ -150,8 +127,11 @@ export function createWebBrowserHostBridge(input: {
       if (existing && !existing.window.isDestroyed() && !existing.view.webContents.isDestroyed()) {
         existing.localRect = { ...localRect };
         existing.surfaceBounds = { ...context.surfaceBounds };
-        existing.previewVisible = true;
-        syncPresentation(existing);
+        if (!existing.presented) {
+          existing.window.contentView.addChildView(existing.view);
+          existing.presented = true;
+        }
+        place(existing);
         if (existing.sourceUrl === url) {
           return { ok: true, sessionId: existing.id, url };
         }
@@ -201,7 +181,6 @@ export function createWebBrowserHostBridge(input: {
         presented: false,
         sourceUrl: url,
         zoomFactor: 1,
-        previewVisible: true,
       };
       contents.on('before-mouse-event', (event, mouse) => {
         if (mouse.type !== 'mouseWheel') return;
@@ -222,7 +201,9 @@ export function createWebBrowserHostBridge(input: {
       });
 
       try {
-        syncPresentation(session);
+        window.contentView.addChildView(view);
+        session.presented = true;
+        place(session);
         await contents.loadURL(url);
         return { ok: true, sessionId: session.id, url };
       } catch (error) {
@@ -246,14 +227,6 @@ export function createWebBrowserHostBridge(input: {
       return true;
     },
 
-    setPreviewVisible(ownerKey, sessionId, visible) {
-      const session = sessions.get(sessionId);
-      if (!session || session.ownerKey !== ownerKey) return false;
-      session.previewVisible = visible;
-      syncPresentation(session);
-      return true;
-    },
-
     setOwnerSurfaceBounds(ownerKey, bounds) {
       if (!validRect(bounds)) return;
       const id = owners.get(ownerKey);
@@ -264,14 +237,22 @@ export function createWebBrowserHostBridge(input: {
     },
 
     setOwnerVisible(ownerKey, visible) {
-      ownerVisibility.set(ownerKey, visible);
       const id = owners.get(ownerKey);
       const session = id ? sessions.get(id) : undefined;
-      if (session) syncPresentation(session);
+      if (!session || session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
+      if (visible) {
+        if (!session.presented) {
+          session.window.contentView.addChildView(session.view);
+          session.presented = true;
+        }
+        place(session);
+      } else if (session.presented) {
+        session.window.contentView.removeChildView(session.view);
+        session.presented = false;
+      }
     },
 
     closeOwner(ownerKey) {
-      ownerVisibility.delete(ownerKey);
       closeOwner(ownerKey);
     },
 
@@ -286,7 +267,6 @@ export function createWebBrowserHostBridge(input: {
 
     dispose() {
       for (const session of [...sessions.values()]) cleanupSession(session);
-      ownerVisibility.clear();
     },
   };
 }

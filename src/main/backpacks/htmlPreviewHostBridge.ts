@@ -96,7 +96,6 @@ export function createHtmlPreviewHostBridge(input: {
 }): HtmlPreviewHostBridge {
   const sessions = new Map<string, LiveHtmlPreview>();
   const owners = new Map<string, string>();
-  const ownerVisibility = new Map<string, boolean>();
 
   const forget = (session: LiveHtmlPreview): void => {
     if (sessions.get(session.id) === session) sessions.delete(session.id);
@@ -119,24 +118,6 @@ export function createHtmlPreviewHostBridge(input: {
     if (session.window.isDestroyed() || session.webContents.isDestroyed()) return;
     session.view.setBounds(absoluteRect(session.surfaceBounds, session.localRect));
   };
-  const syncPresentation = (session: LiveHtmlPreview): void => {
-    if (session.window.isDestroyed() || session.webContents.isDestroyed()) return;
-    if (ownerVisibility.get(session.ownerKey) === true) {
-      if (!session.presented) {
-        session.window.contentView.addChildView(session.view);
-        session.presented = true;
-      }
-      place(session);
-    } else if (session.presented) {
-      session.window.contentView.removeChildView(session.view);
-      session.presented = false;
-    }
-  };
-  const closeOwnerSession = (ownerKey: string): void => {
-    const id = owners.get(ownerKey);
-    const session = id ? sessions.get(id) : undefined;
-    if (session) cleanupSession(session);
-  };
 
   return {
     async open(context, filePath, localRect, cleanup) {
@@ -145,7 +126,7 @@ export function createHtmlPreviewHostBridge(input: {
         return { ok: false, error: 'Invalid HTML preview geometry.' };
       }
 
-      closeOwnerSession(context.ownerKey);
+      this.closeOwner(context.ownerKey);
       const window = input.resolveWindow(context.ownerKey);
       if (!window || window.isDestroyed()) {
         cleanup();
@@ -195,7 +176,9 @@ export function createHtmlPreviewHostBridge(input: {
       });
 
       try {
-        syncPresentation(session);
+        window.contentView.addChildView(view);
+        session.presented = true;
+        place(session);
         await contents.loadFile(filePath);
         await contents.executeJavaScript(`
           (() => {
@@ -245,15 +228,25 @@ export function createHtmlPreviewHostBridge(input: {
     },
 
     setOwnerVisible(ownerKey, visible) {
-      ownerVisibility.set(ownerKey, visible);
       const id = owners.get(ownerKey);
       const session = id ? sessions.get(id) : undefined;
-      if (session) syncPresentation(session);
+      if (!session || session.window.isDestroyed() || session.webContents.isDestroyed()) return;
+      if (visible) {
+        if (!session.presented) {
+          session.window.contentView.addChildView(session.view);
+          session.presented = true;
+        }
+        place(session);
+      } else if (session.presented) {
+        session.window.contentView.removeChildView(session.view);
+        session.presented = false;
+      }
     },
 
     closeOwner(ownerKey) {
-      ownerVisibility.delete(ownerKey);
-      closeOwnerSession(ownerKey);
+      const id = owners.get(ownerKey);
+      const session = id ? sessions.get(id) : undefined;
+      if (session) cleanupSession(session);
     },
 
     raiseWindow(windowId) {
@@ -267,7 +260,6 @@ export function createHtmlPreviewHostBridge(input: {
 
     dispose() {
       for (const session of [...sessions.values()]) cleanupSession(session);
-      ownerVisibility.clear();
     },
   };
 }
