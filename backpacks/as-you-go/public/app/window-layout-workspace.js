@@ -117,8 +117,18 @@ export function windowLayoutCandidateIsMember(members, candidate) {
     windowDescriptorIdentityRelation(member?.descriptor, candidate) === 'same');
 }
 
-export function windowLayoutPickForBoundCandidate(members, bound, candidate = null) {
+/**
+ * One semantic membership decision after a native candidate has been bound.
+ *
+ * UI surfaces may discover a window differently, but once Papers returns the
+ * persisted descriptor they all converge here before any durable writer runs.
+ * `toggle` adds an absent identity or removes the one present identity.
+ * `remove` is data-only intent: absence is a no-op and can never become an
+ * add. Ambiguous identity fails closed for both.
+ */
+export function windowLayoutPickForBoundCandidate(members, bound, candidate = null, intent = 'toggle') {
   if (!isPlainObject(bound) || !isPlainObject(bound.descriptor)) return null;
+  if (intent !== 'toggle' && intent !== 'remove') return null;
   const descriptor = bound.descriptor;
   const current = Array.isArray(members) ? members : [];
   if (descriptor.windowInstanceId !== undefined && !validWindowInstanceId(descriptor.windowInstanceId)) return null;
@@ -132,23 +142,16 @@ export function windowLayoutPickForBoundCandidate(members, bound, candidate = nu
     windowDescriptorIdentityRelation(member?.descriptor, descriptor));
   if (relations.includes('ambiguous')) return null;
   const isMember = relations.includes('same');
+  if (intent === 'remove') {
+    return {
+      outcome: 'committed',
+      adds: [],
+      removes: isMember ? [{ descriptor }] : [],
+    };
+  }
   return isMember
     ? { outcome: 'committed', adds: [], removes: [{ descriptor }] }
     : { outcome: 'committed', adds: [{ descriptor, capability: bound.capability, candidate }], removes: [] };
-}
-
-/** A native-list remove intent can only remove this exact bound identity.
- * Unlike a toggle pick, absence is a no-op and can never turn into an add. */
-export function windowLayoutRemoveForBoundCandidate(members, bound) {
-  if (!isPlainObject(bound) || !isPlainObject(bound.descriptor)) return null;
-  const descriptor = bound.descriptor;
-  const current = Array.isArray(members) ? members : [];
-  const isMember = current.some((member) => sameWindowDescriptorIdentity(member?.descriptor, descriptor));
-  return {
-    outcome: 'committed',
-    adds: [],
-    removes: isMember ? [{ descriptor }] : [],
-  };
 }
 
 export function createWindowLayoutPickApplier({

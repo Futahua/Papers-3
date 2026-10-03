@@ -1043,6 +1043,37 @@ test('bound list-pick identity treats same title on another executable as an add
   assert.equal(remove.adds.length, 0);
   assert.deepEqual(remove.removes, [{ descriptor: exact.descriptor }]);
 });
+
+test('explicit remove intent never turns an absent bound window into an add', () => {
+  const saved = descriptorInstance('Notepad', 'W0000000000000001', FINGERPRINT_A);
+  const other = descriptorInstance('Calculator', 'W0000000000000002', FINGERPRINT_B);
+  const members = [{ id: 'saved', descriptor: saved, state: 'normal', bounds: null }];
+
+  const present = windowLayoutPickForBoundCandidate(
+    members,
+    { descriptor: saved, capability: capabilityFor('Notepad') },
+    null,
+    'remove',
+  );
+  assert.deepEqual(present, {
+    outcome: 'committed',
+    adds: [],
+    removes: [{ descriptor: saved }],
+  });
+
+  const absent = windowLayoutPickForBoundCandidate(
+    members,
+    { descriptor: other, capability: capabilityFor('Calculator') },
+    null,
+    'remove',
+  );
+  assert.deepEqual(absent, {
+    outcome: 'committed',
+    adds: [],
+    removes: [],
+  });
+});
+
 test('attached and detached list picks use bound descriptor identity and the shared durable writer', async () => {
   const source = await readFile(new URL('./public/workspace-20260730b.js', import.meta.url), 'utf8');
   const attachedPickerStart = source.indexOf('async function openWindowLayoutPicker(layoutId)');
@@ -1064,6 +1095,8 @@ test('attached and detached list picks use bound descriptor identity and the sha
     'the attached picker exits before applying an unsafe toggle');
   assert.doesNotMatch(attached, /store\.commit\(|saveWorkspaceView\(|descriptor\.title\s*===\s*row\.title/,
     'attached list picking has no title-only or side-channel persistence path');
+  assert.match(attached, /windowLayoutPickForBoundCandidate\([\s\S]*?'remove'/,
+    'explicit attached removal uses the same semantic bound-candidate path and cannot become an add');
 
   const widgetStart = source.indexOf('  async function handleWidgetListCandidate(candidateId, intent = \'toggle\')');
   const widgetEnd = source.indexOf('  async function beginWidgetDirectPick()', widgetStart);
@@ -1075,6 +1108,8 @@ test('attached and detached list picks use bound descriptor identity and the sha
     'the detached picker exits before sending an unsafe toggle');
   assert.doesNotMatch(widget, /selectedOverride|descriptor\.title\s*===\s*bound\.descriptor\.title/,
     'detached list picking decides add/remove only after binding the persisted descriptor pair');
+  assert.match(widget, /windowLayoutPickForBoundCandidate\([\s\S]*?intent/,
+    'detached list picking passes its toggle/remove intent into the same semantic membership decision');
 
   const widgetPickerStart = source.indexOf('  async function openWidgetPicker()');
   const widgetPickerEnd = source.indexOf('  function windowLayoutWidgetPickerMarkup(candidates)', widgetPickerStart);

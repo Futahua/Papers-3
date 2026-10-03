@@ -1914,6 +1914,7 @@ async function handleWindowLayoutPickCandidate(layoutId, candidateId) {
     layout.arrangement?.members ?? [],
     bound,
     picked.row ?? bound.candidate ?? null,
+    'toggle',
   );
   if (!pick) {
     setWindowLayoutStatus(layoutId, windowLayoutHasValidInstanceId(bound.descriptor)
@@ -1946,7 +1947,12 @@ async function handleWindowLayoutRemoveCandidate(layoutId, candidateId) {
   // This explicit remove intent is not a toggle. Re-read after the host await;
   // if the exact W was removed on another surface, this becomes a no-op.
   const currentLayout = windowLayoutFromState(layoutId);
-  const pick = windowLayoutRemoveForBoundCandidate(currentLayout?.arrangement?.members ?? [], bound);
+  const pick = windowLayoutPickForBoundCandidate(
+    currentLayout?.arrangement?.members ?? [],
+    bound,
+    null,
+    'remove',
+  );
   if (!pick || pick.removes.length === 0) return false;
   const applied = await applyWindowLayoutPickSet(layoutId, pick, { activateOnMutation: false });
   return applied.outcome === 'committed' && windowLayoutPickApplyOutcome(applied).mutated;
@@ -7976,7 +7982,8 @@ function bootstrapWindowLayoutWidget() {
       widgetState.snapshot.members ?? [],
       bound,
       picked.row,
-  );
+      intent,
+    );
   if (!pick) {
     setWindowLayoutStatus(layoutId, windowLayoutHasValidInstanceId(bound.descriptor)
       ? 'Window identity could not be confirmed; no layout change was made.'

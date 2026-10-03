@@ -364,6 +364,18 @@ First migration slice committed as 379d079 (extract AYG window candidate binding
   this connector machine: test.mjs requires D:\Programs\CLIP STUDIO PAINT\CLIPS.bat,
   while Local Lapdog exposes only C:\. No refactor-related test failed.
 
-Next planned slice: converge AYG window membership mutation so attached/manual/widget paths
-share one semantic mutation entry before durable writer coordination, without creating a new
-persistence authority.
+Second migration slice validated and ready to commit on 2026-10-03:
+
+- extended windowLayoutPickForBoundCandidate with an explicit toggle/remove intent so bound
+  window membership has one semantic decision before durable writer coordination;
+- attached toggle, attached explicit remove, and compact-widget list paths all route through
+  that same decision;
+- deleted the separate remove-only helper, which also removed a latent runtime defect where
+  that path referenced an undefined identity helper and was called without a workspace import;
+- explicit remove is proven unable to turn an absent window into an add;
+- focused syntax + window-layout run: **58/58 pass**;
+- full AYG run: **1680/1681 pass**. The only failure remains the known environment-only
+  D:\Programs\CLIP STUDIO PAINT\CLIPS.bat check on this C:-only connector machine.
+
+Next planned slice: isolate compact-widget presentation lifecycle from durable AYG document
+authority, preserving the single durable writer and current UX.
