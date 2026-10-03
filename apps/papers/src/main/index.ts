@@ -34,6 +34,7 @@ import { papersDataDirArgument } from './papersDataDir';
 import { createHash, randomUUID } from 'node:crypto';
 import { createCandidatePickerDelivery, type CandidatePickerDeliveryResult } from './windows/candidatePickerDelivery';
 import { buildCandidatePickerDocument } from './windows/candidatePickerDocument';
+import { parseCandidatePickerNavigation, parseCandidatePickerSignal, type CandidatePickerIntent } from './windows/candidatePickerSignal';
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
@@ -2470,40 +2471,26 @@ async function bootstrap(): Promise<void> {
           if (now - pickerOutsideSince >= 140) closePicker();
         }, 40);
         pickerPointerWatch.unref?.();
-        const handlePickerUrl = (target: string): void => {
-          try {
-            const url = new URL(target);
-            if (url.host === 'papers-picker.invalid' && url.pathname === '/cancel') { closePicker(); return; }
-            if (url.host === 'papers-picker.invalid' && url.pathname === '/direct-pick') { finishDirectPick(); return; }
-            if (url.host === 'papers-picker.invalid' && url.pathname === '/peek-end') { deferCandidatePeekEnd(); return; }
-            if (url.host === 'papers-picker.invalid' && url.pathname.startsWith('/peek/')) {
-              const candidateId = decodeURIComponent(url.pathname.slice('/peek/'.length));
-              if (session.candidateIds.has(candidateId)) beginCandidatePeek(candidateId);
-              return;
-            }
-            if (url.host !== 'papers-picker.invalid') return;
-            const action = url.pathname.startsWith('/select/') ? 'select'
-              : url.pathname.startsWith('/close/') ? 'close' : null;
-            if (!action) return;
-            const candidateId = decodeURIComponent(url.pathname.slice(`/${action}/`.length));
-            if (session.candidateIds.has(candidateId)) finishAction(action, candidateId);
-          } catch { /* malformed navigation is ignored */ }
+        const handlePickerIntent = (intent: CandidatePickerIntent): void => {
+          if (intent.action === 'cancel') { closePicker(); return; }
+          if (intent.action === 'direct-pick') { finishDirectPick(); return; }
+          if (intent.action === 'peek-end') { deferCandidatePeekEnd(); return; }
+          if (intent.action === 'peek') { beginCandidatePeek(intent.candidateId); return; }
+          if (intent.action === 'select' || intent.action === 'close') {
+            finishAction(intent.action, intent.candidateId);
+          }
         };
         picker.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
         const pickerSignal = (event: Electron.IpcMainEvent, raw: unknown): void => {
-          if (event.sender.id !== picker.webContents.id || !raw || typeof raw !== 'object' || Array.isArray(raw)) return;
-          const record = raw as Record<string, unknown>;
-          if (Object.keys(record).some((key) => key !== 'action' && key !== 'candidateId')) return;
-          const action = record.action;
-          const candidateId = record.candidateId;
-          if (typeof action !== 'string' || !['select', 'close', 'cancel', 'peek', 'peek-end', 'direct-pick'].includes(action)) return;
-          if (typeof candidateId !== 'string' || Buffer.byteLength(candidateId, 'utf8') > 512) return;
-          handlePickerUrl(`https://papers-picker.invalid/${action}${candidateId ? `/${encodeURIComponent(candidateId)}` : ''}`);
+          if (event.sender.id !== picker.webContents.id) return;
+          const intent = parseCandidatePickerSignal(raw, session.candidateIds);
+          if (intent) handlePickerIntent(intent);
         };
         ipcMain.on('papers:candidate-picker:signal', pickerSignal);
         picker.webContents.on('will-navigate', (event, target) => {
           event.preventDefault();
-          handlePickerUrl(target);
+          const intent = parseCandidatePickerNavigation(target, session.candidateIds);
+          if (intent) handlePickerIntent(intent);
         });
         picker.webContents.on('before-input-event', (event, input) => {
           if (input.key === 'Escape') { event.preventDefault(); closePicker(); }

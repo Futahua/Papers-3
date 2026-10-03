@@ -453,7 +453,7 @@ Fourth Papers host-side seam committed as c9ef08d (centralize Papers window capa
 - Papers typecheck passes;
 - full default parallel suite: **1338 pass / 8 skipped / 0 fail**.
 
-Fifth Papers host-side seam is validated and ready to commit:
+Fifth Papers host-side seam committed as 6dcd4b6 (extract Papers candidate picker document):
 
 - extracted the native candidate-picker document/CSS/interaction script from main/index.ts
   into windows/candidatePickerDocument.ts;
@@ -465,6 +465,18 @@ Fifth Papers host-side seam is validated and ready to commit:
 - focused picker tests: **4/4 pass**;
 - Papers typecheck passes;
 - full default parallel suite: **1340 pass / 8 skipped / 0 fail**.
+
+Sixth Papers host-side seam is validated and ready to commit:
+
+- added windows/candidatePickerSignal.ts as the single fail-closed parser for candidate-picker
+  preload IPC and the legacy/navigation signal path;
+- unknown fields/actions, oversized ids, wrong hosts, malformed URLs and stale candidate ids
+  now converge through one tested contract instead of separate inline checks;
+- the parser returns semantic picker intents only; native picker lifecycle and window
+  capability authority remain outside it;
+- focused signal + shell-contract tests: **5/5 pass**;
+- Papers typecheck passes;
+- full default parallel suite: **1343 pass / 8 skipped / 0 fail**.
 
 AYG CLIP action-path note: this connector machine has a Desktop CLIP STUDIO PAINT shortcut
 pointing to the installed app under C:\Program Files\CELSYS, but no CLIPS.bat exists. The AYG
