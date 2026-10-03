@@ -440,7 +440,7 @@ Window interaction journal reliability slice committed as ea1f777:
 - Papers typecheck passes;
 - full default parallel suite passed **twice consecutively: 1337 pass / 8 skipped / 0 fail**.
 
-Fourth Papers host-side seam is validated and ready to commit:
+Fourth Papers host-side seam committed as c9ef08d (centralize Papers window capability runtime):
 
 - added windows/windowCapabilityRuntime.ts as the single lifecycle owner for the semantic
   window-capability service plus the resident native window-control broker;
@@ -453,11 +453,24 @@ Fourth Papers host-side seam is validated and ready to commit:
 - Papers typecheck passes;
 - full default parallel suite: **1338 pass / 8 skipped / 0 fail**.
 
+Fifth Papers host-side seam is validated and ready to commit:
+
+- extracted the native candidate-picker document/CSS/interaction script from main/index.ts
+  into windows/candidatePickerDocument.ts;
+- the new module is presentation-only: native window/session lifecycle, peek behavior,
+  capability binding and picker authority remain outside it;
+- candidate JSON stays in one escaped data island; markup-capable titles are regression-tested;
+- existing candidate-picker shell-contract tests now read the new presentation owner rather
+  than freezing the old composition-root location;
+- focused picker tests: **4/4 pass**;
+- Papers typecheck passes;
+- full default parallel suite: **1340 pass / 8 skipped / 0 fail**.
+
 AYG CLIP action-path note: this connector machine has a Desktop CLIP STUDIO PAINT shortcut
 pointing to the installed app under C:\Program Files\CELSYS, but no CLIPS.bat exists. The AYG
 source action still intentionally points at D:\Programs\CLIP STUDIO PAINT\CLIPS.bat, so the
 single AYG full-suite failure on this machine remains an environment/path mismatch; do not
 rewrite the product action merely to manufacture a green count.
 
-Next planned slice: continue decomposing Papers by real lifecycle ownership. Candidate-picker
-presentation/lifecycle is the next likely seam, but do not extract it merely for file size.
+Next planned slice: inspect candidate-picker native lifecycle/session code for a coherent
+controller boundary. Keep window-capability authority in WindowCapabilityRuntime/Service.
