@@ -996,6 +996,18 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             const tab = deps.webBrowser.getTab(context.nativePreviewHost.ownerKey, browserTabId(params.tabId));
             return tab ? { ok: true, tab } : { ok: false, code: 'BROWSER_TAB_UNAVAILABLE', message: 'Browser tab is unavailable.' };
           }
+          case 'browser-downloads': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return { ok: true, downloads: deps.webBrowser.getDownloads() };
+          }
+          case 'browser-adblock-state': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return { ok: true, adblock: deps.webBrowser.getAdblockState() };
+          }
+          case 'browser-adblock-set': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return { ok: true, adblock: await deps.webBrowser.setAdblockEnabled(params.enabled === true) };
+          }
           case 'preview-text-chunk': {
             const target = absolutePath(params.path);
             const offset = params.offset === undefined ? 0 : Number(params.offset);

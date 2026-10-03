@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { BaseWindow, WebContentsView, type NavigationEntry, type Session } from 'electron';
+import { app, BaseWindow, WebContentsView, type NavigationEntry, type Session } from 'electron';
+import { ElectronBlocker } from '@ghostery/adblocker-electron';
 
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
 
@@ -41,6 +42,23 @@ export interface BrowserTabState {
   crashed: boolean;
 }
 
+export interface BrowserDownloadState {
+  id: string;
+  filename: string;
+  path: string;
+  url: string;
+  receivedBytes: number;
+  totalBytes: number;
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+  startedAt: number;
+}
+
+export interface BrowserAdblockState {
+  enabled: boolean;
+  status: 'loading' | 'enabled' | 'disabled' | 'failed';
+  error?: string;
+}
+
 type BrowserTabResult = { ok: true; tab: BrowserTabState } | { ok: false; error?: string };
 
 export interface WebBrowserHostBridge {
@@ -59,6 +77,9 @@ export interface WebBrowserHostBridge {
   closeTab(ownerKey: string, tabId: string): boolean;
   setTabsVisible(ownerKey: string, visible: boolean): void;
   getTab(ownerKey: string, tabId: string): BrowserTabState | null;
+  getDownloads(): BrowserDownloadState[];
+  getAdblockState(): BrowserAdblockState;
+  setAdblockEnabled(enabled: boolean): Promise<BrowserAdblockState>;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
   closeOwner(ownerKey: string): void;
@@ -68,6 +89,7 @@ export interface WebBrowserHostBridge {
 
 const BROWSER_PARTITION = 'persist:papers-web-browser';
 const MAX_LIVE_TABS_PER_OWNER = 3;
+const MAX_RECENT_DOWNLOADS = 50;
 const hardenedBrowserSessions = new WeakSet<Session>();
 
 function hardenBrowserSession(browserSession: Session): void {
@@ -75,7 +97,6 @@ function hardenBrowserSession(browserSession: Session): void {
   hardenedBrowserSessions.add(browserSession);
   browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   browserSession.setPermissionCheckHandler(() => false);
-  browserSession.on('will-download', (event) => event.preventDefault());
   browserSession.setCertificateVerifyProc((request, callback) => {
     const hostname = request.hostname.toLocaleLowerCase().replace(/^\[|\]$/g, '');
     const loopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
@@ -127,7 +148,92 @@ export function createWebBrowserHostBridge(input: {
   const tabs = new Map<string, DurableBrowserTab>();
   const ownerTabs = new Map<string, Set<string>>();
   const activeTabs = new Map<string, string>();
+  const downloads: BrowserDownloadState[] = [];
+  const downloadSessions = new WeakSet<Session>();
+  const adblockSessions = new Set<Session>();
+  let adblockDesired = true;
+  let adblockStatus: BrowserAdblockState['status'] = 'loading';
+  let adblockError: string | undefined;
+  let blocker: ElectronBlocker | null = null;
+  let blockerPromise: Promise<ElectronBlocker> | null = null;
   const tabKey = (ownerKey: string, tabId: string): string => ownerKey + '\n' + tabId;
+
+  const enableBrowserDownloads = (browserSession: Session): void => {
+    if (downloadSessions.has(browserSession)) return;
+    downloadSessions.add(browserSession);
+    try { browserSession.setDownloadPath(app.getPath('downloads')); } catch { /* use Electron default */ }
+    browserSession.on('will-download', (_event, item) => {
+      const record: BrowserDownloadState = {
+        id: randomUUID(),
+        filename: item.getFilename(),
+        path: item.getSavePath(),
+        url: item.getURL(),
+        receivedBytes: item.getReceivedBytes(),
+        totalBytes: item.getTotalBytes(),
+        state: 'progressing',
+        startedAt: Date.now(),
+      };
+      downloads.unshift(record);
+      if (downloads.length > MAX_RECENT_DOWNLOADS) downloads.length = MAX_RECENT_DOWNLOADS;
+      const sync = (state: BrowserDownloadState['state'] = record.state) => {
+        record.filename = item.getFilename();
+        record.path = item.getSavePath();
+        record.url = item.getURL();
+        record.receivedBytes = item.getReceivedBytes();
+        record.totalBytes = item.getTotalBytes();
+        record.state = state;
+      };
+      item.on('updated', (_itemEvent, state) => {
+        if (state === 'progressing' || state === 'interrupted') sync(state);
+      });
+      item.once('done', (_itemEvent, state) => sync(state));
+    });
+  };
+
+  const loadBlocker = (): Promise<ElectronBlocker> => {
+    if (blocker) return Promise.resolve(blocker);
+    if (!blockerPromise) {
+      blockerPromise = ElectronBlocker.fromPrebuiltAdsAndTracking(fetch)
+        .then((loaded) => {
+          blocker = loaded;
+          return loaded;
+        })
+        .catch((error) => {
+          blockerPromise = null;
+          throw error;
+        });
+    }
+    return blockerPromise;
+  };
+
+  const syncAdblockSession = async (browserSession: Session): Promise<void> => {
+    adblockSessions.add(browserSession);
+    if (!adblockDesired) {
+      if (blocker?.isBlockingEnabled(browserSession)) blocker.disableBlockingInSession(browserSession);
+      adblockStatus = 'disabled';
+      return;
+    }
+    adblockStatus = 'loading';
+    adblockError = undefined;
+    try {
+      const loaded = await loadBlocker();
+      if (!adblockDesired) {
+        adblockStatus = 'disabled';
+        return;
+      }
+      if (!loaded.isBlockingEnabled(browserSession)) loaded.enableBlockingInSession(browserSession);
+      adblockStatus = 'enabled';
+    } catch (error) {
+      adblockStatus = 'failed';
+      adblockError = boundedError(error);
+    }
+  };
+
+  const adblockState = (): BrowserAdblockState => ({
+    enabled: adblockDesired,
+    status: adblockStatus,
+    ...(adblockError ? { error: adblockError } : {}),
+  });
 
   const forget = (session: LiveWebBrowser): void => {
     if (sessions.get(session.id) === session) sessions.delete(session.id);
@@ -229,6 +335,8 @@ export function createWebBrowserHostBridge(input: {
   const wireTabView = (tab: DurableBrowserTab, view: WebContentsView): void => {
     const contents = view.webContents;
     hardenBrowserSession(contents.session);
+    enableBrowserDownloads(contents.session);
+    void syncAdblockSession(contents.session);
     contents.setBackgroundThrottling(true);
     contents.on('will-navigate', (event, nextUrl) => {
       if (safeWebUrl(nextUrl)) return;
@@ -379,6 +487,8 @@ export function createWebBrowserHostBridge(input: {
       });
       const contents = view.webContents;
       hardenBrowserSession(contents.session);
+      enableBrowserDownloads(contents.session);
+      void syncAdblockSession(contents.session);
       contents.on('will-navigate', (event, nextUrl) => {
         if (safeWebUrl(nextUrl)) return;
         event.preventDefault();
@@ -555,6 +665,28 @@ export function createWebBrowserHostBridge(input: {
       const tab = tabs.get(tabKey(ownerKey, tabId));
       if (!tab || tab.ownerKey !== ownerKey) return null;
       return tabState(tab);
+    },
+
+    getDownloads() {
+      return downloads.map((download) => ({ ...download }));
+    },
+
+    getAdblockState() {
+      return adblockState();
+    },
+
+    async setAdblockEnabled(enabled) {
+      adblockDesired = enabled;
+      adblockError = undefined;
+      if (!enabled) {
+        for (const browserSession of adblockSessions) {
+          if (blocker?.isBlockingEnabled(browserSession)) blocker.disableBlockingInSession(browserSession);
+        }
+        adblockStatus = 'disabled';
+        return adblockState();
+      }
+      await Promise.all([...adblockSessions].map((browserSession) => syncAdblockSession(browserSession)));
+      return adblockState();
     },
 
     setOwnerSurfaceBounds(ownerKey, bounds) {

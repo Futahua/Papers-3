@@ -6,6 +6,7 @@ import { createWebBrowserHostBridge } from '../../src/main/backpacks/webBrowserH
 type FakeSession = {
   setPermissionRequestHandler: ReturnType<typeof vi.fn>;
   setPermissionCheckHandler: ReturnType<typeof vi.fn>;
+  setDownloadPath: ReturnType<typeof vi.fn>;
   on: ReturnType<typeof vi.fn>;
   setCertificateVerifyProc: ReturnType<typeof vi.fn>;
 };
@@ -48,6 +49,9 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
+  app: {
+    getPath: vi.fn().mockReturnValue('C:\\Users\\test\\Downloads'),
+  },
   BaseWindow: class {
     id = 1;
     contentView = {
@@ -67,6 +71,7 @@ vi.mock('electron', () => ({
         session: {
           setPermissionRequestHandler: vi.fn(),
           setPermissionCheckHandler: vi.fn(),
+          setDownloadPath: vi.fn(),
           on: vi.fn(),
           setCertificateVerifyProc: vi.fn(),
         },
@@ -141,6 +146,18 @@ describe('web browser preview session leases', () => {
 });
 
 describe('durable browser tabs', () => {
+  it('enables normal browser downloads into the user Downloads folder', async () => {
+    const window = new BaseWindow();
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });
+    const tabId = '88888888-8888-4888-8888-888888888888';
+    await bridge.openTab(context, tabId, url, rect);
+
+    const session = harness.views[0]!.webContents.session;
+    expect(session.setDownloadPath).toHaveBeenCalledWith('C:\\Users\\test\\Downloads');
+    expect(session.on).toHaveBeenCalledWith('will-download', expect.any(Function));
+    expect(bridge.getDownloads()).toEqual([]);
+  });
+
   it('keeps at most three live Chromium views and restores a hibernated tab history', async () => {
     const window = new BaseWindow();
     const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });
