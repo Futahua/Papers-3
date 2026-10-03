@@ -5,8 +5,8 @@ import {
   SURFACE_ROLE,
   createSurfaceCoordinator,
   hostWriterLeaseAdapter,
-  mergeSurfaceSnapshots,
 } from './public/app/workspace-surface-coordinator.js';
+import { mergeSurfaceSnapshots } from './public/app/workspace-surface-merge.js';
 
 test('host writer lease adapter acquires and releases through Papers', async () => {
   const calls = [];

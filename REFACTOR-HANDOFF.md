@@ -466,7 +466,7 @@ Fifth Papers host-side seam committed as 6dcd4b6 (extract Papers candidate picke
 - Papers typecheck passes;
 - full default parallel suite: **1340 pass / 8 skipped / 0 fail**.
 
-Sixth Papers host-side seam is validated and ready to commit:
+Sixth Papers host-side seam committed as 1f31ec9 (centralize Papers candidate picker signal parsing):
 
 - added windows/candidatePickerSignal.ts as the single fail-closed parser for candidate-picker
   preload IPC and the legacy/navigation signal path;
@@ -478,11 +478,33 @@ Sixth Papers host-side seam is validated and ready to commit:
 - Papers typecheck passes;
 - full default parallel suite: **1343 pass / 8 skipped / 0 fail**.
 
+Proxima architecture reassessment: deliberately **no code change**.
+
+- DATA-PLANE.md's intended strangler seam is already real, not aspirational;
+- app.js has one cockpit command helper and exactly one Store.command mutation call;
+- direct localStorage access is confined to store.js (board implementation + cockpit prefs);
+- therefore the future SQLite/HTTP service can replace Store internals without another UI
+  mutation path. Adding another façade now would duplicate the boundary rather than improve it.
+- Open finding #19 (bad-read recovery still allows a later overwrite) remains a product/recovery
+  UX decision, not something to hide inside this maintainability refactor.
+
 AYG CLIP action-path note: this connector machine has a Desktop CLIP STUDIO PAINT shortcut
 pointing to the installed app under C:\Program Files\CELSYS, but no CLIPS.bat exists. The AYG
 source action still intentionally points at D:\Programs\CLIP STUDIO PAINT\CLIPS.bat, so the
 single AYG full-suite failure on this machine remains an environment/path mismatch; do not
 rewrite the product action merely to manufacture a green count.
 
-Next planned slice: inspect candidate-picker native lifecycle/session code for a coherent
-controller boundary. Keep window-capability authority in WindowCapabilityRuntime/Service.
+Fourth AYG refactor slice is validated and ready to commit:
+
+- extracted the pure three-way shared-document merge policy from
+  public/app/workspace-surface-coordinator.js into workspace-surface-merge.js;
+- snapshot merge policy, prompt-tree/stable-id merge logic, keyed/set merges and stripping of
+  surface-local navigation fields now live together;
+- writer election, forwarding, mutation ACK/cancellation, conflict recovery and host CAS stay
+  in the coordinator and retain authority;
+- coordinator tests import mergeSurfaceSnapshots from its new owner, proving the seam directly;
+- focused coordinator suite: **78/78 pass**;
+- full AYG suite: **1684/1685 pass**, with only the known CLIP action-path environment failure.
+
+Next planned slice: inspect mutation request/ACK/cancellation inside the coordinator. Extract
+only if it can become a protocol component without creating a second writer-election authority.
