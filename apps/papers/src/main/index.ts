@@ -31,10 +31,17 @@ import { PapersHostFacade } from './hostFacade';
 import { PapersUpdater } from './papersUpdater';
 import { createPapersControlEventHub, startPapersControlServer, type PapersControlEventHub, type PapersControlServer } from './control/papersControlServer';
 import { papersDataDirArgument } from './papersDataDir';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { createCandidatePickerDelivery, type CandidatePickerDeliveryResult } from './windows/candidatePickerDelivery';
 import { buildCandidatePickerDocument } from './windows/candidatePickerDocument';
 import { parseCandidatePickerNavigation, parseCandidatePickerSignal, type CandidatePickerIntent } from './windows/candidatePickerSignal';
+import {
+  buildHoverPreviewDocument,
+  HOVER_PREVIEW_TITLE_HEIGHT,
+  hoverPreviewSignature,
+  hoverPreviewWindowSize,
+  placeHoverPreview,
+} from './windows/hoverPreviewPresentation';
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
@@ -2104,12 +2111,8 @@ async function bootstrap(): Promise<void> {
   const lastPreviewSignature = new Map<number, string>();
   const previewRevisions = new Map<number, number>();
   const showPreviewWindow = (sender: Electron.WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }, placement: 'widget' | 'anchor'): void => {
-    const previewSignature = createHash('sha256').update(preview.imageUrl).digest('hex')
-      + `|${preview.width}x${preview.height}|${preview.title}`;
-      const pad = 4;
-      const titleHeight = 24;
-      const width = preview.width + (pad * 2);
-      const height = preview.height + titleHeight + (pad * 2);
+      const previewSignature = hoverPreviewSignature(preview);
+      const { width, height } = hoverPreviewWindowSize(preview);
       const display = screen.getDisplayMatching({
         x: Math.round(preview.anchor.x),
         y: Math.round(preview.anchor.y),
@@ -2117,7 +2120,6 @@ async function bootstrap(): Promise<void> {
         height: Math.max(1, Math.round(preview.anchor.height)),
       });
       const area = display.workArea;
-      let x = Math.round(preview.anchor.x + (preview.anchor.width / 2) - (width / 2));
       // A widget preview hangs above or below the WHOLE widget, not the hovered
       // icon: at the screen top the fallback begins below the widget's bottom
       // edge, so the name surface can never sit over the preview. A project
@@ -2127,30 +2129,8 @@ async function bootstrap(): Promise<void> {
       const ownerBounds = owner && !owner.isDestroyed()
         ? owner.getBounds()
         : { x: preview.anchor.x, y: preview.anchor.y, width: preview.anchor.width, height: preview.anchor.height };
-      let y: number;
-      if (placement === 'anchor') {
-        y = Math.round(preview.anchor.y + preview.anchor.height + 8);
-        if (y + height > area.y + area.height) y = Math.round(preview.anchor.y - height - 8);
-      } else {
-        y = Math.round(ownerBounds.y - height - 8);
-        if (y < area.y) y = Math.round(ownerBounds.y + ownerBounds.height + 8);
-      }
-      x = Math.max(area.x, Math.min(area.x + area.width - width, x));
-      y = Math.max(area.y, Math.min(area.y + area.height - height, y));
-      const safeTitle = preview.title
-        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-      const html = `<!doctype html><meta charset="utf-8"><style>
-        html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent}
-        .preview{box-sizing:border-box;margin:${pad}px;width:${preview.width}px;height:${preview.height + titleHeight}px;
-          border:1px solid rgba(140,132,116,.72);border-radius:7px;overflow:hidden;
-          background:#26231f;box-shadow:0 3px 10px rgba(0,0,0,.38);
-          animation:rise 180ms cubic-bezier(.2,.8,.2,1) both}
-        .title{box-sizing:border-box;height:${titleHeight}px;padding:5px 7px;color:#eee9df;
-          font:11px/14px system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        img{display:block;width:${preview.width}px;height:${preview.height}px;object-fit:contain;background:#26231f}
-        @keyframes rise{from{transform:translateY(12px)}to{transform:translateY(0)}}
-      </style><div class="preview"><div class="title">${safeTitle}</div><img src="${preview.imageUrl}" alt=""></div>`;
+      const { x, y } = placeHoverPreview(preview, placement, area, ownerBounds);
+      const html = buildHoverPreviewDocument(preview);
       const existing = widgetPreviewWindows.get(sender.id);
       if (existing && !existing.isDestroyed()) {
         if (existing.getBounds().x !== x || existing.getBounds().y !== y) {
@@ -2182,7 +2162,7 @@ async function bootstrap(): Promise<void> {
               visible.style.width = next.width + 'px';
               visible.style.height = next.height + 'px';
               frame.style.width = next.width + 'px';
-              frame.style.height = (next.height + ${titleHeight}) + 'px';
+              frame.style.height = (next.height + ${HOVER_PREVIEW_TITLE_HEIGHT}) + 'px';
               return true;
             }).catch(() => false);
           })();`).then((painted) => {

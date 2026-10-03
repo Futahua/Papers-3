@@ -494,7 +494,7 @@ source action still intentionally points at D:\Programs\CLIP STUDIO PAINT\CLIPS.
 single AYG full-suite failure on this machine remains an environment/path mismatch; do not
 rewrite the product action merely to manufacture a green count.
 
-Fourth AYG refactor slice is validated and ready to commit:
+Fourth AYG refactor slice committed as 31d6824 (separate shared document merge policy):
 
 - extracted the pure three-way shared-document merge policy from
   public/app/workspace-surface-coordinator.js into workspace-surface-merge.js;
@@ -506,5 +506,16 @@ Fourth AYG refactor slice is validated and ready to commit:
 - focused coordinator suite: **78/78 pass**;
 - full AYG suite: **1684/1685 pass**, with only the known CLIP action-path environment failure.
 
-Next planned slice: inspect mutation request/ACK/cancellation inside the coordinator. Extract
-only if it can become a protocol component without creating a second writer-election authority.
+Seventh Papers host-side seam is validated and ready to commit:
+
+- added windows/hoverPreviewPresentation.ts as the pure owner of hover-preview signature,
+  window geometry/clamping and HTML/title escaping;
+- main/index.ts still owns the actual preview BrowserWindow lifecycle for now; this slice does
+  not move window authority or alter show/hide/update timing;
+- focused presentation tests: **4/4 pass**;
+- Papers typecheck passes;
+- full default parallel suite: **1347 pass / 8 skipped / 0 fail**.
+
+Next planned slice: move the hover-preview BrowserWindow lifecycle behind one manager while
+keeping the new presentation policy pure. After that, reassess AYG mutation ACK/cancellation
+rather than extracting it if doing so would duplicate writer-election authority.
