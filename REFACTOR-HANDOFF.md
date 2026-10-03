@@ -350,7 +350,7 @@ viewed from opposite sides.
 
 Baseline/handoff checkpoint committed as root commit 8503f50.
 
-First migration slice is implemented but not yet committed at the time of this note:
+First migration slice committed as 379d079 (extract AYG window candidate binding recovery):
 
 - added public/app/window-layout-candidate-binding.js as the sole owner of short-lived
   chooser candidate binding/recovery;
@@ -364,4 +364,6 @@ First migration slice is implemented but not yet committed at the time of this n
   this connector machine: test.mjs requires D:\Programs\CLIP STUDIO PAINT\CLIPS.bat,
   while Local Lapdog exposes only C:\. No refactor-related test failed.
 
-Before continuing, inspect the root diff and commit this slice if it still matches the above.
+Next planned slice: converge AYG window membership mutation so attached/manual/widget paths
+share one semantic mutation entry before durable writer coordination, without creating a new
+persistence authority.
