@@ -96,6 +96,7 @@ import { createWindowCapabilityService } from './windows/windowCapabilityService
 import { createWindowControlBroker, resolveWindowControlSourcePath } from './windows/windowControlBroker';
 import { createWindowCandidatePeekController } from './windows/windowCandidatePeekController';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
+import { createSlopTopPickerFileTransport } from './windows/slopTopPickerFileTransport';
 import { createWindowDetachSession, isAllowedDetachedNavigation, type WindowDetachSession } from './windows/windowDetachSession';
 import {
   createCompactWidgetSession,
@@ -1636,40 +1637,10 @@ async function bootstrap(): Promise<void> {
   // initial-member snapshot to the creator's already-running SlopTop AHK. AHK
   // owns hover/click/rendering locally and returns one final green-set snapshot
   // on Enter; no pointer event or click is routed through Papers.
-  const nativeSignalRoot = path.join(process.env.PUBLIC ?? 'C:\\Users\\Public', 'Documents', 'PapersNativeBridgeReceipts');
-  const nativePickerSignal = path.join(nativeSignalRoot, 'picker-activate.signal');
-  const nativePickerAck = path.join(nativeSignalRoot, 'picker-ack.signal');
-  const nativePickerResult = path.join(nativeSignalRoot, 'picker-result.signal');
-  const nativePickerCancel = path.join(nativeSignalRoot, 'picker-cancel.signal');
-  const removeSignal = (file: string): void => { try { unlinkSync(file); } catch { /* absent is clean */ } };
-  const writeSignal = (file: string, value: unknown): void => {
-    const temp = `${file}.tmp-${process.pid}`;
-    writeFileSync(temp, JSON.stringify(value), { encoding: 'utf8' });
-    removeSignal(file);
-    renameSync(temp, file);
-  };
-  const readSignal = (file: string): unknown => {
-    // Tolerate one legacy AHK BOM while all new signals use UTF-8-RAW.
-    const text = readFileSync(file, 'utf8').replace(/^\uFEFF/, '');
-    return JSON.parse(text);
-  };
-  const windowPickSession = createSlopTopPickerSession(windowCapabilityService, {
-    activate: (request) => {
-      mkdirSync(nativeSignalRoot, { recursive: true });
-      removeSignal(nativePickerAck);
-      removeSignal(nativePickerResult);
-      removeSignal(nativePickerCancel);
-      writeSignal(nativePickerSignal, request);
-    },
-    readAck: () => readSignal(nativePickerAck),
-    readResult: () => readSignal(nativePickerResult),
-    requestCancel: (token) => writeSignal(nativePickerCancel, { version: 2, token, cancel: true }),
-    cleanup: () => {
-      removeSignal(nativePickerSignal);
-      removeSignal(nativePickerAck);
-      removeSignal(nativePickerResult);
-    },
-  });
+  const windowPickSession = createSlopTopPickerSession(
+    windowCapabilityService,
+    createSlopTopPickerFileTransport(),
+  );
   registerWindowPickIpc({
     ipcMain,
     session: windowPickSession,
