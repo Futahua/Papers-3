@@ -506,16 +506,26 @@ Fourth AYG refactor slice committed as 31d6824 (separate shared document merge p
 - focused coordinator suite: **78/78 pass**;
 - full AYG suite: **1684/1685 pass**, with only the known CLIP action-path environment failure.
 
-Seventh Papers host-side seam is validated and ready to commit:
+Seventh Papers host-side seam committed as b1d8a29 (extract Papers hover preview presentation):
 
 - added windows/hoverPreviewPresentation.ts as the pure owner of hover-preview signature,
   window geometry/clamping and HTML/title escaping;
-- main/index.ts still owns the actual preview BrowserWindow lifecycle for now; this slice does
-  not move window authority or alter show/hide/update timing;
 - focused presentation tests: **4/4 pass**;
 - Papers typecheck passes;
 - full default parallel suite: **1347 pass / 8 skipped / 0 fail**.
 
-Next planned slice: move the hover-preview BrowserWindow lifecycle behind one manager while
-keeping the new presentation policy pure. After that, reassess AYG mutation ACK/cancellation
-rather than extracting it if doing so would duplicate writer-election authority.
+Eighth Papers host-side seam is validated and ready to commit:
+
+- added windows/hoverPreviewWindowManager.ts as the owner of hover-preview BrowserWindow
+  creation, one-window-per-sender reuse, repaint revisioning, sender cleanup and shutdown disposal;
+- main/index.ts now asks one manager to show/hide project and compact-widget previews instead
+  of carrying preview-window maps and lifecycle inline;
+- the manager consumes the separate pure presentation module; presentation policy and native
+  lifecycle stay distinct;
+- focused preview presentation + lifecycle tests: **6/6 pass**;
+- Papers typecheck passes;
+- full default parallel suite: **1349 pass / 8 skipped / 0 fail**.
+
+Next planned slice: reassess another subsystem rather than splitting preview code further.
+AYG mutation ACK/cancellation remains a candidate only if it can be separated without creating
+a second writer-election authority.

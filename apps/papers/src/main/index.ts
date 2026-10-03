@@ -35,13 +35,7 @@ import { randomUUID } from 'node:crypto';
 import { createCandidatePickerDelivery, type CandidatePickerDeliveryResult } from './windows/candidatePickerDelivery';
 import { buildCandidatePickerDocument } from './windows/candidatePickerDocument';
 import { parseCandidatePickerNavigation, parseCandidatePickerSignal, type CandidatePickerIntent } from './windows/candidatePickerSignal';
-import {
-  buildHoverPreviewDocument,
-  HOVER_PREVIEW_TITLE_HEIGHT,
-  hoverPreviewSignature,
-  hoverPreviewWindowSize,
-  placeHoverPreview,
-} from './windows/hoverPreviewPresentation';
+import { createHoverPreviewWindowManager } from './windows/hoverPreviewWindowManager';
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
@@ -1568,6 +1562,8 @@ async function bootstrap(): Promise<void> {
   adapter.on('health-changed', () => facade.emitHermesHealth());
 
   registerHostIpc(facade);
+  const hoverPreviewManager = createHoverPreviewWindowManager();
+  app.once('will-quit', () => hoverPreviewManager.dispose());
   const windowCapabilityRuntime = createWindowCapabilityRuntime({
     serviceOptions: {
       // Papers itself is a useful saved layout member. Admit only the real main
@@ -1631,8 +1627,8 @@ async function bootstrap(): Promise<void> {
     // instead of an in-page popover, which could only ever be as visible as the
     // project window itself. Same primitive the compact widget uses; placed
     // from the hovered element rather than from the whole window.
-    showProjectPreview: (sender, preview) => showPreviewWindow(sender, preview, 'anchor'),
-    hideProjectPreview: (senderId) => hideWidgetPreview(senderId),
+    showProjectPreview: (sender, preview) => hoverPreviewManager.show(sender, preview, 'anchor'),
+    hideProjectPreview: (senderId) => hoverPreviewManager.hide(senderId),
     resolveCallerHwnd: (sender) => {
       const owner = BrowserWindow.fromWebContents(sender);
       if (!owner || owner.isDestroyed()) return null;
@@ -2072,7 +2068,6 @@ async function bootstrap(): Promise<void> {
     },
     onError: (message) => console.warn(`[papers] ${message}`),
   });
-  const widgetPreviewWindows = new Map<number, BrowserWindow>();
   type PickerCandidate = { id: string; title: string; icon: string | null; current: boolean };
   type CandidatePickerSession = {
     window: BrowserWindow;
@@ -2093,127 +2088,6 @@ async function bootstrap(): Promise<void> {
       );
       return applied === true && candidatePickerSessions.get(senderId) === session && !session.window.isDestroyed();
     });
-  const hideWidgetPreview = (senderId: number): void => {
-    const preview = widgetPreviewWindows.get(senderId);
-    widgetPreviewWindows.delete(senderId);
-    // The signature goes with the window: a later hover must paint, not be
-    // skipped as "already showing".
-    lastPreviewSignature.delete(senderId);
-    previewRevisions.delete(senderId);
-    if (preview && !preview.isDestroyed()) preview.destroy();
-  };
-  /** Papers' own preview window: transparent, never focused, always on top, and
-   * never in the page - so a hover preview cannot be hidden behind another
-   * window. A widget preview hangs above or below the whole compact widget; a
-   * project preview sits beside the hovered element's own screen rectangle. */
-  /** What the preview currently shows per sender, so an identical repaint is
-   * skipped rather than flashed again. */
-  const lastPreviewSignature = new Map<number, string>();
-  const previewRevisions = new Map<number, number>();
-  const showPreviewWindow = (sender: Electron.WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }, placement: 'widget' | 'anchor'): void => {
-      const previewSignature = hoverPreviewSignature(preview);
-      const { width, height } = hoverPreviewWindowSize(preview);
-      const display = screen.getDisplayMatching({
-        x: Math.round(preview.anchor.x),
-        y: Math.round(preview.anchor.y),
-        width: Math.max(1, Math.round(preview.anchor.width)),
-        height: Math.max(1, Math.round(preview.anchor.height)),
-      });
-      const area = display.workArea;
-      // A widget preview hangs above or below the WHOLE widget, not the hovered
-      // icon: at the screen top the fallback begins below the widget's bottom
-      // edge, so the name surface can never sit over the preview. A project
-      // preview has no owner to hang from - it sits beside the hovered element's
-      // own screen rectangle.
-      const owner = BrowserWindow.fromWebContents(sender);
-      const ownerBounds = owner && !owner.isDestroyed()
-        ? owner.getBounds()
-        : { x: preview.anchor.x, y: preview.anchor.y, width: preview.anchor.width, height: preview.anchor.height };
-      const { x, y } = placeHoverPreview(preview, placement, area, ownerBounds);
-      const html = buildHoverPreviewDocument(preview);
-      const existing = widgetPreviewWindows.get(sender.id);
-      if (existing && !existing.isDestroyed()) {
-        if (existing.getBounds().x !== x || existing.getBounds().y !== y) {
-          existing.setPosition(x, y);
-        }
-        if (lastPreviewSignature.get(sender.id) === previewSignature) return;
-        lastPreviewSignature.set(sender.id, previewSignature);
-        const revision = (previewRevisions.get(sender.id) ?? 0) + 1;
-        previewRevisions.set(sender.id, revision);
-        const paint = (): void => {
-          if (existing.isDestroyed() || widgetPreviewWindows.get(sender.id) !== existing
-            || previewRevisions.get(sender.id) !== revision) return;
-          const payload = JSON.stringify({ imageUrl: preview.imageUrl, title: preview.title,
-            width: preview.width, height: preview.height, revision });
-          // Decode offscreen, then swap only the image node. The cached frame
-          // stays visible until the fresh frame is ready; the native window and
-          // its one-time entrance animation are never recreated.
-          void existing.webContents.executeJavaScript(`(() => {
-            const next = ${payload}; window.__previewRevision = next.revision;
-            const image = new Image(); image.src = next.imageUrl;
-            return image.decode().then(() => {
-              if (window.__previewRevision !== next.revision) return false;
-              const visible = document.querySelector('img');
-              const title = document.querySelector('.title');
-              const frame = document.querySelector('.preview');
-              if (!visible || !title || !frame) return false;
-              title.textContent = next.title;
-              visible.src = next.imageUrl;
-              visible.style.width = next.width + 'px';
-              visible.style.height = next.height + 'px';
-              frame.style.width = next.width + 'px';
-              frame.style.height = (next.height + ${HOVER_PREVIEW_TITLE_HEIGHT}) + 'px';
-              return true;
-            }).catch(() => false);
-          })();`).then((painted) => {
-            if (!painted || existing.isDestroyed() || widgetPreviewWindows.get(sender.id) !== existing
-              || previewRevisions.get(sender.id) !== revision) return;
-            const bounds = existing.getBounds();
-            if (bounds.x !== x || bounds.y !== y || bounds.width !== width || bounds.height !== height) {
-              existing.setBounds({ x, y, width, height });
-            }
-          }).catch(() => undefined);
-        };
-        if (existing.webContents.isLoadingMainFrame()) existing.webContents.once('did-finish-load', paint);
-        else paint();
-        return;
-      }
-      const previewWindow = new BrowserWindow({
-        x, y, width, height,
-        frame: false,
-        transparent: true,
-        backgroundColor: '#00000000',
-        resizable: false,
-        movable: false,
-        focusable: false,
-        alwaysOnTop: true,
-        skipTaskbar: true,
-        show: false,
-        hasShadow: true,
-        webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
-      });
-      widgetPreviewWindows.set(sender.id, previewWindow);
-      previewWindow.setIgnoreMouseEvents(true);
-      previewWindow.setAlwaysOnTop(true, 'floating');
-      previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-      previewWindow.on('closed', () => {
-        if (widgetPreviewWindows.get(sender.id) === previewWindow) widgetPreviewWindows.delete(sender.id);
-      });
-      sender.once('destroyed', () => hideWidgetPreview(sender.id));
-      lastPreviewSignature.set(sender.id, previewSignature);
-      void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(async () => {
-        if (previewWindow.isDestroyed() || widgetPreviewWindows.get(sender.id) !== previewWindow) return;
-        // The first frame is the cached preview. Wait for its image decode so
-        // the preview appears already painted instead of flashing an empty box.
-        await previewWindow.webContents.executeJavaScript(
-          'document.querySelector("img")?.decode().then(() => true, () => false) ?? false',
-        ).catch(() => false);
-        if (!previewWindow.isDestroyed() && widgetPreviewWindows.get(sender.id) === previewWindow) {
-          previewWindow.showInactive();
-        }
-      }).catch(() => hideWidgetPreview(sender.id));
-  };
-
   registerCompactWidgetIpc({
     ipcMain,
     registry: widgetRegistry,
@@ -2228,7 +2102,7 @@ async function bootstrap(): Promise<void> {
       ? beginHoverCapture(senderId, text, false)
       : appendHoverCapture(senderId, text, false),
     acknowledgeHoverQuickRunSeal: acknowledgeWidgetQuickRunSeal,
-    hidePreview: hideWidgetPreview,
+    hidePreview: (senderId) => hoverPreviewManager.hide(senderId),
     dismissCandidatePicker: async (sender) => {
       const active = candidatePickerSessions.get(sender.id);
       if (!active || active.window.isDestroyed()) return;
@@ -2518,7 +2392,7 @@ async function bootstrap(): Promise<void> {
       active.candidateIds = new Set(candidates.map((candidate) => candidate.id));
       return active.delivery!.update(candidates);
     },
-    showPreview: (sender, preview) => { showPreviewWindow(sender, preview, 'widget'); },
+    showPreview: (sender, preview) => { hoverPreviewManager.show(sender, preview, 'widget'); },
     isWorkspaceSender: (sender, projectId) => {
       if (!runtimeForSender(sender.id)?.isSender(sender)) return false;
       try {
