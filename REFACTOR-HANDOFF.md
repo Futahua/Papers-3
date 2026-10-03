@@ -377,7 +377,7 @@ Second migration slice committed as e4b17be (converge AYG bound window membershi
 - full AYG run: **1680/1681 pass**. The only failure remains the known environment-only
   D:\Programs\CLIP STUDIO PAINT\CLIPS.bat check on this C:-only connector machine.
 
-Third migration slice is validated and ready to commit:
+Third migration slice committed as 052e927 (extract AYG native widget presentation lifecycle):
 
 - verified first that widget ready/dispose presence is already local and intentionally
   ungated from writer election; durable commands/snapshots remain writer-authoritative;
@@ -395,5 +395,18 @@ journal's visible_report_text, suppresses duplicate tool_executed receipts and r
 and renders concise tool rows. That project had pre-existing unrelated dirty work, so this
 handoff records the validated local change without claiming a clean standalone commit.
 
-Next planned slice: reassess the remaining AYG composition root for the next coherent authority
-or lifecycle boundary; do not extract code merely to reduce file size.
+First Papers host-side seam is validated and ready to commit:
+
+- added backpacks/previewOwnerGroup.ts so main/index.ts no longer repeats the concrete preview
+  engine set for owner close/visibility/bounds/raise lifecycle;
+- provider-specific preview implementations remain unchanged and file capability behavior is
+  untouched;
+- added focused unit coverage for lifecycle fanout and empty-provider fail-local behavior;
+- adapted the existing window-helper provenance tests to use Git's checkout prefix so their
+  exact staged/HEAD blob proof remains valid when Papers is embedded below this refactor root;
+- Papers typecheck passes;
+- full Papers unit suite: **1334 pass / 8 skipped / 0 fail**.
+
+Next planned slice: continue decomposing by observed ownership boundaries, not by file size.
+The preview/file-capability bootstrap in Papers main is a likely next candidate, but only after
+confirming which provider lifecycle must remain directly exposed to host surface routing.

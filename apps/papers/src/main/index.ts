@@ -20,6 +20,7 @@ import { createAutoCadPreviewBridge } from './backpacks/autoCadPreviewBridge';
 import { createMlightCadPreviewBridge } from './backpacks/mlightCadPreviewBridge';
 import { createPowerPointPreviewBridge } from './backpacks/powerPointPreviewBridge';
 import { createWindowsPreviewHandlerBridge, resolveWindowsPreviewHostSourcePath } from './backpacks/windowsPreviewHandlerBridge';
+import { createPreviewOwnerGroup } from './backpacks/previewOwnerGroup';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
 import { BackpackProjectSurfaceCollection } from './backpacks/backpackProjectSurfaceCollection';
@@ -727,6 +728,12 @@ async function bootstrap(): Promise<void> {
     },
   });
   app.once('will-quit', () => webBrowser.dispose());
+  const previewOwners = createPreviewOwnerGroup([
+    windowsPreview,
+    pdfPreview,
+    htmlPreview,
+    webBrowser,
+  ]);
   const fileCapability = createFileCapabilityService({
     cacheDirectory: fileCapabilityCacheDirectory,
     everythingSearch,
@@ -1436,10 +1443,7 @@ async function bootstrap(): Promise<void> {
       ]);
     },
     closeAttachedProjectSurface: async (windowId, surfaceId, options) => {
-      windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
-      pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
-      htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
-      webBrowser.closeOwner(`${windowId}:${surfaceId}`);
+      previewOwners.closeOwner(`${windowId}:${surfaceId}`);
       await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
     projectEntryUrlForSurface: (windowId, surfaceId) =>
@@ -1447,10 +1451,7 @@ async function bootstrap(): Promise<void> {
     closeBackpackProjectSurface: async (senderId, surfaceId) => {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) {
-        windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
-        pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
-        htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
-        webBrowser.closeOwner(`${windowId}:${surfaceId}`);
+        previewOwners.closeOwner(`${windowId}:${surfaceId}`);
         await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
       }
     },
@@ -1539,10 +1540,7 @@ async function bootstrap(): Promise<void> {
           },
         });
         if (owningWindowId !== null) {
-          windowsPreview?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
-          pdfPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
-          htmlPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
-          webBrowser.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+          previewOwners.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
         }
       } catch (caught) {
         if (stagedFrameSender !== null) surfaceContexts.unbind(stagedFrameSender);
@@ -1583,20 +1581,14 @@ async function bootstrap(): Promise<void> {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) {
         papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
-        windowsPreview?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
-        pdfPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
-        htmlPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
-        webBrowser.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+        previewOwners.setOwnerVisible(`${windowId}:${surfaceId}`, false);
       }
     },
     setBackpackProjectSurfaceBounds: (senderId, surfaceId, bounds) => {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) {
         papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
-        windowsPreview?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
-        pdfPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
-        htmlPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
-        webBrowser.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+        previewOwners.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
       }
     },
     setHostOverlayActive: (windowId, active, owner = 'legacy') => {
@@ -1612,9 +1604,7 @@ async function bootstrap(): Promise<void> {
       if (owners.size > 0) context.owned.window.contentView.addChildView(context.owned.hostView);
       else {
         context.owned.projectSurfaces.raisePresented();
-        pdfPreview.raiseWindow(windowId);
-        htmlPreview.raiseWindow(windowId);
-        webBrowser.raiseWindow(windowId);
+        previewOwners.raiseWindow(windowId);
       }
     },
     runtime,

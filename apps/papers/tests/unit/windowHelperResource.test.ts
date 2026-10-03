@@ -17,6 +17,15 @@ import {
 } from '../../src/main/windows/windowHelperResource';
 
 const REPO_ROOT = path.join(__dirname, '../..');
+// The refactor workspace may embed Papers below a larger Git root. Ask Git
+// for this checkout's prefix instead of assuming Papers itself is the root;
+// the blob being validated is still the exact staged/HEAD resource byte stream.
+const GIT_PREFIX = execFileSync('git', ['rev-parse', '--show-prefix'], {
+  cwd: REPO_ROOT,
+  encoding: 'utf8',
+}).trim().replace(/\\/g, '/');
+const gitResourcePath = (file: string): string =>
+  `${GIT_PREFIX}resources/window-helper/${file}`;
 
 function realPaths(): ReturnType<typeof resolveWindowHelperResourcePaths> {
   return resolveWindowHelperResourcePaths({ appPath: REPO_ROOT, resourcesPath: '', packaged: false });
@@ -117,12 +126,12 @@ describe('windowHelperResource provenance validation', () => {
       // checkout receives, and after a commit they are the same object.
       let blob: Buffer | null = null;
       try {
-        blob = execFileSync('git', ['cat-file', 'blob', `:0:resources/window-helper/${file}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
+        blob = execFileSync('git', ['cat-file', 'blob', `:0:${gitResourcePath(file)}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
       } catch {
         blob = null;
       }
       if (blob === null) {
-        blob = execFileSync('git', ['cat-file', 'blob', `HEAD:resources/window-helper/${file}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
+        blob = execFileSync('git', ['cat-file', 'blob', `HEAD:${gitResourcePath(file)}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
       }
       // A CRLF blob means the pin cannot be reproduced by an `eol=lf` checkout.
       expect(blob.toString('binary').includes('\r\n'), `${file} blob must be LF-only`).toBe(false);
@@ -142,9 +151,9 @@ describe('windowHelperResource provenance validation', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-fresh-checkout-'));
     const readBlob = (file: string): Buffer => {
       try {
-        return execFileSync('git', ['cat-file', 'blob', `:0:resources/window-helper/${file}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
+        return execFileSync('git', ['cat-file', 'blob', `:0:${gitResourcePath(file)}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
       } catch {
-        return execFileSync('git', ['cat-file', 'blob', `HEAD:resources/window-helper/${file}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
+        return execFileSync('git', ['cat-file', 'blob', `HEAD:${gitResourcePath(file)}`], { cwd: REPO_ROOT, maxBuffer: 1 << 28 });
       }
     };
     for (const file of [WINDOW_HELPER_SCRIPT_FILE, WINDOW_HELPER_ADAPTER_FILE, WINDOW_HELPER_MANIFEST_FILE]) {
