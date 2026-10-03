@@ -36,7 +36,6 @@ import { createCandidatePickerDelivery, type CandidatePickerDeliveryResult } fro
 import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
-import { registerWindowCapabilityIpc } from './ipc/windowCapabilityIpc';
 import { registerWindowPickIpc } from './ipc/windowPickIpc';
 import { registerWindowDetachIpc } from './ipc/windowDetachIpc';
 import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
@@ -92,8 +91,8 @@ import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './win
 import { COMPACT_WIDGET_TOPMOST_LEVEL, focusSurfaceForForeignActivation } from './windows/activationSurfaceFocus';
 import { createHoverInputBridge, resolveHoverInputBridgeSourcePath, type HoverInputBridge } from './windows/hoverInputBridge';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
-import { createWindowCapabilityService } from './windows/windowCapabilityService';
-import { createWindowControlBroker, resolveWindowControlSourcePath } from './windows/windowControlBroker';
+import { resolveWindowControlSourcePath } from './windows/windowControlBroker';
+import { createWindowCapabilityRuntime } from './windows/windowCapabilityRuntime';
 import { createWindowCandidatePeekController } from './windows/windowCandidatePeekController';
 import { createSlopTopPickerSession } from './windows/slopTopPickerProtocol';
 import { createSlopTopPickerFileTransport } from './windows/slopTopPickerFileTransport';
@@ -1560,36 +1559,35 @@ async function bootstrap(): Promise<void> {
   adapter.on('health-changed', () => facade.emitHermesHealth());
 
   registerHostIpc(facade);
-  const windowCapabilityService = createWindowCapabilityService({
-    // Papers itself is a useful saved layout member. Admit only the real main
-    // shell by its fixed native title; same-process picker, widget, preview and
-    // overlay utility windows retain empty/data titles and remain ineligible.
-    allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
-    // Bringing a member's window forward is done by Papers itself, because
-    // Papers owns the click that asked for it. Windows refuses a foreground
-    // switch from a background worker, and a refusal flashes the taskbar button
-    // instead of raising the window.
-    foregroundBridge: () => foregroundBridge,
-  });
-  const windowControlBroker = createWindowControlBroker({
-    cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
-    sourcePath: resolveWindowControlSourcePath({
-      appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged,
-    }),
-    onUnavailable: (reason) => {
-      for (const sender of webContents.getAllWebContents()) {
-        if (isProjectSurfaceSender(sender) && !sender.isDestroyed()) {
-          sender.send('papers:window-control:unavailable', reason);
-        }
-      }
+  const windowCapabilityRuntime = createWindowCapabilityRuntime({
+    serviceOptions: {
+      // Papers itself is a useful saved layout member. Admit only the real main
+      // shell by its fixed native title; same-process picker, widget, preview and
+      // overlay utility windows retain empty/data titles and remain ineligible.
+      allowCurrentProcessWindow: (observation) => observation.title === 'Papers',
+      // Bringing a member's window forward is done by Papers itself, because
+      // Papers owns the click that asked for it. Windows refuses a foreground
+      // switch from a background worker, and a refusal flashes the taskbar button
+      // instead of raising the window.
+      foregroundBridge: () => foregroundBridge,
     },
-  });
-  registerWindowCapabilityIpc({
-    ipcMain,
-    service: windowCapabilityService,
+    brokerOptions: {
+      cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
+      sourcePath: resolveWindowControlSourcePath({
+        appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged,
+      }),
+      onUnavailable: (reason) => {
+        for (const sender of webContents.getAllWebContents()) {
+          if (isProjectSurfaceSender(sender) && !sender.isDestroyed()) {
+            sender.send('papers:window-control:unavailable', reason);
+          }
+        }
+      },
+    },
+    ipc: {
+      ipcMain,
     isSender: isProjectSurfaceSender,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
-    controlBroker: windowControlBroker,
     // The native foreground bridge takes a HANDLE, and the broker's registration has
     // already proved one for every member - so activation costs one native process
     // and never touches the window helper.
@@ -1632,7 +1630,9 @@ async function bootstrap(): Promise<void> {
       const handle = owner.getNativeWindowHandle();
       return handle.length >= 8 ? handle.readBigUInt64LE(0).toString() : String(handle.readUInt32LE(0));
     },
+    },
   });
+  const windowCapabilityService = windowCapabilityRuntime.service;
   // One global direct-onscreen pick session. Papers sends one authenticated
   // initial-member snapshot to the creator's already-running SlopTop AHK. AHK
   // owns hover/click/rendering locally and returns one final green-set snapshot
@@ -3009,8 +3009,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           workspaceLayoutStore.flush().catch((error) => console.error('[workspace-layout] shutdown flush failed', error)),
           detachSession!.closeAll().catch(() => undefined),
           widgetSession!.closeAll().catch(() => undefined),
-          windowCapabilityService.stop().catch(() => undefined),
-          Promise.resolve(windowControlBroker.stop()),
+          windowCapabilityRuntime.stop().catch(() => undefined),
         ]))
         .then(() => {
         hermesSurface.shutdown();

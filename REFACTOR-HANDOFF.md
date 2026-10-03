@@ -429,7 +429,7 @@ Third Papers host-side seam committed as 338dc1f (extract SlopTop picker file tr
 - focused transport tests: **3/3 pass**;
 - Papers typecheck passes.
 
-Window interaction journal reliability slice is validated and ready to commit:
+Window interaction journal reliability slice committed as ea1f777:
 
 - the default parallel Papers suite exposed a pre-existing Windows write flake where exactly
   one bounded diagnostic record could be silently dropped because record() swallowed a failed
@@ -440,11 +440,24 @@ Window interaction journal reliability slice is validated and ready to commit:
 - Papers typecheck passes;
 - full default parallel suite passed **twice consecutively: 1337 pass / 8 skipped / 0 fail**.
 
+Fourth Papers host-side seam is validated and ready to commit:
+
+- added windows/windowCapabilityRuntime.ts as the single lifecycle owner for the semantic
+  window-capability service plus the resident native window-control broker;
+- the broker remains resident native machinery and keeps all existing low-latency behavior;
+  it simply stops leaking as a separately coordinated bootstrap authority;
+- window capability IPC registration is owned by the runtime;
+- picker and window-dock callers still consume the same WindowCapabilityService contract;
+- runtime stop drains both the semantic service and resident broker exactly once;
+- focused runtime test: **1/1 pass**;
+- Papers typecheck passes;
+- full default parallel suite: **1338 pass / 8 skipped / 0 fail**.
+
 AYG CLIP action-path note: this connector machine has a Desktop CLIP STUDIO PAINT shortcut
 pointing to the installed app under C:\Program Files\CELSYS, but no CLIPS.bat exists. The AYG
 source action still intentionally points at D:\Programs\CLIP STUDIO PAINT\CLIPS.bat, so the
 single AYG full-suite failure on this machine remains an environment/path mismatch; do not
 rewrite the product action merely to manufacture a green count.
 
-Next planned slice: continue decomposing Papers by real lifecycle ownership, starting from
-native window/control bootstrap only where one owner can be named without broadening authority.
+Next planned slice: continue decomposing Papers by real lifecycle ownership. Candidate-picker
+presentation/lifecycle is the next likely seam, but do not extract it merely for file size.
