@@ -364,7 +364,7 @@ First migration slice committed as 379d079 (extract AYG window candidate binding
   this connector machine: test.mjs requires D:\Programs\CLIP STUDIO PAINT\CLIPS.bat,
   while Local Lapdog exposes only C:\. No refactor-related test failed.
 
-Second migration slice validated and ready to commit on 2026-10-03:
+Second migration slice committed as e4b17be (converge AYG bound window membership decisions):
 
 - extended windowLayoutPickForBoundCandidate with an explicit toggle/remove intent so bound
   window membership has one semantic decision before durable writer coordination;
@@ -377,5 +377,23 @@ Second migration slice validated and ready to commit on 2026-10-03:
 - full AYG run: **1680/1681 pass**. The only failure remains the known environment-only
   D:\Programs\CLIP STUDIO PAINT\CLIPS.bat check on this C:-only connector machine.
 
-Next planned slice: isolate compact-widget presentation lifecycle from durable AYG document
-authority, preserving the single durable writer and current UX.
+Third migration slice is validated and ready to commit:
+
+- verified first that widget ready/dispose presence is already local and intentionally
+  ungated from writer election; durable commands/snapshots remain writer-authoritative;
+- extracted native widget open success, bounded retry, and startup-open selection into
+  public/app/window-layout-widget-lifecycle.js;
+- the lifecycle receives only presentation inputs and has no store, revision, membership,
+  or document-writer interface;
+- direct user opens still activate normally; startup opens remain activate:false;
+- focused widget/workspace run: **93/93 pass**;
+- full AYG run: **1684/1685 pass**, with only the same environment-only CLIP STUDIO check.
+
+Delegate Wave local projection correction on the Lapdog machine was also validated separately:
+typecheck passes and **92/92 tests pass**. It now projects turn_progress from the durable
+journal's visible_report_text, suppresses duplicate tool_executed receipts and raw guard JSON,
+and renders concise tool rows. That project had pre-existing unrelated dirty work, so this
+handoff records the validated local change without claiming a clean standalone commit.
+
+Next planned slice: reassess the remaining AYG composition root for the next coherent authority
+or lifecycle boundary; do not extract code merely to reduce file size.

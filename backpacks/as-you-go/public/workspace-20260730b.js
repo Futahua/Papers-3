@@ -106,6 +106,7 @@ import { planWindowLayoutShiftPeekTransition } from './app/window-layout-shift-p
 import { createDetachSaveGate, createDetachReadOnlyInputGuards, createWindowLayoutMemberDrag, createWindowLayoutGroupActionRunner, toggleWindowLayoutMemberVisibility, createReadOnlyStatusSink, orderWindowLayoutMemberButtons, windowLayoutPresentationMode, windowLayoutContentSignature, DETACH_ACTIVATE_CANCELLED } from './app/window-layout-detached.js';
 import { runBoundedConcurrent } from './app/window-layout-actions.js';
 import { createWindowLayoutWidgetChannelWorkspace, createWindowLayoutWidgetChannelClient, windowLayoutWidgetSnapshot, windowLayoutWidgetRenderIdentity, windowLayoutWidgetCommittedStatus, createBoundedRetry, WINDOW_LAYOUT_WIDGET_CHANNEL, WINDOW_LAYOUT_CARD_MAX_WIDTH } from './app/window-layout-widget-channel.js';
+import { createWindowLayoutWidgetLifecycle, windowLayoutWidgetOpenSucceeded } from './app/window-layout-widget-lifecycle.js';
 import {
   createWindowLayoutPickApplier,
   createWindowLayoutRetirementWriter,
@@ -2876,7 +2877,7 @@ elements.grid.addEventListener('auxclick', (event) => {
   if (restoreAll && !detachedWidgets.has(restoreAll.dataset.wlRestoreAll)) {
     event.preventDefault();
     event.stopPropagation();
-    void openWindowLayoutWidgetWithRetry(restoreAll.dataset.wlRestoreAll);
+    void windowLayoutWidgetLifecycle.open(restoreAll.dataset.wlRestoreAll);
     return;
   }
   const minimizeAll = event.target.closest('[data-wl-min-all]');
@@ -3906,44 +3907,16 @@ async function reconcileTrackingBaseline(providedSnapshot = null) {
   if (accepted.events.length) void drainTrackingLifecycleEvents();
 }
 
-function windowLayoutWidgetOpenSucceeded(result) {
-  return Boolean(result)
-    && result.ok !== false
-    && result.widget?.ok !== false
-    && result.outcome !== 'failed'
-    && result.outcome !== 'error';
-}
-
-async function openWindowLayoutWidgetWithRetry(layoutId, options = {}) {
-  let result = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      result = await host.widgetOpen(layoutId, options);
-    } catch {
-      result = null;
-    }
-    if (windowLayoutWidgetOpenSucceeded(result)) return result;
-    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 100 * (2 ** attempt)));
-  }
-  return result;
-}
-
-async function ensureStartupWindowLayoutWidget() {
-  if (windowLayoutDetachment.getState().mode === 'detached'
-    || windowLayoutDetachment.isReadOnly()) return;
-  // Every layout is a native widget by default. Only layouts explicitly
-  // middle-clicked into the AYG pill tray stay docked across startup.
-  const docked = new Set(state.windowLayoutPillIds ?? []);
-  const layouts = (state.windowLayouts ?? []).filter((layout) =>
-    layout.binned !== true
-      && !layout.bin
-      && !docked.has(layout.id)
-      && itemsIn(state, layout.parentId).some((candidate) => candidate.id === layout.id));
-  // Writer handoff can happen when a new AYG tab opens. Reconcile widgets
-  // without activating every existing native window and disturbing taskbar
-  // order/focus; direct user opens retain the normal activate behavior.
-  for (const layout of layouts) await openWindowLayoutWidgetWithRetry(layout.id, { activate: false });
-}
+const windowLayoutWidgetLifecycle = createWindowLayoutWidgetLifecycle({
+  widgetOpen: (layoutId, options) => host.widgetOpen(layoutId, options),
+  getLayouts: () => state.windowLayouts ?? [],
+  getDockedLayoutIds: () => state.windowLayoutPillIds ?? [],
+  isLayoutVisible: (layout) =>
+    itemsIn(state, layout.parentId).some((candidate) => candidate.id === layout.id),
+  presentationSuppressed: () =>
+    windowLayoutDetachment.getState().mode === 'detached'
+      || windowLayoutDetachment.isReadOnly(),
+});
 
 async function populateTrackingLayout(layoutId) {
   if (trackingPopulateInFlight) return;
@@ -5709,7 +5682,7 @@ async function reopenWindowLayoutWidget(layoutId) {
     setStatus('Could not reopen this layout widget.');
     return;
   }
-  const result = await openWindowLayoutWidgetWithRetry(layoutId);
+  const result = await windowLayoutWidgetLifecycle.open(layoutId);
   if (!result || result.ok === false || result.widget?.ok === false
     || result.outcome === 'failed' || result.outcome === 'error') {
     setStatus('Could not open this layout widget.');
@@ -5900,7 +5873,7 @@ async function runMenuAction(action) {
           ? 'Reattach the window layout before creating another layout.'
           : 'Workspace is still synchronizing; try again in a moment.');
       } else if (createdLayout?.id) {
-        const opened = await openWindowLayoutWidgetWithRetry(createdLayout.id);
+        const opened = await windowLayoutWidgetLifecycle.open(createdLayout.id);
         if (!windowLayoutWidgetOpenSucceeded(opened)) setStatus('Could not open this layout widget.');
       }
     } catch (error) {
@@ -8498,7 +8471,7 @@ if (WIDGET_SURFACE) {
             windowLayoutWidgetChannelWorkspace.broadcast(layout.id);
           }
           void reconcileTrackingBaseline();
-          void ensureStartupWindowLayoutWidget();
+          void windowLayoutWidgetLifecycle.ensureStartup();
           scheduleClosedWindowReconcile();
         }
         render();
@@ -8537,7 +8510,7 @@ if (WIDGET_SURFACE) {
         // helper is unavailable or still restarting.
         try {
           await reconcileTrackingBaseline();
-          await ensureStartupWindowLayoutWidget();
+          await windowLayoutWidgetLifecycle.ensureStartup();
           scheduleClosedWindowReconcile();
         } catch (error) {
           console.warn('[AsYouGo] window tracking startup failed; editing remains enabled', error);
@@ -8610,7 +8583,7 @@ if (WIDGET_SURFACE) {
     // giving a detached surface a lock to wait on could deadlock against a
     // workspace that never releases. That integration is deliberately separate.
     if (!DETACHED_SURFACE) startSurfaceCoordination();
-    if (!DETACHED_SURFACE && !SCOPE_ROOT_ID) void ensureStartupWindowLayoutWidget();
+    if (!DETACHED_SURFACE && !SCOPE_ROOT_ID) void windowLayoutWidgetLifecycle.ensureStartup();
     // 019G/021: after durable state loads, broadcast a real snapshot for every
     // layout so an already-open widget is never stuck on `unknown-layout` /
     // the empty default card (cold-open readiness race).

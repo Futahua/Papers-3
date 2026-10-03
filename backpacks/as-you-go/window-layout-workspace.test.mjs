@@ -1235,7 +1235,7 @@ test('a stale process-end row id never falls back to a unique same-title applica
 test('startup opens non-docked layouts by default without creating implicit tracking', async () => {
   const source = await readFile(new URL('./public/workspace-20260730b.js', import.meta.url), 'utf8');
   const baselineStart = source.indexOf('async function reconcileTrackingBaseline(providedSnapshot = null)');
-  const baselineEnd = source.indexOf('async function ensureStartupWindowLayoutWidget()', baselineStart);
+  const baselineEnd = source.indexOf('const windowLayoutWidgetLifecycle =', baselineStart);
   const baseline = source.slice(baselineStart, baselineEnd);
   assert.match(baseline, /reconcileWindowLayoutsAfterStartup\(state, \[\.\.\.live\]\)/);
   assert.match(baseline, /if \(windowLayoutDetachment\.isReadOnly\(\) \|\| !hasDocumentWriteAuthority\(\)[\s\S]*?surfaceCoordinator\?\.role !== SURFACE_ROLE\.WRITER\) return;/,
@@ -1247,18 +1247,18 @@ test('startup opens non-docked layouts by default without creating implicit trac
   assert.doesNotMatch(baseline, /populateTrackingLayout\(/,
     'startup does not bulk-add every window that was already open');
 
-  const startupStart = source.indexOf('async function ensureStartupWindowLayoutWidget()');
-  const startupEnd = source.indexOf('async function populateTrackingLayout', startupStart);
-  const startup = source.slice(startupStart, startupEnd);
+  const startup = await readFile(new URL('./public/app/window-layout-widget-lifecycle.js', import.meta.url), 'utf8');
   assert.doesNotMatch(startup, /createWindowLayout\(/,
     'startup does not manufacture a tracking layout when automatic tracking was not enabled');
-  assert.match(startup, /const docked = new Set\(state\.windowLayoutPillIds \?\? \[\]\)/,
+  assert.match(startup, /const docked = new Set\(getDockedLayoutIds\(\) \?\? \[\]\)/,
     'only layouts explicitly docked into the AYG pill tray stay out of widget startup');
-  assert.match(startup, /await openWindowLayoutWidgetWithRetry\(layout\.id, \{ activate: false \}\)/,
+  assert.match(startup, /await open\(layout\.id, \{ activate: false \}\)/,
     'startup ensures every other durable layout widget without stealing focus and retries transient host failures');
   assert.doesNotMatch(startup, /hasDocumentWriteAuthority\(\)/,
     'opening an existing widget is presentation-only and must not wait for document-writer authority');
-  assert.match(source, /if \(!DETACHED_SURFACE && !SCOPE_ROOT_ID\) void ensureStartupWindowLayoutWidget\(\);/,
+  assert.match(source, /getDockedLayoutIds: \(\) => state\.windowLayoutPillIds \?\? \[\]/,
+    'the workspace injects durable docked-layout identity without giving presentation lifecycle a store');
+  assert.match(source, /if \(!DETACHED_SURFACE && !SCOPE_ROOT_ID\) void windowLayoutWidgetLifecycle\.ensureStartup\(\);/,
     'an ordinary AYG surface ensures its widgets immediately after durable state loads');
   assert.doesNotMatch(startup, /tracking\?\.enabled === true/,
     'automatic widget startup no longer depends on tracking being enabled');
