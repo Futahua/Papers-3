@@ -1,0 +1,7 @@
+Live post-deployment finding on 2026-10-03 after packaging and installing this exact commit:
+- Compact-widget manual add still fails: choosing a window from the list does not add it.
+- Compact-widget manual remove still fails.
+- Direct/manual picking is therefore not a usable membership editor at this commit.
+- Auto mode (circle control) does work: activating it suddenly adds the eligible apps, and those auto-added members then behave correctly in the widget.
+- This narrows the defect to the manual membership/picker path rather than general widget rendering, native control, persisted member behavior, or auto-add.
+This note records observed behavior only; it does not claim a root cause or a fix.
