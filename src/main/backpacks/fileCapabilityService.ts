@@ -1008,6 +1008,10 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
             return { ok: true, adblock: await deps.webBrowser.setAdblockEnabled(params.enabled === true) };
           }
+          case 'browser-lens-screen': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return await deps.webBrowser.captureLensRegion(context.nativePreviewHost.ownerKey, browserTabId(params.tabId));
+          }
           case 'preview-text-chunk': {
             const target = absolutePath(params.path);
             const offset = params.offset === undefined ? 0 : Number(params.offset);

@@ -1,5 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { app, BaseWindow, WebContentsView, type NavigationEntry, type Session } from 'electron';
+import {
+  app,
+  BaseWindow,
+  BrowserWindow,
+  desktopCapturer,
+  ipcMain,
+  screen,
+  WebContentsView,
+  type Display,
+  type NativeImage,
+  type NavigationEntry,
+  type Session,
+} from 'electron';
 import { ElectronBlocker } from '@ghostery/adblocker-electron';
 
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
@@ -60,6 +72,7 @@ export interface BrowserAdblockState {
 }
 
 type BrowserTabResult = { ok: true; tab: BrowserTabState } | { ok: false; error?: string };
+type BrowserLensResult = BrowserTabResult | { ok: false; cancelled: true };
 
 export interface WebBrowserHostBridge {
   open(
@@ -80,6 +93,7 @@ export interface WebBrowserHostBridge {
   getDownloads(): BrowserDownloadState[];
   getAdblockState(): BrowserAdblockState;
   setAdblockEnabled(enabled: boolean): Promise<BrowserAdblockState>;
+  captureLensRegion(ownerKey: string, tabId: string): Promise<BrowserLensResult>;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
   closeOwner(ownerKey: string): void;
@@ -138,6 +152,241 @@ function safeWebUrl(value: string): string | null {
 
 function boundedError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 500);
+}
+
+interface LensDisplayCapture {
+  display: Display;
+  image: NativeImage;
+}
+
+interface LensSelection {
+  displayId: number;
+  rect: PreviewRect;
+}
+
+function lensOverlayHtml(channel: string, displayId: number, screenshot: string): string {
+  const channelJson = JSON.stringify(channel);
+  const displayIdJson = JSON.stringify(displayId);
+  const screenshotJson = JSON.stringify(screenshot);
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#111;cursor:crosshair;user-select:none}
+  #shot{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;pointer-events:none}
+  #shade{position:absolute;inset:0;background:rgba(0,0,0,.34);pointer-events:none}
+  #sel{position:absolute;display:none;border:2px solid #fff;box-sizing:border-box;box-shadow:0 0 0 99999px rgba(0,0,0,.34);pointer-events:none}
+  #hint{position:absolute;left:50%;top:22px;transform:translateX(-50%);padding:8px 14px;border-radius:18px;background:rgba(20,20,20,.82);color:#fff;font:13px system-ui,sans-serif;pointer-events:none}
+</style>
+</head>
+<body>
+  <img id="shot">
+  <div id="shade"></div>
+  <div id="sel"></div>
+  <div id="hint">Drag to search with Lens · Esc to cancel</div>
+<script>
+  const { ipcRenderer } = require('electron');
+  const channel = ${channelJson};
+  const displayId = ${displayIdJson};
+  const shot = document.getElementById('shot');
+  shot.src = ${screenshotJson};
+  const shade = document.getElementById('shade');
+  const sel = document.getElementById('sel');
+  let start = null;
+  let current = null;
+  const draw = () => {
+    if (!start || !current) return;
+    const x = Math.min(start.x,current.x), y = Math.min(start.y,current.y);
+    const w = Math.abs(current.x-start.x), h = Math.abs(current.y-start.y);
+    shade.style.display = 'none';
+    sel.style.display = 'block';
+    sel.style.left = x+'px'; sel.style.top = y+'px'; sel.style.width = w+'px'; sel.style.height = h+'px';
+  };
+  addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    start = {x:e.clientX,y:e.clientY}; current = start;
+    document.body.setPointerCapture?.(e.pointerId);
+    draw();
+  });
+  addEventListener('pointermove', e => {
+    if (!start) return;
+    current = {x:e.clientX,y:e.clientY}; draw();
+  });
+  addEventListener('pointerup', e => {
+    if (!start || e.button !== 0) return;
+    current = {x:e.clientX,y:e.clientY}; draw();
+    const x = Math.min(start.x,current.x), y = Math.min(start.y,current.y);
+    const width = Math.abs(current.x-start.x), height = Math.abs(current.y-start.y);
+    if (width >= 4 && height >= 4) ipcRenderer.send(channel,{kind:'select',displayId,rect:{x,y,width,height}});
+    else { start = null; current = null; shade.style.display = ''; sel.style.display = 'none'; }
+  });
+  addEventListener('keydown', e => {
+    if (e.key === 'Escape') ipcRenderer.send(channel,{kind:'cancel'});
+  });
+</script>
+</body>
+</html>`;
+}
+
+async function captureLensDisplays(): Promise<LensDisplayCapture[]> {
+  const displays = screen.getAllDisplays();
+  if (displays.length === 0) return [];
+  const thumbnailSize = displays.reduce((largest, display) => ({
+    width: Math.max(largest.width, Math.ceil(display.size.width * display.scaleFactor)),
+    height: Math.max(largest.height, Math.ceil(display.size.height * display.scaleFactor)),
+  }), { width: 1, height: 1 });
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize,
+    fetchWindowIcons: false,
+  });
+  return displays.flatMap((display) => {
+    const source = sources.find((candidate) => candidate.display_id === String(display.id));
+    return source && !source.thumbnail.isEmpty() ? [{ display, image: source.thumbnail }] : [];
+  });
+}
+
+async function pickLensRegion(): Promise<{ capture: LensDisplayCapture; rect: PreviewRect } | null> {
+  const captures = await captureLensDisplays();
+  if (captures.length === 0) throw new Error('No screen is available for Lens capture.');
+  const channel = `papers:lens-region:${randomUUID()}`;
+  const overlays: BrowserWindow[] = [];
+  let finished = false;
+  const closeOverlays = (): void => {
+    for (const overlay of overlays) {
+      if (!overlay.isDestroyed()) overlay.destroy();
+    }
+  };
+  return await new Promise((resolve, reject) => {
+    const finish = (selection: LensSelection | null): void => {
+      if (finished) return;
+      finished = true;
+      ipcMain.removeAllListeners(channel);
+      closeOverlays();
+      if (!selection) {
+        resolve(null);
+        return;
+      }
+      const capture = captures.find((candidate) => candidate.display.id === selection.displayId);
+      if (!capture) {
+        reject(new Error('The selected display is no longer available.'));
+        return;
+      }
+      resolve({ capture, rect: selection.rect });
+    };
+    ipcMain.on(channel, (event, payload: unknown) => {
+      if (!overlays.some((overlay) => !overlay.isDestroyed() && overlay.webContents.id === event.sender.id)) return;
+      if (!payload || typeof payload !== 'object') return;
+      const value = payload as { kind?: unknown; displayId?: unknown; rect?: Partial<PreviewRect> };
+      if (value.kind === 'cancel') {
+        finish(null);
+        return;
+      }
+      if (value.kind !== 'select' || !Number.isSafeInteger(value.displayId)) return;
+      const rect = value.rect;
+      if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
+        || Number(rect.width) < 4 || Number(rect.height) < 4) return;
+      finish({
+        displayId: Number(value.displayId),
+        rect: {
+          x: Math.max(0, Number(rect.x)),
+          y: Math.max(0, Number(rect.y)),
+          width: Number(rect.width),
+          height: Number(rect.height),
+        },
+      });
+    });
+    try {
+      for (const capture of captures) {
+        const bounds = capture.display.bounds;
+        const overlay = new BrowserWindow({
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+          frame: false,
+          transparent: false,
+          resizable: false,
+          movable: false,
+          minimizable: false,
+          maximizable: false,
+          fullscreenable: false,
+          skipTaskbar: true,
+          show: false,
+          backgroundColor: '#111111',
+          webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false,
+            sandbox: false,
+            webSecurity: true,
+          },
+        });
+        overlays.push(overlay);
+        overlay.setAlwaysOnTop(true, 'screen-saver');
+        overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+        overlay.webContents.on('will-navigate', (event) => event.preventDefault());
+        overlay.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        overlay.once('closed', () => {
+          if (!finished && overlays.every((candidate) => candidate.isDestroyed())) finish(null);
+        });
+        const html = lensOverlayHtml(channel, capture.display.id, capture.image.toDataURL());
+        void overlay.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+          .then(() => {
+            if (finished || overlay.isDestroyed()) return;
+            overlay.show();
+            overlay.focus();
+          })
+          .catch((error) => {
+            if (!finished) {
+              finished = true;
+              ipcMain.removeAllListeners(channel);
+              closeOverlays();
+              reject(error);
+            }
+          });
+      }
+    } catch (error) {
+      finished = true;
+      ipcMain.removeAllListeners(channel);
+      closeOverlays();
+      reject(error);
+    }
+  });
+}
+
+function cropLensSelection(capture: LensDisplayCapture, rect: PreviewRect): Uint8Array {
+  const size = capture.image.getSize();
+  const bounds = capture.display.bounds;
+  const scaleX = size.width / bounds.width;
+  const scaleY = size.height / bounds.height;
+  const x = Math.max(0, Math.min(size.width - 1, Math.round(rect.x * scaleX)));
+  const y = Math.max(0, Math.min(size.height - 1, Math.round(rect.y * scaleY)));
+  const width = Math.max(1, Math.min(size.width - x, Math.round(rect.width * scaleX)));
+  const height = Math.max(1, Math.min(size.height - y, Math.round(rect.height * scaleY)));
+  return new Uint8Array(capture.image.crop({ x, y, width, height }).toPNG());
+}
+
+async function uploadLensCrop(png: Uint8Array): Promise<string> {
+  const form = new FormData();
+  const uploadBuffer = new ArrayBuffer(png.byteLength);
+  new Uint8Array(uploadBuffer).set(png);
+  form.append('encoded_image', new Blob([uploadBuffer], { type: 'image/png' }), 'screen-crop.png');
+  const response = await fetch(`https://lens.google.com/v3/upload?stcs=${Date.now()}`, {
+    method: 'POST',
+    body: form,
+    redirect: 'manual',
+  });
+  const location = response.headers.get('location');
+  const url = location ? safeWebUrl(location) : null;
+  if (response.status < 300 || response.status >= 400 || !url) {
+    throw new Error(`Google Lens did not accept the screen crop (HTTP ${response.status}).`);
+  }
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'https:' || (parsed.hostname !== 'google.com' && !parsed.hostname.endsWith('.google.com'))) {
+    throw new Error('Google Lens returned an unexpected result address.');
+  }
+  return url;
 }
 
 export function createWebBrowserHostBridge(input: {
@@ -687,6 +936,26 @@ export function createWebBrowserHostBridge(input: {
       }
       await Promise.all([...adblockSessions].map((browserSession) => syncAdblockSession(browserSession)));
       return adblockState();
+    },
+
+    async captureLensRegion(ownerKey, tabId) {
+      const tab = tabs.get(tabKey(ownerKey, tabId));
+      if (!tab || tab.ownerKey !== ownerKey) return { ok: false, error: 'Browser tab is unavailable.' };
+      try {
+        const selection = await pickLensRegion();
+        if (!selection) return { ok: false, cancelled: true };
+        const resultUrl = await uploadLensCrop(cropLensSelection(selection.capture, selection.rect));
+        tab.history = null;
+        tab.url = resultUrl;
+        tab.title = 'Google Lens';
+        await ensureTabView(tab);
+        if (!tab.view || tab.view.webContents.isDestroyed()) return { ok: false, error: 'Browser tab is unavailable.' };
+        await tab.view.webContents.loadURL(resultUrl);
+        tab.lastActiveAt = Date.now();
+        return { ok: true, tab: tabState(tab) };
+      } catch (error) {
+        return { ok: false, error: boundedError(error) };
+      }
     },
 
     setOwnerSurfaceBounds(ownerKey, bounds) {
