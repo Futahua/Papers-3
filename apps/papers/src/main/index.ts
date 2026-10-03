@@ -7,20 +7,7 @@ import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
-import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from './backpacks/everythingSearchBridge';
-import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
-import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
-import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
-import { createHtmlPreviewHostBridge } from './backpacks/htmlPreviewHostBridge';
-import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
-import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
-import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
-import { createCalibrePreviewBridge } from './backpacks/calibrePreviewBridge';
-import { createAutoCadPreviewBridge } from './backpacks/autoCadPreviewBridge';
-import { createMlightCadPreviewBridge } from './backpacks/mlightCadPreviewBridge';
-import { createPowerPointPreviewBridge } from './backpacks/powerPointPreviewBridge';
-import { createWindowsPreviewHandlerBridge, resolveWindowsPreviewHostSourcePath } from './backpacks/windowsPreviewHandlerBridge';
-import { createPreviewOwnerGroup } from './backpacks/previewOwnerGroup';
+import { createFileCapabilityRuntime } from './backpacks/fileCapabilityRuntime';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
 import { BackpackProjectSurfaceCollection } from './backpacks/backpackProjectSurfaceCollection';
@@ -653,62 +640,8 @@ async function bootstrap(): Promise<void> {
     },
   );
   installBackpackProjectProtocol(backpackProjects);
-  const filePreviewResources = createFilePreviewResourceRegistry();
-  protocol.handle(FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler(filePreviewResources));
-  app.once('will-quit', () => { void filePreviewResources.dispose(); });
-
-  const everythingPaths = resolveEverythingSearchBridgePaths({
-    appPath: app.getAppPath(),
-    resourcesPath: process.resourcesPath,
-    packaged: app.isPackaged,
-  });
-  const fileCapabilityCacheDirectory = path.join(paths.root, 'native', 'file-capability');
-  const everythingSearch = createEverythingSearchBridge({
-    cacheDirectory: fileCapabilityCacheDirectory,
-    sourcePath: everythingPaths.sourcePath,
-    dllPath: everythingPaths.dllPath,
-  });
-  const revitPreview = createRevitPreviewBridge({
-    cacheDirectory: fileCapabilityCacheDirectory,
-    sourcePath: resolveRevitPreviewBridgeSourcePath({
-      appPath: app.getAppPath(),
-      resourcesPath: process.resourcesPath,
-      packaged: app.isPackaged,
-    }),
-  });
-  const shellThumbnail = createShellThumbnailBridge({
-    cacheDirectory: fileCapabilityCacheDirectory,
-    sourcePath: resolveShellThumbnailSourcePath({
-      appPath: app.getAppPath(),
-      resourcesPath: process.resourcesPath,
-      packaged: app.isPackaged,
-    }),
-  });
-  const calibrePreview = createCalibrePreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
-  const autoCadPreview = createAutoCadPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
-  const mlightCadPreview = createMlightCadPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
-  const powerPointPreview = createPowerPointPreviewBridge({ cacheDirectory: fileCapabilityCacheDirectory });
-  const windowsPreview = createWindowsPreviewHandlerBridge({
-    cacheDirectory: fileCapabilityCacheDirectory,
-    sourcePath: resolveWindowsPreviewHostSourcePath({
-      appPath: app.getAppPath(),
-      resourcesPath: process.resourcesPath,
-      packaged: app.isPackaged,
-    }),
-  });
-  app.once('will-quit', () => windowsPreview?.dispose());
-  const pdfPreview = createPdfPreviewHostBridge({
-    resolveWindow: (ownerKey) => {
-      const separator = ownerKey.indexOf(':');
-      if (separator <= 0) return null;
-      const windowId = Number(ownerKey.slice(0, separator));
-      if (!Number.isSafeInteger(windowId)) return null;
-      return papersWindows.get(windowId)?.owned.window ?? null;
-    },
-    stateDirectory: path.join(paths.root, 'preview-state', 'pdf'),
-  });
-  app.once('will-quit', () => pdfPreview.dispose());
-  const htmlPreview = createHtmlPreviewHostBridge({
+  const fileCapabilityRuntime = createFileCapabilityRuntime({
+    rootPath: paths.root,
     resolveWindow: (ownerKey) => {
       const separator = ownerKey.indexOf(':');
       if (separator <= 0) return null;
@@ -717,46 +650,8 @@ async function bootstrap(): Promise<void> {
       return papersWindows.get(windowId)?.owned.window ?? null;
     },
   });
-  app.once('will-quit', () => htmlPreview.dispose());
-  const webBrowser = createWebBrowserHostBridge({
-    resolveWindow: (ownerKey) => {
-      const separator = ownerKey.indexOf(':');
-      if (separator <= 0) return null;
-      const windowId = Number(ownerKey.slice(0, separator));
-      if (!Number.isSafeInteger(windowId)) return null;
-      return papersWindows.get(windowId)?.owned.window ?? null;
-    },
-  });
-  app.once('will-quit', () => webBrowser.dispose());
-  const previewOwners = createPreviewOwnerGroup([
-    windowsPreview,
-    pdfPreview,
-    htmlPreview,
-    webBrowser,
-  ]);
-  const fileCapability = createFileCapabilityService({
-    cacheDirectory: fileCapabilityCacheDirectory,
-    everythingSearch,
-    previewResources: filePreviewResources,
-    pdfPreview,
-    revitPreview,
-    shellThumbnail,
-    calibrePreview,
-    autoCadPreview,
-    mlightCadPreview,
-    htmlPreview,
-    webBrowser,
-    powerPointPreview,
-    windowsPreview,
-    dopusrtPath: resolveDirectoryOpusRtPath(),
-    libreOfficePath: resolveLibreOfficePath(),
-    openPath: (target) => shell.openPath(target),
-    revealPath: (target) => shell.showItemInFolder(target),
-    fileIcon: async (target) => {
-      const icon = await app.getFileIcon(target, { size: 'small' });
-      return icon.isEmpty() ? null : icon.toDataURL();
-    },
-  });
+  const { fileCapability, previewOwners } = fileCapabilityRuntime;
+  app.once('will-quit', () => fileCapabilityRuntime.dispose());
 
   const permissionStore = new PermissionStore(paths);
   await permissionStore.initialize();

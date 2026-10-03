@@ -395,7 +395,7 @@ journal's visible_report_text, suppresses duplicate tool_executed receipts and r
 and renders concise tool rows. That project had pre-existing unrelated dirty work, so this
 handoff records the validated local change without claiming a clean standalone commit.
 
-First Papers host-side seam is validated and ready to commit:
+First Papers host-side seam committed as 2716175 (centralize Papers preview owner lifecycle):
 
 - added backpacks/previewOwnerGroup.ts so main/index.ts no longer repeats the concrete preview
   engine set for owner close/visibility/bounds/raise lifecycle;
@@ -407,6 +407,17 @@ First Papers host-side seam is validated and ready to commit:
 - Papers typecheck passes;
 - full Papers unit suite: **1334 pass / 8 skipped / 0 fail**.
 
-Next planned slice: continue decomposing by observed ownership boundaries, not by file size.
-The preview/file-capability bootstrap in Papers main is a likely next candidate, but only after
-confirming which provider lifecycle must remain directly exposed to host surface routing.
+Second Papers host-side seam is validated and ready to commit:
+
+- added backpacks/fileCapabilityRuntime.ts as the owner of concrete file/preview engine
+  construction, preview-protocol resources, and provider disposal;
+- main/index.ts now receives only fileCapability plus previewOwners instead of constructing
+  Everything/Revit/shell-thumbnail/Calibre/AutoCAD/Mlight/PowerPoint/Windows/PDF/HTML/web
+  preview implementations itself;
+- the runtime still receives Papers' window resolver explicitly; it does not gain window or
+  Backpack authority beyond the preview/file capability it owns;
+- Papers typecheck passes;
+- full Papers unit suite remains **1334 pass / 8 skipped / 0 fail**.
+
+Next planned slice: reassess the remaining Papers composition root for the next coherent
+lifecycle/authority boundary. Do not turn fileCapabilityRuntime into a universal framework.
