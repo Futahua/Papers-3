@@ -97,6 +97,7 @@ import { createWorkspaceNavigator } from './app/workspace-navigator.js';
 import { createWindowLayoutRecordingWiring, windowLayoutMemberKey, resolveWindowLayoutDescriptorWithFallback } from './app/window-layout-runtime.js';
 import { createWindowLayoutAutoTracking } from './app/window-layout-auto-tracking.js';
 import { openWindowLayoutPickerSession, toWindowLayoutPickerRows } from './app/window-layout-picker-session.js';
+import { createWindowLayoutCandidateBinder } from './app/window-layout-candidate-binding.js';
 import { endExactWindowCandidateProcess } from './app/window-layout-process-end.js';
 import { createClickTwiceGuard } from './app/click-twice-guard.js';
 import { createWidgetHoverPolicy, createWidgetHoverPolicyDiagnostics } from './app/widget-hover-policy.js';
@@ -176,6 +177,10 @@ import {
 } from './workspace-scope.js';
 
 const host = createHostBridge(window);
+const bindWindowLayoutPickerCandidate = createWindowLayoutCandidateBinder({
+  bindWindowCandidate: (candidateId) => host.bindWindowCandidate(candidateId),
+  listWindowCandidates: () => host.windowCandidates({ includeNativeIcons: false }),
+});
 const PROJECT_SURFACE_KEY = (() => {
   const value = new URLSearchParams(window.location.search).get('papers-surface-key');
   return value && value.length <= 128 ? value : null;
@@ -1819,29 +1824,6 @@ async function openWindowLayoutPicker(layoutId) {
     if (windowLayoutRuntime.pickerOpenFor === layoutId
       && windowLayoutRuntime.pickerGeneration === generation) closeWindowLayoutPicker();
   }
-}
-
-/** A tracking lifecycle refresh can relist the native candidates while the
- * chooser is still open, replacing the short-lived candidate table behind the
- * row the user clicked. Retry only that typed `missing` case, and only when a
- * fresh enumeration has one unambiguous title/application match. Duplicate
- * Chrome windows remain fail-closed. */
-async function bindWindowLayoutPickerCandidate(candidateId, row) {
-  let bound = await host.bindWindowCandidate(candidateId);
-  if (bound?.outcome !== 'missing' || !row) return { bound, row };
-  const refreshed = await host.windowCandidates({ includeNativeIcons: false });
-  if (refreshed?.outcome !== 'success') return { bound, row };
-  const matches = (refreshed.candidates ?? []).filter((candidate) => {
-    if (candidate.title !== row.title) return false;
-    if (typeof row.applicationLabel === 'string' && typeof candidate.applicationLabel === 'string') {
-      return candidate.applicationLabel === row.applicationLabel;
-    }
-    return true;
-  });
-  if (matches.length !== 1) return { bound, row };
-  const rebound = await host.bindWindowCandidate(matches[0].id);
-  if (rebound?.outcome === 'success') return { bound: rebound, row: matches[0] };
-  return { bound: rebound, row: matches[0] };
 }
 
 async function closeWindowLayoutCandidate(layoutId, candidateId, candidates) {

@@ -345,3 +345,23 @@ Success is:
 
 User-side cognitive load and agent-side cognitive load are the same architectural problem
 viewed from opposite sides.
+
+## Current refactor progress — 2026-10-03
+
+Baseline/handoff checkpoint committed as root commit 8503f50.
+
+First migration slice is implemented but not yet committed at the time of this note:
+
+- added public/app/window-layout-candidate-binding.js as the sole owner of short-lived
+  chooser candidate binding/recovery;
+- removed the inline binder from public/workspace-20260730b.js;
+- attached and compact-widget list paths now call the same injected binder;
+- added window-layout-candidate-binding.test.mjs with fresh-bind, stale-id recovery,
+  ambiguous fail-closed, application-label disambiguation, and no-row/no-guess tests;
+- wired that test into AYG's explicit npm test list;
+- focused syntax + behavior run: **57/57 pass**;
+- full AYG run: **1679/1680 pass**. The only failure is environmental and pre-existing for
+  this connector machine: test.mjs requires D:\Programs\CLIP STUDIO PAINT\CLIPS.bat,
+  while Local Lapdog exposes only C:\. No refactor-related test failed.
+
+Before continuing, inspect the root diff and commit this slice if it still matches the above.

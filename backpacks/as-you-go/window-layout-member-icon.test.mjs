@@ -51,11 +51,10 @@ test('picker enumeration skips serial native icon extraction while Auto hydratio
   const source = await readFile(new URL('./public/workspace-20260730b.js', import.meta.url), 'utf8');
   const picker = source.match(/async function openWindowLayoutPicker\(layoutId\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
   const widgetPicker = source.match(/async function openWidgetPicker\(\)\s*\{([\s\S]*?)\n  \}/)?.[1] ?? '';
-  const fallbackBind = source.match(/async function bindWindowLayoutPickerCandidate\(candidateId, row\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
   const iconRefresh = source.match(/async function runWindowLayoutIconRefresh\(\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
   assert.match(picker, /host\.windowCandidates\(\{\s*includeNativeIcons:\s*false\s*\}\)/);
   assert.match(widgetPicker, /host\.windowCandidates\(\{\s*includeNativeIcons:\s*false\s*\}\)/);
-  assert.match(fallbackBind, /host\.windowCandidates\(\{\s*includeNativeIcons:\s*false\s*\}\)/);
+  assert.match(source, /createWindowLayoutCandidateBinder\([\s\S]*listWindowCandidates:\s*\(\)\s*=>\s*host\.windowCandidates\(\{\s*includeNativeIcons:\s*false\s*\}\)/);
   assert.match(source, /requestCandidates:\s*\(\)\s*=>\s*host\.windowCandidates\(\{\s*includeNativeIcons:\s*true\s*\}\)/);
   assert.match(source, /createWindowLayoutIconHydration/);
 });
