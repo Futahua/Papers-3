@@ -155,6 +155,17 @@ describe('durable browser tabs', () => {
     const session = harness.views[0]!.webContents.session;
     expect(session.setDownloadPath).toHaveBeenCalledWith('C:\\Users\\test\\Downloads');
     expect(session.on).toHaveBeenCalledWith('will-download', expect.any(Function));
+    expect(harness.views[0]!.webContents.setBackgroundThrottling).toHaveBeenCalledWith(false);
+    const permissionRequest = session.setPermissionRequestHandler.mock.calls[0]![0];
+    const permissionCheck = session.setPermissionCheckHandler.mock.calls[0]![0];
+    const storageCallback = vi.fn();
+    permissionRequest(null, 'storage-access', storageCallback, { requestingUrl: 'https://x.com/' });
+    expect(storageCallback).toHaveBeenCalledWith(true);
+    const mediaCallback = vi.fn();
+    permissionRequest(null, 'media', mediaCallback, { requestingUrl: 'https://x.com/' });
+    expect(mediaCallback).toHaveBeenCalledWith(false);
+    expect(permissionCheck(null, 'top-level-storage-access', 'https://x.com/')).toBe(true);
+    expect(permissionCheck(null, 'media', 'https://x.com/')).toBe(false);
     expect(bridge.getDownloads()).toEqual([]);
   });
 

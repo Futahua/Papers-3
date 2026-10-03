@@ -11,6 +11,7 @@ import {
   type NativeImage,
   type NavigationEntry,
   type Session,
+  type WebContents,
 } from 'electron';
 import { ElectronBlocker } from '@ghostery/adblocker-electron';
 
@@ -93,7 +94,7 @@ export interface WebBrowserHostBridge {
   getDownloads(): BrowserDownloadState[];
   getAdblockState(): BrowserAdblockState;
   setAdblockEnabled(enabled: boolean): Promise<BrowserAdblockState>;
-  captureLensRegion(ownerKey: string, tabId: string): Promise<BrowserLensResult>;
+  captureLensRegion(ownerKey: string, sourceTabId: string, targetTabId: string): Promise<BrowserLensResult>;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
   closeOwner(ownerKey: string): void;
@@ -109,8 +110,14 @@ const hardenedBrowserSessions = new WeakSet<Session>();
 function hardenBrowserSession(browserSession: Session): void {
   if (hardenedBrowserSessions.has(browserSession)) return;
   hardenedBrowserSessions.add(browserSession);
-  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  browserSession.setPermissionCheckHandler(() => false);
+  const allowStorageAccess = (permission: string, origin: string | undefined): boolean =>
+    (permission === 'storage-access' || permission === 'top-level-storage-access')
+    && Boolean(origin && safeWebUrl(origin));
+  browserSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    callback(allowStorageAccess(permission, details.requestingUrl));
+  });
+  browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
+    allowStorageAccess(permission, requestingOrigin));
   browserSession.setCertificateVerifyProc((request, callback) => {
     const hostname = request.hostname.toLocaleLowerCase().replace(/^\[|\]$/g, '');
     const loopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
@@ -162,6 +169,12 @@ interface LensDisplayCapture {
 interface LensSelection {
   displayId: number;
   rect: PreviewRect;
+}
+
+interface LensCrop {
+  jpeg: Uint8Array;
+  width: number;
+  height: number;
 }
 
 function lensOverlayHtml(channel: string, displayId: number, screenshot: string): string {
@@ -355,7 +368,7 @@ async function pickLensRegion(): Promise<{ capture: LensDisplayCapture; rect: Pr
   });
 }
 
-function cropLensSelection(capture: LensDisplayCapture, rect: PreviewRect): Uint8Array {
+function cropLensSelection(capture: LensDisplayCapture, rect: PreviewRect): LensCrop {
   const size = capture.image.getSize();
   const bounds = capture.display.bounds;
   const scaleX = size.width / bounds.width;
@@ -364,29 +377,94 @@ function cropLensSelection(capture: LensDisplayCapture, rect: PreviewRect): Uint
   const y = Math.max(0, Math.min(size.height - 1, Math.round(rect.y * scaleY)));
   const width = Math.max(1, Math.min(size.width - x, Math.round(rect.width * scaleX)));
   const height = Math.max(1, Math.min(size.height - y, Math.round(rect.height * scaleY)));
-  return new Uint8Array(capture.image.crop({ x, y, width, height }).toPNG());
+  const cropped = capture.image.crop({ x, y, width, height });
+  const croppedSize = cropped.getSize();
+  const longest = Math.max(croppedSize.width, croppedSize.height);
+  const resizeScale = longest > 1000 ? 1000 / longest : 1;
+  const processed = resizeScale < 1
+    ? cropped.resize({
+      width: Math.max(1, Math.round(croppedSize.width * resizeScale)),
+      height: Math.max(1, Math.round(croppedSize.height * resizeScale)),
+      quality: 'good',
+    })
+    : cropped;
+  const processedSize = processed.getSize();
+  return {
+    jpeg: new Uint8Array(processed.toJPEG(40)),
+    width: processedSize.width,
+    height: processedSize.height,
+  };
 }
 
-async function uploadLensCrop(png: Uint8Array): Promise<string> {
-  const form = new FormData();
-  const uploadBuffer = new ArrayBuffer(png.byteLength);
-  new Uint8Array(uploadBuffer).set(png);
-  form.append('encoded_image', new Blob([uploadBuffer], { type: 'image/png' }), 'screen-crop.png');
-  const response = await fetch(`https://lens.google.com/v3/upload?stcs=${Date.now()}`, {
-    method: 'POST',
-    body: form,
-    redirect: 'manual',
+async function submitLensCrop(contents: WebContents, crop: LensCrop): Promise<string> {
+  const jpegBase64 = Buffer.from(crop.jpeg).toString('base64');
+  const action = new URL('https://lens.google.com/v3/upload');
+  action.searchParams.set('ep', 'cntpubb');
+  action.searchParams.set('hl', app.getLocale() || 'en');
+  action.searchParams.set('st', Date.now().toString());
+  action.searchParams.set('cd', '');
+  action.searchParams.set('re', 'df');
+  action.searchParams.set('s', '4');
+  action.searchParams.set('vph', String(crop.height));
+  action.searchParams.set('vpw', String(crop.width));
+  await contents.loadURL('https://www.google.com/');
+  let cancelNavigationWait = (): void => {};
+  const navigation = new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Google Lens did not finish loading the screen crop.'));
+    }, 20_000);
+    const onNavigate = (_event: unknown, nextUrl: string): void => {
+      const safe = safeWebUrl(nextUrl);
+      if (!safe) return;
+      const parsed = new URL(safe);
+      const googleHost = parsed.hostname === 'google.com'
+        || parsed.hostname.endsWith('.google.com');
+      if (!googleHost) return;
+      if (parsed.hostname === 'www.google.com' && parsed.pathname === '/' && !parsed.search) return;
+      cleanup();
+      resolve(safe);
+    };
+    const onDestroyed = (): void => {
+      cleanup();
+      reject(new Error('The Lens result tab closed before the upload finished.'));
+    };
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      contents.removeListener('did-navigate', onNavigate);
+      contents.removeListener('destroyed', onDestroyed);
+    };
+    cancelNavigationWait = cleanup;
+    contents.on('did-navigate', onNavigate);
+    contents.once('destroyed', onDestroyed);
   });
-  const location = response.headers.get('location');
-  const url = location ? safeWebUrl(location) : null;
-  if (response.status < 300 || response.status >= 400 || !url) {
-    throw new Error(`Google Lens did not accept the screen crop (HTTP ${response.status}).`);
+  try {
+    await contents.executeJavaScript(`(() => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(jpegBase64)}), c => c.charCodeAt(0));
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = ${JSON.stringify(action.toString())};
+      form.enctype = 'multipart/form-data';
+      const file = document.createElement('input');
+      file.type = 'file';
+      file.name = 'encoded_image';
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], 'screen-crop.jpg', { type: 'image/jpeg' }));
+      file.files = transfer.files;
+      form.appendChild(file);
+      const dimensions = document.createElement('input');
+      dimensions.type = 'hidden';
+      dimensions.name = 'processed_image_dimensions';
+      dimensions.value = ${JSON.stringify(`${crop.width},${crop.height}`)};
+      form.appendChild(dimensions);
+      document.body.appendChild(form);
+      form.submit();
+    })()`);
+    return await navigation;
+  } catch (error) {
+    cancelNavigationWait();
+    throw error;
   }
-  const parsed = new URL(url);
-  if (parsed.protocol !== 'https:' || (parsed.hostname !== 'google.com' && !parsed.hostname.endsWith('.google.com'))) {
-    throw new Error('Google Lens returned an unexpected result address.');
-  }
-  return url;
 }
 
 export function createWebBrowserHostBridge(input: {
@@ -442,7 +520,7 @@ export function createWebBrowserHostBridge(input: {
   const loadBlocker = (): Promise<ElectronBlocker> => {
     if (blocker) return Promise.resolve(blocker);
     if (!blockerPromise) {
-      blockerPromise = ElectronBlocker.fromPrebuiltAdsAndTracking(fetch)
+      blockerPromise = ElectronBlocker.fromPrebuiltAdsOnly(fetch)
         .then((loaded) => {
           blocker = loaded;
           return loaded;
@@ -586,7 +664,10 @@ export function createWebBrowserHostBridge(input: {
     hardenBrowserSession(contents.session);
     enableBrowserDownloads(contents.session);
     void syncAdblockSession(contents.session);
-    contents.setBackgroundThrottling(true);
+    // Browser tabs are real long-lived web apps, not previews. Throttling a
+    // covered/background tab can stall streaming responses and auth flows.
+    // Memory is bounded separately by MAX_LIVE_TABS_PER_OWNER + hibernation.
+    contents.setBackgroundThrottling(false);
     contents.on('will-navigate', (event, nextUrl) => {
       if (safeWebUrl(nextUrl)) return;
       event.preventDefault();
@@ -938,22 +1019,45 @@ export function createWebBrowserHostBridge(input: {
       return adblockState();
     },
 
-    async captureLensRegion(ownerKey, tabId) {
-      const tab = tabs.get(tabKey(ownerKey, tabId));
-      if (!tab || tab.ownerKey !== ownerKey) return { ok: false, error: 'Browser tab is unavailable.' };
+    async captureLensRegion(ownerKey, sourceTabId, targetTabId) {
+      const sourceTab = tabs.get(tabKey(ownerKey, sourceTabId));
+      if (!sourceTab || sourceTab.ownerKey !== ownerKey) return { ok: false, error: 'Browser tab is unavailable.' };
+      if (!/^[A-Za-z0-9._:-]{1,128}$/.test(targetTabId)) return { ok: false, error: 'Invalid Lens result tab id.' };
+      if (tabs.has(tabKey(ownerKey, targetTabId))) return { ok: false, error: 'Lens result tab already exists.' };
+      let targetTab: DurableBrowserTab | null = null;
       try {
         const selection = await pickLensRegion();
         if (!selection) return { ok: false, cancelled: true };
-        const resultUrl = await uploadLensCrop(cropLensSelection(selection.capture, selection.rect));
-        tab.history = null;
-        tab.url = resultUrl;
-        tab.title = 'Google Lens';
-        await ensureTabView(tab);
-        if (!tab.view || tab.view.webContents.isDestroyed()) return { ok: false, error: 'Browser tab is unavailable.' };
-        await tab.view.webContents.loadURL(resultUrl);
-        tab.lastActiveAt = Date.now();
-        return { ok: true, tab: tabState(tab) };
+        const crop = cropLensSelection(selection.capture, selection.rect);
+        targetTab = {
+          tabId: targetTabId,
+          ownerKey,
+          window: sourceTab.window,
+          view: null,
+          localRect: { ...sourceTab.localRect },
+          surfaceBounds: { ...sourceTab.surfaceBounds },
+          presented: false,
+          url: 'https://www.google.com/',
+          title: 'Google Lens',
+          zoomFactor: 1,
+          lastActiveAt: Date.now(),
+          history: null,
+          crashed: false,
+        };
+        tabs.set(tabKey(ownerKey, targetTabId), targetTab);
+        const ids = ownerTabs.get(ownerKey) ?? new Set<string>();
+        ids.add(targetTabId);
+        ownerTabs.set(ownerKey, ids);
+        await ensureTabView(targetTab);
+        if (!targetTab.view || targetTab.view.webContents.isDestroyed()) throw new Error('Lens result tab is unavailable.');
+        const resultUrl = await submitLensCrop(targetTab.view.webContents, crop);
+        targetTab.url = resultUrl;
+        targetTab.history = null;
+        targetTab.lastActiveAt = Date.now();
+        await activateDurableTab(targetTab);
+        return { ok: true, tab: tabState(targetTab) };
       } catch (error) {
+        if (targetTab) cleanupTab(targetTab);
         return { ok: false, error: boundedError(error) };
       }
     },

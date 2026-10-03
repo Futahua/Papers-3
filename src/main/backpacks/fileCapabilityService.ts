@@ -1010,7 +1010,11 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'browser-lens-screen': {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
-            return await deps.webBrowser.captureLensRegion(context.nativePreviewHost.ownerKey, browserTabId(params.tabId));
+            return await deps.webBrowser.captureLensRegion(
+              context.nativePreviewHost.ownerKey,
+              browserTabId(params.sourceTabId),
+              browserTabId(params.targetTabId),
+            );
           }
           case 'preview-text-chunk': {
             const target = absolutePath(params.path);
