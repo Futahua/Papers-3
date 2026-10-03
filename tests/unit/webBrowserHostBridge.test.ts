@@ -19,6 +19,17 @@ type FakeWebContents = {
   loadURL: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   setZoomFactor: ReturnType<typeof vi.fn>;
+  setBackgroundThrottling: ReturnType<typeof vi.fn>;
+  reload: ReturnType<typeof vi.fn>;
+  navigationHistory: {
+    canGoBack: ReturnType<typeof vi.fn>;
+    canGoForward: ReturnType<typeof vi.fn>;
+    goBack: ReturnType<typeof vi.fn>;
+    goForward: ReturnType<typeof vi.fn>;
+    getAllEntries: ReturnType<typeof vi.fn>;
+    getActiveIndex: ReturnType<typeof vi.fn>;
+    restore: ReturnType<typeof vi.fn>;
+  };
   isDestroyed: () => boolean;
 };
 
@@ -63,8 +74,19 @@ vi.mock('electron', () => ({
         once: vi.fn(),
         setWindowOpenHandler: vi.fn(),
         loadURL: vi.fn().mockResolvedValue(undefined),
-        close: vi.fn(),
+        close: vi.fn(() => { webContents.destroyed = true; }),
         setZoomFactor: vi.fn(),
+        setBackgroundThrottling: vi.fn(),
+        reload: vi.fn(),
+        navigationHistory: {
+          canGoBack: vi.fn().mockReturnValue(false),
+          canGoForward: vi.fn().mockReturnValue(false),
+          goBack: vi.fn(),
+          goForward: vi.fn(),
+          getAllEntries: vi.fn().mockReturnValue([{ url: 'https://example.com/watch', title: 'Example', pageState: 'state' }]),
+          getActiveIndex: vi.fn().mockReturnValue(0),
+          restore: vi.fn().mockResolvedValue(undefined),
+        },
         isDestroyed() {
           return webContents.destroyed;
         },
@@ -115,5 +137,72 @@ describe('web browser preview session leases', () => {
     expect(bridge.move(ownerKey, secondSessionId, rect)).toBe(true);
     expect(bridge.close(ownerKey, secondSessionId)).toBe(true);
     expect(harness.views[0]!.webContents.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('durable browser tabs', () => {
+  it('keeps at most three live Chromium views and restores a hibernated tab history', async () => {
+    const window = new BaseWindow();
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });
+    const ids = [
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+      '33333333-3333-4333-8333-333333333333',
+      '44444444-4444-4444-8444-444444444444',
+    ];
+
+    for (let index = 0; index < ids.length; index += 1) {
+      const opened = await bridge.openTab(context, ids[index]!, `https://example.com/${index}`, rect);
+      expect(opened.ok).toBe(true);
+    }
+
+    expect(harness.views).toHaveLength(4);
+    expect(harness.views[0]!.webContents.close).toHaveBeenCalledTimes(1);
+    expect(bridge.getTab(ownerKey, ids[0]!)?.live).toBe(false);
+    expect(bridge.getTab(ownerKey, ids[3]!)?.live).toBe(true);
+
+    const restored = await bridge.activateTab(context, ids[0]!, rect);
+    expect(restored.ok).toBe(true);
+    expect(harness.views).toHaveLength(5);
+    expect(harness.views[4]!.webContents.navigationHistory.restore).toHaveBeenCalledWith({
+      entries: [{ url: 'https://example.com/watch', title: 'Example', pageState: 'state' }],
+      index: 0,
+    });
+  });
+
+  it('supports navigation commands on a live tab', async () => {
+    const window = new BaseWindow();
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });
+    const tabId = '55555555-5555-4555-8555-555555555555';
+    await bridge.openTab(context, tabId, url, rect);
+    const contents = harness.views.at(-1)!.webContents;
+    contents.navigationHistory.canGoBack.mockReturnValue(true);
+    contents.navigationHistory.canGoForward.mockReturnValue(true);
+
+    expect(bridge.commandTab(ownerKey, tabId, 'back').ok).toBe(true);
+    expect(contents.navigationHistory.goBack).toHaveBeenCalledTimes(1);
+    expect(bridge.commandTab(ownerKey, tabId, 'forward').ok).toBe(true);
+    expect(contents.navigationHistory.goForward).toHaveBeenCalledTimes(1);
+    expect(bridge.commandTab(ownerKey, tabId, 'reload').ok).toBe(true);
+    expect(contents.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('scopes the same persisted tab id independently per owning surface', async () => {
+    const window = new BaseWindow();
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });
+    const tabId = '77777777-7777-4777-8777-777777777777';
+    const otherOwner = {
+      ...context,
+      ownerKey: '1:surface-b',
+    };
+
+    const first = await bridge.openTab(context, tabId, 'https://example.com/a', rect);
+    const second = await bridge.openTab(otherOwner, tabId, 'https://example.com/b', rect);
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    expect(harness.views).toHaveLength(2);
+    expect(bridge.getTab(context.ownerKey, tabId)?.url).toBe('https://example.com/a');
+    expect(bridge.getTab(otherOwner.ownerKey, tabId)?.url).toBe('https://example.com/b');
   });
 });

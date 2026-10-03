@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { BaseWindow, WebContentsView, type Session } from 'electron';
+import { BaseWindow, WebContentsView, type NavigationEntry, type Session } from 'electron';
 
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
 
@@ -15,6 +15,34 @@ interface LiveWebBrowser {
   zoomFactor: number;
 }
 
+interface DurableBrowserTab {
+  tabId: string;
+  ownerKey: string;
+  window: BaseWindow;
+  view: WebContentsView | null;
+  localRect: PreviewRect;
+  surfaceBounds: PreviewRect;
+  presented: boolean;
+  url: string;
+  title: string;
+  zoomFactor: number;
+  lastActiveAt: number;
+  history: { entries: NavigationEntry[]; index: number } | null;
+  crashed: boolean;
+}
+
+export interface BrowserTabState {
+  tabId: string;
+  url: string;
+  title: string;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  live: boolean;
+  crashed: boolean;
+}
+
+type BrowserTabResult = { ok: true; tab: BrowserTabState } | { ok: false; error?: string };
+
 export interface WebBrowserHostBridge {
   open(
     context: PreviewHostContext,
@@ -23,6 +51,14 @@ export interface WebBrowserHostBridge {
   ): Promise<{ ok: true; sessionId: string; url: string } | { ok: false; error?: string }>;
   move(ownerKey: string, sessionId: string, localRect: PreviewRect): boolean;
   close(ownerKey: string, sessionId: string): boolean;
+  openTab(context: PreviewHostContext, tabId: string, url: string, localRect: PreviewRect): Promise<BrowserTabResult>;
+  activateTab(context: PreviewHostContext, tabId: string, localRect: PreviewRect): Promise<BrowserTabResult>;
+  navigateTab(ownerKey: string, tabId: string, url: string): Promise<BrowserTabResult>;
+  commandTab(ownerKey: string, tabId: string, command: 'back' | 'forward' | 'reload'): BrowserTabResult;
+  moveTab(ownerKey: string, tabId: string, localRect: PreviewRect): boolean;
+  closeTab(ownerKey: string, tabId: string): boolean;
+  setTabsVisible(ownerKey: string, visible: boolean): void;
+  getTab(ownerKey: string, tabId: string): BrowserTabState | null;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
   closeOwner(ownerKey: string): void;
@@ -31,6 +67,7 @@ export interface WebBrowserHostBridge {
 }
 
 const BROWSER_PARTITION = 'persist:papers-web-browser';
+const MAX_LIVE_TABS_PER_OWNER = 3;
 const hardenedBrowserSessions = new WeakSet<Session>();
 
 function hardenBrowserSession(browserSession: Session): void {
@@ -87,6 +124,10 @@ export function createWebBrowserHostBridge(input: {
 }): WebBrowserHostBridge {
   const sessions = new Map<string, LiveWebBrowser>();
   const owners = new Map<string, string>();
+  const tabs = new Map<string, DurableBrowserTab>();
+  const ownerTabs = new Map<string, Set<string>>();
+  const activeTabs = new Map<string, string>();
+  const tabKey = (ownerKey: string, tabId: string): string => ownerKey + '\n' + tabId;
 
   const forget = (session: LiveWebBrowser): void => {
     if (sessions.get(session.id) === session) sessions.delete(session.id);
@@ -124,6 +165,169 @@ export function createWebBrowserHostBridge(input: {
     const id = owners.get(ownerKey);
     const session = id ? sessions.get(id) : undefined;
     if (session) cleanupSession(session);
+  };
+
+  const tabState = (tab: DurableBrowserTab): BrowserTabState => {
+    const contents = tab.view?.webContents;
+    return {
+      tabId: tab.tabId,
+      url: tab.url,
+      title: tab.title,
+      canGoBack: Boolean(contents && !contents.isDestroyed() && contents.navigationHistory.canGoBack()),
+      canGoForward: Boolean(contents && !contents.isDestroyed() && contents.navigationHistory.canGoForward()),
+      live: Boolean(contents && !contents.isDestroyed()),
+      crashed: tab.crashed,
+    };
+  };
+
+  const detachTab = (tab: DurableBrowserTab): void => {
+    if (!tab.view || !tab.presented || tab.window.isDestroyed()) return;
+    try { tab.window.contentView.removeChildView(tab.view); } catch { /* best effort */ }
+    tab.presented = false;
+  };
+
+  const snapshotTabHistory = (tab: DurableBrowserTab): void => {
+    const contents = tab.view?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    try {
+      const entries = contents.navigationHistory.getAllEntries();
+      if (entries.length > 0) tab.history = { entries, index: contents.navigationHistory.getActiveIndex() };
+    } catch { /* best effort */ }
+  };
+
+  const hibernateTab = (tab: DurableBrowserTab): void => {
+    if (!tab.view) return;
+    snapshotTabHistory(tab);
+    detachTab(tab);
+    const contents = tab.view.webContents;
+    tab.view = null;
+    if (!contents.isDestroyed()) {
+      try { contents.close(); } catch { /* best effort */ }
+    }
+  };
+
+  const placeTab = (tab: DurableBrowserTab): void => {
+    if (!tab.view || tab.window.isDestroyed() || tab.view.webContents.isDestroyed()) return;
+    tab.view.setBounds(absoluteRect(tab.surfaceBounds, tab.localRect));
+  };
+
+  const enforceLiveLimit = (ownerKey: string, keepTabId: string): void => {
+    const live = [...(ownerTabs.get(ownerKey) ?? [])]
+      .map((id) => tabs.get(tabKey(ownerKey, id)))
+      .filter((tab): tab is DurableBrowserTab => Boolean(tab?.view && !tab.view.webContents.isDestroyed()));
+    const candidates = live
+      .filter((tab) => tab.tabId !== keepTabId)
+      .sort((left, right) => left.lastActiveAt - right.lastActiveAt);
+    while (live.length > MAX_LIVE_TABS_PER_OWNER && candidates.length > 0) {
+      const victim = candidates.shift();
+      if (!victim) break;
+      hibernateTab(victim);
+      live.splice(live.indexOf(victim), 1);
+    }
+  };
+
+  const wireTabView = (tab: DurableBrowserTab, view: WebContentsView): void => {
+    const contents = view.webContents;
+    hardenBrowserSession(contents.session);
+    contents.setBackgroundThrottling(true);
+    contents.on('will-navigate', (event, nextUrl) => {
+      if (safeWebUrl(nextUrl)) return;
+      event.preventDefault();
+    });
+    contents.on('did-navigate', (_event, nextUrl) => {
+      const safe = safeWebUrl(nextUrl);
+      if (safe) tab.url = safe;
+    });
+    contents.on('did-navigate-in-page', (_event, nextUrl) => {
+      const safe = safeWebUrl(nextUrl);
+      if (safe) tab.url = safe;
+    });
+    contents.on('page-title-updated', (event, title) => {
+      event.preventDefault();
+      tab.title = String(title || '').slice(0, 500);
+    });
+    contents.on('render-process-gone', () => { tab.crashed = true; });
+    contents.on('zoom-changed', (_event, direction) => {
+      const factor = direction === 'in' ? 1.1 : (1 / 1.1);
+      tab.zoomFactor = Math.max(0.5, Math.min(2.5, Number((tab.zoomFactor * factor).toFixed(3))));
+      contents.setZoomFactor(tab.zoomFactor);
+    });
+    contents.setWindowOpenHandler(({ url: nextUrl }) => {
+      const safe = safeWebUrl(nextUrl);
+      if (safe) void contents.loadURL(safe).catch(() => {});
+      return { action: 'deny' };
+    });
+    contents.once('destroyed', () => {
+      if (tab.view === view) tab.view = null;
+    });
+  };
+
+  const ensureTabView = async (tab: DurableBrowserTab): Promise<void> => {
+    if (tab.view && !tab.view.webContents.isDestroyed()) return;
+    const view = new WebContentsView({
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+        partition: BROWSER_PARTITION,
+      },
+    });
+    tab.view = view;
+    tab.crashed = false;
+    wireTabView(tab, view);
+    if (tab.history?.entries?.length) {
+      void view.webContents.navigationHistory.restore({ entries: tab.history.entries, index: tab.history.index })
+        .catch(() => view.webContents.loadURL(tab.url).catch(() => {}));
+      return;
+    }
+    void view.webContents.loadURL(tab.url).catch(() => {});
+  };
+
+  const presentTab = async (tab: DurableBrowserTab): Promise<void> => {
+    await ensureTabView(tab);
+    if (!tab.view || tab.window.isDestroyed() || tab.view.webContents.isDestroyed()) return;
+    if (!tab.presented) {
+      tab.window.contentView.addChildView(tab.view);
+      tab.presented = true;
+    }
+    placeTab(tab);
+  };
+
+  const activateDurableTab = async (tab: DurableBrowserTab): Promise<void> => {
+    const previousId = activeTabs.get(tab.ownerKey);
+    if (previousId && previousId !== tab.tabId) {
+      const previous = tabs.get(tabKey(tab.ownerKey, previousId));
+      if (previous) detachTab(previous);
+    }
+    tab.lastActiveAt = Date.now();
+    activeTabs.set(tab.ownerKey, tab.tabId);
+    await presentTab(tab);
+    enforceLiveLimit(tab.ownerKey, tab.tabId);
+  };
+
+  const cleanupTab = (tab: DurableBrowserTab): void => {
+    hibernateTab(tab);
+    tabs.delete(tabKey(tab.ownerKey, tab.tabId));
+    const ids = ownerTabs.get(tab.ownerKey);
+    ids?.delete(tab.tabId);
+    if (ids && ids.size === 0) ownerTabs.delete(tab.ownerKey);
+    if (activeTabs.get(tab.ownerKey) === tab.tabId) activeTabs.delete(tab.ownerKey);
+  };
+
+  const closeOwnerTabs = (ownerKey: string): void => {
+    for (const tabId of [...(ownerTabs.get(ownerKey) ?? [])]) {
+      const tab = tabs.get(tabKey(ownerKey, tabId));
+      if (tab) cleanupTab(tab);
+    }
+  };
+
+  const setOwnerTabsVisible = (ownerKey: string, visible: boolean): void => {
+    const activeId = activeTabs.get(ownerKey);
+    const active = activeId ? tabs.get(tabKey(ownerKey, activeId)) : undefined;
+    if (!active) return;
+    if (visible) void presentTab(active).catch(() => {});
+    else detachTab(active);
   };
 
   return {
@@ -234,33 +438,162 @@ export function createWebBrowserHostBridge(input: {
       return true;
     },
 
+    async openTab(context, tabId, rawUrl, localRect) {
+      const url = safeWebUrl(rawUrl);
+      if (!url) return { ok: false, error: 'Only http and https links can open in the browser.' };
+      if (!/^[A-Za-z0-9._:-]{1,128}$/.test(tabId)) return { ok: false, error: 'Invalid browser tab id.' };
+      if (!validRect(context.surfaceBounds) || !validRect(localRect)) return { ok: false, error: 'Invalid browser geometry.' };
+      const existing = tabs.get(tabKey(context.ownerKey, tabId));
+      const window = input.resolveWindow(context.ownerKey);
+      if (!window || window.isDestroyed()) return { ok: false, error: 'The owning Papers window is unavailable.' };
+
+      const tab = existing ?? {
+        tabId,
+        ownerKey: context.ownerKey,
+        window,
+        view: null,
+        localRect: { ...localRect },
+        surfaceBounds: { ...context.surfaceBounds },
+        presented: false,
+        url,
+        title: '',
+        zoomFactor: 1,
+        lastActiveAt: Date.now(),
+        history: null,
+        crashed: false,
+      };
+
+      if (!existing) {
+        tabs.set(tabKey(context.ownerKey, tabId), tab);
+        const ids = ownerTabs.get(context.ownerKey) ?? new Set<string>();
+        ids.add(tabId);
+        ownerTabs.set(context.ownerKey, ids);
+      }
+
+      tab.window = window;
+      tab.localRect = { ...localRect };
+      tab.surfaceBounds = { ...context.surfaceBounds };
+      if (tab.url !== url) {
+        tab.url = url;
+        tab.history = null;
+        if (tab.view && !tab.view.webContents.isDestroyed()) void tab.view.webContents.loadURL(url).catch(() => {});
+      }
+
+      try {
+        await activateDurableTab(tab);
+        return { ok: true, tab: tabState(tab) };
+      } catch (error) {
+        return { ok: false, error: boundedError(error) };
+      }
+    },
+
+    async activateTab(context, tabId, localRect) {
+      const tab = tabs.get(tabKey(context.ownerKey, tabId));
+      if (!tab || tab.ownerKey !== context.ownerKey || !validRect(context.surfaceBounds) || !validRect(localRect)) {
+        return { ok: false, error: 'Browser tab is unavailable.' };
+      }
+      tab.surfaceBounds = { ...context.surfaceBounds };
+      tab.localRect = { ...localRect };
+      try {
+        await activateDurableTab(tab);
+        return { ok: true, tab: tabState(tab) };
+      } catch (error) {
+        return { ok: false, error: boundedError(error) };
+      }
+    },
+
+    async navigateTab(ownerKey, tabId, rawUrl) {
+      const tab = tabs.get(tabKey(ownerKey, tabId));
+      const url = safeWebUrl(rawUrl);
+      if (!tab || tab.ownerKey !== ownerKey || !url) return { ok: false, error: 'Browser navigation is unavailable.' };
+      try {
+        tab.history = null;
+        tab.url = url;
+        await ensureTabView(tab);
+        if (!tab.view) return { ok: false, error: 'Browser tab is unavailable.' };
+        void tab.view.webContents.loadURL(url).catch(() => {});
+        tab.lastActiveAt = Date.now();
+        return { ok: true, tab: tabState(tab) };
+      } catch (error) {
+        return { ok: false, error: boundedError(error) };
+      }
+    },
+
+    commandTab(ownerKey, tabId, command) {
+      const tab = tabs.get(tabKey(ownerKey, tabId));
+      const contents = tab?.view?.webContents;
+      if (!tab || tab.ownerKey !== ownerKey || !contents || contents.isDestroyed()) {
+        return { ok: false, error: 'Browser tab is not live.' };
+      }
+      if (command === 'back' && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+      else if (command === 'forward' && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
+      else if (command === 'reload') contents.reload();
+      tab.lastActiveAt = Date.now();
+      return { ok: true, tab: tabState(tab) };
+    },
+
+    moveTab(ownerKey, tabId, localRect) {
+      const tab = tabs.get(tabKey(ownerKey, tabId));
+      if (!tab || tab.ownerKey !== ownerKey || !validRect(localRect)) return false;
+      tab.localRect = { ...localRect };
+      placeTab(tab);
+      return true;
+    },
+
+    closeTab(ownerKey, tabId) {
+      const tab = tabs.get(tabKey(ownerKey, tabId));
+      if (!tab || tab.ownerKey !== ownerKey) return false;
+      cleanupTab(tab);
+      return true;
+    },
+
+    setTabsVisible(ownerKey, visible) {
+      setOwnerTabsVisible(ownerKey, visible);
+    },
+
+    getTab(ownerKey, tabId) {
+      const tab = tabs.get(tabKey(ownerKey, tabId));
+      if (!tab || tab.ownerKey !== ownerKey) return null;
+      return tabState(tab);
+    },
+
     setOwnerSurfaceBounds(ownerKey, bounds) {
       if (!validRect(bounds)) return;
       const id = owners.get(ownerKey);
       const session = id ? sessions.get(id) : undefined;
-      if (!session) return;
-      session.surfaceBounds = { ...bounds };
-      place(session);
+      if (session) {
+        session.surfaceBounds = { ...bounds };
+        place(session);
+      }
+      for (const tabId of ownerTabs.get(ownerKey) ?? []) {
+        const tab = tabs.get(tabKey(ownerKey, tabId));
+        if (!tab) continue;
+        tab.surfaceBounds = { ...bounds };
+        placeTab(tab);
+      }
     },
 
     setOwnerVisible(ownerKey, visible) {
       const id = owners.get(ownerKey);
       const session = id ? sessions.get(id) : undefined;
-      if (!session || session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
-      if (visible) {
-        if (!session.presented) {
-          session.window.contentView.addChildView(session.view);
-          session.presented = true;
+      if (session && !session.window.isDestroyed() && !session.view.webContents.isDestroyed()) {
+        if (visible) {
+          if (!session.presented) {
+            session.window.contentView.addChildView(session.view);
+            session.presented = true;
+          }
+          place(session);
+        } else if (session.presented) {
+          session.window.contentView.removeChildView(session.view);
+          session.presented = false;
         }
-        place(session);
-      } else if (session.presented) {
-        session.window.contentView.removeChildView(session.view);
-        session.presented = false;
       }
+      setOwnerTabsVisible(ownerKey, visible);
     },
 
     closeOwner(ownerKey) {
       closeOwner(ownerKey);
+      closeOwnerTabs(ownerKey);
     },
 
     raiseWindow(windowId) {
@@ -270,10 +603,17 @@ export function createWebBrowserHostBridge(input: {
         session.window.contentView.addChildView(session.view);
         place(session);
       }
+      for (const tab of tabs.values()) {
+        if (tab.window.id !== windowId || !tab.presented || !tab.view
+          || tab.window.isDestroyed() || tab.view.webContents.isDestroyed()) continue;
+        tab.window.contentView.addChildView(tab.view);
+        placeTab(tab);
+      }
     },
 
     dispose() {
       for (const session of [...sessions.values()]) cleanupSession(session);
+      for (const tab of [...tabs.values()]) cleanupTab(tab);
     },
   };
 }

@@ -188,6 +188,16 @@ function previewSessionId(value: unknown): string {
   if (!PREVIEW_RESOURCE_ID_PATTERN.test(id)) throw new Error('sessionId is not valid.');
   return id;
 }
+function browserTabId(value: unknown): string {
+  const id = boundedString(value, 'tabId', 64);
+  if (!PREVIEW_RESOURCE_ID_PATTERN.test(id)) throw new Error('tabId is not valid.');
+  return id;
+}
+function browserCommand(value: unknown): 'back' | 'forward' | 'reload' {
+  const command = boundedString(value, 'command', 16);
+  if (command !== 'back' && command !== 'forward' && command !== 'reload') throw new Error('command is not valid.');
+  return command;
+}
 function previewStateKey(value: unknown): string | null {
   if (value === undefined || value === null || value === '') return null;
   const key = boundedString(value, 'stateKey', 64);
@@ -949,6 +959,42 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'browser-close': {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Link viewer hosting is unavailable.' };
             return { ok: deps.webBrowser.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
+          }
+          case 'browser-tab-open': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            const url = boundedString(params.url, 'url', 8_192);
+            return await deps.webBrowser.openTab(context.nativePreviewHost, browserTabId(params.tabId), url, previewRect(params.rect));
+          }
+          case 'browser-tab-activate': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return await deps.webBrowser.activateTab(context.nativePreviewHost, browserTabId(params.tabId), previewRect(params.rect));
+          }
+          case 'browser-tab-navigate': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            const url = boundedString(params.url, 'url', 8_192);
+            return await deps.webBrowser.navigateTab(context.nativePreviewHost.ownerKey, browserTabId(params.tabId), url);
+          }
+          case 'browser-tab-command': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return deps.webBrowser.commandTab(context.nativePreviewHost.ownerKey, browserTabId(params.tabId), browserCommand(params.command));
+          }
+          case 'browser-tab-move': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return { ok: deps.webBrowser.moveTab(context.nativePreviewHost.ownerKey, browserTabId(params.tabId), previewRect(params.rect)) };
+          }
+          case 'browser-tab-close': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return { ok: deps.webBrowser.closeTab(context.nativePreviewHost.ownerKey, browserTabId(params.tabId)) };
+          }
+          case 'browser-tabs-visible': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            deps.webBrowser.setTabsVisible(context.nativePreviewHost.ownerKey, params.visible === true);
+            return { ok: true };
+          }
+          case 'browser-tab-state': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            const tab = deps.webBrowser.getTab(context.nativePreviewHost.ownerKey, browserTabId(params.tabId));
+            return tab ? { ok: true, tab } : { ok: false, code: 'BROWSER_TAB_UNAVAILABLE', message: 'Browser tab is unavailable.' };
           }
           case 'preview-text-chunk': {
             const target = absolutePath(params.path);
