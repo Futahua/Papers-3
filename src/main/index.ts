@@ -1789,7 +1789,6 @@ async function bootstrap(): Promise<void> {
     ipcMain,
     session: windowPickSession,
     isSender: isProjectSurfaceSender,
-    waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
   });
   // 018H1: generic Papers-owned detached Backpack surface seam - one
   // sandboxed BrowserWindow per registered project/surface request, an

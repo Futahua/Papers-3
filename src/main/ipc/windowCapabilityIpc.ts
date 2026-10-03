@@ -227,7 +227,7 @@ function toPageCachedThumbnailResult(
 
 type IpcResult = WindowCandidateListResult | WindowBindResult | WindowResolveResult | WindowCapabilityResult | WindowThumbnailResult | WindowCachedThumbnailResult | { snapshot: WindowInstanceSnapshot }
   | { outcome: 'success'; results: Array<{ layoutId: string; memberId: string; ready: boolean }> }
-  /** The activation seam's answer. efused means the native attempt ran and Windows
+  /** The activation seam's answer. `refused` means the native attempt ran and Windows
    * did not give the foreground up - a completed attempt, not a failure to try. */
   | { outcome: 'activated' | 'refused'; foreground: string; raised: boolean; moved: boolean; accepted: boolean };
 
@@ -566,7 +566,10 @@ export function registerWindowCapabilityIpc({
     });
     return { outcome: 'success' };
   });
-  handle('papers:window-capability:bind', (raw) => parseBoundedString(raw, 'candidateId'), (candidateId) => service.bindCandidate(candidateId));
+  // Binding a listed native window creates only an opaque, in-memory capability.
+  // It does not mutate the Backpack document, so a compact widget must not wait
+  // for whichever workspace renderer currently owns document-write authority.
+  handleRead('papers:window-capability:bind', (raw) => parseBoundedString(raw, 'candidateId'), (candidateId) => service.bindCandidate(candidateId));
   handleRead('papers:window-control:sync', (raw) => {
     if (!Array.isArray(raw) || raw.length > 32) throw new Error('control list exceeds the bound');
     return raw.map((entry) => {
@@ -769,7 +772,10 @@ export function registerWindowCapabilityIpc({
     return { outcome: controlBroker.group(actions as Array<{ id: number; operation: 'minimize' | 'restore' | 'foreground' | 'toggle' }>)
       ? 'success' : 'helper-unavailable' };
   });
-  handle('papers:window-capability:observe', parseRuntimeCapability, (capability) => service.observeCapability(capability));
+  // Observation is likewise machine-local/read-only with respect to the
+  // project document. The widget needs it to turn one human picker selection
+  // into persisted member bounds/state before its own checked document save.
+  handleRead('papers:window-capability:observe', parseRuntimeCapability, (capability) => service.observeCapability(capability));
   handle('papers:window-capability:minimize', parseRuntimeCapability, (capability) => service.minimizeCapability(capability));
   // One request instead of observe-then-mutate: the helper reads the live state
   // and acts on it, so no renderer round trip sits between the decision and the

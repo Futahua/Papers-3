@@ -86,7 +86,7 @@ function fakeIpcMain() {
   };
 }
 
-const capability = { version: 1, bindingId: 'wl-binding-test' };
+const capability = { version: 1 as const, bindingId: 'wl-binding-test' };
 
 describe('windowCapabilityIpc', () => {
   it('registers exactly the enumerated channels', () => {
@@ -275,7 +275,7 @@ describe('windowCapabilityIpc', () => {
     // It must NOT be answered ready from the previous identity's registration.
     expect(results[0]!.ready).toBe(false);
   });
-  it('answers READ-ONLY capability operations without waiting for write authority', async () => {
+  it('answers document-neutral window lookup/observation without waiting for write authority', async () => {
     // The compact widget is not the writer, so waiting for document-write
     // authority parked its descriptor resolution forever - and a surface that
     // only needs to LOOK was starved. That starvation left the native control
@@ -284,11 +284,33 @@ describe('windowCapabilityIpc', () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let listCalls = 0;
+    let bindCalls = 0;
+    let observeCalls = 0;
     let minimizeCalls = 0;
     const service = fakeService();
     service.listCandidates = async () => {
       listCalls += 1;
       return { outcome: 'success', candidates: [] };
+    };
+    service.bindCandidate = async () => {
+      bindCalls += 1;
+      return { outcome: 'success', capability, descriptor: {
+        version: 1, title: 'Window', executableFingerprint: 'a'.repeat(64),
+      } };
+    };
+    service.observeCapability = async () => {
+      observeCalls += 1;
+      return { outcome: 'success', observation: {
+        runtimeId: 'R1' as RuntimeWindowId,
+        processId: 1,
+        processStartTicks: '1',
+        windowClass: 'Test',
+        handle: 1,
+        title: 'Window',
+        processPath: 'C:\\Test\\window.exe',
+        bounds: { x: 1, y: 1, width: 100, height: 100 },
+        state: 'normal',
+      } };
     };
     service.minimizeCapability = async () => {
       minimizeCalls += 1;
@@ -305,6 +327,12 @@ describe('windowCapabilityIpc', () => {
     await expect(ipc.invoke('papers:window-capability:list', 41, undefined))
       .resolves.toEqual({ outcome: 'success', candidates: [] });
     expect(listCalls).toBe(1);
+    await expect(ipc.invoke('papers:window-capability:bind', 41, 'candidate-1'))
+      .resolves.toEqual(expect.objectContaining({ outcome: 'success', capability }));
+    expect(bindCalls).toBe(1);
+    await expect(ipc.invoke('papers:window-capability:observe', 41, capability))
+      .resolves.toEqual(expect.objectContaining({ outcome: 'success' }));
+    expect(observeCalls).toBe(1);
 
     // A mutation still waits for the gate.
     const pending = ipc.invoke('papers:window-capability:minimize', 41, { version: 1, bindingId: 'binding-1' });
