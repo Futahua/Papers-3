@@ -39,6 +39,26 @@ const CRITICAL_KINDS: readonly WindowInteractionKind[] = [
   'lifecycle-subscribe', 'lifecycle-delivery', 'shift-delivery', 'peek-begin', 'peek-end', 'auto-add', 'candidate-list',
 ];
 const PREVIEW_KINDS: readonly WindowInteractionKind[] = ['thumbnail-cache', 'thumbnail-capture'];
+let journalWriteSequence = 0;
+
+function replaceJournalFile(file: string, content: string): void {
+  const temp = `${file}.tmp-${process.pid}-${++journalWriteSequence}`;
+  fs.writeFileSync(temp, content, 'utf8');
+  try {
+    try {
+      fs.renameSync(temp, file);
+      return;
+    } catch {
+      // On Windows, replacing an existing destination with renameSync can
+      // intermittently fail under filesystem/AV contention. Preserve the
+      // already-written temp bytes and fall back to an overwrite copy rather
+      // than silently dropping the diagnostic record.
+      fs.copyFileSync(temp, file);
+    }
+  } finally {
+    try { fs.unlinkSync(temp); } catch { /* rename already consumed it or cleanup is best-effort */ }
+  }
+}
 
 export function createWindowInteractionJournal(dir: string): WindowInteractionJournal {
   const file = path.join(dir, 'window-interaction-journal.json');
@@ -67,9 +87,7 @@ export function createWindowInteractionJournal(dir: string): WindowInteractionJo
         rows.critical = rows.critical.slice(-WINDOW_INTERACTION_CRITICAL_LIMIT);
         rows.preview = rows.preview.slice(-WINDOW_INTERACTION_PREVIEW_LIMIT);
         fs.mkdirSync(dir, { recursive: true });
-        const temp = `${file}.tmp`;
-        fs.writeFileSync(temp, JSON.stringify({ version: 1, ...rows }), 'utf8');
-        fs.renameSync(temp, file);
+        replaceJournalFile(file, JSON.stringify({ version: 1, ...rows }));
       } catch { /* diagnostics never fail the action they describe */ }
     },
     read,

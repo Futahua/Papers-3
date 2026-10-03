@@ -419,7 +419,7 @@ Second Papers host-side seam committed as 1cdd09f (extract Papers file preview c
 - Papers typecheck passes;
 - full Papers unit suite remains **1334 pass / 8 skipped / 0 fail**.
 
-Third Papers host-side seam is validated and ready to commit:
+Third Papers host-side seam committed as 338dc1f (extract SlopTop picker file transport):
 
 - extracted the SlopTop Direct Pick filesystem signal transport from main/index.ts into
   windows/slopTopPickerFileTransport.ts;
@@ -427,12 +427,18 @@ Third Papers host-side seam is validated and ready to commit:
   slopTopPickerProtocol; the new module owns only signal paths, atomic writes, BOM-tolerant
   JSON reads and cleanup;
 - focused transport tests: **3/3 pass**;
+- Papers typecheck passes.
+
+Window interaction journal reliability slice is validated and ready to commit:
+
+- the default parallel Papers suite exposed a pre-existing Windows write flake where exactly
+  one bounded diagnostic record could be silently dropped because record() swallowed a failed
+  fixed-temp rename replacement;
+- journal writes now use unique temp names and a Windows-safe overwrite fallback while keeping
+  the same bounded/redacted record contract;
+- focused journal test passed **5 consecutive runs**;
 - Papers typecheck passes;
-- full Papers suite passes serially: **1337 pass / 8 skipped / 0 fail**;
-- the default parallel suite currently exposes an unrelated pre-existing flake in
-  windowInteractionJournal where exactly one diagnostic record is occasionally dropped; the
-  same test passes alone and the full suite passes with one worker. Treat this as a separate
-  reliability slice, not as SlopTop transport behavior.
+- full default parallel suite passed **twice consecutively: 1337 pass / 8 skipped / 0 fail**.
 
 AYG CLIP action-path note: this connector machine has a Desktop CLIP STUDIO PAINT shortcut
 pointing to the installed app under C:\Program Files\CELSYS, but no CLIPS.bat exists. The AYG
@@ -440,5 +446,5 @@ source action still intentionally points at D:\Programs\CLIP STUDIO PAINT\CLIPS.
 single AYG full-suite failure on this machine remains an environment/path mismatch; do not
 rewrite the product action merely to manufacture a green count.
 
-Next planned slice: harden windowInteractionJournal against the parallel-write/drop behavior
-exposed by the full suite, then continue decomposing Papers by real lifecycle ownership.
+Next planned slice: continue decomposing Papers by real lifecycle ownership, starting from
+native window/control bootstrap only where one owner can be named without broadening authority.
