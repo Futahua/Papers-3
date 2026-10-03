@@ -1,0 +1,231 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Assignment 003 — capture fixture (real state.json)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #efe9dc; }
+  body { display: grid; grid-template-rows: auto 1fr; }
+  header { padding: 10px 16px; font: 13px system-ui, sans-serif; color: #3d3932; }
+  header b { font-size: 14px; }
+  iframe { width: 100%; height: 100%; border: 0; display: block; }
+  pre { margin: 6px 0 0; font-size: 11px; white-space: pre-wrap; }
+</style>
+<body>
+  <header>
+    <b>Assignment 003 evidence</b> — the trail as ORDINARY FOLDER CONTENTS: the current
+    folder's ancestors join its item list, outlined in --text, current folder absent.
+    Real state.json served by a stub host through the real code path.
+    Query params: <code>at=root|depth1|mid|expanded</code>, <code>theme=light|dark</code>,
+    <code>transparent=1</code>, <code>probe=1</code> (runtime DOM/CSS report). The
+    creator's eye check is the gate; this fixture only exercises the real code path.
+    <pre id="probe-report" hidden></pre>
+  </header>
+  <iframe id="workspace" src="public/workspace-20260730b.html" title="As you Go workspace"></iframe>
+<script type="module">
+  const params = new URLSearchParams(window.location.search);
+  const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
+  const transparent = params.get('transparent') === '1';
+  const at = params.get('at') ?? 'depth1';
+
+  // The creator's real tree (state.json is read-only creator data — this
+  // fixture only serves it; every save message is discarded below).
+  const state = await (await fetch('./state.json')).json();
+  const byName = new Map();
+  for (const group of state.groups) byName.set(group.name, group);
+
+  const scene = {
+    root: { currentGroupId: 'root' },
+    depth1: { currentGroupId: byName.get('Real').id },
+    mid: { currentGroupId: byName.get('A').id },
+    expanded: { currentGroupId: byName.get('A').id, expand: byName.get('Real').id },
+  }[at] ?? { currentGroupId: byName.get('Real').id };
+
+  state.view = {
+    ...state.view,
+    currentGroupId: scene.currentGroupId,
+    graphExpandedGroupIds: [],
+    selectedItemIds: [],
+    binMode: false,
+    preferences: {
+      ...(state.view.preferences ?? {}),
+      theme,
+      transparentBackground: transparent,
+      // Assignment 005: an optional served Trail opacity, so probes can
+      // verify the whole derived trail branch fades together.
+      ...(params.get('opacity') ? { trailOpacity: Number(params.get('opacity')) } : {}),
+    },
+    // Assignment 007: an optional served per-view trail expansion choice
+    // (`trailExpand=<folder name>` expands that folder in the current
+    // view's trail context), so probes can verify remembered choices
+    // restore on load and defaults stay collapsed.
+    ...(params.get('trailExpand') && byName.get(params.get('trailExpand'))
+      ? {
+        trailExpandedByContext: {
+          [`folder:${scene.currentGroupId}`]: [byName.get(params.get('trailExpand')).id],
+        },
+      }
+      : {}),
+  };
+  // Assignment 008: an optional served window-layout record, so probes can
+  // verify the static miniature, the widened measured footprint and the
+  // stale-fixture refresh behavior through the real code path.
+  if (params.get('wl') === '1') {
+    state.windowLayouts = [{
+      id: 'wl-probe-1',
+      parentId: scene.currentGroupId,
+      order: 99,
+      name: 'Studio',
+      icon: null,
+      arrangement: { version: 1, members: [] },
+    }];
+  }
+
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (!data || typeof data.type !== 'string') return;
+    const reply = (detail) => {
+      event.source.postMessage({ type: 'papers:host:result', requestId: data.requestId, ...detail }, '*');
+    };
+    if (data.type === 'papers:project:as-you-go-load') {
+      console.log(`[fixture-stub] serving state: at=${at}, current=${state.view.currentGroupId.slice(0, 8)}, theme=${theme}, transparent=${transparent}`);
+      reply({ ok: true, state });
+      return;
+    }
+    // Accept and discard everything else (saves, copies, icon lookups).
+    reply({ ok: true });
+  });
+
+  // Expanding an ancestor goes through the existing [data-expand] affordance —
+  // the real click path — for every load, so screenshots capture it too.
+  // With noexpand=1 the load leaves every trail folder collapsed (Assignment
+  // 007: views without a saved choice start collapsed).
+  if (scene.expand && params.get('noexpand') !== '1') {
+    (async () => {
+      const frame = document.querySelector('#workspace');
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await wait(500);
+        const expander = frame.contentDocument?.querySelector(`[data-expand="${scene.expand}"]`);
+        if (expander) {
+          expander.dispatchEvent(new frame.contentWindow.MouseEvent('click', { bubbles: true }));
+          return;
+        }
+      }
+    })();
+  }
+
+  // Runtime probe (probe=1): after the workspace settles, report what the
+  // real code path rendered — ancestor count, current folder absence, and
+  // the --text outline (computed ring and fill) on every ancestor tile.
+  // With nav=1, first click the deepest ancestor tile through the real
+  // click path and report the breadcrumb after navigation.
+  if (params.get('probe') === '1') {
+    const frame = document.querySelector('#workspace');
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await wait(500);
+      const shells = frame.contentDocument?.querySelectorAll('.graph-node-shell') ?? [];
+      if (shells.length > 0) break;
+    }
+    await wait(12000);
+    const doc = frame.contentDocument;
+    const report = document.querySelector('#probe-report');
+    const lines = [`at=${at} theme=${theme} transparent=${transparent}`];
+    lines.push(`servedCurrent=${state.view.currentGroupId}`);
+    const allShells = [...(doc?.querySelectorAll('.graph-node-shell') ?? [])];
+    const ancestorShells = allShells.filter((s) => s.querySelector('.icon-item')?.classList.contains('ancestor-item'));
+    const trailShells = allShells.filter((s) => s.querySelector('.icon-item')?.classList.contains('trail-item'));
+    lines.push(`ancestorShells=${ancestorShells.length} trailShells=${trailShells.length} totalShells=${allShells.length}`);
+    lines.push(`currentFolderAbsent=${![...allShells].some((s) => s.dataset.graphNodeId === scene.currentGroupId)}`);
+    const styleOf = (shell, selector, prop) => {
+      const el = shell.querySelector(selector);
+      if (!el) return 'missing';
+      return doc.defaultView.getComputedStyle(el).getPropertyValue(prop).trim();
+    };
+    for (const shell of trailShells) {
+      const item = shell.querySelector('.icon-item');
+      const expander = shell.querySelector('.folder-expander');
+      lines.push(`trail id=${shell.dataset.graphNodeId.slice(0, 8)} name=${(item.querySelector('strong')?.textContent ?? '').slice(0, 20)} ` +
+        `ancestor=${item.classList.contains('ancestor-item')} ` +
+        `chevron=${expander ? (expander.classList.contains('expanded') ? 'expanded' : 'collapsed') : 'none'} ` +
+        `opacity=${styleOf(shell, '.icon-item', 'opacity')}`);
+    }
+    for (const shell of ancestorShells) {
+      const item = shell.querySelector('.icon-item');
+      lines.push(`ancestor id=${shell.dataset.graphNodeId.slice(0, 8)} name=${(item.querySelector('strong')?.textContent ?? '').slice(0, 20)} ` +
+        `folderColor=${item?.style.getPropertyValue('--folder-color') || 'none'} ` +
+        `ring=${styleOf(shell, '.item-icon', 'border-color')} ` +
+        `fill=${styleOf(shell, '.item-icon', 'background-color')}`);
+    }
+    const real = allShells.find((s) => !s.querySelector('.icon-item')?.classList.contains('ancestor-item'));
+    if (real) {
+      const item = real.querySelector('.icon-item');
+      lines.push(`realItem id=${real.dataset.graphNodeId.slice(0, 8)} kind=${item?.dataset.kind} ` +
+        `trail=${item?.classList.contains('trail-item')} ` +
+        `opacity=${styleOf(real, '.icon-item', 'opacity')} ` +
+        `folderColor=${item?.style.getPropertyValue('--folder-color') || 'none'} ` +
+        `ring=${styleOf(real, '.item-icon', 'border-color')}`);
+    }
+    for (const shell of allShells) {
+      const item = shell.querySelector('.icon-item');
+      lines.push(`shell id=${shell.dataset.graphNodeId.slice(0, 8)} kind=${item?.dataset.kind} ` +
+        `trail=${item?.classList.contains('trail-item')} ` +
+        `ancestor=${item?.classList.contains('ancestor-item')} ` +
+        `folderColor=${item?.style.getPropertyValue('--folder-color') || 'none'}`);
+    }
+    if (params.get('nav') === '1') {
+      const crumbsBefore = frame.contentDocument.querySelector('#breadcrumbs')?.innerText ?? '';
+      const deepest = ancestorShells.at(-1);
+      deepest?.querySelector('.icon-item')
+        ?.dispatchEvent(new frame.contentWindow.MouseEvent('click', { bubbles: true }));
+      await wait(4000);
+      lines.push(`nav crumbsBefore="${crumbsBefore.replace(/\s+/g, ' ').trim()}"`);
+      lines.push(`nav crumbsAfter="${(frame.contentDocument.querySelector('#breadcrumbs')?.innerText ?? '').replace(/\s+/g, ' ').trim()}"`);
+      lines.push(`nav currentShells=${frame.contentDocument?.querySelectorAll('.graph-node-shell')?.length ?? 0}`);
+    }
+    // Assignment 008 probes.
+    const wlShells = [...(doc?.querySelectorAll('.graph-node-shell.window-layout-shell') ?? [])];
+    if (wlShells.length > 0) {
+      const shell = wlShells[0];
+      const members = [...shell.querySelectorAll('.window-layout-member')];
+      const controls = [...shell.querySelectorAll('.window-layout-control')];
+      const ordinaryShell = [...allShells].find((s) => !s.classList.contains('window-layout-shell'));
+      lines.push(`wlShells=${wlShells.length} members=${members.length} controls=${controls.length} ` +
+        `allDisabled=${[...members, ...controls].every((b) => b.disabled)} ` +
+        `shellWidth=${shell.getBoundingClientRect().width.toFixed(0)} ` +
+        `ordinaryWidth=${ordinaryShell ? ordinaryShell.getBoundingClientRect().width.toFixed(0) : 'none'}`);
+    }
+    if (params.get('refresh') === '1' && wlShells.length > 0) {
+      // Ctrl+wheel on the explorer changes the persistent icon size, which
+      // re-renders every shell through refreshNodeContent — the fixture
+      // miniature must be rebuilt, not duplicated.
+      const explorer = frame.contentDocument.querySelector('.explorer');
+      const wheel = (deltaY) => explorer.dispatchEvent(new frame.contentWindow.WheelEvent('wheel', {
+        bubbles: true, cancelable: true, ctrlKey: true, deltaY,
+      }));
+      wheel(-120);
+      await wait(600);
+      wheel(-120);
+      await wait(600);
+      lines.push(`refreshBodies=${doc.querySelectorAll('.window-layout-body').length} ` +
+        `refreshMembers=${doc.querySelectorAll('.window-layout-member').length}`);
+    }
+    if (params.get('create') === '1') {
+      // Real creation path: blank right-click opens the context menu, the
+      // "New window layout" action creates the record and renders the item.
+      const grid = frame.contentDocument.querySelector('#icon-grid');
+      grid.dispatchEvent(new frame.contentWindow.MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, clientX: 600, clientY: 400,
+      }));
+      await wait(300);
+      const createButton = frame.contentDocument.querySelector('[data-action="new-window-layout"]');
+      lines.push(`createMenuItem=${createButton ? 'present' : 'missing'}`);
+      createButton?.dispatchEvent(new frame.contentWindow.MouseEvent('click', { bubbles: true }));
+      await wait(1500);
+      lines.push(`createShells=${frame.contentDocument.querySelectorAll('.graph-node-shell.window-layout-shell').length}`);
+    }
+    report.hidden = false;
+    report.textContent = lines.join('\n');
+  }
+</script>
+</body>
+</html>

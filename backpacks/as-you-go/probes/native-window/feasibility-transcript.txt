@@ -1,0 +1,12 @@
+== Assignment 009 live feasibility transcript ==
+host: Microsoft Windows NT 10.0.26200.0 (PS 7.6.3)
+disposable target title: AYG-FEASIBILITY-45380-361bdcd7
+launched; runtime id (ephemeral HWND): 12328754
+enumeration count (visible top-level): 39;
+resolved exactly one: runtimeId=12328754 pid=45380
+before minimize: state=normal bounds=400x300@120,140
+after minimize: state=minimized (expect minimized)
+after restore: state=normal (expect normal)
+after set-bounds: bounds=520x340@300,220 (expect 520x340@300,220)
+after graceful close: alive=False (expect False), formDisposed=True
+== cleanup: only the disposable target was launched, manipulated and closed; nothing remains running ==

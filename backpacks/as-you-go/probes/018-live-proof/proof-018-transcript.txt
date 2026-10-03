@@ -1,0 +1,36 @@
+018V LIVE PROOF - TRANSCRIPT
+run at: 2026-08-10T22:09:43.482Z
+isolated data dir: D:\Programs\evTEMP\papers-018v-oaCkaZ
+creator Papers pids before: [10488,33804,3872,41460,62156]
+
+PASS - creator installed Papers enumerated before (observed only) :: [10488,33804,3872,41460,62156]
+PASS - three disposable targets launched :: 10508:AYG-015R3-10508-54fdb40d 64928:AYG-015R3-64928-73cecddd 2040:AYG-015R3-2040-7e00b454 38772:AYG-015R3-38772-ee5cbf1e
+PASS - P1 layout created :: window-layout-f6ccc388-0082-483e-9422-87d58b708cef
+PASS - P1 two members list-picked and active layout id persisted :: {"members":["AYG-015R3-10508-54fdb40d","AYG-015R3-64928-73cecddd"],"active":"window-layout-f6ccc388-0082-483e-9422-87d58b708cef"}
+PASS - P2 transfer ordering: workspace STOP_REQUEST before STOP_ACK, detached only activates afterwards :: {"workspace":[{"t":1786399680006,"type":"papers:project:detach-open","transferId":null,"reason":null},{"t":1786399680115,"type":"papers:project:detach-stop-request","transferId":"8d562aa0-0df5-4166-962c-dde9809446e9","reason":null},{"t":1786399680122,"type":"papers:project:detach-stop-ack","transferId":"8d562aa0-0df5-4166-962c-dde9809446e9","reason":null}],"detached":[],"activatedPushSeen":false}
+PASS - P2 workspace entered read-only surface after activate
+PASS - P3 detached Minimize all minimized both real members :: AYG-015R3-10508-54fdb40d/AYG-015R3-64928-73cecddd
+PASS - P3 detached Restore all restored both real members
+PASS - P3 detached list picker added the third member and persisted it :: ["AYG-015R3-10508-54fdb40d","AYG-015R3-64928-73cecddd","AYG-015R3-2040-7e00b454"]
+PASS - P3 detached direct pick added a fourth member via real OS click :: ["AYG-015R3-10508-54fdb40d","AYG-015R3-64928-73cecddd","AYG-015R3-2040-7e00b454","AYG-015R3-38772-ee5cbf1e"]
+PASS - P4 workspace mutation gesture (context menu) blocked while detached
+PASS - P4 workspace Focus button responds while detached
+PASS - P4 workspace Reattach button responds while detached
+PASS - P5 reattach preserved durable members and active layout id :: {"closed":true,"members":4,"active":"window-layout-f6ccc388-0082-483e-9422-87d58b708cef"}
+PASS - P6 detached renderer process id resolved (informational) :: unavailable
+PASS - P6 crash notified the workspace to reload/resume :: [{"t":1786399680006,"type":"papers:project:detach-open","transferId":null,"reason":null},{"t":1786399680115,"type":"papers:project:detach-stop-request","transferId":"8d562aa0-0df5-4166-962c-dde9809446e9","reason":null},{"t":1786399680122,"type":"papers:project:detach-stop-ack","transferId":"8d562aa0-0df5-4166-962c-dde9809446e9","reason":null},{"t":1786399694671,"type":"papers:project:detach-focus","transferId":null,"reason":null},{"t":1786399694684,"type":"papers:project:detach-reattach","transferId":null,"reason":null},{"t":1786399694795,"type":"papers:project:detach-closed","transferId":"8d562aa0-0df5-4166-962c-dde9809446e9","reason":"reattach"},{"t":1786399698950,"type":"papers:project:detach-resumed-ack","transferId":"8d562aa0-0df5-4166-962c-dde9809446e9","reason":null},{"t":1786399699816,"type":"papers:project:detach-open","transferId":null,"reason":null},{"t":1786399699930,"type":"papers:project:detach-stop-request","transferId":"cfb7ddce-2bb6-4440-9309-16cb974f8bc8","reason":null},{"t":1786399700327,"type":"papers:project:detach-stop-ack","transferId":"cfb7ddce-2bb6-4440-9309-16cb974f8bc8","reason":null},{"t":1786399700520,"type":"papers:project:detach-closed","transferId":"cfb7ddce-2bb6-4440-9309-16cb974f8bc8","reason":"crash"},{"t":1786399707050,"type":"papers:project:detach-resumed-ack","transferId":"cfb7ddce-2bb6-4440-9309-16cb974f8bc8","reason":null}]
+PASS - P8 display enumeration :: [{"bounds":{"x":0,"y":0,"width":1366,"height":768},"workArea":{"x":0,"y":0,"width":1366,"height":768}}]
+PASS - P8 detached restored bounds are within the primary display work area :: {"left":12,"top":20,"width":1016,"height":708,"availTop":0,"availLeft":0,"availWidth":1366,"availHeight":768,"availRight":1366,"availBottom":768}
+PASS - P7 shutdown: zero owned helpers :: []
+PASS - P7 shutdown: zero owned test electrons :: []
+PASS - P7 shutdown: zero probe disposable windows :: 0
+PASS - P9 creator installed Papers untouched (same process ids, never activated) :: before=[10488,33804,3872,41460,62156] after=[10488,33804,3872,41460,62156]
+PASS - cleanup: zero owned helpers :: []
+PASS - cleanup: zero owned test electrons :: []
+PASS - cleanup: zero probe windows remain :: 0
+PASS - creator installed Papers untouched after run :: before=[10488,33804,3872,41460,62156] after=[10488,33804,3872,41460,62156]
+
+NOT RUN - P8 display-removal re-clamp :: single display connected (environmental)
+NOT RUN - P8 multi-monitor clamp :: single display connected (environmental)
+
+FINAL SUMMARY: 26/26 passed, 0 failed; 2 rows NOT RUN.

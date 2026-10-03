@@ -1,0 +1,293 @@
+/*
+ * Quick Run — the surface itself.
+ *
+ * The feature shipped behaviourally complete and visually absent: the markup declared
+ * .quick-run-layer, -input, -chips, -results, -cap and -notice, and no stylesheet mentioned any of them.
+ * The layer therefore rendered as a static, transparent, in-flow block at the top-left of the workspace,
+ * underneath the absolutely-positioned graph viewport - painted, but impossible to click, hover or scroll,
+ * because every pointer event at those coordinates hit #graph-viewport instead. This file is the surface
+ * those elements were always meant to have.
+ *
+ * Placement is a judgement call, not a measurement: a command surface belongs near the top, over the
+ * workspace, and out of the way of the floating toolbars at the top-left, so this is centred with a
+ * bounded width. z-index 140 is above every modal layer on purpose, at the reviewer's ruling: the chord
+ * opens Quick Run from inside the editor dialog, the prompt library and the Settings tab, so the palette
+ * has to paint over them - and it has exclusive input while it is up, which a context menu (100) or a
+ * dialog (120/130) painting above it would contradict. It stays below the informational band (2147483640)
+ * and the read-only toolbar (2147483647). This was 60, deliberately *under* the dialogs so that a dialog
+ * could appear over Quick Run; that reasoning was right for a surface with no modal story, and it is
+ * exactly what the ruling reverses.
+ *
+ * Being above the dialogs is one half of it; the other half is that opening here resolves nothing.
+ * Nothing underneath is saved, discarded or closed, its unsaved buffer is left exactly as it was, and
+ * focus goes back to the control it came from when the palette closes.
+ *
+ * Colours come from tokens.css and nothing here is a literal, so the dark theme is not a second file.
+ */
+
+.quick-run-layer {
+  position: absolute;
+  z-index: 140;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(680px, calc(100% - 48px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-raised);
+  box-shadow: 0 18px 40px var(--shadow);
+}
+
+.quick-run-layer[data-quick-run-sized='true'] .quick-run-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+/* The host owns the global command-surface window bounds. This handle is for
+ * the project-owned in-workspace card only. */
+.quick-run-resize-handle {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: linear-gradient(135deg, transparent 45%, var(--border-strong) 46%, var(--border-strong) 53%, transparent 54%),
+    linear-gradient(135deg, transparent 60%, var(--border-strong) 61%, var(--border-strong) 68%, transparent 69%);
+  cursor: nwse-resize;
+  opacity: .7;
+  z-index: 1;
+}
+
+.quick-run-resize-handle:hover,
+.quick-run-resize-handle:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.quick-run-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  outline: none;
+}
+
+.quick-run-input::placeholder {
+  color: var(--text-faint);
+}
+
+.quick-run-input:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+/* The chips are a filter strip, not a toolbar: small, quiet, and the active one carries the accent. */
+.quick-run-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 12px;
+  list-style: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.quick-run-chip {
+  padding: 2px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  user-select: none;
+}
+
+.quick-run-chip.active {
+  border-color: var(--accent-border-soft);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+/*
+ * The list scrolls, and that is load-bearing: section 6.3 leaves scrolling to the list while the wheel
+ * moves the highlight with it (quick-run-surface.js). A list that could not scroll would make that rule
+ * vacuous, so the height bound below is what gives the wheel something to do.
+ */
+.quick-run-results {
+  margin: 0;
+  padding: 4px 0;
+  max-height: 320px;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.quick-run-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* The measured row height when a wheel delta is turned into rows; QUICK_RUN_WHEEL_ROW_HEIGHT_PX in
+     quick-run-surface.js is the fallback for a caller without layout. Change one and change the other. */
+  min-height: 24px;
+  padding: 3px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.quick-run-result[data-quick-run-hovered="true"] {
+  background: var(--item-surface-hover);
+}
+
+/* The keyboard highlight is the one that Enter runs, so it is the one that reads as selected. */
+.quick-run-result.highlighted,
+.quick-run-result.highlighted[data-quick-run-hovered="true"] {
+  background: var(--selection);
+}
+
+.quick-run-result.highlighted .quick-run-name {
+  color: var(--text);
+}
+
+/*
+ * One fixed box per row, and the icon kind is the fallback that fills it: a row whose item has no artwork of
+ * its own shows a plain shape rather than a hole, and every row keeps the same leading edge so the list stays
+ * scannable. The box is deliberately no taller than the row's own min-height (the wheel arithmetic measures
+ * that row), so a real icon cannot change how far a wheel notch travels.
+ */
+.quick-run-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--surface-soft);
+}
+
+/*
+ * The item's own artwork (the creator's per-item icons, the strings the canvas paints). The box becomes a
+ * window rather than a tile: no border and no fill behind the picture, and the picture is contained rather
+ * than cropped or stretched. A picture that has not arrived yet simply shows this box's own background, so
+ * there is never a blank white frame.
+ */
+.quick-run-icon-image {
+  border: 0;
+  background: none;
+}
+
+.quick-run-icon-art {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.quick-run-icon-folder {
+  background: var(--folder-top);
+  border-color: var(--folder-body);
+}
+
+.quick-run-icon-link {
+  border-radius: 50%;
+  background: var(--accent-soft);
+  border-color: var(--accent-border-soft);
+}
+
+.quick-run-icon-shortcut {
+  background: var(--icon-surface);
+}
+
+.quick-run-icon-layout-item {
+  border-radius: 2px;
+  background: var(--surface-muted);
+}
+
+.quick-run-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Section 1.2's faint trailing breadcrumb: quiet, right-aligned, and never wider than it needs to be. */
+.quick-run-breadcrumb {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-run-cap,
+.quick-run-notice {
+  margin: 0;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* The no-matches line is an answer, not a footnote: it gets room so a blank layer cannot read as a stall. */
+.quick-run-notice {
+  padding: 14px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* The launcher overlay: the same surface in a 640x220 window with no workspace behind it.
+ *
+ * The host opens that window on this page with `?papers-surface=command-surface`, and the marker is the only
+ * difference from the canvas - so this block is the whole of "render ONLY the command surface": every child
+ * of the workspace except the palette goes, and the palette stops being a floating card and becomes the
+ * window. Nothing here changes behaviour; the two behavioural divergences (Escape is the host's, and nothing
+ * takes focus back on close) are in the surface itself, where they can be read next to the rules they bend.
+ */
+html[data-papers-surface='command-surface'],
+html[data-papers-surface='command-surface'] body {
+  background: transparent;
+  overflow: hidden;
+}
+html[data-papers-surface='command-surface'] main.workspace > :not(.quick-run-layer) { display: none !important; }
+html[data-papers-surface='command-surface'] main.workspace {
+  background: transparent;
+  min-height: 0;
+}
+html[data-papers-surface='command-surface'] .quick-run-layer {
+  position: fixed;
+  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  max-width: none;
+  transform: none;
+  border: 0;
+  border-radius: 0;
+  /* The window is the frame: a shadow would draw inside it and read as a dark band. */
+  box-shadow: none;
+}
+/* The list takes what is left of the 220px rather than the canvas's fixed cap, so the rows that fit are the
+   rows shown. The paint cap still applies to how many rows exist to scroll through. */
+html[data-papers-surface='command-surface'] .quick-run-results {
+  max-height: none;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+html[data-papers-surface='command-surface'] .quick-run-resize-handle { display: none; }

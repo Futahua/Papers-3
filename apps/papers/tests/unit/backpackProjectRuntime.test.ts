@@ -1,0 +1,392 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { BaseWindow, WebContentsView } from 'electron';
+import { BackpackProjectRuntime } from '../../src/main/backpacks/backpackProjectRuntime';
+
+/**
+ * Backpack project surface lifecycle. hide() must detach and close the child
+ * surface before the parent window is destroyed, be idempotent, and stay
+ * safe when it arrives late — after the BaseWindow or the WebContents is
+ * already destroyed. Electron cannot be instantiated under vitest's node
+ * environment, so the minimal window/view boundary is mocked structurally;
+ * the class under test is the real one.
+ */
+
+type FakeWebContents = {
+  id: number;
+  destroyed: boolean;
+  setWindowOpenHandler: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof vi.fn>;
+  once: ReturnType<typeof vi.fn>;
+  loadURL: ReturnType<typeof vi.fn>;
+  executeJavaScript: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+  focus: ReturnType<typeof vi.fn>;
+  isDestroyed: () => boolean;
+};
+
+type FakeView = {
+  webContents: FakeWebContents;
+  setBounds: ReturnType<typeof vi.fn>;
+  setBackgroundColor: ReturnType<typeof vi.fn>;
+};
+
+const harness = vi.hoisted(() => ({
+  window: {
+    destroyed: false,
+    addChildView: vi.fn(),
+    removeChildView: vi.fn(),
+    focus: vi.fn(),
+  },
+  views: [] as FakeView[],
+}));
+
+vi.mock('electron', () => ({
+  BaseWindow: class {
+    contentView = {
+      addChildView: (view: unknown) => harness.window.addChildView(view),
+      removeChildView: (view: unknown) => harness.window.removeChildView(view),
+    };
+    isDestroyed() {
+      return harness.window.destroyed;
+    }
+    focus() {
+      return harness.window.focus();
+    }
+    getContentBounds() {
+      return { width: 800, height: 600 };
+    }
+  } as unknown as typeof BaseWindow,
+  WebContentsView: class {
+    webContents: FakeWebContents;
+    setBounds = vi.fn();
+    setBackgroundColor = vi.fn();
+    constructor() {
+      const webContents: FakeWebContents = {
+        id: harness.views.length + 1,
+        destroyed: false,
+        setWindowOpenHandler: vi.fn(),
+        on: vi.fn(),
+        once: vi.fn(),
+        loadURL: vi.fn().mockResolvedValue(undefined),
+        executeJavaScript: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn(),
+        focus: vi.fn(),
+        isDestroyed() {
+          return webContents.destroyed;
+        },
+      };
+      this.webContents = webContents;
+      harness.views.push(this);
+    }
+  } as unknown as typeof WebContentsView,
+}));
+
+const PROJECT_URL = 'papers-backpack://bp-004-test/entry/index.html';
+
+beforeEach(() => {
+  harness.window.destroyed = false;
+  harness.window.addChildView.mockClear();
+  harness.window.removeChildView.mockClear();
+  harness.window.focus.mockReset();
+  harness.views.length = 0;
+});
+
+async function shownRuntime(): Promise<BackpackProjectRuntime> {
+  const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false);
+  await runtime.show(PROJECT_URL);
+  expect(harness.views).toHaveLength(1);
+  expect(harness.window.addChildView).toHaveBeenCalledWith(harness.views[0]);
+  return runtime;
+}
+
+function soleView(): FakeView {
+  const view = harness.views[0];
+  expect(view).toBeDefined();
+  return view as FakeView;
+}
+
+describe('BackpackProjectRuntime.focus', () => {
+  it('focuses the exact live native presentation', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+
+    expect(runtime.focus()).toBe(true);
+    expect(harness.window.focus).toHaveBeenCalledTimes(1);
+    expect(view.webContents.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns false after a second-stage native focus failure', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    view.webContents.focus.mockImplementation(() => { throw new Error('focus failed'); });
+
+    expect(runtime.focus()).toBe(false);
+    // Native parent focus can be a partial side effect, but callers must not
+    // commit logical workspace activation when focus() reports failure.
+    expect(harness.window.focus).toHaveBeenCalledTimes(1);
+    expect(view.webContents.focus).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('BackpackProjectRuntime.hide', () => {
+  it('forwards project loading lifecycle events from the live sender', async () => {
+    const lifecycle = vi.fn();
+    const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false, undefined, undefined, lifecycle);
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    const loading = view.webContents.on.mock.calls.find(([event]) => event === 'did-start-loading')?.[1] as (() => void) | undefined;
+    const domReady = view.webContents.on.mock.calls.find(([event]) => event === 'dom-ready')?.[1] as (() => void) | undefined;
+    loading?.();
+    domReady?.();
+    expect(lifecycle).toHaveBeenNthCalledWith(1, view.webContents.id, 'did-start-loading');
+    expect(lifecycle).toHaveBeenNthCalledWith(2, view.webContents.id, 'dom-ready');
+  });
+
+  it('forwards console messages with bootstrap eligibility from the live sender', async () => {
+    const consoleMessage = vi.fn();
+    const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false, undefined, consoleMessage);
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    const consoleListener = view.webContents.on.mock.calls.find(([event]) => event === 'console-message')?.[1] as
+      ((event: unknown, level: number, message: string) => void) | undefined;
+    const domReady = view.webContents.on.mock.calls.find(([event]) => event === 'dom-ready')?.[1] as (() => void) | undefined;
+    expect(consoleListener).toBeTypeOf('function');
+    consoleListener?.({}, 3, 'Uncaught bootstrap failure');
+    expect(consoleMessage).toHaveBeenNthCalledWith(1, view.webContents.id, 3, 'Uncaught bootstrap failure', true);
+    domReady?.();
+    consoleListener?.({}, 1, 'surface-a ready');
+    expect(consoleMessage).toHaveBeenNthCalledWith(2, view.webContents.id, 1, 'surface-a ready', false);
+  });
+
+  it('forwards renderer exit reasons from the live sender', async () => {
+    const rendererGone = vi.fn();
+    const runtime = new BackpackProjectRuntime(
+      new BaseWindow(), '/tmp/preload.cjs', false, undefined, undefined, undefined, rendererGone,
+    );
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    const goneListener = view.webContents.on.mock.calls.find(([event]) => event === 'render-process-gone')?.[1] as
+      ((event: unknown, details: { reason: string }) => void) | undefined;
+    expect(goneListener).toBeTypeOf('function');
+    goneListener?.({}, { reason: 'crashed' });
+    expect(rendererGone).toHaveBeenCalledWith(view.webContents.id, 'crashed');
+  });
+
+  it('forwards page favicon updates from the live sender', async () => {
+    const faviconChanged = vi.fn();
+    const runtime = new BackpackProjectRuntime(
+      new BaseWindow(), '/tmp/preload.cjs', false,
+      undefined, undefined, undefined, undefined, undefined, faviconChanged,
+    );
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    const faviconListener = view.webContents.on.mock.calls.find(([event]) => event === 'page-favicon-updated')?.[1] as
+      ((event: unknown, urls: string[]) => void) | undefined;
+    expect(faviconListener).toBeTypeOf('function');
+    const urls = ['data:image/png;base64,AAAA'];
+    faviconListener?.({}, urls);
+    expect(faviconChanged).toHaveBeenCalledWith(view.webContents.id, urls);
+  });
+
+  it('conceals and restores the same live renderer without closing it', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+
+    runtime.conceal();
+
+    expect(harness.window.removeChildView).toHaveBeenCalledWith(view);
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(runtime.senderId).toBe(view.webContents.id);
+
+    await runtime.show(PROJECT_URL);
+
+    expect(harness.views).toHaveLength(1);
+    expect(harness.window.addChildView).toHaveBeenCalledTimes(2);
+    expect(runtime.senderId).toBe(view.webContents.id);
+  });
+
+  it('registers one destroyed subscription across repeated presentations', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    const first = vi.fn();
+    const latest = vi.fn();
+
+    runtime.onFrameDestroyed(view.webContents.id, first);
+    runtime.conceal();
+    await runtime.show(PROJECT_URL);
+    runtime.onFrameDestroyed(view.webContents.id, latest);
+
+    expect(view.webContents.once).toHaveBeenCalledTimes(1);
+    const destroyed = view.webContents.once.mock.calls[0]?.[1] as (() => void) | undefined;
+    destroyed?.();
+    expect(first).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledTimes(1);
+  });
+
+  it('detaches and closes the shown surface once', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+
+    await runtime.hide();
+
+    expect(harness.window.removeChildView).toHaveBeenCalledTimes(1);
+    expect(harness.window.removeChildView).toHaveBeenCalledWith(view);
+    expect(view.webContents.close).toHaveBeenCalledTimes(1);
+    expect(runtime.isSender(view.webContents as unknown as import('electron').WebContents)).toBe(false);
+  });
+
+  it('waits for the optional close-time durability hook before closing', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    let release!: () => void;
+    const flush = new Promise<void>((resolve) => { release = resolve; });
+    view.webContents.executeJavaScript.mockReturnValue(flush);
+
+    const closing = runtime.hide();
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(
+      'globalThis.__papersFlushBeforeClose?.()',
+      true,
+    );
+    expect(view.webContents.close).not.toHaveBeenCalled();
+
+    release();
+    await closing;
+    expect(view.webContents.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores the old presentation when a voluntary close flush rejects', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    view.webContents.executeJavaScript.mockRejectedValue(new Error('flush failed'));
+
+    await expect(runtime.hide()).rejects.toThrow('flush failed');
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(runtime.senderId).toBe(view.webContents.id);
+    expect(harness.window.addChildView).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not create a replacement renderer while the old close flush is pending', async () => {
+    const runtime = await shownRuntime();
+    const oldView = soleView();
+    let release!: () => void;
+    const flush = new Promise<void>((resolve) => { release = resolve; });
+    oldView.webContents.executeJavaScript.mockReturnValue(flush);
+
+    const closing = runtime.hide();
+    const showing = runtime.show('papers-backpack://bp-004-test/entry/next.html');
+    expect(harness.views).toHaveLength(1);
+
+    release();
+    await Promise.all([closing, showing]);
+    expect(harness.views).toHaveLength(2);
+    expect(harness.views[1]).not.toBe(oldView);
+  });
+
+  it('does not re-present a same-URL renderer that is already closing', async () => {
+    const runtime = await shownRuntime();
+    const oldView = soleView();
+    let release!: () => void;
+    const flush = new Promise<void>((resolve) => { release = resolve; });
+    oldView.webContents.executeJavaScript.mockReturnValue(flush);
+
+    const closing = runtime.hide();
+    const showing = runtime.show(PROJECT_URL);
+    await Promise.resolve();
+    expect(harness.window.addChildView).toHaveBeenCalledTimes(1);
+
+    release();
+    await Promise.all([closing, showing]);
+    expect(harness.views).toHaveLength(2);
+    expect(harness.window.addChildView).toHaveBeenCalledTimes(2);
+    expect(harness.views[1]).not.toBe(oldView);
+  });
+
+  it('018V6: exposes the retained workspace entry only to its live matching sender', async () => {
+    const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false);
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    expect(runtime.entryUrlFor(view.webContents as unknown as import('electron').WebContents, 'bp-004-test')).toBe(PROJECT_URL);
+    expect(runtime.entryUrlFor(view.webContents as unknown as import('electron').WebContents, 'bp-other')).toBeNull();
+    await runtime.hide();
+    expect(runtime.entryUrlFor(view.webContents as unknown as import('electron').WebContents, 'bp-004-test')).toBeNull();
+  });
+
+  it('018V6R: destroyed listener clears identity, notifies closure, and rejects other senders', async () => {
+    const closed: string[] = [];
+    const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false, (projectId) => closed.push(projectId));
+    await runtime.show(PROJECT_URL);
+    const view = soleView();
+    expect(runtime.entryUrlFor({ id: 999 } as import('electron').WebContents, 'bp-004-test')).toBeNull();
+    const destroyed = view.webContents.on.mock.calls.find(([event]) => event === 'destroyed')?.[1] as (() => void) | undefined;
+    expect(destroyed).toBeTypeOf('function');
+    destroyed!();
+    expect(runtime.entryUrlFor(view.webContents as unknown as import('electron').WebContents, 'bp-004-test')).toBeNull();
+    expect(closed).toEqual(['bp-004-test']);
+  });
+
+  it('018X2: custom-scheme navigation is restricted to the exact project host', async () => {
+    await shownRuntime();
+    const view = soleView();
+    const navigation = view.webContents.on.mock.calls.find(([event]) => event === 'will-navigate')?.[1] as
+      ((event: { preventDefault: () => void }, target: string) => void) | undefined;
+    expect(navigation).toBeTypeOf('function');
+    const blocked = vi.fn();
+    navigation!({ preventDefault: blocked }, 'papers-backpack://bp-other/entry/index.html');
+    expect(blocked).toHaveBeenCalledTimes(1);
+    navigation!({ preventDefault: blocked }, 'papers-backpack://bp-004-test/entry/next.html');
+    expect(blocked).toHaveBeenCalledTimes(1);
+  });
+
+  it('is idempotent: a second hide does nothing', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+
+    await runtime.hide();
+    await runtime.hide();
+
+    expect(harness.window.removeChildView).toHaveBeenCalledTimes(1);
+    expect(view.webContents.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('with nothing shown is a safe no-op', async () => {
+    const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false);
+
+    await expect(runtime.hide()).resolves.toBeUndefined();
+    expect(harness.window.removeChildView).not.toHaveBeenCalled();
+  });
+
+  it('arriving after the parent window is destroyed skips removal but still closes the view', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    harness.window.destroyed = true;
+
+    await runtime.hide();
+
+    expect(harness.window.removeChildView).not.toHaveBeenCalled();
+    expect(view.webContents.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('arriving after the webContents is destroyed skips close but still removes the view', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    view.webContents.destroyed = true;
+
+    await runtime.hide();
+
+    expect(harness.window.removeChildView).toHaveBeenCalledTimes(1);
+    expect(view.webContents.close).not.toHaveBeenCalled();
+  });
+
+  it('arriving after both are destroyed touches neither', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    harness.window.destroyed = true;
+    view.webContents.destroyed = true;
+
+    await runtime.hide();
+
+    expect(harness.window.removeChildView).not.toHaveBeenCalled();
+    expect(view.webContents.close).not.toHaveBeenCalled();
+  });
+});

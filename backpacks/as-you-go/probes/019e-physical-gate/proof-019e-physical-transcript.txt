@@ -1,0 +1,25 @@
+019E EXCLUSIVE PHYSICAL-INPUT FINAL GATE
+run at: 2026-08-11T19:55:33.194Z
+isolated data dir: D:\Programs\CodexBrainB\tmp\papers-019e-physical-gLmXfb
+external interference: false
+
+PASS - creator Papers exact PID+CreationDate set captured (observed only) :: ["1992:2026-08-12T00:00:47.9480730+07:00","36152:2026-08-11T13:17:42.5953150+07:00","60628:2026-08-11T13:17:42.8652300+07:00","61244:2026-08-11T13:17:42.7599590+07:00","65328:2026-08-11T13:17:42.7810400+07:00"]
+PASS - foreign helper exact PID+CreationDate set captured (observed only) :: ["46804:2026-08-11T13:17:43.2189030+07:00"]
+PASS - dynamic display plan discovered :: {"displays":[{"primary":true,"x":0,"y":0,"width":1366,"height":768,"workX":0,"workY":0,"workWidth":1366,"workHeight":768}],"primary":{"primary":true,"x":0,"y":0,"width":1366,"height":768,"workX":0,"workY":0,"workWidth":1366,"workHeight":768},"width":420,"height":289,"positions":[{"x":75,"y":49},{"x":871,"y":49},{"x":75,"y":430},{"x":871,"y":430}]}
+PASS - four uniquely titled disposable targets placed from dynamic display geometry :: [{"pid":66264,"title":"AYG-015R3-66264-20c1bb76","bounds":{"x":75,"y":49,"ok":true,"height":289,"width":420}},{"pid":67480,"title":"AYG-015R3-67480-445ee318","bounds":{"width":420,"ok":true,"height":289,"y":49,"x":871}},{"pid":64944,"title":"AYG-015R3-64944-948c0074","bounds":{"x":75,"y":430,"ok":true,"width":420,"height":289}},{"pid":64888,"title":"AYG-015R3-64888-a2540883","bounds":{"x":871,"y":430,"width":420,"ok":true,"height":289}}]
+PASS - isolated Papers root and exact descendant identities captured :: ["29856:2026-08-12T02:52:26.3246590+07:00","47108:2026-08-12T02:52:26.1284010+07:00","54084:2026-08-12T02:52:26.2481000+07:00","61380:2026-08-12T02:52:26.2443930+07:00"]
+PASS - isolated layout seeded with A :: window-layout-d6779759-5e4d-4f5d-bc2e-4fa4c707aecc
+PASS - P1 real cursor live hover follows B(add) -> C(add) -> A(remove), with persisted A green :: {"B":{"x":871,"y":49,"width":420,"height":289,"kind":"add"},"C":{"x":75,"y":430,"width":420,"height":289,"kind":"add"},"A":{"x":75,"y":49,"width":420,"height":289,"kind":"remove"},"green":[{"x":75,"y":49,"width":420,"height":289}]}
+PASS - P1 Escape after hover-only traversal is byte-zero
+PASS - P2 isolated workspace owns foreground before real Enter :: {"creationDate":"2026-08-12T02:52:26.1284010+07:00","pid":47108,"hwnd":"8064368","title":"Papers"}
+PASS - P2 real Space keys stage multiple add/remove and real Enter commits exactly B+C :: ["AYG-015R3-67480-445ee318","AYG-015R3-64944-948c0074"]
+PASS - P2 real Escape cancels a staged remove+add byte-zero :: ["AYG-015R3-67480-445ee318","AYG-015R3-64944-948c0074"]
+PASS - P3 compact-widget real Escape cancels staged add+remove byte-zero :: ["AYG-015R3-67480-445ee318","AYG-015R3-64944-948c0074"]
+PASS - P3 compact-widget direct pick uses real hover/Space/Enter and workspace persists exactly C+D :: ["AYG-015R3-64944-948c0074","AYG-015R3-64888-a2540883"]
+PASS - cleanup has zero exact PID+CreationDate isolated survivors :: []
+PASS - creator Papers exact PID+CreationDate set untouched :: before=["1992:2026-08-12T00:00:47.9480730+07:00","36152:2026-08-11T13:17:42.5953150+07:00","60628:2026-08-11T13:17:42.8652300+07:00","61244:2026-08-11T13:17:42.7599590+07:00","65328:2026-08-11T13:17:42.7810400+07:00"] after=["1992:2026-08-12T00:00:47.9480730+07:00","36152:2026-08-11T13:17:42.5953150+07:00","60628:2026-08-11T13:17:42.8652300+07:00","61244:2026-08-11T13:17:42.7599590+07:00","65328:2026-08-11T13:17:42.7810400+07:00"]
+PASS - foreign helper exact PID+CreationDate set untouched :: before=["46804:2026-08-11T13:17:43.2189030+07:00"] after=["46804:2026-08-11T13:17:43.2189030+07:00"]
+PASS - cleanup has zero exact disposable windows :: 0
+PASS - original cursor restored; foreground restored only on exact surviving identity :: {"reason":"exact HWND/PID/CreationDate restored","cursorRestored":true,"ok":true,"foregroundRestored":true}
+
+FINAL SUMMARY: 18/18 passed, 0 failed.

@@ -1,0 +1,47 @@
+/* Deliberately different visual language from the host: light, warm. */
+:root { color-scheme: light; }
+body {
+  margin: 0;
+  font-family: Georgia, 'Times New Roman', serif;
+  background: #faf6ef;
+  color: #33302a;
+}
+main { max-width: 720px; margin: 0 auto; padding: 28px 20px 60px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: #7a736a; margin-top: 0; }
+section {
+  background: #fffdf9;
+  border: 1px solid #e5ddcf;
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin-top: 16px;
+}
+h2 { font-size: 16px; margin: 0 0 10px; }
+h3 { font-size: 14px; margin: 12px 0 6px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+button {
+  font: inherit;
+  font-size: 14px;
+  background: #33302a;
+  color: #faf6ef;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.5; cursor: default; }
+.danger-zone { border-color: #d9534f; }
+.danger-zone button { background: #d9534f; }
+pre {
+  background: #f3eee3;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow-y: auto;
+  user-select: text;
+}
+code { background: #f3eee3; padding: 1px 5px; border-radius: 4px; }
+#counter { font-size: 20px; font-weight: bold; }

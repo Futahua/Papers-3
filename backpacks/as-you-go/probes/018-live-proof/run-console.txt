@@ -1,0 +1,14 @@
+=== 018V LIVE PROOF (isolated) ===
+PASS - creator installed Papers enumerated before (observed only) :: [10488,33804,3872,41460,62156]
+PASS - three disposable targets launched :: 49600:AYG-015R3-49600-828e08de 62872:AYG-015R3-62872-0a61ab8e 55516:AYG-015R3-55516-33f55b5a 40184:AYG-015R3-40184-13002415
+PASS - P1 layout created :: window-layout-fd03e61b-1214-4c81-bbf4-b4eb7f5f0ee3
+PASS - P1 two members list-picked and active layout id persisted :: {"members":["AYG-015R3-49600-828e08de","AYG-015R3-62872-0a61ab8e"],"active":"window-layout-fd03e61b-1214-4c81-bbf4-b4eb7f5f0ee3"}
+PASS - P2 transfer ordering: workspace STOP_REQUEST before STOP_ACK, detached only activates afterwards :: {"workspace":[{"t":1786393326393,"type":"papers:project:detach-open","transferId":null,"reason":null},{"t":1786393326508,"type":"papers:project:detach-stop-request","transferId":"b128b799-ae23-4ea3-a481-f8d74ca96d5b","reason":null},{"t":1786393326511,"type":"papers:project:detach-stop-ack","transferId":"b128b799-ae23-4ea3-a481-f8d74ca96d5b","reason":null}],"detached":[],"activatedPushSeen":false}
+PASS - P2 workspace entered read-only surface after activate
+PASS - P3 detached Minimize all minimized both real members :: AYG-015R3-49600-828e08de/AYG-015R3-62872-0a61ab8e
+PASS - P3 detached Restore all restored both real members
+PASS - P3 detached list picker added the third member and persisted it :: ["AYG-015R3-49600-828e08de","AYG-015R3-62872-0a61ab8e","AYG-015R3-55516-33f55b5a"]
+PASS - P3 detached direct pick added a fourth member via real OS click :: ["AYG-015R3-49600-828e08de","AYG-015R3-62872-0a61ab8e","AYG-015R3-55516-33f55b5a","AYG-015R3-40184-13002415"]
+PASS - P4 workspace mutation gesture (context menu) blocked while detached
+PASS - P4 workspace Focus button responds while detached
+PASS - P4 workspace Reattach button responds while detached

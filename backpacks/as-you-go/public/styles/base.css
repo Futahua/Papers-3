@@ -1,0 +1,16 @@
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--page-background);
+}
+
+button, input, textarea, select { font: inherit; }
+button { color: inherit; }

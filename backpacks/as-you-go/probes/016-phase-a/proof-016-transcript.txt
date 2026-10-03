@@ -1,0 +1,27 @@
+016 LIVE PROOF - TRANSCRIPT
+run at: 2026-08-10T12:30:39.737Z
+isolated data dir: D:\Programs\evTEMP\papers-016-proof-9lhX6Z
+owned papers pid: closed
+
+PASS - three disposable windows launched :: 55352:AYG-015R3-55352-9516b280 34444:AYG-015R3-34444-9e9186bb 31628:AYG-015R3-31628-3fa29c46
+PASS - layout 1 created :: window-layout-6817058d-50c6-4067-b122-4ee7267300c2
+PASS - list-pick A: member bound with immediate captured bounds :: {"id":"28db3a3b-dd61-418f-a8bc-38c487eef155","descriptor":{"version":1,"title":"AYG-015R3-55352-9516b280","executableFingerprint":"656870b7a837ffb1e8c22c3dc5bfb387c113804399f06d16fa6a7a1dba65bb4d"},"bounds":{"x":120,"y":140,"width":400,"height":300},"state":"normal"}
+PASS - direct pick B added via real hover/click :: ["AYG-015R3-55352-9516b280","AYG-015R3-34444-9e9186bb"]
+PASS - target B state untouched by the pick click :: normal
+PASS - direct pick A toggled off (remove) :: ["AYG-015R3-34444-9e9186bb"]
+PASS - list picker toggles membership both ways
+PASS - Minimize all minimized every member :: minimized/minimized
+PASS - Restore all restored every member
+PASS - Isolate: selected A restored, unselected B minimized (this layout only) :: normal/minimized
+PASS - offscreen saved bounds clamp to a visible monitor on apply :: {"ok":true,"height":300,"y":140,"width":400,"x":820}
+PASS - layout 2 created with C via list :: window-layout-06a2492a-057a-471f-a36c-b8e542ba536a
+PASS - icon click from a different layout applies that layout's occurrence :: applied={"x":820,"y":140,"ok":true,"height":300,"width":400} saved={"x":820,"y":140,"width":400,"height":300}
+PASS - drag-out beyond the threshold unlinks data-only :: ["AYG-015R3-34444-9e9186bb"]
+PASS - unlink itself never changes the window state :: minimized -> minimized
+PASS - inner drag reorders the persisted member order :: before=2 after=2
+PASS - no forbidden keys persisted :: 0
+PASS - cleanup: zero owned helpers :: []
+PASS - cleanup: zero owned test electrons :: []
+PASS - cleanup: zero AYG windows remain :: 0
+
+FINAL SUMMARY: 20/20 passed, 0 failed.

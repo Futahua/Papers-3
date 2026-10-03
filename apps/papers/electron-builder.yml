@@ -1,0 +1,64 @@
+appId: com.futahua.papers
+productName: Papers
+copyright: Copyright © 2026 Futahua
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+
+extraResources:
+  - from: programs
+    to: programs
+  - from: assets/icon.png
+    to: icon.png
+  - from: hermes-skin/papers-integration.patch
+    to: hermes-integration/papers-integration.patch
+  - from: hermes-skin/papers-theme-plugin.js
+    to: hermes-integration/papers-theme-plugin.js
+  - from: resources/window-helper
+    to: window-helper
+  # The native foreground bridge source. Shipped as SOURCE and compiled once on
+  # first use with the csc.exe that ships with Windows, so no prebuilt binary is
+  # distributed and no node-gyp step is introduced. Without it the launcher
+  # overlay still opens, but it cannot hand focus back - and it says so.
+  - from: resources/native
+    to: native
+
+asar: true
+
+# Where a packaged Papers looks for newer versions, and where `npm run release`
+# uploads them. The repository is public, so an installed Papers reads the feed
+# anonymously — no token ships inside the application.
+publish:
+  provider: github
+  owner: Futahua
+  repo: Papers-3
+
+# electron-builder embeds win.icon into the exe during a full (NSIS) build, but a
+# `--dir` pack can skip that rcedit step and leave the stock Electron atom on the exe.
+# This hook re-embeds build/icon.ico into the packed Papers.exe for every pack path.
+afterPack: build/afterPack.cjs
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: Papers-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: false
+  createStartMenuShortcut: false
+  artifactName: Papers-Setup-${version}.${ext}
+  # Papers keeps its runtime profile in a `Data` folder BESIDE the install
+  # (see src/main/index.ts — userData is resolved relative to the executable).
+  # Uninstalling must therefore never remove the parent folder's `Data`; an
+  # update reinstalls over the same directory and the profile survives.
+  deleteAppDataOnUninstall: false

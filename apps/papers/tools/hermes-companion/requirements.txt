@@ -1,0 +1,7 @@
+# Hermes companion — desktop runtime dependencies.
+# (The phone side uses lazysodium-android + Android NSD, not these.)
+PyNaCl>=1.5        # NaCl box e2e encryption (same libsodium underneath as Android lazysodium — interoperable)
+zeroconf>=0.130    # mDNS service advertisement (the phone discovers via Android NSD)
+qrcode>=7          # render the pairing/handoff QR (browser console + terminal)
+pillow>=9          # image backend for qrcode + the tray icon
+pystray>=0.19      # cross-platform system-tray / menu-bar app (companion_app.py)

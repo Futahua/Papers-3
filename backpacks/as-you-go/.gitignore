@@ -1,0 +1,9 @@
+/state.json
+/state.json.before-*
+/state.json.tmp-*
+/node_modules/
+/probes/**/*.log
+/probes/**/*.pid
+/probes/**/*.out
+/probes/**/*.err
+

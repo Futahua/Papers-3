@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>As You Go — Assignment 008 regions fixture</title>
+<style>
+  html, body { margin: 0; min-height: 100%; background: #faf8f1; color: #3d3932; font: 14px system-ui, sans-serif; }
+  body { display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+  figure { margin: 0; max-width: 1000px; width: 100%; }
+  svg { display: block; width: 100%; height: auto; border: 1px solid #d6d0c4; background: #fffdf7; }
+  figcaption { margin-top: 10px; color: #756b5d; }
+  .region { stroke: none; }
+  .outline { fill: none; stroke: rgba(76, 114, 90, .48); stroke-width: 2; stroke-dasharray: 5 5; }
+</style>
+<figure>
+  <svg id="fixture" viewBox="0 0 1000 650" aria-label="Two-set and three-set colour-region decomposition"></svg>
+  <figcaption>Each filled patch is a solved region hue, including the two-way lens and the three-way centre. The dashed outlines are reference geometry only.</figcaption>
+</figure>
+<script type="module">
+  import { assignSpatialFolderHues } from './public/graph-model-20260730b.js';
+  import { regionCentroid, regionPath } from './public/set-region-model.js';
+  import { decomposeArrangement } from './public/set-region-arrangement.js';
+
+  const svg = document.querySelector('#fixture');
+  const NS = 'http://www.w3.org/2000/svg';
+  const colors = new Map();
+  const examples = [
+    [
+      { id: 'A', outline: [{x:100,y:180},{x:300,y:180},{x:300,y:380},{x:100,y:380}] },
+      { id: 'B', outline: [{x:220,y:180},{x:420,y:180},{x:420,y:380},{x:220,y:380}] },
+    ],
+    [
+      { id: 'C', outline: [{x:500,y:155},{x:700,y:155},{x:700,y:355},{x:500,y:355}] },
+      { id: 'D', outline: [{x:590,y:105},{x:790,y:105},{x:790,y:305},{x:590,y:305}] },
+      { id: 'E', outline: [{x:545,y:235},{x:745,y:235},{x:745,y:435},{x:545,y:435}] },
+    ],
+  ];
+  const regions = examples.flatMap((sets) => decomposeArrangement(sets).regions ?? []);
+  const nodes = regions.map((region) => {
+    const point = regionCentroid(region);
+    return { id: `region:${region.id}`, x: point.x, y: point.y };
+  });
+  assignSpatialFolderHues(nodes, colors, { cx: 500, cy: 300 });
+  for (const sets of examples) {
+    for (const set of sets) {
+      const outline = document.createElementNS(NS, 'path');
+      outline.setAttribute('class', 'outline');
+      outline.setAttribute('d', `${set.outline.map((point, index) => `${index ? 'L' : 'M'}${point.x},${point.y}`).join('')}Z`);
+      svg.append(outline);
+    }
+  }
+  for (const region of regions) {
+    const path = document.createElementNS(NS, 'path');
+    const hue = colors.get(`region:${region.id}`);
+    path.setAttribute('class', 'region');
+    path.setAttribute('d', regionPath(region));
+    path.style.fill = `oklch(68% .18 ${hue}deg)`;
+    svg.insertBefore(path, svg.firstChild);
+  }
+</script>

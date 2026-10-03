@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>As You Go — Assignment 007 drag trail fixture</title>
+<style>
+  html, body { margin: 0; min-height: 100%; background: #faf8f1; color: #3d3932; font: 14px system-ui, sans-serif; }
+  body { display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+  figure { margin: 0; max-width: 900px; width: 100%; }
+  svg { display: block; width: 100%; height: auto; border: 1px solid #d6d0c4; background: #fffdf7; }
+  figcaption { margin-top: 10px; color: #756b5d; }
+  .route { fill: none; stroke: rgba(76, 114, 90, .20); stroke-width: 2; stroke-dasharray: 5 7; }
+  .item { fill: #3f7950; }
+  .graph-set-effects-layer { pointer-events: none; overflow: visible; }
+  .graph-drag-trail-mark { pointer-events: none; opacity: .65; vector-effect: non-scaling-stroke; }
+</style>
+<figure>
+  <svg id="fixture" viewBox="0 0 900 360" aria-label="One bounded drag trail following a selection centroid"></svg>
+  <figcaption>One bounded selection-centroid trail follows many small drag steps and fades behind the item. The trail is decorative and pointer-free.</figcaption>
+</figure>
+<script type="module">
+  import { animate } from './public/vendor/anime.js';
+  import { createDragTrailController } from './public/drag-trail-model.js';
+
+  const svg = document.querySelector('#fixture');
+  const NS = 'http://www.w3.org/2000/svg';
+  const layer = document.createElementNS(NS, 'g');
+  layer.setAttribute('class', 'graph-set-effects-layer');
+  svg.append(layer);
+  const route = document.createElementNS(NS, 'path');
+  route.setAttribute('class', 'route');
+  route.setAttribute('d', 'M110 230 C240 80 370 300 520 150 C640 40 730 100 790 220');
+  svg.append(route);
+  const item = document.createElementNS(NS, 'circle');
+  item.setAttribute('class', 'item');
+  item.setAttribute('r', '8');
+  svg.append(item);
+  const trail = createDragTrailController({ document, animate, maxMarks: 24 });
+  trail.setLayer(layer);
+  const points = [
+    [110, 230], [125, 210], [140, 190], [155, 172], [175, 150], [195, 130], [220, 112],
+    [245, 102], [270, 105], [295, 120], [320, 145], [345, 175], [370, 205], [400, 225],
+    [430, 220], [460, 195], [490, 165], [520, 145], [555, 120], [590, 95], [625, 82],
+    [660, 90], [695, 115], [730, 155], [760, 190], [790, 220],
+  ];
+  let index = 0;
+  const timer = setInterval(() => {
+    const [x, y] = points[index];
+    item.setAttribute('cx', x);
+    item.setAttribute('cy', y);
+    trail.record([{ x, y }], { color: '#3f7950' });
+    index += 1;
+    if (index >= points.length) clearInterval(timer);
+  }, 22);
+</script>

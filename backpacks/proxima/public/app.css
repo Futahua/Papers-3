@@ -1,0 +1,450 @@
+:root {
+  --bg: #21252e; --panel: #272c37; --panel-2: #2e3440; --line: #3a4150;
+  --ink: #e6e9ef; --dim: #97a0b0; --accent: #b8d04a; --running: #4fd1a5;
+  --finished: #e7b24b; --danger: #e06c75; --radius: 8px;
+}
+* { box-sizing: border-box; }
+/* The `hidden` attribute must win over any component that sets its own display.
+   Without this an element styled `display: flex`/`grid`/`block` ignores `hidden`
+   entirely and stays on screen — which is how a hidden header and an empty-state
+   message once rendered alongside live panels. */
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 "Segoe UI", system-ui, sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+.spacer { flex: 1; }
+
+.topbar { display: flex; align-items: center; gap: 16px; padding: 12px 16px;
+  background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+
+/* Navigation carries the current position, so the current one is the only one that
+   shouts: same accent treatment the panel toggles use, so "you are here" looks the
+   same everywhere in the app. */
+.surfaces { display: flex; gap: 6px; align-items: center; }
+.surf { color: var(--dim); text-decoration: none; padding: 6px 12px; border-radius: 6px;
+  border: 1px solid transparent; font-weight: 600; }
+.surf:hover { color: var(--ink); background: var(--panel-2); }
+.surf[aria-current="page"] { background: var(--accent); color: #1d2129;
+  border-color: var(--accent); }
+/* The open project's own item: present only while its workspace is mounted, so the
+   nav never carries a link to something that is not on screen. */
+#navProject { max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+
+.seg { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 14px; cursor: pointer; }
+.seg.active { background: var(--accent); color: #1d2129; border-color: var(--accent); font-weight: 600; }
+.seg[disabled] { opacity: .45; cursor: not-allowed; }
+.seg.small { padding: 5px 12px; font-size: 13px; }
+.projpick { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
+.projpick select, .runbar input { background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px 10px; }
+.ghost { background: transparent; border: 1px solid var(--line); border-radius: 6px;
+  padding: 6px 12px; cursor: pointer; }
+.primary { background: transparent; border: 1px solid var(--accent); color: var(--accent);
+  border-radius: 6px; padding: 6px 14px; cursor: pointer; font-weight: 600; }
+/* A navigation control that happens to be painted like a button — the Hub card's
+   way into a project. It is a link because it navigates, and the browser's own
+   affordances (middle click, copy the address, open in a new tab) come with it. */
+a.primary, a.ghost { display: inline-block; text-decoration: none; }
+.danger { background: transparent; border: 1px solid var(--danger); color: var(--danger);
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+
+main { padding: 16px; max-width: 1200px; }
+/* A route with nothing derived to draw: a title and a sentence. Narrower than the
+   board, because a paragraph set 1200px wide is unreadable. */
+.stub { max-width: 680px; }
+.stub h1, .boardhead h1, .tk-bar h1 { margin: 2px 0 4px; font-size: 22px; }
+.stub .sub + .sub { margin-top: 10px; }
+.stub a { color: var(--accent); }
+.subtabs { display: flex; gap: 8px; margin-bottom: 18px; }
+.boardhead { display: flex; align-items: flex-end; gap: 16px; margin-bottom: 14px; }
+.eyebrow { margin: 0; font-size: 11px; letter-spacing: .08em; color: var(--dim); }
+.boardhead h1 { margin: 2px 0 4px; font-size: 22px; }
+.sub { margin: 0; color: var(--dim); font-size: 13px; }
+.counts { margin-left: auto; display: flex; align-items: center; gap: 14px; color: var(--dim); }
+
+.runbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; font-size: 13px; }
+.runbar label { display: flex; align-items: center; gap: 8px; color: var(--dim); }
+.lock { background: var(--accent); color: #1d2129; border: none; border-radius: 6px;
+  padding: 7px 18px; font-weight: 700; cursor: pointer; }
+.lock.on { background: var(--danger); color: #fff; }
+.runinfo { color: var(--dim); }
+
+.columns { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
+.col { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+/* Grid items do not stretch under `align-items: start`, so the running column
+   asks for the row height explicitly — it needs a definite H — while the other
+   two stay content-sized. */
+.col[data-status="running"] { align-self: stretch; }
+.colhead { display: flex; justify-content: space-between; padding: 12px 14px;
+  border-bottom: 1px solid var(--line); font-size: 12px; letter-spacing: .06em; color: var(--dim); }
+.colhead .running { color: var(--running); }
+.colhead .finished { color: var(--finished); }
+.cards { padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 120px; }
+.cards.over { background: #2b3140; }
+
+/* Quiet scrollbars for the card columns: a transparent track with a thumb barely
+   lighter than the panel, so a long column still reads as scrollable without a
+   bright system bar cutting across the dark board. Standard properties first for
+   Firefox and the Electron shell, then the WebKit pseudos Chromium actually uses. */
+.cards { scrollbar-width: thin; scrollbar-color: #465063 transparent; }
+.cards::-webkit-scrollbar { width: 8px; height: 8px; }
+.cards::-webkit-scrollbar-track { background: transparent; }
+.cards::-webkit-scrollbar-thumb {
+  background: #465063; border-radius: 999px;
+  border: 2px solid transparent; background-clip: content-box;
+}
+.cards::-webkit-scrollbar-thumb:hover { background: #5b6679; background-clip: content-box; }
+.cards::-webkit-scrollbar-thumb:active { background: #6b7789; background-clip: content-box; }
+.cards::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.cards::-webkit-scrollbar-corner { background: transparent; }
+
+/* The running column is a measured box: its clientHeight is the H that every
+   card's proportional height is computed against. It stretches to the board's
+   row, and the cards are ORDINARY FLOW items — not absolute — so a drag
+   placeholder between them really pushes them apart, the way it already does in
+   Backlog and Finished.
+
+   The height is DEFINITE (`height`, not `min-height`) and kept independent of the
+   cards. When the cards drove the height they filled it exactly and H depended on
+   the allocation, which is the loop that once made cards balloon.
+
+   Heights stay hand-written on purpose. `flex-grow: weight` looks like it should
+   express the ratio, but each item's 125px floor is part of its base size and
+   skews its share: weights 6/3/1 over 900px gave 416/271/174 where the formula
+   wants 540/270/125. So the cards are in flow for interaction, and the arithmetic
+   — max(125, (w/totalWeight)H) — is still applied explicitly. Flow and weighted
+   heights are both kept; only the positioning had to go. */
+.col[data-status="running"] { display: flex; flex-direction: column; align-self: stretch; }
+/* The column is stretched to the row by the grid; this box fills it, so the height
+   the cards are given is the space the board really has. It used to be `height:
+   300px` here, which quietly made the app's "measure the column, never a constant"
+   claim untrue: that constant was the only number the measurement could ever read,
+   so every card sat on its 125px floor and the column stopped filling its row as
+   soon as the board grew. The floor stays as a minimum, which is what the original's
+   300px baseline is for. */
+.cards[data-drop="running"] {
+  position: relative; display: flex; flex-direction: column; gap: 8px;
+  flex: 1 1 auto; min-height: 300px; overflow-y: auto;
+}
+/* Flex must not resize a card: the inline height is the whole answer, and the
+   floor lives here so it survives a pass that has not run yet. */
+.cards[data-drop="running"] > .card { flex: 0 0 auto; min-height: 125px; }
+
+.card { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--line);
+  border-radius: 6px; padding: 12px; cursor: grab; position: relative; overflow: hidden; }
+.card:hover { border-color: #4a5364; }
+.card.running { border-left-color: var(--running); }
+.card.finished { border-left-color: var(--finished); }
+.card .body { position: relative; z-index: 3; display: flex; flex-direction: column; min-height: 100%; }
+.card .kind { font-size: 10px; letter-spacing: .08em; color: var(--dim); }
+.card h4 { margin: 4px 0 6px; font-size: 15px; text-transform: uppercase; letter-spacing: .02em; }
+.card p { margin: 0 0 8px; font-size: 13px; color: var(--dim); }
+.card .alloc { font-weight: 700; font-size: 13px; }
+.card footer { display: flex; justify-content: space-between; font-size: 11px;
+  color: var(--dim); border-top: 1px solid var(--line); padding-top: 8px; margin-top: auto; }
+/* A floor-height card has no room for the footer; it fades instead of spilling. */
+.card.tight footer { display: none; }
+
+.card .acts { position: absolute; top: 8px; right: 8px; z-index: 3;
+  display: flex; align-items: center; gap: 8px; }
+.card .del { opacity: 0; background: transparent; border: none; color: var(--danger);
+  cursor: pointer; font-size: 15px; line-height: 1; }
+.card:hover .del { opacity: 1; }
+
+/* Inline weight stepper, clamped at a minimum of one. */
+.stepper { display: inline-flex; align-items: center; gap: 2px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 999px; padding: 1px 2px; }
+.stepper .step { width: 20px; height: 20px; display: grid; place-items: center; padding: 0;
+  background: transparent; border: none; border-radius: 50%; cursor: pointer;
+  color: var(--ink); font-size: 13px; line-height: 1; }
+.stepper .step:hover { background: var(--panel-2); }
+.stepper .step[disabled] { opacity: .35; cursor: not-allowed; }
+.stepper .w { min-width: 16px; text-align: center; font-size: 12px; font-weight: 700; color: var(--dim); }
+
+/* Locked progress: a translucent green layer wiped down the card from the top,
+   its height the task's completed ratio — not a thin bar at the bottom. */
+.pos-wipe { position: absolute; top: 0; left: 0; right: 0; z-index: 1; pointer-events: none;
+  background: rgba(0, 184, 148, .12); border-bottom: 1px solid rgba(0, 184, 148, .45); }
+.card.spent .pos-wipe { border-bottom-color: transparent; }
+.card.dragging { opacity: .35; }
+/* The drop gap. `flex: 0 0 auto` matters in the running column: its content
+   routinely overflows, and as a shrinkable flex item the placeholder was crushed
+   from 90px to 2px — the column opened a slot, but a nearly invisible one. */
+.placeholder { flex: 0 0 auto; border: 1px dashed var(--accent); border-radius: 6px; background: #2a3040; }
+.empty { color: var(--dim); font-size: 13px; text-align: center; padding: 18px 0; }
+
+/* ══ Timekeeping ═══════════════════════════════════════════════════════════
+   Below the board on one page, not a separate surface. Three panels over one
+   task set: they are independent, any combination can be on screen at once, so
+   the row lays them out side by side and only the timeline flexes. Urgency bands
+   drive the colour of every deadline-marked element. */
+:root {
+  --u-overdue: #e06c75; --u-today: #e7a24b; --u-soon: #e7d24b;
+  --u-week: #9fd04a; --u-later: #6fa8dc;
+}
+
+/* Sticky so the composition controls and the scope stay reachable while the
+   panels below scroll. */
+.tk-bar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap;
+  margin: 22px 0 12px; padding: 12px 0 10px; border-top: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 5; background: var(--bg); }
+.tk-bar h1 { margin: 2px 0 0; font-size: 22px; }
+.tk-bar .eyebrow { margin: 0; }
+.tk-count { font-size: 12px; color: var(--dim); white-space: nowrap; }
+
+.tk-notice { margin: 0 0 12px; padding: 9px 12px; border-radius: 6px; font-size: 12px;
+  color: var(--ink); background: rgba(224, 108, 117, .12); border: 1px solid var(--danger); }
+
+/* A bar whose stored dates are reversed cannot be dragged into a valid state, so
+   it does not invite a grab it would then have to refuse. The tooltip says what
+   to do about it; the bar itself keeps the invalid treatment. */
+.tk-tl-bar.invalid { cursor: pointer; }
+
+/* Refused actions speak here: one quiet chip, near the thing that was touched,
+   gone on its own. Deliberately not a page-level banner — a refusal about one bar
+   should not shout across the whole panel. */
+.flash { position: fixed; z-index: 60; max-width: 340px; padding: 7px 11px;
+  border-radius: 6px; font-size: 12px; line-height: 1.4; color: var(--ink);
+  background: var(--panel-2); border: 1px solid var(--line);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35); pointer-events: none;
+  animation: flash-in .12s ease-out; }
+.flash.warn { border-color: var(--u-overdue, #e06c75); }
+/* A condition that is still true after you have read it — a store that could not
+   be read, a write that is still failing — must not evaporate on a timer. */
+.flash.sticky { max-width: 460px; padding: 10px 13px; pointer-events: auto;
+  border-width: 2px; box-shadow: 0 10px 26px rgba(0, 0, 0, .45); }
+@keyframes flash-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+
+.tk-toggles { display: flex; gap: 8px; flex-wrap: wrap; }
+.tk-toggle::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 7px;
+  border-radius: 50%; background: var(--line); vertical-align: middle; }
+.tk-toggle.active::before { background: var(--accent); }
+.tk-toggle.active { border-color: var(--accent); }
+
+.tk-empty { color: var(--dim); font-size: 13px; background: var(--panel); border: 1px dashed var(--line);
+  border-radius: var(--radius); padding: 22px; text-align: center; margin: 0; }
+
+.tk-panels { display: flex; gap: 14px; align-items: stretch; overflow-x: auto; padding-bottom: 4px;
+  min-height: 460px; scrollbar-width: thin; scrollbar-color: #465063 transparent; }
+.tk-panels::-webkit-scrollbar { height: 8px; }
+.tk-panels::-webkit-scrollbar-track { background: transparent; }
+.tk-panels::-webkit-scrollbar-thumb { background: #465063; border-radius: 999px;
+  border: 2px solid transparent; background-clip: content-box; }
+.tk-panels::-webkit-scrollbar-thumb:hover { background: #5b6679; background-clip: content-box; }
+
+.tk-panel { display: flex; flex-direction: column; flex: 0 0 auto; width: 440px; max-height: 620px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.tk-panel-wide { flex: 1 1 460px; min-width: 380px; width: auto; }
+.tk-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; letter-spacing: .06em;
+  color: var(--dim); text-transform: uppercase; background: var(--panel-2); }
+.tk-panel-actions { display: flex; gap: 4px; }
+.tk-btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  padding: 3px 9px; cursor: pointer; font-size: 12px; color: var(--ink); line-height: 1.4; }
+.tk-btn:hover { border-color: var(--accent); color: var(--accent); }
+.tk-panel-body { flex: 1; overflow: auto; padding: 10px; min-height: 0;
+  scrollbar-width: thin; scrollbar-color: #465063 transparent; }
+.tk-panel-body::-webkit-scrollbar { width: 8px; }
+.tk-panel-body::-webkit-scrollbar-track { background: transparent; }
+.tk-panel-body::-webkit-scrollbar-thumb { background: #465063; border-radius: 999px;
+  border: 2px solid transparent; background-clip: content-box; }
+
+/* ── Panel 1: Deadline Calendar ──
+   Day numbers stay a plain 7-column grid; task SPANS are projected over the week
+   as absolutely placed bars, so a task covers the part of the week it occupies. */
+.tk-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-bottom: 6px; }
+.tk-weekday { text-align: center; font-size: 10px; letter-spacing: .08em; color: var(--dim); }
+.tk-weekday.weekend { color: #6d7686; }
+.tk-cal { display: flex; flex-direction: column; gap: 8px; }
+.tk-cal-week { display: flex; flex-direction: column; gap: 2px; }
+.tk-cal-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.tk-cal-cell { min-height: 24px; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 2px 5px; display: flex; align-items: flex-start; }
+.tk-cal-cell.other-month { opacity: .42; }
+.tk-cal-cell.weekend { background: #2a3039; }
+.tk-cal-cell.today { border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(184, 208, 74, .35); }
+.tk-cal-num { font-size: 10px; color: var(--dim); }
+.tk-cal-cell.today .tk-cal-num { color: var(--accent); font-weight: 700; }
+.tk-cal-bars { position: relative; }
+.tk-cal-chip { position: absolute; height: 16px; line-height: 16px; text-align: left; border: none;
+  border-radius: 3px; padding: 0 5px; font-size: 11px; cursor: pointer; color: #1b1f26; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Square off the ends that run past the week, as the original does. */
+.tk-cal-chip.is-start { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.tk-cal-chip.is-end { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.tk-cal-chip:hover { filter: brightness(1.12); }
+
+/* ── Panel 2: Timeline ── */
+.tk-tl-viewport { flex: 1; overflow: auto; position: relative; min-height: 0;
+  scrollbar-width: thin; scrollbar-color: #465063 transparent; }
+.tk-tl-viewport::-webkit-scrollbar { width: 8px; height: 8px; }
+.tk-tl-viewport::-webkit-scrollbar-track { background: transparent; }
+.tk-tl-viewport::-webkit-scrollbar-thumb { background: #465063; border-radius: 999px;
+  border: 2px solid transparent; background-clip: content-box; }
+.tk-tl-viewport::-webkit-scrollbar-thumb:hover { background: #5b6679; background-clip: content-box; }
+.tk-tl-inner { position: relative; padding: 0 0 8px; margin-left: 24px; }
+.tk-tl-dates { position: sticky; top: 0; z-index: 3; height: 34px; background: var(--panel-2);
+  border-bottom: 1px solid var(--line); cursor: grab; }
+/* The ruler is a pan handle, so it says so before it is grabbed. */
+body.tk-panning { cursor: grabbing; user-select: none; }
+body.tk-panning .tk-tl-dates { cursor: grabbing; }
+.tk-tl-date { position: absolute; top: 0; height: 34px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; border-left: 1px solid #333a47; font-size: 9px;
+  color: var(--dim); }
+.tk-tl-date.weekend { background: rgba(0, 0, 0, .16); }
+.tk-tl-date.month-start { border-left-color: #55606f; }
+.tk-tl-date.today { background: rgba(184, 208, 74, .12); color: var(--accent); }
+.tk-tl-dow { font-size: 9px; opacity: .75; }
+.tk-tl-num { font-size: 10px; font-weight: 600; }
+.tk-tl-dates-pad { position: absolute; inset: 0; }
+.tk-tl-rows { position: relative; }
+/* A track is absolutely placed at its packed row, so a task's vertical position
+   is the row it holds rather than its index in the visible list. */
+.tk-tl-row { position: absolute; left: 0; right: 0; height: 40px; }
+.tk-tl-row.alt { background: rgba(255, 255, 255, .018); }
+.tk-tl-today-line { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(184, 208, 74, .5);
+  pointer-events: none; }
+.tk-tl-bar { position: absolute; top: 8px; height: 24px; border-radius: 5px; cursor: grab;
+  display: flex; align-items: center; padding: 0 8px; overflow: hidden; color: #1b1f26;
+  font-size: 11px; font-weight: 600; will-change: transform; }
+.tk-tl-bar:active { cursor: grabbing; }
+.tk-tl-bar:hover { filter: brightness(1.1); }
+.tk-tl-bar.invalid { background: var(--line); color: var(--dim); }
+body.tk-dragging { cursor: grabbing; user-select: none; }
+body.tk-dragging .tk-tl-bar, body.tk-resizing .tk-tl-bar { transition: none; }
+/* Stretch, in progress: the whole page says "you are moving an edge now". */
+body.tk-resizing, body.tk-resizing * { cursor: ew-resize !important; }
+body.tk-resizing .tk-tl-bar { box-shadow: 0 4px 14px rgba(0, 0, 0, .35); }
+/* The stretch hint. `data-shift-pressed` is STRETCH_BINDING.hintAttr in app.js —
+   the binding itself is named once there; this is the same name spelled for CSS. */
+body[data-shift-pressed="true"] .tk-tl-bar.hover-left-half,
+body[data-shift-pressed="true"] .tk-tl-bar.hover-left-half * { cursor: w-resize !important; }
+body[data-shift-pressed="true"] .tk-tl-bar.hover-right-half,
+body[data-shift-pressed="true"] .tk-tl-bar.hover-right-half * { cursor: e-resize !important; }
+body[data-shift-pressed="true"] .tk-tl-bar.hover-left-half { box-shadow: inset 3px 0 0 rgba(255, 255, 255, .8); }
+body[data-shift-pressed="true"] .tk-tl-bar.hover-right-half { box-shadow: inset -3px 0 0 rgba(255, 255, 255, .8); }
+.tk-tl-bar-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── Panel 3: Countdowns ── */
+.tk-groups { display: flex; flex-direction: column; gap: 10px; }
+.tk-group { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel-2); }
+/* Informational, not a control: a label and a count. */
+.tk-group-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+.tk-group-count { margin-left: auto; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 999px; padding: 0 7px; font-size: 10px; color: var(--ink); }
+.tk-group-items { display: flex; flex-direction: column; gap: 6px; padding: 0 8px 8px; }
+.tk-cd-card { display: flex; align-items: center; gap: 10px; background: var(--panel);
+  border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 6px;
+  padding: 8px 10px; cursor: pointer; }
+.tk-cd-card:hover { border-color: #4a5364; }
+.tk-cd-info { min-width: 0; flex: 1; }
+.tk-cd-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-cd-date { font-size: 11px; color: var(--dim); }
+.tk-cd-right { text-align: right; flex: 0 0 auto; }
+.tk-cd-timer { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+.tk-cd-track { width: 92px; height: 4px; margin-top: 5px; background: #384051; border-radius: 2px; overflow: hidden; }
+.tk-cd-fill { height: 100%; background: var(--running); }
+
+/* Contradictory stored data is shown as wrong, never smoothed into something
+   plausible: a reversed task keeps its real deadline position and is flagged. */
+.tk-cal-chip.invalid, .tk-tl-bar.invalid {
+  background: repeating-linear-gradient(45deg, var(--danger), var(--danger) 5px, #a8555c 5px, #a8555c 10px);
+  color: #fff; box-shadow: 0 0 0 1px var(--danger);
+}
+.tk-cd-card.invalid { border-color: var(--danger); }
+.tk-cd-card.invalid .tk-cd-name::before { content: '⚠ '; color: var(--danger); }
+
+/* A locked plan member: its weight and column are part of the frozen plan, so
+   both controls are inert. The card stays legible — it is the run, after all. */
+.card.locked-member { cursor: default; }
+.card.locked-member .stepper.frozen { opacity: .55; }
+.card.locked-member .stepper.frozen .step { cursor: not-allowed; }
+
+/* Something that reached Running after the lock. It is not in the plan, gets no
+   slice, and says so instead of being silently fed the run's elapsed time. */
+.card.not-in-plan { border-left-color: var(--danger); border-style: dashed; }
+.card.not-in-plan .kind { color: var(--danger); }
+
+/* A bar cut off by the ends of the visible range shows that it continues,
+   rather than appearing to end at the window edge. */
+.tk-tl-bar.clipped-start { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.tk-tl-bar.clipped-end { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.tk-tl-more-before, .tk-tl-more-after { font-size: 9px; opacity: .8; flex: 0 0 auto; }
+.tk-tl-more-before { margin-right: 3px; }
+.tk-tl-more-after { margin-left: 3px; }
+
+/* ══ Projects Hub ══════════════════════════════════════════════════════════
+   A portfolio view under the board and Timekeeping. Each card carries a
+   project's identity and its pressure — the numbers are read at a glance, so
+   the grid is calm and the trouble colours stand out against it. */
+.hub-archived { display: flex; align-items: center; gap: 7px; font-size: 12px;
+  color: var(--dim); cursor: pointer; white-space: nowrap; }
+.hub-archived input { accent-color: var(--accent); }
+
+.hub-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+
+.hub-card { position: relative; display: flex; flex-direction: column; gap: 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  border-top: 3px solid hsl(var(--hue, 90), 45%, 52%); padding: 14px; }
+.hub-card.archived { opacity: .72; border-top-color: var(--line); }
+
+.hub-head { display: flex; align-items: center; gap: 10px; }
+.hub-mark { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 8px; display: grid;
+  place-items: center; font-weight: 800; font-size: 16px; color: #14181f;
+  background: hsl(var(--hue, 90), 55%, 62%); }
+.hub-title { min-width: 0; flex: 1; }
+.hub-title h3 { margin: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-meta { margin: 2px 0 0; font-size: 11px; color: var(--dim); }
+.hub-badge { font-size: 9px; letter-spacing: .08em; padding: 2px 6px; border-radius: 4px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--dim); }
+
+.hub-desc { margin: 0; font-size: 12px; color: var(--dim); line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+.hub-pressure { display: flex; flex-wrap: wrap; gap: 6px; }
+.hub-stat { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); }
+.hub-stat.bad { color: var(--u-overdue); border-color: var(--u-overdue); }
+.hub-stat.hot { color: var(--u-today); border-color: var(--u-today); }
+.hub-warn { margin: 0; font-size: 11px; color: var(--u-overdue); }
+
+.hub-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; }
+.hub-acts button { font-size: 12px; padding: 5px 11px; }
+.hub-acts button[disabled] { opacity: .6; cursor: default; border-color: var(--accent); color: var(--accent); }
+
+.confirm-body { margin: 0 0 4px; font-size: 13px; color: var(--dim); line-height: 1.5; }
+.segnote { font-size: 11px; color: var(--dim); letter-spacing: .04em; }
+
+/* Urgency bands, shared by calendar chips, timeline bars and countdown cards. */
+.tk-cal-chip.urgency-overdue, .tk-tl-bar.urgency-overdue { background: var(--u-overdue); }
+.tk-cal-chip.urgency-today, .tk-tl-bar.urgency-today { background: var(--u-today); }
+.tk-cal-chip.urgency-soon, .tk-tl-bar.urgency-soon { background: var(--u-soon); }
+.tk-cal-chip.urgency-week, .tk-tl-bar.urgency-week { background: var(--u-week); }
+.tk-cal-chip.urgency-later, .tk-tl-bar.urgency-later { background: var(--u-later); }
+.tk-cd-card.urgency-overdue { border-left-color: var(--u-overdue); }
+.tk-cd-card.urgency-today { border-left-color: var(--u-today); }
+.tk-cd-card.urgency-soon { border-left-color: var(--u-soon); }
+.tk-cd-card.urgency-week { border-left-color: var(--u-week); }
+.tk-cd-card.urgency-later { border-left-color: var(--u-later); }
+.tk-group.urgency-overdue .tk-group-title { color: var(--u-overdue); }
+.tk-group.urgency-today .tk-group-title { color: var(--u-today); }
+.tk-group.urgency-soon .tk-group-title { color: var(--u-soon); }
+.tk-group.urgency-week .tk-group-title { color: var(--u-week); }
+.tk-group.urgency-later .tk-group-title { color: var(--u-later); }
+
+dialog { background: var(--panel); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 10px; padding: 20px; width: min(460px, 92vw); }
+dialog::backdrop { background: rgba(0,0,0,.55); }
+dialog h3 { margin: 0 0 14px; }
+dialog label { display: block; margin-bottom: 12px; font-size: 12px; color: var(--dim); }
+dialog input, dialog select, dialog textarea { width: 100%; margin-top: 4px; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+dialog small { display: block; margin-top: 4px; color: var(--dim); }
+dialog menu { display: flex; gap: 8px; padding: 0; margin: 18px 0 0; }
+
+/* A refused save says what is wrong, in words, next to the fields it concerns. */
+.field-error { margin: 0 0 12px; padding: 9px 11px; border-radius: 6px; font-size: 12px;
+  color: var(--ink); background: rgba(224, 108, 117, .12); border: 1px solid var(--danger); }

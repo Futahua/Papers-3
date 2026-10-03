@@ -1,0 +1,6 @@
+
+@media (max-width: 700px) {
+  .workspace { width: calc(100vw - 24px); padding-top: 8px; }
+  .pickup-copy .copy-label { display: none; }
+  .icon-grid { padding: 14px; }
+}

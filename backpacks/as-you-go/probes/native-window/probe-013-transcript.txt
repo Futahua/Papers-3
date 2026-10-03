@@ -1,0 +1,78 @@
+runtimes discovered: pwsh 7.6.3, powershell 5.1.26100.8737
+==== runtime: pwsh 7.6.3 [C:\Program Files\PowerShell\7\pwsh.exe] ====
+PASS: list succeeds before the window exists
+PASS: zero-match discovery: typed missing, no act
+PASS: exactly one window matches the unique title
+discovered runtimeId=Tc1bf9b6f7d674f168dc00f3bfae52b8e pid=63056 title=AYG-013-63056-771ffe59
+PASS: observe succeeds
+PASS: observed runtimeId echoes the wire token
+PASS: observed PID matches the probe-owned identity
+PASS: observed title matches the unique identity
+PASS: initial state is normal
+PASS: initial bounds are the form size (400 x 300)
+PASS: invalid lines are ignored; the only response correlates to the valid request
+PASS: command-like field is denied, not executed
+PASS: a dead runtime id returns missing, no act
+PASS: the multibyte split point is inside the first UTF-8 character
+PASS: a request split inside a multibyte character parses and fails closed as a non-token target
+PASS: the next valid request correlates after the multibyte split
+PASS: minimize -> minimized
+PASS: restore -> normal
+transition: normal -> minimized -> normal (via helper observations)
+PASS: apply succeeds
+PASS: applied bounds round-trip (w=360 h=260)
+PASS: applied position round-trip (x=200 y=180)
+applied bounds (200,180,360x260); observed (x=200 y=180 w=360 h=260)
+PASS: coalesced requests respond in order with correct correlation
+PASS: MAX_SAFE requestId echoes exactly live
+MAX_SAFE requestId: 9007199254740991 echoed exactly (no narrowing) on this runtime
+PASS: close succeeds
+PASS: the window is gone after graceful close
+main helper exit code: 0
+PASS: fresh helper: first output is the response to the first request (no replay)
+PASS: the fresh helper sees no trace of the closed window
+fresh-helper no-replay: PASS (first output = response to request 16; no window trace)
+PASS: the main helper token is unusable in the fresh helper (session-scoped)
+token session-scoping: PASS (previous-session token is missing in the fresh helper)
+fresh helper exit code: 0
+runtime summary: 27 passed, 0 failed
+==== runtime: powershell 5.1.26100.8737 [C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe] ====
+PASS: list succeeds before the window exists
+PASS: zero-match discovery: typed missing, no act
+PASS: exactly one window matches the unique title
+discovered runtimeId=Tc982f7d5c3fb4b29901762304e4f0908 pid=63056 title=AYG-013-63056-a4de97a9
+PASS: observe succeeds
+PASS: observed runtimeId echoes the wire token
+PASS: observed PID matches the probe-owned identity
+PASS: observed title matches the unique identity
+PASS: initial state is normal
+PASS: initial bounds are the form size (400 x 300)
+PASS: invalid lines are ignored; the only response correlates to the valid request
+PASS: command-like field is denied, not executed
+PASS: a dead runtime id returns missing, no act
+PASS: the multibyte split point is inside the first UTF-8 character
+PASS: a request split inside a multibyte character parses and fails closed as a non-token target
+PASS: the next valid request correlates after the multibyte split
+PASS: minimize -> minimized
+PASS: restore -> normal
+transition: normal -> minimized -> normal (via helper observations)
+PASS: apply succeeds
+PASS: applied bounds round-trip (w=360 h=260)
+PASS: applied position round-trip (x=200 y=180)
+applied bounds (200,180,360x260); observed (x=200 y=180 w=360 h=260)
+PASS: coalesced requests respond in order with correct correlation
+PASS: MAX_SAFE requestId echoes exactly live
+MAX_SAFE requestId: 9007199254740991 echoed exactly (no narrowing) on this runtime
+PASS: close succeeds
+PASS: the window is gone after graceful close
+main helper exit code: 0
+PASS: fresh helper: first output is the response to the first request (no replay)
+PASS: the fresh helper sees no trace of the closed window
+fresh-helper no-replay: PASS (first output = response to request 16; no window trace)
+PASS: the main helper token is unusable in the fresh helper (session-scoped)
+token session-scoping: PASS (previous-session token is missing in the fresh helper)
+fresh helper exit code: 0
+runtime summary: 27 passed, 0 failed
+cleanup: owned helper PIDs still running: 0; leftover AYG-013 windows: 0
+---
+run-013.ps1: 54 passed, 0 failed

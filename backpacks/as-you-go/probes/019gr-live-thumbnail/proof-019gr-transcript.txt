@@ -1,0 +1,26 @@
+019GR ISOLATED NATIVE THUMBNAIL INTEGRATION PROOF
+run at: 2026-08-11T05:52:17.423Z
+isolated data dir: D:\Programs\evTEMP\papers-019gr-LkrWsC
+
+PASS - creator Papers PIDs captured before (observed only) :: [9528,31040,38372,43116,65344]
+PASS - foreign helper identities captured before (observed only) :: ["33508:31040"]
+PASS - two exact disposable colored native windows launched :: 41516:AYG-019GR-41516-f2322dad:#D92D2D 36040:AYG-019GR-36040-06e2e51c:#2457E6
+PASS - isolated Papers root and owned identity allowlist captured :: root=33536 owned=15520,33536,61136,63420
+PASS - real list/bind path persisted both fixture descriptors :: window-layout-e673962c-4951-436e-9d42-580ce1716730
+PASS - real PrintWindow PNG renders with bounded dimensions and fixture-red center pixel :: {"width":180,"height":135,"pixel":[217,45,45,255],"events":[{"type":"papers:project:window-thumbnail","requestId":"f3e182ff-918a-4a57-9de6-396045300264","imageChars":0},{"type":"papers:host:result","requestId":"f3e182ff-918a-4a57-9de6-396045300264","outcome":"success","imageChars":2858},{"type":"papers:host:result","requestId":"304dfece-e7d4-4e78-938b-528667cc266b","outcome":"success","imageChars":0}]}
+PASS - duplicate request inside cache TTL returns the prior validated capture :: {"pixel":[217,45,45,255],"events":[{"type":"papers:project:window-thumbnail","requestId":"b10f1691-2ed8-4ee0-83ee-cfdfae9a43b0","imageChars":0},{"type":"papers:host:result","requestId":"b10f1691-2ed8-4ee0-83ee-cfdfae9a43b0","outcome":"success","imageChars":2858}]}
+PASS - expired cache recaptures the same HWND and exposes its new green pixels :: {"pixel":[32,201,107,255],"events":[{"type":"papers:project:window-thumbnail","requestId":"afd73f0b-9e16-4f06-b69a-7937c6e57ffd","imageChars":0},{"type":"papers:host:result","requestId":"561e097c-cd95-4ace-bb89-c165c8f5bbbc","outcome":"success","imageChars":0},{"type":"papers:host:result","requestId":"afd73f0b-9e16-4f06-b69a-7937c6e57ffd","outcome":"success","imageChars":2870},{"type":"papers:host:result","requestId":"71f24a09-c133-48bc-a7c5-e351f742e503","outcome":"success","imageChars":0}]}
+PASS - pointer-leave cancel before debounce emits no thumbnail request and clears preview :: []
+PASS - rapid A-to-B hover sends one latest request and renders only blue B :: {"pixel":[36,87,230,255],"events":[{"type":"papers:host:result","requestId":"b4cf2d9a-9f46-4f86-8df2-9ed7e384f024","imageChars":0},{"type":"papers:host:result","requestId":"0e952e54-ce03-4e9c-a432-7cca31933aba","outcome":"success","imageChars":0},{"type":"papers:host:result","requestId":"c79f921a-298f-418c-b3e6-f08918b285c2","outcome":"success","imageChars":0},{"type":"papers:project:window-thumbnail","requestId":"7d0a8fba-ccbe-4b53-9fe0-f965316b1699","imageChars":0},{"type":"papers:host:result","requestId":"7d0a8fba-ccbe-4b53-9fe0-f965316b1699","outcome":"success","imageChars":2846}]}
+PASS - minimized native window returns typed minimized and keeps icon/name-only fallback :: [{"type":"papers:host:result","requestId":"3db97939-d658-49c6-a733-2c0a383fbec7","imageChars":0},{"type":"papers:project:window-thumbnail","requestId":"a031f703-d841-4bdf-8f66-2682f51db802","imageChars":0},{"type":"papers:host:result","requestId":"a031f703-d841-4bdf-8f66-2682f51db802","outcome":"minimized","imageChars":0},{"type":"papers:host:result","requestId":"5278f4aa-91ef-4a4e-aec4-020f423e68cd","outcome":"success","imageChars":0},{"type":"papers:host:result","requestId":"00e6725a-e111-4948-95a2-6fa3205a4463","outcome":"success","imageChars":0}]
+PASS - closed native window returns typed missing and renders no fabricated thumbnail :: [{"type":"papers:project:window-thumbnail","requestId":"2ecebc06-6769-41b1-9010-40e6dc9bcd61","imageChars":0},{"type":"papers:host:result","requestId":"2ecebc06-6769-41b1-9010-40e6dc9bcd61","outcome":"missing","imageChars":0},{"type":"papers:host:result","requestId":"8d4815c3-f840-4fa7-9c5e-86712bda6661","outcome":"success","imageChars":0}]
+PASS - no durable thumbnail/data-PNG/imageUrl persistence :: []
+PASS - zero isolated Papers/helper descendants after graceful shutdown :: []
+PASS - creator Papers PIDs untouched :: before=[9528,31040,38372,43116,65344] after=[9528,31040,38372,43116,65344]
+PASS - foreign helper PID+parent set untouched :: before=["33508:31040"] after=["33508:31040"]
+PASS - zero exact disposable fixture windows :: 0
+PASS - finally: zero proven-owned survivors :: PID+CreationDate allowlist
+PASS - finally: zero exact fixture windows :: 0
+PASS - finally: creator Papers PIDs unchanged :: [9528,31040,38372,43116,65344]
+
+FINAL SUMMARY: 20/20 passed, 0 failed.

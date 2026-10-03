@@ -1,0 +1,23 @@
+at=expanded theme=dark transparent=false
+servedCurrent=group-bb780e1c-f500-4e2a-a430-ff7b542e0584
+ancestorShells=2 trailShells=5 totalShells=11
+currentFolderAbsent=true
+trail id=root name=As you Go ancestor=true opacity=0.5
+trail id=group-62 name=Real ancestor=true opacity=0.5
+trail id=shortcut name=LapSlop brotherhood ancestor=false opacity=0.5
+trail id=group-c5 name=Profiles ancestor=false opacity=0.5
+trail id=shortcut name=sync ancestor=false opacity=0.5
+ancestor id=root name=As you Go folderColor=var(--text) ring=rgb(242, 237, 226) fill=oklch(0.388272 0.0124056 none)
+ancestor id=group-62 name=Real folderColor=var(--text) ring=rgb(242, 237, 226) fill=oklch(0.388272 0.0124056 none)
+realItem id=shortcut kind=shortcut trail=false opacity=1 folderColor=none ring=rgb(242, 237, 226)
+shell id=root kind=group trail=true ancestor=true folderColor=var(--text)
+shell id=group-62 kind=group trail=true ancestor=true folderColor=var(--text)
+shell id=shortcut kind=shortcut trail=false ancestor=false folderColor=none
+shell id=shortcut kind=shortcut trail=false ancestor=false folderColor=none
+shell id=shortcut kind=shortcut trail=false ancestor=false folderColor=none
+shell id=group-15 kind=group trail=false ancestor=false folderColor=oklch(68% 0.18 286.9217831716628deg)
+shell id=shortcut kind=shortcut trail=false ancestor=false folderColor=none
+shell id=shortcut kind=shortcut trail=false ancestor=false folderColor=none
+shell id=shortcut kind=shortcut trail=true ancestor=false folderColor=none
+shell id=group-c5 kind=group trail=true ancestor=false folderColor=oklch(68% 0.18 241.9217831716628deg)
+shell id=shortcut kind=shortcut trail=true ancestor=false folderColor=none

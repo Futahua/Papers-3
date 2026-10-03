@@ -1,0 +1,3391 @@
+# C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
+
+## Tab mouse controls — 2026-09-05
+
+Creator request: middle-click closes the pointed tab; empty tab-header space
+must not initiate a group drag. WorkspaceDock routes middle auxiliary clicks
+through the existing close action and cancels Dockview group drag initiation.
+Individual tab dragging and header drop targets remain available.
+
+Typecheck and production build pass. The navigation E2E passed the new
+middle-close and empty-strip drag checks, then successfully dragged a tab to
+split; it subsequently failed at the previously reported sash persistence
+timeout. This change has not been installed or independently reviewer-audited.
+
+Last updated: 2026-09-07
+Persistent status: C1.1 synchronized surface/composed-window capture signed off at `b5a1fb6a46812d05b7aea25597123644ae23f7df`; C1.3 synchronized geometry, assertions, element capture, and semantic-key authority evidence are signed off through `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`; C1.4 baseline/diff core is signed off at `5e850881da809f9d301040ee1acddabe73c5aa43`; C1.5 bounded timeline and exact-surface ZIP report are signed off at `f5a67bfc40f690a5c7e551492ef533a308579e3b`; C1.6 non-packaged MCP boundary is signed off at `03d2ef7e4174d1620f833f3526f9183a39b42294`, with element-PNG reports at `ff890251b1b59e6a3e98a2d7d95a784dd52e8daa`, interrupted-report cleanup at `0114d5b6154db045d8814679dd5bc7ef52a5db1f`, cancellation closure at `e05286d5cb77a7e8adc6a737652e862ff41cb9c1`, and packaged visual success/failure plus stdio MCP acceptance signed off at `d977a2974beddd1ea94aade311c65ab9e29fec74`; the reviewed C1 core is complete, while only older live-fixture integration checklists remain outside this acceptance record
+Working branch: `agent/surface-context-routing`
+
+## Per-tab As You Go restore — 2026-09-07
+
+The former restart behavior restored every As You Go tab from one shared
+`view.currentGroupId`, which made all tabs reopen at the same folder. Papers
+now assigns each project surface an opaque stable `surfaceKey` that survives
+runtime `surfaceId` remapping. As You Go stores a bounded per-key
+`{ currentGroupId }` map, persists it at folder navigation and close flush,
+and merges concurrent keys without changing a peer tab's live location.
+
+Source commits: Papers `1a0c111` (with routing and test commits `2169b53`,
+`4f15267`); As You Go `ad3ac0f`.
+
+Validation: As You Go full suite 1,123/1,123 passing (4 skipped); Papers full
+unit suite 922/922 passing (4 skipped), focused routing/topology 64/64, and
+TypeScript typecheck passing. This source change is not installed in the live
+App; creator data and `docs/evidence/worker-comparison.json` remain untouched.
+
+### Live installation — 2026-09-07 10:06 local
+
+The creator explicitly authorized installation. The packaged directory build
+was installed into the actual desktop target
+`D:\Letters\MatTroiSeConMoc\Papers\App` (the running processes and shortcut
+resolve there; `Products\Papers\Runtime\App` is a separate historical copy).
+The prior live App is recoverable at
+`D:\Letters\MatTroiSeConMoc\Papers\Backups\before-live-install-20260907-100659`.
+
+Old executable SHA-256: `CAD588CDC70397AAEBB421FAD58650061ADF75FBEBF2FD5595E78CA015496BB4`.
+Installed executable SHA-256: `A0F4D5F8597C0188E577DEC58B323C625CA7DDC74D5F3E66B79D22D2936C233E`.
+The live As You Go `state.json` hash was identical before and after the swap;
+no `Data` files were modified. Papers relaunched successfully with a
+responsive main window.
+
+## Creator removes saved-layout menu — 2026-09-04
+
+The creator marked the title-bar Layouts button and rejected this feature.
+Remove the named-layout button, save/load popover, associated renderer state,
+handlers and styles. New Window, workspace tabs/splits, and existing saved data
+remain available. Existing host layout APIs retain compatibility; there is no
+creator-facing saved-layout menu. This supersedes the historical named-layout
+UI acceptance recorded below.
+
+Validation: typecheck and production build pass. The adapted named-layout
+compatibility test verifies that both native host windows omit the menu while
+saved data remains usable; workspace tab/split/move/close acceptance also
+passes (2 E2E files / 2 tests).
+
+## Backpack navigation and split resizing — 2026-09-04
+
+Backpacks now exposes a hover sidebar with a scrollable list of available
+Backpacks. A normal click selects the Backpack in the current Papers tab;
+middle-click opens it in a new tab. The same current-tab/new-tab contract is
+used by the main Backpacks picker. Navigation is serialized per host window,
+and a replacement transaction preserves the logical surface and split/group
+topology while flushing the previous project's durable state before retirement.
+If that voluntary flush rejects or times out, replacement fails closed and the
+old native presentation is restored; the old logical surface and topology are
+retained for retry.
+
+Dockview split borders are draggable. During a drag, native project views stay
+live and continue receiving their current bounds; the canonical root/group
+weights are committed when the gesture ends, preserving renderer identity and
+creator data. Tabs can also be dragged to a group's left/right/top/bottom drop
+zone to create the supported two-way split directly; the existing Dockview
+reorder path remains in place for tab-strip drops.
+The topology effect distinguishes an externally supplied canonical snapshot
+from a local update batched in the same render, so a user's resize or tab
+action cannot be silently skipped.
+Sash/tab interaction is disabled while a replacement transaction owns the
+mutation lock. The sidebar is also exposed on title-button focus, supports
+Escape dismissal, and offers Shift+Enter as a keyboard equivalent of
+middle-click new-tab activation.
+
+Validation is covered by `tests/e2e/backpack-navigation.e2e.ts` (synthetic
+Backpacks): current-tab replacement, middle-click tab creation, hover-sidebar
+selection and scrolling, vertical and horizontal split resizing, unchanged
+native WebContents identities, empty-selection retention, and absence of the
+removed Layouts control. Focused host routing tests cover deferred-close
+durability and cross-window/archived-target rejection.
+The runtime unit suite also proves a rejected voluntary flush restores the
+same native sender/presentation without closing it.
+
+Deployment checkpoint (creator-authorized, 2026-09-04): packaged and installed
+exact source `de0830d0dd3a5da12500b9c1478ba5237e21cca6` into the existing
+canonical `Runtime\App` using the NSIS installer (exit 0), then launched the
+live alias. The rollback snapshot is
+`Runtime\Backups\before-live-install-20260904-134820` (App, Data, and shortcut).
+Installed/package `app.asar` SHA-256 match:
+`957695A770212FFC63AD3161B58F71B92C216A9D9F5346A6477B4F0418D7FB3E`.
+The live Data tree digest is unchanged at
+`E2EF452E7B20F967032708B164C5F7546FDABB4B2F7EB9E57604FB69548B81EF`, and the
+desktop shortcut hash is unchanged at
+`97B9F14AE6FAFF9F41157A5582CBEAED3E091F212F5209F8389D5A8D9834B4EC`.
+Installer archive: `Runtime\Installers\Papers-Setup-1.3.11-66D9BB11.exe`.
+No Runtime\Data, creator data, or As you Go source was modified.
+
+### Live interaction follow-up — 2026-09-04 14:23 local
+
+The creator requested a floating Backpack picker and direct tab-drag splitting.
+Source commit `b06f94d61e97216e9cebbe839fb06581ac10edcd` adds the floating
+popover/hover bridge, keeps native panes rendered throughout sash drags, and
+routes a completed Dockview side drop through the existing Papers topology
+transaction. The focused development E2E matrix passes both
+`tests/e2e/backpack-navigation.e2e.ts` and `tests/e2e/workspace-tabs.e2e.ts`;
+typecheck and production build also pass.
+
+This exact source was packaged and installed into the creator-authorized live
+`Runtime\App` target with NSIS (exit 0), then launched normally. Installed
+`app.asar` SHA-256 is
+`5CFD43AADBB4CF663080EFF9C35BA81C081F228F923151166F9FB336ACBC7017`.
+The installer archive is
+`Runtime\Installers\Papers-Setup-1.3.11-b06f94d.exe` with SHA-256
+`C50B4073448090627A893B15D5EA375131285ABE2B478868D4A242DE289F8EEE`.
+Rollback is the App snapshot
+`Runtime\Backups\before-live-install-20260904-142259`.
+The live registry digest and desktop shortcut hash remain unchanged; no
+`Runtime\Data` file was intentionally modified.
+
+### Final reviewed live install — 2026-09-04 14:40 local
+
+The browser reviewer marked exact source `73371a289b88e4ab96a87cd7064ffdccaa6e5462`
+READY after auditing the fresh canonical-topology recovery and single-owner
+host-overlay composition. That exact package is now installed and launched in
+the live setup (NSIS exit 0). Installed/package `app.asar` SHA-256 match:
+`6848C7295FE3D3498F95B128B12BD101504B918B0B201BA70D27DD673DDFB08C`.
+Installer archive:
+`Runtime\Installers\Papers-Setup-1.3.11-73371a2.exe`, SHA-256
+`4BC93F882730D99724F2FDF04E6BCF5D716D12E0268BF0F73ABA9D4D59415D15`.
+Rollback snapshot:
+`Runtime\Backups\before-live-install-20260904-144003` (App only).
+The live registry and desktop shortcut hashes remain unchanged; no
+`Runtime\Data` file was intentionally modified.
+
+### Live overlay hardening follow-up — 2026-09-04 14:30 local
+
+Reviewer audit of the direct tab-drop candidate found two composition/race
+risks. Source commit `8f5a73e30ff0be85256fec64f7c478f5aad7e30f` closes them:
+host DOM is raised above native project child views only while a picker or
+Dockview side-drop overlay is active (sash resizing remains live), and a
+rejected renderer topology commit immediately rehydrates canonical main state.
+The prior Dockview one-flat-group side-drop policy, native surface identity,
+and existing reorder/sash paths remain unchanged. Typecheck, full unit suite,
+and both focused workspace E2Es pass after this correction.
+
+The corrected source was packaged and installed into the same authorized live
+`Runtime\App` target (NSIS exit 0) and launched normally. Installed/package
+`app.asar` SHA-256 match:
+`16A0C46534FE7EB717C154CEC34893A279913CD6FE7FAF52B90F14BA571AD8A0`.
+Installer archive:
+`Runtime\Installers\Papers-Setup-1.3.11-8f5a73e.exe`, SHA-256
+`3DCFC51717E472287CE66462D4D3EAE8755524DB9A4CDA98850DB21B42351AC3`.
+Rollback snapshot:
+`Runtime\Backups\before-live-install-20260904-143018` (App only).
+The live registry digest and desktop shortcut hash remain unchanged; no
+`Runtime\Data` file was intentionally modified.
+
+## Creator acceptance and positioning reversal — 2026-09-04
+
+Follow-up correction: the creator reported indefinite motion after `d15f717`.
+Its unconditional reheat let periodic coordinated position saves restart the
+simulation on every render. As you Go
+`4e27ba22799977ad167498808f8c0c33d419ab50` now reheats only when physical layout
+inputs change (entry, topology, sets, pins, node size or viewport), while ordinary
+position/status updates allow cooling. Entry still starts physics; this does
+not restore the rejected saved-position freeze. All 1,116 unit tests and 8
+visual pretests pass. A two-native-window synthetic test with six folders and
+overlapping sets fails on `d15f717` and passes with the fix against installed
+Papers: after 12 seconds, node transforms stay unchanged for 3 further seconds,
+and all six positions are saved. The live bound project contains the correction;
+existing tabs need reopening. No creator data or Papers binary was changed.
+
+The creator confirms that multiple-window interactions work well, and requests
+restoring positioning from before the "already settled on entry" change.
+As you Go commit `d15f717a79a7dc55bde0526b788d9fb144921230` removes the
+simulation-freeze rule introduced at `f10c6df` and its later topology guards.
+Entry and updates again reheat the physics simulation from remembered starting
+coordinates. Coordination, state merging, durable save queues and close-time
+flushes are retained. This is a project-only change in the live bound project;
+existing tabs must be reopened to load it. Papers was not rebuilt or restarted.
+
+Validation: 1,114 project unit tests pass, plus 8 visual pretests. The new
+production-function entry tests fail twice before the revert and pass afterward.
+Packaged visual acceptance reaches rendering and capture but fails its saved
+PNG hash check both before (`f4e2c42`, isolated checkout) and after this change.
+That existing baseline gate is not signed off by this correction, and no
+baseline was overwritten. No creator state file was edited.
+
+## Post-C1 transparency incident — 2026-09-03
+
+The creator's live screenshot shows an opaque project rectangle despite enabled
+window transparency. Isolated Electron reproduction against `bc790a6` found
+three opaque host ancestors beneath the native project: `.workspace-dock`
+(`rgb(239, 237, 231)`), `.dv-grid-view.dv-dockview` (white), and `.dv-groupview`
+(white). Dockview's theme root declares `--dv-group-view-background-color`;
+the host's older `--dv-background-color` does not clear those layers.
+
+The correction clears the workspace background and overrides the group color
+on the actual Dockview theme root only when window transparency is enabled.
+No native window architecture or independent Backpack behavior is changed.
+An earlier uncommitted BrowserWindow/BrowserView prototype was backed out;
+an old Electron issue is not evidence that current Electron lacks transparency.
+
+`tests/e2e/workspace-transparency.e2e.ts` fails before the correction with the
+three opaque ancestors and passes afterward. It uses a synthetic profile and
+neutral project, verifies the project capture's alpha is zero, checks the full
+host ancestor chain, and captures actual host pixels over two synthetic colors.
+It also checks opaque mode remains opaque. The fix is now installed and the
+creator has confirmed the live desktop appearance. The earlier C1 opaque-fixture
+acceptance did not cover this transparent workspace regression.
+
+Validation: typecheck, production build, 88 passing unit files / 865 passing
+tests (1 file / 4 tests skipped), focused workspace-transparency, workspace-tabs,
+and project-visual-diagnostics Electron tests (3/3), and diff check pass.
+Reviewer checkpoint: **SOURCE-AUDITED SIGNED OFF** for the host-layer fix at
+exact pushed SHA `ae53fcb33e92f70ff7565236ae35b354b8acf1a9`. The reviewer found
+no concrete defect or missing host-layer proof and accepted the scoped CSS,
+real pixel regression, and bounded incident claims. Deployment and real
+installed desktop-compositor validation remain outstanding, not implied by
+this sign-off. Live installation, running app, and creator data are unchanged;
+`docs/evidence/worker-comparison.json` remains untouched and unstaged.
+
+Deployment checkpoint (creator-authorized, 2026-09-03): built the local installer
+from `58cde5e53b1c4f42e0a1f2087881175ff356f7ab` (reviewed code remains
+`ae53fcb33e92f70ff7565236ae35b354b8acf1a9`), closed the old live process
+gracefully, and installed into the existing canonical `Runtime\App` using NSIS
+(exit 0). No version bump or publication. Previous app preserved at
+`Runtime\App.backup-before-transparency-20260903-1104`; installer archived at
+`Runtime\Installers\Papers-Setup-1.3.11-58cde5e5.exe`. Installed/package
+`app.asar` SHA-256 match:
+`2ECEB7EB15CC3FE6C21F2A9E8FC0DF81CFC63A961C243149C7305CE2E7A3C6DE`.
+Settings and As you Go `state.json` hashes are unchanged across installation.
+The transparency E2E passes against the installed executable with an isolated
+synthetic profile. The existing desktop shortcut was preserved and used to
+launch a fresh live process (PID 45560, start 2026-09-03 12:57:43 local).
+The creator confirmed the desktop-compositor appearance after restart; no
+Windows desktop control or capture was performed by the agent.
+
+## Debugging-pipeline research — reviewer follow-up, 2026-09-03
+
+### Main installation updated — 2026-09-03 16:02 local
+
+The creator authorized updating the main installation. Built an unpublished
+NSIS installer from `3e28b7ac64bf4b9e71cb000e368d8d4b6376d8f4`, keeping version
+1.3.11. The embedded stamp is `3e28b7a+local` because the preserved, unbundled
+`docs/evidence/worker-comparison.json` modification remains in the checkout.
+Build timestamp: `2026-09-03T09:00:48.820Z`.
+
+The old app exited gracefully. App/Data backups, the external As you Go state,
+and the desktop shortcut were preserved under
+`Runtime/Backups/before-debug-update-20260903-1602`. NSIS installed into the
+existing `Runtime/App` with exit code 0. The installer was archived as
+`Runtime/Installers/Papers-Setup-1.3.11-3e28b7a.exe`; no publication occurred.
+Installed and packaged `app.asar` SHA-256 match:
+`499446651E026A2373CFB1486B24378F4259321D0352058E13CA10B7F6B8E407`.
+
+Settings, registry, workspace topology, project registry, As you Go state, and
+desktop shortcut hashes were unchanged across installation. Both project visual
+diagnostics (including MCP) and workspace transparency E2Es passed against the
+unpacked package and again against the installed executable, using isolated
+synthetic profiles. The existing desktop shortcut launched the updated live
+app (PID 43436, start 2026-09-03 16:02:28 local). Normal launch remains normal;
+developer control still requires an explicitly diagnostic launch. Client tools
+remain in the source checkout. No desktop-compositor capture was performed.
+
+### Live installation refreshed — 2026-09-04 10:15 local
+
+The creator requested the current signed source be put into the live setup while
+preserving the real profile. Built an unpublished Papers 1.3.11 NSIS installer
+from source HEAD `c6dfb2d0f1657922bb8eed8efbebfbe315d636f6` (code through
+`517cf1c61c3bfa6ae0b0d1ace44dd24bef690372`). The preserved
+`docs/evidence/worker-comparison.json` modification means the local build stamp
+is `c6dfb2d+local`; no publication occurred.
+
+The running app exited gracefully. The previous installed App and the complete
+live Data profile were copied to
+`Runtime/Backups/before-live-install-20260904-101418`, and the installer was
+archived as `Runtime/Installers/Papers-Setup-1.3.11-c6dfb2d.exe`. NSIS then
+installed into the existing `Runtime/App` target (exit code 0). Installed and
+packaged `app.asar` SHA-256 match:
+`47383EA58451864E0CAFA741F1BC347CD4B6AE8B1F4B93CB74E8AD21AB063830`.
+The archived installer SHA-256 is
+`FD2E85C6456484E986E79EF314BA4429DBDD9A0C6C371C3D7121C047C1733BD7`.
+
+All 192 live Data files have identical hashes before and after installation;
+the As you Go `state.json` remains the creator's live file. The existing desktop
+shortcut still targets `D:\\Letters\\MatTroiSeConMoc\\Papers\\App\\Papers.exe`,
+which is the junction-backed live App. The refreshed executable launched
+normally with the real profile (PID 28368, start 2026-09-04 10:14:53 local).
+
+### Reviewed pipeline scope
+
+The audit found C1 complete and no transparency blocker. The existing stack can
+already identify the exact process/window/surface, subscribe to lifecycle and
+diagnostic events, inspect semantic geometry, capture window/surface/element
+pixels, create a bounded report, and reconstruct/hash its artifacts through
+MCP when Papers was launched with `PAPERS_DEV_CONTROL=1`.
+
+Ranked follow-ups for the easiest reliable workflow:
+
+1. **Read-only diagnostic runner/evidence bundle (highest value, lowest risk).**
+   Compose process check, exact target selection, lifecycle subscription,
+   bounded event wait, `capture.window`, `visual.report.create`, artifact
+   reconstruction, and SHA verification into one runner. This is tooling over
+   existing reviewed semantics, not a new authority surface.
+2. **Exact-target event-driven wait for MCP.** Add a bounded control-side wait
+   primitive only if MCP callers need it; retain the thin MCP forwarder.
+3. **Read-only live baseline comparison.** Connect the reviewed baseline core to
+   live capture/control without automatic baseline blessing.
+4. **Predefined host-layer inspection.** Add only if host-composition incidents
+   recur; do not reopen arbitrary renderer execution or selectors.
+5. **Longer bounded client-side incident transcript.** Preserve slow/intermittent
+   context without enlarging Papers' ordinary 10-second history.
+
+Reviewer checklist execution is now active in ordered tranches. P1's
+read-only runner is implemented and signed off at
+`886bbda6dd192e5264bfa5d2ccae7713d55e5f8b`; P2's generic bounded
+`visual.wait` implementation is signed off at
+`e9e03066aa34e708de4f19df0b8f120870fda2e5`; P3's read-only live baseline
+comparison is signed off at `6d7064008b6f1f928e10c19c419241603c9acf45`.
+P4's bounded incident transcript is signed off at
+`288d07be4cb79e60c57cbd3521d430293407197d`. P5 host-layer inspection was
+evaluated and is **not triggered**: the transparency incident already has a
+source-audited host-layer correction, and no new host-composition diagnosis gap
+remains. No As you Go changes are scheduled without a concrete project-local
+bug.
+
+Reviewer checklist completion (2026-09-03):
+
+* [x] P1 read-only diagnostic runner/evidence bundle — signed off at
+  `886bbda6dd192e5264bfa5d2ccae7713d55e5f8b`.
+* [x] P2 exact-target bounded `visual.wait` — signed off at
+  `e9e03066aa34e708de4f19df0b8f120870fda2e5`.
+* [x] P3 read-only live baseline comparison — signed off at
+  `6d7064008b6f1f928e10c19c419241603c9acf45`.
+* [x] P4 bounded client-side incident transcript — signed off at
+  `288d07be4cb79e60c57cbd3521d430293407197d`.
+* [x] Conditional P5 host-layer inspection evaluated; no new recurrence, so no
+  additional scope is authorized or required.
+
+The reviewer-defined debugging-pipeline agenda is complete. This completion
+does not authorize installation, release, publication, automatic baseline
+blessing, or mutation of creator data.
+
+The first two items are Papers-generic. Additional semantic keys, summaries,
+fixtures, or reproduction actions belong in an independent Backpack only when a
+concrete Backpack bug requires them. Making ordinary creator-launched Papers
+always attachable, automatic restart/termination/install/release, mutating
+debugging, arbitrary JavaScript/filesystem inspection, desktop capture, or
+automatic baseline updates remain out of scope and require separate creator
+authorization. The only current friction blocker is that normal Papers runs do
+not expose C1; the safe interim workflow is an explicitly authorized diagnostic
+restart plus the read-only runner.
+
+This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
+
+## Multi-session reviewer continuation
+
+If the in-app reviewer reaches its message limit before issuing a verdict,
+open a fresh ChatGPT reviewer session and provide enough context to continue
+the same gate. Include:
+
+* the active agenda slice and the concrete question still awaiting review;
+* the repository/branch and exact pushed commit SHA;
+* a remote commit link, for example
+  `https://github.com/Futahua/Papers-3/commit/<sha>`, plus the branch link
+  `https://github.com/Futahua/Papers-3/tree/<branch>`;
+* the relevant validation results, user-owned dirty files that must remain
+  untouched, and the standing no-release/install/package boundary;
+* the prior reviewer’s concrete blocker or sign-off and the smallest requested
+  correction, if any.
+
+Do not treat a message-limit notice as a sign-off. Do not start the fresh
+session while the prior response is still generating. After sending the
+context, use one bounded internal completion watcher that requires
+`Stop answering` to appear and then disappear; read the response only after
+that watcher finishes. If the prior tab was released, reclaim the exact
+reviewer URL or use the newly created session, and keep the same exact-SHA
+review/validation loop.
+
+### One-shot watcher contract
+
+The watcher is one deferred operation attached to the still-live initiating
+turn. It owns the quiet sampling loop internally (about once per second),
+rather than returning unchanged browser state to the model or creating a
+recurring automation that sends messages. It must observe both transitions:
+
+1. `Stop answering` appears, proving generation actually started;
+2. `Stop answering` disappears, proving that generation finished.
+
+Use the following session-local shape, with a generous bounded timeout and no
+browser reads between samples:
+
+```js
+async function waitForReviewerCompletion(
+  tab,
+  { intervalMs = 1000, timeoutMs = 30 * 60 * 1000 } = {},
+) {
+  const startedAt = Date.now();
+  let sawGenerating = false;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const generating =
+      (await tab.playwright
+        .getByRole('button', { name: 'Stop answering' })
+        .count()) > 0;
+    sawGenerating ||= generating;
+
+    if (sawGenerating && !generating) {
+      return { status: 'finished', elapsedMs: Date.now() - startedAt };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return { status: 'timeout', elapsedMs: Date.now() - startedAt };
+}
+```
+
+The outer deferred operation must await this function and call the
+orchestration `notify(...)` channel exactly once with its result. Only after
+that wake-up may the task read the completed response, act on it, and start a
+new watcher after sending another reviewer message. Keep the same task turn
+alive while the watcher is pending: finalizing early can release the claimed
+in-app tab and leave the watcher with `Tab not found`. If that happens,
+reclaim the exact reviewer URL from `browser.user.openTabs()` before starting
+a replacement watcher. A timeout is a monitoring result, not a reviewer
+verdict; do not claim sign-off or send a duplicate message.
+
+## Milestone purpose
+
+Papers is primarily a visual rendering and user-experience application. Logical correctness alone is therefore insufficient evidence of product correctness.
+
+The Papers 1.3.11 incident demonstrated the gap clearly: persistent state could contain the expected document, Papers could prove logical surfaces and topology, and the application could still visibly render an empty document. Diagnosis required manual screenshots, Windows accessibility inspection, repeated restarts, process inspection, and temporary project instrumentation. A junction-launched stale Electron process further made apparent restarts unreliable until process identity was understood independently of path strings.
+
+C1 makes the rendered result itself a first-class, semantically inspectable part of Papers' control plane.
+
+This plan authorizes **planning and later implementation of visual observability only**. It does not authorize release, installation, publication, unrelated UX features, arbitrary renderer execution, broad filesystem access, or mutation of creator data for diagnostics.
+
+---
+
+# 0. Non-negotiable invariants
+
+These apply to every C1 phase.
+
+* [x] **Rendered evidence is independent evidence.** A valid logical topology, document file, or state revision must never be treated as proof that the corresponding UI rendered successfully.
+* [x] **Diagnostics are read-only with respect to creator data.** Captures, timelines, visual reports, fixtures, and baselines must never rewrite Backpack/project documents or state files.
+* [x] **No diagnostic recovery by mutation.** A failed capture must not reload, normalize, rewrite, migrate, reopen, restart, or otherwise alter the user's document merely to obtain evidence.
+* [x] **No continuous polling.** Readiness and changes are event-driven through Electron lifecycle events, renderer observers, explicit project hydration signals, and bounded timeouts.
+* [x] **No path-string restart inference.** Process freshness is established from PID + start/instance identity + build identity and canonical executable identity. Junction/symlink spelling is not process identity.
+* [x] **Exact surface authority remains mandatory.** Visual operations name explicit `windowId`/`surfaceId` targets and resolve through existing Papers authority. No “active”, “current”, “first”, or “only surface” inference.
+* [x] **No arbitrary JavaScript control operation.** Renderer observation uses predefined Papers-owned observation code and strict schemas only.
+* [x] **No new broad filesystem API.** Generated visual artifacts live in a Papers-owned diagnostic artifact store and are addressed by opaque artifact IDs.
+* [x] **No secret-bearing raw transport leakage.** Tokens, descriptor contents, sender/WebContents IDs, native handles, install roots, arbitrary URLs, query strings, project filesystem roots, and hidden form secrets stay outside control/MCP output.
+* [x] **Observation must fail separately from product state.** If visual observation breaks, the user's existing runtime remains authoritative and untouched.
+* [x] **Bound every operation.** Snapshot stabilization, timeline collection, report construction, artifact retention, DOM summaries, event buffers, console buffers, and retries all have explicit upper bounds.
+* [x] **One reviewed gate at a time.** Each C1.x phase receives exact-SHA review and sign-off before the next phase begins.
+
+---
+
+# 1. Host-generic vs project-specific ownership
+
+## Papers host-generic responsibilities
+
+Papers owns all reusable visual-debug infrastructure:
+
+* native window/surface targeting;
+* synchronized screenshots;
+* process/build/start identity;
+* renderer lifecycle observation;
+* bounded console/error/resource diagnostics;
+* generic DOM/accessibility projection;
+* semantic element registration contract;
+* stable geometry calculations;
+* visual assertions;
+* diagnostic artifact storage;
+* visual timelines;
+* control protocol schemas;
+* MCP transport exposure;
+* deterministic fixture harness infrastructure;
+* baseline storage/update mechanics;
+* packaged Electron acceptance.
+
+Papers must not know that a particular project contains groups, shortcuts, graph nodes, canvases, or any As-you-Go-specific concepts.
+
+## Project responsibilities
+
+A project may optionally contribute only generic observability signals:
+
+* opaque document/state revision;
+* `state-hydrated` success/failure signal;
+* stable semantic element keys;
+* safe project-defined summary counters;
+* deterministic project fixture data;
+* project-owned visual assertions and screenshot baselines.
+
+Those integrations live in the project repository.
+
+## As you Go specifically
+
+As you Go may use C1 once the generic Papers contract exists, but:
+
+* [x] no `As you Go` ID, filename, schema, group model, shortcut model, or rendering behavior is embedded in Papers;
+* [x] its existing state-envelope fix remains project-owned;
+* [x] its regression fixture uses copied synthetic fixture state, never creator `state.json`;
+* [x] Papers generic tests use a neutral diagnostic fixture project instead.
+
+Companion implementation checkpoint: the independent As you Go project consumes the
+generic hydration/failure bridge and publishes bounded model counters only after
+versioned state installation at exact pushed SHA
+[`1299560`](https://github.com/Futahua/as-you-go-backpack/commit/1299560cd7753cc205b8255b15f3b54b2941c698).
+Its packaged acceptance runs the real production renderer from persisted synthetic
+`state.json`, proves exact semantic-key geometry, enforces the 1280x800/en-US/light/
+Segoe UI profile and 1280x760 surface baseline, and retrieves both healthy and
+failure reports with SHA-256 plus lifecycle/diagnostic evidence. Its full project
+suite passes 1,055 tests, explicit packaged acceptance passes 1/1, and live
+`state.json` is unchanged. No As-you-Go-specific logic was added to Papers and no
+release/install action is authorized by this checkpoint.
+
+### As you Go multi-surface coordination closure (2026-09-03)
+
+Deployment checkpoint (creator-authorized, 2026-09-03 22:46 local): the live
+As you Go project resolved to `f19842afc0fc15de2832a4c6d9f12ad75ed335b9` at
+installation time. A subsequent real two-window reproduction showed that the
+synthetic/project-local signoff did not prove live transport convergence.
+Built an unpublished Papers 1.3.11 NSIS installer from `bab2872bc399a77beb8bc4485eabb94bac64797e`,
+including the generic project-owned new-surface routing changes. Build stamp is
+`bab2872+local` (the protected, unbundled worker-comparison evidence remains dirty),
+timestamp `2026-09-03T15:43:49.123Z`. Installed into canonical `Runtime/App` with
+exit 0, without publication or version bump. Backup:
+`Runtime/Backups/before-coordination-update-20260903-2244` (App, Data, As you Go
+state and desktop shortcut). Installer archived at
+`Runtime/Installers/Papers-Setup-1.3.11-bab2872.exe`.
+Installed/package app.asar SHA-256:
+`BF8326D5582F7E2C1955BFAC66A913106AFF6CC6D019D14F45106781C16AD47B`.
+All 194 profile files, external As you Go state and desktop shortcut hashes
+were unchanged across installation before normal launch. Typecheck and three
+packaged Electron tests (workspace tabs/new-surface routing, transparency and
+project visual diagnostics) passed, then the same three passed against the
+installed executable, each using synthetic profiles. The unchanged desktop
+shortcut launched live PID 31924 at `2026-09-03T22:46:22+07:00`. Normal launch
+does not enable developer control; installed synthetic tests do not claim a
+desktop-compositor or live creator multi-window interaction audit.
+
+The independent As you Go project has the intended all-window document
+pipeline: one durable Web-Lock writer with CAS protection, ordered optimistic
+queue/ACK handling, generation invalidation and promotion recovery, authoritative
+base tracking, stable prompt/entity merge semantics (including move/reorder,
+subtree relocation and deletion wins), and surface-local navigation, selection and
+trail expansion. The browser reviewer later marked the live integration
+**NOT SIGNED OFF**: the transport/session scope is not yet observable in real
+Papers windows, and a follower failure could strand an optimistic mutation.
+The follower recovery correction, race fences, generation cleanup,
+lock-safe conflict recovery, durable-timeout/rebase recognition, and
+writer-cancellation fence are now pushed at exact SHA
+[`7cabe18`](https://github.com/Futahua/as-you-go-backpack/commit/7cabe188ab9421e3bb96734af2c228c20c7a68cf).
+
+* [x] queued optimistic edits are protected in coordinator tests; live transport
+  convergence remains unproven after the real reproduction;
+* [x] follower failure and writer promotion are explicit and recoverable in
+  the project-local coordinator tests; live follower recovery is hardened at
+  `7cabe18` but still needs installed two-window proof;
+* [x] prompt moves, inserts, reorders, subtree edits and identity deletion
+  converge deterministically;
+* [x] every open surface is designed to update shared actions while retaining
+  its own view;
+* [ ] installed two-native-window native/compositor acceptance remains open;
+  the reviewer source hardening audit is complete and signed off.
+
+Validation before the recovery correction at `f19842a`: `npm test` passed 1,083
+tests with 0 failures and 0 skips; focused coordinator coverage was 42 tests and
+store coverage 29 tests. After the recovery/race/authority correction at
+`7cabe18`, the coordinator+store targeted suites are 96/96 and the full suite
+passes 1,111 tests with 0 failures and 0 skips. The remaining release gate is
+a cloned-real-profile,
+installed-app matrix with two native Papers windows, identity/session/channel
+telemetry, follower-originated mutations, and deterministic missed-message
+recovery. This does not authorize another installation or creator-data mutation.
+
+---
+
+# 2. Phase order
+
+Priority is determined by diagnostic information gained per unit of implementation risk.
+
+1. **C1.1 — Atomic synchronized visual snapshot + canonical process identity**
+2. **C1.2 — Renderer lifecycle, hydration, console and failure observability**
+3. **C1.3 — Semantic elements, element capture and geometry assertions**
+4. **C1.4 — Deterministic visual fixtures and screenshot baselines**
+5. **C1.5 — Bounded visual timeline and self-contained debug report**
+6. **C1.6 — Full control/MCP agent workflow and packaged closure**
+
+C1.1 is deliberately first because a single synchronized surface capture would have answered the central 1.3.11 question immediately:
+
+> “The logical document says X; what exact process is running, what revision did this renderer hydrate, and what is visibly on screen right now?”
+
+---
+
+# C1.1 — Atomic synchronized visual snapshot + canonical process identity
+
+## User-visible capability
+
+An authenticated agent can request one bounded capture of a real Papers window or project surface and receive one correlated observation containing:
+
+* PNG screenshot;
+* exact `windowId` / `surfaceId`;
+* workspace topology revision;
+* opaque project/document state revision when reported;
+* render-cycle identity;
+* safe DOM/accessibility summary;
+* stable semantic element bounds already registered by the project;
+* current presentation state;
+* process/build/start identity;
+* capture consistency status.
+
+Initial commands:
+
+```text
+capture.window
+capture.surface
+```
+
+`capture.element` is reserved for C1.3.
+
+## Architectural boundary / likely owner
+
+**Main-process owner:** new Papers-owned visual observation service, composed from `src/main/index.ts`.
+
+Likely separation:
+
+```text
+src/main/visual/
+  visualObservationService.ts
+  visualArtifactStore.ts
+  processIdentity.ts
+  visualSchemas.ts
+```
+
+Existing integration points:
+
+* Papers window registry for exact native ownership;
+* logical surface registry;
+* workspace topology + revision maps;
+* `BackpackProjectRuntime` / surface collection for exact WCV;
+* project preload for predefined renderer observation;
+* `papersControlProtocol.ts` for safe control exposure.
+
+The main process remains canonical. The renderer reports observation facts; it never decides which logical surface it represents.
+
+## Synchronization contract
+
+A capture must not casually combine evidence from different render states.
+
+For a surface capture:
+
+1. resolve exact live `{windowId,surfaceId}`;
+2. record topology revision and process instance identity;
+3. request renderer observation with fresh `captureId`;
+4. renderer waits only for bounded requested readiness;
+5. renderer returns:
+
+   * document revision;
+   * render cycle;
+   * layout epoch;
+   * DOM/accessibility projection;
+   * semantic bounds;
+6. main captures the exact WCV PNG;
+7. main obtains a cheap post-capture fence:
+
+   * document revision;
+   * layout epoch;
+   * render cycle;
+8. main rechecks topology revision and exact sender/surface binding;
+9. snapshot is accepted only if the pre/post identities agree.
+
+One bounded retry is permitted when state changes during capture. A second mismatch returns an explicit unstable result.
+
+No indefinite “wait until things stop changing”.
+
+## Proposed API schema
+
+```text
+capture.surface
+input:
+  windowId: integer
+  surfaceId: string
+  settle:
+    mode: "layout-stable" | "immediate"
+    timeoutMs: 0..5000
+  include:
+    domSummary: boolean
+    accessibilitySummary: boolean
+    semanticBounds: boolean
+
+output:
+  captureId: UUID
+  target:
+    windowId
+    surfaceId
+    projectId
+  observedAt: datetime
+  consistency:
+    status: "stable" | "unstable"
+    reason?: "layout-changed" | "state-changed" | "topology-changed" |
+             "renderer-replaced"
+  process:
+    pid
+    appInstanceId
+    startedAt
+    build:
+      version
+      commit
+      packaged
+    executableIdentity:
+      canonicalFileId
+  revisions:
+    workspaceTopologyRevision
+    documentStateRevision: string | null
+    renderCycleId: string | null
+    layoutEpoch: integer | null
+  presentation:
+    "visible" | "hidden" | "not-created"
+  summary:
+    documentTitle?
+    viewport
+    visibleNodeCount
+    semanticElements[]
+    accessibilityNodes[]
+  png:
+    artifactId
+    mimeType: "image/png"
+    size
+    sha256
+```
+
+`capture.window` follows the same envelope but reports the actual composed native window and the set of currently visible logical surfaces.
+
+## Canonical process identity
+
+Papers must introduce an identity that survives path aliases but distinguishes actual process instances.
+
+Internal identity should include:
+
+```text
+pid
+appInstanceId: random UUID generated once at process start
+startedAt
+build.version
+build.commit
+executableCanonicalFileId
+```
+
+On Windows, `executableCanonicalFileId` should derive from file/volume identity or equivalent canonical handle-based identity, not the input pathname.
+
+Raw canonical filesystem paths do not need to cross control.
+
+## Current implementation slice
+
+The first bounded slice is intentionally below the control/API boundary. It
+establishes the identity and comparison primitives that a later observation
+service must use, without pretending that a screenshot is coherent merely
+because one request completed:
+
+* [x] `src/main/visual/processIdentity.ts` records PID, process-lifetime
+  app-instance ID, process start time derived from `process.uptime()`, safe
+  build identity, and a lossless BigInt-backed stat dev/ino executable identity
+  after `realpath`.
+* [x] `src/main/visual/visualObservation.ts` compares the pre/post capture
+  fences and returns an explicit unstable reason on any identity, topology,
+  document, render-cycle, or layout change.
+* [x] aliases are tested against the file identity rather than pathname
+  equality; realpath/stat failure reports `{ status: "unavailable" }` while
+  preserving PID/app-instance/start evidence and never blocks control startup.
+  A zero Windows volume identity is also treated as unavailable; inode alone is
+  not enough to claim a globally canonical file identity.
+* [x] mismatch priority is process identity, exact target, sender binding,
+  topology, document/render state, then layout, so renderer replacement cannot
+  be misreported as ordinary layout churn.
+* [x] compose the identity once in the opt-in main-process control plane and
+  expose only the redacted `inspect.process` query; ordinary Papers runs do
+  not initialize the diagnostic identity.
+* [x] implement the bounded renderer observation and native PNG capture.
+* [x] expose the read-only `capture.surface` and composed `capture.window`
+  commands only after their synchronized services exist.
+
+### Current per-surface observation tracker (active C1.1 work)
+
+The diagnostic ring is historical evidence, not the current capture fence.
+The tracker must retain, per exact live project surface:
+
+```text
+windowId
+surfaceId
+currentSenderGeneration
+renderCycleId
+documentStateRevision | null
+domReady
+hydrated
+firstPaint
+layoutEpoch
+layoutStable
+renderFailed
+```
+
+* [x] did-start-loading starts a new cycle and clears document/readiness state;
+* [x] hydration, paint, layout-epoch, and layout-stable signals apply only to the current sender and accepted document instance;
+* [x] a new layout epoch invalidates prior layout-stable state;
+* [x] replacement/gone invalidates current state;
+* [x] cross-window adoption and rollback re-establish the exact generation;
+* [x] no capture infers current state by searching historical diagnostics.
+
+Implementation checkpoint: pushed head [`b5a1fb6`](https://github.com/Futahua/Papers-3/commit/b5a1fb6a46812d05b7aea25597123644ae23f7df)
+adds the main-issued per-navigation document token, buffered scoped
+observations, exact sender/document fences, layout-epoch invalidation,
+immutable pre/post surface snapshots, bounded renderer replacement retries,
+process-ephemeral artifact cleanup, and the composed native-window capture
+slice. `capture.window` obtains the exact `BaseWindow.getMediaSourceId()`,
+matches it against Electron's `desktopCapturer` window sources, records the
+thumbnail's actual pixel dimensions, snapshots the native bounds/topology and
+visible surface revisions, and retries once on any member/window change. The
+same opaque artifact store and post-write deletion fence are used for both
+surface and window captures. Focused deterministic tests cover exact source
+matching, timeout/bounds rejection, stable capture, state-change retry, and
+protocol dispatch. Validation: `npm run typecheck`, `npm test` (84 files:
+836 passed, 4 skipped), build, focused visual diagnostics E2E, focused composed
+window E2E with two same-title windows, and `git diff --check` all pass. The
+full E2E aggregate remains non-green only in the previously recorded
+permission/fixture-sensitive suites; no release/install/package action was run.
+
+The older pre-capture checkpoints above are retained as history. The active
+implementation checkpoint is `b5a1fb6`; packaged/alias proof and later
+geometry/assertion layers remain unchecked until the reviewer clears this
+capture gate.
+
+Reviewer checkpoint: **SIGNED OFF** for the process-identity/fence foundation
+at pushed head `58b27f6cb7ef4dca1a9ef2f99dbd06c7d1d0c468`. The reviewer found no
+remaining defect in this narrow slice after the `dev:0n` correction. Source was
+inspected from the pushed branch; validation reported 34/34 focused tests,
+typecheck, and `git diff --check`. Renderer capture/API remain intentionally
+unclaimed and are the next C1.1 work.
+
+Reviewer checkpoint: **SIGNED OFF** for the C1.3 semantic-key
+identity/surface-local-authority foundation at exact pushed head
+`d440466b87d4234339b3fb5dd0ac6845b0be7fa8`. The reviewer accepted bounded
+opaque keys, duplicate/invalid-payload atomicity, predefined attribute-only
+observation, exact sender-derived targeting, surface isolation, generation and
+navigation invalidation, exact-surface retirement, prepared-sender refusal,
+cross-window/rollback recovery, and diagnostic-refresh failure isolation.
+Validation for the accepted correction included `npm run typecheck`,
+`npm test` (78 files: 812 passed, 4 skipped), build, focused Electron E2E, and
+`git diff --check`. The user-owned
+`docs/evidence/worker-comparison.json` remained untouched and unstaged.
+
+The next active gate is C1.1 capture infrastructure. Its correction-tranche
+checklist is:
+
+* [x] canonical current per-surface observation state, independent of the
+  historical diagnostic ring;
+* [x] fixed bounded renderer fence request/response with capture correlation;
+* [x] Papers-owned opaque artifact store with atomic finalize and bounded reads;
+* [x] synchronized `capture.surface` and composed `capture.window` control
+  commands, with exact native source matching and actual pixel dimensions;
+* [x] exact-target, retry, instability, no-mutation and artifact-integrity
+  deterministic evidence;
+* [x] service-level rejection of a native image whose source ID is foreign to
+  the exact requested Papers window;
+* [x] same-renderer document/render identity changes classified as
+  `state-changed`, distinct from sender-generation replacement;
+* [x] focused Electron proof reconstructs `capture.window` through bounded
+  `visual.artifact.read` chunks and verifies size plus SHA-256;
+* [x] packaged/alias/restart acceptance evidence;
+* [x] exact-SHA reviewer sign-off before advancing to geometry/assertions.
+
+Reviewer checkpoint: **SIGNED OFF** for the synchronized `capture.surface`
+slice at exact pushed head `d25b5d643092b3a32e7e2836b7cea10d16c370d3`.
+The reviewer accepted the main-issued navigation token, exact renderer fence,
+layout epoch, immutable summaries, renderer-churn retry, and artifact cleanup.
+The composed `capture.window` implementation and this hardening tranche are
+now at `b5a1fb6a46812d05b7aea25597123644ae23f7df` and are awaiting their own exact-SHA review; do not advance
+to geometry/assertions until that review is explicit.
+
+### Required invariant
+
+Two launches of the same executable through:
+
+```text
+real path
+junction alias
+symlink alias
+```
+
+may have the same executable file identity but are fresh only if their PID/start/app-instance identity differs.
+
+## Security / redaction / authority
+
+* exact existing window/surface authority only;
+* no sender IDs or WebContents IDs in output;
+* no filesystem paths;
+* no raw descriptor/token;
+* no arbitrary selector;
+* DOM/AX projection has hard node/count/size limits;
+* password/value-bearing inputs always redact value;
+* hidden form state is omitted;
+* script source URLs and project roots are omitted;
+* screenshot is an explicit local authenticated operation and may naturally contain whatever is visibly rendered;
+* screenshot capture never expands into hidden document content.
+
+## Deterministic tests
+
+* [x] exact foreign/retired surface rejected;
+* [x] two surfaces of same project remain distinguishable;
+* [x] screenshot and semantic snapshot carry same capture ID;
+* [x] topology revision change during capture produces unstable/retry, never false stable;
+* [x] document revision change produces unstable/retry;
+* [x] renderer replacement during capture is detected;
+* [x] second instability returns bounded failure;
+* [x] process instance ID changes on real restart;
+* [x] canonical executable identity remains identical across a Windows junction alias;
+* [x] no test uses executable path-string equality as restart proof;
+* [x] capture causes zero writes to project/Backpack state.
+
+## Packaged live proof
+
+Using a packaged Electron build:
+
+* open deterministic neutral fixture;
+* verify screenshot contains its visible fixture;
+* verify logical surface and topology revision match the capture;
+* verify project-reported document revision matches capture;
+* launch packaged executable through a junction alias and prove reported canonical executable identity still matches the real image;
+* start a genuinely new process and prove PID/app-instance/start identity changes.
+
+No release or installation is part of this gate.
+
+## Reviewer gate
+
+Reviewer must explicitly answer:
+
+> Does this command prove one coherent visual observation of the exact logical surface, and can a stale process or alias-launched process be distinguished without relying on path spelling?
+
+## Completion evidence
+
+Record:
+
+* implementation SHA;
+* exact pushed review head;
+* unit/focused suite counts;
+* packaged Electron test result;
+* example redacted capture manifest;
+* proof no project state changed;
+* process-alias identity proof;
+* reviewer SIGNED OFF / blocker.
+
+## Rollback / failure behavior
+
+Observation failure:
+
+* never closes/reloads/reopens a project;
+* never retires a logical surface;
+* never mutates topology;
+* never changes project state;
+* deletes any incomplete diagnostic artifact;
+* returns explicit partial/unstable status;
+* leaves the renderer running exactly as before.
+
+---
+
+# C1.2 — Renderer lifecycle, hydration, console and failure observability
+
+## User-visible capability
+
+Agents can subscribe to the actual rendering lifecycle and know where rendering stopped.
+
+Required lifecycle events:
+
+```text
+navigation-started
+dom-ready
+state-hydrated
+first-paint
+layout-stable
+render-failed
+```
+
+Required diagnostic classes:
+
+```text
+console
+uncaught-error
+unhandled-rejection
+navigation-failed
+resource-failed
+renderer-gone
+hydration-failed
+```
+
+This phase eliminates restart-and-stare debugging.
+
+## Current implementation slice
+
+The first C1.2 slice defines the bounded, path-redacted evidence buffer that
+later lifecycle hooks will append to:
+
+* [x] `src/main/visual/visualDiagnostics.ts` defines strict lifecycle and
+  diagnostic payloads for navigation, DOM readiness, hydration, paint,
+  stability, render failure, console, uncaught errors, rejected promises,
+  navigation/resource failures, and renderer exit.
+* [x] the in-memory ring buffer has a bounded capacity, monotonic sequence,
+  exact target, timestamp, and copy-out snapshot; it never writes project
+  state and never starts a polling loop.
+* [x] local paths, URLs, and credential-like assignments in diagnostic text
+  are redacted before storage; unknown payload fields and malformed targets are
+  refused.
+* [x] `src/main/visual/visualLifecycleMonitor.ts` maps real Electron
+  `did-start-loading`, `dom-ready`, `did-fail-load`, `console-message`, and
+  `render-process-gone` events into the bounded buffer;
+  renderer-owned hydration/paint/stability phases are accepted only through a
+  target-bound signal seam.
+* [x] the adapter detaches listeners cleanly and introduces no timers, polling,
+  reloads, or recovery side effects.
+* [x] `src/main/visual/visualResourceMonitor.ts` attributes real
+  `session.webRequest.onErrorOccurred` failures through the exact current
+  WebContents/surface authority. It records only bounded resource kind and
+  sanitized error text; source URLs and unknown/stale WebContents are ignored,
+  and the single listener detaches on shutdown.
+* [x] compose one monitor and bounded buffer per opt-in Papers host window,
+  detach both on native-window close, and expose the read-only exact-target
+  `inspect.visual.diagnostics` control query.
+* [x] route host/project renderer paint and stability signals through the
+  authenticated sender → `{windowId,surfaceId}` mapping; renderer-supplied
+  targets are ignored, unbound senders/main-owned phases are refused, and the
+  current runtime WebContents is rechecked to reject stale replaced senders.
+  No preload claims paint or layout stability automatically; real producers
+  remain explicit and project hydration remains project-owned.
+* [x] the authority resolver has a focused old-sender/current-runtime
+  regression at the IPC composition boundary.
+* [x] extend the existing authenticated control event hub with
+  `visual.lifecycle` and `visual.diagnostic`; subscriptions require an exact
+  live `{windowId,surfaceId?}` target whenever either visual event is named,
+  and reject a target when no visual event is requested.
+* [x] publish only after a diagnostic record is successfully appended and
+  schema-validated; window targets receive host plus project records in that
+  window, surface targets receive only that surface, and no URL/path/sender or
+  raw renderer detail crosses the frame boundary.
+* [x] validate the visual target before activating the socket subscription and
+  drop visual frames when the socket is under backpressure rather than growing
+  an unbounded queue; historical sequence numbers remain available through
+  `inspect.visual.diagnostics`.
+* [x] opt-in host and project preloads forward only strict bounded
+  `uncaught-error` and `unhandled-rejection` `{kind,message}` signals through
+  the authenticated renderer IPC channel; stacks, filenames, event objects,
+  and payload-supplied targets are not forwarded.
+* [x] the main IPC boundary resolves the sender-authoritative target, refuses
+  stale/unbound senders and malformed or oversized failure payloads, and keeps
+  redaction/retention and live event publication on the existing bounded path.
+* [x] dev-control project runtimes forward non-empty console messages from
+  their live renderer through the exact sender/surface callback; main maps the
+  bounded message and level into the existing redacted diagnostic buffer.
+
+The resource-attribution adapter, event-subscription adapter, and renderer
+failure slice are implemented against the existing bounded path and have
+reviewer sign-off below. The renderer failure path is opt-in, strict,
+sender-authoritative, redacted, bounded, and best-effort; it does not make
+ordinary project startup depend on observation.
+
+Implementation checkpoint: focused preload/host/IPC/lifecycle coverage passes
+12/12 and the developer-control plus neutral-project Electron suite passes
+7/7, including main-world uncaught-error and unhandled-rejection capture,
+exact host-window/surface authority, redaction, bootstrap isolation, staged
+sender refusal, current replacement acceptance, and no duplicate observer
+records. The full host suite passes 776/776 with 4 skipped across 70 passed
+files and 1 skipped file; typecheck, production build, and diff check pass.
+This closes the current C1.2 renderer-failure gate. C1.2 remains a broader
+phase whose later visual lifecycle work is tracked separately below and must
+still receive its own exact-SHA review.
+
+Reviewer checkpoint: **SIGNED OFF** for the lifecycle adapter at
+`efd24422296d9b64c974dcb3b97073d0629e25b0` and for the host-composition/control
+slice at `730e3ab2659cc66ff910635dd8376f8b4a09da4c`. The final host review found
+no remaining defect after the exact `isMainFrame === true` correction. The
+reviewer specifically confirmed opt-in composition, close cleanup, exact target
+authority, schema revalidation, bounded/redacted records, and no polling or
+recovery side effects. Resource attribution and project-frame routing were
+subsequently completed and signed off below.
+
+The renderer-signal routing extension is also **SIGNED OFF** at
+`dd70318f04a2da8539727286a4d129f26a46bb17`. The reviewer confirmed that
+`resolveVisualDiagnosticTarget` is the production authority seam, stale replaced
+project senders are refused even while logical bindings lag cleanup, renderer
+payload targets are ignored, and no preload claims paint or layout stability
+automatically. The resource-attribution slice is **SIGNED OFF** at
+`ddfdd2e7f7bf3383179961f482a90d584b205fb6`, and exact-target event subscription
+is **SIGNED OFF** at `6ba945d137939afeab4460fcba7a21d9e5bd0bd4`; screenshot
+capture remains unchecked.
+
+The current renderer-failure diagnostic slice is intentionally awaiting review:
+the normal preloads contain no failure observer; `PAPERS_DEV_CONTROL=1` selects
+dedicated dev-control preload entries that expose one fixed reporting seam, and
+the host's actual main-world renderer code installs the two failure listeners.
+The project dev-control preload requests the same fixed observer through
+Electron's `contextBridge.executeInMainWorld` at document start. Electron 43 can
+emit a project's first synchronous throw/rejection as an error-level
+`console-message` before that experimental callback's listeners receive it, so
+the project runtime keeps an early-error fallback on the exact newly-created
+project WebContents. The same callback now also forwards every non-empty
+console message after DOM-ready; main retains it as a bounded `console`
+diagnostic and uses the sender-authoritative resolver immediately before
+recording. A prepared cross-window renderer therefore has no canonical surface
+and is refused; a replaced old renderer is refused even if its listener has not
+detached yet. The failure parser runs only when the runtime marks the console
+event as pre-DOM bootstrap; post-DOM console text cannot become an
+uncaught-error or unhandled-rejection candidate. The failure path suppresses
+only a matching cross-source pair (bootstrap-console plus observer) for the
+same exact pre-redaction message, target, and short burst. The transient matcher
+stores only a SHA-256 fingerprint of that raw message and at most 64 unmatched
+candidates; a suppressed pair is consumed so it cannot hide a later same-source
+failure. Same-source repeats and different raw messages that redact alike remain
+separate. It is best-effort and is not awaited by `show()`, so observation cannot
+make ordinary project startup fail.
+The main-process IPC boundary accepts only strict bounded `{kind,message}`
+payloads after sender-authoritative target resolution. No runtime capability
+query, shared sandbox preload chunk, arbitrary renderer execution, or polling
+loop is involved. The dev-only main-world test seams have no arguments and emit
+fixed path/credential-shaped messages solely to prove the end-to-end redaction
+and exact-target paths. The neutral project regression uses immediate startup
+throw/rejection, a prepared cross-window renderer, and a post-adoption
+replacement failure; it proves that staged records are refused, current
+replacement records are accepted, and `show()` still resolves while failures
+are captured.
+
+The same-project console-isolation slice is now implemented against that
+existing path. The real two-surface Electron fixture emits a distinct console
+message through each live project sender, queries each exact surface stream,
+and proves each message appears on exactly one `{windowId,surfaceId}` target.
+No project identity or target is supplied by the renderer message itself.
+
+Reviewer checkpoint: **SIGNED OFF** for the complete forward renderer-failure
+slice at exact pushed head
+`178c874ea203c1e953b5942ed46c452f55ea24f6`. The reviewer found no remaining
+defect in the SHA-256-only transient matcher, its 64-candidate bound, consumed
+cross-source pair behavior, same-source repeat behavior, redaction-collision
+separation, or the existing sender-authority/startup-isolation regressions.
+
+Current narrow reviewed slice: **reverse Papers → Dockview reconciliation with
+feedback suppression**. When Papers/main applies canonical workspace topology
+to Dockview during restore/load/open/close/move reconciliation, suppress only
+the Dockview callbacks caused by that application so they cannot echo as a
+second topology mutation or commit. Genuine subsequent user Dockview actions
+must immediately resume forward reporting.
+
+Implementation checkpoint: `WorkspaceDock` now uses a synchronous,
+nestable reconciliation-feedback gate around the complete Papers-applied
+Dockview projection effect: panel add, canonical removal, active-panel
+application, and topology reconciliation. The gate has no timer or polling
+window: structural, active-panel, and layout callbacks emitted during the API
+operation are ignored, then user callbacks are eligible immediately after it
+returns. `synchronizingRemovals` remains in place so canonical removal cannot
+become a semantic user-close callback. Focused unit coverage proves scoped
+suppression, immediate resumption, and nested operations. The workspace E2E
+proves canonical identity/order/focus convergence, no delayed echo commit
+after restore/open/close, and genuine post-reconciliation tab movement
+producing the next canonical update. Validation: full Vitest 778 passed/4
+skipped across 71 passed/1 skipped files; focused developer-control,
+renderer-diagnostics, and workspace E2E 8/8; typecheck; build; diff check.
+
+Reviewer checkpoint: **SIGNED OFF** for the reverse Papers → Dockview
+reconciliation slice at exact pushed head
+`073e48fa5c710170e32465959521e07894155ef2`. The reviewer confirmed that the
+complete Papers-driven projection is gated—panel add, canonical removal,
+canonical active-panel application, and topology reorder/split/size
+reconciliation—while `synchronizingRemovals` independently preserves
+semantic close suppression. The E2E confirms canonical restore/open/close
+without delayed echo revisions and immediate resumption of genuine Dockview
+interaction.
+
+Current smallest reviewed slice: **C1.2 generic project hydration reporting** —
+sender-authoritative `state-hydrated` / `hydration-failed` signals with opaque
+revision and bounded safe metadata, no state bytes, and no Papers-synthesized
+hydration success.
+
+Implementation checkpoint: the opt-in project dev-control bridge exposes fixed
+`reportStateHydrated(revision, summary?)` and
+`reportHydrationFailed(revision?, stage, code)` methods. Revisions are bounded
+delimiter-free opaque tokens; success summaries are limited to 32 named
+nonnegative integer counters; failure stage/code are bounded metadata tokens.
+Main strictly parses the hydration signal as exactly
+`{kind, phase, revision, summary?}`—no `detail`, state bytes, target, or
+unknown fields—then resolves the exact target from the authenticated sender.
+Malformed/foreign signals are refused and no raw state bytes are retained.
+Unit and neutral-project E2E coverage proves success and failure delivery,
+spoofed-target/extra-field refusal, bounded metadata, and exact
+window/surface authority. Validation: full Vitest 784 passed/4 skipped across
+72 passed/1 skipped files; focused developer-control, renderer-diagnostics,
+and workspace E2E 8/8; typecheck; build; diff check.
+
+The exact-SHA reviewer gate must confirm that hydration remains project-owned:
+Papers does not synthesize success from DOM-ready/file reads, and no state
+bytes or renderer-supplied target cross the diagnostic boundary.
+
+Reviewer checkpoint: **SIGNED OFF** for generic project hydration reporting at
+exact pushed head `7488be957038cbba4e8e2d99bfb56452586ba5a5`. The reviewer
+confirmed the exact state-hydrated shape `{kind, phase, revision, summary?}`,
+shared bounded schemas, refusal of `detail`/state/target/unknown fields,
+sender-derived target authority, fixed bridge limits, and project-owned
+hydration semantics.
+
+Next smallest reviewed slice: **C1.2 first-paint observability** — add a real
+project/main-world paint producer for the existing sender-authoritative
+`first-paint` lifecycle signal, without treating DOM-ready, load, or hydration
+as paint.
+
+Current implementation checkpoint: the opt-in project dev-control preload
+installs a Papers-owned `PerformanceObserver` for the browser-provided `paint`
+entry named `first-paint`, with a buffered-entry check and one-shot disconnect.
+The fixed first-paint emitter is no longer present on the page-visible bridge;
+project code can report hydration and failure facts, but cannot forge paint
+success. The preload emits the fixed sender-authoritative lifecycle signal only
+after that real Paint Timing entry exists; unsupported Paint Timing leaves the
+phase unknown and never infers it from load, DOM-ready, or hydration. Focused
+unit coverage proves the private emitter/public bridge boundary, and
+neutral-project E2E proves the actual producer reaches the exact
+window/surface diagnostic stream while `reportFirstPaint` is unavailable to the
+project page.
+Validation: full Vitest 785 passed/4 skipped across 72 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+Reviewer checkpoint: **SIGNED OFF** for C1.2 first-paint observability at exact
+pushed head `2731daca6f610de6a6ddaa70980cd9499bfa8e8b`. The reviewer confirmed
+the preload-owned Paint Timing observer, page capability separation, one-shot
+buffered observation, unsupported-API unknown behavior, and actual producer E2E.
+
+Next smallest reviewed slice: **C1.2 real layout-stable observability** — use
+event-driven `ResizeObserver` / `MutationObserver` geometry stabilization with
+a bounded unchanged window, no perpetual polling, and no inference from
+DOM-ready, paint, or hydration.
+
+Current implementation checkpoint: the opt-in project dev-control preload
+observes the document from document-start, anchoring `MutationObserver` to the
+`Document` until parser-created roots exist, then tracking document/body
+geometry through `ResizeObserver` where available. Three unchanged animation
+frames are required; repeated activity is bounded to 12 frames and emits
+structured `render-failed` with `layout-stability-timeout` instead of waiting
+forever. A later mutation starts a fresh bounded epoch. Layout-success and
+timeout emission remain preload-owned and are absent from the page-visible
+bridge; font readiness is an event-driven refresh, not a polling loop.
+Deterministic unit tests cover stable, renewed, and timed-out epochs, and
+neutral-project E2E proves the real event-driven `layout-stable` record reaches
+the exact window/surface diagnostic stream.
+Validation: full Vitest 792 passed/4 skipped across 73 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+Reviewer checkpoint: **SIGNED OFF** for C1.2 real layout-stable observability
+at exact pushed head `256e4f402c8e01488a7bcc3ac1c118de8ade9db3`. The reviewer
+confirmed empty/text-only geometry handling, null-geometry frame consumption,
+bounded mutation epochs, document-start ownership, structured timeout behavior,
+and actual producer E2E.
+
+Next smallest reviewed slice: **C1.2 hydration-failure → render-failed
+lifecycle correlation** — an exact sender-authoritative hydration failure must
+produce both the structured `hydration-failed` diagnostic and the corresponding
+`render-failed` lifecycle fact, without conflating it with navigation/load/layout
+failures.
+
+Current implementation checkpoint: the fixed page-facing
+`reportHydrationFailed(revision?, stage, code)` bridge validates bounded
+metadata, emits the `hydration-failed` diagnostic, and emits a paired strict
+`render-failed` lifecycle payload carrying the same bounded revision/stage/code.
+The main process accepts that correlation shape only for `render-failed`, while
+ordinary render failures retain their separate bounded-detail shape; the shared
+retained schema rejects mixed detail-plus-correlation payloads. All records
+still use the authenticated sender-derived window/surface target.
+Focused IPC, bridge, lifecycle-schema, and neutral-project E2E coverage proves
+the pair and rejects extra/foreign fields.
+Validation: full Vitest 792 passed/4 skipped across 73 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+Reviewer checkpoint: **SIGNED OFF** for C1.2 hydration-failure → render-failed
+correlation at exact pushed head `6871673e39988c9b7c21ac7a09e0f64e17b5be90`.
+The reviewer confirmed diagnostic-first then lifecycle pairing, identical
+bounded correlation metadata, strict mutual exclusion from ordinary
+render-failed detail, and sender-derived target authority.
+
+Next smallest reviewed slice: **C1.2 deterministic lifecycle ordering** — prove
+on one exact surface that `navigation-started` precedes `dom-ready`, and
+establish the successful fixture’s recorded lifecycle sequence without
+synthesizing or imposing false ordering between independent hydration,
+first-paint, and layout-stable facts.
+
+Current implementation checkpoint: project runtime lifecycle callbacks are
+composed before `loadURL()`, so the canonical project WebContents records
+`did-start-loading` as `navigation-started` and `dom-ready` through the same
+authenticated exact-surface target path. Prepared cross-window renderers still
+remain unrecorded until canonical adoption. The deterministic unit proof
+attaches to an exact `{windowId, surfaceId}` target and verifies source-event
+order; the production neutral-project E2E verifies
+`navigation-started.sequence < dom-ready.sequence`. The tests assert only the
+required navigation-to-DOM ordering; they do not impose an ordering among
+independent renderer-owned hydration, first-paint, and layout-stable signals.
+Validation: full Vitest 793 passed/4 skipped across 73 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+Reviewer checkpoint: **SIGNED OFF** for C1.2 deterministic lifecycle ordering
+at exact pushed head `ec6f6a4cb81cb1a6561c5983b2120621ae0a7771`. The reviewer
+confirmed production project lifecycle composition before navigation, exact
+sender/surface retention, prepared-sender refusal, and deliberate non-total
+ordering for independent hydration/paint/layout facts.
+
+Next smallest reviewed slice: **C1.2 deterministic negative hydration
+ownership** — prove `state-hydrated` cannot appear for an exact surface unless
+that project explicitly reports it, including DOM-ready/load/paint/layout
+occurring without synthesizing hydration success.
+
+Current implementation checkpoint: the neutral-project E2E asserts that the
+initial exact-surface lifecycle sequence contains navigation-started and
+dom-ready in that order, then waits for the actual first-paint and
+layout-stable records before checking that no state-hydrated record exists.
+Only after that negative assertion does the project call
+`reportStateHydrated`; the test then verifies the exact revision appears after
+that explicit bridge call. Main process lifecycle hooks do not read project
+state or infer hydration from any other event.
+Validation: full Vitest 793 passed/4 skipped across 73 passed/1 skipped files;
+focused developer-control, renderer-diagnostics, and workspace E2E 8/8;
+typecheck; build; diff check.
+
+Reviewer feedback at exact pushed head `e27c0e6037198857b6c37f4e9ac9fc11b7fe5675`
+identified one evidence-ordering gap: the prior test reported hydration before
+awaiting first-paint and layout-stable, so it did not prove those independent
+facts while hydration was absent. The narrow correction reordered the existing
+E2E only; no production code change was needed. The exact-SHA reviewer gate
+must reconfirm the reordered negative assertion, explicit-report positive
+assertion, exact sender authority, and no state mutation or polling.
+
+Reviewer checkpoint: **SIGNED OFF** for C1.2 deterministic negative hydration
+ownership at exact pushed head
+`8a196eccd094d5cdc8c138b5b220d3b4db9d334e`. The reviewer confirmed that the
+exact surface reaches navigation-started, dom-ready, first-paint, and
+layout-stable before the negative hydration check; explicit project-owned
+hydration is then the only source of the positive state-hydrated record.
+
+Next smallest reviewed slice: **C1.2 deterministic same-project console
+isolation** — prove two simultaneously live surfaces showing the same project
+retain console diagnostics only under their own exact `{windowId,surfaceId}`
+targets, with no cross-surface attribution.
+
+Current implementation checkpoint: dev-control project runtimes forward every
+non-empty `console-message` from the live renderer, including messages emitted
+after DOM-ready. Main maps Electron levels through the shared bounded console
+schema and resolves the target from the authenticated sender plus the named
+surface; the renderer cannot provide or redirect that target. The two-surface
+fixture emits one distinct message through each native project sender and
+confirms that each exact surface query owns only its corresponding message.
+Its post-DOM error-shaped message regression proves that ordinary console
+output is retained without creating a failure record; the existing project
+visual E2E continues to prove the pre-DOM fallback path. The E2E now also
+requires the two message owners to be the two different logical surfaces and
+checks both exact streams for the absence of a false failure record.
+Unit coverage for runtime forwarding and lifecycle mapping is 18/18; full
+Vitest is 794 passed/4 skipped; focused developer-control,
+renderer-diagnostics, same-project, and workspace E2E is 9/9; typecheck,
+build, and diff check pass.
+
+The exact-SHA reviewer gate must confirm both same-project messages remain
+isolated, ordinary post-DOM console output is retained, stale/prepared senders
+cannot attribute records, and the existing redaction/bounded/no-polling rules
+remain intact.
+
+Reviewer feedback at exact pushed head
+`3e84ec2045d383b1c8516e3b65eb324fcfadd7ec` identified a concrete regression:
+making the console callback permanent also made post-DOM text beginning with
+`Uncaught` enter the bootstrap failure classifier. The correction carries an
+explicit bootstrap boolean through the runtime/collection/factory callback;
+all console events are retained, but failure classification is gated to
+pre-DOM events. Unit coverage proves both metadata values, and the real
+same-project E2E proves post-DOM `console.error('Uncaught ...')` is console-only.
+This exact-SHA gate must review the corrected callback propagation and confirm
+the prior pre-DOM failure behavior remains intact.
+
+Reviewer feedback at exact pushed head
+`7aa06ca808314d607a1851e32e54d587e634fea4` found that the prior E2E proved
+each injected message had one owner but did not prove the two owners were
+different; both messages could have been routed to one surface. The narrow
+correction requires the collected owner set to equal both logical surface IDs
+and checks all exact surface streams for the post-DOM error-shaped message’s
+absence of uncaught-error/unhandled-rejection records. No production change
+was needed for this blocker.
+
+Reviewer checkpoint: **SIGNED OFF** for C1.2 deterministic same-project console
+isolation at exact pushed head
+`34558f731080151d41a276149e7486d4c13cdfe8`. The reviewer confirmed distinct
+same-project sender messages retain under distinct exact surfaces, post-DOM
+error-shaped console text cannot create failure diagnostics, and the existing
+authority, redaction, bounds, stale/prepared refusal, and no-polling behavior
+remain intact.
+
+Next smallest reviewed slice: **C1.2 exact project renderer-gone
+observability** — retain a real project `WebContents` `render-process-gone`
+event under its authenticated current `{windowId,surfaceId}`, refuse
+staged/stale senders, and prove it in Electron E2E without recovery/reload
+behavior.
+
+Current implementation checkpoint: project runtimes forward
+`render-process-gone` with its bounded reason through the surface-aware
+callback chain. Main re-resolves the current sender and exact surface before
+retaining `renderer-gone`; a prepared or replaced sender therefore fails
+closed. The neutral-project E2E force-crashes the exact moved project renderer
+and verifies the retained diagnostic without any reload or recovery action.
+Validation: typecheck; runtime/surface unit tests 22/22; project visual E2E
+1/1; build; diff check.
+
+The exact-SHA reviewer gate must confirm real project renderer exit retention,
+current exact-sender authority, staged/stale refusal, bounded reason handling,
+and no recovery or polling side effect.
+
+Next smallest reviewed slice: **C1.2 real failed-resource exact-surface
+attribution** — make a neutral project trigger a real failed script/style/image/
+font request and prove `resource-failed` is retained only under that current
+`{windowId,surfaceId}`, with no URL leakage and stale/prepared sender
+attribution refused.
+
+Current implementation checkpoint: the main-process resource monitor observes
+both Electron transport failures and completed HTTP responses with status 400+
+so failed resources served by Papers' custom protocol are observable as well.
+For either source it resolves the originating WebContents through the current
+surface authority before appending a bounded, redacted `resource-failed`
+record. The record keeps only the safe resource kind and message; complete URLs,
+paths, query strings, and token-like values are excluded. The neutral-project
+E2E requests a missing script from the exact moved project surface, verifies
+the record's exact target and kind, checks that the resource URL and token do
+not appear, and then continues to the renderer-gone proof. Unit coverage also
+exercises HTTP 404 attribution and detach cleanup.
+
+Validation: typecheck; full Vitest 796 passed/4 skipped across 73 passed/1
+skipped files; focused developer-control, renderer-diagnostics, same-project,
+and workspace E2E 9/9; project visual diagnostics E2E 1/1; production build;
+diff check.
+
+The exact-SHA reviewer gate must confirm real failed-resource retention,
+current exact-sender/surface authority, stale/prepared refusal, bounded and
+redacted messages, and no URL leakage, recovery, or polling side effect.
+
+Reviewer checkpoint at exact pushed head
+`924c440189cce7294ca57d0adac6a0eb27ba8224`: **SIGNED OFF** for real
+failed-resource exact-surface attribution. The reviewer confirmed that both
+transport failures and HTTP 400+ completions share sender-authoritative target
+resolution, prepared/stale senders fail closed, only resource kind plus a
+bounded redacted message is retained, both listeners detach cleanly, and the
+neutral-project E2E proves a genuine missing script without URL/token leakage.
+
+Next smallest reviewed slice: **C1.2 deterministic diagnostic-buffer bound
+closure** — prove mixed real visual events cannot exceed the configured
+retained-record cap while sequence numbers remain monotonic and observation/
+event publication continues without affecting product state.
+
+Current implementation checkpoint: no production buffer change was needed.
+The narrow closure adds a mixed-event unit proof with a capacity-3 buffer,
+monotonic sequences, oldest-record eviction, and a deliberately failing
+publication callback whose later events still publish. The neutral-project
+Electron E2E drives 132 real console observations through the moved project,
+proves the real default 128-record window cap and monotonic retained
+sequences, subscribes only after overflow, then emits real console,
+unhandled-rejection, and failed-image events. It verifies exact-surface
+publication, bounded retention, redaction/no URL-token leakage, and unchanged
+workspace topology/state. The user-owned
+`docs/evidence/worker-comparison.json` remains unstaged and untouched.
+
+The exact-SHA reviewer gate must confirm mixed-event overflow, monotonic
+sequences, post-overflow publication, exact target filtering, redaction,
+unchanged product state, and no polling or recovery side effect.
+
+Reviewer checkpoint at exact pushed head
+`591cc12aff5040b32defa8d17c59fc7dad92d358`: **SIGNED OFF** for deterministic
+diagnostic-buffer bound closure. The reviewer confirmed the real default
+128-record cap, oldest-record eviction, strictly increasing retained
+sequences, the capacity-3 mixed-event unit proof, publication continuing after
+a throwing callback, exact-target live publication after overflow, redaction,
+and workspace immutability across the overflow burst and later events.
+
+Next smallest reviewed slice: **C1.2 deterministic redaction closure** — prove
+the existing redaction guarantees comprehensively at the control boundary,
+especially that retained diagnostics and live-published diagnostic frames
+cannot expose path, URL, query, token, or credential material across console,
+renderer-error, hydration, resource, navigation, and renderer-exit classes.
+Start as an evidence/test slice; change production redaction only if the
+targeted closure exposes a concrete leakage case.
+
+Current implementation checkpoint: no production redaction change was needed.
+The real control event hub is now composed with the real bounded diagnostic
+buffer in unit coverage across console, uncaught-error, unhandled-rejection,
+navigation-failed, resource-failed, renderer-gone, hydration-failed,
+state-hydrated, and render-failed records. The test injects Windows paths,
+URLs/queries, tokens, passwords, secrets, and API-key values, verifies neither
+retained snapshots nor serialized live frames expose them, and confirms
+hostile hydration metadata is rejected by existing schemas. The neutral-project
+E2E also checks the serialized live frames themselves after the post-overflow
+console/rejection/failed-image publication.
+
+Validation and exact-SHA reviewer gate are pending for this slice. The
+user-owned `docs/evidence/worker-comparison.json` remains unstaged and
+untouched; no release, install, package, or policy action is in scope.
+
+Reviewer checkpoint at exact pushed head
+`7c6f2974af16566741495555c0c25e3c6c93a6a8`: **SIGNED OFF** for no timer-based
+continuous polling and recovery-side-effect closure. The reviewer confirmed
+event-driven lifecycle/resource observation, bounded layout epochs, listener
+cleanup and post-detach inertness, absence of reload/loadURL/restart and
+polling call paths, unchanged workspace state, and unchanged renderer
+`performance.timeOrigin` across real diagnostic activity. The focused test
+drives real navigation-failure and renderer-gone events; only intended
+bounded `requestAnimationFrame` and browser paint observation remain.
+
+Next smallest reviewed slice: **C1.2 deterministic hydration-failure pairing
+closure** — prove one authenticated project `reportHydrationFailed(revision,
+stage,code)` produces exactly one correlated `hydration-failed` →
+`lifecycle/render-failed` pair under the same exact `{windowId,surfaceId}`,
+with matching metadata, no duplicate/synthesized record, and deterministic
+ordering.
+
+Current implementation checkpoint: the production pair already exists and the
+neutral-project E2E observes both records. The narrow evidence correction
+will assert exact counts, ordering, target identity, and revision/stage/code
+matching around one report; no production change is expected.
+
+The implementation checkpoint is now complete: the neutral-project E2E captures
+the sequence immediately before one authenticated project hydration-failure
+report and requires exactly one ordered `hydration-failed` then
+`lifecycle/render-failed` pair under the same exact surface, with matching
+revision/stage/code metadata. No production change was needed.
+
+Reviewer checkpoint at exact pushed head
+`d91608a841eddf824407a524ebb8ff3240d4c82e`: **SIGNED OFF** for deterministic
+hydration-failure pairing. The reviewer confirmed one authenticated report
+produces exactly one ordered `hydration-failed` then `lifecycle/render-failed`
+pair under the same exact surface, with strictly increasing sequence values
+and matching revision/stage/code metadata.
+
+Next smallest reviewed slice: **C1.2 thrown renderer-exception/control-
+survival closure** — fence one deliberate real main-world renderer exception,
+prove its exact-surface `uncaught-error` record, then immediately prove the
+developer-control plane remains responsive and the same renderer/document was
+not implicitly recovered or replaced.
+
+Implementation checkpoint: the neutral-project E2E adds a sequence-fenced
+deliberate throw, exact-target assertion, immediate control query, and
+unchanged `performance.timeOrigin`/document proof; no production change was
+needed.
+
+Reviewer checkpoint at exact pushed head
+`25069086076fcbfc9930986375e2ac3ab3a20e50`: **SIGNED OFF** for C1.2 thrown
+renderer-exception/control-survival closure. The reviewer confirmed the
+sequence-fenced real throw, exact-surface redacted `uncaught-error`, immediate
+control response, unchanged renderer/document identity, and no implicit
+recovery.
+
+Next smallest reviewed slice: **C1.2 no timer-based continuous polling /
+recovery-side-effect closure** — prove that attaching, observing, failing, and
+detaching visual observation never creates recurring polling loops, reloads or
+restarts a renderer as diagnostic recovery, or mutates workspace/product
+state, while allowing only intended bounded one-shot timing and animation-frame
+mechanisms and cleaning up observers/listeners.
+
+Implementation checkpoint: no production correction was needed. The focused
+side-effect suite proves listener cleanup, inert post-detach behavior,
+coalesced layout frames, bounded stable/timeout epochs, and no recurring
+timer. Real navigation-failure and renderer-gone E2E evidence confirms the
+renderer and workspace remain unchanged.
+
+Reviewer checkpoint at exact pushed head
+`7c6f2974af16566741495555c0c25e3c6c93a6a8`: **SIGNED OFF** for C1.2 no
+timer-based continuous polling/recovery-side-effect closure. The reviewer
+confirmed event-driven observation, bounded one-shot timing only, teardown
+inertness, and absence of reload/restart recovery behavior.
+
+Next smallest reviewed slice: **C1.2 deterministic hydration-failure pairing
+closure** — prove one authenticated project `reportHydrationFailed(revision,
+stage,code)` produces exactly one correlated `hydration-failed` then
+`lifecycle/render-failed` pair under the same exact surface.
+
+Reviewer checkpoint at exact pushed head
+`d91608a841eddf824407a524ebb8ff3240d4c82e`: **SIGNED OFF** for deterministic
+hydration-failure pairing. The reviewer confirmed one ordered pair, strictly
+increasing sequence values, matching revision/stage/code metadata, and exact
+surface authority.
+
+Next smallest reviewed slice: **C1.3 semantic-key identity / surface-local
+authority foundation** — define a strict bounded opaque semantic-key contract,
+allow only predefined project-side registration/observation, reject duplicate
+keys within one surface, allow the same key independently in two surfaces,
+and expose only the smallest read-only inspection seam needed to inspect key
+identity. No caller-provided selector, XPath, or script is allowed.
+
+The user-owned `docs/evidence/worker-comparison.json` remains unstaged and
+untouched; no release, install, package, or policy action is in scope.
+
+## Architectural boundary / likely owner
+
+Main-process visual observation service owns correlation and retention.
+
+Sources:
+
+**Electron/main**
+
+* navigation events;
+* DOM ready;
+* load failure;
+* render process gone;
+* resource/network failure;
+* first presentation state.
+
+**Project preload / generic visual bridge**
+
+* window error;
+* unhandled rejection;
+* project `state-hydrated`;
+* project `hydration-failed`;
+* stable-layout observer;
+* paint observer.
+
+Projects report hydration; Papers does not infer it from successful file reads.
+
+## Lifecycle schema
+
+One event stream:
+
+```text
+event: "visual.lifecycle"
+
+payload:
+  kind:
+    "navigation-started" |
+    "dom-ready" |
+    "state-hydrated" |
+    "first-paint" |
+    "layout-stable" |
+    "render-failed"
+  windowId
+  surfaceId
+  projectId
+  eventSeq
+  observedAt
+  renderCycleId
+  navigationId
+  revisions:
+    workspaceTopologyRevision
+    documentStateRevision?
+  detail:
+    stage?
+    stabilityWindowMs?
+    failureCode?
+```
+
+Diagnostics:
+
+```text
+event: "visual.diagnostic"
+
+payload:
+  kind:
+    "console" |
+    "uncaught-error" |
+    "unhandled-rejection" |
+    "navigation-failed" |
+    "resource-failed" |
+    "renderer-gone" |
+    "hydration-failed"
+  severity
+  windowId
+  surfaceId
+  eventSeq
+  renderCycleId?
+  message
+  source:
+    category
+    line?
+    column?
+  resource?:
+    type
+    scheme?
+    host?
+    status?
+    errorCode?
+```
+
+## Hydration contract
+
+Papers defines the generic signal only:
+
+```text
+reportStateHydrated({
+  revision: opaque string,
+  summary?: bounded string→integer map
+})
+```
+
+and:
+
+```text
+reportHydrationFailed({
+  revision?: string,
+  stage: bounded enum/string,
+  code: bounded string
+})
+```
+
+Sender context determines the surface/project. The project cannot claim another `surfaceId` or `projectId`.
+
+No state bytes cross this bridge.
+
+## Layout-stable definition
+
+Event-driven only:
+
+* observe semantic/layout root changes using `ResizeObserver` / `MutationObserver` where appropriate;
+* wait for fonts readiness when requested;
+* require a short bounded unchanged geometry window across animation frames;
+* emit one `layout-stable` for that render cycle;
+* new mutations may begin a new layout epoch.
+
+No perpetual interval.
+
+If stability is not achieved before the bound, emit structured failure/degraded readiness rather than waiting forever.
+
+## First-paint definition
+
+Use an actual renderer paint/performance signal where available.
+
+Do not define “first paint” as:
+
+```text
+DOM ready
+load finished
+state file loaded
+```
+
+Those are separate lifecycle facts.
+
+## Security / redaction / authority
+
+* console messages capped in length and count;
+* token-like values, URLs with paths/query, filesystem-looking strings and known credential patterns redacted before control exposure;
+* stack traces projected to safe function/line metadata rather than raw machine paths;
+* resource failures expose resource type + safe origin/error, not complete URL;
+* diagnostic buffers live only in memory unless an explicit report is requested;
+* exact surface authority retained.
+
+## Deterministic tests
+
+* [x] lifecycle ordering for successful fixture;
+* [x] navigation-started occurs before DOM-ready;
+* [x] state-hydrated cannot be synthesized by Papers without a project signal;
+* [x] first-paint independently observable;
+* [x] layout-stable only after bounded geometric stability;
+* [x] hydration failure produces `hydration-failed`/`render-failed`;
+* [x] thrown renderer exception surfaces without killing control;
+* [x] failed resource attributed to correct surface;
+* [x] console of two same-project surfaces remains isolated;
+* [x] renderer crash produces `renderer-gone`;
+* [x] mixed visual events remain within the diagnostic-record cap with
+  monotonic sequences and continued publication;
+* [x] diagnostic buffers obey maximum length/count;
+* [x] redaction tests reject secret/path leakage;
+* [x] no timer-based continuous polling.
+
+## Packaged live proof
+
+Packaged neutral fixture has two modes:
+
+1. successful hydration and render;
+2. intentionally failed hydration/resource.
+
+Prove the real packaged event sequence and that an agent can identify the failed stage without screenshot interpretation or source instrumentation.
+
+## Reviewer gate
+
+Reviewer must explicitly determine:
+
+> Can an agent distinguish “document loaded”, “document hydrated”, “first pixels painted”, “layout settled”, and “render failed” as separate facts for one exact surface?
+
+## Completion evidence
+
+* exact event sequences from packaged success/failure fixtures;
+* redaction test evidence;
+* event buffer bounds;
+* exact SHA and reviewer sign-off.
+
+## Rollback / failure behavior
+
+Visual listeners are observational.
+
+If lifecycle instrumentation itself throws or becomes unavailable:
+
+* mark observer state degraded;
+* continue normal rendering;
+* never fail project startup solely because diagnostics failed.
+
+---
+
+# C1.3 — Semantic element observation, capture.element and visual assertions
+
+## User-visible capability
+
+Agents can ask:
+
+```text
+Where is the graph?
+Is it actually visible?
+Is it clipped?
+Is it underneath something?
+Are these elements overlapping?
+Is the foreground/background contrast acceptable?
+Capture just this semantic element.
+```
+
+without DOM selectors or arbitrary JS.
+
+## Architectural boundary / likely owner
+
+Papers defines a generic semantic-key contract.
+
+Projects opt elements into observation using stable semantic keys, for example conceptually:
+
+```text
+data-papers-visual-key="canvas.root"
+data-papers-visual-key="toolbar.primary"
+```
+
+The key describes project semantics only to the project and tests. Papers treats it as an opaque stable identifier.
+
+No Papers code knows what `canvas.root` means.
+
+## API schemas
+
+```text
+capture.element
+input:
+  windowId
+  surfaceId
+  elementKey
+  paddingCssPx?: 0..32
+
+output:
+  captureId
+  element:
+    key
+    boundsCss
+    boundsDevice
+    visible
+    visibilityReasons[]
+    clipping
+    overlapSummary
+    contrast?
+  png:
+    artifactId
+    size
+    sha256
+```
+
+Generic semantic inspection:
+
+```text
+inspect.visual.elements
+input:
+  windowId
+  surfaceId
+  keys?: bounded array
+
+output:
+  layoutEpoch
+  elements:
+    key
+    role?
+    accessibleName?
+    bounds
+    visible
+    clippedPercent
+    opacity
+    zEvidence?
+```
+
+Assertions are declarative:
+
+```text
+visual.assert
+input:
+  windowId
+  surfaceId
+  assertions:
+    - kind: "visible"
+      elementKey: ...
+    - kind: "not-clipped"
+      elementKey: ...
+      maxClippedPercent: ...
+    - kind: "inside"
+      elementKey: ...
+      containerKey: ...
+    - kind: "no-overlap"
+      a: ...
+      b: ...
+      maxIntersectionPercent: ...
+    - kind: "min-contrast"
+      elementKey: ...
+      ratio: ...
+```
+
+No arbitrary expression language.
+
+## Visibility model
+
+A semantic element may be reported non-visible because of:
+
+```text
+display-none
+visibility-hidden
+opacity-zero
+zero-area
+outside-viewport
+ancestor-clipped
+covered-at-sample-points
+detached
+surface-hidden
+```
+
+“Visible” must therefore mean more than “DOM node exists”.
+
+## Stable geometry
+
+Bounds:
+
+* measured only after a known layout epoch;
+* relative both to surface viewport and owning window;
+* include CSS-pixel and device-pixel representations;
+* quantized consistently for deterministic comparisons;
+* associated with the layout epoch that produced them.
+
+## Contrast
+
+Compute WCAG-style contrast only when foreground/background can be determined safely.
+
+For gradients, images, transparency chains, or uncertain composition:
+
+```text
+contrast.status = "unknown"
+```
+
+Never fabricate a passing contrast value.
+
+## Security / authority
+
+* semantic key only, no caller-provided CSS/XPath selector;
+* project DOM traversal remains predefined;
+* accessible names/text capped;
+* password/input values excluded;
+* exact surface target;
+* no arbitrary computed-style property access from control.
+
+## Deterministic tests
+
+* [x] semantic key collision rejected within one surface;
+* [x] same semantic key in two surfaces remains surface-local;
+* [x] hidden/display/opacity/zero-area cases are represented by bounded
+  visibility reasons;
+* [x] ancestor and viewport clipping are represented with clipped percentage;
+* [x] overlap calculation remains surface-local and key-based;
+* [x] element crop uses the accepted CSS viewport and actual PNG dimensions
+  for non-1:1 scaling, and reports the exact clamped crop with bounded CSS
+  padding;
+* [x] conservative contrast is known only for opaque solid RGB pairs and is
+  otherwise `unknown`;
+* [x] geometry is invalidated at layout-epoch start and accepted only when its
+  payload epoch matches the current stable epoch;
+* [x] caller cannot supply selector/script;
+* [x] fixed declarative `visual.assert` evaluates visible, clipping,
+  containment, overlap, and minimum-contrast predicates with bounded failure
+  reasons.
+* [x] `visual.assert` returns explicit `geometry-unavailable` evidence during
+  navigation or before a stable observation instead of treating empty/stale
+  geometry as a missing element assertion.
+
+## Packaged live proof
+
+Packaged fixture intentionally contains:
+
+* one visible element;
+* one clipped element;
+* one overlapping pair;
+* one poor-contrast pair.
+
+Agent captures and asserts each through control and receives the expected structured outcome.
+
+## Reviewer gate
+
+Reviewer asks:
+
+> Can a caller diagnose geometry and visibility using stable semantic identities without obtaining general-purpose DOM execution?
+
+## Completion evidence
+
+* fixture assertion matrix;
+* element PNGs;
+* structured assertion output;
+* redaction/schema proofs;
+* exact SHA/sign-off.
+
+Reviewer checkpoint: **SIGNED OFF** for the C1.3 semantic-key
+identity/surface-local-authority foundation at exact pushed head
+`d440466b87d4234339b3fb5dd0ac6845b0be7fa8` and for stable-epoch geometry at
+`0d4447a58a4e8e0f0f2c17f53ae91582a96b98db`. The explicit unavailable-result
+guard and live assertion coverage are at
+`5f9e1b7a00001edd29a0c903d97869daa4f2ff5c`. Same-surface
+`capture.element` cropping and its artifact-coordinate correction are
+implemented at
+`26963baad5e0457bb24de4e39a80445ade1afa49` with docs SHA
+`b2fa135adfd6c0e7cca8eed5716c578aff7f2ab3`. No remaining capture-element
+blocker was found. Duplicate observations are now rejected atomically at
+`30f3f31c0b3d188beb51640c2a0de351b7f3ed9c` with docs SHA
+`08fce721b29b18429f792a018e751f55104cd81f`. No remaining defect was found in
+this slice. A dedicated exact-surface two-registry proof for same-key locality
+is signed off at exact code/test SHA `1eb0e538faf6cce7bbba7eb1babbac6d456fd0af`
+with docs SHA `2d4bf9a3b093e4ee757d82729ee380fc736ae0ed`.
+
+## Rollback / failure behavior
+
+Unknown/missing semantic key is an observation failure only.
+
+No DOM mutation is performed to “make it observable”.
+
+---
+
+# C1.4 — Deterministic visual fixtures and screenshot baseline diffing
+
+## User-visible capability
+
+Visual regressions become reproducible, reviewable test failures instead of manual screenshot comparisons.
+
+## Architectural boundary / likely owner
+
+**Papers repository owns the fixture harness.**
+
+Projects own their own fixture contents and baselines.
+
+The generic harness controls:
+
+```text
+window dimensions
+content dimensions
+device scale factor
+theme
+transparency
+locale
+timezone where applicable
+animation/transitions
+font set
+fixture data
+startup route
+render readiness contract
+```
+
+## Deterministic rendering profile
+
+Define a versioned profile such as:
+
+```text
+visualProfileVersion: 1
+window: 1280x800
+deviceScaleFactor: 1
+theme: light
+transparency: false
+animations: disabled
+reducedMotion: true
+locale: en-US
+fixtureFont: pinned test font
+```
+
+Do not rely on whatever fonts/settings happen to be installed on the developer machine.
+
+CI pixel baselines may use a deterministic rendering mode.
+
+Real packaged acceptance remains separately required and should not pretend arbitrary user GPUs produce byte-identical pixels.
+
+## Baseline structure
+
+Each baseline is keyed by:
+
+```text
+fixtureId
+captureTarget
+visualProfileVersion
+platform
+electronMajor/minor as required
+```
+
+Manifest:
+
+```text
+baselineId
+pngSha256
+dimensions
+semanticSnapshotSha256
+createdFromCommit
+visualProfileVersion
+```
+
+## Diff result
+
+Produce at minimum:
+
+```text
+changedPixelCount
+changedPixelPercent
+maxBoundingDiffRect
+perceptualScore
+expectedDimensions
+actualDimensions
+diffPngArtifact
+```
+
+A semantic-layout failure and a pixel failure are reported separately.
+
+## Intentional update workflow
+
+No automatic baseline replacement.
+
+Explicit update operation only, e.g. test tooling equivalent of:
+
+```text
+UPDATE_VISUAL_BASELINES=1
+```
+
+An update must:
+
+1. preserve old baseline until new capture succeeds;
+2. generate old/new/diff evidence;
+3. record old/new hashes;
+4. update atomically;
+5. require normal code review.
+
+A failing test must never silently “bless” its new screenshot.
+
+## Security / data safeguards
+
+* baselines contain synthetic fixture data only;
+* no baseline is generated from creator user data;
+* fixture directories are isolated temp profiles;
+* diagnostic runs assert fixture source data hashes before/after.
+
+## Deterministic tests
+
+* [x] baseline core produces zero-diff evidence for identical RGBA images;
+* [x] one known pixel mutation produces a deterministic diff rectangle;
+* [x] dimension changes are reported separately from pixel comparison;
+* [x] semantic snapshot changes remain separate even when pixels are identical;
+* [x] update workflow requires explicit opt-in;
+* [x] content-addressed PNG plus atomic manifest publication preserves the
+  previous baseline until replacement is complete;
+* [x] baseline reads re-hash the referenced PNG;
+* [x] successful reads/replacements remove orphaned content-addressed PNGs and
+  temporary files without deleting the manifest-referenced baseline;
+* [x] baseline reads and updates share one serialized operation queue, so
+  cleanup cannot delete staged files from an in-progress update;
+* [x] user profile/state directories are never baseline sources; baseline APIs
+  consume caller-provided PNG bytes and never read source paths.
+
+Implementation checkpoint: deterministic baseline/diff core and its integrity
+corrections are prepared at `5e850881da809f9d301040ee1acddabe73c5aa43`.
+The core preserves the previous manifest on interrupted publication, validates
+PNG structure/dimensions, serializes updates, and cleans orphaned artifacts.
+Reads and updates across all store instances use one process-wide serialized
+queue, so filesystem aliases and differing path spellings cannot bypass the
+lock; a deterministic two-instance race test proves a reader cannot delete
+staged PNG or temporary manifest files.
+Integration with a live capture command and a real fixture remains open; the
+baseline/diff core itself is signed off at exact code SHA
+`5e850881da809f9d301040ee1acddabe73c5aa43` with docs SHA
+`6e04a7805814dd83b74917c9dec3046eaf6856c5`. The dedicated
+`capture.element` slice has its own review gate.
+
+## Packaged live proof
+
+Use packaged executable against the same synthetic fixture.
+
+Required proof is:
+
+* correct fixture reaches lifecycle readiness;
+* screenshot capture succeeds;
+* semantic assertions pass;
+* gross visual output matches expected dimensions/content.
+
+CI baseline exactness does not replace this packaged test.
+
+## Reviewer gate
+
+Reviewer confirms:
+
+> Are visual changes impossible to bless accidentally, and are baselines based only on deterministic synthetic data?
+
+## Completion evidence
+
+* baseline manifest;
+* zero-diff run;
+* intentional-diff run;
+* update workflow evidence;
+* packaged fixture result;
+* exact SHA/sign-off.
+
+## Rollback / failure behavior
+
+Baseline write uses temp + atomic replacement.
+
+Failure keeps the previous reviewed baseline.
+
+---
+
+# C1.5 — Bounded visual timeline + self-contained visual-debug report
+
+## User-visible capability
+
+An agent can request a compact record of:
+
+> what state/lifecycle/diagnostic changes happened immediately before and during this bad render?
+
+without recording the desktop continuously.
+
+## Architectural boundary / likely owner
+
+Visual observation service owns bounded per-surface ring buffers.
+
+Data is captured from events already emitted by C1.1/C1.2/C1.3.
+
+No polling loop and no continuous video recorder.
+
+## Timeline model
+
+Per exact surface maintain bounded recent history, for example:
+
+```text
+maxAge: 10 seconds
+maxEvents: 256
+maxDiagnostics: 128
+```
+
+Each item carries:
+
+```text
+eventSeq
+observedAt
+renderCycleId
+navigationId?
+workspaceTopologyRevision
+documentStateRevision?
+layoutEpoch?
+kind
+```
+
+Explicit timeline request may include:
+
+```text
+beforeMs: <= 10000
+until:
+  "layout-stable" |
+  "render-failed" |
+  bounded duration <= 5000
+frames:
+  "lifecycle-only"
+```
+
+Lifecycle-only frames may capture at significant edges:
+
+```text
+navigation-started
+state-hydrated
+first-paint
+layout-stable
+render-failed
+```
+
+No 30/60 FPS capture.
+
+## Report command
+
+```text
+visual.report.create
+input:
+  windowId
+  surfaceId?
+  include:
+    windowCapture
+    surfaceCapture
+    semanticElements
+    recentLifecycle
+    recentDiagnostics
+    timeline
+  beforeMs
+```
+
+Output:
+
+```text
+reportId
+artifactId
+size
+sha256
+createdAt
+manifestSummary
+```
+
+## Self-contained report format
+
+A single ZIP-like artifact:
+
+```text
+manifest.json
+process.json
+snapshot.json
+lifecycle.ndjson
+diagnostics.ndjson
+timeline.ndjson
+window.png
+surfaces/<surface-id>.png
+elements/<semantic-key>.png
+diff/...
+```
+
+Manifest includes hashes for every entry.
+
+It contains **observations only**, never copied creator state files.
+
+## Artifact store
+
+Papers-owned diagnostics area only.
+
+Rules:
+
+* opaque artifact IDs;
+* no arbitrary pathname reads;
+* temp-write + atomic finalize;
+* explicit TTL/cleanup;
+* maximum artifact size;
+* report generation never automatically uploads anything.
+
+## Artifact retrieval
+
+Control API:
+
+```text
+visual.artifact.read
+input:
+  artifactId
+  offset
+  maxBytes <= bounded chunk size
+
+output:
+  artifactId
+  offset
+  eof
+  base64Chunk
+  sha256
+```
+
+This works within the existing framed control transport without opening filesystem access.
+
+## Security / redaction
+
+* report creation is explicit;
+* screenshots may contain visible user content and manifest marks that classification clearly;
+* hidden document/state bytes excluded;
+* diagnostics redacted before entering report;
+* tokens/descriptor/install roots excluded;
+* artifact IDs unguessable;
+* artifact read limited strictly to artifacts generated by Papers.
+
+## Deterministic tests
+
+* [x] ring buffer age/count enforcement;
+* [x] event revisions remain correlated;
+* [x] two surfaces do not mix timelines;
+* [x] lifecycle-only screenshot count bounded;
+* [x] no timer polling;
+* [x] report manifest hashes verify;
+* [x] interrupted report leaves no exposed partial artifact;
+* [x] artifact reader cannot access arbitrary filesystem paths;
+* [x] expired artifact refused;
+* [x] no project state file included in report.
+
+Implementation checkpoint: the bounded per-surface timeline store and
+`inspect.visual.timeline` query are implemented at
+[`c6435976`](https://github.com/Futahua/Papers-3/commit/c6435976bfd08470b0aedc1eabe52e348a503093),
+with lifecycle transition correlation corrected at
+[`0996f5b`](https://github.com/Futahua/Papers-3/commit/0996f5b227578acb0d450b3a8c074c250abc666a).
+The append path consumes only already-emitted diagnostic events, enforces the
+256-event/10-second bounds, and carries render-cycle, document, layout, and
+workspace-topology revisions. The reviewer signed off the corrected slice at
+the exact code SHA above with no remaining concrete defect. Report element
+coverage and interrupted-report cleanup are now implemented and reviewed.
+The real packaged visual success/failure and stdio-MCP artifact proof is signed
+off at [`d977a297`](https://github.com/Futahua/Papers-3/commit/d977a2974beddd1ea94aade311c65ab9e29fec74).
+
+Report checkpoint: `visual.report.create` and the bounded ZIP artifact builder
+are implemented at [`abed691f`](https://github.com/Futahua/Papers-3/commit/abed691f67add77d3768ad532a797a37903b3ba8).
+The exact-surface report includes safe process/snapshot/surface projections,
+lookback-filtered lifecycle/diagnostic/timeline evidence, semantic observations,
+and an optional verified surface PNG. The reviewer signed off this slice at the
+exact SHA with no remaining concrete defect. Element-PNG entries were added and
+signed off at [`ff890251`](https://github.com/Futahua/Papers-3/commit/ff890251b1b59e6a3e98a2d7d95a784dd52e8daa).
+Interrupted-report cleanup was added and signed off at
+[`0114d5b6`](https://github.com/Futahua/Papers-3/commit/0114d5b6154db045d8814679dd5bc7ef52a5db1f).
+Cancellation-aware capture/report cleanup was completed and signed off at
+[`e05286d5`](https://github.com/Futahua/Papers-3/commit/e05286d5cb77a7e8adc6a737652e862ff41cb9c1).
+The packaged acceptance slice is closed at the exact SHA above; baseline
+live-capture integration is tracked in the earlier C1.4 sub-gate.
+
+Additional proof checkpoint: the production visual E2E now queries two same-
+project surfaces after one moves across windows and proves each timeline stays
+exactly target-local. The report unit proof also verifies that the current
+surface-report mode emits only one PNG entry; no continuous or per-frame
+screenshot capture is present.
+
+Final C1.5 checkpoint: the reviewer signed off the complete implemented scope
+at [`f5a67bfc`](https://github.com/Futahua/Papers-3/commit/f5a67bfc40f690a5c7e551492ef533a308579e3b).
+The later report element, interruption, and cancellation evidence is recorded
+in the C1.6 checkpoints above. Packaged success/failure acceptance is closed at
+[`d977a297`](https://github.com/Futahua/Papers-3/commit/d977a2974beddd1ea94aade311c65ab9e29fec74),
+with same-target hydration-to-failure evidence, real failure pixels, full
+report hash verification, and stdio-MCP retrieval.
+
+## As you Go convergence and close-path source sign-off
+
+The source-level convergence and durability agenda is signed off by the
+reviewer at Papers [`517cf1c`](https://github.com/Futahua/Papers-3/commit/517cf1c61c3bfa6ae0b0d1ace44dd24bef690372)
+and As you Go [`f4e2c42`](https://github.com/Futahua/as-you-go-backpack/commit/f4e2c420a4683d24a162780e9356006a96ac85b1).
+The reviewed chain covers checked-save envelopes, immediate cross-window
+convergence, topology-scoped settled layouts, position last-writer-wins,
+navigation/native-close durability before renderer teardown, semantic tab-close
+authority, repeated-close fencing, and serialized hide/show replacement.
+Reviewer result: P0 0, P1 0, P2 0 at those exact heads. Validation recorded at
+the sign-off was Papers 92 test files (1 skipped), 896 tests passed (4 skipped),
+typecheck passed; As you Go 1,113 tests passed plus 8 visual pretest checks.
+
+The sole remaining gate is installed evidence, not a source defect: a real
+cloned profile and bound As you Go project, the exact installed Papers build,
+two native same-project windows, identity/origin/channel/physical-lock
+telemetry, disk=A=B fingerprints after the bidirectional action matrix,
+local-view isolation, close-before-1500-ms fresh-renderer proof, fault
+injection, the fefaf regression, and one complete incident bundle. Do not
+interpret this source sign-off as installed-runtime sign-off.
+
+## Packaged live proof
+
+Packaged fixture intentionally fails after hydration.
+
+Generate one report and prove it contains enough evidence to reconstruct:
+
+```text
+correct process/build
+correct state revision
+hydration success
+subsequent render failure
+bad screenshot
+relevant diagnostics
+exact surface identity
+```
+
+without adding temporary project UI instrumentation.
+
+## Reviewer gate
+
+Reviewer answers:
+
+> Is this report sufficient for another session or another agent to diagnose the visual incident without access to transient desktop state?
+
+## Completion evidence
+
+Store:
+
+* one synthetic successful report;
+* one synthetic failed-render report;
+* manifest verification;
+* bounded-size proof;
+* exact SHA/sign-off.
+
+## Rollback / failure behavior
+
+Report failure cannot affect active rendering.
+
+Delete incomplete artifacts and return a structured report-generation failure.
+
+---
+
+# C1.6 — Full agent/control/MCP workflow + packaged closure
+
+## User-visible capability
+
+An MCP-connected agent can perform the complete safe workflow:
+
+```text
+identify exact process
+subscribe to visual lifecycle
+wait for event-driven readiness
+capture exact surface
+inspect semantic geometry
+retrieve screenshot/report
+diagnose failures
+```
+
+without:
+
+```text
+arbitrary JavaScript
+Windows desktop clicking
+raw filesystem access
+temporary project instrumentation
+continuous polling
+path-string process guessing
+```
+
+## Architectural boundary / likely owner
+
+The existing reviewed local control protocol remains the semantic authority.
+
+The existing standalone MCP adapter remains transport-only.
+
+New visual commands are added to the control catalog; MCP continues forwarding exact `{method,params}`.
+
+Do not duplicate visual business logic inside MCP.
+
+## Control command surface
+
+Final expected visual command family:
+
+```text
+capture.window
+capture.surface
+capture.element
+
+inspect.visual.elements
+visual.assert
+
+visual.report.create
+visual.artifact.read
+```
+
+Event subscription extends the existing validated event mechanism with:
+
+```text
+visual.lifecycle
+visual.diagnostic
+```
+
+No independent MCP event bus.
+
+If MCP event subscription support is later needed, it consumes the same reviewed control event stream.
+
+## Agent readiness workflow
+
+Canonical workflow:
+
+```text
+inspect process identity
+→ resolve explicit window/surface
+→ subscribe
+→ observe navigation-started
+→ observe DOM-ready
+→ observe state-hydrated
+→ observe first-paint
+→ observe layout-stable
+→ capture.surface
+```
+
+If `render-failed` arrives at any point, the agent captures/report-generates immediately.
+
+No loop that repeatedly asks “are we ready yet?”
+
+## MCP/security rules
+
+* one authenticated local Papers connection;
+* strict existing control schemas;
+* no control descriptor/token in MCP output;
+* no arbitrary selector;
+* no JS;
+* no arbitrary file path;
+* artifact reads only by opaque generated artifact ID;
+* cancellation closes/revokes relevant control state as already established by B3;
+* observation commands are read-only and need no destructive confirmation;
+* future mutating visual-debug commands are out of C1.
+
+## Deterministic tests
+
+* [x] MCP exact parameter pass-through for every visual command family;
+* [x] invalid/foreign surface refusal preserved;
+* [x] artifact chunk reconstruction yields expected SHA;
+* [x] MCP cannot turn element key into selector/script;
+* [x] lifecycle events remain correctly correlated with outstanding calls;
+* [x] cancellation during capture leaves no partial artifact and no continued operation;
+* [x] adapter contains no Papers visual business rules.
+
+Implementation checkpoint: the standalone MCP adapter remains a mechanical
+`method`/`params` forwarder. Unit coverage now exercises the complete current
+visual command family, including report creation and opaque artifact reads,
+with exact argument preservation. Control-side validation and authority remain
+in Papers' reviewed protocol; no visual logic was duplicated in MCP.
+
+Reviewer checkpoint: C1.6's non-packaged MCP boundary is signed off at exact
+SHA [`03d2ef7e`](https://github.com/Futahua/Papers-3/commit/03d2ef7e4174d1620f833f3526f9183a39b42294).
+The reviewer found no concrete defect. Packaged MCP acceptance and
+cancellation-during-capture were subsequently closed in the reviewed local
+scope at [`e05286d5`](https://github.com/Futahua/Papers-3/commit/e05286d5cb77a7e8adc6a737652e862ff41cb9c1), with no remaining concrete
+reviewer defect. The final packaged visual/MCP acceptance is signed off at
+[`d977a297`](https://github.com/Futahua/Papers-3/commit/d977a2974beddd1ea94aade311c65ab9e29fec74).
+
+## Real packaged Electron acceptance
+
+The final packaged acceptance must use the real packaged executable and real stdio MCP adapter.
+
+Minimum scenario:
+
+1. launch packaged Papers with isolated synthetic profile;
+2. inspect process identity;
+3. open deterministic fixture;
+4. subscribe to lifecycle;
+5. observe hydration + first paint + layout stable;
+6. capture surface;
+7. inspect/capture semantic element;
+8. make one semantic geometry assertion;
+9. create visual-debug report;
+10. retrieve report through control/MCP artifact API;
+11. verify report hashes;
+12. close normally.
+
+A second packaged fixture deliberately fails render and must produce an actionable failure report.
+
+## Reviewer gate
+
+Final reviewer question:
+
+> Can a remote agent, using only reviewed control/MCP semantics, establish what exact Papers process is running and what the user actually sees, identify where rendering failed, and preserve enough evidence for another session—without mutating the user's data or gaining arbitrary execution/filesystem authority?
+
+## Completion evidence
+
+Final C1 closure records:
+
+* all C1.x implementation and reviewed SHAs;
+* protocol version/schema state;
+* full unit suite;
+* all focused visual suites;
+* deterministic baseline suite;
+* packaged success/failure E2E at `d977a297`;
+* MCP packaged E2E at `d977a297`;
+* artifact integrity proof at `d977a297`;
+* production audit;
+* `git diff --check`;
+* reviewer sign-off.
+
+No release follows automatically from C1 completion.
+
+## Rollback / failure behavior
+
+The complete visual subsystem must be removable/disableable without changing ordinary Papers behavior.
+
+If visual control is unavailable:
+
+* Papers still opens and renders normally;
+* no project is migrated/restarted;
+* control returns “visual observation unavailable”;
+* no creator data is touched.
+
+---
+
+# 3. As you Go companion track — project repository only
+
+These tasks begin only when the corresponding generic Papers phase exists.
+
+## AY-C1.1 — Generic hydration/revision integration
+
+ * [x] Preserve the versioned `{state,revision}` state envelope through the existing fixed path.
+ * [x] After successful decode/parse/normalization and model installation, report generic `state-hydrated` with the opaque revision.
+ * [x] Optionally provide safe summary counters such as model/entity totals through the generic bounded summary map.
+ * [x] On parse/decode/hydration failure, report structured `hydration-failed`.
+ * [x] Never send raw serialized state through the visual diagnostics channel.
+ * [x] Regression fixture proves non-empty source state cannot silently become an empty hydrated model without generating observable disagreement/failure.
+ * [x] Hash fixture source state before/after; prove no mutation.
+
+This specifically guards the class of defect fixed by `a247778`, but the implementation remains entirely project-owned.
+
+## AY-C1.3 — Stable project semantic keys
+
+Project chooses stable keys such as conceptual equivalents of:
+
+```text
+document.root
+empty-state
+primary-canvas
+group.<fixture-key>
+shortcut.<fixture-key>
+```
+
+Exact names are an As you Go decision.
+
+ * [x] keys are stable across styling/refactors;
+ * [x] they do not encode DOM selectors;
+ * [x] fixture assertions verify expected semantic elements are visible and correctly bounded;
+ * [x] Papers contains no knowledge of those keys.
+
+## AY-C1.4 — Deterministic project fixture
+
+Create synthetic fixed state representing a meaningful non-empty document.
+
+For the historical failure class, the fixture should ensure:
+
+```text
+persisted model clearly non-empty
+hydrated revision known
+rendered semantic summary non-empty
+visual graph visibly non-empty
+```
+
+The exact group/shortcut counts belong to the As you Go fixture, not Papers.
+
+ * [x] no creator `state.json` copied or modified;
+ * [x] deterministic theme/font/window profile;
+ * [x] screenshot baseline;
+ * [x] semantic geometry assertions;
+ * [x] intentional baseline-update workflow.
+
+## AY-C1.5 — Incident-style visual report regression
+
+Synthetic regression intentionally injects a hydration/model failure and proves the generic report exposes:
+
+```text
+source/document revision
+state-hydrated or hydration-failed
+model summary
+first-paint/layout state
+visible screenshot
+diagnostics
+```
+
+No temporary red box, visible counter, manual instrumentation, or Windows accessibility inspection should be required.
+
+* [x] the packaged production-renderer fixture emits the failure through its own file-backed page;
+* [x] retrieved report artifacts contain revision, hydration/failure, model summary, paint/layout, screenshot, and diagnostics evidence.
+
+---
+
+# 4. Incident-derived acceptance safeguards
+
+These are explicit reviewer checks, not informal lessons.
+
+## Process/restart safeguard
+
+* [x] every packaged visual report records PID;
+* [x] every report records process `appInstanceId`;
+* [x] every report records process start time;
+* [x] every report records build version/commit;
+* [x] every report records canonical executable file identity;
+* [x] junction/symlink alias spelling never establishes process sameness/freshness;
+* [x] a “fresh restart” claim without changed process start identity is rejected as evidence.
+
+## Render-success safeguard
+
+* [x] document file presence is not render success;
+* [x] valid state JSON is not render success;
+* [x] topology membership is not render success;
+* [x] visible native surface is not render success;
+* [x] DOM-ready is not hydration success;
+* [x] hydration success is not first-paint;
+* [x] first-paint is not layout-stable;
+* [x] each fact has its own explicit evidence.
+
+## Creator-data safeguard
+
+Before and after any packaged diagnostic acceptance:
+
+* [x] snapshot/hash source fixture data;
+* [x] prove diagnostics did not modify it;
+* [x] reports contain observation copies/summaries only;
+* [x] no “fix by rewriting state” diagnostic path exists.
+
+## Event-driven safeguard
+
+* [x] no background screenshot polling;
+* [x] no “check every 500 ms until ready” production mechanism;
+* [x] observers signal changes;
+* [x] callers wait on events with bounded timeout;
+* [x] timeline screenshots occur only on explicit lifecycle boundaries.
+
+---
+
+# 5. Persistent multi-session workflow
+
+For every C1 implementation session:
+
+1. [x] Read `HERMES.md` and the current persistent progress/visual-observability plan.
+2. [x] Inspect branch/head/origin parity and dirty worktree.
+3. [x] Preserve all user-owned modifications.
+4. [x] Identify the single active C1.x gate.
+5. [x] Re-read the previous exact-SHA reviewer verdict.
+6. [x] Do not implement later phases opportunistically.
+7. [x] Run focused tests before changing the seam.
+8. [x] Keep Papers-generic logic free of project identities.
+9. [x] Keep project-specific fixtures/assertions in their own repositories.
+10. [x] Add control schemas concurrently with each new semantic capability.
+11. [x] Verify authority/redaction before adding MCP exposure.
+12. [x] Run typecheck + focused tests + full suite + build + packaged E2E + diff check as appropriate.
+13. [x] Record evidence using exact commit SHA.
+14. [x] Obtain explicit reviewer SIGNED OFF or concrete blocker.
+15. [x] Update the persistent checklist only after the reviewer verdict.
+16. [x] Do not release/install/package beyond the packaged test artifact required for acceptance unless separately authorized.
+
+---
+
+# 6. Milestone completion definition
+
+C1 is complete only when all of the following are true:
+
+* [x] an agent can capture the actual window/surface pixels;
+* [x] capture is synchronized with topology/document/render revisions;
+* [x] process identity distinguishes stale vs genuinely fresh instances across path aliases;
+* [x] lifecycle exposes navigation → DOM → hydration → paint → stability/failure;
+* [x] renderer console/errors/resource/hydration failures are safely observable;
+* [x] stable semantic element bounds exist;
+* [x] `capture.element` works without selectors/JS;
+* [x] visibility/clipping/overlap/contrast assertions exist;
+* [x] deterministic fixture rendering exists;
+* [x] baseline screenshot diff/update workflow is review-safe;
+* [x] bounded event-driven timelines exist;
+* [x] self-contained diagnostic reports exist;
+* [x] reports never contain creator state files or broad filesystem contents;
+* [x] MCP can use the same reviewed control semantics without gaining extra authority;
+* [x] successful and failing flows work in real packaged Electron acceptance;
+ * [x] As you Go can consume the generic contract without any As-you-Go-specific logic appearing in Papers;
+* [x] diagnostics demonstrably do not mutate project data;
+* [x] no reviewed blocker remains in the non-packaged scope.
+
+**C1 completion means Papers can prove both what it believes the application state is and what the user actually sees.**
+
+# 7. Workspace split-preview and project-tab hardening (2026-09-04)
+
+The reviewed workspace interaction now uses Dockview's mature drag/drop engine
+for hit testing and structural mutation, while Papers supplies the visible
+guarantee layer above native Backpack surfaces.
+
+ * [x] Removed the explicit Split Right / Split Down controls.
+ * [x] Allowed left/right/top/bottom candidates show a Papers-owned half-pane
+   preview and only an animation-frame-armed preview, after the host-raise IPC
+   acknowledgement, may drop.
+ * [x] Rejected or busy candidates retain visible cancellation/unavailable text
+   after release; tab-strip and center drops remain ordinary reorder operations,
+   and leaving the drop surface invalidates the candidate without lowering the
+   host during the remainder of the drag.
+ * [x] Fast-release candidates are rejected unless the matching edge preview is
+   already armed; accepted structural drops use a guarded exactly-once fallback
+   for Dockview pointer/HTML5 event ordering, and post-drop fallback requires
+   the same still-armed preview before consuming semantic intent.
+ * [x] Pointer-backed (touch/pen/coarse-pointer) drags mirror Dockview's
+   window-level pointer-up/cancel boundary so `dragActive` and host compositor
+   ownership are always released even when no native HTML5 `dragend` fires.
+ * [x] Delayed host-raise acknowledgements are generation-guarded before they
+   write `sideDrop`, so edge → center/reorder transitions cannot resurrect a
+   stale split intent.
+ * [x] Dockview `tab`/`header_space` overlays explicitly clear side intent and
+   preserve the raised host, so edge → tab-strip drops remain pure reorders.
+ * [x] Main-owned topology rejection reports an announced cancellation while
+   fresh canonical topology reconciliation restores the renderer; the rejection
+   path re-raises the host before displaying its visual status above native
+   project views.
+ * [x] Keyboard fallback is retained through Control+Alt+ArrowLeft/Right/Up/Down
+   on the focused Dockview tab, using the same semantic split transaction.
+ * [x] Sash resizing remains live and does not enter split-preview composition.
+ * [x] A queued project renderer is bound to its logical surface before staged
+   authority is released, preventing new-tab bootstrap state-load calls from
+   being rejected as non-host senders.
+ * [x] Focused E2E coverage proves the visible armed preview precedes release,
+   horizontal and vertical keyboard splits still persist, and the removed
+   buttons are absent.
+
+The implementation is Papers-generic. Backpack project URLs remain authenticated
+and project-owned; Papers does not interpret folder/document data. The protected
+user-owned `docs/evidence/worker-comparison.json` remains outside this change.
+
+## 8. Signed-off live installation (2026-09-04)
+
+Reviewer sign-off: `ddaec3384ba3bffd63650941b713acc76af0311c` (READY / SIGNED
+OFF). A fresh `npm run package:dir` build from that source was installed into
+the user-facing `Runtime/App` junction target after stopping only Papers
+processes. The installed `Papers.exe` SHA-256 is
+`FA8C1B0C0D698796ED4E63665F0E0A7558CC2C4226D2DFF82F59C564CB8B7BD1`, matching
+the unpacked package exactly.
+
+Rollback is reversible by moving the current `Runtime/App` aside and restoring
+`Runtime/Backups/before-live-install-20260904-164700` to `Runtime/App`.
+`Runtime/Data` was not changed. The existing desktop shortcut still resolves
+through `D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, which is the same
+junction-backed executable. Packaged acceptance was re-run against the installed
+executable with the isolated backpack-navigation and workspace-tabs E2Es; both
+passed.
+
+## 9. Post-install interaction audit (2026-09-04)
+
+The follow-up reviewer audit of the live screenshot found two separate issues
+that are not included in the signed-off install: As-you-Go action buttons are
+also 4px drag handles with unsafe pointer-cancel/click-suppression behavior,
+and a physical tab drag can lose Dockview edge discovery while a native project
+view is topmost. The former belongs to the independent As-you-Go project; the
+latter needs a Papers-native hit-testing/compositor design and physical-input
+acceptance. A candidate implementation was intentionally reverted after it
+regressed the focused E2E path, so the signed-off live build remains unchanged
+until that follow-up is proven.
+
+## 10. Screenshot-class drag hardening source sign-off (2026-09-04)
+
+The follow-up Papers source chain is now reviewed and signed off at
+`33cd66debccd968b811e9accf790b26fc10497c2` (READY / SIGNED OFF — source).
+The chain closes the concrete source blockers found in the screenshot audit:
+
+* Dockview content resolution uses an explicit deterministic center/edge
+  resolver; center and `header_space` transitions visibly explain that they are
+  reorder/keep-in-group targets and explicitly clear `sideDrop`, candidate
+  generation and preview state.
+* Workspace drag ownership is acquired on the next animation frame and is
+  generation guarded. Picker and workspace drag use independent host-overlay
+  owner leases, so releasing one cannot lower the host while another remains.
+* Native host backing and every repaint path derive from one owner-aware
+  function. During a workspace drag, the host backing and the complete
+  renderer paint chain (`:root`, `body`, `#root`, `.app`, Dockview roots and
+  `.backpack-project-frame`) are transparent, preserving native project pixels
+  beneath the Papers preview in opaque mode.
+
+Validation at the signed-off source head: typecheck passed; full unit suite
+passed (92 files, 902 tests, 4 skipped); focused `backpack-navigation` and
+`workspace-tabs` E2Es passed together; production build and `git diff --check`
+passed. The protected `docs/evidence/worker-comparison.json` remains the only
+uncommitted user-owned change.
+
+This is source sign-off, not installed-runtime sign-off. The remaining gate is
+one physical Windows/Electron acceptance with a real native As-you-Go surface:
+hold a tab over a split band inside the project rectangle, capture the composed
+window before release, prove live project pixels plus armed preview, then prove
+exactly one persisted split. The same run must cover all four edges, center,
+`header_space`, fast release, delayed compositor acknowledgement, and picker
+open/close ownership. No new live install or release is implied by this record.
+
+The As-you-Go button/handle correction remains independent project work. Its
+exact pushed source head is `9d8147e95fff12b7a7fb98eaae14c677db497b0a`
+(`agent/single-writer-surfaces`), audited READY / SIGNED OFF by the reviewer.
+Action buttons are pure buttons inside positioned shells, movement uses an
+explicit handle, and cancel/lost-capture/blur/destroy roll back without
+persistence or click suppression; the full independent suite passes 1,121
+tests with 0 failures and 0 skips. No As-you-Go implementation is included in
+this Papers commit, and no live project data was changed.
+
+### 10.1 Successful split terminal hardening (2026-09-04)
+
+The screenshot-class regression where a successful split left the delegated
+surface above the opposite native pane is closed in source at
+`00a49738e91d0a5bd3ba5a4fddf1c00e169ceb0f` (READY / SIGNED OFF by the
+reviewer). Every semantic success consumer now calls an idempotent
+`finishSuccessfulDrop()` that ends the drag session before clearing the preview,
+releases the `workspace-drag` host lease, and makes late terminal events
+harmless. The focused packaged navigation E2E asserts the preview is gone and
+`document.documentElement.dataset.workspaceDrag` is `false` immediately after
+release; typecheck, the full 92-file/902-test unit suite (4 skipped), and the
+focused navigation/workspace-tabs E2Es all pass.
+
+This correction is source-signoff only. The currently installed executable
+(`99B2A6B16EFBB70ACCEEC7610CFFFC928E83E02BA1133CF8659E7DA967E4DA50`) predates
+this fix; a creator-authorized live swap and physical two-native-pane click
+acceptance remain the final operational gate. The existing rollback backup and
+creator data remain preserved.
+
+A fresh unpacked package was nevertheless rebuilt from this source head for
+verification. Its `release/win-unpacked/Papers.exe` SHA-256 is
+`3AC269E8F0E7EA113E7F0197232FEA22ED3F16F9090B6245F776F834A6D0AA02`.
+Single-worker packaged runs of `backpack-navigation.e2e.ts` and
+`workspace-tabs.e2e.ts` both pass against that exact executable; the earlier
+parallel invocation was not used as evidence because two simultaneous packaged
+Electron launches raced their isolated startup profiles.
+
+### 10.2 Creator-authorized live swap (2026-09-04 21:25 local)
+
+The creator authorized installation of the successful-split terminal fix. Papers
+processes were stopped, and the previous canonical `Runtime/App` package was
+moved reversibly to
+`Runtime/Backups/before-live-install-20260904-212439`. Because
+`D:\Letters\MatTroiSeConMoc\Papers` is a junction to `Runtime`, this single
+replacement also updates the desktop shortcut target; no second app copy was
+created. The new live executable and shortcut-resolved executable both hash to
+`3AC269E8F0E7EA113E7F0197232FEA22ED3F16F9090B6245F776F834A6D0AA02`, and the
+updated app is running normally from that path. A before/after manifest found
+all 194 `Runtime/Data` files byte-for-byte unchanged. Isolated packaged runs of
+`backpack-navigation.e2e.ts` and `workspace-tabs.e2e.ts` pass against the live
+executable. No publication or installer release occurred.
+
+### 10.3 Resize and nested-tiling source sign-off (reviewer follow-up, 2026-09-04)
+
+The reviewer audited the final source head
+[`b930ba35`](https://github.com/Futahua/Papers-3/commit/b930ba35f6a93bd7c1647355faac93e429264a71)
+and marked the Papers resize/arbitrary nested multi-group agenda **READY / SIGNED
+OFF — source**. The implementation is generic Papers host logic; no As-you-Go
+project behavior was copied into Papers.
+
+Closed source gates:
+
+* Generation-scoped resize ownership with pointer-ID terminals, frozen and
+  restored active/focused panels, Dockview pointer-cancel termination before
+  canonical rollback, competing-pointer rejection, and fail-closed capture or
+  host-raise failure handling.
+* Resize transparency remains until the acknowledged owner release succeeds;
+  uncertain release stays fail-closed and cannot be stranded by a later tab drag.
+* Recursive Dockview `toJSON()`/`fromJSON()` projection preserves native panel
+  reuse, allocates distinct stable live group IDs during coarse hydration,
+  evicts stale canonical↔live mappings, restores canonical focus, and projects
+  same-count orientation/order changes instead of treating them as a size-only
+  update.
+* Same-axis splits normalize to n-ary canonical nodes, nested geometry commits
+  round-trip through Dockview's alternating axes, and close/move operations
+  preserve surviving sibling proportions.
+
+Validation at the signed-off source head: `npm run typecheck`; full unit suite
+(`93` files, `908` passed, `4` skipped); focused
+`backpack-navigation.e2e.ts` and `workspace-tabs.e2e.ts` passed in clean
+single-worker runs; `git diff --check` passed. The protected
+`docs/evidence/worker-comparison.json` remains the only uncommitted user-owned
+change.
+
+A fresh `npm run package:dir` build from this exact source produced
+`release/win-unpacked/Papers.exe` with SHA-256
+`D8A437B17D98948B487A7AFB98AEA80D3FE184575D30CD5B671559125ECF6CDD`.
+Packaged single-worker runs of both focused E2Es passed against that executable.
+This package is not installed into `Runtime/App`; the existing live install,
+desktop shortcut, `Runtime/Data`, and creator data remain untouched. A separate
+creator-authorized live swap still requires physical Windows acceptance of the
+reviewer's final matrix: mixed 6+ pane reload with stable sender IDs, native
+clicks in every visible pane, held-sash remote mutation, touch/pen terminal
+handling, rapid resize→tab-drag, and picker+resize owner overlap.
+
+### 10.4 Creator-authorized live installation (2026-09-04 23:28 local)
+
+The creator authorized installation of the resize and nested-tiling source
+sign-off. Only Papers processes were closed, and the previous live
+`Runtime/App` was moved reversibly to
+`Runtime/Backups/before-live-install-20260904-232843`. The prepared unpacked
+package was copied into the original `Runtime/App` path; no installer release,
+publication, or second app copy was performed, and the swap itself did not
+write `Runtime\Data`.
+
+The installed executable, package executable, and the existing desktop
+shortcut-resolved executable all hash to
+`D8A437B17D98948B487A7AFB98AEA80D3FE184575D30CD5B671559125ECF6CDD` (package
+built from source sign-off `b930ba35`). The `Papers` desktop shortcut still
+targets `D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, which remains the
+same junction-backed runtime path. A clean before/after manifest found all 192
+`Runtime/Data` files byte-for-byte unchanged at the swap boundary. The normal
+post-install shortcut launch restored the live workspace and updated only
+`PapersData\workspace-topologies.json` and its backup; backpack records,
+registry, and settings were unchanged.
+
+Against the installed executable, isolated single-worker packaged
+`backpack-navigation.e2e.ts` passed on retry after one intermittent resize
+timeout, and `workspace-tabs.e2e.ts` passed. The source and packaged acceptance
+remain valid; the reviewer's physical native matrix (mixed 6+ pane reload,
+native clicks in every pane, held-sash remote mutation, touch/pen terminals,
+rapid resize→tab-drag, and picker+resize owner overlap) is still a separate
+Windows acceptance gate and was not claimed by this install.
+
+### 10.5 Arbitrary mixed-split policy correction and live installation (2026-09-05 00:21 local)
+
+The reviewer re-audited exact source head
+`4fe91905b289db593acfc2a9bf806e1608b4bf57` and returned **READY / SIGNED OFF —
+source**. The obsolete main-process one/two-group `flatRoot` restriction was
+removed; recursive topology validation and exact live surface identity checks
+remain the authority boundary. The added regression commits a three-group
+mixed horizontal/vertical topology through `PapersHostFacade`.
+
+The creator then authorized installation. Papers processes were stopped and the
+prior live `Runtime/App` was moved reversibly to
+`Runtime/Backups/before-live-install-20260905-002141`. The package rebuilt from
+the signed-off source was copied into the original junction-backed path. The
+package, installed executable, and existing desktop shortcut-resolved
+executable all hash to
+`200D882D82BC22A970153222700A25A96188C016A9C30FB92FCC81EA1457DB85`.
+`Runtime/Data` had 192 files with zero byte/hash differences at the swap
+boundary, and the shortcut still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`.
+
+Typecheck, full unit tests (93 files, 909 passed, 4 skipped), build, package,
+and the new focused host-facade regression passed. Packaged navigation and
+workspace acceptance reached their pre-existing resize assertions but timed
+out in repeated runs; this remains a separate package/physical acceptance
+gate, not a source blocker or evidence of a data mutation. No publication or
+installer release occurred. The requested `TOGGLE MODE.bat` and PC shutdown
+remain the final creator-authorized post-sign-off actions.
+
+### 10.6 Creator-authorized tab-control installation (2026-09-05)
+
+The middle-click tab-close and blank-strip drag guard are pushed at
+`5941ce6a8df77c275e0ebb58ccbd2638e9292469`. The package rebuilt from that
+commit was installed after stopping only Papers processes. The previous live
+app is reversible at
+`Runtime/Backups/before-live-install-20260905-171315`.
+
+The package, installed executable, and desktop shortcut-resolved executable
+share SHA-256
+`47CCE74865D85303C7FC983BCDF5608FC73A16B552677E5163E0486F4C159959`.
+`Runtime/Data` contained 192 files with zero byte/hash differences at the swap
+boundary, and the existing shortcut/junction was preserved. Typecheck and
+production build pass; the focused navigation test reaches the new tab-control
+checks before the pre-existing sash-persistence timeout.
+
+### 10.7 Split-preview generation hardening source sign-off (2026-09-05)
+
+The reviewer audited exact source head
+[`6fa3eb50`](https://github.com/Futahua/Papers-3/commit/6fa3eb5014e77c937d711e1a41c9e38ea91a5a1d)
+and returned **READY / SIGNED OFF — source** for the arbitrary mixed-split
+and bounded visual-preview agenda. The stale acknowledged-edge race is closed
+with one generation-scoped arm predicate requiring the exact surface, target
+group, edge, and current candidate generation. Same-candidate Dockview
+re-emissions reuse the active generation; real edge/group changes invalidate
+the previous arm before a new acknowledgement/animation-frame barrier. The
+final Dockview move and each semantic topology consumer use the same accepted
+edge authority. A focused unit regression covers right → bottom → right
+re-entry before the new arm can complete.
+
+Validation from the exact pushed head: `npm run typecheck` passed; the full
+unit suite passed (94 files, 911 passed, 4 skipped); `npm run package:dir`
+passed; and the clean unpacked package
+`release/win-unpacked/Papers.exe` has SHA-256
+`7E829091B2EBE3A63BEA7D7E0126FC0660842667D13CD1DAADF8ECE664611AC5`.
+Packaged `backpack-navigation.e2e.ts` passed on the final clean-package retry
+after intermittent armed-preview timing misses. `workspace-tabs.e2e.ts`
+continues to time out only at its pre-existing sash-persistence assertion
+(line 212); this remains a separate package/physical gate and is not a source
+blocker for the signed-off preview work.
+
+This package is not installed into `Runtime/App`. The live executable,
+desktop shortcut, `Runtime/Data`, and creator data remain unchanged. Remaining
+operational acceptance is physical Windows validation of all four edges,
+mixed 3+ nesting, stale-ack races, split-versus-resize pointer ownership,
+native clicks after a split, and full restart/reload; installation still
+requires explicit creator authorization under the release/rollback procedure.
+
+### 10.8 Creator-authorized split-preview installation (2026-09-05 18:56 local)
+
+The creator authorized installation of the reviewer-signed split-preview
+hardening build. Only Papers processes were stopped. The previous live App was
+moved reversibly to
+`Runtime/Backups/before-live-install-20260905-185615`, and the signed unpacked
+package was copied into the same junction-backed `Runtime/App` path. No
+installer release or publication occurred.
+
+The live executable, package executable, and desktop shortcut-resolved
+executable now hash to
+`7E829091B2EBE3A63BEA7D7E0126FC0660842667D13CD1DAADF8ECE664611AC5`.
+The protected `Runtime/Data` manifest contained 194 files before and after the
+swap with zero byte/hash differences. `Papers.lnk` still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, and the updated app was
+relaunched successfully.
+
+Live-path `backpack-navigation.e2e.ts` reaches the split-preview assertions
+and then reproduces the known intermittent sash-persistence timeout at the
+dragged split-size checkpoint on two retries. This remains a separate resize
+acceptance issue; it did not alter the installed hash or Runtime/Data.
+
+### 10.9 Split-preview visual lifecycle hardening (2026-09-05)
+
+The reviewer audited exact source head
+[`30cf99fa`](https://github.com/Futahua/Papers-3/commit/30cf99fa1b7bfae55c07d259678649ff4abcb681)
+and returned **READY / SIGNED OFF — source**. The correction removes the
+persistent center/header `SplitPreview` pill, makes directional previews
+rectangle-only and group-local, ignores Dockview root-edge repaint callbacks
+without replacing an active group candidate, and restores an armed rectangle
+for identical same-edge re-emissions. Unavailable/rejected states are now a
+separate one-shot fadeaway status; the dedupe key remains latched until a real
+semantic transition, and warning expiry releases only its generation-owned
+workspace-drag host lease when no newer drag is active.
+
+Validation from the exact pushed head: `npm run typecheck` passed; the full
+unit suite passed (94 files, 911 passed, 4 skipped); `npm run package:dir`
+passed; and the fresh unpacked package
+`release/win-unpacked/Papers.exe` has SHA-256
+`81FA9D2A1730918179511F9A36966F88204FCC4A4CEFC9C533DE7659D4B56088`.
+Packaged navigation reaches the new warning-fade, no-repeat, stable-preview,
+group-local-bounds, and hidden-Dockview-strip assertions before reproducing
+the known intermittent sash-persistence timeout at the dragged split-size
+checkpoint. That timeout remains a separate package/physical gate.
+
+This corrected package is **not installed** into `Runtime/App`; the current
+live package remains the creator-authorized `7E829091...` build recorded in
+10.8. The protected `docs/evidence/worker-comparison.json` remains the only
+user-owned worktree modification. Remaining physical gates are warning-owner
+native click-through, all four edges in nested mixed 3+ layouts, delayed and
+out-of-order acknowledgements, fast release, split-versus-resize ownership,
+full restart/reload, and resolution/classification of the existing sash
+persistence timeout. Installing this new package still requires explicit
+creator authorization under the rollback procedure.
+
+### 10.10 Creator-authorized visual-lifecycle installation (2026-09-05 20:49 local)
+
+The creator authorized installation of the reviewer-signed visual-lifecycle
+package. Only Papers processes were stopped. The prior live App was moved
+reversibly to
+`Runtime\Backups\before-live-install-20260905-204906`, and the fresh unpacked
+package from source head `30cf99fa` was copied into the same junction-backed
+`Runtime\App` path. No installer release or publication was performed.
+
+The live executable, package executable, and desktop-shortcut-resolved
+executable hash to
+`81FA9D2A1730918179511F9A36966F88204FCC4A4CEFC9C533DE7659D4B56088`.
+The prior rollback App hash is
+`7E829091B2EBE3A63BEA7D7E0126FC0660842667D13CD1DAADF8ECE664611AC5`.
+`Runtime\Data` was not a swap target; its post-swap manifest contains 194
+files and remains readable. `Papers.lnk` still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, and the updated app was
+relaunched successfully with five Papers processes using that target.
+
+The package/live acceptance gates remain the reviewer-listed native checks:
+warning-owner click-through, all four edges in nested mixed 3+ layouts,
+delayed/out-of-order acknowledgement races, fast release, split-versus-resize
+ownership, full restart/reload, and resolution/classification of the existing
+sash-persistence timeout. The protected
+`docs/evidence/worker-comparison.json` remains untouched.
+
+### 10.15 Singleton-source direct split hardening (2026-09-06)
+
+Cross-group drag now permits moving the only tab in a source group directly
+into another group's split zone. The canonical
+`splitWorkspaceSurfaceAtTarget` mutation removes the empty source group and
+splits the destination atomically; same-group singleton drops remain rejected
+because they have no meaningful source/destination distinction. The renderer
+now predicts the destination rectangle after source collapse before drawing the
+armed preview in outer group/layout coordinates, then converts it back through
+the target's measured header/content insets, including nested mixed-orientation
+layouts. Missing geometry fails closed. Armed drops carry the source group and
+structural topology token and are cancelled when canonical membership/layout
+changes. Structural invalidation is terminal for the physical Dockview drag:
+pointer cleanup is released, the drag-session generation is incremented, stale
+overlays/drops cannot re-arm, and a fresh drag is required. Title relays also
+fail closed after a target window starts closing so they cannot overwrite an
+atomic move/compensation record.
+
+Reviewer audited exact pushed head
+[`e4027906`](https://github.com/Futahua/Papers-3/commit/e402790699b35c1cf0785196fab389216b55fa49)
+and returned **READY / SIGNED OFF — source**. Validation: typecheck, production
+build, full unit suite (96 files passed, 922 tests passed, 1 skipped file, 4
+skipped tests), built-app `workspace-center-split.e2e.ts`, and the same focused
+E2E against `PAPERS_E2E_EXE=release\\win-unpacked\\Papers.exe` all passed. The
+packaged executable hash is
+`CAD588CDC70397AAEBB421FAD58650061ADF75FBEBF2FD5595E78CA015496BB4`.
+The regression covers both a multi-tab source and a singleton source, durable
+topology membership, and restart/reload persistence (surface IDs are compared
+by project identity after startup remapping). This source head is signed off
+but not installed live; installation still requires creator authorization. The
+protected `docs/evidence/worker-comparison.json` remains untouched.
+
+### 10.14 Creator-authorized no-guidance installation (2026-09-05 23:41 local)
+
+The creator authorized installation of the reviewer-signed no-guidance build.
+Only Papers processes were stopped. The prior direct-center App was moved
+reversibly to
+`Runtime\Backups\before-live-install-20260905-234105`, and the unpacked
+package from source head `57a3461` was copied into the same junction-backed
+`Runtime\App` path. No installer release or publication was performed.
+
+The live executable, package executable, and desktop-shortcut-resolved
+executable hash to
+`61D2FDE608E46723D5C09A9D99566EA164E4F784B0A7C52AA18D8E6E26FFD73F`.
+A strict pre/post swap manifest found 194 `Runtime\Data` files with zero
+byte/hash differences. `Papers.lnk` still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, and the updated app was
+relaunched successfully with six Papers processes using that target.
+
+The protected `docs/evidence/worker-comparison.json` remains untouched.
+
+### 10.13 Remove split guidance text (2026-09-05)
+
+The reviewer audited exact source head
+[`57a34610`](https://github.com/Futahua/Papers-3/commit/57a346101f825f01aca5dd40d69ff6cd6bf4b934)
+and returned **READY / SIGNED OFF — source**. The hidden general drag-help
+paragraph and the visible `Release to split...` preview label are removed;
+the semantic preview object, bounded rectangle, ARIA status/name, generation
+authority, warning fadeaway, and native transparency path are unchanged.
+
+Validation: typecheck passed; the full unit suite passed (94 files, 912
+passed, 4 skipped); and `npm run package:dir` passed. The fresh package hash
+is
+`61D2FDE608E46723D5C09A9D99566EA164E4F784B0A7C52AA18D8E6E26FFD73F`.
+This cosmetic package is not installed; live remains on the authorized
+direct-center build from 10.12. The protected
+`docs/evidence/worker-comparison.json` remains untouched.
+
+### 10.11 Direct cross-group content-center split sign-off (2026-09-05)
+
+The reviewer audited exact source/test head
+[`bb8c833`](https://github.com/Futahua/Papers-3/commit/bb8c8336909d2438da63d032dc2a04a4ac9f266d)
+and returned **READY / SIGNED OFF — source**. Content-center drags now resolve
+to a real left/right/top/bottom destination using source-versus-target group
+geometry (with pointer-relative fallback for same-group center), intercept
+Dockview before its ordinary center move, and use the existing atomic
+cross-group split path. Tab strips and blank headers remain ordinary reorder
+territory. Provisional Dockview side moves are fenced from ordinary canonical
+`onMove` persistence.
+
+The dedicated packaged regression
+`tests/e2e/workspace-center-split.e2e.ts` passes against the fresh package. It
+proves a tab can be dragged directly from a source group into another group's
+content center without an intermediate canonical move, shows a non-center
+bounded preview inside the target content rectangle, and creates the third
+group on release. The fresh package from this exact source/test head has
+SHA-256
+`1E8050E3FFF87FED6351ABE056C25F48A1FB1CFA9CF33D9F4163D13D2C8117C9`.
+Typecheck, the full unit suite (94 files, 912 passed, 4 skipped), and
+`npm run package:dir` pass.
+
+This package is **not installed**. Live remains on the previously authorized
+`81FA9D2A...` build. Singleton-source direct splitting remains intentionally
+out of scope because it requires prospective post-collapse geometry. Remaining
+live gates are native click-through/sender identity after direct-center split,
+center-to-edge/header delayed-ack races, fast release, nested 3+ mixed H/V
+restart, and classification of the existing sash-persistence timeout.
+
+### 10.12 Creator-authorized direct-center installation (2026-09-05 21:50 local)
+
+The creator authorized installation of the reviewer-signed direct-center split
+build. Only Papers processes were stopped. The prior live App was moved
+reversibly to
+`Runtime\Backups\before-live-install-20260905-215050`, and the unpacked
+package from source/test head `bb8c833` was copied into the same
+junction-backed `Runtime\App` path. No installer release or publication was
+performed.
+
+The live executable, package executable, and desktop-shortcut-resolved
+executable hash to
+`1E8050E3FFF87FED6351ABE056C25F48A1FB1CFA9CF33D9F4163D13D2C8117C9`.
+The rollback App is the previously installed `81FA9D2A...` build. A strict
+pre/post swap manifest found 194 `Runtime\Data` files with zero byte/hash
+differences. `Papers.lnk` still targets
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, and the updated app was
+relaunched successfully with six Papers processes using that target.
+
+The remaining live gates are native click-through and sender identity after a
+direct-center split, center-to-edge/header delayed-ack races, fast release,
+nested 3+ mixed H/V restart/reload, and resolution/classification of the
+existing sash-persistence timeout. The protected
+`docs/evidence/worker-comparison.json` remains untouched.
+
+### 10.16 Creator-authorized singleton-source live installation (2026-09-06 01:35 local)
+
+The creator authorized installation of the reviewer-signed singleton-source
+direct-split build from exact source head
+[`e4027906`](https://github.com/Futahua/Papers-3/commit/e402790699b35c1cf0785196fab389216b55fa49).
+Only Papers processes were stopped. The previous live App was moved
+reversibly to
+`Runtime\Backups\before-live-install-20260906-013548`; the verified unpacked
+package was staged, hash-checked, and moved into the same canonical
+`Runtime\App` path. No installer release or publication was performed.
+
+The package, installed executable, and all relaunched desktop-shortcut
+processes hash to
+`CAD588CDC70397AAEBB421FAD58650061ADF75FBEBF2FD5595E78CA015496BB4`.
+The desktop shortcut remains
+`C:\Users\admin\Desktop\Papers.lnk` targeting
+`D:\Letters\MatTroiSeConMoc\Papers\App\Papers.exe`, which resolves through
+the existing `Papers` junction to `Products\Papers\Runtime`.
+
+The swap boundary was clean: all 194 `Runtime\Data` files had zero byte/hash
+differences before versus after the App replacement. On the controlled
+post-install stop/relaunch check, normal Chromium/app startup updated eight
+runtime entries (cache/log files plus `PapersData\workspace-topologies.json`
+and its backup); this was runtime persistence, not an App-copy mutation. The
+new build relaunched successfully with nine Papers processes, all using the
+verified hash. Rollback is reversible by moving the current `Runtime\App`
+aside and restoring
+`Runtime\Backups\before-live-install-20260906-013548` to `Runtime\App`.
+The protected `docs/evidence/worker-comparison.json` remains untouched.

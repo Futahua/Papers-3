@@ -1,0 +1,45 @@
+015R3 LIVE RESTART DURABILITY PROOF - TRANSCRIPT
+run at: 2026-08-10T05:16:36.366Z
+isolated data dir: D:\Programs\evTEMP\papers-015r3-proof-sG0vX3
+isolated project copy: D:\Programs\evTEMP\papers-015r3-proof-sG0vX3\ayg-project-copy
+disposable target: title=AYG-015R3-58532-8ef88953 pid=58532
+old owned papers pid: 38052 helpers: [31212]
+new owned papers pid: 52280 helpers: [26324]
+
+PASS - setup: isolated data dir :: D:\Programs\evTEMP\papers-015r3-proof-sG0vX3
+PASS - isolated project copy seeded
+PASS - isolated registry seeded
+PASS - isolated state.json starts absent
+PASS - disposable target launched :: pid=58532 title=AYG-015R3-58532-8ef88953
+PASS - session 1: owned Papers launched :: main pid=38052 cdp port=54715
+PASS - member persisted :: {"id":"b5777834-c388-4728-9237-7f5af93bee0a","descriptor":{"version":1,"title":"AYG-015R3-58532-8ef88953","executableFingerprint":"656870b7a837ffb1e8c22c3dc5bfb387c113804399f06d16fa6a7a1dba65bb4d"},"bounds":null,"state":"normal"}
+PASS - descriptor is exactly {version, executableFingerprint, title} :: {"version":1,"title":"AYG-015R3-58532-8ef88953","executableFingerprint":"656870b7a837ffb1e8c22c3dc5bfb387c113804399f06d16fa6a7a1dba65bb4d"}
+PASS - descriptor has exactly three keys :: executableFingerprint,title,version
+PASS - member starts bounds=null state=normal :: bounds=null state=normal
+PASS - no forbidden keys persisted after bind :: clean
+PASS - session 1: owned helper running :: helper pids=31212
+PASS - auto-record: move persisted :: 300,220 520x340
+PASS - target minimized by member click :: minimized
+PASS - target restored by member click :: normal
+PASS - target geometry unchanged after minimize/restore cycle :: {"width":520,"y":220,"height":340,"ok":true,"x":300}
+PASS - persisted bounds unchanged after minimize/restore :: {"x":300,"y":220,"width":520,"height":340}
+PASS - session 1: old owned PIDs recorded :: papers=38052 helpers=31212
+PASS - session 1: app exited via quit barrier :: Browser.close -> before-quit -> clean exit
+PASS - FULL STOP: owned helper exited :: helper pids after close = 0
+PASS - target stays alive across restart :: state=normal
+PASS - session 2: fresh owned Papers launched :: main pid=52280 cdp port=62729
+PASS - As you Go surface already open (last active restored) :: no card click needed
+PASS - session 2: persisted descriptor intact :: {"version":1,"title":"AYG-015R3-58532-8ef88953","executableFingerprint":"656870b7a837ffb1e8c22c3dc5bfb387c113804399f06d16fa6a7a1dba65bb4d"}
+PASS - fresh session applied saved geometry to the same target :: {"width":520,"ok":true,"x":300,"y":220,"height":340}
+PASS - fresh session member state normal :: normal
+PASS - fresh session member bounds intact :: {"x":300,"y":220,"width":520,"height":340}
+PASS - session 2: new owned PIDs recorded :: papers=52280 helpers=26324
+PASS - fresh helper issued (new helper PID(s), old not reused) :: old=[31212] new=[26324]
+PASS - no forbidden keys persisted after fresh session :: clean
+PASS - cleanup: running finally cleanup
+PASS - cleanup: target gracefully closed
+PASS - cleanup: zero owned helper processes :: remaining=[]
+PASS - cleanup: zero owned test electron processes :: remaining=[]
+PASS - cleanup: zero AYG-015R3 windows remain :: remaining=0
+
+FINAL SUMMARY: 35/35 passed, 0 failed.

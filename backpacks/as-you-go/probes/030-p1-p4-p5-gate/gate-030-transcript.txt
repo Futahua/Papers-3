@@ -1,0 +1,33 @@
+030 P1/P4/P5 LIVE GATE - TRANSCRIPT (isolated, exclusive interval)
+run at: 2026-08-12T05:23:58.057Z
+isolated data dir: D:\Programs\CodexBrainB\tmp\papers-030-moCrAO
+creator Papers pids before: [36456,37472,37616,39540,40748]
+
+PASS - creator installed Papers enumerated before (observed only) :: [36456,37472,37616,39540,40748]
+PASS - twelve disposable target windows launched :: AYG-015R3-46912-fdd106b9 AYG-015R3-45060-6c3b37a9 AYG-015R3-42760-c1214032 AYG-015R3-47056-ad11fb53 AYG-015R3-45832-ee1b16c6 AYG-015R3-46828-13ea55c1 AYG-015R3-43124-89756bf1 AYG-015R3-46112-bdf5aae5 AYG-015R3-34100-79798851 AYG-015R3-46120-b498ed72 AYG-015R3-33704-278c972a AYG-015R3-39696-5e6594a4
+PASS - isolated root PID captured with exact descendant set :: root=36216
+PASS - layout with six list-picked members seeded (baseline above the old four-icon cap) :: window-layout-96b6f529-c47f-4b15-b954-6705cdffe085
+PASS - P1 attached card: no decorative folder art (no art / folder-art / empty icon box) :: {"hasArt":false,"hasItemIcon":false,"body":true,"cardRect":{"w":214,"h":78},"scrollH":76,"hasFolderArtClass":false}
+PASS - P1 attached card: content-sized (rendered height equals scroll content within 8px) :: {"cardRect":{"w":214,"h":78},"scrollH":76}
+PASS - C4 no hard four-icon cap: all six members are rendered and visible (no clipped strip) :: {"memberButtons":6,"clipX":0,"cardRect":{"w":206,"h":70},"cardClass":"window-layout-card"}
+PASS - C4 bounded wrap at six members: one row, no overflow, uniform control gaps, safe lock edge padding :: {"rows":1,"cardW":206,"cardRightPadding":30,"lockFullyVisible":true,"controlGap":3,"controlGapUniform":true}
+PASS - P3 no intrusive native-looking scrollbar (members + controls strips hide it) :: {"members":{"scrollbarWidth":"none","clientW":188,"scrollW":188},"controls":{"scrollbarWidth":"none","clientW":188,"scrollW":188}}
+PASS - P1 running bar: present for open/normal, absent/hidden when minimized, restored after :: {"before":{"hasBar":true},"minimized":{"hasBar":true,"visible":false}}
+PASS - P5 controls: coherent row, no individual button outlines (transparent border, no shadow) :: {"count":6,"border":"1px solid rgba(0, 0, 0, 0)","boxShadow":"none"}
+PASS - P4 detach preserves exact identity with NO redundant title (same body, members, controls) :: {"hasTitle":false,"body":true,"memberCount":6,"realIcons":6,"totalIcons":6,"controls":["pick","list","min-all","restore-all","isolate","reattach"],"windowContent":{"w":210,"h":74},"card":{"w":206,"h":70,"scrollW":204,"scrollH":68}}
+PASS - P4 detach preserves REAL member icons (every member has a non-empty icon) :: {"totalIcons":6,"realIcons":6}
+PASS - P4 detached card is content-sized (window CONTENT fits the full card within a tight width AND height tolerance) :: {"windowContent":{"w":210,"h":74},"card":{"w":206,"h":70,"scrollW":204,"scrollH":68},"fitDelta":{"w":4,"h":4}}
+PASS - C5 shared card component: attached and detached render the SAME card, NO title (members, shared controls + lock toggle) :: {"attached":{"className":"window-layout-card","hasTitle":false,"memberCount":6,"controls":["pick","list","min-all","restore-all","isolate","detach"],"rect":{"w":206,"h":70}},"detached":{"hasTitle":false,"memberCount":6,"controls":["pick","list","min-all","restore-all","isolate","reattach"],"card":{"w":206,"h":70,"scrollW":204,"scrollH":68}},"sameShared":true,"lockShared":true}
+PASS - C5 shared card dimensions: attached and detached card sizes match within a tight tolerance :: {"attachedRect":{"w":206,"h":70},"detachedCard":{"w":206,"h":70,"scrollW":204,"scrollH":68},"dimensionDelta":{"w":0,"h":0}}
+PASS - P5 member reorder works in the ATTACHED card and persists :: {"before":["AYG-015R3-46912-fdd106b9","AYG-015R3-45060-6c3b37a9","AYG-015R3-42760-c1214032","AYG-015R3-47056-ad11fb53","AYG-015R3-45832-ee1b16c6","AYG-015R3-46828-13ea55c1"],"after":["AYG-015R3-46912-fdd106b9","AYG-015R3-42760-c1214032","AYG-015R3-45060-6c3b37a9","AYG-015R3-47056-ad11fb53","AYG-015R3-45832-ee1b16c6","AYG-015R3-46828-13ea55c1"]}
+PASS - P5 member reorder works in the DETACHED card and persists through the channel :: {"before":["AYG-015R3-46912-fdd106b9","AYG-015R3-42760-c1214032","AYG-015R3-45060-6c3b37a9","AYG-015R3-47056-ad11fb53","AYG-015R3-45832-ee1b16c6","AYG-015R3-46828-13ea55c1"],"after":["AYG-015R3-42760-c1214032","AYG-015R3-45060-6c3b37a9","AYG-015R3-47056-ad11fb53","AYG-015R3-46912-fdd106b9","AYG-015R3-45832-ee1b16c6","AYG-015R3-46828-13ea55c1"]}
+PASS - C5 lock icon solely toggles detached on/off (reattach closes the widget; the attached card returns to detach) :: {"widgetHasReattach":true,"workspaceDetachBack":true}
+PASS - C4 above-eight (12 members): members WRAP into bounded rows, all visible, no overflow, no unbounded width :: {"rows":2,"count":12,"cardW":340,"fullyInside":true}
+PASS - C4 detached at 12 members: bounded wrap, content-fit window, no clip :: {"detached12":{"rows":2,"count":12,"cardRect":{"w":340,"h":102},"windowContent":{"w":344,"h":106},"fullyInside":true},"wrapDelta12":{"w":4,"h":4}}
+PASS - C4/034 detached member preview renders fully within the window (not swallowed/clipped by host/card bounds) :: {"visible":true,"rect":{"left":6,"top":6,"right":166,"bottom":100},"size":{"w":160,"h":94},"hasPreviewImage":true,"previewWidth":82,"windowContent":{"w":344,"h":106},"style":{"left":"6px","top":"6px"}}
+PASS - P5 no layout name/icon customization: the reachable rename shows the fixed message and opens NO editor :: {"renameItem":{},"messageShown":true,"editorOpened":false,"layoutNameBefore":"Window layout","layoutNameAfter":"Window layout"}
+PASS - P4/P5 main workspace stays usable after attach/detach/reorder (grid renders, controls act) :: {"grid":true,"layoutNode":true,"memberButtons":12}
+PASS - cleanup: zero PROVEN-owned survivors :: []
+PASS - creator installed Papers untouched after run :: before=[36456,37472,37616,39540,40748] after=[36456,37472,37616,39540,40748]
+
+FINAL SUMMARY: 26/26 passed, 0 failed.

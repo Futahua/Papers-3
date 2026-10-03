@@ -1,0 +1,11 @@
+# Line endings must survive a round trip, because validation rebuilds public/ and
+# compares it byte-for-byte against what was committed. With core.autocrlf=true a
+# checkout rewrites LF to CRLF, the build re-emits LF, and every attempt fails a
+# diff that has nothing to do with the work.
+
+# Source normalises to LF in the working tree, matching what the build emits.
+* text=auto eol=lf
+
+# Build output is an artifact: stored and checked out byte-identical, never
+# converted.
+public/** -text

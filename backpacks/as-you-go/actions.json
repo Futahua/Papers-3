@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "actions": [
+    {
+      "id": "clips",
+      "target": "D:\\Programs\\CLIP STUDIO PAINT\\CLIPS.bat"
+    },
+    {
+      "id": "sloptop-mode",
+      "target": "D:\\Letters\\MatTroiSeConMoc\\Papers\\User Generated\\SLOPTOP MODE.bat"
+    },
+    {
+      "id": "slop-engine",
+      "target": "D:\\333\\SlopTop\\sloptop_engine.ahk"
+    },
+    {
+      "id": "usb",
+      "target": "D:\\Programs\\scrcpy-win64-v3.3.4\\usb.bat"
+    }
+  ]
+}

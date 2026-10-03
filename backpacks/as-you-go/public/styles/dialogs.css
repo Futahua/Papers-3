@@ -1,0 +1,631 @@
+
+.editor-layer,
+.confirm-layer {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  overflow: auto;
+  background: var(--overlay);
+  backdrop-filter: blur(4px);
+  place-items: center;
+  padding: 24px;
+}
+.editor,
+.confirm-card {
+  width: min(570px, 100%);
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
+  background: var(--surface-raised);
+  box-shadow: 0 24px 70px var(--shadow);
+  padding: 22px;
+}
+.editor h2,
+.confirm-card h2 {
+  margin: 0 0 16px;
+  font: 400 27px/1.2 Georgia, serif;
+}
+.editor label {
+  display: block;
+  margin: 11px 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.editor label span { color: var(--text-faint); font-weight: 400; }
+.editor input:not([type="file"]),
+.editor textarea {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 9px 10px;
+  color: var(--text);
+}
+.editor textarea { resize: vertical; }
+.editor-actions { gap: 8px; flex-wrap: wrap; }
+.editor-submit { justify-content: flex-end; margin-top: 18px; }
+.confirm-card .editor-actions { justify-content: flex-end; }
+.paper-button.primary { border-color: var(--accent); background: var(--accent); color: var(--surface); }
+.paper-button.danger { border-color: var(--danger-button); background: var(--danger-button); color: var(--surface); }
+.file-button { display: inline-flex !important; margin: 0 !important; font-weight: 400 !important; }
+.file-button input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.icon-choice {
+  margin: 16px 0 0;
+  border: 1px solid var(--border-dialog);
+  border-radius: 10px;
+  padding: 12px;
+}
+.icon-choice legend { padding: 0 6px; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.icon-preview-shell {
+  display: grid;
+  width: 76px;
+  height: 76px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  place-items: center;
+  overflow: hidden;
+}
+.icon-choice.drag-over {
+  border-color: var(--green);
+  background: var(--success-surface);
+  box-shadow: 0 0 0 2px var(--green);
+}
+.icon-preview { max-width: 68px; max-height: 68px; object-fit: contain; }
+#icon-fallback {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  border-radius: 11px;
+  background: var(--green-soft);
+  color: var(--accent-strong);
+  place-items: center;
+  font-size: 23px;
+}
+.editor-error { min-height: 17px; margin: 10px 0 0; color: var(--danger); font-size: 12px; }
+.confirm-card p { margin: 0 0 18px; color: var(--text-confirm); line-height: 1.55; }
+.confirm-card label { display: block; margin: 11px 0; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.prompt-settings-page {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-raised);
+  color: var(--text);
+}
+.prompt-library {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: clamp(18px, 3vw, 36px);
+}
+.prompt-library-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--prompt-border);
+  padding-bottom: 12px;
+}
+.prompt-library-header h2 { margin: 0; }
+.prompt-library-tabs {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 3px;
+  border: 1px solid var(--border-dialog);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  padding: 3px;
+}
+.prompt-tab {
+  margin: 0;
+  border-color: transparent;
+  background: transparent;
+  padding: 7px 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.prompt-tab:hover { border-color: transparent; background: var(--surface); }
+.prompt-tab[aria-selected="true"] {
+  border-color: var(--accent-tab-border);
+  background: var(--surface-raised);
+  color: var(--accent-strong);
+  box-shadow: 0 1px 2px var(--shadow);
+}
+.prompt-page { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.prompt-library-add-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 0 auto;
+  border: 0;
+  padding: 0;
+}
+.prompt-library-add-actions .paper-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  border-color: var(--accent-border-soft);
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: 12px;
+}
+.prompt-library-status {
+  min-height: 17px;
+  margin: 0 0 8px;
+  color: var(--accent-strong);
+  font-size: 12px;
+}
+.hotkeys-page { overflow: hidden; }
+.hotkey-list { flex: 1 1 auto; min-height: 160px; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
+.hotkey-group { margin: 0 0 14px; }
+.hotkey-group h3 { margin: 8px 0 5px; color: var(--text-muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.hotkey-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; border-top: 1px solid var(--border-subtle); padding: 9px 0; }
+.hotkey-row.hotkey-capturing { border-radius: 8px; background: var(--surface-muted); padding-inline: 8px; }
+.hotkey-details { display: grid; gap: 2px; min-width: 0; }
+.hotkey-label { color: var(--text); font-size: 13px; }
+.hotkey-current {
+  width: fit-content;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  cursor: pointer;
+  font: 600 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-align: left;
+}
+.hotkey-current:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.hotkey-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.hotkey-controls .paper-button { margin: 0; padding: 5px 8px; font-size: 11px; }
+.hotkey-status-error { color: var(--danger); }
+.hotkey-reset-actions { justify-content: flex-end; margin-top: 6px; }
+.settings-preferences {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 4px 0 10px;
+  padding: 9px 0 18px;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.settings-opacity-control { display: grid; gap: 5px; min-width: 0; }
+.settings-preferences label { display: flex; justify-content: space-between; gap: 12px; }
+.settings-preferences output { color: var(--accent-strong); font-weight: 700; }
+.settings-preferences input[type="range"] { width: 100%; accent-color: var(--accent); }
+.settings-breadcrumb-scale-control { grid-column: span 2; }
+.breadcrumb-scale-values { color: var(--text-muted); font-weight: 400; }
+.dual-range { position: relative; height: 20px; }
+.dual-range-track {
+  position: absolute;
+  inset: 8px 0 auto;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+.dual-range input[type="range"] {
+  position: absolute;
+  inset: 0;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  appearance: none;
+}
+.dual-range input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: transparent; }
+.dual-range input[type="range"]::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border: 2px solid var(--surface-raised);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-strong);
+  pointer-events: auto;
+  appearance: none;
+}
+.dual-range .dual-range-middle::-webkit-slider-thumb { background: var(--accent-strong); }
+.settings-preferences select {
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--text);
+  padding: 4px 6px;
+}
+.settings-checkbox-label { align-items: center; justify-content: flex-start !important; }
+.settings-checkbox-label input { accent-color: var(--accent); }
+@media (max-width: 560px) {
+  .settings-preferences { grid-template-columns: 1fr; }
+  .settings-breadcrumb-scale-control { grid-column: auto; }
+  .prompt-library { padding: 16px; }
+  .prompt-library-header { align-items: flex-start; }
+  .prompt-library-add-actions { width: 100%; margin-left: 0; }
+}
+/* A copy confirmation is the one status the user is actively waiting for, so
+ * it reads as a notification rather than the usual quiet line. */
+.prompt-library-status.prompt-status-copied {
+  /* Shrink-wrapped pill, matching the workspace copy confirmation, so a short
+   * message is not a full-width panel. */
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: max-content;
+  max-width: 100%;
+  min-height: 26px;
+  margin: 0 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--success-surface);
+  padding: 4px 12px 4px 8px;
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 600;
+  animation: prompt-status-copied-in 180ms ease-out;
+}
+.prompt-library-status.prompt-status-copied::before {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--surface-raised);
+  content: "✓";
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+}
+@keyframes prompt-status-copied-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prompt-library-status.prompt-status-copied { animation-duration: 1ms; }
+}
+.prompt-delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  border: 1px solid var(--danger-soft-border);
+  border-radius: 10px;
+  background: var(--danger-soft);
+  padding: 9px 12px;
+  color: var(--danger);
+  font-size: 13px;
+}
+.prompt-delete-confirm span { flex: 1 1 auto; }
+/* The viewport, not the row list, owns the scrollable area and the root
+ * pointer target. It always fills the space between the status line and the
+ * footer so the blank area under the last row stays clickable as "root". */
+.prompt-tree-viewport {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 160px;
+  overflow-y: auto;
+  margin: 0 -6px;
+  padding: 0 6px;
+  border: 0;
+}
+.prompt-tree-viewport:focus { outline: none; }
+.prompt-tree-viewport.prompt-root-target:focus {
+  outline: none;
+}
+
+/* These are page-sized work areas, not inset browser panels. Keep their
+ * scrollbars quiet and surface-coloured while retaining a comfortably sized
+ * hit target. */
+.prompt-settings-page,
+.prompt-tree-viewport,
+.hotkey-list {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-faint) 24%, var(--surface-raised)) var(--surface-raised);
+}
+.prompt-settings-page::-webkit-scrollbar,
+.prompt-tree-viewport::-webkit-scrollbar,
+.hotkey-list::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.prompt-settings-page::-webkit-scrollbar-track,
+.prompt-tree-viewport::-webkit-scrollbar-track,
+.hotkey-list::-webkit-scrollbar-track {
+  background: var(--surface-raised);
+}
+.prompt-settings-page::-webkit-scrollbar-thumb,
+.prompt-tree-viewport::-webkit-scrollbar-thumb,
+.hotkey-list::-webkit-scrollbar-thumb {
+  border: 3px solid var(--surface-raised);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-faint) 24%, var(--surface-raised));
+}
+.prompt-settings-page::-webkit-scrollbar-thumb:hover,
+.prompt-tree-viewport::-webkit-scrollbar-thumb:hover,
+.hotkey-list::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-muted) 38%, var(--surface-raised));
+}
+.prompt-tree-list { display: block; }
+/* Blank remainder of the viewport: absorbs clicks below the final row so the
+ * user can deliberately target the top level. */
+.prompt-root-surface { flex: 1 1 auto; min-height: 44px; }
+.prompt-tree-menu {
+  position: fixed;
+  z-index: 130;
+  min-width: 190px;
+  border: 1px solid var(--border-dialog);
+  border-radius: 10px;
+  background: var(--surface-raised);
+  box-shadow: 0 12px 30px var(--shadow);
+  padding: 4px;
+}
+.prompt-tree-menu button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 8px 10px;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.prompt-tree-menu button:hover,
+.prompt-tree-menu button:focus { background: var(--selection); outline: none; }
+.prompt-tree-children { position: relative; }
+.prompt-tree-children::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(22px + var(--prompt-depth, 1) * 22px);
+  width: 1px;
+  background: var(--border-subtle);
+  content: "";
+}
+.prompt-tree-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  min-height: 43px;
+  padding-left: calc(7px + var(--prompt-depth, 0) * 22px);
+  border-bottom: 1px solid var(--border-subtle);
+  /* Collapsed rows are click/drag targets, not prose: text selection here only
+   * fights row selection and drag. The editors below opt back in. */
+  user-select: none;
+}
+/* Anything actually editable stays fully selectable. */
+.prompt-card-title,
+.prompt-card-text,
+.prompt-folder-rename {
+  user-select: text;
+}
+.prompt-prompt-row { grid-template-columns: 28px 22px minmax(0, 1fr) 30px; }
+.prompt-folder-row { grid-template-columns: 28px 26px 22px minmax(0, 1fr); }
+.prompt-tree-row:hover { background: var(--prompt-surface-hover); }
+.prompt-selected { background: var(--prompt-selection); }
+.prompt-selected:hover { background: var(--prompt-selection-strong); }
+.prompt-focused { box-shadow: inset 0 0 0 1px var(--prompt-focus); }
+.prompt-row-icon { display: grid; color: var(--text-faint); place-items: center; }
+.prompt-row-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.prompt-card-toggle {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  place-items: center;
+  cursor: pointer;
+}
+.prompt-card-toggle:hover { background: var(--selection); color: var(--accent-strong); }
+.prompt-card-toggle svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 140ms ease;
+}
+.prompt-prompt-row:has(.prompt-card-toggle[aria-expanded="true"]) .prompt-card-toggle svg { transform: rotate(180deg); }
+.prompt-prompt-title {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  padding: 7px 8px;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prompt-card-title,
+.prompt-folder-rename {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  padding: 7px 8px;
+  color: var(--text);
+  font: inherit;
+}
+.prompt-card-title:focus,
+.prompt-folder-rename:focus {
+  outline: none;
+  background: var(--prompt-input-focus);
+  box-shadow: inset 0 0 0 1px var(--prompt-input-focus-soft);
+}
+.prompt-folder-toggle {
+  display: grid;
+  width: 26px;
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-faint);
+  place-items: center;
+  cursor: pointer;
+}
+.prompt-folder-toggle:hover { background: var(--selection); color: var(--accent-strong); }
+.prompt-folder-toggle svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 140ms ease;
+}
+.prompt-tree-row:has(.prompt-folder-toggle[aria-expanded="true"]) .prompt-folder-toggle svg { transform: rotate(90deg); }
+.prompt-folder-icon { display: grid; color: var(--warning); place-items: center; }
+.prompt-folder-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.prompt-folder-title {
+  overflow: hidden;
+  padding: 7px 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prompt-card-details {
+  margin: 0 39px 10px calc(62px + var(--prompt-depth, 0) * 22px);
+  background: var(--prompt-card-surface);
+  border-radius: 0 0 7px 7px;
+  padding: 8px 10px 10px;
+}
+.prompt-card-text {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 150px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 10px;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
+}
+.prompt-card-text::-webkit-resizer { background: transparent; }
+.prompt-card-text:focus {
+  outline: none;
+  background: var(--prompt-text-focus);
+  box-shadow: inset 0 0 0 1px var(--prompt-input-focus-strong);
+}
+.prompt-row-expanded {
+  background: var(--prompt-expanded);
+  border-radius: 7px 7px 0 0;
+}
+.prompt-row-expanded.prompt-selected { background: var(--prompt-selection-stronger); }
+.prompt-cut { opacity: 0.45; }
+/* Copy confirmation: the button flashes green so the click is visibly
+ * acknowledged even when the copied text is off screen.
+ *
+ * The end frame names the button's real base colours rather than `inherit`,
+ * which in a keyframe resolves against the parent, not the element's own
+ * rule. The selector is doubled and also written for :hover so it outranks
+ * `.paper-button:hover` — the pointer is by definition over the button that
+ * was just clicked, and hover would otherwise repaint straight over the
+ * flash. */
+@keyframes prompt-copied-flash {
+  0%, 70% { background: var(--accent); border-color: var(--accent); color: var(--surface-raised); }
+  100% { background: var(--paper); border-color: var(--border-strong); color: var(--text); }
+}
+.paper-button.prompt-copied-flash,
+.paper-button.prompt-copied-flash:hover {
+  /* `forwards` holds the end frame until the class is removed. Do not also
+   * set the green statically here: the static colour would repaint after the
+   * animation finishes, reading as a second flash. */
+  animation: prompt-copied-flash 640ms ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .paper-button.prompt-copied-flash,
+  .paper-button.prompt-copied-flash:hover { animation-duration: 1ms; }
+}
+.prompt-checkbox { accent-color: var(--accent); }
+/* Folder exclude-all. A native checkbox has no excluded state, so the box is
+ * drawn explicitly: red fill with a var(--surface) minus, clearly distinct from the
+ * green check of include-all. */
+.prompt-folder-checkbox[data-batch-state="exclude"] {
+  position: relative;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--danger);
+  border-radius: 3px;
+  background: var(--danger);
+}
+.prompt-folder-checkbox[data-batch-state="exclude"]::after {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--surface-raised);
+  content: "";
+  transform: translateY(-50%);
+}
+/* Rows governed by an ancestor override: their own checkbox no longer decides,
+ * so the label takes the override's colour — green for include, red for
+ * exclude — and the box itself is dimmed. */
+.prompt-batch-forced .prompt-checkbox { opacity: 0.45; }
+.prompt-batch-include .prompt-prompt-title,
+.prompt-batch-include .prompt-folder-title { color: var(--accent-strong); }
+.prompt-batch-exclude .prompt-prompt-title,
+.prompt-batch-exclude .prompt-folder-title {
+  color: var(--danger);
+  text-decoration: line-through;
+  text-decoration-color: var(--danger-soft);
+}
+.prompt-tree-viewport.prompt-root-target { box-shadow: none; }
+.prompt-tree-viewport.prompt-drop-root { box-shadow: inset 0 -2px 0 0 var(--accent); }
+.prompt-dragging { opacity: 0.5; }
+.prompt-drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
+.prompt-drop-after { box-shadow: inset 0 -2px 0 0 var(--accent); }
+.prompt-drop-inside { background: var(--selection); }
+#confirm-restore { background: var(--accent-selection); border-color: var(--accent); color: var(--accent); }
+#confirm-restore:hover { background: var(--success-soft); }

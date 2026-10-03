@@ -1,0 +1,28 @@
+035 C5 RESPONSIVE SHARED GEOMETRY LIVE GATE - TRANSCRIPT (isolated, exclusive interval)
+run at: 2026-08-12T06:12:02.912Z
+isolated data dir: D:\Programs\CodexBrainB\tmp\papers-035-OMWkLS
+creator Papers pids before: [36456,37472,37616,39540,40748]
+
+PASS - creator installed Papers enumerated before (observed only) :: [36456,37472,37616,39540,40748]
+PASS - twelve disposable target windows launched :: AYG-015R3-41056-cea9bf5e AYG-015R3-38976-8d3ff12e AYG-015R3-7888-36830171 AYG-015R3-44516-390e3a8a AYG-015R3-14156-d2eff738 AYG-015R3-46992-4cfb9854 AYG-015R3-45212-8198d7d0 AYG-015R3-44076-17b18c73 AYG-015R3-26840-3a96015b AYG-015R3-15168-65e00ee1 AYG-015R3-22308-4cdb7cfe AYG-015R3-496-4db32bd2
+PASS - isolated root PID captured with exact descendant set :: root=34484
+PASS - layout with six list-picked members seeded :: window-layout-bf0e4a95-faad-4214-804e-f60858ad961c
+PASS - 035 first detach content-fits: card fills the window content width (no empty surround) :: {"windowContent":{"w":420,"h":70},"docClientW":420,"bodyW":420,"explorerW":420,"gridW":420,"gridPad":"0px","cardRect":{"w":420,"h":70},"rows":1,"count":6,"fullyInside":true,"controlCount":6,"scrollW":418,"scrollH":68}
+PASS - 035 attached card is a greyed placeholder while its widget is open: only the reattach lock, members disabled :: {"isPlaceholder":true,"dataPlaceholder":"true","membersDisabled":true,"controls":[{}],"hasDetach":false,"hasReattach":true,"controlCount":1}
+PASS - 035 the placeholder member is inert: a click performs no state change :: before=6 after=6
+PASS - 035 the detached window is USER-resizable: the native window content width follows the resize (frameless chrome excluded) :: {"w":184,"h":252}
+PASS - 035 the card FILLS the resized host width (card width == window content width) :: {"cardRect":{"w":184,"h":102},"windowContent":{"w":184,"h":252}}
+PASS - 035 narrow width reflows members into MORE rows (wrap responds continuously) :: {"firstRows":1,"narrowRows":2}
+PASS - 035 every member stays fully inside the card at the narrow width (no clip/overflow, safe padding) :: {"windowContent":{"w":184,"h":252},"docClientW":184,"bodyW":184,"explorerW":184,"gridW":184,"gridPad":"0px","cardRect":{"w":184,"h":102},"rows":2,"count":6,"fullyInside":true,"controlCount":6,"scrollW":182,"scrollH":100}
+PASS - 035 the resized geometry persists to the shared card geometry :: {"persisted":{"width":184,"height":252},"measured":{"w":184,"h":252}}
+PASS - 035 wider width reflows members into FEWER rows (continuous, no breakpoints) :: {"narrowRows":2,"wideRows":1}
+PASS - 035 the wider card still shows every member fully inside, even gaps (no unbounded strip) :: {"windowContent":{"w":504,"h":212},"docClientW":504,"bodyW":504,"explorerW":504,"gridW":504,"gridPad":"0px","cardRect":{"w":504,"h":70},"rows":1,"count":6,"fullyInside":true,"controlCount":6,"scrollW":502,"scrollH":68}
+PASS - 035 reattach restores the live attached card (no placeholder) with the detach lock :: {"w":502,"isPlaceholder":false,"controls":["pick","list","min-all","restore-all","isolate","detach"]}
+PASS - 035 the attached card follows the widget latest width immediately (attached w == persisted w) :: {"attached":502,"persisted":{"width":504,"height":212}}
+PASS - 035 the next detach reuses the persisted shared geometry (window reopens at the saved size) :: {"persisted":{"width":504,"height":212},"reopened":{"w":504,"h":212}}
+PASS - 035 12-member card opens content-fitted with every member visible :: {"windowContent":{"w":504,"h":212},"docClientW":504,"bodyW":504,"explorerW":504,"gridW":504,"gridPad":"0px","cardRect":{"w":504,"h":70},"rows":1,"count":12,"fullyInside":true,"controlCount":6,"scrollW":502,"scrollH":68}
+PASS - 035 at 12 members a narrow width still wraps into MORE rows with every member fully inside :: {"opened12Rows":1,"narrow12Rows":3,"narrow12":{"windowContent":{"w":184,"h":412},"docClientW":184,"bodyW":184,"explorerW":184,"gridW":184,"gridPad":"0px","cardRect":{"w":184,"h":134},"rows":3,"count":12,"fullyInside":true,"controlCount":6,"scrollW":182,"scrollH":132}}
+PASS - 035 at 12 members a wider width shows FEWER rows (continuous reflow, no hardcoded columns) :: {"narrowRows":3,"wideRows":1}
+PASS - creator installed Papers untouched after run :: before=[36456,37472,37616,39540,40748] after=[36456,37472,37616,39540,40748]
+
+FINAL SUMMARY: 21/21 passed, 0 failed.

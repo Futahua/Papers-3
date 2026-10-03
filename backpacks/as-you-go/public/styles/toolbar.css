@@ -1,0 +1,232 @@
+
+.toolbar-float {
+  position: absolute;
+  box-shadow: 0 4px 16px var(--shadow);
+  cursor: default;
+  touch-action: auto;
+}
+.window-layout-pill-tray {
+  position: fixed;
+  z-index: 24;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: min(70vw, 640px);
+  pointer-events: none;
+}
+.window-layout-pill {
+  pointer-events: auto;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 7px 12px;
+  border: 1px solid var(--border-soft, var(--text-faint));
+  border-radius: 999px;
+  color: var(--text);
+  background: var(--surface-raised);
+  box-shadow: 0 4px 16px var(--shadow);
+  cursor: pointer;
+}
+.window-layout-pill:hover { border-color: var(--focus); }
+:root[data-widget-surface="true"] .window-layout-pill-tray { display: none !important; }
+.toolbar-float.toolbar-dragging {
+  z-index: 20;
+  cursor: grabbing;
+  box-shadow: 0 10px 28px var(--shadow);
+}
+.toolbar-shell {
+  display: inline-flex;
+  align-items: center;
+}
+.toolbar-shell > .icon-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px;
+}
+.toolbar-drag-handle {
+  display: inline-flex;
+  flex: 0 0 12px;
+  align-self: stretch;
+  align-items: center;
+  justify-content: center;
+  margin: 4px 0 4px 4px;
+  border-radius: 4px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.toolbar-drag-handle::before {
+  width: 3px;
+  height: 18px;
+  border-radius: 3px;
+  background: currentColor;
+  content: "";
+  opacity: 0.35;
+}
+.toolbar-drag-handle:hover::before,
+.toolbar-dragging .toolbar-drag-handle::before { opacity: 0.8; }
+.toolbar-dragging .toolbar-drag-handle { cursor: grabbing; }
+.toolbar-shell:has(> [hidden]) { display: none !important; }
+/* Copy confirmation for the icon-only pickup button. Its "Copied" label is
+ * sr-only, so without this a sighted user gets no feedback at all. The
+ * selector is doubled and written for :hover because the pointer is by
+ * definition over the button that was just clicked, and `.quiet-button:hover`
+ * would otherwise repaint straight over the flash. */
+@keyframes pickup-copied-flash {
+  0%, 70% { background: var(--accent); border-color: var(--accent); color: var(--surface-raised); }
+  100% { background: var(--paper); border-color: var(--border-strong); color: var(--text); }
+}
+.quiet-button.pickup-copied,
+.quiet-button.pickup-copied:hover {
+  /* `forwards` holds the end frame until the class is removed. Do not also
+   * set the green statically here: the static colour would repaint after the
+   * animation finishes, reading as a second flash. */
+  animation: pickup-copied-flash 900ms ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .quiet-button.pickup-copied,
+  .quiet-button.pickup-copied:hover { animation-duration: 1ms; }
+}
+.icon-button svg { width: 18px; height: 18px; flex: none; }
+.icon-button .bin-count { position: static; }
+
+.toolbar-float[data-toolbar-key="breadcrumbs"] { top: 12px; left: 28px; }
+.toolbar-float[data-toolbar-key="backdrop-slider"] { top: 12px; right: 268px; }
+.toolbar-float[data-toolbar-key="copy-prompt"] { top: 12px; right: 148px; }
+.toolbar-float[data-toolbar-key="bin-button"] { top: 12px; right: 28px; }
+.toolbar-float[data-toolbar-key="delete-all-bin"] { top: 12px; right: 88px; }
+.toolbar-float[data-toolbar-key="restore-all-bin"] { top: 12px; right: 208px; }
+/* Background-opacity slider: the bare track, no chrome. The padded strip
+ * around it is the drag surface — the toolbar controller ignores pointerdown
+ * on an <input>, so the range itself moves the thumb and the margin drags. */
+.backdrop-slider {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  /* No pill behind the track, so the shared float shadow would cast a
+   * rectangle over open canvas. */
+  box-shadow: none;
+}
+.backdrop-slider.toolbar-dragging { box-shadow: none; }
+.backdrop-slider input[type="range"] {
+  width: 96px;
+  cursor: pointer;
+  accent-color: var(--green);
+}
+
+#delete-all-bin.selective {
+  background: var(--toolbar-danger-surface);
+  border-color: var(--toolbar-danger-text);
+}
+#restore-all-bin.selective {
+  background: var(--accent-selection);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The breadcrumb pill is retired: the ancestor chain now renders as ordinary
+   folder bodies in the workspace itself. The element stays in the DOM because
+   dom.js requires it and the render path still fills it, but it is never
+   shown. Remove the element and its render block together, not separately. */
+.breadcrumbs { display: none; }
+
+.breadcrumbs-retired {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-width: min(640px, calc(100vw - 220px));
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--paper);
+  padding: 7px 12px;
+}
+.breadcrumbs button {
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 5px 7px;
+  cursor: pointer;
+}
+.breadcrumbs button:hover { background: var(--selection); }
+.breadcrumbs span { color: var(--text-faint); }
+.status {
+  position: fixed;
+  top: 68px;
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  width: max-content;
+  max-width: min(760px, calc(100vw - 32px));
+  margin: 0;
+  border: 1px solid var(--toolbar-danger-border);
+  border-radius: 12px;
+  background: var(--toolbar-danger-surface);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 28px var(--shadow);
+  padding: 8px 13px;
+  color: var(--toolbar-danger-text);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  opacity: 0.5;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: status-toast-in 180ms ease-out;
+}
+.status:empty { display: none; }
+.status.status-success {
+  border-color: var(--accent-border-soft);
+  background: var(--success-surface);
+  color: var(--accent-strong);
+}
+.status.status-info {
+  border-color: var(--surface-border);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+}
+.status.status-fading {
+  opacity: 0;
+  transform: translate(-50%, -6px);
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+@keyframes status-toast-in {
+  from { opacity: 0; transform: translate(-50%, -6px); }
+  to { opacity: 0.5; transform: translateX(-50%); }
+}
+/* Copy confirmation uses the same overlay but keeps its success treatment. */
+.status.status-copied {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--accent-border-soft);
+  border-radius: 999px;
+  background: var(--success-surface);
+  padding: 5px 14px 5px 10px;
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+.status.status-copied::before {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--surface-raised);
+  content: "✓";
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .status { animation-duration: 1ms; }
+  .status.status-fading { transition-duration: 1ms; }
+}

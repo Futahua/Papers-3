@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Repository Research</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="sidebar">
+        <div class="brand">
+          <h1>Repository Research</h1>
+          <span class="brand-sub">a Papers 3 research desk</span>
+        </div>
+        <nav id="nav" aria-label="Views">
+          <button class="nav-btn" data-view="overview">Overview</button>
+          <button class="nav-btn" data-view="explorer">Explorer</button>
+          <button class="nav-btn" data-view="notes">Notes</button>
+          <button class="nav-btn" data-view="evidence">Evidence</button>
+          <button class="nav-btn" data-view="tasks">Coding Tasks</button>
+          <button class="nav-btn" data-view="draft">Draft</button>
+          <button class="nav-btn" data-view="artifacts">Artifacts</button>
+        </nav>
+        <div id="sidebar-foot">
+          <span id="save-status" title="Persistence status">·</span>
+        </div>
+      </aside>
+      <div id="main-col">
+        <header id="topbar">
+          <h2 id="view-title">Overview</h2>
+          <div id="topbar-actions">
+            <button id="undo-btn" hidden title="Restore the state captured before the last applied agent result">Undo</button>
+          </div>
+        </header>
+        <main id="content" tabindex="-1"></main>
+        <footer id="tray" aria-label="Selection tray"></footer>
+      </div>
+    </div>
+    <div id="modal-root"></div>
+    <div id="toasts" aria-live="polite"></div>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

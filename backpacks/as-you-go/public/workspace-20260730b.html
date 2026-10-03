@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: papers-file-preview: https: http:; media-src papers-file-preview: blob:; frame-src papers-file-preview: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>As you Go</title>
+    <link rel="stylesheet" href="workspace-20260730b.css?build=widget-picker-silent-v1" />
+    <script type="module" src="workspace-20260730b.js?build=widget-picker-history-restore-v1"></script>
+  </head>
+  <body>
+    <main class="workspace" data-papers-visual-key="document.root">
+      <div class="workspace-backdrop" id="workspace-backdrop" aria-hidden="true"></div>
+      <section class="navigation" aria-label="Folder navigation">
+        <div class="backdrop-slider toolbar-float toolbar-shell" id="backdrop-slider" data-toolbar-key="backdrop-slider">
+          <span class="toolbar-drag-handle" data-toolbar-drag-handle aria-hidden="true" title="Drag to move"></span>
+          <label class="sr-only" for="backdrop-opacity-slider">Background opacity</label>
+          <input id="backdrop-opacity-slider" type="range" min="0" max="1" step="0.05" value="1" />
+          <output id="backdrop-opacity-value" class="sr-only" for="backdrop-opacity-slider">100%</output>
+        </div>
+        <nav class="breadcrumbs" id="breadcrumbs" aria-label="Current group path"></nav>
+        <div class="toolbar-float toolbar-shell" data-toolbar-key="restore-all-bin">
+          <span class="toolbar-drag-handle" data-toolbar-drag-handle aria-hidden="true" title="Drag to move"></span>
+          <button class="quiet-button icon-button" id="restore-all-bin" type="button" title="Restore all" hidden>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10a6 6 0 1 0 1.76-4.24M4 10V5m0 5h5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="sr-only">Restore all</span>
+          </button>
+        </div>
+        <div class="toolbar-float toolbar-shell" data-toolbar-key="delete-all-bin">
+          <span class="toolbar-drag-handle" data-toolbar-drag-handle aria-hidden="true" title="Drag to move"></span>
+          <button class="quiet-button icon-button danger-text" id="delete-all-bin" type="button" title="Delete all" hidden>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V6M6 6v9.5A1.5 1.5 0 0 0 7.5 17h5a1.5 1.5 0 0 0 1.5-1.5V6M8.5 9v5M11.5 9v5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="sr-only">Delete all</span>
+          </button>
+        </div>
+        <div class="toolbar-float toolbar-shell" data-toolbar-key="copy-prompt">
+          <span class="toolbar-drag-handle" data-toolbar-drag-handle aria-hidden="true" title="Drag to move"></span>
+          <button class="quiet-button icon-button pickup-copy" id="copy-prompt" type="button" title="Copy agent pickup prompt">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M13 7V4.5A1.5 1.5 0 0 0 11.5 3h-7A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13H7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="sr-only copy-label">Copy agent pickup prompt</span>
+          </button>
+          <!--
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 2.6v2.2M10 15.2v2.2M2.6 10h2.2M15.2 10h2.2M4.8 4.8l1.6 1.6M13.6 13.6l1.6 1.6M15.2 4.8l-1.6 1.6M6.4 13.6l-1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+          -->
+        </div>
+        <div class="toolbar-float toolbar-shell" data-toolbar-key="bin-button">
+          <span class="toolbar-drag-handle" data-toolbar-drag-handle aria-hidden="true" title="Drag to move"></span>
+          <button class="quiet-button icon-button bin-button" id="bin-button" data-bin-view type="button" aria-pressed="false" title="Bin">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 6h12M8 6V4.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V6M6 6v9.5A1.5 1.5 0 0 0 7.5 17h5a1.5 1.5 0 0 0 1.5-1.5V6M8.5 9v5M11.5 9v5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="sr-only" id="bin-label">Bin</span>
+          <span class="bin-count" id="bin-count" hidden></span>
+          </button>
+        </div>
+      </section>
+
+      <div class="window-layout-pill-tray" id="window-layout-pills" aria-label="Docked window layouts"></div>
+
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+      <aside class="workspace-navigator" id="workspace-navigator" aria-label="Navigator"></aside>
+      <button class="parent-graph-toggle" id="parent-graph-toggle" type="button" aria-pressed="true" title="Show or hide parent folders">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5 10 10M10 10l5-5M10 10l5 5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="5" cy="5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="15" cy="5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="15" cy="15" r="2.2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+        <span class="sr-only">Show or hide parent folders</span>
+      </button>
+
+      <section class="explorer" id="explorer" aria-label="As you Go explorer">
+        <div
+          class="icon-grid"
+          id="icon-grid"
+          data-icon-grid
+          data-view="graph"
+          data-papers-visual-key="primary-canvas"
+          tabindex="0"
+          aria-label="Items in this folder"
+        ></div>
+        <div class="empty" id="empty" data-papers-visual-key="empty-state" hidden></div>
+        <div class="selection-marquee" id="selection-marquee" aria-hidden="true" hidden></div>
+      </section>
+
+      <footer class="selection-status" id="selection-status" hidden></footer>
+
+      <div class="context-menu" id="context-menu" data-context-menu role="menu" hidden></div>
+
+      <section class="editor-layer" id="editor-layer" hidden>
+        <form class="editor" id="editor" aria-label="Shortcut or folder editor">
+          <h2 id="editor-title"></h2>
+          <label>Name<input id="name-input" maxlength="120" autocomplete="off" /></label>
+          <label id="description-label">Description <span>(optional)</span><textarea id="description-input" maxlength="500" rows="2"></textarea></label>
+          <div id="target-fields">
+            <label>Target<input id="target-input" readonly /></label>
+            <div class="editor-actions" id="target-actions">
+              <button class="paper-button" id="pick-file" type="button">Choose file / app</button>
+              <button class="paper-button" id="pick-folder" type="button">Choose folder</button>
+            </div>
+          </div>
+          <fieldset class="icon-choice">
+            <legend>Icon</legend>
+            <div class="icon-preview-shell"><img id="icon-preview" class="icon-preview" alt="" hidden /><span id="icon-fallback" aria-hidden="true">↗</span></div>
+            <div class="editor-actions">
+              <button class="paper-button" id="use-target-icon" type="button">Use target icon</button>
+              <label class="paper-button file-button">Choose image<input id="icon-input" type="file" accept="image/*" /></label>
+            </div>
+          </fieldset>
+          <p class="editor-error" id="editor-error" role="alert"></p>
+          <div class="editor-actions editor-submit">
+            <button class="paper-button" id="cancel-editor" type="button">Cancel</button>
+            <button class="paper-button primary" id="save-editor" type="button">Save</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="confirm-layer" id="link-edit-layer" hidden>
+        <div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="link-edit-title">
+          <h2 id="link-edit-title">This shortcut is linked</h2>
+          <p>It appears in more than one folder. Apply this edit everywhere it's linked, or split this one location off as its own independent copy first?</p>
+          <div class="editor-actions">
+            <button class="paper-button" id="cancel-link-edit" type="button">Cancel</button>
+            <button class="paper-button" id="fork-link-edit" type="button">Fork this one</button>
+            <button class="paper-button primary" id="apply-everywhere-link-edit" type="button">Apply everywhere</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="confirm-layer" id="confirm-layer" hidden>
+        <div class="confirm-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+          <h2 id="confirm-title">Delete permanently?</h2>
+          <p id="confirm-copy">This cannot be undone.</p>
+          <div class="editor-actions">
+            <button class="paper-button" id="cancel-confirm" type="button">Cancel</button>
+            <button class="paper-button danger" id="confirm-delete" type="button">Delete permanently</button>
+            <button class="paper-button" id="confirm-restore" type="button" hidden>Restore</button>
+          </div>
+        </div>
+      </section>
+
+<!-- Quick Run: one search line, its type chips, and the flat result list. The elements are declared
+     here and registered in public/app/dom.js, which must stay in lockstep - a registered id with no
+     element here makes the whole workspace fail to mount (requiredElement throws). -->
+<section class="quick-run-layer" id="quick-run-layer" hidden>
+  <label class="sr-only" for="quick-run-input">Quick Run</label>
+  <input class="quick-run-input" id="quick-run-input" type="text" autocomplete="off" spellcheck="false" placeholder="Search saved folders, shortcuts, links and layout items">
+  <ul class="quick-run-chips" id="quick-run-chips"></ul>
+  <!-- The cap line: painted only while the list below is shorter than the match set, so it never appears
+       for a query that fits (public/app/quick-run/quick-run-session.js, QUICK_RUN_MAX_PAINTED_ROWS). -->
+  <p class="quick-run-cap" id="quick-run-cap" data-quick-run-cap="false" hidden></p>
+  <ul class="quick-run-results" id="quick-run-results"></ul>
+  <!-- The no-matches line: a non-empty query with no results says so, rather than leaving a blank layer
+       that reads like a surface which has not answered yet (public/app/quick-run/quick-run-presentation.js). -->
+  <p class="quick-run-notice" id="quick-run-notice" hidden></p>
+</section>
+
+      <section class="prompt-settings-page" id="prompt-layer" aria-labelledby="prompt-dialog-label" hidden>
+        <div class="prompt-library" role="region">
+          <header class="prompt-library-header">
+            <span id="prompt-dialog-label" class="sr-only">Prompt library</span>
+            <nav class="prompt-library-tabs" aria-label="Prompt library pages">
+              <button id="prompt-tab-prompts" class="paper-button prompt-tab" type="button" aria-selected="true">Prompts</button>
+              <button id="prompt-tab-hotkeys" class="paper-button prompt-tab" type="button" aria-selected="false">Settings</button>
+            </nav>
+            <div class="prompt-library-add-actions">
+              <button id="prompt-add-prompt" class="paper-button" type="button">+ Prompt</button>
+              <button id="prompt-add-folder" class="paper-button" type="button">+ Folder</button>
+            </div>
+          </header>
+          <div id="prompt-page-prompts" class="prompt-page">
+          <p id="prompt-status" class="prompt-library-status" role="status" aria-live="polite"></p>
+          <div id="prompt-delete-confirm" class="prompt-delete-confirm" hidden>
+            <span id="prompt-delete-message"></span>
+            <button id="prompt-delete-ok" class="paper-button danger" type="button">Delete</button>
+            <button id="prompt-delete-cancel" class="paper-button" type="button">Cancel</button>
+          </div>
+          <div id="prompt-tree-viewport" class="prompt-tree-viewport" tabindex="0" aria-label="Prompt library root">
+            <div id="prompt-card-list" class="prompt-tree-list" role="tree" aria-multiselectable="true" aria-label="Prompt library"></div>
+            <div class="prompt-root-surface" aria-hidden="true"></div>
+          </div>
+          <div id="prompt-tree-menu" class="prompt-tree-menu" role="menu" hidden></div>
+          <p id="prompt-error" class="editor-error" role="alert"></p>
+          </div>
+          <div id="prompt-page-hotkeys" class="prompt-page hotkeys-page" hidden>
+            <p id="hotkey-status" class="prompt-library-status" role="status" aria-live="polite"></p>
+            <section class="settings-preferences" aria-label="Visual preferences">
+              <div class="settings-opacity-control">
+                <label id="edge-opacity-label" for="edge-opacity-slider">Connector opacity <output id="edge-opacity-value" for="edge-opacity-slider">50%</output></label>
+                <input id="edge-opacity-slider" type="range" min="0" max="1" step="0.05" value="0.5" />
+              </div>
+              <div class="settings-opacity-control">
+                <label id="outline-opacity-label" for="outline-opacity-slider">Set outline opacity <output id="outline-opacity-value" for="outline-opacity-slider">100%</output></label>
+                <input id="outline-opacity-slider" type="range" min="0" max="1" step="0.05" value="1" />
+              </div>
+              <div class="settings-opacity-control">
+                <label id="region-opacity-label" for="region-opacity-slider">Region fill opacity <output id="region-opacity-value" for="region-opacity-slider">100%</output></label>
+                <input id="region-opacity-slider" type="range" min="0" max="1" step="0.05" value="1" />
+              </div>
+              <div class="settings-opacity-control">
+                <label id="trail-opacity-label" for="trail-opacity-slider">Trail opacity <output id="trail-opacity-value" for="trail-opacity-slider">100%</output></label>
+                <input id="trail-opacity-slider" type="range" min="0" max="1" step="0.05" value="1" />
+              </div>
+              <div class="settings-opacity-control settings-breadcrumb-scale-control">
+                <label>Breadcrumb size <span class="breadcrumb-scale-values">Root <output id="breadcrumb-root-scale-value" for="breadcrumb-root-scale-slider">30%</output> · Middle <output id="breadcrumb-middle-scale-value" for="breadcrumb-middle-scale-slider">60%</output> · Parent 100%</span></label>
+                <div class="dual-range" aria-label="Breadcrumb hierarchy sizes">
+                  <span class="dual-range-track" aria-hidden="true"></span>
+                  <input id="breadcrumb-root-scale-slider" class="dual-range-root" aria-label="Root breadcrumb size" type="range" min="0.3" max="1" step="0.05" value="0.3" />
+                  <input id="breadcrumb-middle-scale-slider" class="dual-range-middle" aria-label="Middle breadcrumb size" type="range" min="0.3" max="1" step="0.05" value="0.6" />
+                </div>
+              </div>
+              <div class="settings-opacity-control settings-theme-control">
+                <label for="theme-select">Theme</label>
+                <select id="theme-select" aria-label="Theme">
+                  <option value="light">Light paper</option>
+                  <option value="dark">Dark paper</option>
+                </select>
+              </div>
+              <div class="settings-opacity-control settings-transparent-control">
+                <label for="transparent-background-toggle">Background</label>
+                <label class="settings-checkbox-label">
+                  <input id="transparent-background-toggle" type="checkbox" />
+                  <span>Transparent</span>
+                </label>
+              </div>
+            </section>
+            <div id="hotkey-list" class="hotkey-list"></div>
+            <div class="editor-actions hotkey-reset-actions">
+              <button id="hotkey-reset-all" class="paper-button" type="button">Reset all</button>
+            </div>
+          </div>
+          <div class="editor-actions editor-submit">
+            <button id="prompt-copy-selected" class="paper-button" type="button" disabled title="Select rows to copy their prompt text">Copy selected</button>
+            <button id="prompt-cancel" class="paper-button primary" type="button">Close</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

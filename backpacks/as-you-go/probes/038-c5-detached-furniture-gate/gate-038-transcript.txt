@@ -1,0 +1,21 @@
+038 C5 DETACHED HOST FURNITURE REMOVAL LIVE GATE - TRANSCRIPT (isolated, exclusive interval)
+run at: 2026-08-12T06:44:05.213Z
+isolated data dir: D:\Programs\CodexBrainB\tmp\papers-038-oqeGcW
+host controls expected ABSENT: .navigation, .toolbar-float, #copy-prompt, #bin-button, #breadcrumbs, #backdrop-slider, #restore-all-bin, #delete-all-bin, .status, .selection-status, .context-menu, .editor-layer, .confirm-layer, .workspace-backdrop
+creator Papers pids before: [36456,37472,37616,39540,40748]
+
+PASS - creator installed Papers enumerated before (observed only) :: [36456,37472,37616,39540,40748]
+PASS - twelve disposable target windows launched :: AYG-015R3-40252-fa4500bd AYG-015R3-45028-7b95bfe6 AYG-015R3-29284-7ecd303a AYG-015R3-38792-c96d6291 AYG-015R3-34076-30ae098c AYG-015R3-31472-8a13e901 AYG-015R3-5672-0e72ab3b AYG-015R3-43532-bc6cb24c AYG-015R3-46348-6cd9eddf AYG-015R3-46288-3fde2ad9 AYG-015R3-32376-b4fb85f3 AYG-015R3-14964-31465ba9
+PASS - isolated root PID captured with exact descendant set :: root=44596
+PASS - layout with six list-picked members seeded :: window-layout-58c8be7b-cf9f-425f-85b8-99b1bf27633b
+PASS - 038 natural/maximum: NO host furniture is rendered in the detached window (navigation/toolbar copy+Bin/status/footers/dialogs/backdrop absent) :: {"visibleHost":[]}
+PASS - 038 natural/maximum: the shared card touches the client width with zero surrounding canvas :: {"cardRect":{"w":340,"h":70},"windowContent":{"w":340,"h":70}}
+PASS - 038 natural/maximum: every member and the six legitimate card controls are visible and unclipped (inside the card) :: {"cardControls":["pick","list","min-all","restore-all","isolate","reattach"],"memberCount":6}
+PASS - 038 narrow: NO host furniture rendered; card touches the client width (zero canvas) :: {"visibleHost":[],"cardRect":{"w":184,"h":102},"windowContent":{"w":184,"h":252}}
+PASS - 038 narrow: every member and the six legitimate card controls remain visible and unclipped (wrapped) :: {"cardControls":["pick","list","min-all","restore-all","isolate","reattach"],"memberCount":6}
+PASS - 038 reattach: attached card restored live with the same legitimate controls; dimensions equal the detached card (parity persists) :: {"attached":{"w":184,"h":102,"controls":["pick","list","min-all","restore-all","isolate","detach"]},"detached":{"w":184,"h":102}}
+PASS - 038 12-member wrapped: NO host furniture rendered; card touches the client width (zero canvas) :: {"visibleHost":[],"cardRect":{"w":184,"h":134},"windowContent":{"w":184,"h":252}}
+PASS - 038 12-member wrapped: every member and the six legitimate card controls are visible and unclipped (inside the wrapped card) :: {"cardControls":["pick","list","min-all","restore-all","isolate","reattach"],"memberCount":12,"cardRect":{"w":184,"h":134}}
+PASS - creator installed Papers untouched after run :: before=[36456,37472,37616,39540,40748] after=[36456,37472,37616,39540,40748]
+
+FINAL SUMMARY: 13/13 passed, 0 failed.

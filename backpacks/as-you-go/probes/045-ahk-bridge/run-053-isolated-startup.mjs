@@ -1,0 +1,30 @@
+import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as crypto from 'node:crypto';
+
+const AHK = 'C:\\Program Files\\AutoHotkey\\v2\\AutoHotkey64.exe';
+const PW = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+const SOURCE = 'D:\\333\\SlopTop\\sloptop_engine.ahk';
+const SHARED = 'C:\\Users\\Public\\Documents\\PapersNativeBridgeReceipts';
+const token = crypto.randomUUID();
+const sourceHash = crypto.createHash('sha256').update(fs.readFileSync(SOURCE)).digest('hex');
+const copy = `${SOURCE}.${token}.diagnostic.ahk`;
+const receipt = `${SHARED}\\startup-${token}.receipt`;
+fs.mkdirSync(SHARED, { recursive: true });
+fs.copyFileSync(SOURCE, copy);
+const copyHash = crypto.createHash('sha256').update(fs.readFileSync(copy)).digest('hex');
+if (copyHash !== sourceHash) throw new Error('isolated copy hash mismatch');
+const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+const command = `$p=Start-Process -FilePath ${quote(AHK)} -ArgumentList @('/force',${quote(copy)},${quote(receipt)},${quote(token)},'startup-diagnostic') -Verb RunAs -PassThru; $p.Id`;
+const launcher = spawn(PW, ['-NoProfile', '-NonInteractive', '-Command', command], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+const launcherOutput = [];
+launcher.stdout.on('data', (chunk) => launcherOutput.push(String(chunk)));
+launcher.stderr.on('data', (chunk) => launcherOutput.push(String(chunk)));
+const startedAt = Date.now();
+while (Date.now() - startedAt < 10000 && !fs.existsSync(receipt)) await new Promise((resolve) => setTimeout(resolve, 100));
+const body = fs.existsSync(receipt) ? fs.readFileSync(receipt, 'utf8') : '';
+const elevatedPid = Number(launcherOutput.join('').trim());
+console.log(JSON.stringify({ token, sourceHash, copyHash, copy, receipt, launcherPid: launcher.pid, elevatedPid, launcherExit: launcher.exitCode, body, creatorPids: [...new Set([...fs.readdirSync(SHARED)])] }));
+if (fs.existsSync(receipt)) fs.rmSync(receipt, { force: true });
+try { fs.rmSync(copy, { force: true }); } catch {}
+process.exitCode = body.includes(`"token":"${token}"`) && body.includes(`"argPath":"${receipt}"`) ? 0 : 1;

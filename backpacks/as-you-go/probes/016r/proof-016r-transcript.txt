@@ -1,0 +1,27 @@
+016R LIVE PROOF - TRANSCRIPT
+run at: 2026-08-10T17:16:30.723Z
+isolated data dir: D:\Programs\evTEMP\papers-016r-proof-5whWyW
+owned papers pid: closed
+
+PASS - three disposable windows launched :: 48436:AYG-015R3-48436-affcc0a5 61808:AYG-015R3-61808-e7a26e6b 60280:AYG-015R3-60280-f234202d
+PASS - layout created :: window-layout-2c30775a-0edb-4cca-ada4-b7f9eca6da65
+PASS - list-pick A baseline member added :: AYG-015R3-48436-affcc0a5
+PASS - (1) overlay owns OS keyboard focus before the immediate click :: {"foreground":{"pid":10064,"title":"Papers"},"papersPid":10064,"targetPids":[48436,61808,60280]}
+PASS - (1) immediate REAL OS left-click resolves the pick (no hover-sample wait) :: {"before":{"cursor":{"x":1020,"y":290},"foreground":{"pid":10064,"title":"Papers"},"targetB":{"bounds":{"x":820,"y":140,"w":400,"h":300},"show":{"visible":true,"iconic":false,"ok":true}}},"after":{"cursor":{"x":1020,"y":290},"foreground":{"pid":10064,"title":"Papers"},"targetB":{"bounds":{"x":820,"y":140,"w":400,"h":300},"show":{"visible":true,"iconic":false,"ok":true}}},"members":["AYG-015R3-48436-affcc0a5","AYG-015R3-61808-e7a26e6b"]}
+FAIL - (1) targets untouched by the immediate click (bounds/show/membership) :: {"before":{"bounds":{"x":820,"y":140,"w":400,"h":300},"show":{"visible":true,"iconic":false,"ok":true}},"after":{"bounds":{"x":820,"y":140,"w":400,"h":300},"show":{"visible":true,"iconic":false,"ok":true}}}
+FAIL - (2) a production-null screen point exists on the occupied desktop :: none of the grid candidates was production-null
+PASS - (2) blank branch covered by the PS adapter null-hover test :: no live blank point available; precondition recorded
+PASS - (2) REAL OS right-click cancels the session cleanly :: {"status":"","before":{"fg":{"pid":10064,"title":"Papers"},"overlays":1},"after":{"fg":{"pid":10064,"title":"Papers"},"overlays":0}}
+PASS - (2) right-click cancel leaves targets untouched :: {"before":{"bounds":{"x":820,"y":140,"w":400,"h":300},"show":{"iconic":false,"visible":true,"ok":true}},"after":{"bounds":{"x":820,"y":140,"w":400,"h":300},"show":{"ok":true,"iconic":false,"visible":true}}}
+PASS - (5) overlay owned OS keyboard focus before the Escape key :: {"pid":10064,"title":"Papers"}
+PASS - (5) REAL OS Escape cancels the session :: {"status":"","foregroundBefore":{"pid":10064,"title":"Papers"},"overlaysAfter":0}
+PASS - (5) Escape leaves targets untouched :: {"before":{"bounds":{"x":820,"y":140,"w":400,"h":300},"show":{"iconic":false,"visible":true,"ok":true}},"after":{"bounds":{"x":820,"y":140,"w":400,"h":300},"show":{"visible":true,"ok":true,"iconic":false}}}
+PASS - (6) malformed click payloads cannot crash or end the session :: overlays=1 displays=1
+PASS - (6) session still resolves normally after malformed payloads :: ["AYG-015R3-48436-affcc0a5"]
+PASS - (6) every pushed draw state is exactly the sanitized shape :: {"timedOut":false,"seen":[{"green":[{"x":120,"y":140,"width":400,"height":300},{"x":820,"y":140,"width":400,"height":300}],"hover":null,"display":{"x":0,"y":0,"width":1366,"height":768}},{"green":[{"x":120,"y":140,"width":400,"height":300},{"x":820,"y":140,"width":400,"height":300}],"hover":{"x":820
+FAIL - harness step :: Error: CDP websocket error
+PASS - cleanup: zero owned helpers :: []
+PASS - cleanup: zero owned test electrons :: []
+PASS - cleanup: zero AYG windows remain :: 0
+
+FINAL SUMMARY: 17/20 passed, 3 failed.

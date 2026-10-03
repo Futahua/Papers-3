@@ -1,0 +1,26 @@
+039 C5 DETACHED TWO-AXIS CONTENT-FIT LIVE GATE - TRANSCRIPT (isolated, exclusive interval)
+run at: 2026-08-12T07:07:36.106Z
+isolated data dir: D:\Programs\CodexBrainB\tmp\papers-039-gxXs4q
+compact presentation maximum: 340px; frame tolerance W<=2 H<=4
+host controls expected ABSENT: .navigation, .toolbar-float, #copy-prompt, #bin-button, #breadcrumbs, #backdrop-slider, #restore-all-bin, #delete-all-bin, .status, .selection-status, .context-menu, .editor-layer, .confirm-layer, .workspace-backdrop
+creator Papers pids before: [36456,37472,37616,39540,40748]
+
+PASS - creator installed Papers enumerated before (observed only) :: [36456,37472,37616,39540,40748]
+PASS - twelve disposable target windows launched :: AYG-015R3-15960-0e8601d8 AYG-015R3-46756-9dd1e65f AYG-015R3-23928-de147564 AYG-015R3-38252-9d0e7043 AYG-015R3-3368-79b4abf8 AYG-015R3-38372-29d591fd AYG-015R3-46980-58164ac5 AYG-015R3-45104-3eca1915 AYG-015R3-29948-2be9a04b AYG-015R3-5616-93def824 AYG-015R3-46048-7c8a1346 AYG-015R3-45876-235a9ff4
+PASS - isolated root PID captured with exact descendant set :: root=4416
+PASS - layout with six list-picked members seeded :: window-layout-08e1a3e7-c06d-4c0f-af71-cac1d6f7cc3e
+PASS - 039 natural/maximum: TWO-AXIS fit — card width == client width AND card height == client height (no empty vertical canvas, no clipping) :: {"cardRect":{"w":340,"h":70},"windowContent":{"w":340,"h":70}}
+PASS - 039 natural/maximum: no host furniture; every member + the six legitimate controls visible and unclipped :: {"visibleHost":[],"cardControls":["pick","list","min-all","restore-all","isolate","reattach"],"memberCount":6}
+PASS - 039 natural/maximum: state CONVERGES without oscillation (two samples identical) :: {"s1":{"w":340,"h":70},"s2":{"w":340,"h":70}}
+PASS - 039 narrow: width is user-resizable (card < max) and the client auto-fits BOTH axes (card == client width AND height) :: {"cardRect":{"w":184,"h":102},"windowContent":{"w":184,"h":102}}
+PASS - 039 narrow: width-driven row change (members wrapped into more rows) with all members + six controls visible/unclipped, no furniture :: {"maxRows":1,"narrowRows":2,"visibleHost":[],"cardControls":["pick","list","min-all","restore-all","isolate","reattach"]}
+PASS - 039 narrow: the content-height correction CONVERGES without oscillation :: {"s1":{"w":184,"h":102},"s2":{"w":184,"h":102}}
+PASS - 039 reattach: persisted geometry is the shared card/client width AND height; attached card matches the detached card (parity) :: {"attached":{"w":184,"h":102,"controls":["pick","list","min-all","restore-all","isolate","detach"]},"detached":{"w":184,"h":102},"persisted":{"width":184,"height":102}}
+PASS - 039 12-member wrapped: member-count change reflowed the card and the client auto-fits BOTH axes (card == client width AND height) :: {"cardRect":{"w":184,"h":134},"windowContent":{"w":184,"h":134}}
+PASS - 039 12-member wrapped: no host furniture; every member + the six legitimate controls visible and unclipped :: {"visibleHost":[],"cardControls":["pick","list","min-all","restore-all","isolate","reattach"],"memberCount":12,"rows":3}
+PASS - 039 12-member: the member-count height correction CONVERGES without oscillation :: {"s1":{"w":184,"h":134},"s2":{"w":184,"h":134}}
+PASS - 039 12-member: persisted shared geometry tracks the detached card (diag) :: {"persistedNow":{"width":184,"height":134},"card":{"w":184,"h":134},"client":{"w":184,"h":134}}
+PASS - 039 12-member: channel snapshots carried the persisted cardSize, then the height correction repersisted the card geometry (diag) :: {"first":{"cardSize":{"width":184,"height":102},"members":7},"last":{"cardSize":{"width":184,"height":134},"members":12}}
+PASS - creator installed Papers untouched after run :: before=[36456,37472,37616,39540,40748] after=[36456,37472,37616,39540,40748]
+
+FINAL SUMMARY: 17/17 passed, 0 failed.

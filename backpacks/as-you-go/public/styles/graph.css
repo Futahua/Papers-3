@@ -1,0 +1,244 @@
+
+.graph-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.graph-camera {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.graph-edges-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
+}
+/* The outline drawn through a set's ring nodes. Pointer events stay off it:
+   clicks are hit-tested against the ring node positions, so the path is purely
+   a rendering and never something the user interacts with directly. */
+/* rgba over the project's green rather than color-mix on an --accent token:
+   there is no --accent in tokens.css, and nothing else in this codebase uses
+   color-mix, so both would have been inventions — and a mistake in either
+   renders the outline invisible rather than wrong, which is the hardest kind
+   of failure to notice on a canvas that is mostly empty. */
+.graph-set-outline {
+  --set-color: oklch(68% 0.18 150deg);
+  fill: none;
+  stroke: color-mix(in srgb, var(--set-color) 62%, transparent);
+  opacity: var(--graph-outline-opacity, 1);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+  /* A set that wraps around a non-member leaves a hole rather than covering it.
+     The drawn outline is a hull and so cannot cross itself, which this rule
+     used to also cover. */
+  fill-rule: evenodd;
+  transition: fill 120ms ease, stroke 120ms ease, opacity 200ms ease;
+}
+/* A set whose members have all left the screen. Faded rather than cut: removing
+   the path outright made the outline vanish between two frames, which reads as
+   the set popping. The timeout that removes it matches this duration, and a set
+   whose members return mid-fade has the class taken off again. */
+.graph-set-outline.set-retiring {
+  opacity: 0;
+  pointer-events: none;
+}
+.graph-set-outline.set-selected {
+  fill: none;
+  stroke: var(--set-color);
+  stroke-width: 3px;
+}
+.graph-set-glyphs.set-retiring { opacity: 0; }
+.graph-set-outline.set-named { stroke: none; }
+.graph-set-region-layer {
+  pointer-events: none;
+  overflow: visible;
+}
+.graph-set-region {
+  --region-color: oklch(68% 0.18 150deg);
+  fill: color-mix(in srgb, var(--region-color) calc(12% * var(--graph-region-opacity, 1)), transparent);
+  stroke: none;
+  pointer-events: none;
+  transition: fill 120ms ease, opacity 120ms ease;
+}
+.graph-set-region.region-selected {
+  fill: color-mix(in srgb, var(--region-color) calc(24% * var(--graph-region-opacity, 1)), transparent);
+}
+.graph-set-region.region-picking { opacity: .32; }
+.graph-set-region.region-chosen { opacity: 1; fill: color-mix(in srgb, var(--region-color) calc(24% * var(--graph-region-opacity, 1)), transparent); }
+.graph-set-region.region-partial { opacity: .68; }
+.graph-set-glyphs {
+  --set-color: oklch(68% 0.18 150deg);
+  fill: none;
+  stroke: var(--set-color);
+  opacity: var(--graph-outline-opacity, 1);
+  stroke-width: 1.7px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition: opacity 120ms ease, stroke-width 120ms ease;
+}
+.graph-set-glyphs.set-selected { stroke-width: 2.5px; }
+.graph-set-glyphs.set-picking { opacity: .32; }
+.graph-set-glyphs.set-chosen { opacity: 1; stroke-width: 2.5px; }
+.graph-set-glyphs.set-partial { opacity: .68; stroke-dasharray: 2 3; }
+.graph-set-effects-layer {
+  pointer-events: none;
+  overflow: visible;
+}
+.graph-drag-trail-mark {
+  pointer-events: none;
+  opacity: .9;
+  vector-effect: non-scaling-stroke;
+}
+.graph-set-interior-ripple,
+.graph-set-interior-wash {
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
+/* While Ctrl+G is picking, every outline recedes so the chosen ones stand out
+   — the canvas itself becomes the picker. */
+.graph-set-outline.set-picking {
+  fill: var(--accent-wash-faint);
+  stroke: var(--accent-stroke-soft);
+  stroke-dasharray: 6 5;
+}
+.graph-set-outline.set-picking.set-chosen {
+  fill: var(--accent-fill-selected);
+  stroke: var(--accent-stroke-selected);
+  stroke-width: 3px;
+  stroke-dasharray: none;
+}
+/* Only some of the picked items are in this set. Enter leaves it exactly as it
+   is, so it must read as neither chosen nor rejected. */
+.graph-set-outline.set-picking.set-partial {
+  fill: var(--accent-wash-partial);
+  stroke: var(--accent-stroke-partial);
+  stroke-dasharray: 2 4;
+}
+.graph-set-outline.set-picking,
+.graph-set-outline.set-picking.set-chosen,
+.graph-set-outline.set-picking.set-partial {
+  fill: none;
+}
+
+.graph-node-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+.graph-node-shell {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* A finite width so long names wrap inside the tile instead of defining an
+   * unbounded parent (max-content). The upper bound tracks --icon-size so the
+   * square icon always fits; the label box is at most 40px wider than it. */
+  width: clamp(84px, calc(var(--icon-size) + 28px), calc(var(--icon-size) + 40px));
+  height: max-content;
+  will-change: transform;
+  transition: opacity 200ms ease, scale 200ms ease;
+}
+.graph-node-shell .icon-item {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+.graph-node-shell .icon-item strong,
+.graph-node-shell .icon-item small {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.graph-node-shell.exiting {
+  pointer-events: none;
+  transition: transform 200ms ease, opacity 200ms ease, scale 200ms ease;
+}
+.graph-node-shell.graph-dragging {
+  z-index: 3;
+  opacity: 0.88;
+}
+.graph-node-shell.graph-dragging .icon-item {
+  box-shadow: 0 8px 32px var(--shadow);
+  outline: 2px solid var(--focus);
+}
+.graph-node-shell.will-pin .icon-item {
+  outline-color: var(--focus);
+  outline-width: 2.5px;
+}
+.graph-node-shell.will-release .icon-item {
+  outline-color: var(--focus);
+  outline-style: dashed;
+  outline-width: 2px;
+}
+.graph-node-shell.graph-drop-target .icon-item {
+  border-color: var(--accent);
+  background: var(--accent-selection);
+  box-shadow: 0 0 0 3px var(--focus);
+}
+.bin-button.graph-bin-drop-target {
+  border-color: var(--graph-danger);
+  background: var(--graph-danger-surface);
+  box-shadow: 0 0 0 3px var(--selection);
+}
+.graph-edge {
+  fill: none;
+  stroke: var(--graph-edge-stroke);
+  stroke-width: 2.25;
+  /* Connector lines sit behind the icons and the set bodies, so they read as
+     context rather than content. Opacity rather than a lighter stroke: the
+     renderer sets each edge's stroke inline from its folder hue, which would
+     override a colour set here. */
+  opacity: var(--graph-edge-opacity, .5);
+  transition: opacity 180ms ease, stroke 180ms ease;
+}
+.graph-edge.bin-origin-edge {
+  stroke: var(--graph-edge-danger);
+  stroke-dasharray: 4 3;
+}
+.graph-node-shell.bin-origin-ghost {
+  pointer-events: none;
+}
+.icon-item.bin-origin-ghost {
+  opacity: 0.55;
+  border-style: dashed;
+  cursor: default;
+}
+.icon-item.bin-origin-ghost:hover {
+  background: transparent;
+}
+.empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  color: var(--text-faint);
+  place-items: center;
+  padding: 40px;
+  text-align: center;
+  pointer-events: none;
+}
+.selection-marquee {
+  position: absolute;
+  z-index: 10;
+  border: 1px solid var(--focus);
+  background: var(--focus);
+  box-shadow: inset 0 0 0 1px var(--text-on-accent);
+  pointer-events: none;
+}
+/* The selection count is left in the DOM (still written by syncSelection, and
+ * asserted by dom.test.mjs) but not drawn: the floating pill sat over the
+ * canvas and the selection is already visible on the tiles themselves. */
+.selection-status {
+  display: none;
+}

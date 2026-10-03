@@ -1,0 +1,60 @@
+
+.workspace {
+  position: relative;
+  min-height: 100vh;
+}
+
+/* The tinted panel the backdrop slider drives. It sits behind every canvas
+ * layer but inside the page, so at opacity 0 the transparent window lets the
+ * desktop through and at 1 it restores the original solid paper background.
+ * --page-background is `transparent` only while the Transparent toggle is on;
+ * --paper is used here so the panel still has something to fade. */
+.workspace-backdrop {
+  position: fixed;
+  /* Behind every canvas layer. .workspace is positioned but sets no z-index,
+   * so it is not a stacking context and -1 stays below the graph without
+   * escaping the page background. */
+  z-index: -1;
+  inset: 0;
+  background: var(--backdrop-tint, var(--paper));
+  opacity: var(--workspace-backdrop-opacity, 1);
+  pointer-events: none;
+}
+
+.navigation {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 0;
+}
+
+.editor-actions {
+  display: flex;
+  align-items: center;
+}
+.quiet-button,
+.paper-button {
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--paper);
+  padding: 8px 11px;
+  cursor: pointer;
+}
+.quiet-button:hover,
+.paper-button:hover { border-color: var(--border-hover); background: var(--surface); }
+.quiet-button:focus-visible,
+.paper-button:focus-visible,
+.icon-item:focus-visible,
+.folder-expander:focus-visible { outline: 2px solid var(--focus-green); outline-offset: 2px; }
+.bin-button[aria-pressed="true"] { background: var(--bin-surface); }
+.bin-count {
+  min-width: 18px;
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--bin-badge);
+  color: var(--surface);
+  font-size: 10px;
+}

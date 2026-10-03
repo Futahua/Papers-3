@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "revision": "fixture-visual-non-empty-v1",
+  "state": {
+    "schemaVersion": 1,
+    "groups": [
+      { "id": "fixture-group", "name": "Synthetic group", "parentId": "root", "order": 0 }
+    ],
+    "shortcuts": [
+      {
+        "id": "fixture-shortcut",
+        "name": "Synthetic shortcut",
+        "target": "https://example.invalid/fixture",
+        "placements": [{ "id": "fixture-placement", "parentId": "root", "order": 1 }]
+      }
+    ],
+    "view": { "layout": "graph", "iconSize": 72 }
+  }
+}

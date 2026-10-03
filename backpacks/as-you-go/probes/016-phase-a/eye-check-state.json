@@ -1,0 +1,275 @@
+{
+  "preparedAt": "2026-08-10T06:12:05.438Z",
+  "dataDir": "D:\\Programs\\evTEMP\\papers-016a-eyechk-9BCEhy",
+  "projectCopy": "D:\\Programs\\evTEMP\\papers-016a-eyechk-9BCEhy\\ayg-project-copy",
+  "statePath": "D:\\Programs\\evTEMP\\papers-016a-eyechk-9BCEhy\\ayg-project-copy\\state.json",
+  "papersMainPid": 54960,
+  "helperPids": [
+    34668
+  ],
+  "cdpPort": 64063,
+  "target": {
+    "pid": 50852,
+    "title": "AYG-015R3-50852-c8744387"
+  },
+  "theme": "light",
+  "visible": {
+    "memberPresent": true,
+    "memberTitle": "AYG-015R3-50852-c8744387 - normal",
+    "memberClass": "window-layout-member normal",
+    "iconLoaded": "loaded",
+    "controls": [
+      "Pick onscreen window",
+      "Activate"
+    ],
+    "status": "Recording",
+    "pickerRows": [
+      {
+        "label": "AYG-015R3-50852-c8744387",
+        "state": "remove",
+        "icon": false,
+        "isMember": true
+      },
+      {
+        "label": "AYG-015R3-50852-c8744387",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "C:\\Windows\\System32\\cmd.exe",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Untitled - Notepad",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Untitled - Notepad",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "OpenCode",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Untitled - SketchUp Pro 2022",
+        "state": "maximized",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Bucketing Tiếng Việt - Local - Obsidian 1.13.4",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "SM-N975F",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "ChatGPT",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Zalo",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Settings",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Untitled - Autodesk 3ds Max Olympus",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Papers",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "C:\\WINDOWS\\system32\\cmd.exe",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "a priori vs a posteriori - Google Search - Google Chrome",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Wacom Center",
+        "state": "minimized",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "opencode - Google Chrome",
+        "state": "minimized",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "multimonitortool-x64",
+        "state": "minimized",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "CLIP STUDIO PAINT",
+        "state": "minimized",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "AudioRelay",
+        "state": "minimized",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Settings",
+        "state": "minimized",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Hermes",
+        "state": "minimized",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Movies & TV",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Movies & TV",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "D:\\",
+        "state": "minimized",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Windows Input Experience",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      },
+      {
+        "label": "Program Manager",
+        "state": "normal",
+        "icon": true,
+        "isMember": false
+      }
+    ],
+    "theme": "light"
+  },
+  "steps": [
+    {
+      "name": "isolated session seeded",
+      "ok": true,
+      "detail": "D:\\Programs\\evTEMP\\papers-016a-eyechk-9BCEhy"
+    },
+    {
+      "name": "disposable target running",
+      "ok": true,
+      "detail": "pid=50852 title=AYG-015R3-50852-c8744387"
+    },
+    {
+      "name": "owned Papers running",
+      "ok": true,
+      "detail": "main pid=54960 cdp port=64063"
+    },
+    {
+      "name": "window-layout item created through the real UI",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "disposable target bound through the real picker",
+      "ok": true,
+      "detail": "AYG-015R3-50852-c8744387"
+    },
+    {
+      "name": "item recording (status \"Recording\")",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "picker left open (member row + candidate list)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "member button present with program icon/state marker",
+      "ok": true,
+      "detail": "{\"title\":\"AYG-015R3-50852-c8744387 - normal\",\"icon\":\"loaded\",\"cls\":\"window-layout-member normal\"}"
+    },
+    {
+      "name": "controls legible",
+      "ok": true,
+      "detail": "[\"Pick onscreen window\",\"Activate\"]"
+    },
+    {
+      "name": "status line legible",
+      "ok": true,
+      "detail": "Recording"
+    },
+    {
+      "name": "picker shows member row + candidates",
+      "ok": true,
+      "detail": "rows=28 memberRow=true"
+    },
+    {
+      "name": "theme",
+      "ok": true,
+      "detail": "current theme: light (creator default)"
+    },
+    {
+      "name": "owned helper running",
+      "ok": true,
+      "detail": "helper pids=34668"
+    },
+    {
+      "name": "children stable for 30s (leaving open)",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "cleanup": [
+    "Close the disposable target (optional): pwsh -NoProfile -NonInteractive -File \"D:\\Letters\\MatTroiSeConMoc\\Papers\\Backpack projects\\As you Go\\probes\\015r3-live-proof\\control-window.ps1\" -Title \"AYG-015R3-50852-c8744387\" -Action close",
+    "Close the eye-check Papers instance: close its window normally (owned test instance, main pid 54960, isolated data dir D:\\Programs\\evTEMP\\papers-016a-eyechk-9BCEhy).",
+    "The creator's real Papers (5 Papers.exe processes) is untouched and must not be closed."
+  ]
+}

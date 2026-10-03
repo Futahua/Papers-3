@@ -1,0 +1,43 @@
+019E LIVE PROOF - TRANSCRIPT (non-interactive prep wave)
+run at: 2026-08-11T05:40:34.252Z
+isolated data dir: D:\Programs\evTEMP\papers-019e-U18vFV
+creator Papers pids before: [31040,38372,43116,65344,9528]
+
+PASS - self-test: pure oracle unit assertions
+PASS - creator installed Papers enumerated before (observed only) :: [31040,38372,43116,65344,9528]
+PASS - foreign helper PID+parent set captured before (observed only) :: ["33508:31040"]
+PASS - four disposable targets launched :: 38916:AYG-015R3-38916-ffbe7753 6708:AYG-015R3-6708-b40b6473 23364:AYG-015R3-23364-fa42384f 49224:AYG-015R3-49224-144437f4
+PASS - isolated root PID captured with exact descendant set (ownership allowlist) :: root=62812 owned=12984,43732,52736,62812
+PASS - N1 layout with three list-picked members seeded :: window-layout-81cb933d-e445-4097-abeb-d6a053cc4ece
+PASS - N2 compact widget opened via card control (exactly one matching target) :: papers-backpack://bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d/_papers-open/40f5d790-b039-428a-93fa-0cc4e3ca56fc/public/works
+PASS - N2 widget reuse does not create a duplicate target :: count=1 urls=t&papers-layout-key=window-layout-81cb933d-e445-4097-abeb-d6a053cc4ece
+PASS - N3 widget page carries the compact-widget root before any widget action
+PASS - N3 widget card-only bootstrap over the real BroadcastChannel :: {"root":true,"memberButtons":3}
+PASS - N4 workspace stays writable while the widget is open :: minimize=true restore=true
+PASS - N5 widget card reflects the persisted snapshot (3 members) after commands :: {"n":3}
+PASS - N6a staged picker: exact-overlay local mousemove+click+Enter added the fourth member (renderer-driven) :: {"display":{"x":0,"y":0,"width":1920,"height":1080},"screenPoint":{"x":1020,"y":770},"local":{"x":1020,"y":770},"hover":{"x":820,"y":620,"width":400,"height":300,"kind":"add"},"staged":[{"x":820,"y":620,"width":400,"height":300,"kind":"add"}],"committedMembers":["AYG-015R3-38916-ffbe7753","AYG-015R3-6708-b40b6473","AYG-015R3-23364-fa42384f","AYG-015R3-49224-144437f4"]}
+PASS - N6b staged seeded-member removal Escape cancels byte-zero (exact red removal stage proven) :: {"display":{"x":0,"y":0,"width":1920,"height":1080},"screenPoint":{"x":320,"y":290},"local":{"x":320,"y":290},"hover":{"x":120,"y":140,"width":400,"height":300,"kind":"remove"},"staged":[{"x":120,"y":140,"width":400,"height":300,"kind":"remove"}],"members":4,"byteZero":true}
+PASS - N8 persisted-member preflight before the group timing (A and C present) :: ["AYG-015R3-38916-ffbe7753","AYG-015R3-6708-b40b6473","AYG-015R3-23364-fa42384f","AYG-015R3-49224-144437f4"]
+PASS - N8 group minimize/restore timing measured (native + typed evidence) :: minimize=1363ms restore=1184ms preflight=["AYG-015R3-38916-ffbe7753","AYG-015R3-6708-b40b6473","AYG-015R3-23364-fa42384f","AYG-015R3-49224-144437f4"] postflight=["AYG-015R3-38916-ffbe7753","AYG-015R3-6708-b40b6473","AYG-015R3-23364-fa42384f","AYG-015R3-49224-144437f4"]
+PASS - N7 isolated-owned helper enumerated by descendant ownership :: [50500]
+PASS - N7 transient helper outage keeps EXACTLY the pre-kill member set (negative control, descendant-only kill) :: ["AYG-015R3-38916-ffbe7753","AYG-015R3-6708-b40b6473","AYG-015R3-23364-fa42384f","AYG-015R3-49224-144437f4"]
+PASS - N7 owned helper restarted after the outage (recovery path) :: excluded=[50500]
+PASS - N7 after recovery the persisted set is EXACTLY the pre-kill set (no member missing, none added) :: ["AYG-015R3-38916-ffbe7753","AYG-015R3-6708-b40b6473","AYG-015R3-23364-fa42384f","AYG-015R3-49224-144437f4"]
+PASS - N7 exactly B retired once; every other pre-kill member remains :: {"preKill":["AYG-015R3-38916-ffbe7753","AYG-015R3-6708-b40b6473","AYG-015R3-23364-fa42384f","AYG-015R3-49224-144437f4"],"closed":"AYG-015R3-6708-b40b6473","after":["AYG-015R3-38916-ffbe7753","AYG-015R3-23364-fa42384f","AYG-015R3-49224-144437f4"]}
+PASS - N9 widget still open after the picker/retirement/group rows
+PASS - N9 widget crash leaves the workspace unaffected and reopens
+PASS - N10 no forbidden persisted keys in state.json :: []
+PASS - N11 shutdown: zero PROVEN-owned survivors (PID+CreationDate allowlist only) :: []
+PASS - FOREIGN_PRESERVED helper PID+parent set unchanged (observed only, never stopped) :: before=["33508:31040"] after=["33508:31040"]
+PASS - N11 shutdown: zero exact probe disposable windows :: 0
+PASS - N11 creator installed Papers PIDs untouched (exact set equality) :: before=[31040,38372,43116,65344,9528] after=[31040,38372,43116,65344,9528]
+PASS - cleanup: zero PROVEN-owned survivors :: []
+PASS - cleanup: zero exact probe windows remain :: 0
+PASS - creator installed Papers untouched after run :: before=[31040,38372,43116,65344,9528] after=[31040,38372,43116,65344,9528]
+PASS - foreign helper PID+parent set preserved after run (exact equality, never stopped) :: before=["33508:31040"] after=["33508:31040"]
+
+NOT RUN - P-A real pointer-following live hover :: requires real cursor movement (exclusive interval)
+NOT RUN - P-A real OS click/Enter/Escape delivery to the picker :: requires real OS input (exclusive interval)
+NOT RUN - P-A real-cursor direct pick from the widget :: requires real OS hover+click (exclusive interval)
+
+FINAL SUMMARY: 32/32 passed, 0 failed; 3 rows NOT RUN (exclusive-physical).

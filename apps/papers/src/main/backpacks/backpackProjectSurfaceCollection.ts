@@ -1,0 +1,257 @@
+import { BaseWindow, type WebContents } from 'electron';
+
+import { BackpackProjectRuntime } from './backpackProjectRuntime';
+
+export interface PreparedProjectSurface {
+  runtime: BackpackProjectRuntime;
+  adopt(): void;
+  discard(): void;
+}
+
+type RuntimeFactory = (
+  surfaceId: string,
+  onSurfaceClosed?: (projectId: string) => void,
+  onConsoleMessage?: (senderId: number, level: number, message: string, isBootstrap: boolean) => void,
+  onLifecycleEvent?: (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void,
+  onRendererGone?: (senderId: number, reason: string) => void,
+  onTitleChanged?: (senderId: number, title: string) => void,
+  onFaviconChanged?: (senderId: number, urls: string[]) => void,
+) => BackpackProjectRuntime;
+
+function closeRuntime(runtime: BackpackProjectRuntime, report: (error: unknown) => void, options?: { restoreOnFlushFailure?: boolean }): void {
+  try {
+    void Promise.resolve(runtime.hide(options)).catch(report);
+  } catch (caught) {
+    report(caught);
+  }
+}
+
+/**
+ * The native project presentations owned by one Papers window.
+ *
+ * `surfaceId` is the logical tab/pane identity. The collection deliberately
+ * does not create or retire that identity; the logical surface registry owns
+ * that lifecycle. It only keeps the replaceable native presentation for each
+ * live identity, including an empty entry while a renderer is being rebuilt.
+ */
+export class BackpackProjectSurfaceCollection {
+  private readonly runtimes = new Map<string, BackpackProjectRuntime>();
+
+  private notifyIfProjectIsNoLongerPresented(surfaceId: string, projectId: string): void {
+    for (const [otherSurfaceId, runtime] of this.runtimes) {
+      if (otherSurfaceId !== surfaceId && runtime.liveProjectId === projectId) return;
+    }
+    this.onSurfaceClosed?.(surfaceId, projectId);
+  }
+
+  constructor(
+    private readonly window: BaseWindow,
+    private readonly preloadPath: string,
+    private transparent: boolean,
+    private readonly onSurfaceClosed?: (surfaceId: string, projectId: string) => void,
+    private readonly createRuntime?: RuntimeFactory,
+    private readonly onProjectConsoleMessage?: (surfaceId: string, senderId: number, level: number, message: string, isBootstrap: boolean) => void,
+    private readonly onProjectLifecycleEvent?: (surfaceId: string, senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string) => void,
+    private readonly onProjectRendererGone?: (surfaceId: string, senderId: number, reason: string) => void,
+    private readonly onProjectTitleChanged?: (surfaceId: string, senderId: number, title: string) => void,
+    private readonly onProjectFaviconChanged?: (surfaceId: string, senderId: number, urls: string[]) => void,
+  ) {}
+
+  get(surfaceId: string): BackpackProjectRuntime | null {
+    return this.runtimes.get(surfaceId) ?? null;
+  }
+
+  /** Get or create the native presentation for an already-authorized surface. */
+  ensure(surfaceId: string): BackpackProjectRuntime {
+    const existing = this.runtimes.get(surfaceId);
+    if (existing) return existing;
+
+    const onSurfaceClosed = (projectId: string): void => this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
+    const onConsoleMessage = (senderId: number, level: number, message: string, isBootstrap: boolean): void => this.onProjectConsoleMessage?.(surfaceId, senderId, level, message, isBootstrap);
+    const onLifecycleEvent = (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string): void => this.onProjectLifecycleEvent?.(surfaceId, senderId, event, documentInstanceId);
+    const onRendererGone = (senderId: number, reason: string): void => this.onProjectRendererGone?.(surfaceId, senderId, reason);
+    const onTitleChanged = (senderId: number, title: string): void => this.onProjectTitleChanged?.(surfaceId, senderId, title);
+    const onFaviconChanged = (senderId: number, urls: string[]): void => this.onProjectFaviconChanged?.(surfaceId, senderId, urls);
+    const runtime = this.createRuntime?.(surfaceId, onSurfaceClosed, onConsoleMessage, onLifecycleEvent, onRendererGone, onTitleChanged, onFaviconChanged) ?? new BackpackProjectRuntime(
+      this.window, this.preloadPath, this.transparent, onSurfaceClosed,
+      onConsoleMessage, onLifecycleEvent, onRendererGone,
+      onTitleChanged, onFaviconChanged,
+    );
+    this.runtimes.set(surfaceId, runtime);
+    return runtime;
+  }
+
+  /**
+   * Create a native project presentation that is not yet canonical. The
+   * caller loads it with `present: false` and establishes authority gating
+   * before navigation; adoption is the only point at which it enters this
+   * collection and becomes visible. The staged runtime has no close callback,
+   * so discard cannot trigger canonical detach/widget cleanup.
+   */
+  prepare(surfaceId: string): PreparedProjectSurface {
+    if (this.runtimes.has(surfaceId)) throw new Error('project surface is already present in this window');
+    let lifecycleActive = false;
+    let pendingTitle: { senderId: number; title: string } | null = null;
+    let pendingFavicon: { senderId: number; urls: string[] } | null = null;
+    const onConsoleMessage = (senderId: number, level: number, message: string, isBootstrap: boolean): void => this.onProjectConsoleMessage?.(surfaceId, senderId, level, message, isBootstrap);
+    const onLifecycleEvent = (senderId: number, event: 'did-start-loading' | 'dom-ready' | 'did-finish-load', documentInstanceId?: string): void => this.onProjectLifecycleEvent?.(surfaceId, senderId, event, documentInstanceId);
+    const onRendererGone = (senderId: number, reason: string): void => this.onProjectRendererGone?.(surfaceId, senderId, reason);
+    const onTitleChanged = (senderId: number, title: string): void => {
+      if (!lifecycleActive) {
+        pendingTitle = { senderId, title };
+        return;
+      }
+      this.onProjectTitleChanged?.(surfaceId, senderId, title);
+    };
+    const onFaviconChanged = (senderId: number, urls: string[]): void => {
+      if (!lifecycleActive) {
+        pendingFavicon = { senderId, urls };
+        return;
+      }
+      this.onProjectFaviconChanged?.(surfaceId, senderId, urls);
+    };
+    const runtime = this.createRuntime?.(surfaceId, (projectId) => {
+      if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
+    }, onConsoleMessage, onLifecycleEvent, onRendererGone, onTitleChanged, onFaviconChanged) ?? new BackpackProjectRuntime(
+      this.window,
+      this.preloadPath,
+      this.transparent,
+      (projectId) => {
+        if (lifecycleActive) this.notifyIfProjectIsNoLongerPresented(surfaceId, projectId);
+      },
+      onConsoleMessage,
+      onLifecycleEvent,
+      onRendererGone,
+      onTitleChanged, onFaviconChanged,
+    );
+    let adopted = false;
+    return {
+      runtime,
+      adopt: () => {
+        if (!adopted) {
+          if (this.runtimes.has(surfaceId)) throw new Error('project surface was adopted twice');
+          adopted = true;
+          this.runtimes.set(surfaceId, runtime);
+          lifecycleActive = true;
+          const title = pendingTitle;
+          const favicon = pendingFavicon;
+          pendingTitle = null;
+          pendingFavicon = null;
+          // Adoption is immediately followed by the caller's canonical
+          // topology/event commit. Flush after that synchronous transaction so
+          // the first page title cannot be dropped as "not yet canonical".
+          if (title) queueMicrotask(() => this.onProjectTitleChanged?.(surfaceId, title.senderId, title.title));
+          if (favicon) queueMicrotask(() => this.onProjectFaviconChanged?.(surfaceId, favicon.senderId, favicon.urls));
+        }
+        // Keep collection insertion idempotent, but retry native presentation
+        // after a first addChildView/fit failure. The facade may need this
+        // during forward canonicalization after durable compensation fails.
+        runtime.present();
+      },
+      discard: () => {
+        if (adopted) {
+          // Compensation is intentionally lifecycle-silent even after adopt:
+          // it must not look like an ordinary user close to detach/widget
+          // ownership observers.
+          lifecycleActive = false;
+          this.runtimes.delete(surfaceId);
+          closeRuntime(runtime, (caught) => {
+            console.error(`[workspace-move] staged native discard failed for ${surfaceId}:`, caught);
+          }, { restoreOnFlushFailure: false });
+          return;
+        }
+        closeRuntime(runtime, (caught) => {
+          console.error(`[workspace-move] staged native discard failed for ${surfaceId}:`, caught);
+        }, { restoreOnFlushFailure: false });
+      },
+    };
+  }
+
+  /** Destroy one attached presentation, leaving logical retirement to its owner. */
+  async close(surfaceId: string, options: { strict?: boolean } = {}): Promise<void> {
+    const runtime = this.runtimes.get(surfaceId);
+    if (!runtime) return;
+    // Collection ownership is retained through native teardown so the
+    // runtime's close-time flush has completed: the
+    // project sender is authenticated through this collection while it saves.
+    let closed = false;
+    try {
+      await runtime.hide({ restoreOnFlushFailure: options.strict === true });
+      closed = true;
+    } catch (caught) {
+      if (options.strict) throw caught;
+      console.error(`[workspace-move] native close failed for ${surfaceId}:`, caught);
+    } finally {
+      if (this.runtimes.get(surfaceId) === runtime && (closed || !options.strict)) this.runtimes.delete(surfaceId);
+    }
+  }
+
+  hide(surfaceId: string): void {
+    this.runtimes.get(surfaceId)?.conceal();
+  }
+
+  /** Focus an existing native presentation by logical surface identity. */
+  focus(surfaceId: string): boolean {
+    return this.runtimes.get(surfaceId)?.focus() ?? false;
+  }
+
+  hideAll(): Promise<void> {
+    // Window teardown is terminal, unlike hiding one inactive tab.
+    return Promise.all([...this.runtimes.values()].map((runtime) => {
+      try {
+        return Promise.resolve(runtime.hide({ restoreOnFlushFailure: false })).catch((caught) => {
+          console.error('[workspace-move] native window teardown failed:', caught);
+        });
+      } catch (caught) {
+        console.error('[workspace-move] native window teardown failed:', caught);
+        return Promise.resolve();
+      }
+    })).then(() => undefined);
+  }
+
+  fit(): void {
+    for (const runtime of this.runtimes.values()) runtime.fit();
+  }
+
+  /** Restore native project surfaces above a temporarily raised host view. */
+  raisePresented(): void {
+    for (const runtime of this.runtimes.values()) runtime.raise();
+  }
+
+  setBounds(surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): void {
+    this.ensure(surfaceId).setBounds(bounds);
+  }
+
+  setTransparent(enabled: boolean): void {
+    this.transparent = enabled;
+    for (const runtime of this.runtimes.values()) runtime.setTransparent(enabled);
+  }
+
+  isSender(sender: WebContents): boolean {
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.isSender(sender)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Auxiliary surfaces are still keyed by project and owner window. If two
+   * logical surfaces show one project, either live presentation has the same
+   * project-owned entry origin, so the first live match is sufficient.
+   */
+  entryUrlForProject(projectId: string): string | null {
+    for (const runtime of this.runtimes.values()) {
+      const entryUrl = runtime.entryUrlForProject(projectId);
+      if (entryUrl) return entryUrl;
+    }
+    return null;
+  }
+
+  entryUrlForSurface(surfaceId: string): string | null {
+    return this.runtimes.get(surfaceId)?.liveEntryUrl ?? null;
+  }
+
+  all(): BackpackProjectRuntime[] {
+    return [...this.runtimes.values()];
+  }
+}

@@ -1,0 +1,376 @@
+import { promises as fs } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { evalInHost, evalInHostWindow, launchPapers, waitFor, type LaunchedApp } from './helpers';
+// @ts-expect-error -- shared production control client is plain ESM.
+import { connectPapersControl, readDescriptor } from '../../tools/papersControlClient.mjs';
+
+const A = 'bp-11111111-1111-4111-8111-111111111111';
+const B = 'bp-22222222-2222-4222-8222-222222222222';
+const C = 'bp-33333333-3333-4333-8333-333333333333';
+let launched: LaunchedApp;
+let descriptorPath: string;
+
+async function call(method: string, params: unknown = {}): Promise<unknown> {
+  const connection = await connectPapersControl(await readDescriptor(descriptorPath));
+  try {
+    const response = await connection.call(method, params) as { ok: boolean; result?: unknown; error?: string };
+    if (!response.ok) throw new Error(response.error ?? 'control request failed');
+    return response.result;
+  } finally {
+    connection.close();
+  }
+}
+
+async function projectSenderId(projectId: string): Promise<number | null> {
+  return launched.app.evaluate(({ webContents }, id) =>
+    webContents.getAllWebContents()
+      .find((contents) => contents.getURL().startsWith(`papers-backpack://${id}/`))?.id ?? null,
+  projectId);
+}
+
+async function seedProject(userDataDir: string, id: string, name: string): Promise<{ id: string; name: string; root: string }> {
+  const root = path.join(userDataDir, `project-${name.toLowerCase()}`);
+  await fs.mkdir(path.join(root, 'public'), { recursive: true });
+  await fs.writeFile(path.join(root, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: id, entry: 'public/index.html' }));
+  await fs.writeFile(path.join(root, 'public', 'index.html'), `<!doctype html><h1>${name}</h1>`);
+  return { id, name, root };
+}
+
+beforeAll(async () => {
+  const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'papers3-workspace-tabs-'));
+  descriptorPath = path.join(userDataDir, 'dev-control.json');
+  const projects = [
+    await seedProject(userDataDir, A, 'Alpha'),
+    await seedProject(userDataDir, B, 'Beta'),
+    await seedProject(userDataDir, C, 'Gamma'),
+  ];
+  const createdAt = '2026-09-01T00:00:00.000Z';
+  const backpacks = projects.map(({ id, name }) => ({
+    id, name, type: 'environment', createdAt, lastEnteredAt: null, archived: false, workspacePath: null,
+  }));
+  const dataDir = path.join(userDataDir, 'PapersData');
+  await fs.mkdir(dataDir, { recursive: true });
+  await fs.writeFile(path.join(dataDir, 'registry.json'), JSON.stringify({ schemaVersion: 1, backpacks, lastActiveBackpackId: null }));
+  await fs.writeFile(path.join(dataDir, 'backpack-projects.json'), JSON.stringify({
+    schemaVersion: 1,
+    projects: Object.fromEntries(projects.map(({ id, root }) => [id, { root }])),
+  }));
+  for (const backpack of backpacks) {
+    const directory = path.join(dataDir, 'backpacks', backpack.id);
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(path.join(directory, 'backpack.json'), JSON.stringify({ schemaVersion: 1, ...backpack }));
+  }
+  launched = await launchPapers(userDataDir, { fixtures: false, devControlDescriptor: descriptorPath });
+  await waitFor(async () => {
+    try { await readDescriptor(descriptorPath); return true; } catch { return false; }
+  }, 10_000, 'workspace control descriptor');
+}, 30_000);
+
+afterAll(async () => {
+  await launched?.close();
+  if (launched?.userDataDir) await fs.rm(launched.userDataDir, { recursive: true, force: true });
+});
+
+function enterBackpack(name: string): string {
+  return `(() => {
+    const card = [...document.querySelectorAll('.backpack-card')].find((item) =>
+      item.querySelector('.name')?.textContent?.trim() === ${JSON.stringify(name)});
+    const enter = [...(card?.querySelectorAll('button') ?? [])].find((button) => button.textContent?.trim() === 'Enter');
+    enter?.dispatchEvent(new MouseEvent('auxclick', { button: 1, bubbles: true }));
+    return Boolean(enter);
+  })()`;
+}
+
+describe('A1 workspace tabs', () => {
+  it('keeps two logical projects in one native window and swaps native presentation by tab', async () => {
+    expect(await evalInHost<boolean>(launched.app, enterBackpack('Alpha'))).toBe(true);
+    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>)
+      .some((surface) => surface.projectId === A && surface.presentation === 'visible'), 10_000, 'visible Alpha surface');
+
+    expect(await evalInHost<boolean>(launched.app, `(() => {
+      const button = document.querySelector('.titlebar .pill-button');
+      button?.click();
+      return Boolean(button);
+    })()`)).toBe(true);
+    await waitFor(() => evalInHost<boolean>(launched.app, `Boolean([...document.querySelectorAll('.backpack-card .name')]
+      .find((node) => node.textContent?.trim() === 'Beta'))`), 10_000, 'Backpack picker');
+    expect(await evalInHost<boolean>(launched.app, enterBackpack('Beta'))).toBe(true);
+
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.length === 2
+        && surfaces.some((surface) => surface.projectId === A && surface.presentation === 'hidden')
+        && surfaces.some((surface) => surface.projectId === B && surface.presentation === 'visible');
+    }, 10_000, 'two tab surfaces with Beta active');
+    const alphaSenderId = await projectSenderId(A);
+    expect(alphaSenderId).not.toBeNull();
+    expect(await evalInHost<string[]>(launched.app, `[...document.querySelectorAll('.dv-tab')]
+      .map((tab) => tab.textContent?.trim() ?? '').filter(Boolean)`)).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
+    const hostPage = await launched.app.firstWindow();
+    const windowId = (await call('inspect.surfaces') as Array<{ windowId: number }>)[0]!.windowId;
+    const initialWorkspace = await call('inspect.workspace', { windowId }) as {
+      topology: { surfaces: Array<{ surfaceId: string; projectId: string }> };
+    };
+    const initialAlpha = initialWorkspace.topology.surfaces.find((surface) => surface.projectId === A)!.surfaceId;
+    await call('workspace.activate', { windowId, surfaceId: initialAlpha });
+    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>).some(
+      (surface) => surface.projectId === A && surface.presentation === 'visible'),
+    10_000, 'semantic workspace activation');
+    await waitFor(async () => (await hostPage.getByRole('tab', { name: 'Alpha' }).getAttribute('aria-selected')) === 'true',
+      10_000, 'semantic activation converges host active tab');
+    await hostPage.getByRole('tab', { name: 'Beta' }).click();
+    const alphaTab = hostPage.getByRole('tab', { name: 'Alpha' });
+    const alphaBox = await alphaTab.boundingBox();
+    await hostPage.getByRole('tab', { name: 'Beta' }).dragTo(alphaTab, {
+      targetPosition: { x: 2, y: Math.max(2, Math.round((alphaBox?.height ?? 20) / 2)) },
+    });
+    await waitFor(() => evalInHost<boolean>(launched.app, `[...document.querySelectorAll('.dv-tab')]
+      .map((tab) => tab.textContent?.trim()).filter(Boolean).join(',') === 'Beta,Alpha'`),
+    10_000, 'Dockview tab reorder');
+    await waitFor(async () => {
+      const workspace = await call('inspect.workspace', { windowId }) as {
+        topology: { groups: Array<{ surfaceIds: string[] }>; surfaces: Array<{ surfaceId: string; projectId: string }> };
+      };
+      const byProject = new Map(workspace.topology.surfaces.map((surface) => [surface.projectId, surface.surfaceId]));
+      return workspace.topology.groups[0]?.surfaceIds.join(',') === `${byProject.get(B)},${byProject.get(A)}`;
+    }, 10_000, 'Papers topology follows real tab reorder');
+    const reorderedWorkspace = await call('inspect.workspace', { windowId }) as {
+      revision: number;
+      topology: {
+        schemaVersion: 1;
+        surfaces: Array<{ surfaceId: string; projectId: string; title: string }>;
+        groups: Array<{ groupId: string; surfaceIds: string[]; activeSurfaceId: string | null }>;
+        root: { kind: 'group'; groupId: string };
+        focusedGroupId: string;
+      };
+    };
+    const surfaceByProject = new Map(reorderedWorkspace.topology.surfaces.map((surface) => [surface.projectId, surface.surfaceId]));
+    const reverseOrder = {
+      ...reorderedWorkspace.topology,
+      groups: reorderedWorkspace.topology.groups.map((group) => ({
+        ...group,
+        surfaceIds: [surfaceByProject.get(A)!, surfaceByProject.get(B)!],
+        activeSurfaceId: surfaceByProject.get(B)!,
+      })),
+    };
+    await call('layout.restore', { windowId, topology: reverseOrder });
+    await waitFor(() => evalInHost<boolean>(launched.app, `[...document.querySelectorAll('.dv-tab')]
+      .map((tab) => tab.textContent?.trim()).filter(Boolean).join(',') === 'Alpha,Beta'`),
+    10_000, 'Papers topology forces Dockview tab order');
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBe(reorderedWorkspace.revision + 1);
+    const restoredRevision = (await call('inspect.workspace', { windowId }) as { revision: number }).revision;
+    await hostPage.waitForTimeout(100);
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBe(restoredRevision);
+
+    const restoredAlphaTab = hostPage.getByRole('tab', { name: 'Alpha' });
+    const restoredBetaTab = hostPage.getByRole('tab', { name: 'Beta' });
+    const restoredAlphaBox = await restoredAlphaTab.boundingBox();
+    await restoredBetaTab.dragTo(restoredAlphaTab, {
+      targetPosition: { x: 2, y: Math.max(2, Math.round((restoredAlphaBox?.height ?? 20) / 2)) },
+    });
+    await waitFor(async () => {
+      const workspace = await call('inspect.workspace', { windowId }) as {
+        topology: { groups: Array<{ surfaceIds: string[] }> };
+      };
+      return workspace.topology.groups[0]?.surfaceIds.join(',') === `${surfaceByProject.get(B)},${surfaceByProject.get(A)}`;
+    }, 10_000, 'user Dockview mutation resumes after reverse reconciliation');
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBeGreaterThan(restoredRevision);
+
+    await call('layout.restore', { windowId, topology: reverseOrder });
+    await hostPage.waitForTimeout(50);
+    expect(await projectSenderId(A)).toBe(alphaSenderId);
+    await hostPage.getByRole('tab', { name: 'Alpha' }).click();
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.some((surface) => surface.projectId === A && surface.presentation === 'visible')
+        && surfaces.some((surface) => surface.projectId === B && surface.presentation === 'hidden');
+    }, 10_000, 'Alpha tab activation');
+    expect(await projectSenderId(A)).toBe(alphaSenderId);
+
+    await hostPage.getByRole('tab', { name: 'Alpha' }).press('Control+Alt+ArrowRight');
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.filter((surface) => surface.presentation === 'visible').length === 2;
+    }, 10_000, 'two visible native split panes');
+    expect(await hostPage.locator('.dv-groupview').count()).toBe(2);
+    expect(await hostPage.getByRole('button', { name: 'Split Right', exact: true }).count()).toBe(0);
+    expect(await hostPage.getByRole('button', { name: 'Split Down', exact: true }).count()).toBe(0);
+
+    const sash = hostPage.locator('.dv-sash.dv-enabled').first();
+    const sashBox = await sash.boundingBox();
+    expect(sashBox).not.toBeNull();
+    await hostPage.mouse.move((sashBox?.x ?? 0) + 2, (sashBox?.y ?? 0) + 20);
+    await hostPage.mouse.down();
+    await hostPage.mouse.move((sashBox?.x ?? 0) + 100, (sashBox?.y ?? 0) + 20, { steps: 5 });
+    await hostPage.mouse.up();
+    await waitFor(async () => {
+      const workspace = await call('inspect.workspace', { windowId }) as { topology: { root: { weights?: number[] } } };
+      const weights = workspace.topology.root.weights;
+      return Boolean(weights && Math.abs((weights[0] ?? 0) - 0.5) > 0.05);
+    }, 10_000, 'Papers topology follows real sash resize');
+
+    const splitWorkspace = await call('inspect.workspace', { windowId }) as {
+      topology: {
+        schemaVersion: 1;
+        surfaces: Array<{ surfaceId: string; projectId: string; title: string }>;
+        groups: Array<{ groupId: string; surfaceIds: string[]; activeSurfaceId: string | null }>;
+        root: { kind: 'split'; orientation: 'horizontal'; weights: number[]; children: Array<{ kind: 'group'; groupId: string }> };
+        focusedGroupId: string;
+      };
+    };
+    const weightedTopology = {
+      ...splitWorkspace.topology,
+      root: { ...splitWorkspace.topology.root, weights: [0.7, 0.3] },
+    };
+    await call('layout.restore', { windowId, topology: weightedTopology });
+    await waitFor(async () => {
+      const boxes = await hostPage.locator('.dv-groupview').evaluateAll((groups) =>
+        groups.map((group) => group.getBoundingClientRect().width));
+      const total = boxes.reduce((sum, width) => sum + width, 0);
+      return boxes.length === 2 && total > 0 && Math.abs((boxes[0] ?? 0) / total - 0.7) < 0.08;
+    }, 10_000, 'Papers split weights force real Dockview sash geometry');
+
+    const collapsedTopology = {
+      ...weightedTopology,
+      groups: [{
+        groupId: 'group-main',
+        surfaceIds: [surfaceByProject.get(A)!, surfaceByProject.get(B)!],
+        activeSurfaceId: surfaceByProject.get(A)!,
+      }],
+      root: { kind: 'group' as const, groupId: 'group-main' },
+      focusedGroupId: 'group-main',
+    };
+    await call('layout.restore', { windowId, topology: collapsedTopology });
+    await waitFor(async () => await hostPage.locator('.dv-groupview').count() === 1,
+      10_000, 'Papers group collapse converges Dockview');
+    await call('layout.split', { windowId, surfaceId: surfaceByProject.get(B)!, direction: 'right' });
+    await waitFor(async () => await hostPage.locator('.dv-groupview').count() === 2,
+      10_000, 'semantic split recreates Dockview group');
+    expect(await projectSenderId(A)).toBe(alphaSenderId);
+
+    const movedAlphaBox = await hostPage.getByRole('tab', { name: 'Alpha' }).boundingBox();
+    const targetBetaBox = await hostPage.getByRole('tab', { name: 'Beta' }).boundingBox();
+    expect(movedAlphaBox).not.toBeNull();
+    expect(targetBetaBox).not.toBeNull();
+    await hostPage.mouse.move((movedAlphaBox?.x ?? 0) + 10, (movedAlphaBox?.y ?? 0) + 10);
+    await hostPage.mouse.down();
+    await hostPage.waitForTimeout(150);
+    await hostPage.mouse.move((movedAlphaBox?.x ?? 0) + 25, (movedAlphaBox?.y ?? 0) + 10, { steps: 3 });
+    await hostPage.mouse.move((targetBetaBox?.x ?? 0) + 10, (targetBetaBox?.y ?? 0) + 10, { steps: 12 });
+    await hostPage.waitForTimeout(150);
+    await hostPage.mouse.up();
+    await waitFor(async () => {
+      const workspace = await call('inspect.workspace', { windowId }) as { topology: { groups: unknown[]; root: { kind: string } } };
+      return workspace.topology.groups.length === 1
+        && workspace.topology.root.kind === 'group'
+        && await hostPage.locator('.dv-groupview').count() === 1;
+    }, 10_000, 'moving final tab collapses Papers and Dockview source group');
+
+    const beforeCanonicalGammaOpen = (await call('inspect.workspace', { windowId }) as { revision: number }).revision;
+    let openedGamma = await call('workspace.open', { windowId, projectId: C }) as { surfaceId: string; projectId: string };
+    expect(openedGamma.projectId).toBe(C);
+    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string }>).some((surface) => surface.projectId === C)
+      && await hostPage.getByRole('tab', { name: 'Gamma' }).count() === 1,
+    10_000, 'programmatic Gamma workspace surface and host metadata');
+    const afterCanonicalGammaOpen = (await call('inspect.workspace', { windowId }) as { revision: number }).revision;
+    expect(afterCanonicalGammaOpen).toBe(beforeCanonicalGammaOpen + 1);
+    await hostPage.waitForTimeout(100);
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBe(afterCanonicalGammaOpen);
+
+    await call('workspace.close', { windowId, surfaceId: openedGamma.surfaceId });
+    await waitFor(async () => !(await call('inspect.surfaces') as Array<{ projectId: string }>).some((surface) => surface.projectId === C)
+      && await hostPage.getByRole('tab', { name: 'Gamma' }).count() === 0,
+    10_000, 'programmatic Gamma workspace close and host metadata');
+    const afterCanonicalGammaClose = (await call('inspect.workspace', { windowId }) as { revision: number }).revision;
+    expect(afterCanonicalGammaClose).toBe(afterCanonicalGammaOpen + 1);
+    await hostPage.waitForTimeout(100);
+    expect((await call('inspect.workspace', { windowId }) as { revision: number }).revision)
+      .toBe(afterCanonicalGammaClose);
+
+    openedGamma = await call('workspace.open', { windowId, projectId: C }) as { surfaceId: string; projectId: string };
+    await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string }>).some((surface) => surface.projectId === C)
+      && await hostPage.getByRole('tab', { name: 'Gamma' }).count() === 1,
+    10_000, 'reopen Gamma after canonical close');
+    const threeWorkspace = await call('inspect.workspace', { windowId }) as {
+      topology: { surfaces: Array<{ surfaceId: string; projectId: string }> };
+    };
+    const gammaSurface = threeWorkspace.topology.surfaces.find((surface) => surface.projectId === C)!.surfaceId;
+    await call('layout.split', { windowId, surfaceId: gammaSurface, direction: 'right' });
+    expect(await evalInHost<boolean>(launched.app, `(() => {
+      const tab = [...document.querySelectorAll('.dv-tab')].find((candidate) => candidate.textContent?.includes('Alpha'));
+      const close = tab?.querySelector('button, [class*="action"]');
+      close?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return Boolean(close);
+    })()`)).toBe(true);
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.length === 2
+        && surfaces.some((surface) => surface.projectId === C && surface.presentation === 'visible')
+        && !surfaces.some((surface) => surface.projectId === A);
+    }, 10_000, 'ordinary Dockview close preserves canonical Gamma focus');
+    expect(await hostPage.getByRole('tab', { name: 'Alpha' }).count()).toBe(0);
+    expect(await hostPage.getByRole('tab', { name: 'Beta' }).count()).toBe(1);
+    expect(await hostPage.getByRole('tab', { name: 'Gamma' }).getAttribute('aria-selected')).toBe('true');
+
+    await evalInHost(launched.app, `window.papersHost.backpacks.setArchived(${JSON.stringify(B)}, true)`);
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>;
+      return surfaces.length === 1 && surfaces[0]?.projectId === C && surfaces[0]?.presentation === 'visible';
+    }, 10_000, 'archive close preserves canonical Gamma focus');
+    expect(await hostPage.getByRole('tab', { name: 'Beta' }).count()).toBe(0);
+
+    const secondary = await call('window.create') as { windowId: number };
+    await waitFor(async () => (await call('inspect.windows') as Array<{ windowId: number }>)
+      .some(({ windowId }) => windowId === secondary.windowId), 10_000, 'cross-window move target');
+    await waitFor(async () => await evalInHostWindow<boolean>(launched.app, secondary.windowId,
+      `Boolean(document.querySelector('button[aria-label="New window"]'))`),
+    10_000, 'cross-window move target host');
+    const movableGammaSurface = (await call('inspect.surfaces') as Array<{ surfaceId: string; projectId: string; windowId: number }>)
+      .find((surface) => surface.projectId === C && surface.windowId === windowId);
+    expect(movableGammaSurface).toBeDefined();
+    const moved = await call('layout.moveSurfaceToWindow', {
+      sourceWindowId: windowId,
+      surfaceId: movableGammaSurface!.surfaceId,
+      targetWindowId: secondary.windowId,
+      targetGroupId: 'group-main',
+      targetIndex: 0,
+    }) as {
+      sourceTopology: { surfaces: Array<{ surfaceId: string }> };
+      targetTopology: { surfaces: Array<{ surfaceId: string }> };
+    };
+    expect(moved.sourceTopology.surfaces).toEqual([]);
+    expect(moved.targetTopology.surfaces.map(({ surfaceId }) => surfaceId)).toEqual([movableGammaSurface!.surfaceId]);
+    await waitFor(async () => {
+      const surfaces = await call('inspect.surfaces') as Array<{ surfaceId: string; projectId: string; windowId: number; presentation: string }>;
+      return surfaces.length === 1
+        && surfaces[0]?.surfaceId === movableGammaSurface!.surfaceId
+        && surfaces[0]?.windowId === secondary.windowId
+        && surfaces[0]?.presentation === 'visible'
+        && await evalInHostWindow<boolean>(launched.app, secondary.windowId,
+          `[...document.querySelectorAll('.dv-tab')].some((tab) => tab.textContent?.trim() === 'Gamma')`);
+    }, 15_000, 'cross-window move converges both host and native project presentation');
+
+    const persistedPath = path.join(launched.userDataDir, 'PapersData', 'workspace-topologies.json');
+    await waitFor(async () => {
+      try {
+        const persisted = JSON.parse(await fs.readFile(persistedPath, 'utf8')) as {
+          workspaces: Array<{ topology: { surfaces: Array<{ projectId: string }> } }>;
+        };
+        return persisted.workspaces.some((workspace) =>
+          workspace.topology.surfaces.length === 1
+          && workspace.topology.surfaces[0]?.projectId === C);
+      } catch {
+        return false;
+      }
+    }, 10_000, 'atomically persisted final Papers topology');
+    const persistedText = await fs.readFile(persistedPath, 'utf8');
+    expect(persistedText).not.toMatch(/dockview|webContents|senderId|windowId/i);
+  });
+});

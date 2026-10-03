@@ -1,0 +1,15 @@
+029 P3 LIVE NATIVE GATE - TRANSCRIPT
+run at: 2026-08-11T18:45:46.144Z
+gate dir: D:\Programs\CodexBrainB\tmp\papers-029-gate-SBE5Jb
+
+PASS - disposable patterned window launched :: {"title":"AYG-029PAT-62392-aac2b3a0","pid":62392,"y":180,"x":320}
+PASS - real AutoCAD launched with a main window :: pid=47820 title=Autodesk AutoCAD 2023 - [Start]
+PASS - real helper lists candidates (production path warm) :: listed
+PASS - Gate1: patterned NORMAL capture is a real-content preview (blue+red pattern, scaled capture) :: {"dims":"195x135","distinct":14,"variance":21669.166804668115,"pattern":true}
+PASS - Gate1: patterned MINIMIZED capture is a real-content preview (durable retained-content path, NOT icon) :: {"dims":"195x135","distinct":14,"pattern":true}
+PASS - Gate2: acad NORMAL capture is real non-uniform content (scaled capture, not a 48x48 icon) :: {"dims":"240x134","distinct":46,"variance":2902.849768430994}
+PASS - Gate2: acad MINIMIZED capture is real non-uniform content :: {"dims":"240x134","distinct":46}
+PASS - Gate2: acad RESTORED capture is real non-uniform content :: {"dims":"240x134","distinct":44}
+PASS - cleanup: no owned test electrons remain :: gate dir D:\Programs\CodexBrainB\tmp\papers-029-gate-SBE5Jb
+
+FINAL SUMMARY: 9/9 passed, 0 failed.

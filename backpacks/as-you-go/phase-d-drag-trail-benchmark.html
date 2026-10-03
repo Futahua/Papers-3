@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Assignment 007 drag trail benchmark</title>
+<svg id="stage" viewBox="0 0 800 400"></svg>
+<pre id="metrics"></pre>
+<script type="module">
+  import { animate } from './public/vendor/anime.js';
+  import { createDragTrailController } from './public/drag-trail-model.js';
+
+  const svg = document.querySelector('#stage');
+  const layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  svg.append(layer);
+  const points = Array.from({ length: 600 }, (_, index) => ({
+    x: 120 + (index % 300) * 1.7,
+    y: 180 + Math.sin(index / 13) * 70,
+  }));
+  const trail = createDragTrailController({ document, animate, maxMarks: 36 });
+  trail.setLayer(layer);
+  const run = (withTrail) => {
+    trail.clear();
+    const samples = [];
+    for (let warm = 0; warm < 120; warm += 1) {
+      if (withTrail) trail.record([points[warm % points.length]]);
+    }
+    trail.clear();
+    for (let batch = 0; batch < 31; batch += 1) {
+      const start = performance.now();
+      for (let step = 0; step < 20; step += 1) {
+        const point = points[(batch * 20 + step) % points.length];
+        if (withTrail) trail.record([point]);
+      }
+      samples.push(performance.now() - start);
+    }
+    samples.sort((a, b) => a - b);
+    return { median: samples[15], min: samples[0], max: samples[30] };
+  };
+  const baseline = run(false);
+  const active = run(true);
+  document.querySelector('#metrics').textContent = JSON.stringify({ baseline, active, added: {
+    median: active.median - baseline.median,
+    min: active.min - baseline.min,
+    max: active.max - baseline.max,
+  } });
+</script>

@@ -1,0 +1,644 @@
+/**
+ * IPC surface for the trusted host frame renderer. Only the host view's
+ * WebContents may call these channels.
+ */
+import { createHash } from 'node:crypto';
+import { app, clipboard, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { z } from 'zod';
+
+import { backpackNameSchema } from '@shared/schemas';
+import type { PermissionDecision } from '@shared/types';
+import type { HostWorkspaceSurfaceMoveTarget } from '../hostFacade';
+import { parseWorkspaceTopology, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+
+export function parseWindowsClipboardFileDrop(buffer: Buffer): string[] {
+  if (buffer.length < 20) return [];
+  const offset = buffer.readUInt32LE(0);
+  const wide = buffer.readUInt32LE(16) !== 0;
+  if (offset < 20 || offset >= buffer.length) return [];
+  const payload = buffer.subarray(offset);
+  const text = wide ? payload.toString('utf16le') : payload.toString('latin1');
+  return text.split('\0').map((entry) => entry.trim()).filter(Boolean);
+}
+
+export function parseWindowsClipboardFileNameW(buffer: Buffer): string[] {
+  if (buffer.length < 2) return [];
+  return buffer.toString('utf16le').split('\0').map((entry) => entry.trim()).filter(Boolean);
+}
+
+function clipboardPathCandidates(formats: string[]): string[] {
+  const paths: string[] = [];
+  if (formats.includes('FileDrop')) {
+    paths.push(...parseWindowsClipboardFileDrop(clipboard.readBuffer('FileDrop')));
+  }
+  if (paths.length === 0 && formats.includes('FileNameW')) {
+    paths.push(...parseWindowsClipboardFileNameW(clipboard.readBuffer('FileNameW')));
+  }
+  if (paths.length === 0 && formats.includes('FileName')) {
+    const single = clipboard.readBuffer('FileName').toString('utf8').split('\0')[0]?.trim();
+    if (single) paths.push(single);
+  }
+  return [...new Set(paths)].slice(0, 64);
+}
+
+function unquoteClipboardPath(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function clipboardFingerprint(formats: string[], paths: string[], text: string): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ formats: [...formats].sort(), paths, text }))
+    .digest('hex');
+}
+
+export interface HostFacade {
+  /**
+   * One local-service request for the project a sender belongs to. Optional so a
+   * build without the capability answers with a typed refusal rather than
+   * failing to start.
+   */
+  fetchLocalService?(senderId: number, request: unknown): Promise<unknown>;
+  isHostSender(sender: WebContents): boolean;
+  isBackpackProjectSender(sender: WebContents): boolean;
+  /**
+   * May this sender use THIS channel?
+   *
+   * Separate from `isBackpackProjectSender` on purpose. That answers "is this an
+   * owned project surface for the project it is showing"; this answers "and may
+   * a surface of its kind use this particular channel". Collapsing them is how
+   * admitting the launcher would also have granted it window enumeration, native
+   * dialogs and the ability to rewrite the project's shared state.
+   */
+  decideProjectSurfaceRequest?(
+    sender: WebContents,
+    channel: string,
+  ): 'allow' | 'not-a-project-sender' | 'capability-not-granted';
+  waitForBackpackProjectAuthority?(senderId: number): Promise<void>;
+
+  buildIdentity(): unknown;
+  updateStatus(): unknown;
+  checkForUpdate(): Promise<unknown>;
+  installUpdate(): Promise<void>;
+
+  listBackpacks(senderId: number): unknown;
+  createBackpack(name: string, type: string): Promise<unknown>;
+  renameBackpack(id: string, name: string): Promise<void>;
+  setBackpackArchived(id: string, archived: boolean): Promise<void>;
+  removeBackpack(id: string): Promise<void>;
+  enterBackpack(senderId: number, id: string): Promise<unknown>;
+  leaveBackpack(senderId: number): Promise<void>;
+  startupRestoreBackpackId(senderId: number): string | null;
+  hydrateStartupWorkspace(senderId: number): Promise<{ hydrated: boolean }>;
+
+  openBackpackProject(senderId: number, id: string): Promise<unknown>;
+  replaceBackpackProject(senderId: number, surfaceId: string, id: string): Promise<unknown>;
+  openBackpackProjectNewSurface(senderId: number, url: string, workspaceOrigin?: string): Promise<unknown>;
+  dismissBackpackProjectCommandSurface(senderId: number, destination: 'restore' | 'external' | 'papers'): Promise<void>;
+  closeBackpackProject(senderId: number, surfaceId: string): Promise<void>;
+  activateBackpackProjectSurface(senderId: number, surfaceId: string): void;
+  showBackpackProjectSurface(senderId: number, surfaceId: string, url: string, present?: boolean): Promise<void>;
+  hideBackpackProjectSurface(senderId: number, surfaceId: string): void;
+  setBackpackProjectSurfaceBounds(senderId: number, surfaceId: string, bounds: { x: number; y: number; width: number; height: number }): void;
+  requestCloseBackpackProject(senderId: number): Promise<void>;
+  runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
+  resolveBackpackProjectWorkspaceScope(senderId: number, projectKey: string, projectName: string): Promise<unknown>;
+  revokeBackpackProjectWorkspaceScope(senderId: number): void;
+  acquireBackpackProjectWriterLease(sender: WebContents, workspaceOrigin?: string): Promise<{ token: string }>;
+  releaseBackpackProjectWriterLease(senderId: number, token: string): void;
+  rebindBackpackProject(backpackId: string, newRoot: string): Promise<void>;
+  copyBackpackProjectText(senderId: number, text: string): void;
+  loadBackpackProjectState(senderId: number, workspaceOrigin?: string): Promise<unknown>;
+  loadBackpackProjectStateVersioned(senderId: number, workspaceOrigin?: string): Promise<unknown>;
+  callDelegateWave(
+    senderId: number,
+    backpackId: string,
+    operation: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown>;
+  saveBackpackProjectState(senderId: number, rawState: string, workspaceOrigin?: string): Promise<void>;
+  saveBackpackProjectStateChecked(senderId: number, rawState: string, expectedRevision: string, workspaceOrigin?: string): Promise<unknown>;
+  pickBackpackProjectTarget(
+    senderId: number,
+    kind: 'file' | 'folder',
+    workspaceOrigin?: string,
+  ): Promise<{ target: string; icon: string | null } | null>;
+  backpackProjectShortcutIcon(senderId: number, shortcutId: string, workspaceOrigin?: string): Promise<string | null>;
+  launchBackpackProjectShortcut(senderId: number, shortcutId: string, workspaceOrigin?: string): Promise<void>;
+  revealBackpackProjectShortcut(senderId: number, shortcutId: string, workspaceOrigin?: string): Promise<void>;
+  grantBackpackProjectNativeSource(senderId: number, target: string): Promise<string>;
+  openBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
+  revealBackpackProjectNativeSource(senderId: number, sourceRef: string): Promise<void>;
+  callBackpackProjectFileCapability(senderId: number, request: unknown, workspaceOrigin?: string): Promise<unknown>;
+  openBackpackProjectWebLink(senderId: number, url: string, workspaceOrigin?: string): Promise<void>;
+  resolveBackpackProjectDroppedTargets(
+    senderId: number,
+    paths: string[],
+    workspaceOrigin?: string,
+  ): Promise<Array<{ name: string; target: string; kind: 'file' | 'folder' }>>;
+  resolveBackpackProjectWebLinkIcon(
+    senderId: number,
+    url: string,
+    workspaceOrigin?: string,
+  ): Promise<{ icon: string | null; finalUrl: string; finalOrigin: string }>;
+
+  programCatalog(): unknown;
+  startProgram(programId: string): Promise<void>;
+  stopProgram(): Promise<void>;
+  restartProgram(programId: string): Promise<void>;
+  clearQuarantine(programId: string): void;
+  invokeProgramCommand(commandId: string): void;
+
+  setProgramBounds(bounds: { x: number; y: number; width: number; height: number }): void;
+  setOverlayActive(active: boolean): void;
+  setHostOverlayActive(senderId: number, active: boolean, owner?: 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy'): void;
+  setTitleBarOverlay(senderId: number, color: string, symbolColor: string): void;
+  getSettings(): unknown;
+  setTransparentWindow(enabled: boolean): Promise<void>;
+  saveWindowBounds(senderId: number): Promise<{ x: number; y: number; width: number; height: number } | null>;
+  clearWindowBounds(): Promise<void>;
+  commitWorkspaceTopology(senderId: number, topology: WorkspaceTopologyV1): void;
+  refreshWorkspaceTopology(senderId: number): void;
+  listWorkspaceLayouts(): Promise<unknown>;
+  saveWorkspaceLayout(senderId: number, name: string): Promise<unknown>;
+  loadWorkspaceLayout(senderId: number, layoutId: string): Promise<unknown>;
+  moveWorkspaceSurfaceFromHost(senderId: number, target: HostWorkspaceSurfaceMoveTarget): Promise<unknown>;
+
+  listPermissions(): unknown;
+  revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
+  respondToPrompt(promptId: string, decision: PermissionDecision): void;
+
+  listRuns(senderId: number): unknown;
+  getRun(runId: string): unknown;
+  cancelRun(runId: string): Promise<void>;
+  respondRunInteraction(runId: string, requestId: string, optionId: string): Promise<void>;
+  retryRun(runId: string): Promise<unknown>;
+  inspectRunInHermes(runId: string): Promise<unknown>;
+  returnToOrigin(senderId: number, runId: string): Promise<void>;
+  respondInvocation(previewId: string, approved: boolean): void;
+  replyToRun(runId: string, text: string): Promise<void>;
+  composedPrompt(runId: string): string;
+
+  hermesHealth(): unknown;
+  hermesSurfaceStatus(senderId: number): unknown;
+  dockHermes(senderId: number, bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
+  setHermesDockBounds(senderId: number, bounds: { x: number; y: number; width: number; height: number }): void;
+  hideHermesDock(senderId: number): Promise<void>;
+  showHermesWindow(): Promise<unknown>;
+  hideHermesWindow(): Promise<void>;
+}
+
+const boundsSchema = z
+  .object({
+    x: z.number().int().min(0).max(20_000),
+    y: z.number().int().min(0).max(20_000),
+    width: z.number().int().min(0).max(20_000),
+    height: z.number().int().min(0).max(20_000),
+  })
+  .strict();
+
+/** Only #rrggbb / #rgb hex colours — the titleBarOverlay repaint takes no other form. */
+const colorSchema = z.string().regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/);
+
+const idSchema = z.string().min(1).max(128);
+const backpackRemovalIdSchema = z
+  .string()
+  .regex(/^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+const backpackProjectActionIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/i);
+const backpackProjectStateSchema = z.string().min(2).max(5_000_000);
+const backpackProjectWorkspaceOriginSchema = z.string().url().max(2_048).optional();
+/** An opaque logical surface id. Never parsed for meaning. */
+const surfaceIdSchema = z.string().min(1).max(128);
+/** A sha256 hex digest, or the sentinel for "no state file yet". */
+const backpackProjectRevisionSchema = z.union([z.literal('absent'), z.string().regex(/^[0-9a-f]{64}$/)]);
+const backpackProjectTextSchema = z.string().min(1).max(50_000);
+const backpackProjectWorkspaceKeySchema = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/);
+const backpackProjectWorkspaceNameSchema = z.string().max(200);
+const backpackProjectWebUrlSchema = z.string().min(8).max(2_048);
+const backpackProjectNativeSourcePathSchema = z.string().min(1).max(32_768);
+const backpackProjectNativeSourceRefSchema = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+const backpackProjectWriterLeaseTokenSchema = backpackProjectNativeSourceRefSchema;
+const backpackProjectFileCapabilitySchema = z.object({
+  operation: z.string().min(1).max(64),
+  params: z.record(z.string(), z.unknown()).optional(),
+}).strict();
+export const hostWorkspaceSurfaceMoveTargetSchema = z.object({
+  surfaceId: surfaceIdSchema,
+  targetWindowId: z.number().int().nonnegative(),
+  targetGroupId: z.string().min(1).max(128),
+  targetIndex: z.number().int().nonnegative(),
+}).strict();
+export const commandSurfaceDismissDestinationSchema = z.enum(['restore', 'external', 'papers']);
+const backpackProjectDroppedPathsSchema = z.array(z.string().min(1).max(32_768)).min(1).max(64);
+const backpackProjectNativeDragPathsSchema = backpackProjectDroppedPathsSchema;
+const delegateWaveRequestSchema = z
+  .object({
+    backpackId: z.string().min(1).max(256),
+    // A NAME, not a path. The relay owns the operation map; an unknown name is
+    // refused there rather than being turned into a request.
+    operation: z.string().min(1).max(64),
+    params: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
+
+export function registerHostIpc(facade: HostFacade): void {
+  const guard = (event: IpcMainInvokeEvent, projectAllowed = false, channel = ''): void => {
+    if (facade.isHostSender(event.sender)) return;
+    if (!projectAllowed) throw new Error('host channel called from non-host sender');
+
+    // A project surface may drive project channels. WHICH ones depends on the
+    // kind of surface it is, so the channel travels with the question: a
+    // launcher reads and runs, and does not get to write the project's document.
+    const decision = facade.decideProjectSurfaceRequest?.(event.sender, channel);
+    if (decision === 'allow') return;
+    if (decision === 'capability-not-granted') {
+      throw new Error(`host channel ${channel} is not available to this kind of project surface`);
+    }
+    if (facade.isBackpackProjectSender(event.sender)) return;
+    throw new Error('host channel called from non-host sender');
+  };
+
+  const handle = (
+    channel: string,
+    handler: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
+    projectAllowed = false,
+  ): void => {
+    ipcMain.handle(channel, async (event, ...args) => {
+      const projectAction = channel.startsWith('host:backpack-project:') &&
+        !channel.endsWith(':open') && !channel.endsWith(':close') &&
+        !channel.endsWith(':show-surface') && !channel.endsWith(':hide-surface');
+      if (projectAction) await facade.waitForBackpackProjectAuthority?.(event.sender.id);
+      guard(event, projectAllowed || projectAction, channel);
+      return handler(event, ...args);
+    });
+  };
+
+  handle('host:app:build-identity', () => facade.buildIdentity());
+  handle('host:app:update-status', () => facade.updateStatus());
+  handle('host:app:check-for-update', () => facade.checkForUpdate());
+  handle('host:app:install-update', () => facade.installUpdate());
+
+  handle('host:backpacks:list', (event) => facade.listBackpacks(event.sender.id));
+  handle('host:backpacks:create', (_e, name, type) =>
+    facade.createBackpack(backpackNameSchema.parse(name), z.enum(['environment', 'canvas']).parse(type)),
+  );
+  handle('host:backpacks:rename', (_e, id, name) =>
+    facade.renameBackpack(idSchema.parse(id), backpackNameSchema.parse(name)),
+  );
+  handle('host:backpacks:set-archived', (_e, id, archived) =>
+    facade.setBackpackArchived(idSchema.parse(id), z.boolean().parse(archived)),
+  );
+  handle('host:backpacks:remove', (_e, id) =>
+    facade.removeBackpack(backpackRemovalIdSchema.parse(id)),
+  );
+  handle('host:backpacks:enter', (event, id) => facade.enterBackpack(event.sender.id, idSchema.parse(id)));
+  handle('host:backpacks:leave', (event) => facade.leaveBackpack(event.sender.id));
+  // Renamed from last-active: only the first window at launch carries a
+  // restore candidate, so a window opened later does not reopen the persisted
+  // most-recent Backpack.
+  handle('host:backpacks:startup-restore', (event) => facade.startupRestoreBackpackId(event.sender.id));
+  handle('host:workspace:hydrate-startup', (event) => facade.hydrateStartupWorkspace(event.sender.id));
+
+  handle('host:backpack-project:open', (event, id) =>
+    facade.openBackpackProject(event.sender.id, backpackRemovalIdSchema.parse(id)),
+  );
+  handle('host:backpack-project:open-new-surface', (event, url, workspaceOrigin) =>
+    facade.openBackpackProjectNewSurface(
+      event.sender.id,
+      z.string().url().max(2_048).parse(url),
+      backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
+    ),
+    true,
+  );
+  handle('host:backpack-project:command-surface-dismiss', (event, destination) =>
+    facade.dismissBackpackProjectCommandSurface(event.sender.id, commandSurfaceDismissDestinationSchema.parse(destination)),
+    true,
+  );
+  handle('host:backpack-project:replace', (event, surfaceId, id) =>
+    facade.replaceBackpackProject(event.sender.id, surfaceIdSchema.parse(surfaceId), backpackRemovalIdSchema.parse(id)),
+  );
+  handle('host:backpack-project:close', (event, surfaceId) =>
+    facade.closeBackpackProject(event.sender.id, surfaceIdSchema.parse(surfaceId)),
+  );
+  handle('host:backpack-project:activate-surface', (event, surfaceId) =>
+    facade.activateBackpackProjectSurface(event.sender.id, surfaceIdSchema.parse(surfaceId)),
+  );
+  // A0.2: the host names its target. No inference from "the window's only
+  // surface" -- that would work until a second one existed.
+  handle('host:backpack-project:show-surface', (event, surfaceId, url, present = true) =>
+    facade.showBackpackProjectSurface(
+      event.sender.id,
+      surfaceIdSchema.parse(surfaceId),
+      z.string().url().max(2_048).parse(url),
+      z.boolean().parse(present),
+    ),
+  );
+  handle('host:backpack-project:set-surface-bounds', (event, surfaceId, bounds) =>
+    facade.setBackpackProjectSurfaceBounds(event.sender.id, surfaceIdSchema.parse(surfaceId), boundsSchema.parse(bounds)),
+  );
+  handle('host:backpack-project:hide-surface', (event, surfaceId) =>
+    facade.hideBackpackProjectSurface(event.sender.id, surfaceIdSchema.parse(surfaceId)),
+  );
+  handle('host:backpack-project:run-action', (event, actionId) =>
+    facade.runBackpackProjectAction(event.sender.id, backpackProjectActionIdSchema.parse(actionId)),
+  );
+  handle('host:backpack-project:workspace-scope', (event, projectKey, projectName) =>
+    facade.resolveBackpackProjectWorkspaceScope(
+      event.sender.id,
+      backpackProjectWorkspaceKeySchema.parse(projectKey),
+      backpackProjectWorkspaceNameSchema.parse(projectName),
+    ),
+  );
+  handle('host:backpack-project:workspace-scope-revoke', (event) =>
+    facade.revokeBackpackProjectWorkspaceScope(event.sender.id),
+  );
+  handle('host:backpack-project:workspace-writer-lease-acquire', (event, workspaceOrigin) =>
+    facade.acquireBackpackProjectWriterLease(
+      event.sender,
+      backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
+    ),
+  );
+  handle('host:backpack-project:workspace-writer-lease-release', (event, token) =>
+    facade.releaseBackpackProjectWriterLease(
+      event.sender.id,
+      backpackProjectWriterLeaseTokenSchema.parse(token),
+    ),
+  );
+  handle('host:backpack-project:rebind', (_event, backpackId, newRoot) =>
+    facade.rebindBackpackProject(
+      backpackRemovalIdSchema.parse(backpackId),
+      z.string().min(1).max(32_768).parse(newRoot),
+    ),
+  );
+  // The local-service capability. `projectAllowed` because a project surface is
+  // exactly who may use it, and the facade resolves that sender to its project
+  // before anything is reached. The payload is passed through untyped here and
+  // validated where it is used: the bridge refuses anything malformed, and a
+  // second schema in this file would be a second place to keep in step.
+  handle('host:backpack-project:local-service-fetch', (event, request) =>
+    facade.fetchLocalService?.(event.sender.id, request) ?? Promise.resolve({ ok: false, detail: 'this build has no local-service capability' }),
+    true,
+  );
+  handle('host:backpack-project:copy-text', (event, text) =>
+    facade.copyBackpackProjectText(event.sender.id, backpackProjectTextSchema.parse(text)),
+  );
+  // Delegate Wave relay. The Backpack id is supplied by the preload from the
+  // page ORIGIN, never from page data. Since Phase 1A the registry independently
+  // says which project this sender belongs to; the two must agree, and the
+  // relay is called with the registry's answer. The relay then applies the
+  // decisive check: that this is the one Backpack Papers was configured with.
+  // `operation` is a name, never a URL, mapped to a fixed route -- nothing here
+  // can express a generic request.
+  handle('host:backpack-project:delegate-wave', (event, payload) => {
+    const request = delegateWaveRequestSchema.parse(payload);
+    return facade.callDelegateWave(
+      event.sender.id,
+      request.backpackId,
+      request.operation,
+      request.params ?? {},
+    );
+  });
+
+  // Phase 1A: the sender is the authority on which project a request is for.
+  // These deliberately no longer resolve against application-global state.
+  handle('host:backpack-project:state-load', (event, workspaceOrigin) =>
+    facade.loadBackpackProjectState(event.sender.id, backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  handle('host:backpack-project:state-save', (event, state, workspaceOrigin) =>
+    facade.saveBackpackProjectState(event.sender.id, backpackProjectStateSchema.parse(state), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  // Versioned pair. `state-load-versioned` returns the document plus the
+  // revision observed, and `state-save-checked` refuses a save built on a
+  // revision that is no longer current. The unversioned pair above remains for
+  // the single-writer path until every surface has moved across.
+  handle('host:backpack-project:state-load-versioned', (event, workspaceOrigin) =>
+    facade.loadBackpackProjectStateVersioned(event.sender.id, backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  handle('host:backpack-project:state-save-checked', (event, state, revision, workspaceOrigin) =>
+    facade.saveBackpackProjectStateChecked(
+      event.sender.id,
+      backpackProjectStateSchema.parse(state),
+      backpackProjectRevisionSchema.parse(revision),
+      backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
+    ),
+  );
+  handle('host:backpack-project:pick-target', (event, kind, workspaceOrigin) =>
+    facade.pickBackpackProjectTarget(event.sender.id, z.enum(['file', 'folder']).parse(kind), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  handle('host:backpack-project:shortcut-icon', (event, shortcutId, workspaceOrigin) =>
+    facade.backpackProjectShortcutIcon(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  handle('host:backpack-project:launch-shortcut', (event, shortcutId, workspaceOrigin) =>
+    facade.launchBackpackProjectShortcut(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  handle('host:backpack-project:reveal-shortcut', (event, shortcutId, workspaceOrigin) =>
+    facade.revealBackpackProjectShortcut(event.sender.id, backpackProjectActionIdSchema.parse(shortcutId), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  handle('host:backpack-project:native-source-grant', (event, target) =>
+    facade.grantBackpackProjectNativeSource(
+      event.sender.id,
+      backpackProjectNativeSourcePathSchema.parse(target),
+    ),
+  );
+  handle('host:backpack-project:native-source-open-granted', (event, sourceRef) =>
+    facade.openBackpackProjectNativeSource(
+      event.sender.id,
+      backpackProjectNativeSourceRefSchema.parse(sourceRef),
+    ),
+  );
+  handle('host:backpack-project:native-source-reveal-granted', (event, sourceRef) =>
+    facade.revealBackpackProjectNativeSource(
+      event.sender.id,
+      backpackProjectNativeSourceRefSchema.parse(sourceRef),
+    ),
+  );
+  handle('host:backpack-project:file-capability', async (event, request, workspaceOrigin) => {
+    const parsedRequest = backpackProjectFileCapabilitySchema.parse(request);
+    const parsedWorkspaceOrigin = backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin);
+    if (parsedRequest.operation === 'clipboard-read') {
+      const formats = clipboard.availableFormats();
+      const paths = clipboardPathCandidates(formats);
+      const text = clipboard.readText().trim().slice(0, 32_768);
+      const fingerprint = clipboardFingerprint(formats, paths, text);
+
+      if (paths.length > 0) {
+        try {
+          const targets = await facade.resolveBackpackProjectDroppedTargets(
+            event.sender.id,
+            paths,
+            parsedWorkspaceOrigin,
+          );
+          if (targets.length > 0) return { ok: true, kind: 'files', targets, fingerprint };
+        } catch {
+          // Some clipboard providers expose stale/virtual FileDrop entries.
+          // Fall through to text, which may still contain a usable path or URL.
+        }
+      }
+
+      if (text) {
+        const possiblePath = unquoteClipboardPath(text);
+        try {
+          const targets = await facade.resolveBackpackProjectDroppedTargets(
+            event.sender.id,
+            [possiblePath],
+            parsedWorkspaceOrigin,
+          );
+          if (targets.length > 0) return { ok: true, kind: 'files', targets, fingerprint };
+        } catch {
+          // Not a live machine path: AYG deliberately treats it as a web link.
+        }
+        return { ok: true, kind: 'text', text, fingerprint };
+      }
+
+      return { ok: true, kind: 'empty', fingerprint };
+    }
+    if (parsedRequest.operation === 'native-drag') {
+      const paths = backpackProjectNativeDragPathsSchema.parse(parsedRequest.params?.['paths']);
+      for (const target of paths) {
+        const checked = await facade.callBackpackProjectFileCapability(
+          event.sender.id,
+          { operation: 'stat', params: { path: target } },
+          parsedWorkspaceOrigin,
+        ) as { ok?: boolean };
+        if (checked?.ok !== true) return checked;
+      }
+      const firstTarget = paths[0]!;
+      const icon = await app.getFileIcon(firstTarget, { size: 'small' });
+      event.sender.startDrag({ file: firstTarget, files: paths, icon });
+      return { ok: true, count: paths.length };
+    }
+    return facade.callBackpackProjectFileCapability(
+      event.sender.id,
+      parsedRequest,
+      parsedWorkspaceOrigin,
+    );
+  });
+  handle('host:backpack-project:open-web-link', (event, url, workspaceOrigin) =>
+    facade.openBackpackProjectWebLink(event.sender.id, backpackProjectWebUrlSchema.parse(url), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  handle('host:backpack-project:resolve-dropped-targets', (event, paths, workspaceOrigin) =>
+    facade.resolveBackpackProjectDroppedTargets(event.sender.id, backpackProjectDroppedPathsSchema.parse(paths), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  handle('host:backpack-project:resolve-web-link-icon', (event, url, workspaceOrigin) =>
+    facade.resolveBackpackProjectWebLinkIcon(event.sender.id, backpackProjectWebUrlSchema.parse(url), backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin)),
+  );
+  ipcMain.on('host:backpack-project:request-close', (event) => {
+    void facade.waitForBackpackProjectAuthority?.(event.sender.id).then(() => {
+      if (!facade.isBackpackProjectSender(event.sender)) return;
+      return facade.requestCloseBackpackProject(event.sender.id);
+    }).catch(() => undefined);
+  });
+
+  handle('host:programs:catalog', () => facade.programCatalog());
+  handle('host:programs:start', (_e, programId) => facade.startProgram(idSchema.parse(programId)));
+  handle('host:programs:stop', () => facade.stopProgram());
+  handle('host:programs:restart', (_e, programId) =>
+    facade.restartProgram(idSchema.parse(programId)),
+  );
+  handle('host:programs:clear-quarantine', (_e, programId) =>
+    facade.clearQuarantine(idSchema.parse(programId)),
+  );
+  handle('host:programs:invoke-command', (_e, commandId) =>
+    facade.invokeProgramCommand(idSchema.parse(commandId)),
+  );
+
+  handle('host:layout:set-program-bounds', (_e, bounds) =>
+    facade.setProgramBounds(boundsSchema.parse(bounds)),
+  );
+  handle('host:layout:set-overlay', (_e, active) =>
+    facade.setOverlayActive(z.boolean().parse(active)),
+  );
+  handle('host:layout:set-host-overlay', (event, active, owner) =>
+    facade.setHostOverlayActive(
+      event.sender.id,
+      z.boolean().parse(active),
+      z.enum(['picker', 'workspace-drag', 'workspace-resize', 'legacy']).default('legacy').parse(owner),
+    ),
+  );
+  handle('host:layout:set-titlebar', (event, color, symbolColor) =>
+    facade.setTitleBarOverlay(event.sender.id, colorSchema.parse(color), colorSchema.parse(symbolColor)),
+  );
+  handle('host:settings:get', () => facade.getSettings());
+  handle('host:settings:set-transparent-window', (_e, enabled) =>
+    facade.setTransparentWindow(z.boolean().parse(enabled)),
+  );
+  handle('host:settings:save-window-bounds', (event) => facade.saveWindowBounds(event.sender.id));
+  handle('host:settings:clear-window-bounds', () => facade.clearWindowBounds());
+  handle('host:workspace:commit-topology', (event, topology) =>
+    facade.commitWorkspaceTopology(event.sender.id, parseWorkspaceTopology(topology)),
+  );
+  handle('host:workspace:refresh-topology', (event) =>
+    facade.refreshWorkspaceTopology(event.sender.id),
+  );
+  handle('host:workspace:move-surface-to-window', (event, rawTarget) =>
+    facade.moveWorkspaceSurfaceFromHost(
+      event.sender.id,
+      hostWorkspaceSurfaceMoveTargetSchema.parse(rawTarget),
+    ),
+  );
+  handle('host:layout:list', () => facade.listWorkspaceLayouts());
+  handle('host:layout:save', (event, name) =>
+    facade.saveWorkspaceLayout(event.sender.id, z.string().min(1).max(120).parse(name)),
+  );
+  handle('host:layout:load', (event, layoutId) =>
+    facade.loadWorkspaceLayout(event.sender.id, z.string().uuid().parse(layoutId)),
+  );
+
+  handle('host:permissions:list', () => facade.listPermissions());
+  handle('host:permissions:revoke', (_e, backpackId, programId, capability) =>
+    facade.revokePermission(
+      idSchema.parse(backpackId),
+      idSchema.parse(programId),
+      idSchema.parse(capability),
+    ),
+  );
+  handle('host:permissions:respond', (_e, promptId, decision) =>
+    facade.respondToPrompt(idSchema.parse(promptId), decisionSchema.parse(decision)),
+  );
+
+  handle('host:runs:list', (event) => facade.listRuns(event.sender.id));
+  handle('host:runs:get', (_e, runId) => facade.getRun(idSchema.parse(runId)));
+  handle('host:runs:cancel', (_e, runId) => facade.cancelRun(idSchema.parse(runId)));
+  handle('host:runs:respond-interaction', (_e, runId, requestId, optionId) =>
+    facade.respondRunInteraction(
+      idSchema.parse(runId),
+      idSchema.parse(requestId),
+      idSchema.parse(optionId),
+    ),
+  );
+  handle('host:runs:retry', (_e, runId) => facade.retryRun(idSchema.parse(runId)));
+  handle('host:runs:inspect-in-hermes', (_e, runId) =>
+    facade.inspectRunInHermes(idSchema.parse(runId)),
+  );
+  handle('host:runs:return-to-origin', (event, runId) =>
+    facade.returnToOrigin(event.sender.id, idSchema.parse(runId)),
+  );
+  handle('host:runs:respond-invocation', (_e, previewId, approved) =>
+    facade.respondInvocation(idSchema.parse(previewId), z.boolean().parse(approved)),
+  );
+  handle('host:runs:reply', (_e, runId, text) =>
+    facade.replyToRun(idSchema.parse(runId), z.string().min(1).max(10_000).parse(text)),
+  );
+  handle('host:runs:composed-prompt', (_e, runId) =>
+    facade.composedPrompt(idSchema.parse(runId)),
+  );
+
+  handle('host:hermes:health', () => facade.hermesHealth());
+  // Phase 1B.4: every dock operation is sender-authorized. Docking transfers
+  // ownership to the asking window; repositioning and hiding are accepted only
+  // from the window that currently owns the dock.
+  handle('host:hermes:surface-status', (event) => facade.hermesSurfaceStatus(event.sender.id));
+  handle('host:hermes:dock', (event, bounds) => facade.dockHermes(event.sender.id, boundsSchema.parse(bounds)));
+  handle('host:hermes:set-dock-bounds', (event, bounds) =>
+    facade.setHermesDockBounds(event.sender.id, boundsSchema.parse(bounds)),
+  );
+  handle('host:hermes:hide-dock', (event) => facade.hideHermesDock(event.sender.id));
+  handle('host:hermes:show-window', () => facade.showHermesWindow());
+  handle('host:hermes:hide-window', () => facade.hideHermesWindow());
+}

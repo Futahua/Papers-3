@@ -1,0 +1,162 @@
+/**
+ * Phase 1A: which project a request actually came from.
+ *
+ * Until now the main process answered "which Backpack project is open?" with a
+ * single application-global. With one window that was indistinguishable from
+ * the truth. With two it is a data-loss bug: window A asks to save its board,
+ * the global says the project window B most recently opened, and A's document
+ * is written into B's file. `saveBackpackProjectState(rawState)` carries no
+ * project identity at all, so nothing downstream can notice.
+ *
+ * The sender always knew the answer. Every IPC request arrives from a specific
+ * `WebContents` — a host view or a project frame — and each of those belongs to
+ * exactly one project. This registry is that binding, and nothing here consults
+ * ambient state: a request either resolves through its own sender or it is
+ * refused.
+ *
+ * Global services stay global. This is only about whose request it is.
+ */
+
+/**
+ * Several senders act for one project, and they are not interchangeable. The
+ * `host` surface is the Papers renderer that opened the project; `project` is
+ * the Backpack's own frame inside it; `detached`, `widget` and `launcher` are
+ * the surfaces the 018 detach, compact-widget and command-surface paths create.
+ * All of them are authorized project senders, so all of them must be bound -- an
+ * authorized sender with no context would be refused by every request that
+ * resolves through its own sender.
+ *
+ * Without this distinction "every sender for project X" is the only question
+ * the registry can answer, and that is the wrong question whenever the right
+ * one is "which window did this come from" -- two windows may legitimately
+ * show the same project.
+ *
+ * The kind is also what decides WHICH channels a surface may use (see
+ * `projectCapabilityDecision`), so a surface that no kind describes cannot be
+ * granted anything: adding one here is a deliberate act with a capability
+ * consequence, not a label.
+ */
+export type SurfaceKind = 'host' | 'project' | 'detached' | 'widget' | 'launcher';
+
+export interface SurfaceContext {
+  /**
+   * The logical surface this sender is currently rendering, when it has one.
+   *
+   * A0.1: the LogicalSurfaceRegistry is the authority for what surfaces exist;
+   * this registry binds current Electron senders to them. A sender dying does
+   * not end the surface -- it ends this binding -- so a renderer can be rebuilt
+   * and re-bound to the same surfaceId.
+   *
+   * Optional during migration: detached and widget surfaces are bound before
+   * they have a logical identity of their own.
+   */
+  surfaceId?: string;
+  /** The Backpack whose project this surface is showing. */
+  projectId: string;
+  /** Identifies the native window a surface belongs to, so a window can be
+   * torn down without hunting for its surfaces. */
+  windowId: number;
+  kind: SurfaceKind;
+}
+
+export interface SurfaceContextRegistry {
+  bind(senderId: number, context: SurfaceContext): void;
+  unbind(senderId: number): void;
+  unbindWindow(windowId: number): void;
+  unbindProject(projectId: string): void;
+  /** The project this sender may act for, or null. Never a guess. */
+  projectForSender(senderId: number): string | null;
+  /** The logical surface this sender is rendering, or null. Never taken from a
+   * payload: a sender proves its own binding. */
+  surfaceForSender(senderId: number): string | null;
+  /** The senders currently rendering one logical surface. Usually one, but
+   * zero while a view is being rebuilt. */
+  sendersForSurface(surfaceId: string): number[];
+  contextForSender(senderId: number): SurfaceContext | null;
+  /** Every sender currently bound to a project — used to notify exactly the
+   * surfaces that care, instead of broadcasting to whoever is listening. */
+  sendersForProject(projectId: string): number[];
+  /** The Papers renderer of one window. This is what a project frame's request
+   * must be answered through: its OWN window's host, never every host showing
+   * the same project. */
+  hostSenderForWindow(windowId: number): number | null;
+  projectSendersForProject(projectId: string): number[];
+  hostSendersForProject(projectId: string): number[];
+  readonly size: number;
+}
+
+export function createSurfaceContextRegistry(): SurfaceContextRegistry {
+  const bySender = new Map<number, SurfaceContext>();
+
+  function sendersWhere(match: (context: SurfaceContext) => boolean): number[] {
+    const found: number[] = [];
+    for (const [senderId, context] of bySender) {
+      if (match(context)) found.push(senderId);
+    }
+    return found;
+  }
+
+  return {
+    bind(senderId, context) {
+      // Rebinding one sender to a different project is legitimate: a window
+      // leaves one Backpack and enters another through the same view.
+      bySender.set(senderId, { ...context });
+    },
+
+    unbind(senderId) {
+      bySender.delete(senderId);
+    },
+
+    unbindWindow(windowId) {
+      for (const [senderId, context] of bySender) {
+        if (context.windowId === windowId) bySender.delete(senderId);
+      }
+    },
+
+    unbindProject(projectId) {
+      for (const [senderId, context] of bySender) {
+        if (context.projectId === projectId) bySender.delete(senderId);
+      }
+    },
+
+    projectForSender(senderId) {
+      return bySender.get(senderId)?.projectId ?? null;
+    },
+
+    surfaceForSender(senderId) {
+      return bySender.get(senderId)?.surfaceId ?? null;
+    },
+
+    sendersForSurface(surfaceId) {
+      return sendersWhere((context) => context.surfaceId === surfaceId);
+    },
+
+    contextForSender(senderId) {
+      const found = bySender.get(senderId);
+      return found ? { ...found } : null;
+    },
+
+    sendersForProject(projectId) {
+      return sendersWhere((context) => context.projectId === projectId);
+    },
+
+    hostSenderForWindow(windowId) {
+      for (const [senderId, context] of bySender) {
+        if (context.windowId === windowId && context.kind === 'host') return senderId;
+      }
+      return null;
+    },
+
+    projectSendersForProject(projectId) {
+      return sendersWhere((context) => context.projectId === projectId && context.kind === 'project');
+    },
+
+    hostSendersForProject(projectId) {
+      return sendersWhere((context) => context.projectId === projectId && context.kind === 'host');
+    },
+
+    get size() {
+      return bySender.size;
+    },
+  };
+}

@@ -1,0 +1,15 @@
+at=mid theme=light transparent=false
+servedCurrent=group-bb780e1c-f500-4e2a-a430-ff7b542e0584
+ancestorShells=2 totalShells=8
+currentFolderAbsent=true
+ancestor id=root name=As you Go folderColor=var(--text) ring=rgb(41, 40, 34) fill=oklch(0.869635 0.00198975 none)
+ancestor id=group-62 name=Real folderColor=var(--text) ring=rgb(41, 40, 34) fill=oklch(0.869635 0.00198975 none)
+realItem id=shortcut kind=shortcut folderColor=none ring=rgb(41, 40, 34)
+shell id=root kind=group ancestor=true folderColor=var(--text)
+shell id=group-62 kind=group ancestor=true folderColor=var(--text)
+shell id=shortcut kind=shortcut ancestor=false folderColor=none
+shell id=shortcut kind=shortcut ancestor=false folderColor=none
+shell id=shortcut kind=shortcut ancestor=false folderColor=none
+shell id=group-15 kind=group ancestor=false folderColor=oklch(68% 0.18 248.26143619916525deg)
+shell id=shortcut kind=shortcut ancestor=false folderColor=none
+shell id=shortcut kind=shortcut ancestor=false folderColor=none

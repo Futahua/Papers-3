@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>As You Go — Phase D glyph fixture</title>
+<style>
+  html, body { margin: 0; min-height: 100%; background: #faf8f1; color: #3d3932; font: 14px system-ui, sans-serif; }
+  body { display: grid; place-items: center; padding: 24px; box-sizing: border-box; }
+  figure { margin: 0; max-width: 1100px; width: 100%; }
+  svg { display: block; width: 100%; height: auto; border: 1px solid #d6d0c4; background: #fffdf7; }
+  figcaption { margin-top: 10px; color: #756b5d; }
+  .body { fill: rgba(120, 164, 129, .10); stroke: rgba(76, 114, 90, .58); stroke-width: 2; }
+  .named-body { fill: rgba(120, 164, 129, .10); stroke: none; }
+  .glyphs { fill: none; stroke: #3f7950; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+</style>
+<figure>
+  <svg id="fixture" viewBox="0 0 1100 780" aria-label="Phase D named and untitled set border fixture"></svg>
+  <figcaption>Production set-ring outline path with decorative vector glyph paths. The titled bodies keep their physical outlines; only their ordinary border stroke is replaced. The flat specimen below uses the same production scale.</figcaption>
+</figure>
+<script type="module">
+  import { ringPath } from './public/set-ring-model.js';
+  import { glyphPath, layoutTitleGlyphs } from './public/set-glyph-model.js';
+
+  const svg = document.querySelector('#fixture');
+  const NS = 'http://www.w3.org/2000/svg';
+  const outlines = [
+    { title: 'Ideas', points: [{x:90,y:180},{x:270,y:110},{x:430,y:165},{x:400,y:300},{x:220,y:350},{x:90,y:280}] },
+    { title: 'As You Go', points: [{x:555,y:190},{x:720,y:105},{x:940,y:170},{x:985,y:315},{x:760,y:390},{x:570,y:320}] },
+    { title: '', points: [{x:250,y:475},{x:385,y:425},{x:520,y:475},{x:485,y:570},{x:295,y:570}] },
+  ];
+  for (const { title, points } of outlines) {
+    const body = document.createElementNS(NS, 'path');
+    body.setAttribute('d', ringPath(points, { hulled: true }));
+    body.setAttribute('class', title ? 'named-body' : 'body');
+    svg.append(body);
+    if (title) {
+      const letters = document.createElementNS(NS, 'path');
+      letters.setAttribute('d', glyphPath(layoutTitleGlyphs(points, title)));
+      letters.setAttribute('class', 'glyphs');
+      svg.append(letters);
+    }
+  }
+  const specimenTitle = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const specimen = document.createElementNS(NS, 'path');
+  specimen.setAttribute('d', glyphPath({
+    placements: [...specimenTitle].map((char, index) => ({
+      char, x: 18 + index * 29, y: 700, rotation: 0, scale: 14,
+    })),
+  }));
+  specimen.setAttribute('class', 'glyphs');
+  svg.append(specimen);
+</script>

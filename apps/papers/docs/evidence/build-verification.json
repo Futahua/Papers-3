@@ -1,0 +1,46 @@
+{
+  "verifiedAt": "2026-07-21T00:35:00+07:00",
+  "platform": "Windows x64",
+  "sourceCommit": "70ccc69cad6c4341a29af706f99c95e38c925881",
+  "package": {
+    "version": "1.0.0",
+    "installer": {
+      "path": "release/Papers3-Setup-1.0.0.exe",
+      "bytes": 100656498,
+      "sha256": "cf9da223c627c19b31660ad45fc2ca786b2b2bc3b11efb66087bda752a054b9f"
+    },
+    "unpackedExecutable": {
+      "path": "release/win-unpacked/Papers 3.exe",
+      "bytes": 225485824,
+      "sha256": "5845f283963fee7c8b757709709fe7f23ab56c3b77e9dfb1e9d7515a8ef4f042"
+    }
+  },
+  "checks": {
+    "typecheck": "passed",
+    "unit": {
+      "status": "passed",
+      "files": 8,
+      "tests": 59
+    },
+    "developmentE2e": {
+      "status": "passed",
+      "tests": ["vertical kill test", "Repository Research primary workflow"]
+    },
+    "packagedE2e": {
+      "status": "passed",
+      "tests": ["vertical kill test", "Repository Research primary workflow"]
+    },
+    "installedE2e": {
+      "status": "passed",
+      "tests": ["vertical kill test"]
+    },
+    "installer": {
+      "installExitCode": 0,
+      "installedExecutableLaunched": true,
+      "uninstallExitCode": 0,
+      "applicationRemoved": true,
+      "creatorDataPreserved": true,
+      "creatorDataPath": "%APPDATA%/papers3/PapersData"
+    }
+  }
+}

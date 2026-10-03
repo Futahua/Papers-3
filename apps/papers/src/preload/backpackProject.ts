@@ -1,0 +1,967 @@
+import { ipcRenderer, webUtils } from 'electron';
+
+interface ProjectMessage {
+  /** The local-service capability adds `method`, `headers` and `body` to the
+   * request shape. `url` already exists below, and a page never supplies the
+   * credential. */
+  destination?: unknown; method?: string; rect?: unknown; restore?: unknown; layoutId?: unknown; memberId?: unknown; memberIds?: unknown; controls?: unknown; actions?: unknown;
+  headers?: Record<string, string>;
+  body?: string; operation?: unknown; params?: unknown; type?: unknown; requestId?: unknown; actionId?: unknown; text?: unknown; state?: unknown; revision?: unknown; url?: unknown; files?: unknown; sourceRef?: unknown; kind?: unknown; candidateId?: unknown; candidates?: unknown; pickerId?: unknown; capability?: unknown; bounds?: unknown; descriptor?: unknown; members?: unknown; projectId?: unknown; projectKey?: unknown; projectName?: unknown; transferId?: unknown; token?: unknown; layoutKey?: unknown; options?: unknown; width?: unknown; height?: unknown; imageUrl?: unknown; title?: unknown; anchor?: unknown; phase?: unknown; captureId?: unknown; generation?: unknown; x?: unknown; y?: unknown; enabled?: unknown; blockedBindings?: unknown; windowInstanceId?: unknown; instanceId?: unknown; }
+
+const WINDOW_CAPABILITY_MAX_STRING_BYTES = 512;
+const WINDOW_CAPABILITY_MAX_BOUNDS = 32768;
+const WINDOW_THUMBNAIL_MAX_WIDTH = 320;
+const WINDOW_THUMBNAIL_MAX_HEIGHT = 180;
+const PICKER_SESSION_ID_PATTERN = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+let detachedToken: string | null = null;
+let detachedTransferId: string | null = null;
+let detachedPageReady = false;
+let detachedReadySent = false;
+let widgetToken: string | null = null;
+let widgetPageReady = false;
+let widgetReadySent = false;
+const CLIPBOARD_READ_GESTURE_MS = 1_500;
+let clipboardReadGestureExpiresAt = 0;
+
+function armClipboardReadGesture(event: Event): void {
+  if (!event.isTrusted) return;
+  clipboardReadGestureExpiresAt = performance.now() + CLIPBOARD_READ_GESTURE_MS;
+}
+
+function consumeClipboardReadGesture(): boolean {
+  const allowed = performance.now() <= clipboardReadGestureExpiresAt;
+  clipboardReadGestureExpiresAt = 0;
+  return allowed;
+}
+
+window.addEventListener('pointerdown', armClipboardReadGesture, true);
+window.addEventListener('paste', armClipboardReadGesture, true);
+window.addEventListener('keydown', (event) => {
+  if (!event.isTrusted || (!event.ctrlKey && !event.metaKey)) return;
+  if (['c', 'x', 'v'].includes(event.key.toLowerCase())) armClipboardReadGesture(event);
+}, true);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function exactKeys(raw: Record<string, unknown>, keys: readonly string[]): boolean {
+  const expected = [...keys].sort();
+  const actual = Object.keys(raw).sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function parseBoundedString(raw: unknown): string {
+  if (typeof raw !== 'string' || raw.length === 0 || Buffer.byteLength(raw, 'utf8') > WINDOW_CAPABILITY_MAX_STRING_BYTES) {
+    throw new Error('a bounded non-empty string is required');
+  }
+  return raw;
+}
+
+function parseCapability(raw: unknown): Record<string, unknown> {
+  if (!isPlainObject(raw)) throw new Error('capability must be an object');
+  if (!exactKeys(raw, ['version', 'bindingId'])) throw new Error('capability contains unknown fields');
+  if (raw['version'] !== 1) throw new Error('unsupported capability version');
+  parseBoundedString(raw['bindingId']);
+  return raw;
+}
+
+function parseBounds(raw: unknown): Record<string, unknown> {
+  if (!isPlainObject(raw)) throw new Error('bounds must be an object');
+  if (!exactKeys(raw, ['x', 'y', 'width', 'height'])) throw new Error('bounds contains unknown fields');
+  const bounds: Record<string, number> = {};
+  for (const key of ['x', 'y', 'width', 'height']) {
+    const value = raw[key];
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`bounds.${key} is invalid`);
+    bounds[key] = value;
+  }
+  if (bounds['width']! <= 0 || bounds['height']! <= 0) throw new Error('bounds width and height must be positive');
+  if (bounds['width']! > WINDOW_CAPABILITY_MAX_BOUNDS || bounds['height']! > WINDOW_CAPABILITY_MAX_BOUNDS
+    || Math.abs(bounds['x']!) > WINDOW_CAPABILITY_MAX_BOUNDS || Math.abs(bounds['y']!) > WINDOW_CAPABILITY_MAX_BOUNDS) {
+    throw new Error('bounds exceed the allowed range');
+  }
+  return bounds;
+}
+
+function parseDescriptor(raw: unknown): Record<string, unknown> {
+  if (!isPlainObject(raw)) throw new Error('descriptor must be an object');
+  const hasWindowInstanceId = Object.prototype.hasOwnProperty.call(raw, 'windowInstanceId');
+  if (!exactKeys(raw, hasWindowInstanceId
+    ? ['version', 'title', 'executableFingerprint', 'windowInstanceId']
+    : ['version', 'title', 'executableFingerprint'])) throw new Error('descriptor contains unknown fields');
+  if (raw['version'] !== 1) throw new Error('unsupported descriptor version');
+  parseBoundedString(raw['title']);
+  const fingerprint = parseBoundedString(raw['executableFingerprint']);
+  if (!/^[a-f0-9]{64}$/i.test(fingerprint)) throw new Error('descriptor.executableFingerprint is invalid');
+  if (hasWindowInstanceId && (typeof raw['windowInstanceId'] !== 'string' || !/^W[0-9a-f]{16}$/i.test(raw['windowInstanceId']))) {
+    throw new Error('descriptor.windowInstanceId is invalid');
+  }
+  return raw;
+}
+
+function parsePickMembers(raw: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(raw)) throw new Error('pick members must be an array');
+  if (raw.length > 32) throw new Error('pick member list exceeds the bound');
+  return raw.map(parseDescriptor);
+}
+
+/** 019G thumbnail request dimensions (page gate): options must be an object
+ * with EXACT keys { maxWidth, maxHeight }, each a positive safe integer within
+ * the 320x180 contract bounds. The 240x135 default is applied by the service,
+ * never guessed here. */
+function parseThumbnailOptions(raw: unknown): Record<string, number> {
+  if (!isPlainObject(raw)) throw new Error('thumbnail options must be an object');
+  if (!exactKeys(raw, ['maxWidth', 'maxHeight'])) throw new Error('thumbnail options contains unknown fields');
+  const maxWidth = raw['maxWidth'];
+  const maxHeight = raw['maxHeight'];
+  if (typeof maxWidth !== 'number' || !Number.isSafeInteger(maxWidth) || maxWidth <= 0 || maxWidth > WINDOW_THUMBNAIL_MAX_WIDTH) {
+    throw new Error('thumbnail options.maxWidth is invalid');
+  }
+  if (typeof maxHeight !== 'number' || !Number.isSafeInteger(maxHeight) || maxHeight <= 0 || maxHeight > WINDOW_THUMBNAIL_MAX_HEIGHT) {
+    throw new Error('thumbnail options.maxHeight is invalid');
+  }
+  return { maxWidth, maxHeight };
+}
+
+function projectIdFromOrigin(): string {
+  const projectId = new URL(window.location.href).host;
+  if (!projectId) throw new Error('the project origin has no identity');
+  return projectId;
+}
+
+function immediateHostResult(requestId: unknown, origin: string): void {
+  if (typeof requestId !== 'string') return;
+  window.postMessage({ type: 'papers:host:result', requestId, ok: true }, window.location.origin);
+}
+
+function immediateHostError(requestId: unknown, origin: string, error: string): void {
+  if (typeof requestId !== 'string') return;
+  window.postMessage({ type: 'papers:host:result', requestId, ok: false, error }, window.location.origin);
+}
+
+function validTransferId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512;
+}
+
+function validRequestId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 512;
+}
+
+function validNativeSourceRef(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function trySendDetachedReady(): void {
+  if (!detachedPageReady || detachedReadySent || !detachedToken || !detachedTransferId) return;
+  detachedReadySent = true;
+  ipcRenderer.send('papers:backpack:detach-ready', {
+    token: detachedToken,
+    transferId: detachedTransferId,
+  });
+}
+
+function trySendWidgetReady(): void {
+  if (!widgetPageReady || widgetReadySent || !widgetToken) return;
+  widgetReadySent = true;
+  ipcRenderer.send('papers:backpack:widget-ready', { token: widgetToken });
+}
+
+const SCOPED_WORKSPACE_REQUESTS = new Set([
+  'papers:project:as-you-go-load',
+  'papers:project:as-you-go-save',
+  'papers:project:state-load-versioned',
+  'papers:project:state-save-checked',
+  'papers:project:workspace-writer-lease-acquire',
+  'papers:project:workspace-writer-lease-release',
+  'papers:project:as-you-go-shortcut-icon',
+  'papers:project:as-you-go-launch',
+  'papers:project:as-you-go-reveal',
+  'papers:project:as-you-go-pick-target',
+  'papers:project:resolve-dropped-targets',
+  'papers:project:open-web-link',
+  'papers:project:open-new-surface',
+  'papers:project:resolve-web-link-icon',
+  'papers:project:file-capability',
+]);
+
+const POSITIONED_PREVIEW_OPERATIONS = new Set([
+  'preview-native-open',
+  'preview-native-move',
+  'preview-pdf-open',
+  'preview-pdf-move',
+  'preview-html-open',
+  'preview-html-move',
+]);
+
+function scopedWorkspaceOrigin(event: MessageEvent, request: ProjectMessage): string | undefined {
+  return event.source !== window && typeof request.type === 'string' && SCOPED_WORKSPACE_REQUESTS.has(request.type)
+    ? event.origin
+    : undefined;
+}
+
+function nativePreviewParams(event: MessageEvent, operation: string, params: Record<string, unknown>): Record<string, unknown> {
+  if (!POSITIONED_PREVIEW_OPERATIONS.has(operation)) return params;
+  if (event.source === window) return params;
+  const rect = params['rect'];
+  if (!isPlainObject(rect)) throw new Error('native preview rect is malformed');
+  let frameRect: DOMRect | null = null;
+  for (const frame of document.querySelectorAll('iframe')) {
+    if (frame.contentWindow === event.source) { frameRect = frame.getBoundingClientRect(); break; }
+  }
+  if (!frameRect) throw new Error('native preview source frame is unavailable');
+  return {
+    ...params,
+    rect: {
+      ...rect,
+      x: Number(rect['x']) + frameRect.x,
+      y: Number(rect['y']) + frameRect.y,
+    },
+  };
+}
+
+window.addEventListener('message', (event) => {
+  const request = event.data as ProjectMessage;
+  if (!request || typeof request.type !== 'string') return;
+  const workspaceOrigin = scopedWorkspaceOrigin(event, request);
+  const workspaceOriginArgs = workspaceOrigin === undefined ? [] : [workspaceOrigin];
+  if (event.source !== window && workspaceOrigin === undefined) return;
+  if (event.source === window && event.origin !== window.location.origin) return;
+  if (request.type === 'papers:project:widget-drag') {
+    if (!widgetToken || !exactKeys(request as Record<string, unknown>, ['type', 'phase', 'x', 'y'])
+      || !['begin', 'move', 'end'].includes(String(request.phase))
+      || typeof request.x !== 'number' || typeof request.y !== 'number'
+      || !Number.isFinite(request.x) || !Number.isFinite(request.y)
+      || Math.abs(request.x) > 100000 || Math.abs(request.y) > 100000) return;
+    ipcRenderer.send('papers:backpack:widget-drag', {
+      token: widgetToken,
+      phase: request.phase,
+      x: request.x,
+      y: request.y,
+    });
+    return;
+  }
+  if (request.type === 'papers:project:detach-ready') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || typeof request.requestId !== 'string') {
+      immediateHostError(request.requestId, event.origin, 'detached ready request is malformed');
+      return;
+    }
+    detachedPageReady = true;
+    trySendDetachedReady();
+    immediateHostResult(request.requestId, event.origin);
+    return;
+  }
+  if (request.type === 'papers:project:widget-ready') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'widget ready request is malformed');
+      return;
+    }
+    widgetPageReady = true;
+    trySendWidgetReady();
+    immediateHostResult(request.requestId, event.origin);
+    return;
+  }
+  if (request.type === 'papers:project:close') { ipcRenderer.send('host:backpack-project:request-close'); return; }
+
+  let task: Promise<unknown> | null = null;
+  if (request.type === 'papers:project:native-source-grant') {
+    const files = Array.isArray(request.files) ? request.files : null;
+    const file = files?.[0] ?? null;
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'files'])
+      || !validRequestId(request.requestId)
+      || !files
+      || files.length !== 1
+      || !(file instanceof File)) {
+      immediateHostError(request.requestId, event.origin, 'native source grant request is malformed');
+      return;
+    }
+    const target = webUtils.getPathForFile(file);
+    if (!target) {
+      immediateHostError(request.requestId, event.origin, 'native source is not a disk-backed file');
+      return;
+    }
+    task = ipcRenderer.invoke('host:backpack-project:native-source-grant', target).then((sourceRef) => {
+      if (!validNativeSourceRef(sourceRef)) {
+        throw new Error('native source grant returned malformed reference');
+      }
+      return { sourceRef };
+    });
+  }
+  if (request.type === 'papers:project:native-source-open') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'sourceRef'])
+      || !validRequestId(request.requestId)
+      || !validNativeSourceRef(request.sourceRef)) {
+      immediateHostError(request.requestId, event.origin, 'native source open request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('host:backpack-project:native-source-open-granted', request.sourceRef);
+  }
+  if (request.type === 'papers:project:native-source-reveal') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'sourceRef'])
+      || !validRequestId(request.requestId)
+      || !validNativeSourceRef(request.sourceRef)) {
+      immediateHostError(request.requestId, event.origin, 'native source reveal request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('host:backpack-project:native-source-reveal-granted', request.sourceRef);
+  }
+  if (request.type === 'papers:project:run-action' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:run-action', request.actionId);
+  if (request.type === 'papers:project:workspace-scope'
+    && typeof request.projectKey === 'string'
+    && typeof request.projectName === 'string') {
+    task = ipcRenderer.invoke(
+      'host:backpack-project:workspace-scope',
+      request.projectKey,
+      request.projectName,
+    ).then((workspaceScope) => ({ workspaceScope }));
+  }
+  if (request.type === 'papers:project:workspace-scope-revoke' && event.source === window) {
+    void ipcRenderer.invoke('host:backpack-project:workspace-scope-revoke');
+    return;
+  }
+  if (request.type === 'papers:project:copy-text' && typeof request.text === 'string') task = ipcRenderer.invoke('host:backpack-project:copy-text', request.text);
+  if (request.type === 'papers:project:file-capability') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'operation', 'params'])
+      || !validRequestId(request.requestId)
+      || typeof request.operation !== 'string'
+      || request.operation.length < 1
+      || request.operation.length > 64
+      || !isPlainObject(request.params)) {
+      immediateHostError(request.requestId, event.origin, 'file capability request is malformed');
+      return;
+    }
+    if (request.operation === 'clipboard-read' && !consumeClipboardReadGesture()) {
+      immediateHostError(request.requestId, event.origin, 'clipboard read requires a recent user gesture');
+      return;
+    }
+    let params: Record<string, unknown>;
+    try {
+      params = nativePreviewParams(event, request.operation, request.params);
+    } catch (caught) {
+      immediateHostError(request.requestId, event.origin, caught instanceof Error ? caught.message : String(caught));
+      return;
+    }
+    task = ipcRenderer.invoke('host:backpack-project:file-capability', {
+      operation: request.operation,
+      params,
+    }, ...workspaceOriginArgs).then((result) => ({ fileCapability: result }));
+  }
+  // The local-service capability: this page asking Papers to reach an HTTP
+  // service the creator runs on this machine. The page supplies an address, a
+  // method, headers and a body; it never supplies a credential, and the answer
+  // it receives is the service's own - including a refusal.
+  //
+  // Wrapped under `localService`, like every other nested result here: a bridge
+  // failure carries its own `ok: false`, and unwrapped the transport envelope
+  // would turn that into a failed request instead of the typed answer it is.
+  if (request.type === 'papers:project:local-service-fetch' && typeof request.url === 'string') {
+    task = ipcRenderer.invoke('host:backpack-project:local-service-fetch', {
+      url: request.url,
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+    }).then((result) => ({ localService: result }));
+  }
+  if (request.type === 'papers:project:as-you-go-load') task = ipcRenderer.invoke('host:backpack-project:state-load', ...workspaceOriginArgs).then((state) => ({ state: JSON.stringify(state) }));
+  if (request.type === 'papers:project:as-you-go-save' && typeof request.state === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save', request.state, ...workspaceOriginArgs);
+  // Versioned pair, named without any Backpack's identity: a project asks for
+  // the document plus its revision, then offers a save that names the revision
+  // it was built on. Papers refuses the save if that revision is stale.
+  if (request.type === 'papers:project:state-load-versioned') task = ipcRenderer.invoke('host:backpack-project:state-load-versioned', ...workspaceOriginArgs).then((loaded) => ({ state: JSON.stringify((loaded as { state: unknown }).state), revision: (loaded as { revision: string }).revision }));
+  // Wrapped under `stateSave`, like every other nested result here. A refused
+  // save carries its own `ok: false`, and the transport envelope spreads the
+  // payload over `ok: true` -- unwrapped, a stale revision would arrive at the
+  // project as a failed request instead of the typed answer it is.
+  if (request.type === 'papers:project:state-save-checked' && typeof request.state === 'string' && typeof request.revision === 'string') task = ipcRenderer.invoke('host:backpack-project:state-save-checked', request.state, request.revision, ...workspaceOriginArgs).then((result) => ({ stateSave: result }));
+  if (request.type === 'papers:project:workspace-writer-lease-acquire') task = ipcRenderer.invoke('host:backpack-project:workspace-writer-lease-acquire', ...workspaceOriginArgs).then((writerLease) => ({ writerLease }));
+  if (request.type === 'papers:project:workspace-writer-lease-release' && typeof request.token === 'string') task = ipcRenderer.invoke('host:backpack-project:workspace-writer-lease-release', request.token, ...workspaceOriginArgs);
+  if (request.type === 'papers:project:as-you-go-pick-target' && (request.kind === 'file' || request.kind === 'folder')) task = ipcRenderer.invoke('host:backpack-project:pick-target', request.kind, ...workspaceOriginArgs).then((selection) => ({ target: selection?.target ?? null, icon: selection?.icon ?? null }));
+  if (request.type === 'papers:project:as-you-go-shortcut-icon' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:shortcut-icon', request.actionId, ...workspaceOriginArgs).then((icon) => ({ icon }));
+  if (request.type === 'papers:project:as-you-go-launch' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:launch-shortcut', request.actionId, ...workspaceOriginArgs);
+  if (request.type === 'papers:project:as-you-go-reveal' && typeof request.actionId === 'string') task = ipcRenderer.invoke('host:backpack-project:reveal-shortcut', request.actionId, ...workspaceOriginArgs);
+  if (request.type === 'papers:project:delegate-wave') {
+    // The Backpack names an OPERATION; it never names a URL, a method or a path.
+    // Its identity is attached here from the page origin, exactly as projectId
+    // is elsewhere in this file, and never read from page data -- a page that
+    // supplied its own backpackId would be claiming an authority it cannot have.
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'operation', 'params'])
+      || !validRequestId(request.requestId) || typeof request.operation !== 'string') {
+      immediateHostError(request.requestId, event.origin, 'delegate wave request is malformed');
+      return;
+    }
+    const params = isPlainObject(request.params) ? request.params : {};
+    task = ipcRenderer.invoke('host:backpack-project:delegate-wave', {
+      backpackId: projectIdFromOrigin(),
+      operation: request.operation,
+      params,
+    }).then((payload) => ({ delegateWave: payload }));
+  }
+  if (request.type === 'papers:project:open-web-link' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-web-link', request.url, ...workspaceOriginArgs);
+  if (request.type === 'papers:project:open-new-surface' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-new-surface', request.url, ...workspaceOriginArgs);
+  if (request.type === 'papers:project:command-surface-dismiss') {
+    const keys = request.destination === undefined
+      ? ['type', 'requestId']
+      : ['type', 'requestId', 'destination'];
+    if (!exactKeys(request as Record<string, unknown>, keys)
+      || (request.destination !== undefined && !['restore', 'external', 'papers'].includes(String(request.destination)))) {
+      immediateHostError(request.requestId, event.origin, 'command-surface dismissal request is malformed');
+      return;
+    }
+    const destination = request.destination ?? 'restore';
+    task = ipcRenderer.invoke('host:backpack-project:command-surface-dismiss', destination);
+  }
+  if (request.type === 'papers:project:resolve-dropped-targets' && Array.isArray(request.files)) {
+    const paths = request.files.filter((file): file is File => file instanceof File).map((file) => webUtils.getPathForFile(file)).filter(Boolean);
+    if (paths.length) task = ipcRenderer.invoke('host:backpack-project:resolve-dropped-targets', paths, ...workspaceOriginArgs).then((targets) => ({ targets }));
+  }
+  if (request.type === 'papers:project:resolve-web-link-icon' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:resolve-web-link-icon', request.url, ...workspaceOriginArgs);
+  if (request.type === 'papers:project:window-candidates') {
+    const candidateRequest = request as Record<string, unknown>;
+    if (Object.keys(candidateRequest).some((key) => !['type', 'requestId', 'includeNativeIcons'].includes(key))
+      || (candidateRequest['includeNativeIcons'] !== undefined && typeof candidateRequest['includeNativeIcons'] !== 'boolean')) {
+      throw new Error('window candidate request contains invalid fields');
+    }
+    task = ipcRenderer.invoke('papers:window-capability:list', {
+      includeNativeIcons: candidateRequest['includeNativeIcons'] !== false,
+    });
+  }
+  if (request.type === 'papers:project:window-lifecycle-snapshot') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window lifecycle snapshot request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:lifecycle-snapshot', {});
+  }
+  if (request.type === 'papers:project:window-resolve-instance') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'instanceId'])
+      || typeof request.instanceId !== 'string' || !/^W[0-9a-f]{16}$/i.test(request.instanceId)) {
+      throw new Error('window instance request is malformed');
+    }
+    task = ipcRenderer.invoke('papers:window-capability:resolve-instance', { windowInstanceId: request.instanceId });
+  }
+  if (request.type === 'papers:project:window-bind-candidate') {
+    const candidateId = parseBoundedString(request.candidateId);
+    task = ipcRenderer.invoke('papers:window-capability:bind', candidateId);
+  }
+  if (request.type === 'papers:project:window-control-sync') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'controls'])
+      || !Array.isArray(request.controls) || request.controls.length > 32) {
+      throw new Error('window control sync is malformed');
+    }
+    const controls = request.controls.map((raw) => {
+      if (!isPlainObject(raw) || !exactKeys(raw, ['layoutId', 'memberId', 'descriptor', 'rect', 'restore'])) {
+        throw new Error('window control entry is malformed');
+      }
+      return {
+        layoutId: parseBoundedString(raw['layoutId']),
+        memberId: parseBoundedString(raw['memberId']),
+        // Identity, not a capability: the surface that renders the icons cannot
+        // resolve one - its request would wait on document authority it does not
+        // hold - so Papers resolves the descriptor in its own process.
+        descriptor: parseDescriptor(raw['descriptor']),
+        rect: parseBounds(raw['rect']),
+        restore: raw['restore'] === null ? null : parseBounds(raw['restore']),
+      };
+    });
+    task = ipcRenderer.invoke('papers:window-control:sync', controls);
+  }
+  if (request.type === 'papers:project:window-control-activate') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutId', 'memberId'])) {
+      throw new Error('window control activate is malformed');
+    }
+    task = ipcRenderer.invoke('papers:window-control:activate', {
+      layoutId: parseBoundedString(request.layoutId),
+      memberId: parseBoundedString(request.memberId),
+    });
+  }  if (request.type === 'papers:project:window-control-group') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutId', 'actions'])
+      || !Array.isArray(request.actions) || request.actions.length > 32) {
+      throw new Error('window control group is malformed');
+    }
+    const actions = request.actions.map((raw) => {
+      if (!isPlainObject(raw) || !exactKeys(raw, ['memberId', 'operation'])
+        || !['minimize', 'restore', 'foreground', 'toggle'].includes(String(raw['operation']))) {
+        throw new Error('window control group action is malformed');
+      }
+      return { memberId: parseBoundedString(raw['memberId']), operation: raw['operation'] };
+    });
+    task = ipcRenderer.invoke('papers:window-control:group', {
+      layoutId: parseBoundedString(request.layoutId),
+      actions,
+    });
+  }
+  if (request.type === 'papers:project:window-observe-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:observe', capability);
+  }
+  if (request.type === 'papers:project:window-toggle-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:toggle', capability);
+  }
+  if (request.type === 'papers:project:window-minimize-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:minimize', capability);
+  }
+  if (request.type === 'papers:project:window-activate-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:activate', capability);
+  }  if (request.type === 'papers:project:window-restore-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:restore', capability);
+  }
+  if (request.type === 'papers:project:window-close-capability') {
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:close', capability);
+  }
+  if (request.type === 'papers:project:window-end-process-capability') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability'])) throw new Error('window end-process request contains unknown fields');
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:end-process', capability);
+  }
+  if (request.type === 'papers:project:window-peek-begin') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability'])) throw new Error('window peek begin request contains unknown fields');
+    const capability = parseCapability(request.capability);
+    task = ipcRenderer.invoke('papers:window-capability:peek-begin', capability);
+  }
+  if (request.type === 'papers:project:window-peek-end') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window peek end request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:peek-end', {});
+  }
+  if (request.type === 'papers:project:window-apply-capability') {
+    const capability = parseCapability(request.capability);
+    const bounds = parseBounds(request.bounds);
+    task = ipcRenderer.invoke('papers:window-capability:apply', { capability, bounds });
+  }
+  if (request.type === 'papers:project:window-preview-show') {
+    // A project hover preview shown in Papers' own always-on-top preview window,
+    // so it cannot be hidden behind another application's window. The anchor is
+    // the hovered element's screen rectangle.
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'imageUrl', 'title', 'width', 'height', 'anchor'])) {
+      throw new Error('window preview show request contains unknown fields');
+    }
+    task = ipcRenderer.invoke('papers:window-capability:preview-show', {
+      imageUrl: request.imageUrl,
+      title: request.title,
+      width: request.width,
+      height: request.height,
+      anchor: request.anchor,
+    });
+  }
+  if (request.type === 'papers:project:window-preview-hide') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window preview hide request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:preview-hide', {});
+  }
+  if (request.type === 'papers:project:window-preview-hold') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window preview hold request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:preview-hold', {});
+  }
+  if (request.type === 'papers:project:window-preview-release') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window preview release request contains unknown fields');
+    task = ipcRenderer.invoke('papers:window-capability:preview-release', {});
+  }
+  if (request.type === 'papers:project:window-resolve-descriptor') {
+    const descriptor = parseDescriptor(request.descriptor);
+    task = ipcRenderer.invoke('papers:window-capability:resolve', descriptor);
+  }
+  if (request.type === 'papers:project:window-thumbnail') {
+    // 019G/019GR2: the final AYG page event is EXACTLY
+    // `papers:project:window-thumbnail` with keys { capability,
+    // options: { maxWidth, maxHeight } }; only the opaque capability and
+    // bounded integer dimensions reach Papers, never an HWND/PID/path. The
+    // page result shape is the strict typed thumbnail result (data-URL
+    // success or a payload-free typed fallback).
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability', 'options']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'window thumbnail request is malformed');
+      return;
+    }
+    let capability: Record<string, unknown>;
+    let options: Record<string, number>;
+    try {
+      capability = parseCapability(request.capability);
+      options = parseThumbnailOptions(request.options);
+    } catch {
+      immediateHostError(request.requestId, event.origin, 'window thumbnail request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:window-capability:thumbnail', { capability, options });
+  }
+  if (request.type === 'papers:project:window-thumbnail-cache') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'capability']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'cached window thumbnail request is malformed');
+      return;
+    }
+    let capability: Record<string, unknown>;
+    try {
+      capability = parseCapability(request.capability);
+    } catch {
+      immediateHostError(request.requestId, event.origin, 'cached window thumbnail request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:window-capability:thumbnail-cache', { capability });
+  }
+  if (request.type === 'papers:project:window-diagnostic') {
+    const rawRequest = request as unknown as Record<string, unknown>;
+    const stages = ['auto-add-resolve', 'auto-add-observe', 'auto-add-commit'];
+    const outcomes = ['success', 'missing', 'ambiguous', 'helper-unavailable', 'timeout', 'failed', 'skipped'];
+    if (!exactKeys(rawRequest, ['type', 'requestId', 'stage', 'outcome'])
+      || !validRequestId(request.requestId)
+      || !stages.includes(String(rawRequest['stage']))
+      || !outcomes.includes(String(rawRequest['outcome']))) {
+      immediateHostError(request.requestId, event.origin, 'window diagnostic request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:window-layout:diagnostic', {
+      stage: rawRequest['stage'],
+      outcome: rawRequest['outcome'],
+    });
+  }
+  if (request.type === 'papers:project:window-pick-begin') {
+    console.info('[045-direct-pick] preload-begin-received');
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'members'])) {
+      throw new Error('window pick begin request contains unknown fields');
+    }
+    const members = parsePickMembers(request.members);
+    task = ipcRenderer.invoke('papers:window-pick:begin', { members });
+  }
+  if (request.type === 'papers:project:window-pick-cancel') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) {
+      throw new Error('window pick cancel request contains unknown fields');
+    }
+    task = ipcRenderer.invoke('papers:window-pick:cancel', {});
+  }
+  if (request.type === 'papers:project:window-pick-stage') {
+    // 021: the launching workspace page routes the toggle key (e.g. Space) to
+    // the pick session; empty payload only.
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) {
+      throw new Error('window pick stage request contains unknown fields');
+    }
+    task = ipcRenderer.invoke('papers:window-pick:stage', {});
+  }
+  if (request.type === 'papers:project:window-pick-commit') {
+    // 021: the launching workspace page routes Enter to commit the staged set;
+    // empty payload only.
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) {
+      throw new Error('window pick commit request contains unknown fields');
+    }
+    task = ipcRenderer.invoke('papers:window-pick:commit', {});
+  }
+  if (request.type === 'papers:project:detach-open') {
+    task = ipcRenderer.invoke('papers:backpack:detach-open', {
+      projectId: projectIdFromOrigin(),
+      ...(request.bounds !== undefined ? { bounds: request.bounds } : {}),
+    });
+  }
+  if (request.type === 'papers:project:widget-close') {
+    // 019C: the WORKSPACE frame closes a layout's widget by opaque layoutKey
+    // (projectId attached here); the WIDGET frame closes itself by the hidden
+    // token the preload latched. Exact keys, never a page-visible token.
+    if (exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutKey']) && validRequestId(request.requestId)) {
+      let layoutKey: string;
+      try { layoutKey = parseBoundedString(request.layoutKey); } catch {
+        immediateHostError(request.requestId, event.origin, 'widget close request is malformed');
+        return;
+      }
+      task = ipcRenderer.invoke('papers:backpack:widget-close', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+    } else if (widgetToken && exactKeys(request as Record<string, unknown>, ['type', 'requestId']) && validRequestId(request.requestId)) {
+      task = ipcRenderer.invoke('papers:backpack:widget-close', { token: widgetToken }).then((payload) => ({ widget: payload }));
+    } else {
+      immediateHostError(request.requestId, event.origin, 'widget close request is malformed');
+      return;
+    }
+  }
+  if (request.type === 'papers:project:widget-open') {
+    // 019C: the registered live workspace opens/focuses a layout's compact
+    // widget by opaque layoutKey; projectId is attached ONLY here, never from
+    // page data. The opaque key is bounded and never parsed.
+    const raw = request as Record<string, unknown>;
+    const validKeys = exactKeys(raw, ['type', 'requestId', 'layoutKey'])
+      || exactKeys(raw, ['type', 'requestId', 'layoutKey', 'activate']);
+    if (!validKeys || (raw.activate !== undefined && typeof raw.activate !== 'boolean') || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'widget open request is malformed');
+      return;
+    }
+    let layoutKey: string;
+    try { layoutKey = parseBoundedString(request.layoutKey); } catch {
+      immediateHostError(request.requestId, event.origin, 'widget open request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-open', {
+      projectId: projectIdFromOrigin(), layoutKey,
+      ...(raw.activate === undefined ? {} : { activate: raw.activate }),
+    }).then((payload) => ({ widget: payload }));
+  }
+  if (request.type === 'papers:project:widget-focus') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutKey']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'widget focus request is malformed');
+      return;
+    }
+    let layoutKey: string;
+    try { layoutKey = parseBoundedString(request.layoutKey); } catch {
+      immediateHostError(request.requestId, event.origin, 'widget focus request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-focus', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+  }
+  if (request.type === 'papers:project:widget-minimize') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'layoutKey']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'widget minimize request is malformed');
+      return;
+    }
+    let layoutKey: string;
+    try { layoutKey = parseBoundedString(request.layoutKey); } catch {
+      immediateHostError(request.requestId, event.origin, 'widget minimize request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-minimize', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+  }
+  if (request.type === 'papers:project:widget-report-size') {
+    // 024: the compact-widget page reports its bounded card content size after
+    // each render so the host refits the frameless window to the card. Only the
+    // latched widget token may report (the token never reaches the page body).
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'width', 'height']) || !widgetToken) {
+      immediateHostError(request.requestId, event.origin, 'widget size report is malformed');
+      return;
+    }
+    const width = request.width;
+    const height = request.height;
+    if (typeof width !== 'number' || typeof height !== 'number' || !Number.isFinite(width) || !Number.isFinite(height)
+      || width < 1 || height < 1 || width > 2000 || height > 2000) {
+      immediateHostError(request.requestId, event.origin, 'widget size report is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-report-size', {
+      token: widgetToken,
+      width: Math.round(width),
+      height: Math.round(height),
+    }).then((payload) => ({ size: payload }));
+  }
+  if (request.type === 'papers:project:widget-hover-policy') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'enabled', 'blockedBindings']) || !widgetToken
+      || typeof request.enabled !== 'boolean' || !Array.isArray(request.blockedBindings) || request.blockedBindings.length > 256
+      || request.blockedBindings.some((binding) => typeof binding !== 'string')) {
+      immediateHostError(request.requestId, event.origin, 'widget hover policy is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-hover-policy', {
+      token: widgetToken,
+      enabled: request.enabled,
+      blockedBindings: request.blockedBindings,
+    });
+  }
+  if (request.type === 'papers:project:widget-preview-show') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'imageUrl', 'title', 'width', 'height', 'anchor']) || !widgetToken) {
+      immediateHostError(request.requestId, event.origin, 'widget preview request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-preview-show', {
+      token: widgetToken,
+      imageUrl: request.imageUrl,
+      title: request.title,
+      width: request.width,
+      height: request.height,
+      anchor: request.anchor,
+    }).then((payload) => ({ preview: payload }));
+  }
+  if (request.type === 'papers:project:widget-preview-hide') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !widgetToken) {
+      immediateHostError(request.requestId, event.origin, 'widget preview hide request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-preview-hide', { token: widgetToken })
+      .then((payload) => ({ preview: payload }));
+  }
+  if (request.type === 'papers:project:widget-context-menu') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !widgetToken) {
+      immediateHostError(request.requestId, event.origin, 'widget context menu request is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-context-menu', { token: widgetToken })
+      .then((payload) => ({ menu: payload }));
+  }
+  if (request.type === 'papers:project:window-candidate-picker') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'pickerId', 'candidates'])
+      || !validRequestId(request.requestId) || typeof request.pickerId !== 'string' || !PICKER_SESSION_ID_PATTERN.test(request.pickerId)
+      || !Array.isArray(request.candidates) || request.candidates.length > 64) {
+      immediateHostError(request.requestId, event.origin, 'window candidate picker request is malformed');
+      return;
+    }
+    const payload = widgetToken
+      ? { token: widgetToken, pickerId: request.pickerId, candidates: request.candidates }
+      : { projectId: projectIdFromOrigin(), pickerId: request.pickerId, candidates: request.candidates };
+    task = ipcRenderer.invoke('papers:backpack:window-candidate-picker', payload)
+      .then((value) => ({ picker: value }));
+  }
+  if (request.type === 'papers:project:window-candidate-picker-update') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'pickerId', 'candidates'])
+      || !validRequestId(request.requestId) || typeof request.pickerId !== 'string' || !PICKER_SESSION_ID_PATTERN.test(request.pickerId)
+      || !Array.isArray(request.candidates) || request.candidates.length > 64) {
+      immediateHostError(request.requestId, event.origin, 'window candidate picker update request is malformed');
+      return;
+    }
+    const payload = widgetToken
+      ? { token: widgetToken, pickerId: request.pickerId, candidates: request.candidates }
+      : { projectId: projectIdFromOrigin(), pickerId: request.pickerId, candidates: request.candidates };
+    task = ipcRenderer.invoke('papers:backpack:window-candidate-picker-update', payload);
+  }
+  if (request.type === 'papers:project:window-candidate-picker-close') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId']) || !validRequestId(request.requestId)) {
+      immediateHostError(request.requestId, event.origin, 'window candidate picker close request is malformed');
+      return;
+    }
+    const payload = widgetToken ? { token: widgetToken } : { projectId: projectIdFromOrigin() };
+    task = ipcRenderer.invoke('papers:backpack:window-candidate-picker-close', payload)
+      .then((value) => ({ picker: value }));
+  }
+  if (request.type === 'papers:project:detach-reattach') {
+    task = detachedToken && detachedTransferId
+      ? ipcRenderer.invoke('papers:backpack:detach-reattach', { token: detachedToken, transferId: detachedTransferId })
+      : ipcRenderer.invoke('papers:backpack:detach-reattach', { projectId: projectIdFromOrigin() });
+  }
+  if (request.type === 'papers:project:detach-focus') {
+    if (detachedToken && detachedTransferId) {
+      task = ipcRenderer.invoke('papers:backpack:detach-focus', {
+        token: detachedToken,
+        transferId: detachedTransferId,
+      });
+    } else task = ipcRenderer.invoke('papers:backpack:detach-focus', { projectId: projectIdFromOrigin() });
+  }
+  if (request.type === 'papers:project:detach-stop-ack') {
+    if (!validTransferId(request.transferId)) {
+      immediateHostError(request.requestId, event.origin, 'detached stop acknowledgement is malformed');
+      return;
+    }
+    ipcRenderer.send('papers:backpack:detach-stop-ack', { transferId: request.transferId });
+    immediateHostResult(request.requestId, event.origin);
+    return;
+  }
+  if (request.type === 'papers:project:widget-quick-run-input') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'phase', 'text']) || !widgetToken
+      || (request.phase !== 'open' && request.phase !== 'append') || typeof request.text !== 'string'
+      || [...request.text].length !== 1 || Buffer.byteLength(request.text, 'utf8') > 8) {
+      immediateHostError(request.requestId, event.origin, 'widget Quick Run input is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-quick-run-input', {
+      token: widgetToken,
+      phase: request.phase,
+      text: request.text,
+    });
+  }
+  if (request.type === 'papers:project:widget-quick-run-seal-ack') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'generation']) || !widgetToken
+      || typeof request.generation !== 'number' || !Number.isSafeInteger(request.generation) || request.generation < 1) {
+      immediateHostError(request.requestId, event.origin, 'widget Quick Run seal acknowledgement is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:widget-quick-run-seal-ack', { token: widgetToken, generation: request.generation });
+  }
+  if (request.type === 'papers:project:command-surface-input-ack') {
+    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'captureId'])
+      || typeof request.captureId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(request.captureId)) {
+      immediateHostError(request.requestId, event.origin, 'command surface input acknowledgement is malformed');
+      return;
+    }
+    task = ipcRenderer.invoke('papers:backpack:command-surface-input-ack', { captureId: request.captureId });
+  }
+  if (request.type === 'papers:project:detach-resumed-ack') {
+    if (!validTransferId(request.transferId)) {
+      immediateHostError(request.requestId, event.origin, 'detached resumed acknowledgement is malformed');
+      return;
+    }
+    ipcRenderer.send('papers:backpack:detach-resumed', { transferId: request.transferId });
+    immediateHostResult(request.requestId, event.origin);
+    return;
+  }
+  if (!task) return;
+  void task.then((payload) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: true, ...(payload && typeof payload === 'object' ? payload : {}) }, window.location.origin))
+    .catch((caught) => window.postMessage({ type: 'papers:host:result', requestId: request.requestId, ok: false, error: String(caught instanceof Error ? caught.message : caught) }, window.location.origin));
+});
+
+
+// The direct-pick session pushes its typed result to the project frame.
+ipcRenderer.on('papers:window-pick:result', (_event, result) => {
+  window.postMessage({ type: 'papers:project:window-pick-result', result }, window.location.origin);
+});
+
+ipcRenderer.on('papers:window-lifecycle:event', (_event, payload) => {
+  window.postMessage({ type: 'papers:project:window-lifecycle-event', event: payload }, window.location.origin);
+});
+ipcRenderer.on('papers:window-lifecycle:baseline', (_event, payload) => {
+  window.postMessage({ type: 'papers:project:window-lifecycle-baseline', baseline: payload }, window.location.origin);
+});
+ipcRenderer.on('papers:window-control:event', (_event, payload) => {
+  window.postMessage({ type: 'papers:project:window-control-event', event: payload }, window.location.origin);
+});
+ipcRenderer.on('papers:window-control:shift', (_event, held) => {
+  if (typeof held === 'boolean') {
+    window.postMessage({ type: 'papers:project:window-control-shift', held }, window.location.origin);
+  }
+});
+ipcRenderer.on('papers:window-control:unavailable', (_event, reason) => {
+  window.postMessage({ type: 'papers:project:window-control-unavailable', reason }, window.location.origin);
+});
+void Promise.resolve(ipcRenderer.invoke('papers:window-capability:subscribe-lifecycle', {})).catch(() => undefined);
+
+// The same preload serves the workspace iframe and the top-level detached
+// page. Tokens stay here; the project page sees only bounded lifecycle events.
+ipcRenderer.on('papers:backpack:detach-token', (_event, payload) => {
+  const value = payload as { token?: unknown; transferId?: unknown } | null;
+  if (typeof value?.token !== 'string' || typeof value.transferId !== 'string') return;
+  if (detachedToken !== value.token || detachedTransferId !== value.transferId) {
+    detachedToken = value.token;
+    detachedTransferId = value.transferId;
+    detachedReadySent = false;
+  }
+  trySendDetachedReady();
+});
+
+ipcRenderer.on('papers:backpack:widget-token', (_event, payload) => {
+  const value = payload as { token?: unknown } | null;
+  if (typeof value?.token !== 'string' || value.token.length === 0 || value.token.length > 512) return;
+  if (widgetToken !== value.token) {
+    widgetToken = value.token;
+    widgetReadySent = false;
+  }
+  trySendWidgetReady();
+});
+
+for (const [channel, type] of [
+  ['papers:backpack:detach-stop-request', 'papers:project:detach-stop-request'],
+  ['papers:backpack:detach-activate', 'papers:project:detach-activate'],
+  ['papers:backpack:detach-flush-request', 'papers:project:detach-flush-request'],
+  ['papers:backpack:detach-closed', 'papers:project:detach-closed'],
+  // The launcher overlay is open and this project should render its command
+  // surface in it. The host does not know what a command surface IS: it reports
+  // that the chord was pressed, which chord it was, and that this project's
+  // command surface is what should respond. The project decides the rest.
+  ['papers:backpack:command-surface-invoke', 'papers:project:command-surface-invoke'],
+  ['papers:backpack:widget-quick-run-seal-request', 'papers:project:widget-quick-run-seal-request'],
+] as const) {
+  ipcRenderer.on(channel, (_event, payload) => window.postMessage({ type, ...(payload ?? {}) }, window.location.origin));
+}
+
+window.addEventListener('message', (event) => {
+  if (event.source !== window || event.origin !== window.location.origin) return;
+  const request = event.data as ProjectMessage;
+  if (!request || typeof request.type !== 'string') return;
+  if (request.type === 'papers:project:detach-flush-ack') {
+    if (!detachedToken || !detachedTransferId || request.transferId !== detachedTransferId) {
+      immediateHostError(request.requestId, event.origin, 'detached flush acknowledgement is malformed');
+      return;
+    }
+    ipcRenderer.send('papers:backpack:detach-flush-ack', {
+      token: detachedToken,
+      transferId: detachedTransferId,
+    });
+    immediateHostResult(request.requestId, event.origin);
+  }
+  if (request.type === 'papers:project:detach-activated-ack') {
+    if (!detachedToken || !detachedTransferId || !exactKeys(request as Record<string, unknown>, ['type', 'requestId', 'transferId'])
+      || !validRequestId(request.requestId) || !validTransferId(request.transferId) || request.transferId !== detachedTransferId) {
+      immediateHostError(request.requestId, event.origin, 'detached activation acknowledgement is malformed');
+      return;
+    }
+    ipcRenderer.send('papers:backpack:detach-activated', {
+      token: detachedToken,
+      transferId: detachedTransferId,
+    });
+    immediateHostResult(request.requestId, event.origin);
+  }
+});

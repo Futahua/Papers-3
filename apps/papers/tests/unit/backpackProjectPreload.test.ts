@@ -1,0 +1,555 @@
+import { readFile } from 'node:fs/promises';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  send: vi.fn(),
+  on: vi.fn(),
+}));
+
+vi.mock('electron', () => ({
+  ipcRenderer: { invoke: mocks.invoke, send: mocks.send, on: mocks.on },
+  webUtils: { getPathForFile: vi.fn() },
+}));
+
+async function loadPreloadForTest(): Promise<void> {
+  await import('../../src/preload/backpackProject');
+  // Exclude the preload's one-way lifecycle subscription from each test's
+  // per-request invoke assertions; subscription has its own regression below.
+  mocks.invoke.mockClear();
+}
+
+describe('Backpack project protocol alignment', () => {
+  let messageHandlers: Array<(event: { source: unknown; origin: string; data: unknown }) => void>;
+  let posts: unknown[];
+
+  beforeEach(() => {
+    mocks.invoke.mockReset();
+    mocks.send.mockReset();
+    mocks.on.mockReset();
+    posts = [];
+    messageHandlers = [];
+    const listeners = new Map<string, (payload: unknown) => void>();
+    globalThis.window = {
+      location: { href: 'papers-backpack://bp-a/ns/1/public/index.html', origin: 'papers-backpack://bp-a' },
+      addEventListener: (type: string, callback: (event: unknown) => void) => {
+        if (type === 'message') messageHandlers.push(callback as typeof messageHandlers[number]);
+      },
+      postMessage: (value: unknown) => { posts.push(value); },
+    } as unknown as Window & typeof globalThis;
+    mocks.on.mockImplementation((channel: string, callback: (event: unknown, payload?: unknown) => void) => {
+      listeners.set(channel, (payload) => callback({}, payload));
+    });
+    vi.resetModules();
+  });
+
+  it('subscribes to the native window lifecycle stream when the preload starts', async () => {
+    await import('../../src/preload/backpackProject');
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:subscribe-lifecycle', {});
+  });
+
+  it('forwards the exact-icon candidate-list option through the project bridge', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'success', candidates: [] });
+    dispatch({ type: 'papers:project:window-candidates', requestId: 'candidate-list-1', includeNativeIcons: true });
+    await Promise.resolve();
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:list', { includeNativeIcons: true });
+    expect(() => dispatch({ type: 'papers:project:window-candidates', requestId: 'candidate-list-bad', includeNativeIcons: 'yes' })).toThrow('invalid fields');
+  });
+
+  it('opens and updates an authenticated picker session without exposing its widget token', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    tokenHandler({}, { token: 'private-widget-token' });
+    mocks.invoke.mockResolvedValue({ action: 'cancel', candidateId: null });
+    const pickerId = '12345678-1234-1234-1234-123456789abc';
+    const candidates = [{ id: 'candidate-1', title: 'Window', icon: null, current: false }];
+    dispatch({ type: 'papers:project:window-candidate-picker', requestId: 'picker-open', pickerId, candidates: [] });
+    dispatch({ type: 'papers:project:window-candidate-picker-update', requestId: 'picker-update', pickerId, candidates });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:window-candidate-picker', {
+      token: 'private-widget-token', pickerId, candidates: [],
+    });
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:window-candidate-picker-update', {
+      token: 'private-widget-token', pickerId, candidates,
+    });
+    expect(posts).not.toContainEqual(expect.objectContaining({ token: 'private-widget-token' }));
+    dispatch({ type: 'papers:project:window-candidate-picker-update', requestId: 'bad', pickerId: 'short', candidates });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'bad', ok: false }));
+  });
+
+  it('keeps native clipboard reads behind a short trusted-user-gesture gate', async () => {
+    const source = await readFile(new URL('../../src/preload/backpackProject.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/CLIPBOARD_READ_GESTURE_MS = 1_500/);
+    expect(source).toMatch(/window\.addEventListener\('pointerdown', armClipboardReadGesture, true\)/);
+    expect(source).toMatch(/request\.operation === 'clipboard-read' && !consumeClipboardReadGesture\(\)/);
+  });
+
+  it('routes file capability calls from a scoped child with its exact workspace origin', async () => {
+    await loadPreloadForTest();
+    const child = {};
+    mocks.invoke.mockResolvedValue({ ok: true, providers: { everything: true, directoryOpus: true } });
+    for (const handler of messageHandlers) {
+      handler({
+        source: child,
+        origin: 'papers-backpack://ayg-child',
+        data: {
+          type: 'papers:project:file-capability',
+          requestId: 'file-child-1',
+          operation: 'providers',
+          params: {},
+        },
+      });
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      'host:backpack-project:file-capability',
+      { operation: 'providers', params: {} },
+      'papers-backpack://ayg-child',
+    );
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'file-child-1', ok: true,
+      fileCapability: { ok: true, providers: { everything: true, directoryOpus: true } },
+    }));
+  });
+
+  it('routes open-new-surface from a scoped child with its exact workspace origin', async () => {
+    await loadPreloadForTest();
+    const child = {};
+    mocks.invoke.mockResolvedValue({ surfaceId: 'sf-new' });
+    for (const handler of messageHandlers) {
+      handler({
+        source: child,
+        origin: 'papers-backpack://ayg-child',
+        data: {
+          type: 'papers:project:open-new-surface',
+          requestId: 'surface-child-1',
+          url: 'papers-backpack://ayg-child/open/one/public/workspace.html?papers-file-preview=abc',
+        },
+      });
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      'host:backpack-project:open-new-surface',
+      'papers-backpack://ayg-child/open/one/public/workspace.html?papers-file-preview=abc',
+      'papers-backpack://ayg-child',
+    );
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'surface-child-1', ok: true,
+    }));
+  });
+
+  it('translates every positioned embedded AYG preview rect through its exact iframe before IPC', async () => {
+    await loadPreloadForTest();
+    const child = {};
+    globalThis.document = {
+      querySelectorAll: () => [{
+        contentWindow: child,
+        getBoundingClientRect: () => ({ x: 120, y: 45, width: 900, height: 700 }),
+      }],
+    } as unknown as Document;
+    mocks.invoke.mockResolvedValue({ ok: true, sessionId: '11111111-2222-4333-8444-555555555555' });
+    const operations = [
+      'preview-native-open',
+      'preview-native-move',
+      'preview-pdf-open',
+      'preview-pdf-move',
+      'preview-html-open',
+      'preview-html-move',
+    ];
+    for (const operation of operations) {
+      for (const handler of messageHandlers) {
+        handler({
+          source: child,
+          origin: 'papers-backpack://ayg-child',
+          data: {
+            type: 'papers:project:file-capability',
+            requestId: `positioned-preview-${operation}`,
+            operation,
+            params: { marker: operation, rect: { x: 300, y: 80, width: 420, height: 460 } },
+          },
+        });
+      }
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    for (const operation of operations) {
+      expect(mocks.invoke).toHaveBeenCalledWith(
+        'host:backpack-project:file-capability',
+        {
+          operation,
+          params: { marker: operation, rect: { x: 420, y: 125, width: 420, height: 460 } },
+        },
+        'papers-backpack://ayg-child',
+      );
+    }
+  });
+
+  it('0A: a refused checked save travels as a delivered result, not a failed request', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+
+    // The host refuses the save: its own `ok: false` must not overwrite the
+    // transport envelope, or the project sees a broken host instead of a
+    // conflict it can act on.
+    mocks.invoke.mockResolvedValue({ ok: false, code: 'STALE_REVISION', revision: 'b'.repeat(64) });
+    dispatch({
+      type: 'papers:project:state-save-checked',
+      requestId: 'save-1',
+      state: '{"schemaVersion":1,"groups":[],"shortcuts":[]}',
+      revision: 'a'.repeat(64),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      'host:backpack-project:state-save-checked',
+      '{"schemaVersion":1,"groups":[],"shortcuts":[]}',
+      'a'.repeat(64),
+    );
+    expect(posts).toContainEqual({
+      type: 'papers:host:result',
+      requestId: 'save-1',
+      ok: true,
+      stateSave: { ok: false, code: 'STALE_REVISION', revision: 'b'.repeat(64) },
+    });
+  });
+
+  it('0A: an accepted checked save arrives under the same wrapper', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ ok: true, revision: 'c'.repeat(64) });
+    dispatch({
+      type: 'papers:project:state-save-checked',
+      requestId: 'save-2',
+      state: '{"schemaVersion":1,"groups":[],"shortcuts":[]}',
+      revision: 'a'.repeat(64),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(posts).toContainEqual({
+      type: 'papers:host:result',
+      requestId: 'save-2',
+      ok: true,
+      stateSave: { ok: true, revision: 'c'.repeat(64) },
+    });
+  });
+
+  it('derives workspace identity and resolves one-way ACK requests immediately', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ ok: true });
+    dispatch({
+      type: 'papers:project:detach-open', requestId: 'open-1', bounds: null,
+    });
+    await Promise.resolve();
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:detach-open', { projectId: 'bp-a', bounds: null });
+
+    dispatch({
+      type: 'papers:project:detach-stop-ack', requestId: 'ack-1', transferId: 'tr-1',
+    });
+    expect(mocks.send).toHaveBeenCalledWith('papers:backpack:detach-stop-ack', { transferId: 'tr-1' });
+    expect(posts).toContainEqual({ type: 'papers:host:result', requestId: 'ack-1', ok: true });
+    const sendsBeforeMalformed = mocks.send.mock.calls.length;
+    dispatch({ type: 'papers:project:detach-stop-ack', requestId: 'ack-bad', transferId: '' });
+    expect(mocks.send.mock.calls).toHaveLength(sendsBeforeMalformed);
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'ack-bad', ok: false }));
+  });
+
+  it('attaches stored detached token and transfer to argument-free reattach/focus', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token')?.[1];
+    expect(tokenHandler).toBeTypeOf('function');
+    tokenHandler({}, { token: 'tok-1', transferId: 'tr-1' });
+    expect(mocks.send).not.toHaveBeenCalledWith('papers:backpack:detach-ready', expect.anything());
+    dispatch({ type: 'papers:project:detach-ready', requestId: 'ready-1' });
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(mocks.send).toHaveBeenCalledWith('papers:backpack:detach-ready', { token: 'tok-1', transferId: 'tr-1' });
+    tokenHandler({}, { token: 'tok-1', transferId: 'tr-1' });
+    dispatch({ type: 'papers:project:detach-ready', requestId: 'ready-2' });
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    dispatch({ type: 'papers:project:detach-ready', requestId: 'ready-bad', extra: true });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'ready-bad', ok: false }));
+    expect(posts).not.toContainEqual(expect.objectContaining({ type: 'papers:project:detach-token' }));
+    dispatch({ type: 'papers:project:detach-activated-ack', requestId: 'activated-bad', transferId: 'tr-other' });
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'activated-bad', ok: false }));
+    dispatch({ type: 'papers:project:detach-activated-ack', requestId: 'activated-1', transferId: 'tr-1' });
+    expect(mocks.send).toHaveBeenCalledWith('papers:backpack:detach-activated', { token: 'tok-1', transferId: 'tr-1' });
+    dispatch({ type: 'papers:project:detach-activated-ack', requestId: 'activated-malformed', transferId: 'tr-1', extra: true });
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'activated-malformed', ok: false }));
+    dispatch({ type: 'papers:project:detach-activated-ack', requestId: 7, transferId: 'tr-1' });
+    dispatch({ type: 'papers:project:detach-activated-ack', transferId: 'tr-1' });
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    mocks.invoke.mockResolvedValue({ ok: true });
+    dispatch({
+      type: 'papers:project:detach-reattach', requestId: 'r-1',
+    });
+    dispatch({
+      type: 'papers:project:detach-focus', requestId: 'f-1',
+    });
+    await Promise.resolve();
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:detach-reattach', { token: 'tok-1', transferId: 'tr-1' });
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:detach-focus', { token: 'tok-1', transferId: 'tr-1' });
+  });
+
+  it('018V2: page-ready before token latches and sends one hidden-token READY', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:detach-token')?.[1];
+    dispatch({ type: 'papers:project:detach-ready', requestId: 'ready-first' });
+    expect(mocks.send).not.toHaveBeenCalled();
+    tokenHandler({}, { token: 'tok-2', transferId: 'tr-2' });
+    expect(mocks.send).toHaveBeenCalledWith('papers:backpack:detach-ready', { token: 'tok-2', transferId: 'tr-2' });
+    expect(posts).toContainEqual({ type: 'papers:host:result', requestId: 'ready-first', ok: true });
+  });
+
+  it('019B: compact widget page/token readiness converges once without exposing its token', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    expect(tokenHandler).toBeTypeOf('function');
+    dispatch({ type: 'papers:project:widget-ready', requestId: 'widget-ready-first' });
+    expect(mocks.send).not.toHaveBeenCalled();
+    tokenHandler({}, { token: 'widget-token' });
+    expect(mocks.send).toHaveBeenCalledWith('papers:backpack:widget-ready', { token: 'widget-token' });
+    tokenHandler({}, { token: 'widget-token' });
+    dispatch({ type: 'papers:project:widget-ready', requestId: 'widget-ready-second' });
+    dispatch({ type: 'papers:project:widget-ready', requestId: 'widget-ready-bad', extra: true });
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(posts).not.toContainEqual(expect.objectContaining({ token: 'widget-token' }));
+    expect(posts).toContainEqual({ type: 'papers:host:result', requestId: 'widget-ready-first', ok: true });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'widget-ready-bad', ok: false }));
+  });
+
+  it('routes only bounded widget drag coordinates with the hidden widget token', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    tokenHandler({}, { token: 'widget-token' });
+    dispatch({ type: 'papers:project:widget-drag', phase: 'begin', x: 120, y: -40 });
+    expect(mocks.send).toHaveBeenCalledWith('papers:backpack:widget-drag', {
+      token: 'widget-token', phase: 'begin', x: 120, y: -40,
+    });
+    const before = mocks.send.mock.calls.length;
+    dispatch({ type: 'papers:project:widget-drag', phase: 'move', x: Number.NaN, y: 0 });
+    expect(mocks.send.mock.calls).toHaveLength(before);
+  });
+
+  it('routes one bounded widget Quick Run character with its hidden token and rejects malformed records', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    tokenHandler({}, { token: 'widget-token' });
+    mocks.invoke.mockResolvedValue({ ok: true, detail: 'queued' });
+    dispatch({ type: 'papers:project:widget-quick-run-input', requestId: 'type-open', phase: 'open', text: 'a' });
+    dispatch({ type: 'papers:project:widget-quick-run-input', requestId: 'type-bad', phase: 'open', text: 'ab' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-quick-run-input', {
+      token: 'widget-token', phase: 'open', text: 'a',
+    });
+    expect(posts).not.toContainEqual(expect.objectContaining({ token: 'widget-token' }));
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'type-bad', ok: false }));
+  });
+
+  it('routes renderer input receipts and widget seal acknowledgements through authorized IPC', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    tokenHandler({}, { token: 'widget-token' });
+    mocks.invoke.mockResolvedValue({ ok: true });
+    dispatch({ type: 'papers:project:command-surface-input-ack', requestId: 'receipt-1', captureId: 'papers-123-1' });
+    dispatch({ type: 'papers:project:widget-quick-run-seal-ack', requestId: 'seal-1', generation: 7 });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:command-surface-input-ack', { captureId: 'papers-123-1' });
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-quick-run-seal-ack', { token: 'widget-token', generation: 7 });
+    expect(posts).not.toContainEqual(expect.objectContaining({ token: 'widget-token' }));
+  });
+
+  it('019C: workspace widget-open/focus/close attach projectId and keep keys bounded', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ ok: true, reused: false });
+    dispatch({ type: 'papers:project:widget-open', requestId: 'wo-1', layoutKey: 'layout-a' });
+    dispatch({ type: 'papers:project:widget-open', requestId: 'wo-quiet', layoutKey: 'layout-b', activate: false });
+    dispatch({ type: 'papers:project:widget-focus', requestId: 'wf-1', layoutKey: 'layout-a' });
+    dispatch({ type: 'papers:project:widget-close', requestId: 'wc-1', layoutKey: 'layout-a' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-open', { projectId: 'bp-a', layoutKey: 'layout-a' });
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-open', { projectId: 'bp-a', layoutKey: 'layout-b', activate: false });
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-focus', { projectId: 'bp-a', layoutKey: 'layout-a' });
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-close', { projectId: 'bp-a', layoutKey: 'layout-a' });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'wo-1', ok: true, widget: { ok: true, reused: false } }));
+    expect(posts).not.toContainEqual(expect.objectContaining({ layoutKey: 'layout-a' }));
+  });
+
+  it('019C: malformed widget open/focus and an over-bounded key are rejected', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    dispatch({ type: 'papers:project:widget-open', requestId: 'wo-bad', layoutKey: 'x'.repeat(513) });
+    dispatch({ type: 'papers:project:widget-open', requestId: 'wo-bad2' });
+    dispatch({ type: 'papers:project:widget-open', requestId: 'wo-bad3', layoutKey: 7 });
+    dispatch({ type: 'papers:project:widget-focus', requestId: 'wf-bad', layoutKey: 'x'.repeat(513) });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    for (const id of ['wo-bad', 'wo-bad2', 'wo-bad3', 'wf-bad']) {
+      expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: id, ok: false }));
+    }
+  });
+
+  it('019C: widget self-close stays token-attached with no page-visible token', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    mocks.invoke.mockResolvedValue({ ok: true });
+    // No token latched yet: a bare widget-close is malformed.
+    dispatch({ type: 'papers:project:widget-close', requestId: 'wc-no-token' });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'wc-no-token', ok: false }));
+    tokenHandler({}, { token: 'widget-token' });
+    dispatch({ type: 'papers:project:widget-close', requestId: 'wc-self' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-close', { token: 'widget-token' });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'wc-self', ok: true }));
+    expect(posts).not.toContainEqual(expect.objectContaining({ token: 'widget-token' }));
+  });
+
+  it('019G: window-thumbnail-capability forwards exact keys and rejects malformed shapes', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'success', imageUrl: 'data:image/png;base64,x', width: 240, height: 135 });
+    const capability = { version: 1, bindingId: 'wl-binding-1' };
+    dispatch({
+      type: 'papers:project:window-thumbnail',
+      requestId: 'thumb-1',
+      capability,
+      options: { maxWidth: 240, maxHeight: 135 },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:thumbnail', { capability, options: { maxWidth: 240, maxHeight: 135 } });
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result',
+      requestId: 'thumb-1',
+      ok: true,
+      outcome: 'success',
+      imageUrl: 'data:image/png;base64,x',
+      width: 240,
+      height: 135,
+    }));
+    // Malformed shapes are rejected with ok:false and never reach Papers.
+    dispatch({ type: 'papers:project:window-thumbnail', requestId: 'thumb-bad-1', capability, options: { maxWidth: 240, maxHeight: 135, zoom: 2 } });
+    dispatch({ type: 'papers:project:window-thumbnail', requestId: 'thumb-bad-2', capability, options: { maxWidth: 321, maxHeight: 135 } });
+    dispatch({ type: 'papers:project:window-thumbnail', requestId: 'thumb-bad-3', capability, options: { maxWidth: 240.5, maxHeight: 135 } });
+    dispatch({ type: 'papers:project:window-thumbnail', requestId: 'thumb-bad-4', capability, options: { maxWidth: '240', maxHeight: 135 } });
+    dispatch({ type: 'papers:project:window-thumbnail', requestId: 'thumb-bad-5', capability: { version: 1, bindingId: 7 }, options: { maxWidth: 240, maxHeight: 135 } });
+    dispatch({ type: 'papers:project:window-thumbnail', requestId: 'thumb-bad-6', capability, options: { maxWidth: 240, maxHeight: 135 }, extra: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    for (const id of ['thumb-bad-1', 'thumb-bad-2', 'thumb-bad-3', 'thumb-bad-4', 'thumb-bad-5', 'thumb-bad-6']) {
+      expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: id, ok: false }));
+    }
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('028: cached-thumbnail capability lookup forwards a capability-only request', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'cache-miss' });
+    const capability = { version: 1, bindingId: 'wl-binding-1' };
+    dispatch({ type: 'papers:project:window-thumbnail-cache', requestId: 'thumb-cache-1', capability });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:thumbnail-cache', { capability });
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'thumb-cache-1', ok: true, outcome: 'cache-miss',
+    }));
+    dispatch({ type: 'papers:project:window-thumbnail-cache', requestId: 'thumb-cache-bad', capability, extra: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(posts).toContainEqual(expect.objectContaining({
+      type: 'papers:host:result', requestId: 'thumb-cache-bad', ok: false,
+    }));
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards only allowlisted redacted window diagnostic stages and outcomes', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'success' });
+    dispatch({ type: 'papers:project:window-diagnostic', requestId: 'diag-1', stage: 'auto-add-resolve', outcome: 'ambiguous' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-layout:diagnostic', {
+      stage: 'auto-add-resolve', outcome: 'ambiguous',
+    });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'diag-1', ok: true }));
+
+    dispatch({ type: 'papers:project:window-diagnostic', requestId: 'diag-bad', stage: 'auto-add-resolve', outcome: 'secret', title: 'private' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'diag-bad', ok: false }));
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('Direct Pick begin preserves one valid windowInstanceId and rejects malformed or unknown descriptor keys', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'started' });
+    const descriptor = { version: 1, title: 'Window A', executableFingerprint: 'a'.repeat(64), windowInstanceId: 'W0123456789abcdef' };
+    dispatch({ type: 'papers:project:window-pick-begin', requestId: 'pick-wid', members: [descriptor] });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-pick:begin', { members: [descriptor] });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'pick-wid', ok: true }));
+
+    expect(() => dispatch({ type: 'papers:project:window-pick-begin', requestId: 'pick-bad-wid', members: [{ ...descriptor, windowInstanceId: 'not-a-wid' }] })).toThrow('windowInstanceId is invalid');
+    expect(() => dispatch({ type: 'papers:project:window-pick-begin', requestId: 'pick-extra-key', members: [{ ...descriptor, extra: true }] })).toThrow('descriptor contains unknown fields');
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('021: window-pick-stage and window-pick-commit forward empty payloads and reject malformed shapes', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    mocks.invoke.mockResolvedValue({ outcome: 'staged' });
+    dispatch({ type: 'papers:project:window-pick-stage', requestId: 'stage-1' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-pick:stage', {});
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'stage-1', ok: true }));
+
+    mocks.invoke.mockResolvedValue({ outcome: 'committed' });
+    dispatch({ type: 'papers:project:window-pick-commit', requestId: 'commit-1' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:window-pick:commit', {});
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'commit-1', ok: true }));
+
+    // Malformed shapes (extra keys) are rejected and never reach Papers.
+    expect(() => dispatch({ type: 'papers:project:window-pick-stage', requestId: 'stage-bad', extra: true })).toThrow();
+    expect(() => dispatch({ type: 'papers:project:window-pick-commit', requestId: 'commit-bad', extra: true })).toThrow();
+    expect(mocks.invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it('024: widget-report-size forwards the latched token and bounded size, and rejects malformed reports', async () => {
+    await loadPreloadForTest();
+    const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
+    const tokenHandler = mocks.on.mock.calls.find(([channel]) => channel === 'papers:backpack:widget-token')?.[1];
+    mocks.invoke.mockResolvedValue({ ok: true });
+    // No token latched: the size report is malformed.
+    dispatch({ type: 'papers:project:widget-report-size', requestId: 'size-no-token', width: 360, height: 220 });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'size-no-token', ok: false }));
+    expect(mocks.invoke).not.toHaveBeenCalled();
+
+    tokenHandler({}, { token: 'widget-token' });
+    dispatch({ type: 'papers:project:widget-report-size', requestId: 'size-1', width: 360, height: 220 });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:widget-report-size', { token: 'widget-token', width: 360, height: 220 });
+    expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: 'size-1', ok: true }));
+    expect(posts).not.toContainEqual(expect.objectContaining({ token: 'widget-token' }));
+
+    // Malformed sizes and extra keys are rejected.
+    dispatch({ type: 'papers:project:widget-report-size', requestId: 'size-bad-1', width: 360 });
+    dispatch({ type: 'papers:project:widget-report-size', requestId: 'size-bad-2', width: 360, height: 220, extra: true });
+    dispatch({ type: 'papers:project:widget-report-size', requestId: 'size-bad-3', width: Number.NaN, height: 220 });
+    dispatch({ type: 'papers:project:widget-report-size', requestId: 'size-bad-4', width: 4000, height: 220 });
+    await new Promise((resolve) => setImmediate(resolve));
+    for (const id of ['size-bad-1', 'size-bad-2', 'size-bad-3', 'size-bad-4']) {
+      expect(posts).toContainEqual(expect.objectContaining({ type: 'papers:host:result', requestId: id, ok: false }));
+    }
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+});

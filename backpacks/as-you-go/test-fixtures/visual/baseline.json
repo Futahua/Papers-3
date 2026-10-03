@@ -1,0 +1,14 @@
+{
+  "baselineId": "as-you-go-visual-v1",
+  "fixtureId": "as-you-go-non-empty-v1",
+  "captureTarget": "surface",
+  "visualProfileVersion": 1,
+  "platform": "win32",
+  "electronMajor": 43,
+  "pngSha256": "6e41b35a25c48c8ba26833f3d558f44d3e9ffe2362278ee4e32a36bb841fde94",
+  "dimensions": {
+    "width": 1280,
+    "height": 760
+  },
+  "createdFromCommit": "6e26c8217f3564717aad4143b240637e8881971e"
+}

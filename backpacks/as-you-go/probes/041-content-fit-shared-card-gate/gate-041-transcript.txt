@@ -1,0 +1,25 @@
+041 C5 CONTENT-FIT SHARED CARD + NATIVE HOST LIVE GATE - TRANSCRIPT (isolated, exclusive interval)
+run at: 2026-08-12T08:38:42.706Z
+isolated data dir: D:\Programs\CodexBrainB\tmp\papers-041-Tp6He7
+compact presentation maximum: 340px; frame tolerance W<=2 H<=4
+host controls expected ABSENT: .navigation, .toolbar-float, #copy-prompt, #bin-button, #breadcrumbs, #backdrop-slider, #restore-all-bin, #delete-all-bin, .status, .selection-status, .context-menu, .editor-layer, .confirm-layer, .workspace-backdrop
+creator Papers pids before: [30948,36456,37616,39540,40748,46248]
+
+PASS - creator installed Papers enumerated before (observed only) :: [30948,36456,37616,39540,40748,46248]
+PASS - twelve disposable target windows launched :: AYG-015R3-6784-8f9059c9 AYG-015R3-43548-c26ba896 AYG-015R3-46896-6f183f6e AYG-015R3-10400-e99163cf AYG-015R3-45516-91155f99 AYG-015R3-45272-8e6b3620 AYG-015R3-33500-2160999a AYG-015R3-42936-84387c4d AYG-015R3-46816-572f301c AYG-015R3-21012-1d9cfd8d AYG-015R3-42856-e5ef39a4 AYG-015R3-6740-1b0d46fb
+PASS - isolated root PID captured with exact descendant set :: root=41640
+PASS - 041 ONE member: card CONTENT-FITS (width well below the compact max - no wide empty minimum) :: {"cardRect":{"w":165,"h":70},"windowContent":{"w":165,"h":70}}
+PASS - 041 ONE member: host client == card border box in BOTH axes; no title, no furniture, member + six controls visible/unclipped, no orphan bar :: {"cardRect":{"w":165,"h":70},"windowContent":{"w":165,"h":70},"visibleHost":[],"cardControls":["pick","list","min-all","restore-all","isolate","reattach"],"barsInsideCell":true}
+PASS - 041 SIX members natural: card content-fits (no wide empty minimum), host client == card border box, row change from width :: {"cardRect":{"w":165,"h":102},"windowContent":{"w":165,"h":102},"rows":2}
+PASS - 041 SIX members narrow: continuous measured-width reflow (MORE rows than natural), host client == card border box, all visible/unclipped, no orphan bar :: {"naturalRows":2,"narrowRows":3,"cardRect":{"w":104,"h":157},"windowContent":{"w":104,"h":157},"barsInsideCell":true}
+PASS - 041 SIX members wide attempt: the content-fit card never stretches - the host client snaps back to the card border box (no blank host canvas) :: {"cardRect":{"w":206,"h":70},"windowContent":{"w":206,"h":70}}
+PASS - 041 while detached: the workspace card is a grey INERT placeholder - only the lock (reattach), members disabled, no detach :: {"isPlaceholder":true,"membersDisabled":true,"hasReattach":true,"hasDetach":false,"controlCount":1}
+PASS - 041 placeholder refusal: clicking a placeholder member performs no state change :: before=6 after=6
+PASS - 041 sole-live: the detached card is the sole live card (its pick control and members are present and interactive) :: {"soleLive":true}
+PASS - 041 reattach: attached card live (detach lock), EXACT 1:1 equal-geometry with the detached card at the shared persisted geometry :: {"attached":{"w":206,"h":70,"controls":["pick","list","min-all","restore-all","isolate","detach"]},"detached":{"w":206,"h":70},"persisted":{"width":206,"height":70}}
+PASS - 041 TWELVE members natural: wrapped rows (2+) within the compact bound, host client == card border box, all 12 + six controls visible/unclipped, no orphan bar :: {"rows":2,"cardRect":{"w":206,"h":102},"windowContent":{"w":206,"h":102},"barsInsideCell":true}
+PASS - 041 TWELVE members narrow: MORE rows from the actual width, host client == card border box, every member + control visible/unclipped :: {"naturalRows":2,"narrowRows":6,"cardRect":{"w":104,"h":253},"windowContent":{"w":104,"h":253}}
+PASS - 041 redetach persistence: the shared geometry survives the 12-member resize and reattach (persisted == the detached card) :: {"persisted":{"width":104,"height":253},"detached":{"w":104,"h":253}}
+PASS - creator installed Papers untouched after run :: before=[30948,36456,37616,39540,40748,46248] after=[30948,36456,37616,39540,40748,46248]
+
+FINAL SUMMARY: 16/16 passed, 0 failed.

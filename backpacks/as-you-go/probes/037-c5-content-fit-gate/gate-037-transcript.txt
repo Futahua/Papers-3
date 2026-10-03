@@ -1,0 +1,28 @@
+037 C5 CONTENT-FIT NATIVE-HOST BOUNDARY LIVE GATE - TRANSCRIPT (isolated, exclusive interval)
+run at: 2026-08-12T06:35:39.660Z
+isolated data dir: D:\Programs\CodexBrainB\tmp\papers-037-xXEesw
+compact presentation maximum: 340px
+creator Papers pids before: [36456,37472,37616,39540,40748]
+
+PASS - creator installed Papers enumerated before (observed only) :: [36456,37472,37616,39540,40748]
+PASS - twelve disposable target windows launched :: AYG-015R3-3900-18334696 AYG-015R3-43196-17171e4c AYG-015R3-33776-e98090da AYG-015R3-16484-d8d6dc90 AYG-015R3-16940-ba568032 AYG-015R3-38476-283e57ee AYG-015R3-43964-d8e1ffd6 AYG-015R3-24012-b4ac6881 AYG-015R3-45424-927c6f8b AYG-015R3-38792-273c8126 AYG-015R3-41552-3ebd9d44 AYG-015R3-29840-76bd7823
+PASS - isolated root PID captured with exact descendant set :: root=40024
+PASS - layout with six list-picked members seeded :: window-layout-4ebb8eae-d6d1-4b24-9574-78db7b154224
+PASS - 037 natural: client content-fits the card with ZERO surrounding canvas (client == card == compact max) :: {"windowContent":{"w":340,"h":70},"cardRect":{"w":340,"h":70},"rows":1,"count":6,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":97,"lockVisible":true}
+PASS - 037 natural: balanced one-row card, every member inside, full controls, uniform gaps, safe lock padding :: {"windowContent":{"w":340,"h":70},"cardRect":{"w":340,"h":70},"rows":1,"count":6,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":97,"lockVisible":true}
+PASS - 037/035 attached card is a greyed placeholder while its widget is open: lock-only reattach, members disabled :: {"isPlaceholder":true,"membersDisabled":true,"hasReattach":true,"hasDetach":false,"controlCount":1}
+PASS - 037 narrow (< max): the window is user-resizable and the card FILLS the client (card == client, zero surrounding canvas) :: {"cardRect":{"w":184,"h":102},"windowContent":{"w":184,"h":252}}
+PASS - 037 narrow (< max): width-driven row change (members wrap into MORE rows from the actual available width) :: {"naturalRows":1,"narrowRows":2}
+PASS - 037 narrow (< max): every member fully inside, full controls, uniform gaps, safe padding :: {"windowContent":{"w":184,"h":252},"cardRect":{"w":184,"h":102},"rows":2,"count":6,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":19,"lockVisible":true}
+PASS - 037 attempted over-maximum: the native client width SNAPS to the compact maximum (client ~340, NOT the attempted ~684) :: {"windowContent":{"w":340,"h":252},"attempted":700}
+PASS - 037 attempted over-maximum: ZERO surrounding canvas (client == card exactly), no elongation, no clip :: {"windowContent":{"w":340,"h":252},"cardRect":{"w":340,"h":70},"rows":1,"count":6,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":97,"lockVisible":true}
+PASS - 037 persisted geometry is the ACTUAL card/client width (capped at the compact max, NOT a larger empty host) :: {"persisted":{"width":340,"height":252},"client":{"w":340,"h":252}}
+PASS - 037 reattach: the attached card is live again (detach lock, no placeholder) :: {"cardW":340,"shellW":340,"isPlaceholder":false,"controls":["pick","list","min-all","restore-all","isolate","detach"]}
+PASS - 037 EXACT footprint parity: attached shell == card == detached client == persisted (no empty host footprint, border-free 1:1) :: {"attached":{"cardW":340,"shellW":340,"isPlaceholder":false,"controls":["pick","list","min-all","restore-all","isolate","detach"]},"detachedClient":{"w":340,"h":252},"persisted":{"width":340,"height":252}}
+PASS - 037 redetach reuses the persisted card/client geometry (window reopens at the persisted width, card == client, zero canvas) :: {"persisted":{"width":340,"height":252},"reopened":{"w":340,"h":252},"card":{"w":340,"h":70}}
+PASS - 037 12 members at the natural compact bound: every member visible, wrapped, zero surrounding canvas :: {"windowContent":{"w":340,"h":252},"cardRect":{"w":340,"h":102},"rows":2,"count":12,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":97,"lockVisible":true}
+PASS - 037 12 members narrow (< max): card fills the client and wraps into MORE rows, every member inside :: {"opened12Rows":2,"narrow12Rows":3,"narrow12":{"windowContent":{"w":184,"h":452},"cardRect":{"w":184,"h":134},"rows":3,"count":12,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":19,"lockVisible":true}}
+PASS - 037 12 members attempted over-maximum: client snaps to the compact max, no elongation, no clip, rows stable at the bound :: {"boundRows":2,"snappedRows":2,"snapped12":{"windowContent":{"w":340,"h":252},"cardRect":{"w":340,"h":102},"rows":2,"count":12,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":97,"lockVisible":true}}
+PASS - creator installed Papers untouched after run :: before=[36456,37472,37616,39540,40748] after=[36456,37472,37616,39540,40748]
+
+FINAL SUMMARY: 20/20 passed, 0 failed.

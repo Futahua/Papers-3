@@ -1,0 +1,16 @@
+{
+  "id": "kill-test",
+  "name": "Kill Test",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "index.html",
+  "stateSchemaVersion": 1,
+  "capabilities": [
+    "storage.read-own",
+    "storage.write-own",
+    "clipboard.write",
+    "agent.invoke",
+    "agent.cancel-own"
+  ],
+  "description": "Vertical kill-test program: state persistence, capability prompts, crash isolation, exact Hermes invocation, cancellation, structured results."
+}

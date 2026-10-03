@@ -1,0 +1,10 @@
+at=root theme=dark transparent=false
+servedCurrent=root
+ancestorShells=0 totalShells=5
+currentFolderAbsent=true
+realItem id=group-00 kind=group folderColor=oklch(68% 0.18 155.1168090579572deg) ring=oklch(0.68 0.18 155.117)
+shell id=group-00 kind=group ancestor=false folderColor=oklch(68% 0.18 155.1168090579572deg)
+shell id=group-27 kind=group ancestor=false folderColor=oklch(68% 0.18 154.8553609850926deg)
+shell id=group-62 kind=group ancestor=false folderColor=oklch(68% 0.18 110.11680905795725deg)
+shell id=group-61 kind=group ancestor=false folderColor=oklch(68% 0.18 30.2602411221323deg)
+shell id=group-4c kind=group ancestor=false folderColor=oklch(68% 0.18 35.60401548842776deg)

@@ -1,0 +1,30 @@
+036 C5 COMPACT WIDTH BOUNDARY LIVE GATE - TRANSCRIPT (isolated, exclusive interval)
+run at: 2026-08-12T06:23:51.505Z
+isolated data dir: D:\Programs\CodexBrainB\tmp\papers-036-LJEw3I
+compact presentation bound: 340px
+creator Papers pids before: [36456,37472,37616,39540,40748]
+
+PASS - creator installed Papers enumerated before (observed only) :: [36456,37472,37616,39540,40748]
+PASS - twelve disposable target windows launched :: AYG-015R3-44884-7ec6f26b AYG-015R3-3648-4be8972e AYG-015R3-38908-d815d04d AYG-015R3-36152-b15b9f59 AYG-015R3-13224-a244f067 AYG-015R3-40936-16491657 AYG-015R3-45864-49e22861 AYG-015R3-16724-705d77bc AYG-015R3-44940-4dd543c5 AYG-015R3-44444-d1d80f26 AYG-015R3-11288-78de1194 AYG-015R3-14828-030ec0e5
+PASS - isolated root PID captured with exact descendant set :: root=12812
+PASS - layout with six list-picked members seeded :: window-layout-96b96e8a-db4b-4813-be4d-2676ecade461
+PASS - 036 natural: the first open content-fits to the compact natural card (card <= bound, card == window) :: {"windowContent":{"w":340,"h":70},"cardRect":{"w":340,"h":70},"rows":1,"count":6,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":97,"lockVisible":true}
+PASS - 036 natural: balanced one-row card, every member inside, full controls, uniform gaps, safe lock padding :: {"windowContent":{"w":340,"h":70},"cardRect":{"w":340,"h":70},"rows":1,"count":6,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":97,"lockVisible":true}
+PASS - 036/035 attached card is a greyed placeholder while its widget is open: lock-only reattach, members disabled :: {"isPlaceholder":true,"membersDisabled":true,"hasReattach":true,"hasDetach":false,"controlCount":1}
+PASS - 036 narrow (< bound): the card FILLS the host (card == window content), no cap applied :: {"cardRect":{"w":184,"h":102},"windowContent":{"w":184,"h":252}}
+PASS - 036 narrow (< bound): members wrap into MORE rows from the actual available width :: {"naturalRows":1,"narrowRows":2}
+PASS - 036 narrow (< bound): every member fully inside, full controls, uniform gaps, safe padding :: {"windowContent":{"w":184,"h":252},"cardRect":{"w":184,"h":102},"rows":2,"count":6,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":19,"lockVisible":true}
+PASS - 036 very-wide host (> bound): the card stays at the compact bound and is NOT stretched to the host width :: {"cardRect":{"w":340,"h":70},"windowContent":{"w":684,"h":252}}
+PASS - 036 very-wide host (> bound): the card does NOT elongate (rows stable at the compact bound, no clip/overflow) :: {"naturalRows":1,"wideRows":1}
+PASS - 036 very-wide host (> bound): excess host width is a balanced centered margin (host - card >= 100px) :: {"hostMinusCard":344,"windowContent":{"w":684,"h":252},"cardRect":{"w":340,"h":70}}
+PASS - 036 persisted geometry records the HOST width (user-resized window content size) :: {"persisted":{"width":684,"height":252},"host":{"w":684,"h":252}}
+PASS - 036 reattach: the attached card is live again (detach lock, no placeholder) :: {"w":340,"h":70,"isPlaceholder":false,"controls":["pick","list","min-all","restore-all","isolate","detach"]}
+PASS - 036 EXACT parity: the attached card outer width == the compact-bound-capped host width (no border/content-box delta) :: {"attached":340,"expected":340,"persisted":{"width":684,"height":252}}
+PASS - 036 parity with the detached card: attached card == detached card at the same persisted geometry :: {"attached":340,"detached":340}
+PASS - 036 next detach reuses the persisted HOST geometry (window reopens at the saved width, card capped at the bound) :: {"persisted":{"width":684,"height":252},"reopened":{"w":684,"h":252},"card":{"w":340,"h":70}}
+PASS - 036 12 members at the natural compact bound: every member visible, wrapped, no clip :: {"windowContent":{"w":684,"h":252},"cardRect":{"w":340,"h":102},"rows":2,"count":12,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":97,"lockVisible":true}
+PASS - 036 12 members narrow (< bound): card fills the host and wraps into MORE rows, every member inside :: {"opened12Rows":2,"narrow12Rows":3,"narrow12":{"windowContent":{"w":184,"h":452},"cardRect":{"w":184,"h":134},"rows":3,"count":12,"fullyInside":true,"controlCount":6,"gapUniform":true,"lockPadding":19,"lockVisible":true}}
+PASS - 036 12 members very-wide host (> bound): the card stays capped at the compact bound, no elongation, no clip :: {"boundRows":2,"wideRows":2,"cardRect":{"w":340,"h":102},"windowContent":{"w":684,"h":252}}
+PASS - creator installed Papers untouched after run :: before=[36456,37472,37616,39540,40748] after=[36456,37472,37616,39540,40748]
+
+FINAL SUMMARY: 22/22 passed, 0 failed.
