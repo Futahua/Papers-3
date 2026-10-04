@@ -13,6 +13,7 @@ class FakeWindow {
   visible = true;
   loadedUrls: string[] = [];
   setBounds = vi.fn((bounds) => { this.bounds = { ...bounds }; });
+  setPosition = vi.fn((x: number, y: number) => { this.bounds = { ...this.bounds, x, y }; });
   getBounds = vi.fn(() => ({ ...this.bounds }));
   setContentSize = vi.fn((width: number, height: number) => { this.bounds = { ...this.bounds, width, height }; });
   focus = vi.fn();
@@ -196,11 +197,12 @@ describe('compact widget session', () => {
     const drag = h.listeners.get('papers:backpack:widget-drag')!;
     drag({ sender: { id: window.webContents.id } }, { token, phase: 'begin', x: 100, y: 90 });
     drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 150, y: 130 });
-    expect(window.setBounds).toHaveBeenLastCalledWith({ x: 50, y: 40, width: 420, height: 180 });
+    expect(window.setPosition).toHaveBeenLastCalledWith(50, 40);
+    expect(window.getBounds()).toEqual({ x: 50, y: 40, width: 420, height: 180 });
     drag({ sender: { id: window.webContents.id } }, { token, phase: 'end', x: 150, y: 130 });
-    const calls = window.setBounds.mock.calls.length;
+    const calls = window.setPosition.mock.calls.length;
     drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 180, y: 160 });
-    expect(window.setBounds.mock.calls).toHaveLength(calls);
+    expect(window.setPosition.mock.calls).toHaveLength(calls);
   });
 
   it('Alt+Q starting inside a visible widget hides it once and never follows while held', async () => {
@@ -370,16 +372,16 @@ describe('compact widget session', () => {
       const target = h.windows[1]!;
 
       await expect(h.session.beginAltQGesture(null)).resolves.toBe(true);
-      expect(target.setBounds).toHaveBeenLastCalledWith({ x: 890, y: 531, width: 420, height: 180 });
+      expect(target.setPosition).toHaveBeenLastCalledWith(890, 531);
       expect(target.focus).not.toHaveBeenCalled();
       expect(target.hide).not.toHaveBeenCalled();
       h.session.endAltQGesture();
 
-      const callsAtRelease = target.setBounds.mock.calls.length;
+      const callsAtRelease = target.setPosition.mock.calls.length;
       cursor.x = 800;
       cursor.y = 500;
       await vi.advanceTimersByTimeAsync(32);
-      expect(target.setBounds).toHaveBeenCalledTimes(callsAtRelease);
+      expect(target.setPosition).toHaveBeenCalledTimes(callsAtRelease);
     } finally {
       vi.useRealTimers();
     }
@@ -401,13 +403,13 @@ describe('compact widget session', () => {
       cursor.y = 50;
       h.session.beginAltQGesture(inside.webContents.id);
       h.session.endAltQGesture();
-      const beforeMove = followed.setBounds.mock.calls.length;
+      const beforeMove = followed.setPosition.mock.calls.length;
       cursor.x = 800;
       cursor.y = 500;
       await vi.advanceTimersByTimeAsync(16);
 
       expect(inside.hide).toHaveBeenCalledOnce();
-      expect(followed.setBounds.mock.calls.length).toBeGreaterThan(beforeMove);
+      expect(followed.setPosition.mock.calls.length).toBeGreaterThan(beforeMove);
     } finally {
       vi.useRealTimers();
     }
@@ -423,10 +425,10 @@ describe('compact widget session', () => {
     target.visible = false;
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
-    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 115, width: 420, height: 180 });
+    expect(target.setPosition).toHaveBeenLastCalledWith(327, 115);
     expect(target.restore).toHaveBeenCalledOnce();
     expect(target.show).not.toHaveBeenCalled();
-    expect(target.setBounds.mock.invocationCallOrder[0]).toBeLessThan(target.restore.mock.invocationCallOrder[0]!);
+    expect(target.setPosition.mock.invocationCallOrder[0]).toBeLessThan(target.restore.mock.invocationCallOrder[0]!);
     expect(target.isVisible()).toBe(true);
     expect(target.focus).not.toHaveBeenCalled();
     expect(target.moveTop).toHaveBeenCalledOnce();
@@ -442,19 +444,19 @@ describe('compact widget session', () => {
       await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
       const target = h.windows[0]!;
       expect(await h.session.bringLatestToCursor()).toBe(true);
-      expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 115, width: 420, height: 180 });
+      expect(target.setPosition).toHaveBeenLastCalledWith(327, 115);
 
       cursor.x = 800;
       cursor.y = 500;
       await vi.advanceTimersByTimeAsync(16);
-      expect(target.setBounds).toHaveBeenLastCalledWith({ x: 590, y: 331, width: 420, height: 180 });
+      expect(target.setPosition).toHaveBeenLastCalledWith(590, 331);
 
       h.session.stopFollowing();
-      const callsAtRelease = target.setBounds.mock.calls.length;
+      const callsAtRelease = target.setPosition.mock.calls.length;
       cursor.x = 900;
       cursor.y = 600;
       await vi.advanceTimersByTimeAsync(64);
-      expect(target.setBounds).toHaveBeenCalledTimes(callsAtRelease);
+      expect(target.setPosition).toHaveBeenCalledTimes(callsAtRelease);
     } finally {
       vi.useRealTimers();
     }
@@ -471,7 +473,7 @@ describe('compact widget session', () => {
     expect(await h.session.bringLatestToCursor()).toBe(true);
     expect(target.restore).toHaveBeenCalledOnce();
     expect(target.isVisible()).toBe(true);
-    expect(target.setBounds).toHaveBeenLastCalledWith({ x: 327, y: 115, width: 420, height: 180 });
+    expect(target.setPosition).toHaveBeenLastCalledWith(327, 115);
     h.session.stopFollowing();
   });
 
@@ -509,7 +511,7 @@ describe('compact widget session', () => {
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
-    expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: -208, y: -165, width: 420, height: 180 });
+    expect(h.windows[0]!.setPosition).toHaveBeenLastCalledWith(-208, -165);
     h.session.stopFollowing();
   });
 
@@ -518,7 +520,7 @@ describe('compact widget session', () => {
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
 
     expect(await h.session.bringLatestToCursor()).toBe(true);
-    expect(h.windows[0]!.setBounds).toHaveBeenLastCalledWith({ x: 988, y: 629, width: 420, height: 180 });
+    expect(h.windows[0]!.setPosition).toHaveBeenLastCalledWith(988, 629);
     h.session.stopFollowing();
   });
 
@@ -531,7 +533,7 @@ describe('compact widget session', () => {
     expect(target.showInactive).toHaveBeenCalledOnce();
     expect(target.focus).not.toHaveBeenCalled();
     expect(target.moveTop).toHaveBeenCalledOnce();
-    expect(target.setBounds.mock.invocationCallOrder[0]).toBeLessThan(target.showInactive.mock.invocationCallOrder[0]!);
+    expect(target.setPosition.mock.invocationCallOrder[0]).toBeLessThan(target.showInactive.mock.invocationCallOrder[0]!);
     h.session.stopFollowing();
   });
 });

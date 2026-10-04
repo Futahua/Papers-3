@@ -44,6 +44,7 @@ export interface CompactWidgetWindow {
     on(event: 'render-process-gone', callback: () => void): void;
   };
   setBounds(bounds: WindowBounds): void;
+  setPosition(x: number, y: number): void;
   getBounds(): WindowBounds;
   setContentSize(width: number, height: number): void;
   focus(): void;
@@ -185,12 +186,14 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     if (entry.closing || entry.window.isDestroyed()) return;
     const point = deps.screen.getCursorScreenPoint();
     const bounds = entry.window.getBounds();
-    const next = {
-      ...bounds,
-      x: Math.round(point.x - bounds.width / 2),
-      y: Math.round(point.y - Math.max(0, bounds.height - COMPACT_WIDGET_CURSOR_BOTTOM_INSET)),
-    };
-    if (next.x !== bounds.x || next.y !== bounds.y) entry.window.setBounds(next);
+    const x = Math.round(point.x - bounds.width / 2);
+    const y = Math.round(point.y - Math.max(0, bounds.height - COMPACT_WIDGET_CURSOR_BOTTOM_INSET));
+    // Alt+Q is a MOVE gesture, never a resize. setBounds() resubmits width
+    // and height on every 16 ms tick; across mixed-DPI displays Windows can
+    // turn that nominally identical size into a client resize, which makes the
+    // widget's resize observer persist/reapply a larger card. Use the native
+    // position-only operation so following the pointer cannot mutate size.
+    if (x !== bounds.x || y !== bounds.y) entry.window.setPosition(x, y);
   };
 
   const followCursor = (entry: WidgetEntry): void => {
@@ -308,13 +311,14 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       activeDrag = null;
       return;
     }
-    const bounds = entry.window.getBounds();
-    entry.window.setBounds({
-      x: Math.round(raw.x - activeDrag.offsetX),
-      y: Math.round(raw.y - activeDrag.offsetY),
-      width: bounds.width,
-      height: bounds.height,
-    });
+    // Blank-surface mouse dragging is also position-only. Resubmitting the
+    // current width/height through setBounds() can produce a client resize on
+    // mixed-DPI transitions and feed the widget's own size persistence loop.
+    // A move must never make the card larger.
+    entry.window.setPosition(
+      Math.round(raw.x - activeDrag.offsetX),
+      Math.round(raw.y - activeDrag.offsetY),
+    );
   };
 
   const displayEvents: Array<'display-metrics-changed' | 'display-added' | 'display-removed'> = ['display-metrics-changed', 'display-added', 'display-removed'];

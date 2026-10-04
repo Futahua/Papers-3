@@ -612,8 +612,28 @@ Post-mortem browser behavior parity and account-login compatibility on 2026-10-0
 - Papers typecheck: pass;
 - full Papers suite: **1353 pass / 8 skipped / 0 fail**.
 
-Next deployment step: rebuild the isolated `release-parity` Papers package, copy
-AYG/Proxima/current Delegate Wave runtime roots beside the package, seed only that package's
-UTF-8/no-BOM registry/project bindings, remap only packaged AYG action targets to working local
-paths, and reopen it for real X/ChatGPT login testing. Do not mutate installed/live Papers data
-or either original repository branch.
+Widget/state/hotkey repair on 2026-10-04:
+
+- AYG durable state must not live inside a disposable release package root. The recovered creator
+  state (17,663-byte state.json, including the added ChatGPT shortcut) is now rooted at
+  C:\\Users\\admin\\Documents\\Papers-Refactored-Runtime\\Backpacks\\As you Go and current package
+  bindings point there; future package rebuilds must preserve this stable root;
+- the smaller state created by the failed restart was backed up before switching roots;
+- compact-widget movement was using setBounds(x,y,width,height) for both Alt+Q follow and ordinary
+  blank-surface mouse drag. On mixed-DPI movement that can turn a move into a resize and feed size
+  persistence. Both paths now use position-only setPosition(x,y); focused widget tests are 27/27;
+- the May Startup SlopTop script was replaced (after backup) with the newer repo
+  apps/papers/tools/sloptop/sloptop_engine.ahk and is running;
+- Windows .lnk hotkey handling made Alt+Shift+A extremely slow. Papers.lnk now has no shell hotkey;
+  the repo helper apps/papers/tools/hotkeys/open-papers-alt-shift-a.ahk owns Alt+Shift+A instead,
+  directly activates an existing Papers HWND, and uses Papers.lnk only as a launch fallback;
+- Papers.lnk targets the current isolated refactor package, and the hotkey helper has its own
+  Startup shortcut so the fast path survives reboot;
+- release-widgetfix is the current isolated package output, carries the browser profile/data, and
+  binds AYG to the stable runtime root above.
+
+Current validation after the widget move repair: compact-widget focused suite **27/27 pass**,
+Papers typecheck pass. The full Papers suite had **1353 pass / 8 skipped** plus one transient
+Windows EPERM rename in runService temp-data cleanup; rerunning runService + compact-widget tests
+immediately after gave **38/38 pass**. Do not report that full run as perfectly green without
+noting the transient unhandled EPERM.
