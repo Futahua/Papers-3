@@ -58,6 +58,7 @@ export interface BrowserTabState {
 }
 
 export interface BrowserOpenRequest {
+  tabId: string;
   url: string;
   activate: boolean;
 }
@@ -113,7 +114,6 @@ export interface WebBrowserHostBridge {
 }
 
 const BROWSER_PARTITION = 'persist:papers-web-browser';
-const MAX_LIVE_TABS_PER_OWNER = 3;
 const MAX_PENDING_OPEN_REQUESTS = 32;
 const MAX_RECENT_DOWNLOADS = 50;
 const hardenedBrowserSessions = new WeakSet<Session>();
@@ -593,9 +593,9 @@ export function createWebBrowserHostBridge(input: {
   let blocker: ElectronBlocker | null = null;
   let blockerPromise: Promise<ElectronBlocker> | null = null;
   const tabKey = (ownerKey: string, tabId: string): string => ownerKey + '\n' + tabId;
-  const queueOpenRequest = (ownerKey: string, url: string, activate: boolean): void => {
+  const queueOpenRequest = (ownerKey: string, tabId: string, url: string, activate: boolean): void => {
     const queue = openRequests.get(ownerKey) ?? [];
-    queue.push({ url, activate });
+    queue.push({ tabId, url, activate });
     if (queue.length > MAX_PENDING_OPEN_REQUESTS) queue.splice(0, queue.length - MAX_PENDING_OPEN_REQUESTS);
     openRequests.set(ownerKey, queue);
   };
@@ -883,29 +883,14 @@ export function createWebBrowserHostBridge(input: {
     tab.view.setBounds(absoluteRect(tab.surfaceBounds, tab.localRect));
   };
 
-  const enforceLiveLimit = (ownerKey: string, keepTabId: string): void => {
-    const live = [...(ownerTabs.get(ownerKey) ?? [])]
-      .map((id) => tabs.get(tabKey(ownerKey, id)))
-      .filter((tab): tab is DurableBrowserTab => Boolean(tab?.view && !tab.view.webContents.isDestroyed()));
-    const candidates = live
-      .filter((tab) => tab.tabId !== keepTabId)
-      .sort((left, right) => left.lastActiveAt - right.lastActiveAt);
-    while (live.length > MAX_LIVE_TABS_PER_OWNER && candidates.length > 0) {
-      const victim = candidates.shift();
-      if (!victim) break;
-      hibernateTab(victim);
-      live.splice(live.indexOf(victim), 1);
-    }
-  };
-
   const wireTabView = (tab: DurableBrowserTab, view: WebContentsView): void => {
     const contents = view.webContents;
     hardenBrowserSession(contents.session);
     enableBrowserDownloads(contents.session);
     void syncAdblockSession(contents.session);
-    // Browser tabs are real long-lived web apps, not previews. Throttling a
-    // covered/background tab can stall streaming responses and auth flows.
-    // Memory is bounded separately by MAX_LIVE_TABS_PER_OWNER + hibernation.
+    // Browser tabs are real long-lived web apps, not previews. Throttling or
+    // silently discarding a covered tab can stall/kill streaming responses,
+    // auth flows, service workers, and in-memory application state.
     contents.setBackgroundThrottling(false);
     contents.on('will-navigate', (event, nextUrl) => {
       if (safeWebUrl(nextUrl)) return;
@@ -931,8 +916,46 @@ export function createWebBrowserHostBridge(input: {
     });
     contents.setWindowOpenHandler(({ url: nextUrl, disposition }) => {
       const safe = safeWebUrl(nextUrl);
-      if (safe) queueOpenRequest(tab.ownerKey, safe, disposition !== 'background-tab');
-      return { action: 'deny' };
+      if (!safe) return { action: 'deny' };
+      const childTabId = randomUUID();
+      const activate = disposition !== 'background-tab';
+      return {
+        action: 'allow',
+        outlivesOpener: true,
+        createWindow: () => {
+          const childView = new WebContentsView({
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              sandbox: true,
+              webSecurity: true,
+              partition: BROWSER_PARTITION,
+            },
+          });
+          const childTab: DurableBrowserTab = {
+            tabId: childTabId,
+            ownerKey: tab.ownerKey,
+            window: tab.window,
+            view: childView,
+            localRect: { ...tab.localRect },
+            surfaceBounds: { ...tab.surfaceBounds },
+            presented: false,
+            url: safe,
+            title: '',
+            zoomFactor: 1,
+            lastActiveAt: Date.now(),
+            history: null,
+            crashed: false,
+          };
+          tabs.set(tabKey(tab.ownerKey, childTabId), childTab);
+          const ids = ownerTabs.get(tab.ownerKey) ?? new Set<string>();
+          ids.add(childTabId);
+          ownerTabs.set(tab.ownerKey, ids);
+          wireTabView(childTab, childView);
+          queueOpenRequest(tab.ownerKey, childTabId, safe, activate);
+          return childView.webContents;
+        },
+      };
     });
     contents.once('destroyed', () => {
       if (tab.view === view) tab.view = null;
@@ -980,7 +1003,6 @@ export function createWebBrowserHostBridge(input: {
     tab.lastActiveAt = Date.now();
     activeTabs.set(tab.ownerKey, tab.tabId);
     await presentTab(tab);
-    enforceLiveLimit(tab.ownerKey, tab.tabId);
   };
 
   const cleanupTab = (tab: DurableBrowserTab): void => {
@@ -1164,8 +1186,6 @@ export function createWebBrowserHostBridge(input: {
         } else {
           tab.lastActiveAt = Date.now();
           await ensureTabView(tab);
-          const activeId = activeTabs.get(tab.ownerKey);
-          if (activeId) enforceLiveLimit(tab.ownerKey, activeId);
         }
         return { ok: true, tab: tabState(tab) };
       } catch (error) {

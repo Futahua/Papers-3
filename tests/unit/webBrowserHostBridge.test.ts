@@ -224,7 +224,7 @@ describe('durable browser tabs', () => {
     }
   });
 
-  it('keeps at most three live Chromium views and restores a hibernated tab history', async () => {
+  it('keeps ordinary browser tabs live instead of silently discarding web-app runtime state', async () => {
     const window = new BaseWindow();
     const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });
     const ids = [
@@ -240,17 +240,14 @@ describe('durable browser tabs', () => {
     }
 
     expect(harness.views).toHaveLength(4);
-    expect(harness.views[0]!.webContents.close).toHaveBeenCalledTimes(1);
-    expect(bridge.getTab(ownerKey, ids[0]!)?.live).toBe(false);
+    expect(harness.views[0]!.webContents.close).not.toHaveBeenCalled();
+    expect(bridge.getTab(ownerKey, ids[0]!)?.live).toBe(true);
     expect(bridge.getTab(ownerKey, ids[3]!)?.live).toBe(true);
 
     const restored = await bridge.activateTab(context, ids[0]!, rect);
     expect(restored.ok).toBe(true);
-    expect(harness.views).toHaveLength(5);
-    expect(harness.views[4]!.webContents.navigationHistory.restore).toHaveBeenCalledWith({
-      entries: [{ url: 'https://example.com/watch', title: 'Example', pageState: 'state' }],
-      index: 0,
-    });
+    expect(harness.views).toHaveLength(4);
+    expect(harness.views[0]!.webContents.navigationHistory.restore).not.toHaveBeenCalled();
   });
 
   it('supports navigation commands on a live tab', async () => {
@@ -270,7 +267,7 @@ describe('durable browser tabs', () => {
     expect(contents.reload).toHaveBeenCalledTimes(1);
   });
 
-  it('queues target-blank and middle-click navigation as separate durable tabs without navigating the source', async () => {
+  it('creates a real managed child WebContents for target-blank and middle-click navigation', async () => {
     const window = new BaseWindow();
     const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });
     const sourceId = '56565656-5656-4565-8565-565656565656';
@@ -280,32 +277,38 @@ describe('durable browser tabs', () => {
     const handler = sourceContents.setWindowOpenHandler.mock.calls.at(-1)?.[0];
     expect(typeof handler).toBe('function');
 
-    expect(handler({
+    const backgroundOpen = handler({
       url: 'https://chatgpt.com/c/background',
       disposition: 'background-tab',
-    })).toEqual({ action: 'deny' });
-    expect(handler({
+    });
+    expect(backgroundOpen.action).toBe('allow');
+    expect(typeof backgroundOpen.createWindow).toBe('function');
+    backgroundOpen.createWindow({});
+
+    const foregroundOpen = handler({
       url: 'https://example.com/foreground',
       disposition: 'foreground-tab',
-    })).toEqual({ action: 'deny' });
+    });
+    expect(foregroundOpen.action).toBe('allow');
+    expect(typeof foregroundOpen.createWindow).toBe('function');
+    foregroundOpen.createWindow({});
     expect(sourceContents.loadURL).toHaveBeenCalledTimes(1);
 
-    expect(bridge.takeOpenRequests(ownerKey)).toEqual([
-      { url: 'https://chatgpt.com/c/background', activate: false },
-      { url: 'https://example.com/foreground', activate: true },
-    ]);
+    const requests = bridge.takeOpenRequests(ownerKey);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]).toEqual(expect.objectContaining({
+      url: 'https://chatgpt.com/c/background',
+      activate: false,
+      tabId: expect.any(String),
+    }));
+    expect(requests[1]).toEqual(expect.objectContaining({
+      url: 'https://example.com/foreground',
+      activate: true,
+      tabId: expect.any(String),
+    }));
+    expect(bridge.getTab(ownerKey, requests[0]!.tabId)?.live).toBe(true);
+    expect(bridge.getTab(ownerKey, requests[1]!.tabId)?.live).toBe(true);
     expect(bridge.takeOpenRequests(ownerKey)).toEqual([]);
-
-    const addCallsBefore = harness.window.addChildView.mock.calls.length;
-    const background = await bridge.openTab(
-      context,
-      '57575757-5757-4575-8575-575757575757',
-      'https://chatgpt.com/c/background',
-      rect,
-      false,
-    );
-    expect(background.ok).toBe(true);
-    expect(harness.window.addChildView).toHaveBeenCalledTimes(addCallsBefore);
     expect(bridge.getTab(ownerKey, sourceId)?.live).toBe(true);
   });
 
