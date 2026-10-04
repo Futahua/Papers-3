@@ -1,3 +1,8 @@
+import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import * as path from 'node:path';
+import { promisify } from 'node:util';
+
 /**
  * Delegate Wave relay — the narrowest host seam that lets ONE bound Backpack
  * reach the machine-local delegate-wave Control API.
@@ -241,6 +246,77 @@ export interface DelegateWaveConfig {
   readonly token: string | undefined;
   /** The one Backpack id permitted to use this seam. */
   readonly backpackId: string | undefined;
+}
+
+const execFileAsync = promisify(execFile);
+const DEFAULT_DELEGATE_WAVE_DATA_ROOT = 'D:\\AssistantSystem\\delegate-wave';
+const DELEGATE_WAVE_OPERATOR_SECRET_FILE = 'control-secrets.dpapi';
+const DPAPI_UNPROTECT_SCRIPT = `
+Add-Type -AssemblyName System.Security
+$protected = [Convert]::FromBase64String($env:DELEGATE_WAVE_SECRET_BLOB)
+$bytes = [System.Security.Cryptography.ProtectedData]::Unprotect($protected, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+[Text.Encoding]::UTF8.GetString($bytes)
+`;
+
+async function unprotectOperatorRecord(blob: string): Promise<string> {
+  const { stdout } = await execFileAsync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    DPAPI_UNPROTECT_SCRIPT,
+  ], {
+    windowsHide: true,
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+    env: { ...process.env, DELEGATE_WAVE_SECRET_BLOB: blob },
+  });
+  return stdout.trim();
+}
+
+export async function readConfigFromMachine(options: {
+  env?: NodeJS.ProcessEnv;
+  backpackId?: string;
+  platform?: NodeJS.Platform;
+  dataRoot?: string;
+  readSecretFile?: (filePath: string) => Promise<string>;
+  decryptOperator?: (blob: string) => Promise<string>;
+} = {}): Promise<DelegateWaveConfig> {
+  const env = options.env ?? process.env;
+  const configured = readConfigFromEnvironment(env);
+  const backpackId = configured.backpackId ?? options.backpackId;
+  if (configured.token || (options.platform ?? process.platform) !== 'win32') {
+    return { ...configured, backpackId };
+  }
+
+  const dataRoot = options.dataRoot
+    ?? env['DELEGATE_WAVE_DATA_ROOT']
+    ?? DEFAULT_DELEGATE_WAVE_DATA_ROOT;
+  const secretFile = path.join(dataRoot, 'config', DELEGATE_WAVE_OPERATOR_SECRET_FILE);
+  const readSecret = options.readSecretFile ?? ((filePath: string) => readFile(filePath, 'utf8'));
+  const decrypt = options.decryptOperator ?? unprotectOperatorRecord;
+  try {
+    const raw = (await readSecret(secretFile)).trim();
+    // Delegate Wave deliberately refuses lazy migration of its old combined
+    // credential bundle. Papers follows the same rule and only reads the
+    // scoped operator record.
+    if (!raw.startsWith('{')) return { ...configured, backpackId };
+    const parsed = JSON.parse(raw) as { version?: unknown; records?: Record<string, unknown> };
+    const blob = parsed.version === 1 && parsed.records && typeof parsed.records['operator'] === 'string'
+      ? parsed.records['operator']
+      : null;
+    if (!blob) return { ...configured, backpackId };
+    const plaintext = await decrypt(blob);
+    const operator = JSON.parse(plaintext) as Record<string, unknown>;
+    const token = typeof operator['DELEGATE_WAVE_CONTROL_TOKEN'] === 'string'
+      ? operator['DELEGATE_WAVE_CONTROL_TOKEN']
+      : undefined;
+    return { ...configured, token, backpackId };
+  } catch {
+    // A missing/malformed DPAPI store keeps the existing fail-closed
+    // NOT_CONFIGURED behavior. Never leak the secret path or decrypt error to
+    // a Backpack renderer.
+    return { ...configured, backpackId };
+  }
 }
 
 export function readConfigFromEnvironment(env: NodeJS.ProcessEnv = process.env): DelegateWaveConfig {

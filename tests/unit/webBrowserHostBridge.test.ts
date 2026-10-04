@@ -270,6 +270,45 @@ describe('durable browser tabs', () => {
     expect(contents.reload).toHaveBeenCalledTimes(1);
   });
 
+  it('queues target-blank and middle-click navigation as separate durable tabs without navigating the source', async () => {
+    const window = new BaseWindow();
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });
+    const sourceId = '56565656-5656-4565-8565-565656565656';
+    const source = await bridge.openTab(context, sourceId, 'https://chatgpt.com/c/source', rect);
+    expect(source.ok).toBe(true);
+    const sourceContents = harness.views.at(-1)!.webContents;
+    const handler = sourceContents.setWindowOpenHandler.mock.calls.at(-1)?.[0];
+    expect(typeof handler).toBe('function');
+
+    expect(handler({
+      url: 'https://chatgpt.com/c/background',
+      disposition: 'background-tab',
+    })).toEqual({ action: 'deny' });
+    expect(handler({
+      url: 'https://example.com/foreground',
+      disposition: 'foreground-tab',
+    })).toEqual({ action: 'deny' });
+    expect(sourceContents.loadURL).toHaveBeenCalledTimes(1);
+
+    expect(bridge.takeOpenRequests(ownerKey)).toEqual([
+      { url: 'https://chatgpt.com/c/background', activate: false },
+      { url: 'https://example.com/foreground', activate: true },
+    ]);
+    expect(bridge.takeOpenRequests(ownerKey)).toEqual([]);
+
+    const addCallsBefore = harness.window.addChildView.mock.calls.length;
+    const background = await bridge.openTab(
+      context,
+      '57575757-5757-4575-8575-575757575757',
+      'https://chatgpt.com/c/background',
+      rect,
+      false,
+    );
+    expect(background.ok).toBe(true);
+    expect(harness.window.addChildView).toHaveBeenCalledTimes(addCallsBefore);
+    expect(bridge.getTab(ownerKey, sourceId)?.live).toBe(true);
+  });
+
   it('scopes the same persisted tab id independently per owning surface', async () => {
     const window = new BaseWindow();
     const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });

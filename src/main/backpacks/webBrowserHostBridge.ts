@@ -57,6 +57,11 @@ export interface BrowserTabState {
   crashed: boolean;
 }
 
+export interface BrowserOpenRequest {
+  url: string;
+  activate: boolean;
+}
+
 export interface BrowserDownloadState {
   id: string;
   filename: string;
@@ -85,7 +90,7 @@ export interface WebBrowserHostBridge {
   ): Promise<{ ok: true; sessionId: string; url: string } | { ok: false; error?: string }>;
   move(ownerKey: string, sessionId: string, localRect: PreviewRect): boolean;
   close(ownerKey: string, sessionId: string): boolean;
-  openTab(context: PreviewHostContext, tabId: string, url: string, localRect: PreviewRect): Promise<BrowserTabResult>;
+  openTab(context: PreviewHostContext, tabId: string, url: string, localRect: PreviewRect, activate?: boolean): Promise<BrowserTabResult>;
   activateTab(context: PreviewHostContext, tabId: string, localRect: PreviewRect): Promise<BrowserTabResult>;
   navigateTab(ownerKey: string, tabId: string, url: string): Promise<BrowserTabResult>;
   commandTab(ownerKey: string, tabId: string, command: 'back' | 'forward' | 'reload'): BrowserTabResult;
@@ -93,6 +98,7 @@ export interface WebBrowserHostBridge {
   closeTab(ownerKey: string, tabId: string): boolean;
   setTabsVisible(ownerKey: string, visible: boolean): void;
   getTab(ownerKey: string, tabId: string): BrowserTabState | null;
+  takeOpenRequests(ownerKey: string): BrowserOpenRequest[];
   getDownloads(): Promise<BrowserDownloadState[]>;
   showDownloadsBubble(ownerKey: string, localRect: PreviewRect): Promise<boolean>;
   hideDownloadsBubble(ownerKey: string, immediate?: boolean): void;
@@ -108,6 +114,7 @@ export interface WebBrowserHostBridge {
 
 const BROWSER_PARTITION = 'persist:papers-web-browser';
 const MAX_LIVE_TABS_PER_OWNER = 3;
+const MAX_PENDING_OPEN_REQUESTS = 32;
 const MAX_RECENT_DOWNLOADS = 50;
 const hardenedBrowserSessions = new WeakSet<Session>();
 
@@ -546,6 +553,7 @@ export function createWebBrowserHostBridge(input: {
   const tabs = new Map<string, DurableBrowserTab>();
   const ownerTabs = new Map<string, Set<string>>();
   const activeTabs = new Map<string, string>();
+  const openRequests = new Map<string, BrowserOpenRequest[]>();
   const downloads: BrowserDownloadState[] = [];
   const downloadStore = input.downloadHistoryFile && input.downloadRecoveryDir
     ? new AtomicJsonStore(input.downloadHistoryFile, {
@@ -585,6 +593,12 @@ export function createWebBrowserHostBridge(input: {
   let blocker: ElectronBlocker | null = null;
   let blockerPromise: Promise<ElectronBlocker> | null = null;
   const tabKey = (ownerKey: string, tabId: string): string => ownerKey + '\n' + tabId;
+  const queueOpenRequest = (ownerKey: string, url: string, activate: boolean): void => {
+    const queue = openRequests.get(ownerKey) ?? [];
+    queue.push({ url, activate });
+    if (queue.length > MAX_PENDING_OPEN_REQUESTS) queue.splice(0, queue.length - MAX_PENDING_OPEN_REQUESTS);
+    openRequests.set(ownerKey, queue);
+  };
 
   const cleanupDownloadBubble = (ownerKey: string): void => {
     const bubble = downloadBubbles.get(ownerKey);
@@ -915,9 +929,9 @@ export function createWebBrowserHostBridge(input: {
       tab.zoomFactor = Math.max(0.5, Math.min(2.5, Number((tab.zoomFactor * factor).toFixed(3))));
       contents.setZoomFactor(tab.zoomFactor);
     });
-    contents.setWindowOpenHandler(({ url: nextUrl }) => {
+    contents.setWindowOpenHandler(({ url: nextUrl, disposition }) => {
       const safe = safeWebUrl(nextUrl);
-      if (safe) void contents.loadURL(safe).catch(() => {});
+      if (safe) queueOpenRequest(tab.ownerKey, safe, disposition !== 'background-tab');
       return { action: 'deny' };
     });
     contents.once('destroyed', () => {
@@ -1103,7 +1117,7 @@ export function createWebBrowserHostBridge(input: {
       return true;
     },
 
-    async openTab(context, tabId, rawUrl, localRect) {
+    async openTab(context, tabId, rawUrl, localRect, activate = true) {
       const url = safeWebUrl(rawUrl);
       if (!url) return { ok: false, error: 'Only http and https links can open in the browser.' };
       if (!/^[A-Za-z0-9._:-]{1,128}$/.test(tabId)) return { ok: false, error: 'Invalid browser tab id.' };
@@ -1145,7 +1159,14 @@ export function createWebBrowserHostBridge(input: {
       }
 
       try {
-        await activateDurableTab(tab);
+        if (activate) {
+          await activateDurableTab(tab);
+        } else {
+          tab.lastActiveAt = Date.now();
+          await ensureTabView(tab);
+          const activeId = activeTabs.get(tab.ownerKey);
+          if (activeId) enforceLiveLimit(tab.ownerKey, activeId);
+        }
         return { ok: true, tab: tabState(tab) };
       } catch (error) {
         return { ok: false, error: boundedError(error) };
@@ -1220,6 +1241,12 @@ export function createWebBrowserHostBridge(input: {
       const tab = tabs.get(tabKey(ownerKey, tabId));
       if (!tab || tab.ownerKey !== ownerKey) return null;
       return tabState(tab);
+    },
+
+    takeOpenRequests(ownerKey) {
+      const queued = openRequests.get(ownerKey) ?? [];
+      openRequests.delete(ownerKey);
+      return queued.map((request) => ({ ...request }));
     },
 
     async getDownloads() {
@@ -1337,6 +1364,7 @@ export function createWebBrowserHostBridge(input: {
     },
 
     closeOwner(ownerKey) {
+      openRequests.delete(ownerKey);
       cleanupDownloadBubble(ownerKey);
       closeOwner(ownerKey);
       closeOwnerTabs(ownerKey);

@@ -4,6 +4,7 @@ import {
   DelegateWaveRelay,
   isDelegateWaveOperation,
   readConfigFromEnvironment,
+  readConfigFromMachine,
   type DelegateWaveConfig,
 } from '../../src/main/delegateWave/delegateWaveRelay';
 
@@ -254,5 +255,63 @@ describe('DelegateWaveRelay', () => {
     expect(config.url).toBe('http://127.0.0.1:47321');
     expect(config.token).toBe('tok');
     expect(config.backpackId).toBe(BOUND);
+  });
+
+  it('restores the operator token from the scoped DPAPI store when Papers is launched directly', async () => {
+    const requested: string[] = [];
+    const decrypted: string[] = [];
+    const config = await readConfigFromMachine({
+      env: {} as NodeJS.ProcessEnv,
+      platform: 'win32',
+      backpackId: BOUND,
+      dataRoot: 'D:\\delegate-wave-test',
+      readSecretFile: async (filePath) => {
+        requested.push(filePath);
+        return JSON.stringify({ version: 1, records: { operator: 'operator-ciphertext' } });
+      },
+      decryptOperator: async (blob) => {
+        decrypted.push(blob);
+        return JSON.stringify({ DELEGATE_WAVE_CONTROL_TOKEN: 'dpapi-operator-token' });
+      },
+    });
+    expect(requested).toEqual(['D:\\delegate-wave-test\\config\\control-secrets.dpapi']);
+    expect(decrypted).toEqual(['operator-ciphertext']);
+    expect(config).toEqual({
+      url: 'http://127.0.0.1:47321',
+      token: 'dpapi-operator-token',
+      backpackId: BOUND,
+    });
+  });
+
+  it('prefers an injected operator token and keeps malformed machine stores fail-closed', async () => {
+    let decrypted = false;
+    const injected = await readConfigFromMachine({
+      env: {
+        DELEGATE_WAVE_CONTROL_TOKEN: 'launcher-token',
+        DELEGATE_WAVE_BACKPACK_ID: BOUND,
+      } as NodeJS.ProcessEnv,
+      platform: 'win32',
+      readSecretFile: async () => { throw new Error('must not read'); },
+      decryptOperator: async () => {
+        decrypted = true;
+        return '{}';
+      },
+    });
+    expect(injected.token).toBe('launcher-token');
+    expect(decrypted).toBe(false);
+
+    const malformed = await readConfigFromMachine({
+      env: {} as NodeJS.ProcessEnv,
+      platform: 'win32',
+      backpackId: BOUND,
+      readSecretFile: async () => 'legacy-combined-blob',
+      decryptOperator: async () => {
+        decrypted = true;
+        return '{}';
+      },
+    });
+    expect(malformed.token).toBeUndefined();
+    expect(malformed.backpackId).toBe(BOUND);
+    expect(decrypted).toBe(false);
   });
 });

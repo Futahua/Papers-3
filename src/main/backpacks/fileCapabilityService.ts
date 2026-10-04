@@ -963,7 +963,20 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'browser-tab-open': {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
             const url = boundedString(params.url, 'url', 8_192);
-            return await deps.webBrowser.openTab(context.nativePreviewHost, browserTabId(params.tabId), url, previewRect(params.rect));
+            return await deps.webBrowser.openTab(
+              context.nativePreviewHost,
+              browserTabId(params.tabId),
+              url,
+              previewRect(params.rect),
+              params.activate !== false,
+            );
+          }
+          case 'browser-tab-open-requests': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return {
+              ok: true,
+              requests: deps.webBrowser.takeOpenRequests(context.nativePreviewHost.ownerKey),
+            };
           }
           case 'browser-tab-activate': {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };

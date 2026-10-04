@@ -45,7 +45,7 @@ import { createPapersControlEventHub, startPapersControlServer, type PapersContr
 import { papersDataDirArgument } from './papersDataDir';
 import { createHash, randomUUID } from 'node:crypto';
 import { createCandidatePickerDelivery, type CandidatePickerDeliveryResult } from './windows/candidatePickerDelivery';
-import { DelegateWaveRelay, readConfigFromEnvironment } from './delegateWave/delegateWaveRelay';
+import { DelegateWaveRelay, readConfigFromMachine } from './delegateWave/delegateWaveRelay';
 import { registerHostIpc } from './ipc/hostIpc';
 import { registerProgramIpc } from './ipc/programIpc';
 import { registerWindowCapabilityIpc } from './ipc/windowCapabilityIpc';
@@ -567,6 +567,28 @@ function dockBoundsFor(content: { width: number; height: number }): {
   return { x: Math.max(0, content.width - width), y: TOP_BAR_HEIGHT, width, height };
 }
 
+function discoverDelegateWaveBackpackId(projectBindingsFile: string): string | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(projectBindingsFile, 'utf8')) as {
+      projects?: Record<string, { root?: unknown }>;
+    };
+    for (const [backpackId, binding] of Object.entries(parsed.projects ?? {})) {
+      if (!/^bp-[0-9a-f-]{36}$/i.test(backpackId) || typeof binding?.root !== 'string') continue;
+      try {
+        const projectPackage = JSON.parse(readFileSync(path.join(binding.root, 'package.json'), 'utf8')) as {
+          name?: unknown;
+        };
+        if (projectPackage.name === 'delegate-wave-backpack') return backpackId;
+      } catch {
+        // A missing project package is simply not the Delegate Wave binding.
+      }
+    }
+  } catch {
+    // The relay remains fail-closed if project bindings are unavailable.
+  }
+  return undefined;
+}
+
 async function bootstrap(): Promise<void> {
   // Claim Alt+A before any restored project renderer can receive keyboard
   // input. The first press may arrive before the command-surface window exists;
@@ -640,8 +662,9 @@ async function bootstrap(): Promise<void> {
 
   const registry = new BackpackRegistry(baseDir);
   const registryReport = await registry.initialize();
+  const backpackProjectBindingsFile = path.join(paths.root, 'backpack-projects.json');
   const backpackProjects = new BackpackProjectService(
-    path.join(paths.root, 'backpack-projects.json'),
+    backpackProjectBindingsFile,
     (target) => shell.openPath(target),
     async (target) => {
       const icon = await app.getFileIcon(target, { size: 'large' });
@@ -651,6 +674,9 @@ async function bootstrap(): Promise<void> {
       shell.showItemInFolder(target);
     },
   );
+  const delegateWaveConfig = await readConfigFromMachine({
+    backpackId: discoverDelegateWaveBackpackId(backpackProjectBindingsFile),
+  });
   installBackpackProjectProtocol(backpackProjects);
   const filePreviewResources = createFilePreviewResourceRegistry();
   protocol.handle(FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler(filePreviewResources));
@@ -1477,10 +1503,11 @@ async function bootstrap(): Promise<void> {
       const parentHwnd = handle.length >= 8 ? handle.readBigUInt64LE(0).toString() : BigInt(handle.readUInt32LE(0)).toString();
       return { ownerKey: `${context.windowId}:${context.surfaceId}`, parentHwnd, surfaceBounds };
     },
-    // Environment-only: URL, operator token and the one permitted Backpack id
-    // live in main and are never persisted, logged or exposed to a renderer.
+    // The operator token comes from the launcher environment when present, or
+    // from Delegate Wave's existing DPAPI-protected operator record otherwise.
+    // Plaintext stays in main and is never persisted, logged, or exposed.
     delegateWave: new DelegateWaveRelay(
-      readConfigFromEnvironment(),
+      delegateWaveConfig,
       (url, init) => fetch(url, init),
       () => randomUUID(),
     ),
@@ -1912,6 +1939,11 @@ async function bootstrap(): Promise<void> {
   // opaque bounded keys. Papers binds identities and routes bounded opaque
   // messages only; it never parses AYG state or commands.
   let hoverInputBridge: HoverInputBridge | null = null;
+  // Widgets can be restored before the native Alt+Q helper is constructed.
+  // Keep those HWND registrations instead of silently dropping them; otherwise
+  // the helper sees the cursor over a live widget as "outside" until that widget
+  // is recreated.
+  const pendingHoverWidgetRegistrations = new Map<number, Buffer>();
   widgetSession = createCompactWidgetSession({
     registry: widgetRegistry,
     screen: {
@@ -2015,7 +2047,10 @@ async function bootstrap(): Promise<void> {
       bindOwnedProjectSurface(widgetWindow, projectId, 'widget', owningWindowId);
       return widgetWindow;
     },
-    onWidgetRegistered: (senderId, handle) => hoverInputBridge?.registerWidget(senderId, handle),
+    onWidgetRegistered: (senderId, handle) => {
+      if (hoverInputBridge) hoverInputBridge.registerWidget(senderId, handle);
+      else pendingHoverWidgetRegistrations.set(senderId, Buffer.from(handle));
+    },
     onWidgetRemoved: (senderId) => {
       const pending = pendingHoverCaptures.get(senderId);
       if (pending?.opening) {
@@ -2030,6 +2065,7 @@ async function bootstrap(): Promise<void> {
         pendingWidgetSeals.delete(key);
         seal.reject(new Error('the source widget closed during Quick Run handoff'));
       }
+      pendingHoverWidgetRegistrations.delete(senderId);
       hoverInputBridge?.removeWidget(senderId);
     },
     isSurfaceOrigin: (senderId, projectId) => {
@@ -2209,6 +2245,12 @@ async function bootstrap(): Promise<void> {
     },
     onError: (message) => console.warn(`[papers] ${message}`),
   });
+  if (hoverInputBridge) {
+    for (const [senderId, handle] of pendingHoverWidgetRegistrations) {
+      hoverInputBridge.registerWidget(senderId, handle);
+    }
+    pendingHoverWidgetRegistrations.clear();
+  }
   const widgetPreviewWindows = new Map<number, BrowserWindow>();
   type PickerCandidate = { id: string; title: string; icon: string | null; current: boolean };
   type CandidatePickerSession = {
