@@ -42,7 +42,7 @@ class FakeWindow {
   loadURL = vi.fn(async (url: string) => { this.loadedUrls.push(url); });
 }
 
-function harness(cursor = { x: 537, y: 284 }) {
+function harness(cursor = { x: 537, y: 284 }, nativeMove = false) {
   const registry = new BackpackSurfaceRegistry();
   registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
   const windows: FakeWindow[] = [];
@@ -59,6 +59,8 @@ function harness(cursor = { x: 537, y: 284 }) {
     on: vi.fn((channel: string, handler: (event: { sender: { id: number } }, payload?: unknown) => void) => listeners.set(channel, handler)),
     removeListener: vi.fn(),
   };
+  const placeWidgetAtCursorNative = vi.fn(() => true);
+  const dragWidgetNative = vi.fn(() => true);
   const session = createCompactWidgetSession({
     registry,
     screen,
@@ -70,11 +72,48 @@ function harness(cursor = { x: 537, y: 284 }) {
       windows.push(window);
       return window as unknown as CompactWidgetWindow;
     },
+    ...(nativeMove ? { placeWidgetAtCursorNative, dragWidgetNative } : {}),
   });
-  return { registry, session, windows, listeners, screenListeners };
+  return { registry, session, windows, listeners, screenListeners, placeWidgetAtCursorNative, dragWidgetNative };
 }
 
 describe('compact widget session', () => {
+  it('uses the resident native move-only path for Alt+Q follow when available', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness({ x: 537, y: 284 }, true);
+      await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+      const window = h.windows[0]!;
+      expect(await h.session.bringLatestToCursor()).toBe(true);
+      expect(h.placeWidgetAtCursorNative).toHaveBeenCalledWith(window.webContents.id, 11);
+      expect(window.setPosition).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(50);
+      expect(h.placeWidgetAtCursorNative.mock.calls.length).toBeGreaterThan(1);
+      expect(window.setPosition).not.toHaveBeenCalled();
+      h.session.stopFollowing();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses the resident native move-only path for blank-surface drag when available', async () => {
+    const h = harness({ x: 100, y: 90 }, true);
+    h.session.registerIpc();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const window = h.windows[0]!;
+    const token = (window.webContents.send.mock.calls[0]![1] as { token: string }).token;
+    const drag = h.listeners.get('papers:backpack:widget-drag')!;
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'begin', x: 100, y: 90 });
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 140, y: 100 });
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'end', x: 140, y: 100 });
+    expect(h.dragWidgetNative.mock.calls).toEqual([
+      [window.webContents.id, 'begin'],
+      [window.webContents.id, 'move'],
+      [window.webContents.id, 'end'],
+    ]);
+    expect(window.setPosition).not.toHaveBeenCalled();
+  });
+
   it('can ensure a live widget without focusing or activating it', async () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });

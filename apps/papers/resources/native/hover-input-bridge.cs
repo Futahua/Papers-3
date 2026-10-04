@@ -183,6 +183,8 @@ internal static class HoverInputBridge
     [DllImport("user32.dll")] private static extern IntPtr DispatchMessage(ref MSG message);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr window, out RECT rect);
+    [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr window);
@@ -292,6 +294,36 @@ internal static class HoverInputBridge
                     UpdatePolicies(id, new WidgetPolicy(id, hwnd, false, new HashSet<string>()));
                     continue;
                 }
+                if (parts[0] == "PLACE" && parts.Length == 3)
+                {
+                    int id = int.Parse(parts[1], CultureInfo.InvariantCulture);
+                    int insetDip = int.Parse(parts[2], CultureInfo.InvariantCulture);
+                    WidgetPolicy current = FindById(Snapshot(), id);
+                    if (current == null || insetDip < 0 || insetDip > 1000) throw new FormatException();
+                    POINT cursor;
+                    RECT rect;
+                    if (!GetCursorPos(out cursor) || !GetWindowRect(current.Handle, out rect)) throw new InvalidOperationException();
+                    int width = rect.right - rect.left;
+                    int height = rect.bottom - rect.top;
+                    uint dpi = GetDpiForWindow(current.Handle);
+                    if (dpi == 0) dpi = 96;
+                    int insetPx = (int)Math.Round(insetDip * (dpi / 96.0));
+                    int x = cursor.x - (width / 2);
+                    int y = cursor.y - Math.Max(0, height - insetPx);
+                    // Strict move-only primitive: Windows receives NOSIZE, so a
+                    // cursor-follow operation cannot mutate widget dimensions.
+                    if (!SetWindowPos(current.Handle, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010))
+                        throw new InvalidOperationException();
+                    continue;
+                }
+                if (parts[0] == "DRAG" && parts.Length == 3)
+                {
+                    int id = int.Parse(parts[1], CultureInfo.InvariantCulture);
+                    WidgetPolicy current = FindById(Snapshot(), id);
+                    if (current == null) throw new FormatException();
+                    HandleDragCommand(current, parts[2]);
+                    continue;
+                }
                 if (parts[0] == "POLICY" && parts.Length == 5)
                 {
                     string acknowledgement = ApplyPolicyCommand(parts);
@@ -301,6 +333,39 @@ internal static class HoverInputBridge
             catch { Emit("ERROR\tbad-command"); }
         }
         PostThreadMessage(mainThreadId, WM_QUIT, UIntPtr.Zero, IntPtr.Zero);
+    }
+
+    private static readonly object dragLock = new object();
+    private static int dragWidgetId;
+    private static int dragOffsetX;
+    private static int dragOffsetY;
+
+    private static void HandleDragCommand(WidgetPolicy current, string phase)
+    {
+        lock (dragLock)
+        {
+            if (phase == "BEGIN")
+            {
+                POINT cursor;
+                RECT rect;
+                if (!GetCursorPos(out cursor) || !GetWindowRect(current.Handle, out rect)) throw new InvalidOperationException();
+                dragWidgetId = current.Id;
+                dragOffsetX = cursor.x - rect.left;
+                dragOffsetY = cursor.y - rect.top;
+                return;
+            }
+            if (phase == "END")
+            {
+                if (dragWidgetId == current.Id) dragWidgetId = 0;
+                return;
+            }
+            if (phase != "MOVE" || dragWidgetId != current.Id) throw new FormatException();
+            POINT point;
+            if (!GetCursorPos(out point)) throw new InvalidOperationException();
+            if (!SetWindowPos(current.Handle, IntPtr.Zero,
+                point.x - dragOffsetX, point.y - dragOffsetY,
+                0, 0, 0x0001 | 0x0004 | 0x0010)) throw new InvalidOperationException();
+        }
     }
 
     private static void CompleteOverlayReadyIfDrained()

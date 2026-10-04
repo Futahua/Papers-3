@@ -12,6 +12,8 @@ type FakeSession = {
   setPermissionCheckHandler: ReturnType<typeof vi.fn>;
   on: ReturnType<typeof vi.fn>;
   setCertificateVerifyProc: ReturnType<typeof vi.fn>;
+  clearStorageData: ReturnType<typeof vi.fn>;
+  clearCache: ReturnType<typeof vi.fn>;
 };
 
 type FakeWebContents = {
@@ -23,6 +25,8 @@ type FakeWebContents = {
   loadURL: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   setZoomFactor: ReturnType<typeof vi.fn>;
+  setBackgroundThrottling: ReturnType<typeof vi.fn>;
+  isFocused: () => boolean;
   isDestroyed: () => boolean;
 };
 
@@ -62,6 +66,8 @@ vi.mock('electron', () => ({
           setPermissionCheckHandler: vi.fn(),
           on: vi.fn(),
           setCertificateVerifyProc: vi.fn(),
+          clearStorageData: vi.fn().mockResolvedValue(undefined),
+          clearCache: vi.fn().mockResolvedValue(undefined),
         },
         on: vi.fn(),
         once: vi.fn(),
@@ -69,6 +75,8 @@ vi.mock('electron', () => ({
         loadURL: vi.fn().mockResolvedValue(undefined),
         close: vi.fn(),
         setZoomFactor: vi.fn(),
+        setBackgroundThrottling: vi.fn(),
+        isFocused: () => true,
         isDestroyed() {
           return webContents.destroyed;
         },
@@ -77,6 +85,17 @@ vi.mock('electron', () => ({
       harness.views.push(this);
     }
   } as unknown as typeof WebContentsView,
+  session: {
+    fromPartition: vi.fn(() => ({
+      setPermissionRequestHandler: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
+      on: vi.fn(),
+      setCertificateVerifyProc: vi.fn(),
+      clearStorageData: vi.fn().mockResolvedValue(undefined),
+      clearCache: vi.fn().mockResolvedValue(undefined),
+    })),
+  },
+  webContents: { fromId: vi.fn(() => null) },
 }));
 
 const ownerKey = '1:surface-a';
@@ -125,6 +144,9 @@ describe('web browser preview session leases', () => {
 describe('inline browser account compatibility', () => {
   it('allows storage access without granting device/media permissions', () => {
     expect(browserPermissionAllowed('storage-access')).toBe(true);
+    expect(browserPermissionAllowed('clipboard-sanitized-write', 'https://example.com', true)).toBe(true);
+    expect(browserPermissionAllowed('clipboard-read', 'http://localhost:3000/', true)).toBe(true);
+    expect(browserPermissionAllowed('clipboard-read', 'https://example.com', true)).toBe(false);
     expect(browserPermissionAllowed('media')).toBe(false);
     expect(browserPermissionAllowed('geolocation')).toBe(false);
     expect(browserPermissionAllowed('notifications')).toBe(false);
@@ -158,6 +180,10 @@ describe('inline browser account compatibility', () => {
     );
     expect(source).toContain('ElectronBlocker.fromPrebuiltAdsOnly(fetch)');
     expect(source).not.toContain('ElectronBlocker.fromPrebuiltAdsAndTracking(fetch)');
+    expect(source).toContain("'@@||chatgpt.com^$document'");
+    expect(source).toContain("'@@||accounts.google.com^$document'");
+    expect(source).toContain('loaded.updateFromDiff({ added: AUTH_DOCUMENT_ALLOWLIST })');
     expect(source).toContain('contents.setBackgroundThrottling(false)');
+    expect(source).toContain('configureGuestRuntime(webContentsId)');
   });
 });

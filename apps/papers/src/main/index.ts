@@ -1871,6 +1871,9 @@ async function bootstrap(): Promise<void> {
       bindOwnedProjectSurface(widgetWindow, projectId, 'widget', owningWindowId);
       return widgetWindow;
     },
+    placeWidgetAtCursorNative: (senderId, bottomInsetDip) =>
+      hoverInputBridge?.placeWidgetAtCursor(senderId, bottomInsetDip) ?? false,
+    dragWidgetNative: (senderId, phase) => hoverInputBridge?.dragWidget(senderId, phase) ?? false,
     onWidgetRegistered: (senderId, handle) => hoverInputBridge?.registerWidget(senderId, handle),
     onWidgetRemoved: (senderId) => {
       const pending = pendingHoverCaptures.get(senderId);

@@ -56,6 +56,22 @@ describe('hover input policy helper acknowledgement', () => {
     child.emit('exit', 0);
   });
 
+  it('serializes native move-only placement and blank-drag commands', () => {
+    const { bridge, child, stdin } = harness();
+    expect(bridge.placeWidgetAtCursor(17, 11)).toBe(true);
+    expect(bridge.dragWidget(17, 'begin')).toBe(true);
+    expect(bridge.dragWidget(17, 'move')).toBe(true);
+    expect(bridge.dragWidget(17, 'end')).toBe(true);
+    expect(stdin.write.mock.calls.map(([record]) => record)).toEqual([
+      'PLACE\t17\t11\n',
+      'DRAG\t17\tBEGIN\n',
+      'DRAG\t17\tMOVE\n',
+      'DRAG\t17\tEND\n',
+    ]);
+    bridge.close();
+    child.emit('exit', 0);
+  });
+
   it('releases a failed captured key and resets the native handoff for a later try', async () => {
     const { bridge, child, stdin } = harness(async () => { throw new Error('launcher unavailable'); });
     child.stdout.write('CAPTURE\t7\t41\tQQ==\n');

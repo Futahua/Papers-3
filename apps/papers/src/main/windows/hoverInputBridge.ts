@@ -8,6 +8,10 @@ export const HOVER_INPUT_BRIDGE_EXECUTABLE = 'papers-hover-input-bridge.exe';
 
 export interface HoverInputBridge {
   registerWidget(senderId: number, nativeHandle: Buffer): void;
+  /** Move a registered widget in native physical-pixel space without ever resizing it. */
+  placeWidgetAtCursor(senderId: number, bottomInsetDip: number): boolean;
+  /** Native blank-surface drag; the helper owns cursor/window coordinate conversion. */
+  dragWidget(senderId: number, phase: 'begin' | 'move' | 'end'): boolean;
   setPolicy(senderId: number, enabled: boolean, blockedBindings: readonly string[]): Promise<void>;
   setCaptureOpening(senderId: number): Promise<void>;
   removeWidget(senderId: number): void;
@@ -232,6 +236,15 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
   return {
     registerWidget(senderId, nativeHandle) {
       send(`WIDGET\t${senderId}\t${nativeHandleValue(nativeHandle)}`);
+    },
+    placeWidgetAtCursor(senderId, bottomInsetDip) {
+      if (!Number.isSafeInteger(senderId) || senderId <= 0 || !Number.isFinite(bottomInsetDip)
+        || bottomInsetDip < 0 || bottomInsetDip > 1000) return false;
+      return send(`PLACE\t${senderId}\t${Math.round(bottomInsetDip)}`);
+    },
+    dragWidget(senderId, phase) {
+      if (!Number.isSafeInteger(senderId) || senderId <= 0 || !['begin', 'move', 'end'].includes(phase)) return false;
+      return send(`DRAG\t${senderId}\t${phase.toUpperCase()}`);
     },
     setPolicy(senderId, enabled, blockedBindings) {
       const blocked = validBlockedBindings(blockedBindings);

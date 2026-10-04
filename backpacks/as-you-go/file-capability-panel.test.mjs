@@ -12,6 +12,52 @@ test('file capability accepts drive and UNC paths but rejects web and relative t
   assert.equal(isAbsoluteWindowsPath(''), false);
 });
 
+test('inline browser uses a real persistent Chromium guest and keeps the stronger Papers capabilities', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const panel = await readFile(new URL('./public/app/file-capability-panel.js', import.meta.url), 'utf8');
+  const browser = await readFile(new URL('./public/app/browser-workspace.js', import.meta.url), 'utf8');
+  const css = await readFile(new URL('./public/styles/file-capability.css', import.meta.url), 'utf8');
+
+  assert.match(panel, /createBrowserWorkspace/);
+  assert.match(browser, /createElement\('webview'\)/);
+  assert.match(browser, /persist:papers-web-browser/);
+  assert.match(browser, /setAttribute\('allowpopups',''\)/);
+  assert.match(browser, /addEventListener\('new-window'/);
+  assert.match(browser, /addEventListener\('did-navigate'/);
+  assert.match(browser, /addEventListener\('did-navigate-in-page'/);
+  assert.match(browser, /addEventListener\('did-start-loading'/);
+  assert.match(browser, /addEventListener\('did-stop-loading'/);
+  assert.match(browser, /addEventListener\('render-process-gone'/);
+  assert.doesNotMatch(browser, /MAX_LIVE_GUESTS/);
+  assert.doesNotMatch(browser, /browser-guest-restore/);
+  assert.doesNotMatch(browser, /browser-guest-snapshot/);
+  assert.match(browser, /browser-guest-runtime/);
+  assert.doesNotMatch(browser, /x\.el\.hidden=id!==t\.id/);
+  assert.match(browser, /x\.el\.style\.visibility=shown\?'visible':'hidden'/);
+  assert.match(browser, /x\.el\.style\.pointerEvents=shown\?'auto':'none'/);
+  assert.match(browser, /function showShell\(\)/);
+  assert.match(browser, /s\.shell\.style\.visibility='hidden'/);
+  assert.match(browser, /function destroy\(\)\{for\(const\[,r\]of s\.guests\)/);
+  assert.match(browser, /root:\(\)=>s\.shell/);
+  assert.match(panel, /clearPreview\(\{ preserveBrowser: true \}\)/);
+  assert.match(panel, /if \(child !== browserRoot\) child\.remove\(\)/);
+  const openSourceBody = browser.match(/function openSource\([\s\S]*?function hide\(/)?.[0] || '';
+  assert.ok(openSourceBody, 'browser workspace must expose openSource');
+  assert.doesNotMatch(openSourceBody, /t\.url=u/, 're-rendering a source must not drag a live tab back to its initial URL');
+  assert.match(browser, /browser-favicon/);
+  assert.match(browser, /browser-adblock-state/);
+  assert.match(browser, /browser-downloads/);
+  assert.match(browser, /reloadIgnoringCache/);
+  assert.match(browser, /openDevTools/);
+  assert.match(browser, /browser-clear-data/);
+  assert.match(browser, /browser-color-scheme/);
+  assert.match(browser, /VIEWPORT_PRESETS/);
+  assert.match(browser, /Search Google or enter address/);
+  assert.match(css, /\.file-capability-browser-webview/);
+  assert.match(css, /\.file-capability-browser-suggestions/);
+  assert.match(css, /\.file-capability-browser-devicebar/);
+});
+
 test('file preview is a collapsed/expanded dock with a draggable width and no fake file-manager UI', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./public/app/file-capability-panel.js', import.meta.url), 'utf8');

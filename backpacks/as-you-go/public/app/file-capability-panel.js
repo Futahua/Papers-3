@@ -1,3 +1,5 @@
+import { createBrowserWorkspace } from './browser-workspace.js';
+
 const SEARCH_DEBOUNCE_MS = 120;
 const VERIFY_ATTEMPTS = 40;
 const VERIFY_DELAY_MS = 250;
@@ -168,6 +170,12 @@ export function createFileCapabilityPanel(options) {
 
   const browserStorageKey = BROWSER_TABS_STORAGE_PREFIX
     + encodeURIComponent(windowRef?.location?.host || windowRef?.location?.pathname || 'ayg');
+  const browserWorkspace = createBrowserWorkspace({
+    document: documentRef,
+    window: windowRef,
+    host,
+    storageKey: browserStorageKey,
+  });
 
   function safeBrowserUrl(value) {
     try {
@@ -271,7 +279,8 @@ export function createFileCapabilityPanel(options) {
     return state.browserTabs.find((tab) => tab.id === state.activeBrowserTabId) || null;
   }
 
-  loadBrowserTabs();
+  // BrowserWorkspace reads the existing v1 tab metadata directly; do not start
+  // the superseded host-drawn browser-tab state machine.
 
   const workspace = documentRef.querySelector('.workspace');
   const panel = documentRef.createElement('aside');
@@ -371,6 +380,7 @@ export function createFileCapabilityPanel(options) {
 
   const preview = documentRef.createElement('div');
   preview.className = 'file-capability-preview';
+  preview.setAttribute('data-papers-visual-key', 'browser.preview');
   const initialPreview = documentRef.createElement('p');
   initialPreview.className = 'file-capability-empty';
   initialPreview.textContent = 'Preview appears here.';
@@ -496,18 +506,18 @@ export function createFileCapabilityPanel(options) {
     state.browserObserver?.disconnect();
     state.browserObserver = null;
     state.browserSurface = null;
-    void host.fileCapability('browser-tabs-visible', { visible: false }).catch(() => {});
+    browserWorkspace.hide();
   }
 
   function clearPreview({ preserveBrowser = false } = {}) {
     closeNativePreview();
     closePdfPreview();
     closeHtmlPreview();
-    hideBrowserTabs();
     if (preserveBrowser) {
       state.browserObserver?.disconnect();
       state.browserObserver = null;
     } else {
+      hideBrowserTabs();
       closeBrowserPreview();
     }
     state.imagePreviewObserver?.disconnect();
@@ -521,7 +531,10 @@ export function createFileCapabilityPanel(options) {
       URL.revokeObjectURL(state.previewObjectUrl);
       state.previewObjectUrl = null;
     }
-    preview.replaceChildren();
+    const browserRoot = browserWorkspace.root();
+    for (const child of [...preview.children]) {
+      if (child !== browserRoot) child.remove();
+    }
   }
 
   function applyBrowserHostState(hostTab) {
@@ -693,7 +706,16 @@ export function createFileCapabilityPanel(options) {
     return input ? DEFAULT_SEARCH_URL + encodeURIComponent(input) : DEFAULT_BROWSER_HOME;
   }
 
-  function renderBrowserWorkspace() {
+  function renderBrowserWorkspace(source = null) {
+    panel.classList.add('browser-mode');
+    inspector.classList.add('browser-mode');
+    clearPreview({ preserveBrowser: true });
+    if (source) browserWorkspace.openSource(source, preview);
+    else browserWorkspace.render(preview);
+    return;
+
+    // Legacy native-view browser implementation retained below temporarily as
+    // unreachable migration reference until live acceptance proves the guest path.
     panel.classList.add('browser-mode');
     inspector.classList.add('browser-mode');
     clearPreview();
@@ -857,8 +879,7 @@ export function createFileCapabilityPanel(options) {
     revealButton.hidden = true;
     openTabButton.hidden = true;
     actions.hidden = true;
-    browserTabForSource(source);
-    renderBrowserWorkspace();
+    renderBrowserWorkspace(source);
   }
 
   function renderImagePreview(source) {
@@ -1870,6 +1891,7 @@ export function createFileCapabilityPanel(options) {
   }
 
   function refreshPreviewGeometry() {
+    browserWorkspace.refresh();
     if (!state.expanded) return;
     const surface = preview.querySelector('.file-capability-native-preview');
     if (!surface) return;
@@ -1920,6 +1942,7 @@ export function createFileCapabilityPanel(options) {
     refreshPreviewGeometry,
     destroy() {
       if (state.searchTimer) clearTimeout(state.searchTimer);
+      browserWorkspace.destroy();
       clearPreview();
       workspace?.classList.remove('file-capability-docked', 'file-capability-expanded');
       workspace?.style.removeProperty('--file-capability-width');

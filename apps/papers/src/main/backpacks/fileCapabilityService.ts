@@ -1008,6 +1008,47 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
             return { ok: true, adblock: await deps.webBrowser.setAdblockEnabled(params.enabled === true) };
           }
+          case 'browser-clear-data': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            const what = params.what === 'cookies' ? 'cookies' : params.what === 'cache' ? 'cache' : null;
+            if (!what) return { ok: false, code: 'BROWSER_CLEAR_INVALID', message: 'Browser data kind is invalid.' };
+            await deps.webBrowser.clearBrowsingData(what);
+            return { ok: true };
+          }
+          case 'browser-color-scheme': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            const id = Number(params.webContentsId);
+            const scheme = params.scheme === 'light' || params.scheme === 'dark' ? params.scheme : 'system';
+            return { ok: await deps.webBrowser.setGuestColorScheme(id, scheme) };
+          }
+          case 'browser-guest-runtime': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return { ok: deps.webBrowser.configureGuestRuntime(Number(params.webContentsId)) };
+          }
+          case 'browser-guest-snapshot': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return {
+              ok: deps.webBrowser.snapshotGuestHistory(
+                browserTabId(params.tabId),
+                Number(params.webContentsId),
+              ),
+            };
+          }
+          case 'browser-guest-restore': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return {
+              ok: await deps.webBrowser.restoreGuestHistory(
+                browserTabId(params.tabId),
+                Number(params.webContentsId),
+              ),
+            };
+          }
+          case 'browser-favicon': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            const url = boundedString(params.url, 'url', 8_192);
+            const icon = await deps.webBrowser.fetchFavicon(url);
+            return icon ? { ok: true, icon } : { ok: false, code: 'BROWSER_FAVICON_UNAVAILABLE', message: 'Favicon is unavailable.' };
+          }
           case 'preview-text-chunk': {
             const target = absolutePath(params.path);
             const offset = params.offset === undefined ? 0 : Number(params.offset);

@@ -78,6 +78,10 @@ export interface CompactWidgetSessionDependencies {
     removeListener(channel: string, handler: (event: { sender: { id: number } }, payload?: unknown) => void): void;
   };
   createWindow: (options: { bounds: WindowBounds; preloadPath: string; projectId: string; layoutKey: string; owningWindowId: number }) => CompactWidgetWindow;
+  /** Production Windows path: move the HWND through the resident native helper
+   * with SWP_NOSIZE, so movement cannot mutate dimensions. */
+  placeWidgetAtCursorNative?: (senderId: number, bottomInsetDip: number) => boolean;
+  dragWidgetNative?: (senderId: number, phase: 'begin' | 'move' | 'end') => boolean;
   preloadPath: string;
   /** Owner-scoped: two Papers windows may show one project, and each has its
    * own project runtime, so the entry URL cannot be derived from the project
@@ -153,7 +157,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
   let followTimer: NodeJS.Timeout | null = null;
   let followedEntry: WidgetEntry | null = null;
   let altQGesture: { kind: 'inside'; entry: WidgetEntry } | { kind: 'outside' } | null = null;
-  let activeDrag: { senderId: number; token: string; offsetX: number; offsetY: number } | null = null;
+  let activeDrag: { senderId: number; token: string; offsetX: number; offsetY: number; native: boolean } | null = null;
   let registered = false;
   /**
    * Widget identity includes the owning Papers window.
@@ -184,6 +188,10 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
 
   const placeAtCursor = (entry: WidgetEntry): void => {
     if (entry.closing || entry.window.isDestroyed()) return;
+    if (deps.placeWidgetAtCursorNative) {
+      deps.placeWidgetAtCursorNative(entry.window.webContents.id, COMPACT_WIDGET_CURSOR_BOTTOM_INSET);
+      return;
+    }
     const point = deps.screen.getCursorScreenPoint();
     const bounds = entry.window.getBounds();
     const x = Math.round(point.x - bounds.width / 2);
@@ -298,6 +306,17 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     if (!entry || entry.closing || entry.window.isDestroyed()) return;
     if (raw.phase === 'begin') {
       const bounds = entry.window.getBounds();
+      const native = deps.dragWidgetNative?.(event.sender.id, 'begin') === true;
+      if (native) {
+        activeDrag = {
+          senderId: event.sender.id,
+          token: raw.token,
+          offsetX: 0,
+          offsetY: 0,
+          native: true,
+        };
+        return;
+      }
       // Renderer MouseEvent.screenX/screenY are not a safe cross-monitor
       // coordinate authority on Windows: Chromium may report physical pixels
       // while BrowserWindow positions are DIP coordinates. Read the cursor
@@ -309,12 +328,18 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
         token: raw.token,
         offsetX: point.x - bounds.x,
         offsetY: point.y - bounds.y,
+        native: false,
       };
       return;
     }
     if (!activeDrag || activeDrag.senderId !== event.sender.id || activeDrag.token !== raw.token) return;
     if (raw.phase === 'end') {
+      if (activeDrag.native) deps.dragWidgetNative?.(event.sender.id, 'end');
       activeDrag = null;
+      return;
+    }
+    if (activeDrag.native) {
+      deps.dragWidgetNative?.(event.sender.id, 'move');
       return;
     }
     // Blank-surface mouse dragging is also position-only. Resubmitting the

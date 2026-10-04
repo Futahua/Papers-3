@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { app, BaseWindow, WebContentsView, type NavigationEntry, type Session } from 'electron';
+import { app, BaseWindow, session as electronSession, webContents, WebContentsView, type NavigationEntry, type Session } from 'electron';
 import { ElectronBlocker } from '@ghostery/adblocker-electron';
 
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
@@ -80,6 +80,12 @@ export interface WebBrowserHostBridge {
   getDownloads(): BrowserDownloadState[];
   getAdblockState(): BrowserAdblockState;
   setAdblockEnabled(enabled: boolean): Promise<BrowserAdblockState>;
+  clearBrowsingData(what: 'cookies' | 'cache'): Promise<void>;
+  configureGuestRuntime(webContentsId: number): boolean;
+  setGuestColorScheme(webContentsId: number, scheme: 'system' | 'light' | 'dark'): Promise<boolean>;
+  snapshotGuestHistory(tabId: string, webContentsId: number): boolean;
+  restoreGuestHistory(tabId: string, webContentsId: number): Promise<boolean>;
+  fetchFavicon(url: string): Promise<string | null>;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
   closeOwner(ownerKey: string): void;
@@ -101,18 +107,51 @@ const hardenedBrowserSessions = new WeakSet<Session>();
  * permissions. It only allows Chromium's storage-access capability inside the
  * dedicated persistent browser partition.
  */
-export function browserPermissionAllowed(permission: string): boolean {
-  return permission === 'storage-access';
+export function browserPermissionAllowed(
+  permission: string,
+  requestingUrl = '',
+  isFocused = true,
+): boolean {
+  if (permission === 'storage-access') return true;
+  if (!isFocused) return false;
+  if (permission === 'clipboard-sanitized-write') return true;
+  if (permission !== 'clipboard-read') return false;
+  try {
+    const parsed = new URL(requestingUrl);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+      && parsed.hostname.toLocaleLowerCase() === 'localhost';
+  } catch {
+    return false;
+  }
 }
+
+const MAX_FAVICON_BYTES = 512 * 1024;
+const FAVICON_MIME_TYPES = new Set([
+  'image/x-icon',
+  'image/vnd.microsoft.icon',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+]);
+const AUTH_DOCUMENT_ALLOWLIST = [
+  '@@||chatgpt.com^$document',
+  '@@||openai.com^$document',
+  '@@||auth.openai.com^$document',
+  '@@||auth0.openai.com^$document',
+  '@@||accounts.google.com^$document',
+  '@@||google.com^$document',
+];
 
 function hardenBrowserSession(browserSession: Session): void {
   if (hardenedBrowserSessions.has(browserSession)) return;
   hardenedBrowserSessions.add(browserSession);
-  browserSession.setPermissionRequestHandler((_webContents, permission, callback) => (
-    callback(browserPermissionAllowed(permission))
+  browserSession.setPermissionRequestHandler((contents, permission, callback, details) => (
+    callback(browserPermissionAllowed(permission, details?.requestingUrl ?? '', contents.isFocused()))
   ));
-  browserSession.setPermissionCheckHandler((_webContents, permission) => (
-    browserPermissionAllowed(permission)
+  browserSession.setPermissionCheckHandler((contents, permission, requestingOrigin) => (
+    browserPermissionAllowed(permission, requestingOrigin, contents?.isFocused() === true)
   ));
   browserSession.setCertificateVerifyProc((request, callback) => {
     const hostname = request.hostname.toLocaleLowerCase().replace(/^\[|\]$/g, '');
@@ -215,6 +254,13 @@ export function createWebBrowserHostBridge(input: {
       // SSO and account telemetry endpoints as trackers to be destroyed.
       blockerPromise = ElectronBlocker.fromPrebuiltAdsOnly(fetch)
         .then((loaded) => {
+          // Authentication pages must behave like a normal browser document.
+          // A blocker remains useful everywhere else, but even ads-only lists
+          // can break OAuth/Cloudflare/login subrequests and leave sites on a
+          // generic failure page. Document exceptions preserve blocking for
+          // normal browsing while letting the auth document and its
+          // subresources complete untouched.
+          loaded.updateFromDiff({ added: AUTH_DOCUMENT_ALLOWLIST });
           blocker = loaded;
           return loaded;
         })
@@ -254,6 +300,22 @@ export function createWebBrowserHostBridge(input: {
     status: adblockStatus,
     ...(adblockError ? { error: adblockError } : {}),
   });
+
+  // Configure the persistent profile up front so renderer-hosted <webview>
+  // guests get exactly the same downloads/adblock/permission policy as the
+  // older host-created WebContentsView path.
+  const sharedBrowserSession = electronSession.fromPartition(BROWSER_PARTITION);
+  hardenBrowserSession(sharedBrowserSession);
+  enableBrowserDownloads(sharedBrowserSession);
+  void syncAdblockSession(sharedBrowserSession);
+
+  const resolveGuest = (rawId: number) => {
+    if (!Number.isSafeInteger(rawId) || rawId <= 0) return null;
+    const contents = webContents.fromId(rawId);
+    if (!contents || contents.isDestroyed() || contents.session !== sharedBrowserSession) return null;
+    return contents;
+  };
+  const guestHistories = new Map<string, { entries: NavigationEntry[]; index: number }>();
 
   const forget = (session: LiveWebBrowser): void => {
     if (sessions.get(session.id) === session) sessions.delete(session.id);
@@ -713,6 +775,80 @@ export function createWebBrowserHostBridge(input: {
       await Promise.all([...adblockSessions].map((browserSession) => syncAdblockSession(browserSession)));
       return adblockState();
     },
+    async clearBrowsingData(what) {
+      if (what === 'cookies') {
+        await sharedBrowserSession.clearStorageData({ storages: ['cookies'] });
+        return;
+      }
+      await sharedBrowserSession.clearCache();
+    },
+    configureGuestRuntime(webContentsId) {
+      const contents = resolveGuest(webContentsId);
+      if (!contents) return false;
+      // The renderer-owned <webview> path must inherit the same streaming
+      // guarantee as the older host-owned WebContentsView path. Without this,
+      // Chromium may throttle timers/network work when the guest is briefly
+      // occluded or made inactive by Papers UI, which is enough to break live
+      // ChatGPT responses and leave its own "hit a snag" recovery screen.
+      contents.setBackgroundThrottling(false);
+      return true;
+    },
+    async setGuestColorScheme(webContentsId, scheme) {
+      const contents = resolveGuest(webContentsId);
+      if (!contents) return false;
+      try {
+        if (!contents.debugger.isAttached()) contents.debugger.attach('1.3');
+        await contents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+          features: scheme === 'system'
+            ? []
+            : [{ name: 'prefers-color-scheme', value: scheme }],
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    snapshotGuestHistory(tabId, webContentsId) {
+      const contents = resolveGuest(webContentsId);
+      if (!contents || !/^[0-9a-f-]{36}$/i.test(tabId)) return false;
+      try {
+        const entries = contents.navigationHistory.getAllEntries();
+        if (!entries.length) return false;
+        guestHistories.set(tabId, {
+          entries,
+          index: contents.navigationHistory.getActiveIndex(),
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async restoreGuestHistory(tabId, webContentsId) {
+      const contents = resolveGuest(webContentsId);
+      const history = guestHistories.get(tabId);
+      if (!contents || !history) return false;
+      try {
+        await contents.navigationHistory.restore(history);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    async fetchFavicon(url) {
+      const safe = safeWebUrl(url);
+      if (!safe) return null;
+      try {
+        const response = await sharedBrowserSession.fetch(safe);
+        if (!response.ok) return null;
+        const contentType = (response.headers.get('content-type') ?? '').split(';', 1)[0]!.trim().toLocaleLowerCase();
+        if (!FAVICON_MIME_TYPES.has(contentType)) return null;
+        const bytes = Buffer.from(await response.arrayBuffer());
+        if (bytes.length === 0 || bytes.length > MAX_FAVICON_BYTES) return null;
+        return `data:${contentType};base64,${bytes.toString('base64')}`;
+      } catch {
+        return null;
+      }
+    },
 
     setOwnerSurfaceBounds(ownerKey, bounds) {
       if (!validRect(bounds)) return;
@@ -771,6 +907,7 @@ export function createWebBrowserHostBridge(input: {
     dispose() {
       for (const session of [...sessions.values()]) cleanupSession(session);
       for (const tab of [...tabs.values()]) cleanupTab(tab);
+      guestHistories.clear();
     },
   };
 }

@@ -156,12 +156,36 @@ export class BackpackProjectRuntime {
     await this.hide();
     const view = new WebContentsView({ webPreferences: {
       preload: this.preloadPath, nodeIntegration: false, contextIsolation: true,
-      sandbox: true, webviewTag: false, transparent: true,
+      // Electron's Chromium <webview> custom element does not attach reliably
+      // from a sandboxed embedder. Keep Node disabled/context-isolated here,
+      // then force every attached guest back into a sandbox below.
+      sandbox: false, webviewTag: true, transparent: true,
     } });
     this.view = view;
     this.projectId = parsed.host;
     this.entryUrl = url;
     this.presented = present;
+    view.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+      let allowed = false;
+      try {
+        if (typeof params.src === 'string') {
+          const guestUrl = new URL(params.src);
+          allowed = (guestUrl.protocol === 'http:' || guestUrl.protocol === 'https:')
+            && params.partition === 'persist:papers-web-browser';
+        }
+      } catch {
+        allowed = false;
+      }
+      if (!allowed) {
+        event.preventDefault();
+        return;
+      }
+      delete webPreferences.preload;
+      webPreferences.nodeIntegration = false;
+      webPreferences.contextIsolation = true;
+      webPreferences.sandbox = true;
+      webPreferences.webSecurity = true;
+    });
     view.webContents.on('destroyed', () => {
       if (this.view !== view) return;
       this.view = null;
