@@ -647,3 +647,22 @@ Second-stage widget drag correction on 2026-10-04:
 - full Papers suite after this second-stage fix: **1355 pass / 8 skipped / 0 fail**.
 
 The prior transient EPERM did not reproduce on this validation run.
+
+Third-stage widget geometry correction from creator screenshot sequence on 2026-10-04:
+
+- the sequence proved the bad geometry was landing AFTER movement: held Alt+Q kept the horizontal
+  shape, idle after release collapsed it tall/narrow, and dragging blank interior space expanded
+  it again. The remaining bug was therefore the renderer's 80ms trailing resize/persistence timer,
+  not the position operation itself;
+- renderer `window.resize` is no longer treated as evidence of creator resizing. Movement, DPI
+  transitions and programmatic content fitting can all emit it;
+- the host now forwards BrowserWindow `will-resize`, which Electron emits for manual native edge
+  resizing but not programmatic setBounds/setContentSize, as a narrow resize-authority signal;
+- AYG persists a new detached-widget width from the trailing resize path only while that explicit
+  native manual-resize authority lease is live. Blank-space drag, Alt+Q follow, DPI/display
+  transitions and content-fit cannot manufacture a width after movement stops;
+- focused Papers compact-widget tests: **30/30 pass**; AYG resize-authority tests: **3/3 pass**;
+- Papers typecheck: pass; full Papers suite: **1356 pass / 8 skipped / 0 fail**;
+- full AYG main suite: **1687 pass / 1 environment-only fail**. The sole failure is the existing
+  source-contract test trying to access `D:\\Programs\\CLIP STUDIO PAINT\\CLIPS.bat`, a path not
+  present on this connector machine. No widget/resize test failed.

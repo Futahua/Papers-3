@@ -60,7 +60,7 @@ export interface CompactWidgetWindow {
   getNativeWindowHandle(): Buffer;
   isDestroyed(): boolean;
   destroy(): void;
-  on(event: 'closed' | 'focus', callback: () => void): void;
+  on(event: string, callback: (...args: any[]) => void): void;
   loadURL(url: string): Promise<void>;
 }
 
@@ -367,6 +367,15 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
         latestWidgetKey = key;
         // This non-activating widget can report a delayed focus notification
         // during minimize. Only explicit restore paths release suppression.
+      });
+      // BrowserWindow `will-resize` is emitted for a creator-driven native
+      // edge resize, but not for setBounds/setContentSize. That distinction is
+      // the missing authority boundary: renderer `resize` also fires for DPI/
+      // display changes and programmatic content fitting, so treating every
+      // renderer resize as a user resize lets ordinary MOVES rewrite width.
+      window.on('will-resize', () => {
+        if (!isLiveEntry(entry) || activeDrag?.senderId === window.webContents.id || followedEntry === entry) return;
+        window.webContents.send('papers:backpack:widget-native-resize', {});
       });
       window.on('closed', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));
       window.webContents.on('render-process-gone', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));

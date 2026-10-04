@@ -8,6 +8,7 @@ class FakeWindow {
   readonly webContents = { id: ++FakeWindow.nextId, send: vi.fn(), on: vi.fn() };
   readonly closedHandlers: Array<() => void> = [];
   readonly focusHandlers: Array<() => void> = [];
+  readonly willResizeHandlers: Array<() => void> = [];
   destroyed = false;
   bounds = { x: 0, y: 0, width: 420, height: 180 };
   visible = true;
@@ -33,9 +34,10 @@ class FakeWindow {
     this.destroyed = true;
     for (const handler of [...this.closedHandlers]) handler();
   });
-  on(event: 'closed' | 'focus', handler: () => void): void {
+  on(event: string, handler: () => void): void {
     if (event === 'closed') this.closedHandlers.push(handler);
-    else this.focusHandlers.push(handler);
+    else if (event === 'focus') this.focusHandlers.push(handler);
+    else if (event === 'will-resize') this.willResizeHandlers.push(handler);
   }
   loadURL = vi.fn(async (url: string) => { this.loadedUrls.push(url); });
 }
@@ -234,6 +236,17 @@ describe('compact widget session', () => {
     h.session.resizeFromSender(window.webContents.id, token, 500, 210);
     expect(window.setContentSize).toHaveBeenCalledOnce();
     expect(window.setContentSize).toHaveBeenLastCalledWith(500, 210);
+  });
+
+  it('marks only a real native edge resize as renderer resize authority', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const window = h.windows[0]!;
+    window.webContents.send.mockClear();
+
+    expect(window.willResizeHandlers).toHaveLength(1);
+    window.willResizeHandlers[0]!();
+    expect(window.webContents.send).toHaveBeenCalledWith('papers:backpack:widget-native-resize', {});
   });
 
   it('Alt+Q starting inside a visible widget hides it once and never follows while held', async () => {

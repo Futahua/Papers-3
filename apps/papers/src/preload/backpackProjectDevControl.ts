@@ -801,6 +801,7 @@ for (const [channel, type] of [
   ['papers:backpack:detach-activate', 'papers:project:detach-activate'],
   ['papers:backpack:detach-flush-request', 'papers:project:detach-flush-request'],
   ['papers:backpack:detach-closed', 'papers:project:detach-closed'],
+  ['papers:backpack:widget-native-resize', 'papers:project:widget-native-resize'],
 ] as const) {
   ipcRenderer.on(channel, (_event, payload) => window.postMessage({ type, ...(payload ?? {}) }, window.location.origin));
 }

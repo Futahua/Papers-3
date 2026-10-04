@@ -101,6 +101,7 @@ import { createWindowLayoutCandidateBinder } from './app/window-layout-candidate
 import { endExactWindowCandidateProcess } from './app/window-layout-process-end.js';
 import { createClickTwiceGuard } from './app/click-twice-guard.js';
 import { createWidgetHoverPolicy, createWidgetHoverPolicyDiagnostics } from './app/widget-hover-policy.js';
+import { createWidgetResizeAuthority } from './app/widget-resize-authority.js';
 import { handleWidgetClearActivation, handleWidgetDeleteActivation } from './app/widget-clear-activation.js';
 import { planWindowLayoutShiftPeekTransition } from './app/window-layout-shift-peek.js';
 import { createDetachSaveGate, createDetachReadOnlyInputGuards, createWindowLayoutMemberDrag, createWindowLayoutGroupActionRunner, toggleWindowLayoutMemberVisibility, createReadOnlyStatusSink, orderWindowLayoutMemberButtons, windowLayoutPresentationMode, windowLayoutContentSignature, DETACH_ACTIVATE_CANCELLED } from './app/window-layout-detached.js';
@@ -8126,6 +8127,12 @@ function bootstrapWindowLayoutWidget() {
   // HEIGHT is the rendered card content height, so the native client
   // auto-corrects to fit the card in both axes after every reflow.
   let cardSizeTimer = null;
+  const widgetResizeAuthority = createWidgetResizeAuthority();
+  window.addEventListener('message', (event) => {
+    if (event.source !== window || event.origin !== window.location.origin
+      || event.data?.type !== 'papers:project:widget-native-resize') return;
+    widgetResizeAuthority.noteNativeResize();
+  });
   window.addEventListener('resize', () => {
     // Trailing-edge correction: while the creator is dragging an edge Windows
     // owns the native size and can overwrite an early correction. Re-arm on
@@ -8133,6 +8140,11 @@ function bootstrapWindowLayoutWidget() {
     if (cardSizeTimer !== null) clearTimeout(cardSizeTimer);
     cardSizeTimer = setTimeout(() => {
       cardSizeTimer = null;
+      // Renderer resize is NOT proof of a creator resize. Moving this native
+      // window across DPI boundaries, Alt+Q following the cursor and our own
+      // content-size corrections can all dispatch resize. Only BrowserWindow's
+      // manual-only `will-resize` signal grants permission to persist a width.
+      if (!widgetResizeAuthority.mayPersistResize()) return;
       reportWidgetSize();
     }, 80);
   });
