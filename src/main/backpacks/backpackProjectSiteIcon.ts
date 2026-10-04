@@ -237,6 +237,7 @@ async function fetchIconBytes(url: string, signal?: AbortSignal): Promise<{ data
 
   if (signal?.aborted) return null;
   if (!response.ok) return null;
+  validateUrl(response.url);
 
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.length === 0 || buffer.length > MAX_ICON_BYTES) return null;
@@ -255,6 +256,21 @@ async function fetchIconBytes(url: string, signal?: AbortSignal): Promise<{ data
   }
 
   return { data: buffer, mime };
+}
+
+export async function resolveWebLinkIconCandidate(rawUrl: string): Promise<string | null> {
+  const parsed = validateUrl(rawUrl);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS);
+  try {
+    const iconResult = await fetchIconBytes(parsed.toString(), controller.signal);
+    if (!iconResult) return null;
+    return `data:${iconResult.mime};base64,${iconResult.data.toString('base64')}`;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function detectMimeFromBytes(buffer: Buffer): string | null {

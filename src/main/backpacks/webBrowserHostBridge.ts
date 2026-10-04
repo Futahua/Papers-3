@@ -17,7 +17,7 @@ import {
 import { ElectronBlocker } from '@ghostery/adblocker-electron';
 
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
-import { resolveWebLinkIcon } from './backpackProjectSiteIcon';
+import { resolveWebLinkIcon, resolveWebLinkIconCandidate } from './backpackProjectSiteIcon';
 import { AtomicJsonStore } from '../persistence/atomicStore';
 
 interface LiveWebBrowser {
@@ -559,6 +559,7 @@ export function createWebBrowserHostBridge(input: {
   downloadHistoryFile?: string;
   downloadRecoveryDir?: string;
   resolveFavicon?: (pageUrl: string) => Promise<string | null>;
+  resolveFaviconCandidate?: (faviconUrl: string) => Promise<string | null>;
 }): WebBrowserHostBridge {
   const sessions = new Map<string, LiveWebBrowser>();
   const owners = new Map<string, string>();
@@ -588,6 +589,7 @@ export function createWebBrowserHostBridge(input: {
     const resolved = await resolveWebLinkIcon(pageUrl);
     return resolved.icon;
   });
+  const resolveFaviconCandidateData = input.resolveFaviconCandidate ?? resolveWebLinkIconCandidate;
   let downloadSaveQueue = Promise.resolve();
   const persistDownloads = (): void => {
     if (!downloadStore) return;
@@ -903,21 +905,42 @@ export function createWebBrowserHostBridge(input: {
 
   const wireTabView = (tab: DurableBrowserTab, view: WebContentsView): void => {
     const contents = view.webContents;
-    let faviconRequest = 0;
+    let liveFaviconRequest = 0;
     let requestedFaviconPage = '';
-    const refreshFavicon = (): void => {
+    const refreshFallbackFavicon = (): void => {
       const pageUrl = tab.url;
-      if (!pageUrl || requestedFaviconPage === pageUrl) return;
+      if (!pageUrl || tab.faviconUrl || requestedFaviconPage === pageUrl) return;
       requestedFaviconPage = pageUrl;
-      const request = ++faviconRequest;
       void resolveFaviconData(pageUrl).then((icon) => {
-        if (request !== faviconRequest || tab.view !== view) return;
+        if (tab.view !== view || tab.url !== pageUrl || tab.faviconUrl) return;
         const safe = safeFaviconDataUrl(icon);
         tab.faviconUrl = safe ?? '';
         if (!safe && requestedFaviconPage === pageUrl) requestedFaviconPage = '';
       }).catch(() => {
-        if (request === faviconRequest && requestedFaviconPage === pageUrl) requestedFaviconPage = '';
+        if (tab.view === view && tab.url === pageUrl && requestedFaviconPage === pageUrl) requestedFaviconPage = '';
       });
+    };
+    const refreshLiveFavicon = (_event: unknown, favicons: string[]): void => {
+      const pageUrl = tab.url;
+      const candidates = Array.isArray(favicons)
+        ? favicons.filter((value): value is string => typeof value === 'string' && value.length > 0).slice(0, 16)
+        : [];
+      if (!pageUrl || candidates.length === 0) return;
+      const request = ++liveFaviconRequest;
+      void (async () => {
+        for (const candidate of candidates) {
+          const embedded = safeFaviconDataUrl(candidate);
+          if (embedded) return embedded;
+          if (!safeWebUrl(candidate)) continue;
+          const resolved = safeFaviconDataUrl(await resolveFaviconCandidateData(candidate));
+          if (resolved) return resolved;
+        }
+        return null;
+      })().then((icon) => {
+        if (!icon || request !== liveFaviconRequest || tab.view !== view || tab.url !== pageUrl) return;
+        tab.faviconUrl = icon;
+        requestedFaviconPage = pageUrl;
+      }).catch(() => undefined);
     };
     hardenBrowserSession(contents.session);
     enableBrowserDownloads(contents.session);
@@ -932,7 +955,15 @@ export function createWebBrowserHostBridge(input: {
     });
     contents.on('did-navigate', (_event, nextUrl) => {
       const safe = safeWebUrl(nextUrl);
-      if (safe) tab.url = safe;
+      if (safe) {
+        const oldOrigin = safeWebUrl(tab.url) ? new URL(tab.url).origin : null;
+        const nextOrigin = new URL(safe).origin;
+        tab.url = safe;
+        if (oldOrigin && oldOrigin !== nextOrigin) {
+          tab.faviconUrl = '';
+          requestedFaviconPage = '';
+        }
+      }
     });
     contents.on('did-navigate-in-page', (_event, nextUrl) => {
       const safe = safeWebUrl(nextUrl);
@@ -942,8 +973,8 @@ export function createWebBrowserHostBridge(input: {
       event.preventDefault();
       tab.title = String(title || '').slice(0, 500);
     });
-    contents.on('did-finish-load', refreshFavicon);
-    contents.on('page-favicon-updated', refreshFavicon);
+    contents.on('did-finish-load', refreshFallbackFavicon);
+    contents.on('page-favicon-updated', refreshLiveFavicon);
     contents.on('render-process-gone', () => { tab.crashed = true; });
     contents.on('zoom-changed', (_event, direction) => {
       const factor = direction === 'in' ? 1.1 : (1 / 1.1);

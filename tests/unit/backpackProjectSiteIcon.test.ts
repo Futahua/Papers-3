@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractPageTitle, resolveWebLinkIcon } from '../../src/main/backpacks/backpackProjectSiteIcon';
+import { extractPageTitle, resolveWebLinkIcon, resolveWebLinkIconCandidate } from '../../src/main/backpacks/backpackProjectSiteIcon';
 
 // resolveWebLinkIcon validates its input before its own try/catch begins, so
 // every case here throws synchronously rather than resolving with
@@ -32,6 +32,12 @@ describe('Backpack project web-link icon resolver — SSRF blocklist', () => {
   it('rejects a URL carrying embedded credentials', async () => {
     await expect(resolveWebLinkIcon('http://user:pass@example.com/icon.png')).rejects.toThrow(
       /credentials not allowed/i,
+    );
+  });
+
+  it('applies the same private-address blocklist to a live favicon candidate', async () => {
+    await expect(resolveWebLinkIconCandidate('http://127.0.0.1/favicon.ico')).rejects.toThrow(
+      /private or blocked destination/i,
     );
   });
 

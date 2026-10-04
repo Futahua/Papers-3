@@ -157,9 +157,11 @@ describe('web browser preview session leases', () => {
 describe('durable browser tabs', () => {
   it('enables normal browser downloads into the user Downloads folder', async () => {
     const window = new BaseWindow();
-    const faviconDataUrl = 'data:image/png;base64,aGVsbG8=';
-    const resolveFavicon = vi.fn().mockResolvedValue(faviconDataUrl);
-    const bridge = createWebBrowserHostBridge({ resolveWindow: () => window, resolveFavicon });
+    const fallbackFavicon = 'data:image/png;base64,ZmFsbGJhY2s=';
+    const liveFavicon = 'data:image/png;base64,bGl2ZQ==';
+    const resolveFavicon = vi.fn().mockResolvedValue(fallbackFavicon);
+    const resolveFaviconCandidate = vi.fn().mockResolvedValue(liveFavicon);
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => window, resolveFavicon, resolveFaviconCandidate });
     const tabId = '88888888-8888-4888-8888-888888888888';
     await bridge.openTab(context, tabId, url, rect);
 
@@ -178,11 +180,17 @@ describe('durable browser tabs', () => {
     expect(permissionCheck(null, 'top-level-storage-access', 'https://x.com/')).toBe(true);
     expect(permissionCheck(null, 'media', 'https://x.com/')).toBe(false);
     expect(await bridge.getDownloads()).toEqual([]);
+    const didFinishHandler = harness.views[0]!.webContents.on.mock.calls.find(([event]) => event === 'did-finish-load')?.[1];
+    expect(typeof didFinishHandler).toBe('function');
+    didFinishHandler();
+    await vi.waitFor(() => expect(bridge.getTab(ownerKey, tabId)?.faviconUrl).toBe(fallbackFavicon));
+    expect(resolveFavicon).toHaveBeenCalledWith(url);
+
     const faviconHandler = harness.views[0]!.webContents.on.mock.calls.find(([event]) => event === 'page-favicon-updated')?.[1];
     expect(typeof faviconHandler).toBe('function');
-    faviconHandler();
-    await vi.waitFor(() => expect(bridge.getTab(ownerKey, tabId)?.faviconUrl).toBe(faviconDataUrl));
-    expect(resolveFavicon).toHaveBeenCalledWith(url);
+    faviconHandler(null, ['https://static.example.test/favicon.ico']);
+    await vi.waitFor(() => expect(bridge.getTab(ownerKey, tabId)?.faviconUrl).toBe(liveFavicon));
+    expect(resolveFaviconCandidate).toHaveBeenCalledWith('https://static.example.test/favicon.ico');
 
     expect(await bridge.showDownloadsBubble(ownerKey, { x: 10, y: 10, width: 240, height: 58 })).toBe(true);
     expect(harness.views.at(-1)!.setBackgroundColor).toHaveBeenCalledWith('#00000000');
