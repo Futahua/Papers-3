@@ -572,5 +572,28 @@ empty-Backpack copy, and startup-hydration rejects preserved surfaceKey values e
 current durable topology intentionally keeps stable surface keys. Do not make current product
 behavior regress merely to satisfy those historical assertions; refresh those E2Es separately.
 
-Next objective after creator testing: take concrete regressions from the packaged build first.
-Do not continue structural refactoring blindly before real UX feedback from this checkpoint.
+Backpack integration follow-up on 2026-10-04:
+
+- the isolated packaged Papers build initially had no Backpack registry or project bindings, so
+  imported Backpack source alone did not make AYG, Proxima or Delegate Wave usable;
+- AutoHotkey v2 is installed on this machine and the creator's Startup sloptop_engine.ahk is
+  already running;
+- the current Delegate Wave UI is the ChatGPT-local journal projection backed by Local Coder
+  on port 3001, not the retired port-47321 control workflow;
+- Papers' Delegate Wave relay now has one read-only activity.journal operation pinned to Local
+  Coder's /api/activity/workstreams endpoint, usable without the retired operator token, while
+  all existing privileged legacy operations retain their token requirement;
+- the permitted Delegate Wave Backpack identity defaults to the creator-owned stable id
+  bp-a5d07080-7210-45e6-b3f1-93978873a2fe and is still derived from the papers-backpack origin,
+  never page-supplied;
+- Papers typecheck passes, focused Delegate Wave relay tests are **18/18**, and the full Papers
+  suite after this relay change is **1350 pass / 8 skipped / 0 fail**;
+- the current external Delegate Wave checkout was separately updated so its dev build still
+  reads /local-api while a papers-backpack launch requests activity.journal through Papers;
+  its typecheck/tests/build:public pass. Do not claim that external checkout as a clean root
+  refactor commit because it contains its own independent history/work.
+
+Next deployment step: rebuild the isolated Papers package, copy AYG/Proxima/current Delegate
+Wave runtime roots beside the package, seed only that package's registry/project bindings,
+remap only the packaged AYG action targets to working paths on this machine, and reopen the
+refactored package. Do not mutate the installed/live Papers data.

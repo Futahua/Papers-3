@@ -70,6 +70,24 @@ describe('DelegateWaveRelay', () => {
     expect(captured[0]!.headers['x-request-id']).toBeUndefined();
   });
 
+  it('reads the Local Coder durable journal without requiring an operator token', async () => {
+    const { instance, captured } = relay(
+      { url: 'http://127.0.0.1:3001', token: undefined },
+      () => ({ ok: true, entries: [{ id: 'e1', time: '2026-10-04T00:00:00.000Z' }] }),
+    );
+    const result = await instance.call(BOUND, 'activity.journal', {});
+
+    expect(result.ok).toBe(true);
+    expect(result.result).toEqual({
+      ok: true,
+      entries: [{ id: 'e1', time: '2026-10-04T00:00:00.000Z' }],
+    });
+    expect(captured).toHaveLength(1);
+    expect(captured[0]!.url).toBe('http://127.0.0.1:3001/api/activity/workstreams?limit=20000');
+    expect(captured[0]!.headers['authorization']).toBeUndefined();
+    expect(isDelegateWaveOperation('activity.journal')).toBe(true);
+  });
+
   it('exposes exactly two bounded read-only session operations', async () => {
     const { instance, captured } = relay();
     await instance.call(BOUND, 'session.list', { cursor: 'eyJpZCI6InMxIn0', limit: 40, ignored: 'no' });
@@ -245,14 +263,16 @@ describe('DelegateWaveRelay', () => {
     expect(result.message).toBe('operate scope required');
   });
 
-  it('reads delegate-wave’s own environment convention, inventing no new one', () => {
+  it('defaults the current ChatGPT-local relay to Local Coder and the creator-owned Backpack', () => {
     const config = readConfigFromEnvironment({
       DELEGATE_WAVE_CONTROL_TOKEN: 'tok',
       DELEGATE_WAVE_BACKPACK_ID: BOUND,
     } as NodeJS.ProcessEnv);
-    // Same default as delegate-wave's ControlClient.
-    expect(config.url).toBe('http://127.0.0.1:47321');
+    expect(config.url).toBe('http://127.0.0.1:3001');
     expect(config.token).toBe('tok');
     expect(config.backpackId).toBe(BOUND);
+
+    const defaults = readConfigFromEnvironment({} as NodeJS.ProcessEnv);
+    expect(defaults.backpackId).toBe('bp-a5d07080-7210-45e6-b3f1-93978873a2fe');
   });
 });

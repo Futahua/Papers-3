@@ -26,6 +26,7 @@
  */
 
 export type DelegateWaveOperation =
+  | 'activity.journal'
   | 'organization.get'
   | 'organization.change'
   | 'overview'
@@ -156,6 +157,12 @@ export class RelayInputError extends Error {}
  * Control API and are deliberately not reachable from a page.
  */
 const OPERATIONS: Readonly<Record<DelegateWaveOperation, OperationSpec>> = Object.freeze({
+  'activity.journal': {
+    method: 'GET',
+    path: () => '/api/activity/workstreams?limit=20000',
+    pathParams: [],
+    mutation: false,
+  },
   'organization.get': { method: 'GET', path: () => '/v1/wave-organization', pathParams: [], mutation: false },
   'organization.change': {
     method: 'POST', path: () => '/v1/wave-organization', pathParams: [], mutation: true,
@@ -245,14 +252,15 @@ export interface DelegateWaveConfig {
 
 export function readConfigFromEnvironment(env: NodeJS.ProcessEnv = process.env): DelegateWaveConfig {
   return {
-    // delegate-wave's own ControlClient default, not a second configuration
-    // scheme invented here.
-    url: env['DELEGATE_WAVE_CONTROL_URL'] ?? 'http://127.0.0.1:47321',
+    // Current Delegate Wave projects ChatGPT-local workstreams from Local
+    // Coder's durable journal. An override remains available for another
+    // machine-local deployment.
+    url: env['DELEGATE_WAVE_CONTROL_URL'] ?? 'http://127.0.0.1:3001',
     token: env['DELEGATE_WAVE_CONTROL_TOKEN'],
-    // Pinned by the machine, never by the page. A manifest flag would let any
-    // Backpack declare itself the Delegate Wave one, which is the same weakness
-    // as trusting a message type.
-    backpackId: env['DELEGATE_WAVE_BACKPACK_ID'],
+    // This is Papers' creator-owned Delegate Wave project identity. The page
+    // still cannot choose or claim it: preload derives caller identity from the
+    // papers-backpack origin and the relay compares that identity here.
+    backpackId: env['DELEGATE_WAVE_BACKPACK_ID'] ?? 'bp-a5d07080-7210-45e6-b3f1-93978873a2fe',
   };
 }
 
@@ -294,7 +302,7 @@ export class DelegateWaveRelay {
     if (!isDelegateWaveOperation(operation)) {
       return { ok: false, code: 'UNKNOWN_OPERATION', message: 'That Delegate Wave operation does not exist.' };
     }
-    if (!this.config.token) {
+    if (operation !== 'activity.journal' && !this.config.token) {
       return { ok: false, code: 'NOT_CONFIGURED', message: 'Delegate Wave is not configured on this machine.' };
     }
 
@@ -335,7 +343,8 @@ export class DelegateWaveRelay {
       };
     }
 
-    const headers: Record<string, string> = { authorization: `Bearer ${this.config.token}` };
+    const headers: Record<string, string> = {};
+    if (this.config.token) headers['authorization'] = `Bearer ${this.config.token}`;
     if (body) headers['content-type'] = 'application/json';
     if (spec.mutation) {
       // One id per logical mutation. A repeat of the same intent reuses it, so
@@ -381,6 +390,6 @@ export class DelegateWaveRelay {
         message: typeof error['message'] === 'string' ? error['message'] : 'Delegate Wave refused the request.',
       };
     }
-    return { ok: true, result: record['result'] };
+    return { ok: true, result: operation === 'activity.journal' ? record : record['result'] };
   }
 }
