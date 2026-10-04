@@ -12,14 +12,20 @@ using System.Threading;
 internal sealed class AltQChordTracker
 {
     private bool qDown;
+    private bool altDown;
     private bool active;
 
-    public bool ObserveQDown(bool isQ, bool altDown, Func<int> captureWidgetId, out int widgetId)
+    public void ObserveAltDown(bool isAlt)
+    {
+        if (isAlt) altDown = true;
+    }
+
+    public bool ObserveQDown(bool isQ, bool altFlag, Func<int> captureWidgetId, out int widgetId)
     {
         widgetId = 0;
         if (!isQ || qDown) return false;
         qDown = true;
-        if (!altDown || active) return false;
+        if (!(altFlag || altDown) || active) return false;
         active = true;
         widgetId = captureWidgetId();
         return true;
@@ -28,6 +34,7 @@ internal sealed class AltQChordTracker
     public bool ObserveKeyUp(bool isQ, bool isAlt)
     {
         if (isQ) qDown = false;
+        if (isAlt) altDown = false;
         if (!isQ && !isAlt) return false;
         if (!active) return false;
         active = false;
@@ -39,6 +46,7 @@ internal sealed class AltQChordTracker
         widgetId = 0;
         if (!chordHeld || active) return false;
         qDown = true;
+        altDown = true;
         active = true;
         widgetId = captureWidgetId();
         return true;
@@ -48,6 +56,7 @@ internal sealed class AltQChordTracker
     {
         if (chordHeld) return false;
         qDown = false;
+        altDown = false;
         if (!active) return false;
         active = false;
         return true;
@@ -496,6 +505,7 @@ internal static class HoverInputBridge
         if (swallowedKeys.Contains(key.vkCode)) return new IntPtr(1); // suppress auto-repeat for consumed physical key
         if (altQHotkeyRegistered)
         {
+            altQChords.ObserveAltDown(isAlt);
             int widgetId;
             if (altQChords.ObserveQDown(
                 key.vkCode == VK_Q,

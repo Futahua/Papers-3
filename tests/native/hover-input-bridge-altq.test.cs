@@ -84,6 +84,12 @@ internal static class HoverInputBridgeAltQTests
         Require(tracker.ObserveQDown(true, true, () => cursorHit, out capturedHit) && capturedHit == 18,
             "the next physical chord must start immediately and independently");
         Require(tracker.ObserveKeyUp(false, true), "Alt-up must also release the active chord");
+
+        var injectedStyle = new AltQChordTracker();
+        injectedStyle.ObserveAltDown(true);
+        Require(injectedStyle.ObserveQDown(true, false, () => 19, out capturedHit) && capturedHit == 19,
+            "an observed Alt-down must let injected Q-down start even without LLKHF_ALTDOWN");
+        Require(injectedStyle.ObserveKeyUp(true, false), "injected-style chord must release normally");
     }
 
     private static void VerifyMissedReleaseCannotPoisonLaterPresses()
