@@ -68,8 +68,8 @@ vi.mock('electron', () => ({
   WebContentsView: class {
     webContents: FakeWebContents;
     setBounds = vi.fn();
-    constructor() {
-      const webContents: FakeWebContents = {
+    constructor(options?: { webContents?: FakeWebContents }) {
+      const webContents: FakeWebContents = options?.webContents ?? {
         destroyed: false,
         session: {
           setPermissionRequestHandler: vi.fn(),
@@ -284,6 +284,8 @@ describe('durable browser tabs', () => {
     expect(backgroundOpen.action).toBe('allow');
     expect(typeof backgroundOpen.createWindow).toBe('function');
     backgroundOpen.createWindow({});
+    const backgroundContents = harness.views.at(-1)!.webContents;
+    expect(backgroundContents.loadURL).toHaveBeenCalledWith('https://chatgpt.com/c/background');
 
     const foregroundOpen = handler({
       url: 'https://example.com/foreground',
@@ -291,7 +293,13 @@ describe('durable browser tabs', () => {
     });
     expect(foregroundOpen.action).toBe('allow');
     expect(typeof foregroundOpen.createWindow).toBe('function');
-    foregroundOpen.createWindow({});
+    const guestView = new WebContentsView();
+    const foregroundGuest = guestView.webContents;
+    harness.views.pop();
+    const returnedForegroundContents = foregroundOpen.createWindow({
+      webContents: foregroundGuest,
+    } as never);
+    expect(returnedForegroundContents).toBe(foregroundGuest);
     expect(sourceContents.loadURL).toHaveBeenCalledTimes(1);
 
     const requests = bridge.takeOpenRequests(ownerKey);

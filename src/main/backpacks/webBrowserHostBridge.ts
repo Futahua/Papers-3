@@ -922,16 +922,16 @@ export function createWebBrowserHostBridge(input: {
       return {
         action: 'allow',
         outlivesOpener: true,
-        createWindow: () => {
-          const childView = new WebContentsView({
-            webPreferences: {
-              nodeIntegration: false,
-              contextIsolation: true,
-              sandbox: true,
-              webSecurity: true,
-              partition: BROWSER_PARTITION,
-            },
-          });
+        createWindow: (options) => {
+          // Electron has already created the child WebContents for ordinary
+          // target=_blank/window.open requests and passes it through the
+          // runtime `options.webContents` field. WebContentsView must adopt
+          // that exact object. Creating an unrelated WebContents here makes
+          // guest-window-manager reject the child with "Invalid webContents".
+          // For background-tab disposition Electron may defer guest creation;
+          // in that case WebContentsView creates its own contents and we load
+          // the requested URL manually below, per Electron's documented flow.
+          const childView = new WebContentsView(options);
           const childTab: DurableBrowserTab = {
             tabId: childTabId,
             ownerKey: tab.ownerKey,
@@ -952,6 +952,9 @@ export function createWebBrowserHostBridge(input: {
           ids.add(childTabId);
           ownerTabs.set(tab.ownerKey, ids);
           wireTabView(childTab, childView);
+          if (disposition === 'background-tab') {
+            void childView.webContents.loadURL(safe).catch(() => {});
+          }
           queueOpenRequest(tab.ownerKey, childTabId, safe, activate);
           return childView.webContents;
         },
