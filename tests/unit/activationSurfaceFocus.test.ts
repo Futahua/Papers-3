@@ -82,6 +82,13 @@ describe('focusSurfaceForForeignActivation', () => {
     expect(source).toMatch(/surface\?\.kind === COMPACT_WIDGET_SURFACE_KIND \? COMPACT_WIDGET_TOPMOST_LEVEL : 'floating'/);
   });
 
+  it('does not drop restored widget registration before the native Alt+Q helper is ready', async () => {
+    const source = await readFile(new URL('../../src/main/index.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/const pendingHoverWidgetRegistrations = new Map<number, Buffer>\(\)/);
+    expect(source).toMatch(/onWidgetRegistered: \(senderId, handle\) => \{[\s\S]*if \(hoverInputBridge\) hoverInputBridge\.registerWidget\(senderId, handle\);[\s\S]*else pendingHoverWidgetRegistrations\.set\(senderId, Buffer\.from\(handle\)\)/);
+    expect(source).toMatch(/for \(const \[senderId, handle\] of pendingHoverWidgetRegistrations\) \{[\s\S]*hoverInputBridge\.registerWidget\(senderId, handle\);[\s\S]*pendingHoverWidgetRegistrations\.clear\(\)/);
+  });
+
   it('keeps the old floating default for unrelated topmost surfaces', async () => {
     const fake = fakeWindow({ focusable: false, alwaysOnTop: true });
     const release = await focusSurfaceForForeignActivation(fake.window);
