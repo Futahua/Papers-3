@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 describe('native candidate picker immediate shell', () => {
   it('shows the ready picker without an entrance animation', () => {
-    const source = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/main/index.ts'), 'utf8');
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/main');
+    const source = fs.readFileSync(path.join(root, 'windows/candidatePickerWindowManager.ts'), 'utf8');
     const readyHandler = source.match(/picker\.once\('ready-to-show', \(\) => \{([\s\S]*?)\n        \}\);/);
     expect(readyHandler?.[1]).toContain('picker.show();');
     expect(readyHandler?.[1]).toContain('picker.focus();');
@@ -15,7 +16,7 @@ describe('native candidate picker immediate shell', () => {
 
   it('renders loading immediately, preserves search/filter state on update, and Enter selects only a visible row', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/main');
-    const source = fs.readFileSync(path.join(root, 'index.ts'), 'utf8');
+    const source = fs.readFileSync(path.join(root, 'windows/candidatePickerWindowManager.ts'), 'utf8');
     const documentSource = fs.readFileSync(path.join(root, 'windows/candidatePickerDocument.ts'), 'utf8');
     expect(documentSource).toContain('loading=${candidates.length === 0}');
     expect(documentSource).toContain("e.textContent=loading?'Loading windows…':'No matching windows'");

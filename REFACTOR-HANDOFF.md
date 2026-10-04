@@ -514,7 +514,7 @@ Seventh Papers host-side seam committed as b1d8a29 (extract Papers hover preview
 - Papers typecheck passes;
 - full default parallel suite: **1347 pass / 8 skipped / 0 fail**.
 
-Eighth Papers host-side seam is validated and ready to commit:
+Eighth Papers host-side seam committed as 3a62873 (centralize Papers hover preview window lifecycle):
 
 - added windows/hoverPreviewWindowManager.ts as the owner of hover-preview BrowserWindow
   creation, one-window-per-sender reuse, repaint revisioning, sender cleanup and shutdown disposal;
@@ -526,6 +526,21 @@ Eighth Papers host-side seam is validated and ready to commit:
 - Papers typecheck passes;
 - full default parallel suite: **1349 pass / 8 skipped / 0 fail**.
 
-Next planned slice: reassess another subsystem rather than splitting preview code further.
-AYG mutation ACK/cancellation remains a candidate only if it can be separated without creating
-a second writer-election authority.
+Ninth Papers host-side seam is validated and ready to commit:
+
+- added windows/candidatePickerWindowManager.ts as the owner of native candidate-picker
+  BrowserWindow/session lifecycle, reuse, loading delivery, outside-click dismissal, bounded
+  peek timing, preload signal routing and cleanup;
+- main/index.ts now delegates show/update/dismiss to that manager instead of carrying the
+  complete picker lifecycle inline;
+- window identity, candidate binding and preview release still come from WindowCapabilityService;
+  the picker manager does not become a second window authority;
+- existing candidate-picker document/signal contract tests were repointed to the manager where
+  lifecycle now lives rather than weakened;
+- focused candidate-picker tests: **7/7 pass**;
+- Papers typecheck passes;
+- full default parallel suite: **1349 pass / 8 skipped / 0 fail**.
+
+Next objective: stop refactoring for this test cycle, build/package this clean checkpoint, run
+product-level smoke/E2E gates that are safe on this machine, and produce a runnable artifact
+for the creator to test without replacing the live Papers installation.
