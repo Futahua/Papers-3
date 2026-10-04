@@ -40,6 +40,7 @@ type FakeWebContents = {
 type FakeView = {
   webContents: FakeWebContents;
   setBounds: ReturnType<typeof vi.fn>;
+  setBackgroundColor: ReturnType<typeof vi.fn>;
 };
 
 const harness = vi.hoisted(() => ({
@@ -52,6 +53,10 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
+  ipcMain: {
+    on: vi.fn(),
+    removeAllListeners: vi.fn(),
+  },
   app: {
     getPath: vi.fn().mockReturnValue('C:\\Users\\test\\Downloads'),
   },
@@ -68,6 +73,7 @@ vi.mock('electron', () => ({
   WebContentsView: class {
     webContents: FakeWebContents;
     setBounds = vi.fn();
+    setBackgroundColor = vi.fn();
     constructor(options?: { webContents?: FakeWebContents }) {
       const webContents: FakeWebContents = options?.webContents ?? {
         destroyed: false,
@@ -170,6 +176,13 @@ describe('durable browser tabs', () => {
     expect(permissionCheck(null, 'top-level-storage-access', 'https://x.com/')).toBe(true);
     expect(permissionCheck(null, 'media', 'https://x.com/')).toBe(false);
     expect(await bridge.getDownloads()).toEqual([]);
+    const faviconHandler = harness.views[0]!.webContents.on.mock.calls.find(([event]) => event === 'page-favicon-updated')?.[1];
+    expect(typeof faviconHandler).toBe('function');
+    faviconHandler(null, ['https://example.com/favicon.ico']);
+    expect(bridge.getTab(ownerKey, tabId)?.faviconUrl).toBe('https://example.com/favicon.ico');
+
+    expect(await bridge.showDownloadsBubble(ownerKey, { x: 10, y: 10, width: 240, height: 58 })).toBe(true);
+    expect(harness.views.at(-1)!.setBackgroundColor).toHaveBeenCalledWith('#00000000');
   });
 
   it('persists recent downloads across bridge recreation', async () => {

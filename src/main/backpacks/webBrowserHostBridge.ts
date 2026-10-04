@@ -41,6 +41,7 @@ interface DurableBrowserTab {
   presented: boolean;
   url: string;
   title: string;
+  faviconUrl: string;
   zoomFactor: number;
   lastActiveAt: number;
   history: { entries: NavigationEntry[]; index: number } | null;
@@ -51,6 +52,7 @@ export interface BrowserTabState {
   tabId: string;
   url: string;
   title: string;
+  faviconUrl: string;
   canGoBack: boolean;
   canGoForward: boolean;
   live: boolean;
@@ -659,6 +661,7 @@ export function createWebBrowserHostBridge(input: {
           webSecurity: true,
         },
       });
+      view.setBackgroundColor('#00000000');
       bubble = {
         ownerKey,
         window: tab.window,
@@ -845,6 +848,7 @@ export function createWebBrowserHostBridge(input: {
       tabId: tab.tabId,
       url: tab.url,
       title: tab.title,
+      faviconUrl: tab.faviconUrl,
       canGoBack: Boolean(contents && !contents.isDestroyed() && contents.navigationHistory.canGoBack()),
       canGoForward: Boolean(contents && !contents.isDestroyed() && contents.navigationHistory.canGoForward()),
       live: Boolean(contents && !contents.isDestroyed()),
@@ -908,6 +912,10 @@ export function createWebBrowserHostBridge(input: {
       event.preventDefault();
       tab.title = String(title || '').slice(0, 500);
     });
+    contents.on('page-favicon-updated', (_event, favicons) => {
+      const next = Array.isArray(favicons) ? favicons.find((value) => typeof value === 'string' && value) : null;
+      tab.faviconUrl = next ? String(next).slice(0, 4000) : '';
+    });
     contents.on('render-process-gone', () => { tab.crashed = true; });
     contents.on('zoom-changed', (_event, direction) => {
       const factor = direction === 'in' ? 1.1 : (1 / 1.1);
@@ -942,6 +950,7 @@ export function createWebBrowserHostBridge(input: {
             presented: false,
             url: safe,
             title: '',
+            faviconUrl: '',
             zoomFactor: 1,
             lastActiveAt: Date.now(),
             history: null,
@@ -1161,6 +1170,7 @@ export function createWebBrowserHostBridge(input: {
         presented: false,
         url,
         title: '',
+        faviconUrl: '',
         zoomFactor: 1,
         lastActiveAt: Date.now(),
         history: null,
@@ -1324,6 +1334,7 @@ export function createWebBrowserHostBridge(input: {
           presented: false,
           url: 'https://www.google.com/',
           title: 'Google Lens',
+          faviconUrl: '',
           zoomFactor: 1,
           lastActiveAt: Date.now(),
           history: null,
