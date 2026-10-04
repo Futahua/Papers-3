@@ -6,6 +6,7 @@ import {
   desktopCapturer,
   ipcMain,
   screen,
+  shell,
   WebContentsView,
   type Display,
   type NativeImage,
@@ -93,6 +94,8 @@ export interface WebBrowserHostBridge {
   setTabsVisible(ownerKey: string, visible: boolean): void;
   getTab(ownerKey: string, tabId: string): BrowserTabState | null;
   getDownloads(): Promise<BrowserDownloadState[]>;
+  showDownloadsBubble(ownerKey: string, localRect: PreviewRect): Promise<boolean>;
+  hideDownloadsBubble(ownerKey: string, immediate?: boolean): void;
   getAdblockState(): BrowserAdblockState;
   setAdblockEnabled(enabled: boolean): Promise<BrowserAdblockState>;
   captureLensRegion(ownerKey: string, sourceTabId: string, targetTabId: string): Promise<BrowserLensResult>;
@@ -111,6 +114,16 @@ const hardenedBrowserSessions = new WeakSet<Session>();
 interface BrowserDownloadHistoryFile {
   schemaVersion: 1;
   downloads: BrowserDownloadState[];
+}
+
+interface BrowserDownloadBubble {
+  ownerKey: string;
+  window: BaseWindow;
+  view: WebContentsView;
+  channel: string;
+  localRect: PreviewRect;
+  presented: boolean;
+  hideTimer: ReturnType<typeof setTimeout> | null;
 }
 
 function validDownloadState(value: unknown): value is BrowserDownloadState {
@@ -187,6 +200,34 @@ function safeWebUrl(value: string): string | null {
 
 function boundedError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').slice(0, 500);
+}
+
+function downloadBubbleHtml(channel: string, initialDownloads: BrowserDownloadState[]): string {
+  const channelJson = JSON.stringify(channel);
+  const downloadsJson = JSON.stringify(initialDownloads);
+  return `<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;color:#e9e9e9;font:12px system-ui,sans-serif}
+body{box-sizing:border-box;padding:6px}
+#bubble{height:100%;box-sizing:border-box;overflow:auto;background:#24231f;border:1px solid #514f47;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.42);animation:in .13s ease-out}
+@keyframes in{from{opacity:0;transform:translateY(-5px) scale(.985)}to{opacity:1;transform:none}}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto 26px;align-items:center;gap:7px;min-height:38px;padding:0 5px;border-bottom:1px solid rgba(255,255,255,.07)}
+.row:last-child{border-bottom:0}.row[draggable=true]{cursor:grab}.row.dragging{opacity:.62;cursor:grabbing}
+.name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:transparent;border:0;color:inherit;text-align:left;padding:6px 2px;cursor:pointer}
+.name:disabled{color:#8d8b83;cursor:default}.state{font-size:10px;color:#aaa79e}.reveal{width:26px;height:26px;border:0;border-radius:6px;background:transparent;color:#bdbab1;cursor:pointer}.reveal:hover{background:#35332e;color:#fff}
+.empty{padding:12px;color:#aaa79e;font-size:11px}
+</style></head><body><div id="bubble"></div><script>
+const {ipcRenderer}=require('electron'); const channel=${channelJson}; const root=document.getElementById('bubble');
+function render(items){root.replaceChildren();if(!items.length){const e=document.createElement('div');e.className='empty';e.textContent='No recent downloads';root.append(e);return}
+for(const item of items.slice(0,8)){const row=document.createElement('div');row.className='row';const draggable=item.state==='completed'&&/^(?:[A-Za-z]:[\\\\/]|\\\\\\\\)/.test(item.path||'');row.draggable=draggable;
+if(draggable){row.addEventListener('dragstart',e=>{row.classList.add('dragging');e.preventDefault();ipcRenderer.send(channel,{kind:'drag',path:item.path})});row.addEventListener('dragend',()=>row.classList.remove('dragging'))}
+const name=document.createElement('button');name.className='name';name.textContent=item.filename||'Download';name.title=item.path||item.url||'';name.disabled=item.state!=='completed'||!item.path;name.onclick=()=>ipcRenderer.send(channel,{kind:'open',path:item.path});
+const state=document.createElement('span');state.className='state';if(item.state==='progressing'&&Number(item.totalBytes)>0)state.textContent=Math.min(100,Math.round(Number(item.receivedBytes)/Number(item.totalBytes)*100))+'%';else state.textContent=item.state||'';
+const reveal=document.createElement('button');reveal.className='reveal';reveal.textContent='⌕';reveal.title='Show in folder';reveal.disabled=!item.path;reveal.onclick=()=>ipcRenderer.send(channel,{kind:'reveal',path:item.path});
+row.append(name,state,reveal);root.append(row)}}
+window.__papersSetDownloads=render;render(${downloadsJson});
+document.body.addEventListener('mouseenter',()=>ipcRenderer.send(channel,{kind:'hold'}));
+document.body.addEventListener('mouseleave',()=>ipcRenderer.send(channel,{kind:'release'}));
+</script></body></html>`;
 }
 
 interface LensDisplayCapture {
@@ -536,6 +577,7 @@ export function createWebBrowserHostBridge(input: {
       .catch(() => undefined);
   };
   const downloadSessions = new WeakSet<Session>();
+  const downloadBubbles = new Map<string, BrowserDownloadBubble>();
   const adblockSessions = new Set<Session>();
   let adblockDesired = true;
   let adblockStatus: BrowserAdblockState['status'] = 'loading';
@@ -543,6 +585,122 @@ export function createWebBrowserHostBridge(input: {
   let blocker: ElectronBlocker | null = null;
   let blockerPromise: Promise<ElectronBlocker> | null = null;
   const tabKey = (ownerKey: string, tabId: string): string => ownerKey + '\n' + tabId;
+
+  const cleanupDownloadBubble = (ownerKey: string): void => {
+    const bubble = downloadBubbles.get(ownerKey);
+    if (!bubble) return;
+    downloadBubbles.delete(ownerKey);
+    if (bubble.hideTimer) clearTimeout(bubble.hideTimer);
+    ipcMain.removeAllListeners(bubble.channel);
+    if (bubble.presented && !bubble.window.isDestroyed()) {
+      try { bubble.window.contentView.removeChildView(bubble.view); } catch { /* best effort */ }
+    }
+    if (!bubble.view.webContents.isDestroyed()) {
+      try { bubble.view.webContents.close(); } catch { /* best effort */ }
+    }
+  };
+
+  const hideDownloadBubble = (ownerKey: string, immediate = false): void => {
+    const bubble = downloadBubbles.get(ownerKey);
+    if (!bubble) return;
+    if (bubble.hideTimer) clearTimeout(bubble.hideTimer);
+    const hide = () => {
+      bubble.hideTimer = null;
+      if (bubble.presented && !bubble.window.isDestroyed()) {
+        try { bubble.window.contentView.removeChildView(bubble.view); } catch { /* best effort */ }
+        bubble.presented = false;
+      }
+    };
+    if (immediate) hide();
+    else bubble.hideTimer = setTimeout(hide, 220);
+  };
+
+  const updateDownloadBubble = (ownerKey: string): void => {
+    const bubble = downloadBubbles.get(ownerKey);
+    if (!bubble || bubble.view.webContents.isDestroyed()) return;
+    const snapshot = downloads.map((entry) => ({ ...entry })).slice(0, 8);
+    void bubble.view.webContents.executeJavaScript(
+      `window.__papersSetDownloads?.(${JSON.stringify(snapshot)})`,
+    ).catch(() => {});
+  };
+
+  const updateAllDownloadBubbles = (): void => {
+    for (const ownerKey of downloadBubbles.keys()) updateDownloadBubble(ownerKey);
+  };
+
+  const showDownloadBubble = async (ownerKey: string, localRect: PreviewRect): Promise<boolean> => {
+    if (!validRect(localRect)) return false;
+    const activeId = activeTabs.get(ownerKey);
+    const tab = activeId ? tabs.get(tabKey(ownerKey, activeId)) : undefined;
+    if (!tab || tab.window.isDestroyed()) return false;
+    let bubble = downloadBubbles.get(ownerKey);
+    if (!bubble || bubble.view.webContents.isDestroyed() || bubble.window !== tab.window) {
+      if (bubble) cleanupDownloadBubble(ownerKey);
+      const channel = `papers:browser-download-bubble:${randomUUID()}`;
+      const view = new WebContentsView({
+        webPreferences: {
+          nodeIntegration: true,
+          contextIsolation: false,
+          sandbox: false,
+          webSecurity: true,
+        },
+      });
+      bubble = {
+        ownerKey,
+        window: tab.window,
+        view,
+        channel,
+        localRect: { ...localRect },
+        presented: false,
+        hideTimer: null,
+      };
+      downloadBubbles.set(ownerKey, bubble);
+      ipcMain.on(channel, (event, payload: unknown) => {
+        if (event.sender.id !== view.webContents.id || !payload || typeof payload !== 'object') return;
+        const value = payload as { kind?: unknown; path?: unknown };
+        if (value.kind === 'hold') {
+          if (bubble?.hideTimer) clearTimeout(bubble.hideTimer);
+          if (bubble) bubble.hideTimer = null;
+          return;
+        }
+        if (value.kind === 'release') {
+          hideDownloadBubble(ownerKey);
+          return;
+        }
+        const path = typeof value.path === 'string' ? value.path : '';
+        const record = downloads.find((entry) => entry.path === path);
+        if (!record || !path) return;
+        if (value.kind === 'open' && record.state === 'completed') {
+          void shell.openPath(path);
+          return;
+        }
+        if (value.kind === 'reveal') {
+          shell.showItemInFolder(path);
+          return;
+        }
+        if (value.kind === 'drag' && record.state === 'completed') {
+          void app.getFileIcon(path, { size: 'small' }).then((icon) => {
+            if (!view.webContents.isDestroyed()) view.webContents.startDrag({ file: path, icon });
+          }).catch(() => {});
+        }
+      });
+      view.webContents.on('will-navigate', (event) => event.preventDefault());
+      view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      const html = downloadBubbleHtml(channel, downloads.map((entry) => ({ ...entry })).slice(0, 8));
+      await view.webContents.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    } else {
+      if (bubble.hideTimer) clearTimeout(bubble.hideTimer);
+      bubble.hideTimer = null;
+      updateDownloadBubble(ownerKey);
+    }
+    if (!bubble.presented) {
+      bubble.window.contentView.addChildView(bubble.view);
+      bubble.presented = true;
+    }
+    bubble.localRect = { ...localRect };
+    bubble.view.setBounds(absoluteRect(tab.surfaceBounds, localRect));
+    return true;
+  };
 
   const enableBrowserDownloads = (browserSession: Session): void => {
     if (downloadSessions.has(browserSession)) return;
@@ -563,6 +721,7 @@ export function createWebBrowserHostBridge(input: {
         downloads.unshift(record);
         if (downloads.length > MAX_RECENT_DOWNLOADS) downloads.length = MAX_RECENT_DOWNLOADS;
         persistDownloads();
+        updateAllDownloadBubbles();
       });
       const sync = (state: BrowserDownloadState['state'] = record.state) => {
         record.filename = item.getFilename();
@@ -571,7 +730,10 @@ export function createWebBrowserHostBridge(input: {
         record.receivedBytes = item.getReceivedBytes();
         record.totalBytes = item.getTotalBytes();
         record.state = state;
-        void downloadHistoryReady.then(() => persistDownloads());
+        void downloadHistoryReady.then(() => {
+          persistDownloads();
+          updateAllDownloadBubbles();
+        });
       };
       item.on('updated', (_itemEvent, state) => {
         if (state === 'progressing' || state === 'interrupted') sync(state);
@@ -1065,6 +1227,15 @@ export function createWebBrowserHostBridge(input: {
       return downloads.map((download) => ({ ...download }));
     },
 
+    async showDownloadsBubble(ownerKey, localRect) {
+      await downloadHistoryReady;
+      return showDownloadBubble(ownerKey, localRect);
+    },
+
+    hideDownloadsBubble(ownerKey, immediate = false) {
+      hideDownloadBubble(ownerKey, immediate);
+    },
+
     getAdblockState() {
       return adblockState();
     },
@@ -1140,6 +1311,10 @@ export function createWebBrowserHostBridge(input: {
         tab.surfaceBounds = { ...bounds };
         placeTab(tab);
       }
+      const bubble = downloadBubbles.get(ownerKey);
+      if (bubble?.presented && !bubble.view.webContents.isDestroyed()) {
+        bubble.view.setBounds(absoluteRect(bounds, bubble.localRect));
+      }
     },
 
     setOwnerVisible(ownerKey, visible) {
@@ -1157,10 +1332,12 @@ export function createWebBrowserHostBridge(input: {
           session.presented = false;
         }
       }
+      if (!visible) hideDownloadBubble(ownerKey, true);
       setOwnerTabsVisible(ownerKey, visible);
     },
 
     closeOwner(ownerKey) {
+      cleanupDownloadBubble(ownerKey);
       closeOwner(ownerKey);
       closeOwnerTabs(ownerKey);
     },
@@ -1178,9 +1355,15 @@ export function createWebBrowserHostBridge(input: {
         tab.window.contentView.addChildView(tab.view);
         placeTab(tab);
       }
+      for (const bubble of downloadBubbles.values()) {
+        if (bubble.window.id !== windowId || !bubble.presented
+          || bubble.window.isDestroyed() || bubble.view.webContents.isDestroyed()) continue;
+        bubble.window.contentView.addChildView(bubble.view);
+      }
     },
 
     dispose() {
+      for (const ownerKey of [...downloadBubbles.keys()]) cleanupDownloadBubble(ownerKey);
       for (const session of [...sessions.values()]) cleanupSession(session);
       for (const tab of [...tabs.values()]) cleanupTab(tab);
     },

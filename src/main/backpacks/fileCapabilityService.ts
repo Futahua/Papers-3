@@ -1000,6 +1000,20 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
             return { ok: true, downloads: await deps.webBrowser.getDownloads() };
           }
+          case 'browser-download-bubble-show': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return {
+              ok: await deps.webBrowser.showDownloadsBubble(
+                context.nativePreviewHost.ownerKey,
+                previewRect(params.rect),
+              ),
+            };
+          }
+          case 'browser-download-bubble-hide': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            deps.webBrowser.hideDownloadsBubble(context.nativePreviewHost.ownerKey, params.immediate === true);
+            return { ok: true };
+          }
           case 'browser-adblock-state': {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
             return { ok: true, adblock: deps.webBrowser.getAdblockState() };
