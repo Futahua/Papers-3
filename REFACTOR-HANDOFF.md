@@ -541,6 +541,36 @@ Ninth Papers host-side seam is validated and ready to commit:
 - Papers typecheck passes;
 - full default parallel suite: **1349 pass / 8 skipped / 0 fail**.
 
-Next objective: stop refactoring for this test cycle, build/package this clean checkpoint, run
-product-level smoke/E2E gates that are safe on this machine, and produce a runnable artifact
-for the creator to test without replacing the live Papers installation.
+Ninth Papers host-side seam committed as 79a4c8d (centralize Papers candidate picker window lifecycle).
+
+Testable build checkpoint on 2026-10-04:
+
+- production electron-vite build succeeds;
+- electron-builder --win --dir succeeds and produces
+  apps/papers/release/win-unpacked/Papers.exe;
+- packaged executable size: 225,821,696 bytes;
+- packaged executable SHA-256:
+  d25e55cbbb76b365ae2c1234ee0719c3baa6dacd02ae385a58e8d13dcaf3c92a;
+- isolated packaged startup smoke passes: one visible Papers BaseWindow is created and the
+  packaged file:// renderer loads from app.asar;
+- the packaged build was smoke-tested with PAPERS_TEST_USER_DATA pointing to a temporary
+  directory, so no live creator data was touched;
+- ordinary manual launch from this win-unpacked directory uses the sibling release/Data
+  directory by Papers design, keeping this refactor build isolated from another installed copy.
+
+Current automated gates before packaging:
+
+- Papers typecheck: pass;
+- candidate-picker focused tests: **7/7 pass**;
+- full Papers unit suite: **1349 pass / 8 skipped / 0 fail**;
+- package startup smoke: pass.
+
+Two old product-shell E2E assertions and one startup-hydration assertion are stale against the
+current product contracts rather than failures introduced by this refactor: one still asserts
+iframe-hosted Backpack presentation, another is explicitly written around retired Hermes/old
+empty-Backpack copy, and startup-hydration rejects preserved surfaceKey values even though the
+current durable topology intentionally keeps stable surface keys. Do not make current product
+behavior regress merely to satisfy those historical assertions; refresh those E2Es separately.
+
+Next objective after creator testing: take concrete regressions from the packaged build first.
+Do not continue structural refactoring blindly before real UX feedback from this checkpoint.
