@@ -92,11 +92,28 @@ const MAX_LIVE_TABS_PER_OWNER = 3;
 const MAX_RECENT_DOWNLOADS = 50;
 const hardenedBrowserSessions = new WeakSet<Session>();
 
+/**
+ * Browser sites use the Storage Access API to regain first-party cookie/storage
+ * access across login/account boundaries. Denying it unconditionally breaks
+ * legitimate sign-in flows (X was the concrete regression that exposed this).
+ *
+ * Keep the browser narrow: this does NOT grant camera/mic/geolocation/device
+ * permissions. It only allows Chromium's storage-access capability inside the
+ * dedicated persistent browser partition.
+ */
+export function browserPermissionAllowed(permission: string): boolean {
+  return permission === 'storage-access';
+}
+
 function hardenBrowserSession(browserSession: Session): void {
   if (hardenedBrowserSessions.has(browserSession)) return;
   hardenedBrowserSessions.add(browserSession);
-  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  browserSession.setPermissionCheckHandler(() => false);
+  browserSession.setPermissionRequestHandler((_webContents, permission, callback) => (
+    callback(browserPermissionAllowed(permission))
+  ));
+  browserSession.setPermissionCheckHandler((_webContents, permission) => (
+    browserPermissionAllowed(permission)
+  ));
   browserSession.setCertificateVerifyProc((request, callback) => {
     const hostname = request.hostname.toLocaleLowerCase().replace(/^\[|\]$/g, '');
     const loopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
@@ -193,7 +210,10 @@ export function createWebBrowserHostBridge(input: {
   const loadBlocker = (): Promise<ElectronBlocker> => {
     if (blocker) return Promise.resolve(blocker);
     if (!blockerPromise) {
-      blockerPromise = ElectronBlocker.fromPrebuiltAdsAndTracking(fetch)
+      // Tracking-list blocking broke real account authentication (X was the
+      // observed case). Keep the useful ad blocker without treating identity,
+      // SSO and account telemetry endpoints as trackers to be destroyed.
+      blockerPromise = ElectronBlocker.fromPrebuiltAdsOnly(fetch)
         .then((loaded) => {
           blocker = loaded;
           return loaded;
@@ -337,7 +357,12 @@ export function createWebBrowserHostBridge(input: {
     hardenBrowserSession(contents.session);
     enableBrowserDownloads(contents.session);
     void syncAdblockSession(contents.session);
-    contents.setBackgroundThrottling(true);
+    // A visible browser may be temporarily occluded by Papers UI such as the
+    // Lens crop overlay. Chromium's background throttling stalls timers/network
+    // work in that case; ChatGPT streaming was the concrete regression. The
+    // live-tab cap already bounds renderer cost, so live browser tabs stay
+    // unthrottled and hibernation remains the memory-control mechanism.
+    contents.setBackgroundThrottling(false);
     contents.on('will-navigate', (event, nextUrl) => {
       if (safeWebUrl(nextUrl)) return;
       event.preventDefault();

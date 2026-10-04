@@ -593,7 +593,27 @@ Backpack integration follow-up on 2026-10-04:
   its typecheck/tests/build:public pass. Do not claim that external checkout as a clean root
   refactor commit because it contains its own independent history/work.
 
-Next deployment step: rebuild the isolated Papers package, copy AYG/Proxima/current Delegate
-Wave runtime roots beside the package, seed only that package's registry/project bindings,
-remap only the packaged AYG action targets to working paths on this machine, and reopen the
-refactored package. Do not mutate the installed/live Papers data.
+Post-mortem browser behavior parity and account-login compatibility on 2026-10-04:
+
+- the original Papers-3 and AYG `post-mortem` branches remain authoritative and untouched;
+  behavior is ported into this laptop refactor, never the reverse;
+- durable Chromium tabs, 3-live-renderer hibernation/history restore, AYG persistent tab UI,
+  Google Lens, downloads, Ghostery toggle and browser-capabilities-v2 are present here;
+- a later post-mortem compatibility round had been missed by the first parity port. It found
+  that the ads+tracking Ghostery preset broke real X account authentication, so this build now
+  uses the ads-only preset instead;
+- Chromium `storage-access` is allowed in the dedicated persistent browser partition so account
+  and SSO flows can regain cookie/site-storage access; camera, microphone, geolocation,
+  notification and other permissions remain denied by default;
+- live browser tabs use `setBackgroundThrottling(false)`. The concrete prior regression was
+  ChatGPT stalling/"hit a snag" while the Lens overlay occluded the browser; the 3-live-tab cap
+  plus hibernation remain the memory-control mechanism instead of throttling a live tab;
+- focused account-compatibility/browser-host tests: **4/4 pass**;
+- Papers typecheck: pass;
+- full Papers suite: **1353 pass / 8 skipped / 0 fail**.
+
+Next deployment step: rebuild the isolated `release-parity` Papers package, copy
+AYG/Proxima/current Delegate Wave runtime roots beside the package, seed only that package's
+UTF-8/no-BOM registry/project bindings, remap only packaged AYG action targets to working local
+paths, and reopen it for real X/ChatGPT login testing. Do not mutate installed/live Papers data
+or either original repository branch.

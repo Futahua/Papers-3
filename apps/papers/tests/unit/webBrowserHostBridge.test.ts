@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BaseWindow, WebContentsView } from 'electron';
-import { createWebBrowserHostBridge } from '../../src/main/backpacks/webBrowserHostBridge';
+import {
+  browserPermissionAllowed,
+  createWebBrowserHostBridge,
+} from '../../src/main/backpacks/webBrowserHostBridge';
 
 type FakeSession = {
   setPermissionRequestHandler: ReturnType<typeof vi.fn>;
@@ -115,5 +119,45 @@ describe('web browser preview session leases', () => {
     expect(bridge.move(ownerKey, secondSessionId, rect)).toBe(true);
     expect(bridge.close(ownerKey, secondSessionId)).toBe(true);
     expect(harness.views[0]!.webContents.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('inline browser account compatibility', () => {
+  it('allows storage access without granting device/media permissions', () => {
+    expect(browserPermissionAllowed('storage-access')).toBe(true);
+    expect(browserPermissionAllowed('media')).toBe(false);
+    expect(browserPermissionAllowed('geolocation')).toBe(false);
+    expect(browserPermissionAllowed('notifications')).toBe(false);
+  });
+
+  it('wires the persistent browser session to the same narrow storage-access rule', async () => {
+    const window = new BaseWindow();
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });
+    await bridge.open(context, url, rect);
+
+    const browserSession = harness.views[0]!.webContents.session;
+    expect(browserSession.setPermissionRequestHandler).toHaveBeenCalledOnce();
+    expect(browserSession.setPermissionCheckHandler).toHaveBeenCalledOnce();
+
+    const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]![0];
+    const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]![0];
+    const storageReply = vi.fn();
+    const mediaReply = vi.fn();
+    requestHandler(harness.views[0]!.webContents, 'storage-access', storageReply, {});
+    requestHandler(harness.views[0]!.webContents, 'media', mediaReply, {});
+    expect(storageReply).toHaveBeenCalledWith(true);
+    expect(mediaReply).toHaveBeenCalledWith(false);
+    expect(checkHandler(harness.views[0]!.webContents, 'storage-access', 'https://x.com', {})).toBe(true);
+    expect(checkHandler(harness.views[0]!.webContents, 'media', 'https://x.com', {})).toBe(false);
+  });
+
+  it('uses ads-only blocking and keeps live browser tabs unthrottled', () => {
+    const source = readFileSync(
+      new URL('../../src/main/backpacks/webBrowserHostBridge.ts', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain('ElectronBlocker.fromPrebuiltAdsOnly(fetch)');
+    expect(source).not.toContain('ElectronBlocker.fromPrebuiltAdsAndTracking(fetch)');
+    expect(source).toContain('contents.setBackgroundThrottling(false)');
   });
 });
