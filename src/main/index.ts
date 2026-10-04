@@ -725,6 +725,8 @@ async function bootstrap(): Promise<void> {
       if (!Number.isSafeInteger(windowId)) return null;
       return papersWindows.get(windowId)?.owned.window ?? null;
     },
+    downloadHistoryFile: path.join(paths.root, 'browser-downloads.json'),
+    downloadRecoveryDir: paths.recoveryDir,
   });
   app.once('will-quit', () => webBrowser.dispose());
   const fileCapability = createFileCapabilityService({

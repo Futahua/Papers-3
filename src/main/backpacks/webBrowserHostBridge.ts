@@ -16,6 +16,7 @@ import {
 import { ElectronBlocker } from '@ghostery/adblocker-electron';
 
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
+import { AtomicJsonStore } from '../persistence/atomicStore';
 
 interface LiveWebBrowser {
   id: string;
@@ -91,7 +92,7 @@ export interface WebBrowserHostBridge {
   closeTab(ownerKey: string, tabId: string): boolean;
   setTabsVisible(ownerKey: string, visible: boolean): void;
   getTab(ownerKey: string, tabId: string): BrowserTabState | null;
-  getDownloads(): BrowserDownloadState[];
+  getDownloads(): Promise<BrowserDownloadState[]>;
   getAdblockState(): BrowserAdblockState;
   setAdblockEnabled(enabled: boolean): Promise<BrowserAdblockState>;
   captureLensRegion(ownerKey: string, sourceTabId: string, targetTabId: string): Promise<BrowserLensResult>;
@@ -106,6 +107,33 @@ const BROWSER_PARTITION = 'persist:papers-web-browser';
 const MAX_LIVE_TABS_PER_OWNER = 3;
 const MAX_RECENT_DOWNLOADS = 50;
 const hardenedBrowserSessions = new WeakSet<Session>();
+
+interface BrowserDownloadHistoryFile {
+  schemaVersion: 1;
+  downloads: BrowserDownloadState[];
+}
+
+function validDownloadState(value: unknown): value is BrowserDownloadState {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Partial<BrowserDownloadState>;
+  return typeof entry.id === 'string'
+    && typeof entry.filename === 'string'
+    && typeof entry.path === 'string'
+    && typeof entry.url === 'string'
+    && Number.isFinite(entry.receivedBytes)
+    && Number.isFinite(entry.totalBytes)
+    && Number.isFinite(entry.startedAt)
+    && ['progressing', 'completed', 'cancelled', 'interrupted'].includes(String(entry.state));
+}
+
+function validateDownloadHistory(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return 'expected object';
+  const history = value as Partial<BrowserDownloadHistoryFile>;
+  if (history.schemaVersion !== 1) return 'unsupported schemaVersion';
+  if (!Array.isArray(history.downloads)) return 'downloads must be an array';
+  if (history.downloads.length > MAX_RECENT_DOWNLOADS) return 'too many downloads';
+  return history.downloads.every(validDownloadState) ? null : 'invalid download record';
+}
 
 function hardenBrowserSession(browserSession: Session): void {
   if (hardenedBrowserSessions.has(browserSession)) return;
@@ -469,6 +497,8 @@ async function submitLensCrop(contents: WebContents, crop: LensCrop): Promise<st
 
 export function createWebBrowserHostBridge(input: {
   resolveWindow(ownerKey: string): BaseWindow | null;
+  downloadHistoryFile?: string;
+  downloadRecoveryDir?: string;
 }): WebBrowserHostBridge {
   const sessions = new Map<string, LiveWebBrowser>();
   const owners = new Map<string, string>();
@@ -476,6 +506,35 @@ export function createWebBrowserHostBridge(input: {
   const ownerTabs = new Map<string, Set<string>>();
   const activeTabs = new Map<string, string>();
   const downloads: BrowserDownloadState[] = [];
+  const downloadStore = input.downloadHistoryFile && input.downloadRecoveryDir
+    ? new AtomicJsonStore(input.downloadHistoryFile, {
+      recoveryDir: input.downloadRecoveryDir,
+      validate: validateDownloadHistory,
+    })
+    : null;
+  const downloadHistoryReady = downloadStore
+    ? downloadStore.load<BrowserDownloadHistoryFile>()
+      .then((report) => {
+        const restored = report.value?.downloads ?? [];
+        downloads.splice(0, downloads.length, ...restored.map((entry) => ({
+          ...entry,
+          state: entry.state === 'progressing' ? 'interrupted' as const : entry.state,
+        })).slice(0, MAX_RECENT_DOWNLOADS));
+      })
+      .catch(() => undefined)
+    : Promise.resolve();
+  let downloadSaveQueue = Promise.resolve();
+  const persistDownloads = (): void => {
+    if (!downloadStore) return;
+    const snapshot: BrowserDownloadHistoryFile = {
+      schemaVersion: 1,
+      downloads: downloads.map((entry) => ({ ...entry })).slice(0, MAX_RECENT_DOWNLOADS),
+    };
+    downloadSaveQueue = downloadSaveQueue
+      .catch(() => undefined)
+      .then(() => downloadStore.save(snapshot))
+      .catch(() => undefined);
+  };
   const downloadSessions = new WeakSet<Session>();
   const adblockSessions = new Set<Session>();
   let adblockDesired = true;
@@ -500,8 +559,11 @@ export function createWebBrowserHostBridge(input: {
         state: 'progressing',
         startedAt: Date.now(),
       };
-      downloads.unshift(record);
-      if (downloads.length > MAX_RECENT_DOWNLOADS) downloads.length = MAX_RECENT_DOWNLOADS;
+      void downloadHistoryReady.then(() => {
+        downloads.unshift(record);
+        if (downloads.length > MAX_RECENT_DOWNLOADS) downloads.length = MAX_RECENT_DOWNLOADS;
+        persistDownloads();
+      });
       const sync = (state: BrowserDownloadState['state'] = record.state) => {
         record.filename = item.getFilename();
         record.path = item.getSavePath();
@@ -509,6 +571,7 @@ export function createWebBrowserHostBridge(input: {
         record.receivedBytes = item.getReceivedBytes();
         record.totalBytes = item.getTotalBytes();
         record.state = state;
+        void downloadHistoryReady.then(() => persistDownloads());
       };
       item.on('updated', (_itemEvent, state) => {
         if (state === 'progressing' || state === 'interrupted') sync(state);
@@ -997,7 +1060,8 @@ export function createWebBrowserHostBridge(input: {
       return tabState(tab);
     },
 
-    getDownloads() {
+    async getDownloads() {
+      await downloadHistoryReady;
       return downloads.map((download) => ({ ...download }));
     },
 

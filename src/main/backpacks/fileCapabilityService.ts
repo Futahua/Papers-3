@@ -998,7 +998,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'browser-downloads': {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
-            return { ok: true, downloads: deps.webBrowser.getDownloads() };
+            return { ok: true, downloads: await deps.webBrowser.getDownloads() };
           }
           case 'browser-adblock-state': {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };

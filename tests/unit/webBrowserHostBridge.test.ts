@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { BaseWindow, WebContentsView } from 'electron';
 import { createWebBrowserHostBridge } from '../../src/main/backpacks/webBrowserHostBridge';
@@ -166,7 +169,59 @@ describe('durable browser tabs', () => {
     expect(mediaCallback).toHaveBeenCalledWith(false);
     expect(permissionCheck(null, 'top-level-storage-access', 'https://x.com/')).toBe(true);
     expect(permissionCheck(null, 'media', 'https://x.com/')).toBe(false);
-    expect(bridge.getDownloads()).toEqual([]);
+    expect(await bridge.getDownloads()).toEqual([]);
+  });
+
+  it('persists recent downloads across bridge recreation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'papers-download-history-'));
+    const historyFile = join(directory, 'browser-downloads.json');
+    const recoveryDir = join(directory, 'recovery');
+    try {
+      const window = new BaseWindow();
+      const first = createWebBrowserHostBridge({
+        resolveWindow: () => window,
+        downloadHistoryFile: historyFile,
+        downloadRecoveryDir: recoveryDir,
+      });
+      await first.openTab(context, '99999999-9999-4999-8999-999999999999', url, rect);
+      const session = harness.views.at(-1)!.webContents.session;
+      const willDownload = session.on.mock.calls.find(([event]) => event === 'will-download')?.[1];
+      expect(typeof willDownload).toBe('function');
+      const done = vi.fn();
+      const item = {
+        getFilename: () => 'example.pdf',
+        getSavePath: () => 'C:\\Users\\test\\Downloads\\example.pdf',
+        getURL: () => 'https://example.com/example.pdf',
+        getReceivedBytes: () => 1234,
+        getTotalBytes: () => 1234,
+        on: vi.fn(),
+        once: vi.fn((event: string, callback: (event: unknown, state: string) => void) => {
+          if (event === 'done') done.mockImplementation(callback);
+        }),
+      };
+      willDownload(null, item);
+      done(null, 'completed');
+
+      await vi.waitFor(async () => {
+        const persisted = JSON.parse(await readFile(historyFile, 'utf8')) as { downloads?: Array<{ state?: string }> };
+        expect(persisted.downloads?.[0]?.state).toBe('completed');
+      });
+
+      const second = createWebBrowserHostBridge({
+        resolveWindow: () => window,
+        downloadHistoryFile: historyFile,
+        downloadRecoveryDir: recoveryDir,
+      });
+      expect(await second.getDownloads()).toEqual([
+        expect.objectContaining({
+          filename: 'example.pdf',
+          path: 'C:\\Users\\test\\Downloads\\example.pdf',
+          state: 'completed',
+        }),
+      ]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('keeps at most three live Chromium views and restores a hibernated tab history', async () => {
