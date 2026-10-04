@@ -102,6 +102,7 @@ export interface WebBrowserHostBridge {
   closeTab(ownerKey: string, tabId: string): boolean;
   setTabsVisible(ownerKey: string, visible: boolean): void;
   getTab(ownerKey: string, tabId: string): BrowserTabState | null;
+  resolveFavicon(url: string): Promise<string | null>;
   takeOpenRequests(ownerKey: string): BrowserOpenRequest[];
   getDownloads(): Promise<BrowserDownloadState[]>;
   showDownloadsBubble(ownerKey: string, localRect: PreviewRect): Promise<boolean>;
@@ -206,6 +207,13 @@ function safeWebUrl(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+function safeFaviconDataUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > 256_000) return null;
+  return /^data:image\/(?:png|jpeg|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon);base64,/i.test(value)
+    ? value
+    : null;
 }
 
 function boundedError(error: unknown): string {
@@ -576,7 +584,7 @@ export function createWebBrowserHostBridge(input: {
       })
       .catch(() => undefined)
     : Promise.resolve();
-  const resolveFavicon = input.resolveFavicon ?? (async (pageUrl: string) => {
+  const resolveFaviconData = input.resolveFavicon ?? (async (pageUrl: string) => {
     const resolved = await resolveWebLinkIcon(pageUrl);
     return resolved.icon;
   });
@@ -902,14 +910,10 @@ export function createWebBrowserHostBridge(input: {
       if (!pageUrl || requestedFaviconPage === pageUrl) return;
       requestedFaviconPage = pageUrl;
       const request = ++faviconRequest;
-      void resolveFavicon(pageUrl).then((icon) => {
+      void resolveFaviconData(pageUrl).then((icon) => {
         if (request !== faviconRequest || tab.view !== view) return;
-        const safe = typeof icon === 'string'
-          && icon.length <= 256_000
-          && /^data:image\/(?:png|jpeg|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon);base64,/i.test(icon)
-          ? icon
-          : '';
-        tab.faviconUrl = safe;
+        const safe = safeFaviconDataUrl(icon);
+        tab.faviconUrl = safe ?? '';
         if (!safe && requestedFaviconPage === pageUrl) requestedFaviconPage = '';
       }).catch(() => {
         if (request === faviconRequest && requestedFaviconPage === pageUrl) requestedFaviconPage = '';
@@ -1298,6 +1302,16 @@ export function createWebBrowserHostBridge(input: {
       const tab = tabs.get(tabKey(ownerKey, tabId));
       if (!tab || tab.ownerKey !== ownerKey) return null;
       return tabState(tab);
+    },
+
+    async resolveFavicon(rawUrl) {
+      const url = safeWebUrl(rawUrl);
+      if (!url) return null;
+      try {
+        return safeFaviconDataUrl(await resolveFaviconData(url));
+      } catch {
+        return null;
+      }
     },
 
     takeOpenRequests(ownerKey) {
