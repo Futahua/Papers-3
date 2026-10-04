@@ -20,6 +20,8 @@ import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBri
 import { resolveWebLinkIcon, resolveWebLinkIconCandidate } from './backpackProjectSiteIcon';
 import { AtomicJsonStore } from '../persistence/atomicStore';
 
+type FaviconFetch = NonNullable<Parameters<typeof resolveWebLinkIconCandidate>[1]>;
+
 interface LiveWebBrowser {
   id: string;
   ownerKey: string;
@@ -559,7 +561,7 @@ export function createWebBrowserHostBridge(input: {
   downloadHistoryFile?: string;
   downloadRecoveryDir?: string;
   resolveFavicon?: (pageUrl: string) => Promise<string | null>;
-  resolveFaviconCandidate?: (faviconUrl: string) => Promise<string | null>;
+  resolveFaviconCandidate?: (faviconUrl: string, fetchImpl?: FaviconFetch) => Promise<string | null>;
 }): WebBrowserHostBridge {
   const sessions = new Map<string, LiveWebBrowser>();
   const owners = new Map<string, string>();
@@ -932,7 +934,8 @@ export function createWebBrowserHostBridge(input: {
           const embedded = safeFaviconDataUrl(candidate);
           if (embedded) return embedded;
           if (!safeWebUrl(candidate)) continue;
-          const resolved = safeFaviconDataUrl(await resolveFaviconCandidateData(candidate));
+          const sessionFetch = contents.session.fetch.bind(contents.session) as FaviconFetch;
+          const resolved = safeFaviconDataUrl(await resolveFaviconCandidateData(candidate, sessionFetch));
           if (resolved) return resolved;
         }
         return null;

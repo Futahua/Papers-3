@@ -7,6 +7,7 @@ import { BaseWindow, WebContentsView } from 'electron';
 import { createWebBrowserHostBridge } from '../../src/main/backpacks/webBrowserHostBridge';
 
 type FakeSession = {
+  fetch: ReturnType<typeof vi.fn>;
   setPermissionRequestHandler: ReturnType<typeof vi.fn>;
   setPermissionCheckHandler: ReturnType<typeof vi.fn>;
   setDownloadPath: ReturnType<typeof vi.fn>;
@@ -78,6 +79,7 @@ vi.mock('electron', () => ({
       const webContents: FakeWebContents = options?.webContents ?? {
         destroyed: false,
         session: {
+          fetch: vi.fn(),
           setPermissionRequestHandler: vi.fn(),
           setPermissionCheckHandler: vi.fn(),
           setDownloadPath: vi.fn(),
@@ -190,7 +192,10 @@ describe('durable browser tabs', () => {
     expect(typeof faviconHandler).toBe('function');
     faviconHandler(null, ['https://static.example.test/favicon.ico']);
     await vi.waitFor(() => expect(bridge.getTab(ownerKey, tabId)?.faviconUrl).toBe(liveFavicon));
-    expect(resolveFaviconCandidate).toHaveBeenCalledWith('https://static.example.test/favicon.ico');
+    expect(resolveFaviconCandidate).toHaveBeenCalledWith(
+      'https://static.example.test/favicon.ico',
+      expect.any(Function),
+    );
 
     expect(await bridge.showDownloadsBubble(ownerKey, { x: 10, y: 10, width: 240, height: 58 })).toBe(true);
     expect(harness.views.at(-1)!.setBackgroundColor).toHaveBeenCalledWith('#00000000');

@@ -226,10 +226,17 @@ async function fetchWithRedirects(
   throw new Error('too many redirects');
 }
 
-async function fetchIconBytes(url: string, signal?: AbortSignal): Promise<{ data: Buffer; mime: string } | null> {
-  const parsed = validateUrl(url);
+type FetchLike = typeof net.fetch;
 
-  const response = await net.fetch(url, {
+async function fetchIconBytes(
+  url: string,
+  signal?: AbortSignal,
+  fetchImpl?: FetchLike,
+): Promise<{ data: Buffer; mime: string } | null> {
+  const parsed = validateUrl(url);
+  const doFetch = fetchImpl ?? net.fetch;
+
+  const response = await doFetch(url, {
     method: 'GET',
     signal,
     headers: { Accept: 'image/*' },
@@ -258,12 +265,15 @@ async function fetchIconBytes(url: string, signal?: AbortSignal): Promise<{ data
   return { data: buffer, mime };
 }
 
-export async function resolveWebLinkIconCandidate(rawUrl: string): Promise<string | null> {
+export async function resolveWebLinkIconCandidate(
+  rawUrl: string,
+  fetchImpl?: FetchLike,
+): Promise<string | null> {
   const parsed = validateUrl(rawUrl);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS);
   try {
-    const iconResult = await fetchIconBytes(parsed.toString(), controller.signal);
+    const iconResult = await fetchIconBytes(parsed.toString(), controller.signal, fetchImpl);
     if (!iconResult) return null;
     return `data:${iconResult.mime};base64,${iconResult.data.toString('base64')}`;
   } catch {
