@@ -17,6 +17,7 @@ import {
 import { ElectronBlocker } from '@ghostery/adblocker-electron';
 
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
+import { resolveWebLinkIcon } from './backpackProjectSiteIcon';
 import { AtomicJsonStore } from '../persistence/atomicStore';
 
 interface LiveWebBrowser {
@@ -549,6 +550,7 @@ export function createWebBrowserHostBridge(input: {
   resolveWindow(ownerKey: string): BaseWindow | null;
   downloadHistoryFile?: string;
   downloadRecoveryDir?: string;
+  resolveFavicon?: (pageUrl: string) => Promise<string | null>;
 }): WebBrowserHostBridge {
   const sessions = new Map<string, LiveWebBrowser>();
   const owners = new Map<string, string>();
@@ -574,6 +576,10 @@ export function createWebBrowserHostBridge(input: {
       })
       .catch(() => undefined)
     : Promise.resolve();
+  const resolveFavicon = input.resolveFavicon ?? (async (pageUrl: string) => {
+    const resolved = await resolveWebLinkIcon(pageUrl);
+    return resolved.icon;
+  });
   let downloadSaveQueue = Promise.resolve();
   const persistDownloads = (): void => {
     if (!downloadStore) return;
@@ -889,6 +895,26 @@ export function createWebBrowserHostBridge(input: {
 
   const wireTabView = (tab: DurableBrowserTab, view: WebContentsView): void => {
     const contents = view.webContents;
+    let faviconRequest = 0;
+    let requestedFaviconPage = '';
+    const refreshFavicon = (): void => {
+      const pageUrl = tab.url;
+      if (!pageUrl || requestedFaviconPage === pageUrl) return;
+      requestedFaviconPage = pageUrl;
+      const request = ++faviconRequest;
+      void resolveFavicon(pageUrl).then((icon) => {
+        if (request !== faviconRequest || tab.view !== view) return;
+        const safe = typeof icon === 'string'
+          && icon.length <= 256_000
+          && /^data:image\/(?:png|jpeg|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon);base64,/i.test(icon)
+          ? icon
+          : '';
+        tab.faviconUrl = safe;
+        if (!safe && requestedFaviconPage === pageUrl) requestedFaviconPage = '';
+      }).catch(() => {
+        if (request === faviconRequest && requestedFaviconPage === pageUrl) requestedFaviconPage = '';
+      });
+    };
     hardenBrowserSession(contents.session);
     enableBrowserDownloads(contents.session);
     void syncAdblockSession(contents.session);
@@ -912,10 +938,8 @@ export function createWebBrowserHostBridge(input: {
       event.preventDefault();
       tab.title = String(title || '').slice(0, 500);
     });
-    contents.on('page-favicon-updated', (_event, favicons) => {
-      const next = Array.isArray(favicons) ? favicons.find((value) => typeof value === 'string' && value) : null;
-      tab.faviconUrl = next ? String(next).slice(0, 4000) : '';
-    });
+    contents.on('did-finish-load', refreshFavicon);
+    contents.on('page-favicon-updated', refreshFavicon);
     contents.on('render-process-gone', () => { tab.crashed = true; });
     contents.on('zoom-changed', (_event, direction) => {
       const factor = direction === 'in' ? 1.1 : (1 / 1.1);
