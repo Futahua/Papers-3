@@ -11,66 +11,45 @@ using System.Threading;
 
 internal sealed class AltQChordTracker
 {
-    private sealed class Chord
-    {
-        public readonly int WidgetId;
-        public bool Released;
-        public bool Started;
-        public Chord(int widgetId) { WidgetId = widgetId; }
-    }
-
     private bool qDown;
-    private Chord physicalChord;
-    private Chord activeChord;
-    private readonly ConcurrentQueue<Chord> pending = new ConcurrentQueue<Chord>();
+    private bool active;
 
-    public void ObserveQDown(bool isQ, bool altDown, Func<int> captureWidgetId)
+    public bool ObserveQDown(bool isQ, bool altDown, Func<int> captureWidgetId, out int widgetId)
     {
-        if (!isQ || qDown) return;
+        widgetId = 0;
+        if (!isQ || qDown) return false;
         qDown = true;
-        physicalChord = altDown ? new Chord(captureWidgetId()) : null;
-        if (physicalChord != null) pending.Enqueue(physicalChord);
+        if (!altDown || active) return false;
+        active = true;
+        widgetId = captureWidgetId();
+        return true;
     }
 
     public bool ObserveKeyUp(bool isQ, bool isAlt)
     {
         if (isQ) qDown = false;
         if (!isQ && !isAlt) return false;
-        Chord chord = physicalChord;
-        if (chord == null || chord.Released) return false;
-        chord.Released = true;
-        physicalChord = null;
-        if (!chord.Started || activeChord != chord) return false;
-        activeChord = null;
+        if (!active) return false;
+        active = false;
         return true;
     }
 
-    public bool TryStartNext(out int widgetId, out bool releasedBeforeStart)
+    public bool TryStartFallback(bool chordHeld, Func<int> captureWidgetId, out int widgetId)
     {
-        Chord chord;
-        if (!pending.TryDequeue(out chord))
-        {
-            widgetId = 0;
-            releasedBeforeStart = false;
-            return false;
-        }
-        widgetId = chord.WidgetId;
-        releasedBeforeStart = chord.Released;
-        if (!releasedBeforeStart)
-        {
-            chord.Started = true;
-            activeChord = chord;
-        }
+        widgetId = 0;
+        if (!chordHeld || active) return false;
+        qDown = true;
+        active = true;
+        widgetId = captureWidgetId();
         return true;
     }
 
     public bool ReleaseIfKeysAreUp(bool chordHeld)
     {
-        if (chordHeld || activeChord == null) return false;
-        activeChord.Released = true;
-        activeChord = null;
-        physicalChord = null;
+        if (chordHeld) return false;
         qDown = false;
+        if (!active) return false;
+        active = false;
         return true;
     }
 }
@@ -111,6 +90,7 @@ internal static class HoverInputBridge
     private const int WM_KEYUP = 0x0101;
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int WM_SYSKEYUP = 0x0105;
+    private const int WM_NULL = 0x0000;
     private const int WM_HOTKEY = 0x0312;
     private const int WM_TIMER = 0x0113;
     private const int WM_QUIT = 0x0012;
@@ -220,6 +200,11 @@ internal static class HoverInputBridge
     private static void ReleaseAltQIfKeysAreUp()
     {
         if (altQChords.ReleaseIfKeysAreUp(IsAltQPhysicallyHeld())) Emit("ALTQ_RELEASE");
+    }
+
+    private static void WakeMainLoop()
+    {
+        PostThreadMessage(mainThreadId, WM_NULL, UIntPtr.Zero, IntPtr.Zero);
     }
 
     private static WidgetPolicy[] Snapshot()
@@ -496,22 +481,32 @@ internal static class HoverInputBridge
         bool isAlt = key.vkCode == VK_MENU || key.vkCode == VK_LMENU || key.vkCode == VK_RMENU;
         bool injected = (key.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0;
         // Remote-control software such as Chrome Remote Desktop normally reaches
-        // WH_KEYBOARD_LL as injected input. Alt+Q is special: the hook only
-        // captures its start-time widget identity, while RegisterHotKey/WM_HOTKEY
-        // remains the authority that can actually start the gesture. Therefore
-        // injected Alt+Q may enter this tracker, but injected input still cannot
-        // enter the hover typing/capture path below.
+        // WH_KEYBOARD_LL as injected input. Alt+Q is special: its low-level Q-down
+        // is the authoritative immediate start, while WM_HOTKEY remains a fallback
+        // if Windows delivered the registered chord but the hook missed Q-down.
+        // Injected Alt+Q may use this tracker, but injected input still cannot enter
+        // the hover typing/capture path below.
         if (up && altQHotkeyRegistered && altQChords.ObserveKeyUp(key.vkCode == VK_Q, isAlt))
         {
             Emit("ALTQ_RELEASE");
+            WakeMainLoop();
         }
         if (up && swallowedKeys.Remove(key.vkCode)) return new IntPtr(1);
         if (!down) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if (swallowedKeys.Contains(key.vkCode)) return new IntPtr(1); // suppress auto-repeat for consumed physical key
         if (altQHotkeyRegistered)
-            altQChords.ObserveQDown(key.vkCode == VK_Q,
+        {
+            int widgetId;
+            if (altQChords.ObserveQDown(
+                key.vkCode == VK_Q,
                 (key.flags & LLKHF_ALTDOWN) != 0,
-                WidgetAtCursor);
+                WidgetAtCursor,
+                out widgetId))
+            {
+                Emit("ALTQ\t" + widgetId.ToString(CultureInfo.InvariantCulture));
+                WakeMainLoop();
+            }
+        }
         if (injected) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if ((key.flags & LLKHF_ALTDOWN) != 0 || key.vkCode == VK_Q || isAlt) return CallNextHookEx(hookHandle, code, wParam, lParam);
         WidgetPolicy policy = HitWidget();
@@ -566,18 +561,14 @@ internal static class HoverInputBridge
         {
             if (message.message == WM_HOTKEY && message.wParam.ToUInt64() == HOTKEY_ID)
             {
-                // The registered hotkey can be dequeued after the physical key-up
-                // callback. Its widget identity was captured in the low-level hook
-                // on Q-down, before pointer movement can race this queue drain. The
-                // timer below repairs the delayed key-up after start is emitted.
+                // Low-level Q-down is the authoritative, immediate start path.
+                // WM_HOTKEY is only a fallback when Windows delivered the
+                // registered chord but the hook missed its Q-down. Never queue a
+                // delayed start: stale presses must not poison later Alt+Q input.
                 int widgetId;
-                bool releasedBeforeStart;
-                // A missed hook event gives us no reliable cursor identity.
-                // Do not turn that into an outside press that restores a widget.
-                if (altQChords.TryStartNext(out widgetId, out releasedBeforeStart))
+                if (altQChords.TryStartFallback(IsAltQPhysicallyHeld(), WidgetAtCursor, out widgetId))
                 {
                     Emit("ALTQ\t" + widgetId.ToString(CultureInfo.InvariantCulture));
-                    if (releasedBeforeStart) Emit("ALTQ_RELEASE");
                 }
             }
             else if (message.message == WM_TIMER && releaseWatchdog.IsTimerMessage(message.wParam))

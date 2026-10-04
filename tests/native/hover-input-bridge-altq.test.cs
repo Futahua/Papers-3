@@ -67,84 +67,76 @@ internal static class HoverInputBridgeAltQTests
         Require(occluded == null, "a foreign occluder above the widget must remain an outside hit");
     }
 
-    private static void VerifyChordStartHitSurvivesDelayedHotkeyAndRelease()
+    private static void VerifyImmediateChordStartAndRelease()
     {
         var tracker = new AltQChordTracker();
         int cursorHit = 17;
-        tracker.ObserveQDown(true, true, () => cursorHit);
-
-        // Pointer moves before WM_HOTKEY is drained, and Q-up can arrive first.
-        cursorHit = 18;
-        tracker.ObserveQDown(true, true, () => cursorHit); // autorepeat is not a new chord
-        Require(!tracker.ObserveKeyUp(true, false), "key-up before WM_HOTKEY must stay with the pending chord");
-
         int capturedHit;
-        bool releasedBeforeStart;
-        Require(tracker.TryStartNext(out capturedHit, out releasedBeforeStart) && capturedHit == 17,
-            "WM_HOTKEY must receive the root hit captured at physical chord start");
-        Require(releasedBeforeStart, "the start record must retain its earlier key-up");
-        Require(!tracker.TryStartNext(out capturedHit, out releasedBeforeStart), "one captured hit must be consumed only once");
-
-        // A subsequent physical chord captures its own current hit.
+        Require(tracker.ObserveQDown(true, true, () => cursorHit, out capturedHit) && capturedHit == 17,
+            "physical Q-down with Alt held must start immediately with the current widget hit");
         cursorHit = 18;
-        tracker.ObserveQDown(true, true, () => cursorHit);
-        Require(tracker.TryStartNext(out capturedHit, out releasedBeforeStart) && capturedHit == 18,
-            "a later chord must receive its own start-time hit");
-        Require(!releasedBeforeStart, "a held chord must not be treated as already released");
-        Require(tracker.ObserveKeyUp(true, false), "release after start must release that exact chord");
-        Require(!tracker.ObserveKeyUp(true, false), "a second key-up must not duplicate release");
+        Require(!tracker.ObserveQDown(true, true, () => cursorHit, out capturedHit),
+            "Q autorepeat must not create another Alt+Q start");
+        Require(tracker.ObserveKeyUp(true, false), "Q-up must release the active chord");
+        Require(!tracker.ObserveKeyUp(true, false), "a duplicate key-up must not duplicate release");
+
+        cursorHit = 18;
+        Require(tracker.ObserveQDown(true, true, () => cursorHit, out capturedHit) && capturedHit == 18,
+            "the next physical chord must start immediately and independently");
+        Require(tracker.ObserveKeyUp(false, true), "Alt-up must also release the active chord");
     }
 
-    private static void VerifyRapidTapChordsKeepReleaseOwnership()
+    private static void VerifyMissedReleaseCannotPoisonLaterPresses()
     {
-        var firstStartDelayed = new AltQChordTracker();
-        int firstHit = 29;
-        firstStartDelayed.ObserveQDown(true, true, () => firstHit);
-        Require(!firstStartDelayed.ObserveKeyUp(true, false), "first release must attach to its queued chord");
-        int secondHit = 30;
-        firstStartDelayed.ObserveQDown(true, true, () => secondHit);
-        int delayedId;
-        bool delayedRelease;
-        Require(firstStartDelayed.TryStartNext(out delayedId, out delayedRelease) && delayedId == 29 && delayedRelease,
-            "first delayed hotkey must emit its own start followed by release");
-        Require(firstStartDelayed.TryStartNext(out delayedId, out delayedRelease) && delayedId == 30 && !delayedRelease,
-            "second delayed hotkey must remain active while its physical chord is held");
-        Require(!firstStartDelayed.ReleaseIfKeysAreUp(true), "the second held chord must not be released by the watchdog");
-        Require(firstStartDelayed.ObserveKeyUp(true, false), "the second chord's key-up must release only that chord");
-
-        // Now queue two completed taps before either WM_HOTKEY is drained.
         var tracker = new AltQChordTracker();
-        int cursorHit = 31;
-        tracker.ObserveQDown(true, true, () => cursorHit);
-        Require(!tracker.ObserveKeyUp(true, false), "first tap release must wait behind its queued start");
-
-        cursorHit = 32;
-        tracker.ObserveQDown(true, true, () => cursorHit);
-        Require(!tracker.ObserveKeyUp(true, false), "second tap release must attach to its own queued start");
-
         int widgetId;
-        bool releasedBeforeStart;
-        Require(tracker.TryStartNext(out widgetId, out releasedBeforeStart) && widgetId == 31 && releasedBeforeStart,
-            "first dequeued WM_HOTKEY must start then release chord one");
-        Require(tracker.TryStartNext(out widgetId, out releasedBeforeStart) && widgetId == 32 && releasedBeforeStart,
-            "second dequeued WM_HOTKEY must start then release chord two");
-        Require(!tracker.TryStartNext(out widgetId, out releasedBeforeStart), "both starts must be consumed exactly once");
+        Require(tracker.ObserveQDown(true, true, () => 29, out widgetId) && widgetId == 29,
+            "first chord must start");
+        Require(tracker.ObserveKeyUp(false, true), "Alt-up must release the first chord");
+        // Simulate the Q-up being missed by the hook. The watchdog sees that the
+        // physical chord is no longer held and must clear stale qDown even though
+        // there is no active gesture left to release.
+        Require(!tracker.ReleaseIfKeysAreUp(false), "inactive stale state must resynchronize without duplicate release");
+        Require(tracker.ObserveQDown(true, true, () => 30, out widgetId) && widgetId == 30,
+            "a missed Q-up must not make the next Alt+Q press dead");
+        Require(tracker.ObserveKeyUp(true, false), "the recovered next press must release normally");
 
-        // A later held chord remains active until its own release or watchdog.
-        cursorHit = 33;
-        tracker.ObserveQDown(true, true, () => cursorHit);
-        Require(tracker.TryStartNext(out widgetId, out releasedBeforeStart) && widgetId == 33 && !releasedBeforeStart,
-            "held chord must not release before start");
-        Require(!tracker.ReleaseIfKeysAreUp(true), "watchdog must preserve a physically held chord");
-        Require(tracker.ReleaseIfKeysAreUp(false), "watchdog must recover a missed physical key-up");
-        Require(!tracker.ReleaseIfKeysAreUp(false), "watchdog release must be one-shot");
+        Require(tracker.TryStartFallback(true, () => 31, out widgetId) && widgetId == 31,
+            "WM_HOTKEY fallback must recover a genuinely held chord when Q-down was missed");
+        Require(!tracker.TryStartFallback(true, () => 32, out widgetId),
+            "WM_HOTKEY must not duplicate a chord already started by either path");
+        Require(!tracker.ReleaseIfKeysAreUp(true), "watchdog must preserve a physically held fallback chord");
+        Require(tracker.ReleaseIfKeysAreUp(false), "watchdog must recover a missed release");
+        Require(!tracker.ReleaseIfKeysAreUp(false), "watchdog release must remain one-shot");
+    }
+
+    private static void VerifyRepeatedMixedReleaseOrderNeverDeadlocks()
+    {
+        var tracker = new AltQChordTracker();
+        int widgetId;
+        for (int i = 0; i < 200; ++i)
+        {
+            Require(tracker.ObserveQDown(true, true, () => 100 + i, out widgetId) && widgetId == 100 + i,
+                "every physical Alt+Q press must start exactly once");
+            if ((i & 1) == 0)
+            {
+                Require(tracker.ObserveKeyUp(true, false), "Q-first release must end the gesture");
+            }
+            else
+            {
+                Require(tracker.ObserveKeyUp(false, true), "Alt-first release must end the gesture");
+                Require(!tracker.ReleaseIfKeysAreUp(false),
+                    "watchdog resync after Alt-first release must not emit a duplicate release");
+            }
+        }
     }
 
     public static int Main()
     {
         VerifyAuthoritativeWidgetHitResolution();
-        VerifyChordStartHitSurvivesDelayedHotkeyAndRelease();
-        VerifyRapidTapChordsKeepReleaseOwnership();
+        VerifyImmediateChordStartAndRelease();
+        VerifyMissedReleaseCannotPoisonLaterPresses();
+        VerifyRepeatedMixedReleaseOrderNeverDeadlocks();
         // Exercise the production watchdog against a real thread WM_TIMER. In
         // particular, match and stop using the actual UINT_PTR returned by
         // SetTimer rather than assuming Windows kept the requested ID.
@@ -156,10 +148,8 @@ internal static class HoverInputBridgeAltQTests
         try
         {
             var delayedStart = new AltQChordTracker();
-            delayedStart.ObserveQDown(true, true, () => 0);
             int ignoredId;
-            bool releasedBeforeStart;
-            Require(delayedStart.TryStartNext(out ignoredId, out releasedBeforeStart) && !releasedBeforeStart,
+            Require(delayedStart.ObserveQDown(true, true, () => 0, out ignoredId),
                 "test chord must be active before timer recovery");
             Message message;
             while (GetMessage(out message, System.IntPtr.Zero, 0, 0) > 0)
