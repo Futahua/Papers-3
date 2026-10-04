@@ -189,20 +189,51 @@ describe('compact widget session', () => {
   });
 
   it('moves a widget through the token-gated blank-surface drag channel', async () => {
-    const h = harness();
+    const cursor = { x: 100, y: 90 };
+    const h = harness(cursor);
     h.session.registerIpc();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     const window = h.windows[0]!;
     const token = (window.webContents.send.mock.calls[0]![1] as { token: string }).token;
     const drag = h.listeners.get('papers:backpack:widget-drag')!;
     drag({ sender: { id: window.webContents.id } }, { token, phase: 'begin', x: 100, y: 90 });
-    drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 150, y: 130 });
+    cursor.x = 150;
+    cursor.y = 130;
+    // Renderer screen coordinates can be in a different pixel scale on a
+    // mixed-DPI desktop. The main-process Electron cursor is authoritative.
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 300, y: 260 });
     expect(window.setPosition).toHaveBeenLastCalledWith(50, 40);
     expect(window.getBounds()).toEqual({ x: 50, y: 40, width: 420, height: 180 });
-    drag({ sender: { id: window.webContents.id } }, { token, phase: 'end', x: 150, y: 130 });
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'end', x: 300, y: 260 });
     const calls = window.setPosition.mock.calls.length;
     drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 180, y: 160 });
     expect(window.setPosition.mock.calls).toHaveLength(calls);
+  });
+
+  it('ignores renderer size reports while the widget is moving, then accepts them after release', async () => {
+    const cursor = { x: 100, y: 90 };
+    const h = harness(cursor);
+    h.session.registerIpc();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const window = h.windows[0]!;
+    const token = (window.webContents.send.mock.calls[0]![1] as { token: string }).token;
+    const drag = h.listeners.get('papers:backpack:widget-drag')!;
+
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'begin', x: 100, y: 90 });
+    h.session.resizeFromSender(window.webContents.id, token, 900, 500);
+    expect(window.setContentSize).not.toHaveBeenCalled();
+
+    cursor.x = 180;
+    cursor.y = 120;
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'move', x: 360, y: 240 });
+    expect(window.getBounds()).toEqual({ x: 80, y: 30, width: 420, height: 180 });
+    h.session.resizeFromSender(window.webContents.id, token, 950, 550);
+    expect(window.setContentSize).not.toHaveBeenCalled();
+
+    drag({ sender: { id: window.webContents.id } }, { token, phase: 'end', x: 360, y: 240 });
+    h.session.resizeFromSender(window.webContents.id, token, 500, 210);
+    expect(window.setContentSize).toHaveBeenCalledOnce();
+    expect(window.setContentSize).toHaveBeenLastCalledWith(500, 210);
   });
 
   it('Alt+Q starting inside a visible widget hides it once and never follows while held', async () => {
@@ -457,6 +488,27 @@ describe('compact widget session', () => {
       cursor.y = 600;
       await vi.advanceTimersByTimeAsync(64);
       expect(target.setPosition).toHaveBeenCalledTimes(callsAtRelease);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ignores renderer size reports during Alt+Q follow and accepts them after release', async () => {
+    vi.useFakeTimers();
+    try {
+      const h = harness({ x: 537, y: 284 });
+      await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+      const target = h.windows[0]!;
+      const token = (target.webContents.send.mock.calls[0]![1] as { token: string }).token;
+
+      expect(await h.session.bringLatestToCursor()).toBe(true);
+      h.session.resizeFromSender(target.webContents.id, token, 900, 500);
+      expect(target.setContentSize).not.toHaveBeenCalled();
+
+      h.session.stopFollowing();
+      h.session.resizeFromSender(target.webContents.id, token, 500, 210);
+      expect(target.setContentSize).toHaveBeenCalledOnce();
+      expect(target.setContentSize).toHaveBeenLastCalledWith(500, 210);
     } finally {
       vi.useRealTimers();
     }

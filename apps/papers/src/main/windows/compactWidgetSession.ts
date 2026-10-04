@@ -298,11 +298,17 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     if (!entry || entry.closing || entry.window.isDestroyed()) return;
     if (raw.phase === 'begin') {
       const bounds = entry.window.getBounds();
+      // Renderer MouseEvent.screenX/screenY are not a safe cross-monitor
+      // coordinate authority on Windows: Chromium may report physical pixels
+      // while BrowserWindow positions are DIP coordinates. Read the cursor
+      // from Electron's screen API in the main process so both sides of the
+      // drag offset are in the same coordinate space.
+      const point = deps.screen.getCursorScreenPoint();
       activeDrag = {
         senderId: event.sender.id,
         token: raw.token,
-        offsetX: raw.x - bounds.x,
-        offsetY: raw.y - bounds.y,
+        offsetX: point.x - bounds.x,
+        offsetY: point.y - bounds.y,
       };
       return;
     }
@@ -315,9 +321,10 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     // current width/height through setBounds() can produce a client resize on
     // mixed-DPI transitions and feed the widget's own size persistence loop.
     // A move must never make the card larger.
+    const point = deps.screen.getCursorScreenPoint();
     entry.window.setPosition(
-      Math.round(raw.x - activeDrag.offsetX),
-      Math.round(raw.y - activeDrag.offsetY),
+      Math.round(point.x - activeDrag.offsetX),
+      Math.round(point.y - activeDrag.offsetY),
     );
   };
 
@@ -459,6 +466,12 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       if (!Number.isFinite(width) || !Number.isFinite(height)) return;
       const entry = [...entries.values()].find((candidate) => candidate.window.webContents.id === senderId);
       if (!entry || entry.closing || entry.window.isDestroyed()) return;
+      // Moving a widget must never feed its renderer's transient resize
+      // measurements back into the native window. Pointer capture, hover
+      // affordances and mixed-DPI transitions can all trigger ResizeObserver
+      // while the window is in motion. Accept size reports again immediately
+      // after mouse drag / Alt+Q follow ends.
+      if (activeDrag?.senderId === senderId || followedEntry === entry) return;
       // 035: the user owns the window size (resizable). The widget reports its
       // exact window content size and the host applies it verbatim with only the
       // small usability floor - no +tolerance, which would creep on a fill-width

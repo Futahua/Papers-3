@@ -632,8 +632,18 @@ Widget/state/hotkey repair on 2026-10-04:
 - release-widgetfix is the current isolated package output, carries the browser profile/data, and
   binds AYG to the stable runtime root above.
 
-Current validation after the widget move repair: compact-widget focused suite **27/27 pass**,
-Papers typecheck pass. The full Papers suite had **1353 pass / 8 skipped** plus one transient
-Windows EPERM rename in runService temp-data cleanup; rerunning runService + compact-widget tests
-immediately after gave **38/38 pass**. Do not report that full run as perfectly green without
-noting the transient unhandled EPERM.
+Second-stage widget drag correction on 2026-10-04:
+
+- position-only setPosition was necessary but not sufficient. The ordinary renderer drag channel
+  still trusted MouseEvent.screenX/screenY; on Windows those values can be physical-pixel scaled
+  while BrowserWindow coordinates are DIP, which explains the widget flying away on mixed-DPI
+  movement. Main now ignores renderer drag coordinates for movement and reads
+  screen.getCursorScreenPoint() so cursor and window positions share one coordinate space;
+- renderer size reports are ignored while an ordinary mouse drag or Alt+Q follow is active. They
+  are accepted again immediately after release, so movement cannot feed transient hover/pointer/
+  DPI measurements into the persisted native widget size;
+- focused compact-widget suite: **29/29 pass**;
+- Papers typecheck: pass;
+- full Papers suite after this second-stage fix: **1355 pass / 8 skipped / 0 fail**.
+
+The prior transient EPERM did not reproduce on this validation run.
