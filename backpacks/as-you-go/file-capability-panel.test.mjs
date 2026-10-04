@@ -166,10 +166,13 @@ test('file capability panel source keeps destructive retargeting verification-bo
   assert.match(source, /fileCapability\('preview-html-open'/);
   assert.match(source, /fileCapability\('preview-html-move'/);
   assert.match(source, /fileCapability\('preview-html-close'/);
-  assert.match(source, /fileCapability\('browser-open'/);
-  assert.match(source, /fileCapability\('browser-move'/);
-  assert.match(source, /fileCapability\('browser-close'/);
-  assert.match(source, /clearPreview\(\{ preserveBrowser: true \}\)/);
+  assert.doesNotMatch(source, /fileCapability\('browser-open'/);
+  assert.match(source, /fileCapability\('browser-tab-open'/);
+  assert.match(source, /fileCapability\('browser-tab-move'/);
+  assert.match(source, /fileCapability\('browser-tab-state'/);
+  assert.match(source, /fileCapability\('browser-tab-close'/);
+  assert.match(source, /fileCapability\('browser-tabs-visible'/);
+  assert.match(source, /GOOGLE_LENS_HOME/);
   assert.match(source, /host\.openNewSurface\(next\.toString\(\)\)/);
   assert.match(source, /FULL_PAGE_PREVIEW_STORAGE_PREFIX/);
   assert.match(source, /fileCapability\('preview-launch-create', payload\)/);
