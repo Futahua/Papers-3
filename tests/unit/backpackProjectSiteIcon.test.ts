@@ -1,5 +1,31 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { extractPageTitle, resolveWebLinkIcon, resolveWebLinkIconCandidate } from '../../src/main/backpacks/backpackProjectSiteIcon';
+
+describe('live favicon downloads', () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+  it('accepts Electron responses with an empty URL', async () => {
+    const fetchIcon = vi.fn().mockResolvedValue(new Response(png, {
+      headers: { 'content-type': 'image/png' },
+    }));
+    expect(await resolveWebLinkIconCandidate('https://example.com/icon.png', fetchIcon))
+      .toBe('data:image/png;base64,iVBORw==');
+    expect(fetchIcon).toHaveBeenCalledWith('https://example.com/icon.png', expect.objectContaining({ redirect: 'manual' }));
+  });
+  it('validates redirect destinations before fetching them', async () => {
+    const fetchIcon = vi.fn().mockResolvedValue(new Response(null, {
+      status: 302, headers: { location: 'http://127.0.0.1/icon.png' },
+    }));
+    expect(await resolveWebLinkIconCandidate('https://example.com/icon.png', fetchIcon)).toBeNull();
+    expect(fetchIcon).toHaveBeenCalledTimes(1);
+  });
+  it('follows a relative redirect with an empty final response URL', async () => {
+    const fetchIcon = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: '/real.png' } }))
+      .mockResolvedValueOnce(new Response(png, { headers: { 'content-type': 'image/png' } }));
+    expect(await resolveWebLinkIconCandidate('https://example.com/icon.png', fetchIcon)).toBe('data:image/png;base64,iVBORw==');
+    expect(fetchIcon.mock.calls[1]?.[0]).toBe('https://example.com/real.png');
+  });
+});
 
 // resolveWebLinkIcon validates its input before its own try/catch begins, so
 // every case here throws synchronously rather than resolving with

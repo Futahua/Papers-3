@@ -87,14 +87,14 @@ function harness(overrides: Partial<GlobalInvokeDependencies> = {}) {
 }
 
 describe('globalInvoke registration', () => {
-  it('registers only Alt+A; Alt+Shift+A belongs to the Windows shortcut', () => {
+  it('registers both application-owned chords', () => {
     const { shortcut, deps } = harness();
     const report = createGlobalInvoke(deps).register();
 
     expect(report.ok).toBe(true);
-    expect(report.registered).toEqual(['Alt+A']);
-    expect(shortcut.order).toEqual(['Alt+A']);
-    expect([...shortcut.held]).toEqual(['Alt+A']);
+    expect(report.registered).toEqual(['Alt+Shift+A', 'Alt+A']);
+    expect(shortcut.order).toEqual(['Alt+Shift+A', 'Alt+A']);
+    expect([...shortcut.held]).toEqual(['Alt+Shift+A', 'Alt+A']);
   });
 
   it('holds an Alt+A pressed during startup until the command surface is attached', async () => {
@@ -125,8 +125,8 @@ describe('globalInvoke registration', () => {
     expect(failure?.reason).toBe('already-registered-by-another-application');
     // The creator must be able to see which chord, in the chord's own words.
     expect(failure?.message).toContain('Alt+A');
-    expect(report.registered).toEqual([]);
-    expect(shortcut.held.has('Alt+Shift+A')).toBe(false);
+    expect(report.registered).toEqual(['Alt+Shift+A']);
+    expect(shortcut.held.has('Alt+Shift+A')).toBe(true);
   });
 
   it('never falls back to a different chord when one is taken', () => {
@@ -139,8 +139,8 @@ describe('globalInvoke registration', () => {
     };
     createGlobalInvoke(deps).register();
 
-    expect([...shortcut.held]).toEqual([]);
-    expect(shortcut.order).toEqual(['Alt+A']);
+    expect([...shortcut.held]).toEqual(['Alt+Shift+A']);
+    expect(shortcut.order).toEqual(['Alt+Shift+A', 'Alt+A']);
   });
 
   it('turns an unparseable accelerator into a named refusal instead of throwing', () => {
@@ -183,7 +183,7 @@ describe('globalInvoke release', () => {
     const { shortcut, deps } = harness();
     const invoke = createGlobalInvoke(deps);
     invoke.register();
-    expect(shortcut.held.size).toBe(1);
+    expect(shortcut.held.size).toBe(2);
 
     invoke.release();
     expect(shortcut.held.size).toBe(0);
@@ -212,11 +212,13 @@ describe('globalInvoke release', () => {
 });
 
 describe('globalInvoke behaviour', () => {
-  it('does not register an Alt+Shift+A callback; Windows launches Papers.lnk', () => {
-    const { shortcut, deps } = harness();
+  it('Alt+Shift+A raises Papers directly without opening the overlay', async () => {
+    const { shortcut, deps, brought, overlay } = harness();
     createGlobalInvoke(deps).register();
 
-    expect(shortcut.callbacks.get('Alt+Shift+A')).toBeUndefined();
+    shortcut.callbacks.get('Alt+Shift+A')?.();
+    await vi.waitFor(() => expect(brought).toHaveLength(1));
+    expect(overlay.opened).toBe(0);
   });
 
   it('THE CORRECTION: the invoke chord opens the overlay and NEVER brings Papers forward', () => {
@@ -313,7 +315,7 @@ describe('globalInvoke behaviour', () => {
 
 describe('globalInvoke defaults', () => {
   it('defaults are exactly the two chords the creator asked for', () => {
-    expect(DEFAULT_INVOKE_ACCELERATORS).toEqual({ invoke: 'Alt+A' });
+    expect(DEFAULT_INVOKE_ACCELERATORS).toEqual({ invoke: 'Alt+A', bringToFront: 'Alt+Shift+A' });
   });
 
   it('chords come from the injected configuration, not from hardcoded literals at the call site', () => {

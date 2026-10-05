@@ -233,18 +233,34 @@ async function fetchIconBytes(
   signal?: AbortSignal,
   fetchImpl?: FetchLike,
 ): Promise<{ data: Buffer; mime: string } | null> {
-  const parsed = validateUrl(url);
   const doFetch = fetchImpl ?? net.fetch;
-
-  const response = await doFetch(url, {
-    method: 'GET',
-    signal,
-    headers: { Accept: 'image/*' },
-  });
+  let currentUrl = url;
+  let response: Response | undefined;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    const parsed = validateUrl(currentUrl);
+    response = await doFetch(currentUrl, {
+      method: 'GET',
+      redirect: 'manual',
+      signal,
+      headers: { Accept: 'image/*' },
+    });
+    if (signal?.aborted) return null;
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location || hop === MAX_REDIRECTS) return null;
+      currentUrl = new URL(location, parsed).toString();
+      await response.body?.cancel();
+      continue;
+    }
+    break;
+  }
 
   if (signal?.aborted) return null;
-  if (!response.ok) return null;
-  validateUrl(response.url);
+  if (!response?.ok) return null;
+  // Electron net/session.fetch can return an empty Response.url even for a
+  // successful HTTP request. Manual redirects above validate each destination;
+  // validate an additional reported final URL only when one is available.
+  if (response.url) validateUrl(response.url);
 
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.length === 0 || buffer.length > MAX_ICON_BYTES) return null;

@@ -1009,6 +1009,10 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             const tab = deps.webBrowser.getTab(context.nativePreviewHost.ownerKey, browserTabId(params.tabId));
             return tab ? { ok: true, tab } : { ok: false, code: 'BROWSER_TAB_UNAVAILABLE', message: 'Browser tab is unavailable.' };
           }
+          case 'browser-tab-menu': {
+            if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
+            return { ok: true, action: await deps.webBrowser.showTabMenu(context.nativePreviewHost.ownerKey, browserTabId(params.tabId), params.hasOthers === true) };
+          }
           case 'browser-favicon-resolve': {
             if (!deps.webBrowser) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
             const url = boundedString(params.url, 'url', 8_192);

@@ -19,6 +19,9 @@ import { ElectronBlocker } from '@ghostery/adblocker-electron';
 import type { PreviewHostContext, PreviewRect } from './windowsPreviewHandlerBridge';
 import { resolveWebLinkIcon, resolveWebLinkIconCandidate } from './backpackProjectSiteIcon';
 import { AtomicJsonStore } from '../persistence/atomicStore';
+import { showBrowserContextMenu, showBrowserTabMenu } from './browserContextMenu';
+import { createBrowserVideoFullscreen } from './browserVideoFullscreen';
+import { browserViewBounds, createBrowserPresentationGate } from './browserPresentationGate';
 
 type FaviconFetch = NonNullable<Parameters<typeof resolveWebLinkIconCandidate>[1]>;
 
@@ -102,6 +105,7 @@ export interface WebBrowserHostBridge {
   commandTab(ownerKey: string, tabId: string, command: 'back' | 'forward' | 'reload'): BrowserTabResult;
   moveTab(ownerKey: string, tabId: string, localRect: PreviewRect): boolean;
   closeTab(ownerKey: string, tabId: string): boolean;
+  showTabMenu(ownerKey: string, tabId: string, hasOthers: boolean): Promise<'close' | 'close-others' | null>;
   setTabsVisible(ownerKey: string, visible: boolean): void;
   getTab(ownerKey: string, tabId: string): BrowserTabState | null;
   resolveFavicon(url: string): Promise<string | null>;
@@ -165,7 +169,7 @@ function hardenBrowserSession(browserSession: Session): void {
   if (hardenedBrowserSessions.has(browserSession)) return;
   hardenedBrowserSessions.add(browserSession);
   const allowStorageAccess = (permission: string, origin: string | undefined): boolean =>
-    (permission === 'storage-access' || permission === 'top-level-storage-access')
+    (permission === 'storage-access' || permission === 'top-level-storage-access' || permission === 'fullscreen')
     && Boolean(origin && safeWebUrl(origin));
   browserSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
     callback(allowStorageAccess(permission, details.requestingUrl));
@@ -568,6 +572,7 @@ export function createWebBrowserHostBridge(input: {
   const tabs = new Map<string, DurableBrowserTab>();
   const ownerTabs = new Map<string, Set<string>>();
   const activeTabs = new Map<string, string>();
+  const presentation = createBrowserPresentationGate();
   const openRequests = new Map<string, BrowserOpenRequest[]>();
   const downloads: BrowserDownloadState[] = [];
   const downloadStore = input.downloadHistoryFile && input.downloadRecoveryDir
@@ -587,10 +592,19 @@ export function createWebBrowserHostBridge(input: {
       })
       .catch(() => undefined)
     : Promise.resolve();
-  const resolveFaviconData = input.resolveFavicon ?? (async (pageUrl: string) => {
+  const resolvePageFavicon = input.resolveFavicon ?? (async (pageUrl: string) => {
     const resolved = await resolveWebLinkIcon(pageUrl);
     return resolved.icon;
   });
+  const resolveFaviconData = async (pageUrl: string): Promise<string | null> => {
+    // Media and attachment pages can have no icon declarations (or no HTML).
+    // Resolve their site's homepage rather than repeatedly scraping that endpoint.
+    const icon = safeFaviconDataUrl(await resolvePageFavicon(pageUrl).catch(() => null));
+    if (icon) return icon;
+    const homepage = new URL('/', pageUrl).toString();
+    if (homepage === pageUrl) return null;
+    return safeFaviconDataUrl(await resolvePageFavicon(homepage).catch(() => null));
+  };
   const resolveFaviconCandidateData = input.resolveFaviconCandidate ?? resolveWebLinkIconCandidate;
   let downloadSaveQueue = Promise.resolve();
   const persistDownloads = (): void => {
@@ -874,7 +888,9 @@ export function createWebBrowserHostBridge(input: {
     };
   };
 
+  const fullscreenTabs = new WeakMap<DurableBrowserTab, ReturnType<typeof createBrowserVideoFullscreen>>();
   const detachTab = (tab: DurableBrowserTab): void => {
+    fullscreenTabs.get(tab)?.exit();
     if (!tab.view || !tab.presented || tab.window.isDestroyed()) return;
     try { tab.window.contentView.removeChildView(tab.view); } catch { /* best effort */ }
     tab.presented = false;
@@ -901,12 +917,40 @@ export function createWebBrowserHostBridge(input: {
   };
 
   const placeTab = (tab: DurableBrowserTab): void => {
+    if (fullscreenTabs.get(tab)?.isActive()) return;
     if (!tab.view || tab.window.isDestroyed() || tab.view.webContents.isDestroyed()) return;
-    tab.view.setBounds(absoluteRect(tab.surfaceBounds, tab.localRect));
+    tab.view.setBounds(browserViewBounds(tab.surfaceBounds, tab.localRect));
   };
 
   const wireTabView = (tab: DurableBrowserTab, view: WebContentsView): void => {
     const contents = view.webContents;
+    fullscreenTabs.set(tab, createBrowserVideoFullscreen(view, tab.window, () => {
+      if (tab.view !== view || tab.window.isDestroyed() || contents.isDestroyed()) return;
+      if (tab.presented && activeTabs.get(tab.ownerKey) === tab.tabId) {
+        tab.window.contentView.addChildView(view);
+        placeTab(tab);
+        contents.focus();
+      }
+    }));
+    contents.on('context-menu', (_event, params) => {
+      showBrowserContextMenu(params, contents, tab.window, (url) => {
+        const safe = safeWebUrl(url);
+        if (!safe) return;
+        const tabId = randomUUID();
+        const child: DurableBrowserTab = {
+          ...tab, tabId, view: null, presented: false, url: safe, title: '',
+          faviconUrl: '', history: null, crashed: false, lastActiveAt: Date.now(),
+          localRect: { ...tab.localRect }, surfaceBounds: { ...tab.surfaceBounds },
+        };
+        tabs.set(tabKey(tab.ownerKey, tabId), child);
+        const ids = ownerTabs.get(tab.ownerKey) ?? new Set<string>();
+        ids.add(tabId);
+        ownerTabs.set(tab.ownerKey, ids);
+        void ensureTabView(child).then(() => {
+          if (tabs.get(tabKey(tab.ownerKey, tabId)) === child) queueOpenRequest(tab.ownerKey, tabId, safe, false);
+        }).catch(() => cleanupTab(child));
+      });
+    });
     let liveFaviconRequest = 0;
     let requestedFaviconPage = '';
     const refreshFallbackFavicon = (): void => {
@@ -1060,6 +1104,9 @@ export function createWebBrowserHostBridge(input: {
 
   const presentTab = async (tab: DurableBrowserTab): Promise<void> => {
     await ensureTabView(tab);
+    if (!presentation.allows(tab.ownerKey)
+      || tabs.get(tabKey(tab.ownerKey, tab.tabId)) !== tab
+      || activeTabs.get(tab.ownerKey) !== tab.tabId) return;
     if (!tab.view || tab.window.isDestroyed() || tab.view.webContents.isDestroyed()) return;
     if (!tab.presented) {
       tab.window.contentView.addChildView(tab.view);
@@ -1077,6 +1124,7 @@ export function createWebBrowserHostBridge(input: {
     tab.lastActiveAt = Date.now();
     activeTabs.set(tab.ownerKey, tab.tabId);
     await presentTab(tab);
+    if (tab.presented && presentation.allows(tab.ownerKey) && activeTabs.get(tab.ownerKey) === tab.tabId) tab.view?.webContents.focus();
   };
 
   const cleanupTab = (tab: DurableBrowserTab): void => {
@@ -1328,7 +1376,15 @@ export function createWebBrowserHostBridge(input: {
       return true;
     },
 
+    async showTabMenu(ownerKey, tabId, hasOthers) {
+      const tab = tabs.get(tabKey(ownerKey, tabId));
+      const window = tab?.window ?? input.resolveWindow(ownerKey);
+      if (!window || window.isDestroyed()) return null;
+      return showBrowserTabMenu(window, hasOthers);
+    },
+
     setTabsVisible(ownerKey, visible) {
+      presentation.setPane(ownerKey, visible);
       setOwnerTabsVisible(ownerKey, visible);
     },
 
@@ -1451,6 +1507,7 @@ export function createWebBrowserHostBridge(input: {
     },
 
     setOwnerVisible(ownerKey, visible) {
+      presentation.setOwner(ownerKey, visible);
       const id = owners.get(ownerKey);
       const session = id ? sessions.get(id) : undefined;
       if (session && !session.window.isDestroyed() && !session.view.webContents.isDestroyed()) {
@@ -1470,6 +1527,7 @@ export function createWebBrowserHostBridge(input: {
     },
 
     closeOwner(ownerKey) {
+      presentation.forget(ownerKey);
       openRequests.delete(ownerKey);
       cleanupDownloadBubble(ownerKey);
       closeOwner(ownerKey);

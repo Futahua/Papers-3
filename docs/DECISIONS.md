@@ -414,3 +414,10 @@ extends unchanged to panes within a window and to saved layouts.
 
 Not decided here: where saved layouts live, and what a saved layout may contain beyond
 native windows, pane topology, ratios, project ids and opaque surface keys.
+
+## Creator correction — 2026-10-05: Alt+Shift+A
+
+Alt+Shift+A belongs in Papers code and must bring its existing window forward
+quickly. The creator explicitly rejected relying on a Windows shortcut hotkey.
+Restore the application registration and direct foreground handler; remove the
+Windows shortcut binding added during diagnosis so it cannot compete.

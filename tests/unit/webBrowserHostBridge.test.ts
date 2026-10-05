@@ -26,6 +26,7 @@ type FakeWebContents = {
   setZoomFactor: ReturnType<typeof vi.fn>;
   setBackgroundThrottling: ReturnType<typeof vi.fn>;
   reload: ReturnType<typeof vi.fn>;
+  focus: ReturnType<typeof vi.fn>;
   navigationHistory: {
     canGoBack: ReturnType<typeof vi.fn>;
     canGoForward: ReturnType<typeof vi.fn>;
@@ -51,9 +52,11 @@ const harness = vi.hoisted(() => ({
     removeChildView: vi.fn(),
   },
   views: [] as FakeView[],
+  menu: [] as any[],
 }));
 
 vi.mock('electron', () => ({
+  Menu: { buildFromTemplate: (items: any[]) => { harness.menu = items; return { popup: vi.fn((options) => { if (options.callback) { items[0]?.click?.(); options.callback(); } }) }; } },
   ipcMain: {
     on: vi.fn(),
     removeAllListeners: vi.fn(),
@@ -70,6 +73,9 @@ vi.mock('electron', () => ({
     isDestroyed() {
       return harness.window.destroyed;
     }
+    isFullScreen() { return false; }
+    setFullScreen = vi.fn();
+    getBounds() { return { x: 0, y: 0, width: 900, height: 600 }; }
   } as unknown as typeof BaseWindow,
   WebContentsView: class {
     webContents: FakeWebContents;
@@ -94,6 +100,7 @@ vi.mock('electron', () => ({
         setZoomFactor: vi.fn(),
         setBackgroundThrottling: vi.fn(),
         reload: vi.fn(),
+        focus: vi.fn(),
         navigationHistory: {
           canGoBack: vi.fn().mockReturnValue(false),
           canGoForward: vi.fn().mockReturnValue(false),
@@ -157,6 +164,78 @@ describe('web browser preview session leases', () => {
 });
 
 describe('durable browser tabs', () => {
+  it('a delayed open cannot present or focus after its Papers surface is hidden', async () => {
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow(), resolveFavicon: async () => null });
+    const pending = bridge.openTab(context, '12121212-1212-4212-8212-121212121212', url, rect);
+    bridge.setOwnerVisible(ownerKey, false);
+    expect((await pending).ok).toBe(true);
+    bridge.setTabsVisible(ownerKey, true);
+    await Promise.resolve(); await Promise.resolve();
+    expect(harness.window.addChildView).not.toHaveBeenCalled();
+    expect(harness.views[0]!.webContents.focus).not.toHaveBeenCalled();
+    bridge.setOwnerVisible(ownerKey, true);
+    await vi.waitFor(() => expect(harness.window.addChildView).toHaveBeenCalledTimes(1));
+  });
+
+  it('showing a Papers surface does not reopen its collapsed browser pane', async () => {
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow(), resolveFavicon: async () => null });
+    await bridge.openTab(context, '13131313-1313-4313-8313-131313131313', url, rect);
+    bridge.setTabsVisible(ownerKey, false);
+    harness.window.addChildView.mockClear();
+    bridge.setOwnerVisible(ownerKey, false); bridge.setOwnerVisible(ownerKey, true);
+    await Promise.resolve(); await Promise.resolve();
+    expect(harness.window.addChildView).not.toHaveBeenCalled();
+  });
+
+  it('offers a menu for persisted background tabs before their native view is created', async () => {
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow() });
+    expect(await bridge.showTabMenu(ownerKey, '78787878-7878-4787-8787-787878787878', true)).toBe('close');
+    expect(harness.menu[1].enabled).toBe(true);
+    expect(harness.views).toHaveLength(0);
+  });
+
+  it('context-menu links and images become real background tabs in the same owner', async () => {
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow(), resolveFavicon: async () => null });
+    const tabId = '78787878-7878-4787-8787-787878787878';
+    await bridge.openTab(context, tabId, url, rect);
+    const handler = harness.views[0]!.webContents.on.mock.calls.find(([event]) => event === 'context-menu')![1];
+    handler(null, { linkURL: 'https://example.com/link', mediaType: 'image', srcURL: 'https://example.com/image.png', hasImageContents: true, editFlags: {}, x: 10, y: 20 });
+    harness.menu.find((item) => item.label === 'Open link in new tab').click();
+    harness.menu.find((item) => item.label === 'Open image in new tab').click();
+    await vi.waitFor(() => expect(harness.views).toHaveLength(3));
+    const requests = bridge.takeOpenRequests(ownerKey);
+    expect(requests.map((request) => request.url)).toEqual(['https://example.com/link', 'https://example.com/image.png']);
+    for (const request of requests) {
+      expect(request.activate).toBe(false);
+      expect(bridge.getTab(ownerKey, request.tabId)?.live).toBe(true);
+      expect(bridge.getTab('other-owner', request.tabId)).toBeNull();
+    }
+    expect(harness.window.addChildView).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves the site homepage when a media tab has no favicon', async () => {
+    const mediaUrl = 'https://www.messenger.com/messenger_media/?attachment_id=123';
+    const icon = 'data:image/x-icon;base64,aWNvbg==';
+    const resolveFavicon = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(icon);
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow(), resolveFavicon });
+    expect(await bridge.resolveFavicon(mediaUrl)).toBe(icon);
+    expect(resolveFavicon.mock.calls.map(([value]) => value)).toEqual([mediaUrl, 'https://www.messenger.com/']);
+  });
+
+  it('falls back to the homepage after a media-page fetch rejects', async () => {
+    const icon = 'data:image/png;base64,aWNvbg==';
+    const resolveFavicon = vi.fn().mockRejectedValueOnce(new Error('page unavailable')).mockResolvedValueOnce(icon);
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow(), resolveFavicon });
+    expect(await bridge.resolveFavicon('https://example.com/attachment')).toBe(icon);
+  });
+
+  it('does not refetch a homepage that has no favicon', async () => {
+    const resolveFavicon = vi.fn().mockResolvedValue(null);
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow(), resolveFavicon });
+    expect(await bridge.resolveFavicon('https://example.com/')).toBeNull();
+    expect(resolveFavicon).toHaveBeenCalledTimes(1);
+  });
+
   it('enables normal browser downloads into the user Downloads folder', async () => {
     const window = new BaseWindow();
     const fallbackFavicon = 'data:image/png;base64,ZmFsbGJhY2s=';

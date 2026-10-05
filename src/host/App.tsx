@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { host, type BackpacksList, type HostErrorPayload } from './bridge';
 import { BackpacksPane } from './BackpacksPane';
+import { installChromeFocusPolicy } from './chromeFocusPolicy';
 import { BackpackSidebar } from './BackpackSidebar';
 import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
@@ -42,6 +43,7 @@ function closeTopologySurface(topology: ReturnType<typeof createWorkspaceTopolog
  * is not part of the active Papers UI.
  */
 export function App(): React.JSX.Element {
+  useEffect(() => installChromeFocusPolicy(document), []);
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });
   const [view, setView] = useState<BasicView>('backpacks');
   const [basicOpen, setBasicOpen] = useState(false);

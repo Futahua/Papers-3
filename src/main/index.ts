@@ -473,10 +473,8 @@ function bindOwnedProjectSurface(
 let hostView: WebContentsView | null = null;
 
 /**
- * The Papers-owned system-wide invocation chord. Alt+Shift+A is deliberately
- * owned by the Windows Papers.lnk shortcut so it also works while this process
- * is stopped; launching the shortcut routes through `second-instance` when a
- * Papers process already exists.
+ * Papers owns both system-wide chords while running. Alt+Shift+A raises the
+ * existing window directly; a separate launch routes through second-instance.
  */
 let globalInvoke: GlobalInvoke | null = null;
 let startupCommandSurfaceGate: DeferredCommandSurfaceOverlay | null = null;
@@ -606,7 +604,7 @@ async function bootstrap(): Promise<void> {
             known: opened.detail,
             intact: 'Nothing was changed, and no other application was affected. Papers did not come forward.',
             retryUseful: true,
-            inspect: 'Shortcuts: bring Papers forward is the Windows Papers.lnk hotkey Alt+Shift+A; open the command surface is Alt+A.',
+            inspect: 'Shortcuts: bring Papers forward is Alt+Shift+A; open the command surface is Alt+A.',
             recover: 'Open a Backpack in Papers, then press the shortcut again.',
           });
         }
@@ -3300,8 +3298,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // ------------------------------------------------- global invocation chords
   // Two system-wide chords, live while Papers runs, working from inside any
   // other application:
-  //   Alt+Shift+A  is owned by the Windows Papers.lnk shortcut and brings
-  //                Papers to the front through the single-instance path.
+  //   Alt+Shift+A  raises the existing Papers window directly.
   //   Alt+A        pop the command surface OVER whatever the creator is doing.
   //                Papers does NOT come forward - this is a launcher, not a
   //                window switcher. The application they came from keeps its
@@ -3707,7 +3704,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         known: report.detail,
         intact: 'Nothing was changed, and no other application was affected. Papers did not come forward.',
         retryUseful: true,
-        inspect: 'Shortcuts: bring Papers forward is the Windows Papers.lnk hotkey Alt+Shift+A; open the command surface is Alt+A.',
+        inspect: 'Shortcuts: bring Papers forward is Alt+Shift+A; open the command surface is Alt+A.',
         recover: report.outcome === 'window-unavailable'
           ? 'Open a Papers window, then press the shortcut again.'
           : 'Open a Backpack in Papers, then press the shortcut again.',

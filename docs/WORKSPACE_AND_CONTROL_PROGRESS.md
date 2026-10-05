@@ -3389,3 +3389,98 @@ verified hash. Rollback is reversible by moving the current `Runtime\App`
 aside and restoring
 `Runtime\Backups\before-live-install-20260906-013548` to `Runtime\App`.
 The protected `docs/evidence/worker-comparison.json` remains untouched.
+
+### Favicon empty-response-URL correction (2026-10-04)
+
+An isolated Electron 43.1.1 run reproduced successful ChatGPT and Wikipedia icon
+responses with HTTP 200, valid image bytes and an empty Response.url. The icon
+resolver rejected that empty URL and returned null. The source correction uses
+manual redirects, validates each requested destination before fetching, and
+validates a reported response URL only when present. Three regression tests cover
+empty URLs, relative redirects and blocked redirect destinations.
+
+Validation: focused 34 passed; typecheck passed; full suite 1349 passed / 4 skipped.
+The corrected source resolver in isolated Electron returned data:image/x-icon for
+ChatGPT (42745 characters) and data:image/vnd.microsoft.icon for Wikipedia (3685).
+This proves real downloads and resolver behavior, not the installed tab strip or
+Messenger. No creator profile, Backpack state or unrelated dirty changes were
+modified. No Papers build, packaging, installation, release or restart occurred.
+The source changes remain uncommitted; there is no new pushed SHA.
+
+Creator authorized build, installation and restart in the follow-up. The local
+NSIS installer completed with exit 0 in the canonical Runtime/App location.
+Installed and packaged app.asar SHA-256 match:
+173BDB0087D306EE65BA32F63C96013EDED992B1E3EE673C50DF3F58FCB7E894.
+The previous App is retained at Runtime/Backups/App-before-empty-url-favicon-20261004
+(previous app.asar E081452380B1600804A319CBAE17F05E33C1D6C8B5CAE012F544993CC95F569E).
+Papers was restarted. The version stays 1.3.11; this is a local uncommitted build,
+not a published release. Installed tab-strip appearance still awaits creator eyecheck.
+
+### Media-page favicon fallback (2026-10-04)
+
+Creator eyecheck showed ChatGPT and Wikipedia icons restored but Messenger still
+blank. Its tab URL is a messenger_media attachment endpoint. Isolated Electron
+proof resolves no icon from /messenger_media/ but resolves the homepage icon
+(90221-character image/x-icon data URL). Browser fallback resolution now tries the
+same site's homepage after a missing or rejected page icon; successful page icons
+are preserved and a failed homepage is not repeated within the same request.
+Focused tests: 37 passed; typecheck passed; full suite 1352 passed / 4 skipped.
+This remains a local source change; no release or version increment.
+
+Installer exit 0; installed/package app.asar SHA-256 0CB18107A0D6277F6581111809B96D80CAE123F522C393C0C8E858DD9EE9B824. Papers restarted. Rollback: Runtime/Backups/App-before-media-favicon-20261004. Installed visual eyecheck remains pending.
+
+### Direct Alt+Shift+A correction (2026-10-05)
+
+Creator correction: Alt+Shift+A must raise Papers quickly through code, rather
+than a Windows shortcut. globalInvoke retained its foreground callback but did
+not register it. Restored the default bringToFront accelerator and independent
+registration, preserving failure reporting and raise-only behavior. The behavior
+test invokes the real registered callback and verifies foreground dispatch without
+opening the command surface. The Windows shortcut binding added during diagnosis
+was cleared, preserving its existing launcher. Focused 18 passed; typecheck passed;
+full suite 1352 passed / 4 skipped. Creator correction recorded in DECISIONS.md.
+
+Isolated Electron registration accepted Alt+Shift+A. Installer exit 0; installed/package app.asar SHA-256 041FD6D752B12040EE0520F0021A74916168EE47E1C97051A19AD85AFAF55CFF. Papers restarted. Rollback: Runtime/Backups/App-before-direct-raise-20261005. Physical keypress eyecheck remains pending.
+
+### Browser menus, pane fill, monitor video and Tab routing — 2026-10-05
+
+Creator requested selected Chromium link/image context actions, close-this and
+close-others tab menus, side-pane fill constrained to its own Papers surface,
+monitor video fullscreen, and exclusion of surrounding buttons from Tab navigation.
+Read the exact North Star REFACTOR-HANDOFF.md at 251aa0bf and current product map.
+The native menu and temporary fullscreen-window lifecycles have separate owners:
+browserContextMenu.ts and browserVideoFullscreen.ts. The existing browser bridge
+retains session/tab ownership. The file capability service forwards one tab-menu
+intent; AYG owns tab-close policy and metadata writes. Chrome focus policy applies
+to host/workspace controls, not site content or text inputs.
+
+Isolated real Electron proof: view expands to monitor 1920x1080; Papers owner
+remains nonfullscreen; normal exit and Escape restore 500x350 view at (100,80),
+with no remaining temporary window. Same live WebContents is preserved.
+Isolated Chromium pane smoke: fills its 710px surface while the adjacent 473px
+surface is untouched; restores 380px width. Close-others leaves one tab, native
+menu and close intents are observed, all workspace buttons have tabindex=-1 and
+address input retains tabindex=0. Screenshot: D:/CodexTemp/browser-pane-proof.png.
+AYG suite 1843 passed / 0 failed; native host tests and typecheck passed.
+This is a local build; no publication, new version, or unrelated Backpack change.
+
+Final Papers suite: 1362 passed / 4 skipped; typecheck passed. NSIS installer exit 0; installed/package app.asar SHA-256 5C16C89573D17B327F9E4AF4847EE879D103F80F688806FFAD17611714C54E3B. Papers restarted. Rollback: Runtime/Backups/App-before-browser-controls-20261005. Creator eyecheck remains pending; source edits are uncommitted.
+
+### Browser visibility and selected-shortcut refresh — 2026-10-05
+
+Fixed delayed native browser presentation escaping a hidden Papers surface.
+Host owner visibility and renderer pane demand are conjunctive gates; delayed
+opens recheck both and active-tab identity before attaching or focusing. Native
+browser bounds intersect the owning surface. Unchanged workspace selection
+refreshes no longer reactivate or navigate its original browser tab; explicit
+selection changes still do so. AYG browser-source-selection.js owns this guard.
+
+Papers suite: 1366 passed / 4 skipped; AYG suite: 1845 passed / 0 failed;
+typecheck passed. Initial foregroundBridge Windows-focus race passed on full
+rerun. Isolated Chromium smoke confirmed 100 unchanged selection refreshes
+preserve the manually selected browser tab and cause no browser reopen; fill
+stays within its 710px surface beside a 473px surface. Delayed-open and collapsed
+pane visibility regressions pass. NSIS installer exit 0; installed/package
+app.asar SHA-256 4B69282F756F8E1FDB2B540C396D140426A52A879E6DEDC7B7D1E6A68C269C30.
+Papers restarted. Rollback: Runtime/Backups/App-before-browser-visibility-20261005.
+Creator live eyecheck remains pending; no version change or publication.
