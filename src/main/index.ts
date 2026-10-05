@@ -473,7 +473,7 @@ function bindOwnedProjectSurface(
 let hostView: WebContentsView | null = null;
 
 /**
- * Papers owns both system-wide chords while running. Alt+Shift+A raises the
+ * Papers owns both system-wide chords while running. Alt+A raises the
  * existing window directly; a separate launch routes through second-instance.
  */
 let globalInvoke: GlobalInvoke | null = null;
@@ -588,14 +588,14 @@ function discoverDelegateWaveBackpackId(projectBindingsFile: string): string | u
 }
 
 async function bootstrap(): Promise<void> {
-  // Claim Alt+A before any restored project renderer can receive keyboard
+  // Claim Alt+Shift+A before any restored project renderer can receive keyboard
   // input. The first press may arrive before the command-surface window exists;
   // the gate holds it and opens the real overlay as soon as it is attached.
   const commandSurfaceGate = createDeferredCommandSurfaceOverlay();
   startupCommandSurfaceGate = commandSurfaceGate;
   let earlyShortcutRegistered = false;
   try {
-    earlyShortcutRegistered = globalShortcut.register('Alt+A', () => {
+    earlyShortcutRegistered = globalShortcut.register('Alt+Shift+A', () => {
       void commandSurfaceGate.overlay.open().then((opened) => {
         if (!opened.ok) {
           hostView?.webContents.send('host:event:host-error', {
@@ -604,12 +604,12 @@ async function bootstrap(): Promise<void> {
             known: opened.detail,
             intact: 'Nothing was changed, and no other application was affected. Papers did not come forward.',
             retryUseful: true,
-            inspect: 'Shortcuts: bring Papers forward is Alt+Shift+A; open the command surface is Alt+A.',
+            inspect: 'Shortcuts: bring Papers forward is Alt+A; open the command surface is Alt+Shift+A.',
             recover: 'Open a Backpack in Papers, then press the shortcut again.',
           });
         }
       }).catch((error: unknown) => {
-        console.error('[papers] startup Alt+A dispatch failed:', error);
+        console.error('[papers] startup Alt+Shift+A dispatch failed:', error);
       });
     });
   } catch {
@@ -3174,7 +3174,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // exits - not even while the rest of teardown is still draining.
       globalInvoke?.release();
       globalInvoke = null;
-      if (earlyShortcutRegistered) globalShortcut.unregister('Alt+A');
+      if (earlyShortcutRegistered) globalShortcut.unregister('Alt+Shift+A');
       startupCommandSurfaceGate?.fail('Papers is shutting down before the command surface finished starting');
       startupCommandSurfaceGate = null;
       hoverInputBridge?.close();
@@ -3298,8 +3298,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // ------------------------------------------------- global invocation chords
   // Two system-wide chords, live while Papers runs, working from inside any
   // other application:
-  //   Alt+Shift+A  raises the existing Papers window directly.
-  //   Alt+A        pop the command surface OVER whatever the creator is doing.
+  //   Alt+A        raises the existing Papers window directly.
+  //   Alt+Shift+A  pops the command surface OVER whatever the creator is doing.
   //                Papers does NOT come forward - this is a launcher, not a
   //                window switcher. The application they came from keeps its
   //                place and gets focus back when the overlay closes.
@@ -3570,7 +3570,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     },
   });
   // Load the launcher renderer while Papers is settling, without showing it or
-  // touching foreground focus. Later Alt+A presses reuse this hidden surface.
+  // touching foreground focus. Later Alt+Shift+A presses reuse this hidden surface.
   const startupOverlay = commandSurfaceOverlay;
   void startupOverlay.warm().catch((error) => {
     console.error('[papers] command surface warm-up failed:', error);
@@ -3598,9 +3598,9 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     (globalThis as Record<string, unknown>)['__papersTestOpenCommandSurface'] = openCommandSurface;
   }
 
-  // Alt+Shift+A is raise-only. It never minimizes Papers.
+  // Alt+A is raise-only. It never minimizes Papers.
   /* Legacy toggle implementation retained below for historical tests; the
-     shipping Alt+Shift+A path is raise-only and does not wire it. */
+     shipping Alt+A path is raise-only and does not wire it. */
   /* windowToggle = createWindowToggle({
     foregroundPapersWindowId,
     currentWindowId: () => {
@@ -3704,7 +3704,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         known: report.detail,
         intact: 'Nothing was changed, and no other application was affected. Papers did not come forward.',
         retryUseful: true,
-        inspect: 'Shortcuts: bring Papers forward is Alt+Shift+A; open the command surface is Alt+A.',
+        inspect: 'Shortcuts: bring Papers forward is Alt+A; open the command surface is Alt+Shift+A.',
         recover: report.outcome === 'window-unavailable'
           ? 'Open a Papers window, then press the shortcut again.'
           : 'Open a Backpack in Papers, then press the shortcut again.',
@@ -3715,7 +3715,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // Transfer the already-held chord to the normal dispatcher without yielding
   // to the event loop; the startup callback above has been swallowing and
   // queueing the first press until the real overlay is available.
-  if (earlyShortcutRegistered) globalShortcut.unregister('Alt+A');
+  if (earlyShortcutRegistered) globalShortcut.unregister('Alt+Shift+A');
   const shortcutReport = globalInvoke.register();
   globalShortcutReport = shortcutReport;
   if (!shortcutReport.ok) {

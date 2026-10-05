@@ -92,17 +92,17 @@ describe('globalInvoke registration', () => {
     const report = createGlobalInvoke(deps).register();
 
     expect(report.ok).toBe(true);
-    expect(report.registered).toEqual(['Alt+Shift+A', 'Alt+A']);
-    expect(shortcut.order).toEqual(['Alt+Shift+A', 'Alt+A']);
-    expect([...shortcut.held]).toEqual(['Alt+Shift+A', 'Alt+A']);
+    expect(report.registered).toEqual(['Alt+A', 'Alt+Shift+A']);
+    expect(shortcut.order).toEqual(['Alt+A', 'Alt+Shift+A']);
+    expect([...shortcut.held]).toEqual(['Alt+A', 'Alt+Shift+A']);
   });
 
-  it('holds an Alt+A pressed during startup until the command surface is attached', async () => {
+  it('holds an Alt+Shift+A pressed during startup until the command surface is attached', async () => {
     const gate = createDeferredCommandSurfaceOverlay();
     const h = harness({ overlay: gate.overlay });
     createGlobalInvoke(h.deps).register();
 
-    h.shortcut.callbacks.get('Alt+A')?.();
+    h.shortcut.callbacks.get('Alt+Shift+A')?.();
     expect(h.overlay.opened).toBe(0);
 
     gate.attach(h.overlay);
@@ -140,7 +140,7 @@ describe('globalInvoke registration', () => {
     createGlobalInvoke(deps).register();
 
     expect([...shortcut.held]).toEqual(['Alt+Shift+A']);
-    expect(shortcut.order).toEqual(['Alt+Shift+A', 'Alt+A']);
+    expect(shortcut.order).toEqual(['Alt+A', 'Alt+Shift+A']);
   });
 
   it('turns an unparseable accelerator into a named refusal instead of throwing', () => {
@@ -212,11 +212,11 @@ describe('globalInvoke release', () => {
 });
 
 describe('globalInvoke behaviour', () => {
-  it('Alt+Shift+A raises Papers directly without opening the overlay', async () => {
+  it('Alt+A raises Papers directly without opening the overlay', async () => {
     const { shortcut, deps, brought, overlay } = harness();
     createGlobalInvoke(deps).register();
 
-    shortcut.callbacks.get('Alt+Shift+A')?.();
+    shortcut.callbacks.get('Alt+A')?.();
     await vi.waitFor(() => expect(brought).toHaveLength(1));
     expect(overlay.opened).toBe(0);
   });
@@ -225,7 +225,7 @@ describe('globalInvoke behaviour', () => {
     const { shortcut, brought, overlay, deps } = harness();
     createGlobalInvoke(deps).register();
 
-    shortcut.callbacks.get('Alt+A')?.();
+    shortcut.callbacks.get('Alt+Shift+A')?.();
 
     expect(overlay.opened).toBe(1);
     // Papers keeps its place in the z-order. This is a launcher, not a switcher.
@@ -237,7 +237,7 @@ describe('globalInvoke behaviour', () => {
     const { shortcut, deps } = harness({ report: (r) => calls.push(r) });
     createGlobalInvoke(deps).register();
 
-    shortcut.callbacks.get('Alt+A')?.();
+    shortcut.callbacks.get('Alt+Shift+A')?.();
     await new Promise((r) => setTimeout(r, 0));
 
     expect(calls.at(-1)?.outcome).toBe('overlay-opened');
@@ -256,7 +256,7 @@ describe('globalInvoke behaviour', () => {
     });
     createGlobalInvoke(deps).register();
 
-    shortcut.callbacks.get('Alt+A')?.();
+    shortcut.callbacks.get('Alt+Shift+A')?.();
     await new Promise((r) => setTimeout(r, 0));
 
     // It must not appear to do nothing: the reason is reported...
@@ -267,7 +267,7 @@ describe('globalInvoke behaviour', () => {
   });
 
   it('asks the overlay to open again when the chord is pressed again, instead of closing it', () => {
-    // The creator pressed Alt+A a second time expecting an empty, focused line.
+    // The creator pressed Alt+Shift+A a second time expecting an empty, focused line.
     // Closing the overlay here (or merely refocusing the window) leaves the
     // project with no event to clear on, which is the reported defect. The
     // chord re-invokes; the overlay decides what "already open" means.
@@ -275,7 +275,7 @@ describe('globalInvoke behaviour', () => {
     overlay.isOpenValue = true;
     createGlobalInvoke(deps).register();
 
-    shortcut.callbacks.get('Alt+A')?.();
+    shortcut.callbacks.get('Alt+Shift+A')?.();
 
     expect(overlay.closed).toEqual([]);
     expect(overlay.opened).toBe(1);
@@ -293,7 +293,7 @@ describe('globalInvoke behaviour', () => {
     });
     createGlobalInvoke(deps).register();
 
-    shortcut.callbacks.get('Alt+A')?.();
+    shortcut.callbacks.get('Alt+Shift+A')?.();
     await new Promise((r) => setTimeout(r, 0));
 
     expect(calls.at(-1)?.outcome).toBe('overlay-unavailable');
@@ -305,7 +305,7 @@ describe('globalInvoke behaviour', () => {
     const { shortcut, brought, deps } = harness({ overlay: undefined, report: (r) => calls.push(r) });
     createGlobalInvoke(deps).register();
 
-    shortcut.callbacks.get('Alt+A')?.();
+    shortcut.callbacks.get('Alt+Shift+A')?.();
 
     expect(calls.at(-1)?.outcome).toBe('overlay-unavailable');
     expect(brought).toHaveLength(0);
@@ -315,7 +315,7 @@ describe('globalInvoke behaviour', () => {
 
 describe('globalInvoke defaults', () => {
   it('defaults are exactly the two chords the creator asked for', () => {
-    expect(DEFAULT_INVOKE_ACCELERATORS).toEqual({ invoke: 'Alt+A', bringToFront: 'Alt+Shift+A' });
+    expect(DEFAULT_INVOKE_ACCELERATORS).toEqual({ invoke: 'Alt+Shift+A', bringToFront: 'Alt+A' });
   });
 
   it('chords come from the injected configuration, not from hardcoded literals at the call site', () => {

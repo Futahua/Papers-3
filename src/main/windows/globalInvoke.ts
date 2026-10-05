@@ -32,8 +32,8 @@
 /** The chords the creator asked for, by name. Overridable through
  * `GlobalInvokeDependencies.accelerators`. */
 export const DEFAULT_INVOKE_ACCELERATORS: GlobalInvokeAccelerators = {
-  invoke: 'Alt+A',
-  bringToFront: 'Alt+Shift+A',
+  invoke: 'Alt+Shift+A',
+  bringToFront: 'Alt+A',
 };
 
 export interface GlobalInvokeAccelerators {
@@ -317,7 +317,7 @@ export function createGlobalInvoke(dependencies: GlobalInvokeDependencies): Glob
     dependencies.report?.(report);
   };
 
-  /** Alt+Shift+A always raises Papers; it never minimizes it. */
+  /** Alt+A always raises Papers; it never minimizes it. */
   const onBringToFront = (): void => {
     const windowId = dependencies.currentWindowId();
     if (windowId === null) {

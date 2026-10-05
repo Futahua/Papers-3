@@ -1,5 +1,5 @@
 /**
- * Which project Alt+A launches.
+ * Which project Alt+Shift+A launches.
  *
  * The defect these tests pin down: the launcher used to render whatever project
  * happened to be the ACTIVE TAB. The creator presses the chord from outside
