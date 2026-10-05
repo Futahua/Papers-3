@@ -1,55 +1,47 @@
-import { BaseWindow, screen, type WebContentsView } from 'electron';
+import type { BaseWindow, WebContentsView } from 'electron';
 
-/** Owns only the temporary monitor window; the browser tab retains its contents. */
+/** Lets Chromium fullscreen the owning Papers window while the live tab fills it. */
 export function createBrowserVideoFullscreen(view: WebContentsView, owner: BaseWindow, restore: () => void) {
-  let fullscreen: BaseWindow | null = null;
+  let active = false;
   const ownerWasFullscreen = owner.isFullScreen();
+  const fit = (): void => {
+    if (!active || owner.isDestroyed() || view.webContents.isDestroyed()) return;
+    const area = owner.getContentBounds();
+    view.setBounds({ x: 0, y: 0, width: Math.max(1, area.width), height: Math.max(1, area.height) });
+  };
+  const stopFollowingOwner = (): void => {
+    owner.removeListener('resize', fit);
+    owner.removeListener('enter-full-screen', fit);
+  };
   const exit = (): void => {
-    const window = fullscreen;
-    if (!window) return;
-    fullscreen = null;
-    if (!window.isDestroyed()) window.contentView.removeChildView(view);
+    if (!active) return;
+    active = false;
+    stopFollowingOwner();
     if (!owner.isDestroyed() && !ownerWasFullscreen && owner.isFullScreen()) owner.setFullScreen(false);
     restore();
-    if (!window.isDestroyed()) window.close();
   };
   const enter = (): void => {
-    if (fullscreen || owner.isDestroyed() || view.webContents.isDestroyed()) return;
-    const bounds = screen.getDisplayMatching(owner.getBounds()).bounds;
-    const window = new BaseWindow({ ...bounds, show: false, frame: false, backgroundColor: '#000000' });
-    fullscreen = window;
-    owner.contentView.removeChildView(view);
-    window.contentView.addChildView(view);
-    // Chromium may have already fullscreened the Papers owner before this
-    // callback runs. Do not clear that state here: doing so can immediately
-    // emit leave-html-full-screen and snap this same view back into its pane.
-    // exit() restores the owner only after fullscreen really ends.
-    const fit = (): void => {
-      if (window.isDestroyed()) return;
-      const area = window.getContentBounds();
-      view.setBounds({ x: 0, y: 0, width: area.width, height: area.height });
-    };
-    window.on('resize', fit);
-    window.on('enter-full-screen', fit);
-    window.on('close', () => {
-      if (fullscreen !== window) return;
-      void view.webContents.executeJavaScript('document.fullscreenElement && document.exitFullscreen()').catch(() => {});
-      exit();
-    });
-    window.setFullScreen(true);
+    if (active || owner.isDestroyed() || view.webContents.isDestroyed()) return;
+    active = true;
+    owner.on('resize', fit);
+    owner.on('enter-full-screen', fit);
+    if (!owner.isFullScreen()) owner.setFullScreen(true);
+    // Keep the WebContentsView attached to its original owner. Reparenting it
+    // during enter-html-full-screen makes Chromium emit leave-html-full-screen
+    // and snap the video back into the split pane.
+    owner.contentView.addChildView(view);
     fit();
-    window.show();
-    window.focus();
+    owner.focus();
     view.webContents.focus();
   };
   view.webContents.on('enter-html-full-screen', enter);
   view.webContents.on('leave-html-full-screen', exit);
   view.webContents.on('before-input-event', (_event, input) => {
-    if (fullscreen && input.type === 'keyDown' && input.key === 'Escape') {
+    if (active && input.type === 'keyDown' && input.key === 'Escape') {
       void view.webContents.executeJavaScript('document.fullscreenElement && document.exitFullscreen()').catch(() => {});
       exit();
     }
   });
   view.webContents.once('destroyed', exit);
-  return { exit, isActive: () => fullscreen !== null };
+  return { exit, isActive: () => active };
 }

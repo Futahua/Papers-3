@@ -158,6 +158,12 @@ describe('Backpack project protocol alignment', () => {
       'preview-pdf-move',
       'preview-html-open',
       'preview-html-move',
+      'browser-open',
+      'browser-move',
+      'browser-tab-open',
+      'browser-tab-activate',
+      'browser-tab-move',
+      'browser-download-bubble-show',
     ];
     for (const operation of operations) {
       for (const handler of messageHandlers) {

@@ -192,6 +192,12 @@ const POSITIONED_PREVIEW_OPERATIONS = new Set([
   'preview-pdf-move',
   'preview-html-open',
   'preview-html-move',
+  'browser-open',
+  'browser-move',
+  'browser-tab-open',
+  'browser-tab-activate',
+  'browser-tab-move',
+  'browser-download-bubble-show',
 ]);
 
 function scopedWorkspaceOrigin(event: MessageEvent, request: ProjectMessage): string | undefined {
