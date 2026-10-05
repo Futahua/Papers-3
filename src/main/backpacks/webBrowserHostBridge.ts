@@ -52,6 +52,7 @@ interface DurableBrowserTab {
   lastActiveAt: number;
   history: { entries: NavigationEntry[]; index: number } | null;
   crashed: boolean;
+  reservePlainTab: boolean;
 }
 
 export interface BrowserTabState {
@@ -99,7 +100,7 @@ export interface WebBrowserHostBridge {
   ): Promise<{ ok: true; sessionId: string; url: string } | { ok: false; error?: string }>;
   move(ownerKey: string, sessionId: string, localRect: PreviewRect): boolean;
   close(ownerKey: string, sessionId: string): boolean;
-  openTab(context: PreviewHostContext, tabId: string, url: string, localRect: PreviewRect, activate?: boolean): Promise<BrowserTabResult>;
+  openTab(context: PreviewHostContext, tabId: string, url: string, localRect: PreviewRect, activate?: boolean, reservePlainTab?: boolean): Promise<BrowserTabResult>;
   activateTab(context: PreviewHostContext, tabId: string, localRect: PreviewRect): Promise<BrowserTabResult>;
   navigateTab(ownerKey: string, tabId: string, url: string): Promise<BrowserTabResult>;
   commandTab(ownerKey: string, tabId: string, command: 'back' | 'forward' | 'reload'): BrowserTabResult;
@@ -562,6 +563,7 @@ async function submitLensCrop(contents: WebContents, crop: LensCrop): Promise<st
 
 export function createWebBrowserHostBridge(input: {
   resolveWindow(ownerKey: string): BaseWindow | null;
+  onReservedTab?: (ownerKey: string) => void;
   downloadHistoryFile?: string;
   downloadRecoveryDir?: string;
   resolveFavicon?: (pageUrl: string) => Promise<string | null>;
@@ -924,6 +926,12 @@ export function createWebBrowserHostBridge(input: {
 
   const wireTabView = (tab: DurableBrowserTab, view: WebContentsView): void => {
     const contents = view.webContents;
+    contents.on('before-input-event', (event, key) => {
+      if (!tab.reservePlainTab || key.type !== 'keyDown' || key.key !== 'Tab'
+        || key.shift || key.control || key.alt || key.meta || key.isAutoRepeat) return;
+      event.preventDefault();
+      input.onReservedTab?.(tab.ownerKey);
+    });
     fullscreenTabs.set(tab, createBrowserVideoFullscreen(view, tab.window, () => {
       if (tab.view !== view || tab.window.isDestroyed() || contents.isDestroyed()) return;
       if (tab.presented && activeTabs.get(tab.ownerKey) === tab.tabId) {
@@ -940,6 +948,7 @@ export function createWebBrowserHostBridge(input: {
         const child: DurableBrowserTab = {
           ...tab, tabId, view: null, presented: false, url: safe, title: '',
           faviconUrl: '', history: null, crashed: false, lastActiveAt: Date.now(),
+          reservePlainTab: tab.reservePlainTab,
           localRect: { ...tab.localRect }, surfaceBounds: { ...tab.surfaceBounds },
         };
         tabs.set(tabKey(tab.ownerKey, tabId), child);
@@ -1061,6 +1070,7 @@ export function createWebBrowserHostBridge(input: {
             lastActiveAt: Date.now(),
             history: null,
             crashed: false,
+            reservePlainTab: tab.reservePlainTab,
           };
           tabs.set(tabKey(tab.ownerKey, childTabId), childTab);
           const ids = ownerTabs.get(tab.ownerKey) ?? new Set<string>();
@@ -1261,7 +1271,7 @@ export function createWebBrowserHostBridge(input: {
       return true;
     },
 
-    async openTab(context, tabId, rawUrl, localRect, activate = true) {
+    async openTab(context, tabId, rawUrl, localRect, activate = true, reservePlainTab = false) {
       const url = safeWebUrl(rawUrl);
       if (!url) return { ok: false, error: 'Only http and https links can open in the browser.' };
       if (!/^[A-Za-z0-9._:-]{1,128}$/.test(tabId)) return { ok: false, error: 'Invalid browser tab id.' };
@@ -1285,6 +1295,7 @@ export function createWebBrowserHostBridge(input: {
         lastActiveAt: Date.now(),
         history: null,
         crashed: false,
+        reservePlainTab,
       };
 
       if (!existing) {
@@ -1297,6 +1308,7 @@ export function createWebBrowserHostBridge(input: {
       tab.window = window;
       tab.localRect = { ...localRect };
       tab.surfaceBounds = { ...context.surfaceBounds };
+      tab.reservePlainTab = reservePlainTab;
       if (tab.url !== url) {
         tab.url = url;
         tab.history = null;
@@ -1467,6 +1479,7 @@ export function createWebBrowserHostBridge(input: {
           lastActiveAt: Date.now(),
           history: null,
           crashed: false,
+          reservePlainTab: sourceTab.reservePlainTab,
         };
         tabs.set(tabKey(ownerKey, targetTabId), targetTab);
         const ids = ownerTabs.get(ownerKey) ?? new Set<string>();

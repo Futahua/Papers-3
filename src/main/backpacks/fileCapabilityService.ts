@@ -969,6 +969,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               url,
               previewRect(params.rect),
               params.activate !== false,
+              params.reservePlainTab === true,
             );
           }
           case 'browser-tab-open-requests': {

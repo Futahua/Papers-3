@@ -749,6 +749,16 @@ async function bootstrap(): Promise<void> {
       if (!Number.isSafeInteger(windowId)) return null;
       return papersWindows.get(windowId)?.owned.window ?? null;
     },
+    onReservedTab: (ownerKey) => {
+      const separator = ownerKey.indexOf(':');
+      if (separator <= 0) return;
+      const windowId = Number(ownerKey.slice(0, separator));
+      const surfaceId = ownerKey.slice(separator + 1);
+      if (!Number.isSafeInteger(windowId) || !surfaceId) return;
+      const contents = papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.webContents;
+      if (!contents || contents.isDestroyed()) return;
+      contents.send('papers:backpack-project:reserved-tab');
+    },
     downloadHistoryFile: path.join(paths.root, 'browser-downloads.json'),
     downloadRecoveryDir: paths.recoveryDir,
   });

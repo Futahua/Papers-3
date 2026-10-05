@@ -939,6 +939,7 @@ for (const [channel, type] of [
   // command surface is what should respond. The project decides the rest.
   ['papers:backpack:command-surface-invoke', 'papers:project:command-surface-invoke'],
   ['papers:backpack:widget-quick-run-seal-request', 'papers:project:widget-quick-run-seal-request'],
+  ['papers:backpack-project:reserved-tab', 'papers:project:reserved-tab'],
 ] as const) {
   ipcRenderer.on(channel, (_event, payload) => window.postMessage({ type, ...(payload ?? {}) }, window.location.origin));
 }
