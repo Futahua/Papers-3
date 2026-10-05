@@ -16,10 +16,20 @@ function setup() {
   const events = new Map<string, Function>();
   const contents = { isDestroyed: () => false, focus: vi.fn(), executeJavaScript: vi.fn().mockResolvedValue(undefined), on: (name: string, fn: Function) => events.set(name, fn), once: (name: string, fn: Function) => events.set(name, fn) };
   const view = { webContents: contents, setBounds: vi.fn() };
-  const owner = { isDestroyed: () => false, isFullScreen: () => false, setFullScreen: vi.fn(), getBounds: () => ({ x: 2000, y: 50, width: 800, height: 600 }), contentView: { removeChildView: vi.fn() } };
+  let ownerFullscreen = false;
+  const owner = {
+    isDestroyed: () => false,
+    isFullScreen: () => ownerFullscreen,
+    setFullScreen: vi.fn((next: boolean) => { ownerFullscreen = next; }),
+    getBounds: () => ({ x: 2000, y: 50, width: 800, height: 600 }),
+    contentView: { removeChildView: vi.fn() },
+  };
   const restore = vi.fn();
   const control = createBrowserVideoFullscreen(view as any, owner as any, restore);
-  return { events, view, owner, restore, control };
+  return {
+    events, view, owner, restore, control,
+    setOwnerFullscreen(next: boolean) { ownerFullscreen = next; },
+  };
 }
 describe('monitor video fullscreen lifecycle', () => {
   it('moves the same live view to the owner monitor and restores on exit', () => {
@@ -32,6 +42,18 @@ describe('monitor video fullscreen lifecycle', () => {
     expect(h.control.isActive()).toBe(true);
     h.events.get('leave-html-full-screen')!();
     expect(h.restore).toHaveBeenCalledTimes(1); expect(window.destroyed).toBe(true);
+  });
+  it('does not collapse Chromium owner fullscreen while the monitor view is entering', () => {
+    const h = setup();
+    // Electron/Chromium can fullscreen the current owner before delivering
+    // enter-html-full-screen. Clearing it here immediately produces a matching
+    // leave event and snaps the video back into the split browser pane.
+    h.setOwnerFullscreen(true);
+    h.events.get('enter-html-full-screen')!();
+    expect(h.owner.setFullScreen).not.toHaveBeenCalled();
+    expect(h.control.isActive()).toBe(true);
+    h.events.get('leave-html-full-screen')!();
+    expect(h.owner.setFullScreen).toHaveBeenCalledWith(false);
   });
   it('Escape exits fullscreen and restores once without closing the tab', () => {
     const h = setup(); h.events.get('enter-html-full-screen')!();

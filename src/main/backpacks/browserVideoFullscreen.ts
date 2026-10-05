@@ -20,9 +20,10 @@ export function createBrowserVideoFullscreen(view: WebContentsView, owner: BaseW
     fullscreen = window;
     owner.contentView.removeChildView(view);
     window.contentView.addChildView(view);
-    // Chromium also fullscreens the old owner before delivering the HTML event.
-    // The monitor window now owns the view, so return the Papers shell to normal.
-    if (!ownerWasFullscreen && owner.isFullScreen()) owner.setFullScreen(false);
+    // Chromium may have already fullscreened the Papers owner before this
+    // callback runs. Do not clear that state here: doing so can immediately
+    // emit leave-html-full-screen and snap this same view back into its pane.
+    // exit() restores the owner only after fullscreen really ends.
     const fit = (): void => {
       if (window.isDestroyed()) return;
       const area = window.getContentBounds();
