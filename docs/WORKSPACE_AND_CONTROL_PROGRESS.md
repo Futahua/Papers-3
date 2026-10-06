@@ -3484,3 +3484,7 @@ pane visibility regressions pass. NSIS installer exit 0; installed/package
 app.asar SHA-256 4B69282F756F8E1FDB2B540C396D140426A52A879E6DEDC7B7D1E6A68C269C30.
 Papers restarted. Rollback: Runtime/Backups/App-before-browser-visibility-20261005.
 Creator live eyecheck remains pending; no version change or publication.
+
+### 2026-10-06 Alt+Q repeat-click native input investigation
+
+User reported the second icon click failing after refresh while Peek and chooser activation continued working. The bounded renderer trace retained only the first capture-phase pointerdown. On an isolated private Windows desktop, the non-focusable Electron widget returned WM_MOUSEACTIVATE=4 (MA_NOACTIVATEANDEAT) in all four hide/summon cycles; synthetic renderer input still worked and therefore was insufficient evidence of physical input delivery. Peek mode now enables focusability before showInactive; hide resets it, and legacy mode remains non-focusable. The same private-desktop probe returned WM_MOUSEACTIVATE=1 in all four cycles. Typecheck and 1396 unit tests passed (4 skipped). Installed app.asar SHA-256 matches the package: `8A5EE592DF892E9A96C34AE82D8F6FAC54C5D9A2F1B413C15E15BC5E809D138C`. Creator confirmed the installed behavior ("good job, push"). No user-desktop input was injected.

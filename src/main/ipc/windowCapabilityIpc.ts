@@ -58,6 +58,7 @@ export interface WindowCapabilityIpcDependencies {
   /** Resolves only the trusted native host that owns this already-authorized
    * Backpack surface. The raw HWND never crosses the renderer boundary. */
   resolveCallerHwnd?: (sender: WebContents) => string | null;
+  canBeginPeek?: (sender: WebContents) => boolean;
   /** A project surface showing a hover preview in Papers' own always-on-top,
    * never-focused preview window instead of an in-page popover. The anchor is
    * the hovered element's screen rectangle, so the window is placed beside the
@@ -241,6 +242,7 @@ export function registerWindowCapabilityIpc({
   isSender,
   waitForAuthority,
   resolveCallerHwnd,
+  canBeginPeek,
   showProjectPreview,
   hideProjectPreview,
   controlBroker,
@@ -788,6 +790,7 @@ export function registerWindowCapabilityIpc({
   handle('papers:window-capability:close', parseRuntimeCapability, (capability) => service.closeCapability(capability));
   handle('papers:window-capability:end-process', parseRuntimeCapability, (capability) => service.endProcessCapability(capability));
   handle('papers:window-capability:peek-begin', parseRuntimeCapability, async (capability, event) => {
+    if (canBeginPeek && !canBeginPeek(event.sender)) return { outcome: 'denied', error: 'Preview source is hidden' };
     const startedAt = Date.now();
     const caller = resolveCallerHwnd?.(event.sender) ?? null;
     if (caller && service.beginLivePreviewCapability) {

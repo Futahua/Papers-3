@@ -107,6 +107,11 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
 
   ipcMain.handle('papers:backpack:widget-minimize', async (event, raw) => {
     await waitForAuthority?.(event.sender);
+    if(object(raw)&&exact(raw,['token'])) {
+      const token=key(raw.token,'token'), surface=registry.surface(event.sender.id);
+      if(!surface||!isWidgetSender(event.sender,surface.projectId)||!registry.validSender(event.sender.id,surface.projectId,token))throw new Error('denied: sender is not the registered widget');
+      return {ok:session.hideFromSender(event.sender.id,token)};
+    }
     if (!object(raw) || !exact(raw, ['projectId', 'layoutKey'])) throw new Error('widget minimize payload is malformed');
     const projectId = key(raw.projectId, 'projectId');
     const layoutKey = key(raw.layoutKey, 'layoutKey');

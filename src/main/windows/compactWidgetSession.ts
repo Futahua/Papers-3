@@ -35,6 +35,7 @@ interface WidgetEntry {
   /** A background `open(activate: false)` must not undo an Alt+Q hide.
    * An explicit restore clears this marker. */
   altQHidden: boolean;
+  parkedBounds?: WindowBounds;
 }
 
 export interface CompactWidgetWindow {
@@ -47,6 +48,7 @@ export interface CompactWidgetWindow {
   getBounds(): WindowBounds;
   setContentSize(width: number, height: number): void;
   focus(): void;
+  setFocusable(focusable: boolean): void;
   isFocused(): boolean;
   isMinimized(): boolean;
   isVisible(): boolean;
@@ -86,6 +88,7 @@ export interface CompactWidgetSessionDependencies {
   onSurfaceClosed?: (projectId: string, layoutKey: string, owningWindowId: number) => void;
   onWidgetRegistered?: (senderId: number, nativeHandle: Buffer) => void;
   onWidgetRemoved?: (senderId: number) => void;
+  onWidgetHidden?: (senderId: number) => void;
 }
 
 export interface CompactWidgetSession {
@@ -101,7 +104,7 @@ export interface CompactWidgetSession {
   /** Restore the most recently opened/focused widget at the current pointer. */
   bringLatestToCursor(): Promise<boolean>;
   /** Handle the start/end of one Alt+Q press, retaining its native hit widget. */
-  beginAltQGesture(widgetSenderId: number | null): Promise<boolean> | void;
+  beginAltQGesture(widgetSenderId: number | null, interaction?: 'peek' | 'legacy'): Promise<boolean> | void;
   endAltQGesture(): void;
   /** Stop the pointer-follow started by the most recent Alt+Q press. */
   stopFollowing(): void;
@@ -115,6 +118,7 @@ export interface CompactWidgetSession {
    */
   closeOwnedByWindow(owningWindowId: number): Promise<void>;
   closeFromSender(senderId: number, token: string): Promise<void>;
+  hideFromSender(senderId: number, token: string): boolean;
   /** 024: the widget page reports its bounded card content size after each
    * render; the host refits the frameless window to that content (clamped). */
   resizeFromSender(senderId: number, token: string, width: number, height: number): void;
@@ -172,8 +176,15 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     followedEntry = null;
   };
 
+  const restoreParkedBounds = (entry: WidgetEntry): void => {
+    if (entry.parkedBounds === undefined) return;
+    entry.window.setBounds(entry.parkedBounds);
+    entry.parkedBounds = undefined;
+  };
+
   const restoreAndFocus = (entry: WidgetEntry): boolean => {
     if (entry.closing || entry.window.isDestroyed()) return false;
+    restoreParkedBounds(entry);
     if (entry.window.isMinimized()) entry.window.restore();
     if (!entry.window.isVisible()) entry.window.show();
     entry.window.focus();
@@ -219,6 +230,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     // The widget is intentionally non-activating. A foreground activation
     // retry loop cannot focus it and can make one reveal visibly flash again.
     // Position while hidden, reveal once without activation, then raise once.
+    restoreParkedBounds(entry);
     if (!entry.window.isVisible() || entry.window.isMinimized()) placeAtCursor(entry);
     if (entry.window.isMinimized()) entry.window.restore();
     if (!entry.window.isVisible()) entry.window.showInactive();
@@ -228,10 +240,33 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     return entry.window.isVisible() && !entry.window.isMinimized();
   };
 
+  const hideEntry = (entry: WidgetEntry): boolean => {
+    if(!isLiveEntry(entry))return false;
+    if(followedEntry===entry)stopFollowing();
+    latestWidgetKey=keyOf(entry.projectId,entry.layoutKey,entry.owningWindowId);
+    entry.altQHidden=true;
+    entry.window.webContents.send('papers:backpack:widget-interaction-mode', { mode: 'dismissed' });
+    deps.onWidgetHidden?.(entry.window.webContents.id);
+    if (activeDrag?.senderId === entry.window.webContents.id) activeDrag = null;
+    // Leave no on-screen composition rectangle for a stale DWM Peek frame.
+    // Do not switch this translucent window into zero-alpha layered rendering.
+    if (entry.parkedBounds === undefined) {
+      entry.parkedBounds = entry.window.getBounds();
+      const displays = deps.screen.getAllDisplays();
+      const right = Math.max(0, ...displays.map((display) => display.x + display.width));
+      const bottom = Math.max(0, ...displays.map((display) => display.y + display.height));
+      entry.window.setBounds({ ...entry.parkedBounds, x: right + 128, y: bottom + 128 });
+    }
+    entry.window.hide();
+    entry.window.setFocusable(false);
+    return true;
+  };
+
   const minimizeEntry = (entry: WidgetEntry, stopOtherFollow = true): boolean => {
     if (!isLiveEntry(entry)) return false;
     if (followedEntry === entry || (stopOtherFollow && followedEntry !== null)) stopFollowing();
     latestWidgetKey = keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId);
+    entry.altQHidden = true;
     entry.window.minimize();
     return entry.window.isMinimized();
   };
@@ -292,7 +327,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND || surface.token !== raw.token) return;
     if (deps.isSurfaceOrigin && !deps.isSurfaceOrigin(event.sender.id, surface.projectId)) return;
     const entry = [...entries.values()].find((candidate) => candidate.window.webContents.id === event.sender.id);
-    if (!entry || entry.closing || entry.window.isDestroyed()) return;
+    if (!entry || entry.closing || entry.window.isDestroyed() || entry.altQHidden) return;
     if (raw.phase === 'begin') {
       const bounds = entry.window.getBounds();
       activeDrag = {
@@ -320,7 +355,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
   const displayEvents: Array<'display-metrics-changed' | 'display-added' | 'display-removed'> = ['display-metrics-changed', 'display-added', 'display-removed'];
   const clampOpen = (): void => {
     for (const entry of entries.values()) {
-      if (!entry.window.isDestroyed()) entry.window.setBounds(resolveWindowBounds(entry.window.getBounds(), deps.screen.getAllDisplays()) ?? entry.window.getBounds());
+      if (!entry.window.isDestroyed() && !entry.parkedBounds) entry.window.setBounds(resolveWindowBounds(entry.window.getBounds(), deps.screen.getAllDisplays()) ?? entry.window.getBounds());
     }
   };
 
@@ -402,7 +437,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       const entry = latestWidgetKey === null ? undefined : entries.get(latestWidgetKey);
       return entry ? bringEntryToCursor(entry) : false;
     },
-    beginAltQGesture(widgetSenderId) {
+    beginAltQGesture(widgetSenderId, interaction = 'legacy') {
       if (altQGesture !== null) return;
       // The native helper captures the visible widget at physical chord start.
       // Its state may already have changed by the time this record arrives.
@@ -413,16 +448,21 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       if (entry === null) {
         // Outside a widget, retain the established bring-latest-and-follow path.
         altQGesture = { kind: 'outside' };
+        const latest=latestWidgetKey===null?undefined:entries.get(latestWidgetKey);
+        if (latest) {
+          // Non-focusable Electron windows eat WM_MOUSEACTIVATE presses. Peek
+          // mode must accept the press; showInactive still preserves foreground
+          // on summon, and the member activation hands it to the selected app.
+          latest.window.setFocusable(interaction === 'peek');
+          latest.window.webContents.send('papers:backpack:widget-interaction-mode', { mode: interaction });
+        }
         return session.bringLatestToCursor();
       }
       // A press that starts over a widget hides it immediately. The widget
       // has no taskbar entry, so native minimize animation only delays the
       // visible result and can race a subsequent Alt+Q restore.
       altQGesture = { kind: 'inside', entry };
-      if (followedEntry === entry) stopFollowing();
-      latestWidgetKey = keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId);
-      entry.altQHidden = true;
-      entry.window.hide();
+      hideEntry(entry);
     },
     endAltQGesture() {
       const gesture = altQGesture;
@@ -442,6 +482,12 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       for (const entry of [...entries.values()]) {
         if (entry.owningWindowId === owningWindowId) destroy(entry);
       }
+    },
+    hideFromSender(senderId, token) {
+      const surface=deps.registry.surface(senderId);
+      if(!surface||surface.kind!==COMPACT_WIDGET_SURFACE_KIND||surface.token!==token)throw new Error('denied: sender is not the registered compact widget');
+      const entry=[...entries.values()].find(candidate=>candidate.window.webContents.id===senderId);
+      return entry ? hideEntry(entry) : false;
     },
     async closeFromSender(senderId, token) {
       const surface = deps.registry.surface(senderId);

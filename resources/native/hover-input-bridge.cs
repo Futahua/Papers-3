@@ -126,6 +126,8 @@ internal static class HoverInputBridge
     private const int WM_TIMER = 0x0113;
     private const int WM_QUIT = 0x0012;
     private const int VK_Q = 0x51;
+    private const int VK_W = 0x57;
+    private const int ALT_W_HOTKEY_ID = 0x5043;
     private const int VK_MENU = 0x12;
     private const int VK_LMENU = 0xA4;
     private const int VK_RMENU = 0xA5;
@@ -176,6 +178,8 @@ internal static class HoverInputBridge
     private static uint mainThreadId;
     private static readonly AltQChordTracker altQChords = new AltQChordTracker();
     private static volatile bool altQHotkeyRegistered;
+    private static volatile bool altWHotkeyRegistered;
+    private static readonly AltQChordTracker altWChords = new AltQChordTracker();
     private static volatile bool overlayOpen;
     private static volatile bool captureOpening;
     private static volatile int openingWidgetId;
@@ -257,9 +261,9 @@ internal static class HoverInputBridge
         }
     }
 
-    private static bool IsAltQPhysicallyHeld()
+    private static bool IsAltQPhysicallyHeld(uint virtualKey = VK_Q)
     {
-        bool qDown = (GetAsyncKeyState(VK_Q) & 0x8000) != 0;
+        bool qDown = (GetAsyncKeyState((int)virtualKey) & 0x8000) != 0;
         bool altDown = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0
             || (GetAsyncKeyState(VK_LMENU) & 0x8000) != 0
             || (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0;
@@ -269,6 +273,7 @@ internal static class HoverInputBridge
     private static void ReleaseAltQIfKeysAreUp()
     {
         if (altQChords.ReleaseIfKeysAreUp(IsAltQPhysicallyHeld())) Emit("ALTQ_RELEASE");
+        if (altWChords.ReleaseIfKeysAreUp(IsAltQPhysicallyHeld(VK_W))) Emit("ALTW_RELEASE");
     }
 
     private static void WakeMainLoop()
@@ -554,6 +559,18 @@ internal static class HoverInputBridge
         return widget == null ? 0 : widget.Id;
     }
 
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte virtualKey, byte scan, uint flags, UIntPtr extra);
+
+    private static void MaskShortcutMenuActivation()
+    {
+        // The registered chord is invisible to the foreground application.
+        // A no-mapping key prevents bare-Alt menu activation without swallowing
+        // modifier release or interfering with the physical hold watchdog.
+        keybd_event(0xFF, 0, 0, UIntPtr.Zero);
+        keybd_event(0xFF, 0, 2, UIntPtr.Zero);
+    }
+
     private static IntPtr KeyboardHook(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code < 0) return CallNextHookEx(hookHandle, code, wParam, lParam);
@@ -584,6 +601,7 @@ internal static class HoverInputBridge
             Emit("ALTQ_RELEASE");
             WakeMainLoop();
         }
+        if (up && altWHotkeyRegistered && altWChords.ObserveKeyUp(key.vkCode == VK_W, isAlt)) { Emit("ALTW_RELEASE"); WakeMainLoop(); }
         if (up && swallowedKeys.Remove(key.vkCode)) return new IntPtr(1);
         if (!down) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if (swallowedKeys.Contains(key.vkCode)) return new IntPtr(1); // suppress auto-repeat for consumed physical key
@@ -599,7 +617,12 @@ internal static class HoverInputBridge
             {
                 Emit("ALTQ\t" + widgetId.ToString(CultureInfo.InvariantCulture));
                 WakeMainLoop();
+                MaskShortcutMenuActivation();
             }
+        }
+        if (altWHotkeyRegistered) {
+            altWChords.ObserveAltDown(isAlt); int widgetId;
+            if (altWChords.ObserveQDown(key.vkCode == VK_W, (key.flags & LLKHF_ALTDOWN) != 0, WidgetAtCursor, out widgetId)) { Emit("ALTW\t" + widgetId.ToString(CultureInfo.InvariantCulture)); WakeMainLoop(); MaskShortcutMenuActivation(); }
         }
         if (injected) return CallNextHookEx(hookHandle, code, wParam, lParam);
         if ((key.flags & LLKHF_ALTDOWN) != 0 || key.vkCode == VK_Q || isAlt) return CallNextHookEx(hookHandle, code, wParam, lParam);
@@ -643,6 +666,8 @@ internal static class HoverInputBridge
         hookHandle = SetWindowsHookEx(WH_KEYBOARD_LL, hookCallback, IntPtr.Zero, 0);
         bool hotkey = RegisterHotKey(IntPtr.Zero, HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, VK_Q);
         altQHotkeyRegistered = hotkey;
+        altWHotkeyRegistered = RegisterHotKey(IntPtr.Zero, ALT_W_HOTKEY_ID, MOD_ALT | MOD_NOREPEAT, VK_W);
+        if (!altWHotkeyRegistered) Emit("ERROR\talt-w-registration-failed");
         var releaseWatchdog = new AltQReleaseWatchdog(ALTQ_RELEASE_WATCHDOG_ID, 12);
         if (hookHandle == IntPtr.Zero) Emit("ERROR\thook-install-failed");
         else Emit("READY\t" + (hotkey ? "1" : "0"));
@@ -665,6 +690,9 @@ internal static class HoverInputBridge
                     Emit("ALTQ\t" + widgetId.ToString(CultureInfo.InvariantCulture));
                 }
             }
+            else if (message.message == WM_HOTKEY && message.wParam.ToUInt64() == ALT_W_HOTKEY_ID) {
+                int widgetId; if (altWChords.TryStartFallback(IsAltQPhysicallyHeld(VK_W), WidgetAtCursor, out widgetId)) Emit("ALTW\t" + widgetId.ToString(CultureInfo.InvariantCulture));
+            }
             else if (message.message == WM_TIMER && releaseWatchdog.IsTimerMessage(message.wParam)) {
                 ReleaseAltQIfKeysAreUp();
                 ObserveNativeDrag();
@@ -674,6 +702,7 @@ internal static class HoverInputBridge
         releaseWatchdog.Stop();
         FinishNativeDrag(false);
         UnregisterHotKey(IntPtr.Zero, HOTKEY_ID);
+        UnregisterHotKey(IntPtr.Zero, ALT_W_HOTKEY_ID);
         if (hookHandle != IntPtr.Zero) UnhookWindowsHookEx(hookHandle);
         FlushOutput();
     }

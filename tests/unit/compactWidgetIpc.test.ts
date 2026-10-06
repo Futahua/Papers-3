@@ -12,6 +12,7 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, s
     open: vi.fn(async () => ({ ok: true, reused: false })),
     focus: vi.fn(() => true),
     minimize: vi.fn(() => true),
+    hideFromSender: vi.fn(()=>true),
     close: vi.fn(async () => undefined),
     closeFromSender: vi.fn(async () => undefined),
     resizeFromSender: vi.fn(),
@@ -41,6 +42,13 @@ function harness(waitForAuthority?: (sender: { id: number }) => Promise<void>, s
 }
 
 describe('compact widget IPC', () => {
+  it('a widget can hide itself with its token, but cannot use another token',async()=>{
+    const h=harness();const token=h.registry.register(2,'bp-a',COMPACT_WIDGET_SURFACE_KIND,'layout-a');
+    await expect(h.invoke('papers:backpack:widget-minimize',2,{token})).resolves.toEqual({ok:true});
+    expect(h.session.hideFromSender).toHaveBeenCalledWith(2,token);
+    await expect(h.invoke('papers:backpack:widget-minimize',2,{token:'wrong'})).rejects.toThrow('denied');
+    await expect(h.invoke('papers:backpack:widget-minimize',3,{token})).rejects.toThrow('denied');
+  });
   it('does not acknowledge chooser close until the native window is gone', async () => {
     let release!: () => void;
     const closed = new Promise<void>((resolve) => { release = resolve; });

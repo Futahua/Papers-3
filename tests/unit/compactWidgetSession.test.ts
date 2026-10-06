@@ -16,6 +16,8 @@ class FakeWindow {
   getBounds = vi.fn(() => ({ ...this.bounds }));
   setContentSize = vi.fn((width: number, height: number) => { this.bounds = { ...this.bounds, width, height }; });
   focus = vi.fn();
+  focusable = false;
+  setFocusable = vi.fn((value: boolean) => { this.focusable = value; });
   minimized = false;
   isMinimized = vi.fn(() => this.minimized);
   restore = vi.fn(() => { this.minimized = false; this.visible = true; });
@@ -57,6 +59,7 @@ function harness(cursor = { x: 537, y: 284 }) {
     removeListener: vi.fn(),
   };
   const session = createCompactWidgetSession({
+    onWidgetHidden: senderId => windows.find(window => window.webContents.id === senderId)?.webContents.send('test:peek-end'),
     registry,
     screen,
     ipcMain,
@@ -72,6 +75,36 @@ function harness(cursor = { x: 537, y: 284 }) {
 }
 
 describe('compact widget session', () => {
+  it('accepts Alt+Q mouse activation on every summon and keeps legacy inactive', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const window = h.windows[0]!;
+    for (let cycle = 0; cycle < 4; cycle++) {
+      h.session.beginAltQGesture(null, 'peek');
+      h.session.endAltQGesture();
+      expect(window.focusable).toBe(true);
+      h.session.beginAltQGesture(window.webContents.id, 'peek');
+      h.session.endAltQGesture();
+      expect(window.visible).toBe(false);
+      expect(window.focusable).toBe(false);
+    }
+    h.session.beginAltQGesture(null, 'legacy');
+    h.session.endAltQGesture();
+    expect(window.focusable).toBe(false);
+    expect(window.showInactive).toHaveBeenCalled();
+  });
+
+  it('dismisses hover and ends native peek before Alt+Q hides the widget', async () => {
+    const h=harness();
+    await h.session.open({projectId:'bp-a',layoutKey:'layout-a',owningWindowId:1});
+    const window=h.windows[0]!;
+    window.webContents.send.mockClear();
+    h.session.beginAltQGesture(window.webContents.id,'peek');
+    expect(window.webContents.send).toHaveBeenCalledWith('papers:backpack:widget-interaction-mode',{mode:'dismissed'});
+    expect(window.webContents.send).toHaveBeenCalledWith('test:peek-end');
+    expect(window.webContents.send.mock.invocationCallOrder.at(-1)).toBeLessThan(window.hide.mock.invocationCallOrder[0]!);
+    h.session.endAltQGesture();await h.session.closeAll();
+  });
   it('can ensure a live widget without focusing or activating it', async () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
@@ -239,17 +272,19 @@ describe('compact widget session', () => {
       cursor.y = 150;
       await vi.advanceTimersByTimeAsync(200);
       expect(target.hide).toHaveBeenCalledOnce();
-      expect(target.setBounds).not.toHaveBeenCalled();
+      expect(target.setBounds).toHaveBeenCalledOnce(); // one park, no continuing cursor follow
 
       h.session.endAltQGesture();
       h.session.endAltQGesture();
       await vi.advanceTimersByTimeAsync(100);
       expect(target.hide).toHaveBeenCalledOnce();
-      expect(target.getBounds()).toEqual(initialBounds);
+      expect(target.bounds.x).toBeGreaterThan(1200);
+      expect(target.bounds.y).toBeGreaterThan(800);
       expect(target.isVisible()).toBe(false);
 
       // A deliberate open still restores and focuses the exact existing widget.
       await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+      expect(target.getBounds()).toEqual(initialBounds);
       expect(target.show).toHaveBeenCalledOnce();
       expect(target.focus).toHaveBeenCalled();
       expect(target.isVisible()).toBe(true);
@@ -358,6 +393,55 @@ describe('compact widget session', () => {
 
     expect(target.hide).toHaveBeenCalledOnce();
     expect(other.hide).not.toHaveBeenCalled();
+  });
+
+  it('parks hidden composition outside the displays and restores bounds on summon', async () => {
+    const h = harness();
+    h.session.registerIpc();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const target = h.windows[0]!;
+    const before = target.getBounds();
+    const token = h.registry.surface(target.webContents.id)!.token;
+    h.session.hideFromSender(target.webContents.id, token);
+    expect(target.bounds.x).toBeGreaterThan(1200);
+    expect(target.bounds.y).toBeGreaterThan(800);
+    const parked = target.getBounds();
+    const drag = h.listeners.get('papers:backpack:widget-drag')!;
+    drag({ sender: { id: target.webContents.id } }, { token, phase: 'begin', x: 100, y: 90 });
+    drag({ sender: { id: target.webContents.id } }, { token, phase: 'move', x: 150, y: 130 });
+    expect(target.getBounds()).toEqual(parked);
+
+    h.session.hideFromSender(target.webContents.id, token);
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false });
+    h.screenListeners.get('display-metrics-changed')!();
+    expect(target.getBounds()).toEqual(parked);
+    await h.session.bringLatestToCursor();
+    h.session.stopFollowing();
+    expect(target.bounds.width).toBe(before.width);
+    expect(target.bounds.height).toBe(before.height);
+    expect(target.bounds.x).toBeLessThan(1200);
+    expect(target.bounds.y).toBeLessThan(800);
+    expect(target.isVisible()).toBe(true);
+  });
+
+  it('self-hide uses immediate hide and background open cannot reopen it',async()=>{
+    const h=harness({x:900,y:600});const request={projectId:'bp-a',layoutKey:'layout-a',owningWindowId:1};
+    await h.session.open(request);const target=h.windows[0]!;const token=h.registry.surface(target.webContents.id)!.token;
+    expect(h.session.hideFromSender(target.webContents.id,token)).toBe(true);
+    expect(target.hide).toHaveBeenCalledOnce();expect(target.minimize).not.toHaveBeenCalled();
+    await h.session.open({...request,activate:false});expect(target.visible).toBe(false);
+    await h.session.beginAltQGesture(null,'peek');expect(target.visible).toBe(true);h.session.endAltQGesture();
+  });
+  it('sets the requested interaction mode before showing the widget', async()=>{
+    const h=harness({x:900,y:600});
+    await h.session.open({projectId:'bp-a',layoutKey:'layout-a',owningWindowId:1});
+    const target=h.windows[0]!;
+    await h.session.beginAltQGesture(null,'peek');
+    expect(target.webContents.send).toHaveBeenCalledWith('papers:backpack:widget-interaction-mode',{mode:'peek'});
+    h.session.endAltQGesture();
+    await h.session.beginAltQGesture(null,'legacy');
+    expect(target.webContents.send).toHaveBeenCalledWith('papers:backpack:widget-interaction-mode',{mode:'legacy'});
+    h.session.endAltQGesture();
   });
 
   it('Alt+Q outside widgets keeps bringing the latest widget to the cursor and stops on release', async () => {

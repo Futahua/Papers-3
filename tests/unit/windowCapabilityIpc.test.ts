@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { registerWindowCapabilityIpc } from '../../src/main/ipc/windowCapabilityIpc';
 import {
@@ -368,6 +368,28 @@ describe('windowCapabilityIpc', () => {
       ['begin', capability, '424242'],
       ['end', null],
     ]);
+  });
+  it('refuses late peek requests from a hidden widget without falling back',async()=>{
+    const ipc=fakeIpcMain();const service=fakeService();
+    service.beginLivePreviewCapability=vi.fn(async()=>({outcome:'success' as const}));
+    service.beginPeekCapability=vi.fn(async()=>({outcome:'success' as const}));
+    registerWindowCapabilityIpc({ipcMain:ipc.ipcMain,service,isSender:()=>true,resolveCallerHwnd:()=> '424242',canBeginPeek:()=>false});
+    expect((await ipc.invoke('papers:window-capability:peek-begin',42,capability) as {outcome:string}).outcome).toBe('denied');
+    expect(service.beginLivePreviewCapability).not.toHaveBeenCalled();expect(service.beginPeekCapability).not.toHaveBeenCalled();
+  });
+
+  it('uses reversible Peek when the host withholds an unsafe live-preview caller', async () => {
+    const ipc = fakeIpcMain();
+    const service = fakeService();
+    const calls: string[] = [];
+    service.beginLivePreviewCapability = async () => { calls.push('live'); return { outcome: 'success' }; };
+    service.endLivePreview = async () => { calls.push('live-end'); return { outcome: 'success' }; };
+    service.beginPeekCapability = async () => { calls.push('peek'); return { outcome: 'success' }; };
+    service.endPeek = async () => { calls.push('peek-end'); return { outcome: 'success' }; };
+    registerWindowCapabilityIpc({ ipcMain: ipc.ipcMain, service, isSender: () => true, resolveCallerHwnd: () => null });
+    await ipc.invoke('papers:window-capability:peek-begin', 42, capability);
+    await ipc.invoke('papers:window-capability:peek-end', 42, {});
+    expect(calls).toEqual(['peek', 'peek-end']);
   });
 
   it('keeps DWM release armed after a failed begin/end so a later cleanup can retry', async () => {

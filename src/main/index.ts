@@ -1794,6 +1794,10 @@ async function bootstrap(): Promise<void> {
       const handle = owner.getNativeWindowHandle();
       return handle.length >= 8 ? handle.readBigUInt64LE(0).toString() : String(handle.readUInt32LE(0));
     },
+    canBeginPeek: sender => {
+      const owner = BrowserWindow.fromWebContents(sender);
+      return !owner || (!owner.isDestroyed() && owner.isVisible());
+    },
   });
   // One global direct-onscreen pick session. Papers sends one authenticated
   // initial-member snapshot to the creator's already-running SlopTop AHK. AHK
@@ -2011,23 +2015,19 @@ async function bootstrap(): Promise<void> {
         // Codex-pet behavior: the detached control remains available above
         // ordinary application windows without stealing focus.
         alwaysOnTop: true,
-        // NON-ACTIVATING, which is what "without stealing focus" actually means
-        // and what the project already assumes ("the detached widget is
-        // deliberately non-focusable"; Shift Peek reads modifier state from
-        // pointer events because widget keydown is unreliable). Electron defaults
-        // this to true, so a click on the widget made it the FOREGROUND - and the
-        // widget then took the foreground back from the window the click had just
-        // asked for, between 100ms and 300ms later. Windows decides mouse
-        // activation at WM_MOUSEACTIVATE, before the page ever sees the click, so
-        // this cannot be fixed per-gesture. Being in front and taking the keyboard
-        // are independent: the widget stays topmost and every mouse gesture still
-        // lands.
+        // Legacy mode starts non-focusable. Alt+Q enables mouse activation so
+        // Windows delivers icon presses, while showInactive preserves the
+        // current foreground window when the widget is summoned.
         focusable: false,
         skipTaskbar: true,
         minWidth: COMPACT_WIDGET_MIN_WIDTH,
         minHeight: COMPACT_WIDGET_MIN_HEIGHT,
         show: false,
         webPreferences: {
+          // Hidden/offscreen compact widgets are summoned immediately again.
+          // Chromium's visibility throttling can retain the hidden renderer
+          // state after showInactive(), presenting a stale frame on reopen.
+          backgroundThrottling: false,
           preload: widgetPreloadPath,
           contextIsolation: true,
           nodeIntegration: false,
@@ -2068,6 +2068,10 @@ async function bootstrap(): Promise<void> {
     onWidgetRegistered: (senderId, handle) => {
       if (hoverInputBridge) hoverInputBridge.registerWidget(senderId, handle);
       else pendingHoverWidgetRegistrations.set(senderId, Buffer.from(handle));
+    },
+    onWidgetHidden: () => {
+      void windowCapabilityService.endLivePreview?.().catch(error => console.error('[papers] widget peek dismissal:', error));
+      void windowCapabilityService.endPeek().catch(error => console.error('[papers] widget peek dismissal:', error));
     },
     onWidgetRemoved: (senderId) => {
       const pending = pendingHoverCaptures.get(senderId);
@@ -2245,7 +2249,7 @@ async function bootstrap(): Promise<void> {
     cacheDirectory: path.join(app.getPath('userData'), 'native-helpers'),
     sourcePath: resolveHoverInputBridgeSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
     onAltQ: (widgetSenderId) => {
-      const activation = widgetSession?.beginAltQGesture(widgetSenderId);
+      const activation = widgetSession?.beginAltQGesture(widgetSenderId, 'peek');
       if (activation) {
         void activation.then((activated) => {
           if (!activated) console.info('[papers] Alt+Q pressed with no live window-layout widget to activate');
@@ -2253,6 +2257,8 @@ async function bootstrap(): Promise<void> {
       }
     },
     onAltQRelease: () => widgetSession?.endAltQGesture(),
+    onAltW: (senderId) => { void widgetSession?.beginAltQGesture(senderId,'legacy'); },
+    onAltWRelease: () => widgetSession?.endAltQGesture(),
     onCaptured: async (senderId, _captureId, text) => {
       const result = await beginHoverCapture(senderId, text, true);
       if (!result.ok) throw new Error(result.detail);

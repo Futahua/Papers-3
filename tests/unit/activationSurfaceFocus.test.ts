@@ -5,6 +5,8 @@ import { COMPACT_WIDGET_TOPMOST_LEVEL, focusSurfaceForForeignActivation } from '
 
 function fakeWindow(options: { focusable: boolean; alwaysOnTop: boolean; focusThrows?: boolean }) {
   let destroyed = false;
+  let visible = true;
+  const hides = new Set<() => void>();
   let focusable = options.focusable;
   let alwaysOnTop = options.alwaysOnTop;
   const calls: string[] = [];
@@ -12,8 +14,13 @@ function fakeWindow(options: { focusable: boolean; alwaysOnTop: boolean; focusTh
   return {
     calls,
     destroy: () => { destroyed = true; },
+    hide: () => { visible = false; for (const listener of hides) listener(); },
+    show: () => { visible = true; },
     window: {
       isDestroyed: () => destroyed,
+      isVisible: () => visible,
+      on: (_event: 'hide', listener: () => void) => hides.add(listener),
+      removeListener: (_event: 'hide', listener: () => void) => hides.delete(listener),
       isFocusable: () => focusable,
       isAlwaysOnTop: () => alwaysOnTop,
       setFocusable(flag: boolean) {
@@ -74,6 +81,17 @@ describe('focusSurfaceForForeignActivation', () => {
       'topmost:true:screen-saver',
       'moveTop',
     ]);
+  });
+
+  it('never raises a dismissed widget from an old activation even after a new summon', async () => {
+    const fake = fakeWindow({ focusable: false, alwaysOnTop: true });
+    const release = await focusSurfaceForForeignActivation(fake.window, COMPACT_WIDGET_TOPMOST_LEVEL);
+    release?.();
+    const before = [...fake.calls];
+    fake.hide();
+    fake.show();
+    vi.advanceTimersByTime(1000);
+    expect(fake.calls).toEqual(before);
   });
 
   it('wires compact widget creation and activation to the strongest topmost band', async () => {

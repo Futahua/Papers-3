@@ -25,6 +25,8 @@ export interface HoverInputBridgeOptions {
   /** Native topmost widget sender at chord start, or null when the cursor hit another window. */
   onAltQ: (widgetSenderId: number | null) => void;
   onAltQRelease?: () => void;
+  onAltW?: (widgetSenderId: number | null) => void;
+  onAltWRelease?: () => void;
   onCaptured: (senderId: number, captureId: string, text: string) => void | Promise<void>;
   onAppended?: (senderId: number, captureId: string, text: string) => void | Promise<void>;
   onError?: (message: string) => void;
@@ -180,6 +182,8 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
         const senderId = parts.length === 2 && /^\d+$/.test(parts[1] ?? '') ? Number(parts[1]) : 0;
         options.onAltQ(Number.isSafeInteger(senderId) && senderId > 0 ? senderId : null);
       }
+      else if (parts[0] === 'ALTW') { const id=Number(parts[1]); options.onAltW?.(Number.isSafeInteger(id)&&id>0?id:null); }
+      else if (parts[0] === 'ALTW_RELEASE') options.onAltWRelease?.();
       else if (parts[0] === 'ALTQ_RELEASE') options.onAltQRelease?.();
       else if (parts[0] === 'OPENING_READY' && parts.length === 2) {
         const senderId = Number(parts[1]);

@@ -715,7 +715,7 @@ window.addEventListener('message', (event) => {
       immediateHostError(request.requestId, event.origin, 'widget minimize request is malformed');
       return;
     }
-    task = ipcRenderer.invoke('papers:backpack:widget-minimize', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+    task = ipcRenderer.invoke('papers:backpack:widget-minimize', widgetToken ? {token:widgetToken} : { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
   }
   if (request.type === 'papers:project:widget-report-size') {
     // 024: the compact-widget page reports its bounded card content size after
@@ -916,6 +916,12 @@ ipcRenderer.on('papers:backpack:detach-token', (_event, payload) => {
     detachedReadySent = false;
   }
   trySendDetachedReady();
+});
+
+ipcRenderer.on('papers:backpack:widget-interaction-mode', (_event, payload) => {
+  const mode=(payload as {mode?:unknown}|null)?.mode;
+  if(mode!=='peek'&&mode!=='legacy'&&mode!=='dismissed')return;
+  window.postMessage({type:'papers:project:widget-interaction-mode',mode},window.location.origin);
 });
 
 ipcRenderer.on('papers:backpack:widget-token', (_event, payload) => {

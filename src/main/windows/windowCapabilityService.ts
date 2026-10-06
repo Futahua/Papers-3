@@ -1617,6 +1617,7 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   }
 
   async function endLivePreview(): Promise<WindowCapabilityResult> {
+    peekGeneration += 1;
     // Release the watcher hold immediately; serialize native calls so an end
     // cannot run before an outstanding enable has established its release debt.
     releaseLifecycleForPeek();
@@ -1624,16 +1625,19 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   }
 
   async function beginLivePreviewCapability(capability: WindowRuntimeCapability, caller: string): Promise<WindowCapabilityResult> {
+    const generation = peekGeneration;
     if (stopped) return { outcome: 'helper-unavailable', error: 'service is stopped' };
     const target = tokenFor(capability);
     if (!target) return { outcome: 'missing', error: 'binding is not issued' };
     if (!/^[1-9][0-9]{0,19}$/.test(caller)) return { outcome: 'malformed', error: 'caller window is malformed' };
     if (!(await ensureStarted()) || !factory.livePreview) return { outcome: 'helper-unavailable', error: 'DWM live preview is unavailable' };
+    if (generation !== peekGeneration) return { outcome: 'denied', error: 'Preview was dismissed' };
     // A peek session holds the periodic enumeration off exactly like a chooser
     // does: shifting across member icons drives one preview request per icon,
     // and every one of them shares the helper with the 500 ms watcher.
     holdLifecycleForPeek();
     return queueLivePreviewOperation(async () => {
+      if (generation !== peekGeneration) return { outcome: 'denied', error: 'Preview was dismissed' };
       if (livePreview?.target === target && livePreview.caller === caller) return { outcome: 'success' };
       // Enabling B should replace A without an intervening desktop reveal.
       // Until success is known, both A and B may still be active; a timeout

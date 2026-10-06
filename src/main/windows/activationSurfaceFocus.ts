@@ -2,6 +2,9 @@ export const COMPACT_WIDGET_TOPMOST_LEVEL = 'screen-saver';
 
 export interface ActivationSurfaceWindow {
   isDestroyed(): boolean;
+  isVisible(): boolean;
+  on?(event: 'hide', listener: () => void): unknown;
+  removeListener?(event: 'hide', listener: () => void): unknown;
   isFocusable(): boolean;
   isAlwaysOnTop(): boolean;
   setFocusable(flag: boolean): void;
@@ -28,7 +31,7 @@ function restoreSurface(
 }
 
 function reassertTopmost(owner: ActivationSurfaceWindow, wasAlwaysOnTop: boolean, topmostLevel: string): void {
-  if (!wasAlwaysOnTop || owner.isDestroyed()) return;
+  if (!wasAlwaysOnTop || owner.isDestroyed() || !owner.isVisible()) return;
   try {
     owner.setAlwaysOnTop(true, topmostLevel);
     owner.moveTop();
@@ -74,7 +77,13 @@ export async function focusSurfaceForForeignActivation(
     // therefore necessary but not sufficient: the target can still overtake the
     // widget on the next compositor/window-manager turn. Reassert twice inside a
     // short bounded settle window; neither call takes focus.
-    setTimeout(() => reassertTopmost(owner, wasAlwaysOnTop, topmostLevel), 120);
-    setTimeout(() => reassertTopmost(owner, wasAlwaysOnTop, topmostLevel), 360);
+    let dismissed = false;
+    const onHide = () => { dismissed = true; };
+    owner.on?.('hide', onHide);
+    setTimeout(() => { if (!dismissed) reassertTopmost(owner, wasAlwaysOnTop, topmostLevel); }, 120);
+    setTimeout(() => {
+      try { if (!dismissed) reassertTopmost(owner, wasAlwaysOnTop, topmostLevel); }
+      finally { owner.removeListener?.('hide', onHide); }
+    }, 360);
   };
 }

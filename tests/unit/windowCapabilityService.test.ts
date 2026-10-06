@@ -973,6 +973,18 @@ describe('windowCapabilityService lifecycle', () => {
     stop();
     await service.stop();
   });
+  it('dismissal cancels a queued live peek and permits a fresh summon',async()=>{
+    const calls:boolean[]=[];
+    const factory=fakeFactory({livePreview:async(_target,_caller,enabled)=>{calls.push(enabled);return {outcome:'success'};}});
+    const service=createWindowCapabilityService({createFactory:()=>factory,currentPid:9999});
+    const listed=await service.listCandidates();if(listed.outcome!=='success')throw new Error('list failed');
+    const bound=await service.bindCandidate(listed.candidates[0]!.id);if(bound.outcome!=='success')throw new Error('bind failed');
+    const pending=service.beginLivePreviewCapability!(bound.capability,'424242');
+    await service.endLivePreview!();
+    expect((await pending).outcome).toBe('denied');expect(calls).toEqual([]);
+    expect((await service.beginLivePreviewCapability!(bound.capability,'424242')).outcome).toBe('success');
+    await service.endLivePreview!();expect(calls).toEqual([true,false]);await service.stop();
+  });
 
   it('releases the peek hold even when the service stops mid-peek', async () => {
     const target = observation({ runtimeId: TOKEN_A as RuntimeWindowId, windowInstanceId: 'W6666666666666666', processStartTicks: '638945344001234567' });
