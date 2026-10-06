@@ -164,6 +164,38 @@ describe('web browser preview session leases', () => {
 });
 
 describe('durable browser tabs', () => {
+  it('reserves only plain Tab when the owning embedded surface asks for it', async () => {
+    const reserved = vi.fn();
+    const bridge = createWebBrowserHostBridge({
+      resolveWindow: () => new BaseWindow(),
+      resolveFavicon: async () => null,
+      onReservedTab: reserved,
+    });
+    await bridge.openTab(
+      context,
+      '14141414-1414-4414-8414-141414141414',
+      url,
+      rect,
+      true,
+      true,
+    );
+    const inputHandler = harness.views[0]!.webContents.on.mock.calls
+      .find(([event]) => event === 'before-input-event')?.[1] as ((event: { preventDefault(): void }, input: Record<string, unknown>) => void) | undefined;
+    expect(inputHandler).toBeTypeOf('function');
+    const preventDefault = vi.fn();
+    inputHandler!({ preventDefault }, {
+      type: 'keyDown', key: 'Tab', shift: false, control: false, alt: false, meta: false, isAutoRepeat: false,
+    });
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(reserved).toHaveBeenCalledWith(ownerKey);
+
+    inputHandler!({ preventDefault }, {
+      type: 'keyDown', key: 'Tab', shift: true, control: false, alt: false, meta: false, isAutoRepeat: false,
+    });
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(reserved).toHaveBeenCalledTimes(1);
+  });
+
   it('a delayed open cannot present or focus after its Papers surface is hidden', async () => {
     const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow(), resolveFavicon: async () => null });
     const pending = bridge.openTab(context, '12121212-1212-4212-8212-121212121212', url, rect);
@@ -260,6 +292,14 @@ describe('durable browser tabs', () => {
     expect(mediaCallback).toHaveBeenCalledWith(false);
     expect(permissionCheck(null, 'top-level-storage-access', 'https://x.com/')).toBe(true);
     expect(permissionCheck(null, 'media', 'https://x.com/')).toBe(false);
+    const focusedContents = { isDestroyed: () => false, isFocused: () => true };
+    const blurredContents = { isDestroyed: () => false, isFocused: () => false };
+    expect(permissionCheck(focusedContents, 'clipboard-sanitized-write', 'https://chatgpt.com/')).toBe(true);
+    expect(permissionCheck(blurredContents, 'clipboard-sanitized-write', 'https://chatgpt.com/')).toBe(false);
+    expect(permissionCheck(focusedContents, 'clipboard-read', 'https://chatgpt.com/')).toBe(false);
+    const clipboardCallback = vi.fn();
+    permissionRequest(focusedContents, 'clipboard-sanitized-write', clipboardCallback, { requestingUrl: 'https://chatgpt.com/' });
+    expect(clipboardCallback).toHaveBeenCalledWith(true);
     expect(await bridge.getDownloads()).toEqual([]);
     const didFinishHandler = harness.views[0]!.webContents.on.mock.calls.find(([event]) => event === 'did-finish-load')?.[1];
     expect(typeof didFinishHandler).toBe('function');

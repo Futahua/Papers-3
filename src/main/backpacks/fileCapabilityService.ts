@@ -1073,6 +1073,12 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'reveal':
             deps.revealPath(absolutePath(params.path));
             return { ok: true };
+          case 'create-folder': {
+            const parent = absolutePath(params.path);
+            const target = path.join(parent, safeName(params.newName));
+            await fs.mkdir(target);
+            return { ok: true, entry: await describe(target) };
+          }
           case 'copy':
           case 'move':
           case 'rename':

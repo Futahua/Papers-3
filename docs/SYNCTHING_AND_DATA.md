@@ -128,6 +128,14 @@ longer depends on any recorded path (D-016).
 
 Do not open Papers or Hermes concurrently against the same live data on two machines.
 
+Browser failure diagnostics are machine-local under `PapersData/diagnostics/browser-errors.ndjson`
+and its `.previous` rotation. The host owns this disposable diagnostic data; it is not
+creator-authored work and must not be synchronized. Each file is capped at approximately
+1 MiB. Records contain event times, tab IDs, origins, HTTP status codes and exception
+types, never page text, conversation paths, request/response bodies, cookies or tokens.
+Writes are serialized with a bounded queue. Deleting the logs resets the evidence;
+the running host recreates them as new events arrive.
+
 Native drag reveal sessions are process-local, ephemeral state: the source
 window, consumed Shift state, and captured external window handle are discarded
 when the drag ends. They have no saved files, synchronization or creator-data

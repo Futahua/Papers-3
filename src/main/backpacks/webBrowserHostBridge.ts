@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { attachBrowserDiagnostics, createBrowserDiagnosticLog } from './browserDiagnostics';
 import {
   app,
   BaseWindow,
@@ -172,11 +173,17 @@ function hardenBrowserSession(browserSession: Session): void {
   const allowStorageAccess = (permission: string, origin: string | undefined): boolean =>
     (permission === 'storage-access' || permission === 'top-level-storage-access' || permission === 'fullscreen')
     && Boolean(origin && safeWebUrl(origin));
+  const allowClipboardWrite = (contents: WebContents | null, permission: string, origin: string | undefined): boolean =>
+    permission === 'clipboard-sanitized-write'
+    && Boolean(origin && safeWebUrl(origin))
+    && Boolean(contents && !contents.isDestroyed() && contents.isFocused());
   browserSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
-    callback(allowStorageAccess(permission, details.requestingUrl));
+    callback(allowStorageAccess(permission, details.requestingUrl)
+      || allowClipboardWrite(_webContents, permission, details.requestingUrl));
   });
   browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
-    allowStorageAccess(permission, requestingOrigin));
+    allowStorageAccess(permission, requestingOrigin)
+      || allowClipboardWrite(_webContents, permission, requestingOrigin));
   browserSession.setCertificateVerifyProc((request, callback) => {
     const hostname = request.hostname.toLocaleLowerCase().replace(/^\[|\]$/g, '');
     const loopback = hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost';
@@ -566,11 +573,13 @@ export function createWebBrowserHostBridge(input: {
   nativeDrag?: (window: BaseWindow | null, start: () => void) => Promise<void>;
   onReservedTab?: (ownerKey: string) => void;
   downloadHistoryFile?: string;
+  diagnosticLogFile?: string;
   downloadRecoveryDir?: string;
   resolveFavicon?: (pageUrl: string) => Promise<string | null>;
   resolveFaviconCandidate?: (faviconUrl: string, fetchImpl?: FaviconFetch) => Promise<string | null>;
 }): WebBrowserHostBridge {
   const sessions = new Map<string, LiveWebBrowser>();
+  const diagnosticLog = input.diagnosticLogFile ? createBrowserDiagnosticLog(input.diagnosticLogFile) : null;
   const owners = new Map<string, string>();
   const tabs = new Map<string, DurableBrowserTab>();
   const ownerTabs = new Map<string, Set<string>>();
@@ -624,7 +633,7 @@ export function createWebBrowserHostBridge(input: {
   const downloadSessions = new WeakSet<Session>();
   const downloadBubbles = new Map<string, BrowserDownloadBubble>();
   const adblockSessions = new Set<Session>();
-  let adblockDesired = true;
+  let adblockDesired = false;
   let adblockStatus: BrowserAdblockState['status'] = 'loading';
   let adblockError: string | undefined;
   let blocker: ElectronBlocker | null = null;
@@ -1003,6 +1012,7 @@ export function createWebBrowserHostBridge(input: {
       }).catch(() => undefined);
     };
     hardenBrowserSession(contents.session);
+    if (diagnosticLog) attachBrowserDiagnostics(contents, tab.tabId, diagnosticLog);
     enableBrowserDownloads(contents.session);
     void syncAdblockSession(contents.session);
     // Browser tabs are real long-lived web apps, not previews. Throttling or

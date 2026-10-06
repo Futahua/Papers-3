@@ -177,6 +177,37 @@ export function WorkspaceDock(props: {
   const groupIds = useRef(new Map<string, string>());
   const apiSubscriptions = useRef<Array<{ dispose(): void }>>([]);
   const workspaceRef = useRef<HTMLElement | null>(null);
+  // Only headers touching the window's top edge share its title strip.
+  // Reserve the host controls at the two outer corners, including after splits.
+  useEffect(() => {
+    const root = workspaceRef.current;
+    if (!root) return;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const bounds = root.getBoundingClientRect();
+      for (const group of root.querySelectorAll<HTMLElement>('.dv-groupview')) {
+        const rect = group.getBoundingClientRect();
+        const header = group.querySelector<HTMLElement>('.dv-tabs-and-actions-container');
+        if (!header) continue;
+        const top = Math.abs(rect.top - bounds.top) < 2;
+        header.classList.toggle('workspace-window-header', top);
+        header.classList.toggle('workspace-window-header-left', top && Math.abs(rect.left - bounds.left) < 2);
+        header.classList.toggle('workspace-window-header-right', top && Math.abs(rect.right - bounds.right) < 2);
+      }
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+    const sizes = new ResizeObserver(schedule);
+    sizes.observe(root);
+    const structure = new MutationObserver(() => {
+      for (const group of root.querySelectorAll<HTMLElement>('.dv-groupview')) sizes.observe(group);
+      schedule();
+    });
+    structure.observe(root, { childList: true, subtree: true });
+    schedule();
+    return () => { sizes.disconnect(); structure.disconnect(); if (frame) cancelAnimationFrame(frame); };
+  }, []);
+
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const resizing = useRef(false);
   const resizeSession = useRef<{ pointerId: number; generation: number; terminal: 'active' | 'success' | 'cancelled'; focusedGroupId: string; activeByGroup: Map<string, string | null>; captureTarget: HTMLElement | null } | null>(null);
@@ -216,6 +247,23 @@ export function WorkspaceDock(props: {
   const setHostOverlay = useCallback((active: boolean, owner: HostOverlayOwner = 'workspace-drag'): void => {
     void onOverlayActiveChange?.(active, owner);
   }, [onOverlayActiveChange]);
+
+  useEffect(() => {
+    const root = workspaceRef.current;
+    if (!root) return;
+    let open = false;
+    const update = () => {
+      const next = Boolean(root.querySelector('.dv-tabs-overflow-container'));
+      if (next === open) return;
+      open = next;
+      // Native project views would otherwise cover a menu below the title row.
+      setHostOverlay(open, 'legacy');
+    };
+    const observer = new MutationObserver(update);
+    observer.observe(root, {childList: true, subtree: true});
+    update();
+    return () => { observer.disconnect(); if (open) setHostOverlay(false, 'legacy'); };
+  }, [setHostOverlay]);
 
   const setDragSurfaceActive = useCallback((active: boolean): void => {
     document.documentElement.dataset.workspaceDrag = active ? 'true' : 'false';
@@ -1299,6 +1347,11 @@ export function WorkspaceDock(props: {
 
   return (
     <section ref={workspaceRef} className="workspace-dock" aria-label="Workspace tabs"
+      onClickCapture={(event) => {
+        if (!(event.target instanceof Element)) return;
+        const trigger = event.target.closest('.dv-tabs-overflow-dropdown-root');
+        if (trigger) event.currentTarget.dataset.titleMenu = String(Boolean(trigger.closest('.workspace-window-header')));
+      }}
       tabIndex={0}
       data-split={topology.root.kind === 'split' ? '' : undefined}
       aria-busy={interactionDisabled || undefined}

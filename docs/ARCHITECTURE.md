@@ -1,5 +1,33 @@
 # Papers — current architecture boundary
 
+## Compact widget renderer resumption — 2026-10-06
+
+The creator reported a frozen/throttled widget on immediate Alt+Q resummon after
+an icon click. The compact BrowserWindow now disables background throttling in
+its existing webPreferences. This removes Chromium visibility-based suspension
+from this repeatedly hidden/offscreen parked surface; no extra delay, polling
+loop, window recreation, or change to dismissal/Peek ownership is introduced.
+
+Validation: typecheck and 1,395 host tests passed (four skipped). A private Windows
+desktop probe, without desktop input, observed a default-throttled hidden renderer
+still hidden with only one frame after a 100 ms reveal, versus 13 frames and visible
+state with throttling disabled. Subsequent three-cycle frameless/topmost runs
+resumed under both settings, so the baseline stall is intermittent. All three
+unthrottled cycles remained responsive (13–14 frames within 100 ms), and synthetic
+DOM button handlers executed. This does not prove the creator's DWM Peek sequence
+is resolved; the installed eye test remains outstanding.
+
+## Widget dismissal while peeking — 2026-10-06
+
+The creator observed Alt+Q hiding a hovered widget while leaving DWM Peek
+active. Compact widget hiding now sends a dismissal through the existing
+interaction-mode channel and releases the existing native preview owners.
+Hidden source windows cannot begin a new peek. The capability service's existing
+peek generation invalidates live-preview requests queued before dismissal.
+The project owns hover disarming and re-arms it only on a fresh host summon.
+Validation: type checking, 1,395 host tests and 1,891 AYG tests passed without
+desktop input. Installed compositor behavior still requires the creator eye test.
+
 ## Native file drag reveal — creator request, 2026-10-06
 
 During a Papers file drag, pressing Shift after the drag starts temporarily

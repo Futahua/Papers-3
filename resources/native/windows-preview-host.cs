@@ -239,15 +239,19 @@ static class Program {
             Native.SetParent(hwnd, parent);
 
             uint dpi = Native.GetDpiForWindow(parent);
+            int lastX = Int32.MinValue, lastY = Int32.MinValue, lastWidth = -1, lastHeight = -1;
             Action<int,int,int,int,bool> place = (dx,dy,dw,dh,initializeHandlerWindow) => {
                 int px = DipToPixel(dx, dpi);
                 int py = DipToPixel(dy, dpi);
                 int pw = Math.Max(1, DipToPixel(dw, dpi));
                 int ph = Math.Max(1, DipToPixel(dh, dpi));
+                bool sizeChanged = pw != lastWidth || ph != lastHeight;
+                if (!initializeHandlerWindow && !sizeChanged && px == lastX && py == lastY) return;
                 Native.SetWindowPos(hwnd, IntPtr.Zero, px, py, pw, ph, Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW);
                 RECT rect = new RECT { left = 0, top = 0, right = pw, bottom = ph };
                 if (initializeHandlerWindow) handler.SetWindow(hwnd, ref rect);
-                handler.SetRect(ref rect);
+                if (initializeHandlerWindow || sizeChanged) handler.SetRect(ref rect);
+                lastX = px; lastY = py; lastWidth = pw; lastHeight = ph;
             };
 
             place(x, y, width, height, true);
@@ -256,13 +260,27 @@ static class Program {
             Console.WriteLine("READY\t" + clsidText.ToLowerInvariant());
             Console.Out.Flush();
 
+            object moveLock = new object();
+            string latestMove = null;
+            bool moveQueued = false;
             Thread stdin = new Thread(() => {
                 string line;
                 while ((line = Console.ReadLine()) != null) {
                     string command = line;
+                    bool isMove = command.StartsWith("MOVE\t", StringComparison.Ordinal);
+                    if (isMove) {
+                        lock (moveLock) {
+                            latestMove = command;
+                            if (moveQueued) continue;
+                            moveQueued = true;
+                        }
+                    }
                     try {
                         host.BeginInvoke(new Action(() => {
                             try {
+                                if (isMove) {
+                                    lock (moveLock) { command = latestMove; moveQueued = false; }
+                                }
                                 if (command == "CLOSE") { host.Close(); return; }
                                 if (command == "HIDE") { host.Hide(); return; }
                                 if (command == "SHOW") { host.Show(); return; }

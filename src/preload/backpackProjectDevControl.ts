@@ -454,8 +454,14 @@ window.addEventListener('message', (event) => {
   }
   if (request.type === 'papers:project:resolve-web-link-icon' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:resolve-web-link-icon', request.url, ...workspaceOriginArgs);
   if (request.type === 'papers:project:window-candidates') {
-    if (!exactKeys(request as Record<string, unknown>, ['type', 'requestId'])) throw new Error('window candidate request contains unknown fields');
-    task = ipcRenderer.invoke('papers:window-capability:list');
+    const candidateRequest = request as Record<string, unknown>;
+    if (Object.keys(candidateRequest).some((key) => !['type', 'requestId', 'includeNativeIcons'].includes(key))
+      || (candidateRequest['includeNativeIcons'] !== undefined && typeof candidateRequest['includeNativeIcons'] !== 'boolean')) {
+      throw new Error('window candidate request contains invalid fields');
+    }
+    task = ipcRenderer.invoke('papers:window-capability:list', {
+      includeNativeIcons: candidateRequest['includeNativeIcons'] !== false,
+    });
   }
   if (request.type === 'papers:project:window-bind-candidate') {
     const candidateId = parseBoundedString(request.candidateId);
@@ -644,7 +650,7 @@ window.addEventListener('message', (event) => {
       immediateHostError(request.requestId, event.origin, 'widget minimize request is malformed');
       return;
     }
-    task = ipcRenderer.invoke('papers:backpack:widget-minimize', { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
+    task = ipcRenderer.invoke('papers:backpack:widget-minimize', widgetToken ? {token:widgetToken} : { projectId: projectIdFromOrigin(), layoutKey }).then((payload) => ({ widget: payload }));
   }
   if (request.type === 'papers:project:widget-report-size') {
     // 024: the compact-widget page reports its bounded card content size after
@@ -784,6 +790,12 @@ ipcRenderer.on('papers:backpack:detach-token', (_event, payload) => {
     detachedReadySent = false;
   }
   trySendDetachedReady();
+});
+
+ipcRenderer.on('papers:backpack:widget-interaction-mode', (_event, payload) => {
+  const mode=(payload as {mode?:unknown}|null)?.mode;
+  if(mode!=='peek'&&mode!=='legacy')return;
+  window.postMessage({type:'papers:project:widget-interaction-mode',mode},window.location.origin);
 });
 
 ipcRenderer.on('papers:backpack:widget-token', (_event, payload) => {

@@ -1,5 +1,21 @@
 # C1 — First-Class Visual Observability and Agent-Driven Visual Debugging
 
+## Compact widget immediate resummon — 2026-10-06
+
+Reported frozen frame/cooldown after Alt+Q icon activation. Compact widget
+background throttling disabled in the host factory. Typecheck and 1,395 tests
+passed; private desktop renderer probe requires no creator mouse input. An
+initial default-throttled reveal retained hidden visibility and one frame at
+100 ms; subsequent baseline runs resumed normally. Disabled-throttling runs
+resumed consistently across three cycles. Evidence:
+`D:/CodexTemp/shift-drag-proof/resume-result.json`, `resume-probe.cjs`,
+`resume-launch.cs`, `resume-tests.txt`, `resume-typecheck.txt`.
+Local 1.3.11 installer built without publication and installed successfully (exit 0).
+Installed app.asar SHA-256 matches the packaged build:
+`9173AAAB11FEEBFFDB9750C89F9E762D37C20C8D54F69D1B21FB1D6BD90CC25E`.
+Normal Papers relaunched (main process observed as 81592). Creator eye test remains
+outstanding. This change is uncommitted and unpushed.
+
 ## Tab mouse controls — 2026-09-05
 
 Creator request: middle-click closes the pointed tab; empty tab-header space

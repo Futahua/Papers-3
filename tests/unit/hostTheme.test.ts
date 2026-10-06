@@ -8,9 +8,9 @@ const workspaceDock = readFileSync(resolve(process.cwd(), 'src/host/WorkspaceDoc
 describe('host theme contract', () => {
   it('keeps light values, adds OS dark values, and preserves hex native overlay tokens', () => {
     expect(styles).toContain('@media (prefers-color-scheme: dark)');
-    expect(styles).toContain('--titlebar-bg: #efede7;');
+    expect(styles).toContain('--titlebar-bg: #fbfaf6;');
     expect(styles).toContain('--titlebar-symbol: #20201e;');
-    expect(styles).toContain('--titlebar-bg: #211f1b;');
+    expect(styles).toContain('--titlebar-bg: #39352c;');
     expect(styles).toContain('--titlebar-symbol: #f1ede3;');
     expect(styles).toContain('color-scheme: dark;');
     expect(styles).toContain('--paper: #211f1b;');

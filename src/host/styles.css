@@ -35,7 +35,7 @@
      process to paint the native window-controls overlay so the two match. Must
      stay a plain #hex (the overlay repaint accepts only hex). */
   --titlebar-height: 40px;
-  --titlebar-bg: #efede7;
+  --titlebar-bg: #fbfaf6;
   --titlebar-symbol: #20201e;
   --focus-ring: rgba(78, 112, 90, 0.7);
   --grid-line: rgba(32, 32, 30, 0.035);
@@ -73,7 +73,7 @@
     --amber: #d8b26a;
     --red: #e48778;
     --shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
-    --titlebar-bg: #211f1b;
+    --titlebar-bg: #39352c;
     --titlebar-symbol: #f1ede3;
     --focus-ring: rgba(130, 174, 145, 0.78);
     --grid-line: rgba(241, 237, 227, 0.045);
@@ -1197,4 +1197,86 @@ input:focus-visible {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Workspace tabs occupy the title strip, like browser tabs. The floating host
+   controls leave the tab/drop regions interactive and empty space draggable. */
+.app.workspace-title-tabs .workspace-dock { inset: 0; }
+.workspace-title-tabs .titlebar {
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--titlebar-height);
+  background: transparent;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+.workspace-title-tabs .titlebar-left,
+.workspace-title-tabs .titlebar-actions { pointer-events: auto; }
+.workspace-title-tabs .titlebar-left { width: 100px; }
+.workspace-title-tabs .workspace-dock {
+  --dv-tabs-and-actions-container-height: var(--titlebar-height);
+  --dv-tabs-and-actions-container-background-color: var(--titlebar-bg);
+}
+.workspace-dock .workspace-window-header { -webkit-app-region: no-drag; }
+.workspace-dock .workspace-window-header .dv-void-container { -webkit-app-region: drag; }
+.workspace-dock .workspace-window-header-left { padding-left: 112px; }
+.workspace-dock .workspace-window-header-right { padding-right: 191px; }
+.workspace-dock .workspace-window-header .dv-tab,
+.workspace-dock .workspace-window-header .dv-tabs-container,
+.workspace-dock .workspace-window-header button,
+.workspace-dock .workspace-window-header .dv-left-actions-container,
+.workspace-dock .workspace-window-header .dv-right-actions-container {
+  -webkit-app-region: no-drag;
+}
+.workspace-title-tabs .workspace-dock .dv-tab {
+  margin-top: 5px;
+  height: calc(var(--titlebar-height) - 5px);
+  border-radius: 9px 9px 0 0;
+}
+
+/* Dockview's list normally opens at the click point. In the title strip it
+   must clear the caption controls and remain a regular clickable menu. */
+.workspace-dock .dv-tabs-overflow-dropdown-root,
+.workspace-dock .dv-popover-anchor { -webkit-app-region: no-drag; }
+.workspace-dock[data-title-menu="true"] .dv-popover-anchor > div:has(> .dv-tabs-overflow-container) {
+  top: var(--titlebar-height) !important;
+  transform: translateX(-100%);
+}
+.workspace-dock .dv-tabs-overflow-container {
+  background: var(--raised-strong);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px #0003;
+}
+.workspace-dock .dv-tabs-overflow-container .dv-tab {
+  margin: 0;
+  height: 36px;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+.workspace-dock .dv-tabs-overflow-container .dv-tab:hover { background: var(--raised); }
+
+.workspace-title-tabs .workspace-dock .dv-sash { -webkit-app-region: no-drag; }
+
+/* One continuous control-colored title strip, including native caption buttons. */
+.titlebar .pill-button {
+  height: var(--titlebar-height);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.titlebar .pill-button:hover,
+.titlebar .pill-button.active { background: var(--control-surface); }
+.workspace-title-tabs .workspace-dock .dockview-theme-light {
+  --dv-tabs-and-actions-container-background-color: var(--titlebar-bg);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--raised);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--titlebar-bg);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--raised);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--titlebar-bg);
+  --dv-activegroup-visiblepanel-tab-color: var(--ink);
+  --dv-activegroup-hiddenpanel-tab-color: var(--muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--ink);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--muted);
 }

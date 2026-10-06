@@ -768,6 +768,7 @@ async function bootstrap(): Promise<void> {
       contents.send('papers:backpack-project:reserved-tab');
     },
     downloadHistoryFile: path.join(paths.root, 'browser-downloads.json'),
+    diagnosticLogFile: path.join(paths.root, 'diagnostics', 'browser-errors.ndjson'),
     downloadRecoveryDir: paths.recoveryDir,
   });
   app.once('will-quit', () => webBrowser.dispose());

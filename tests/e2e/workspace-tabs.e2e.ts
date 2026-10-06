@@ -86,6 +86,7 @@ function enterBackpack(name: string): string {
 
 describe('A1 workspace tabs', () => {
   it('keeps two logical projects in one native window and swaps native presentation by tab', async () => {
+    await waitFor(() => evalInHost<boolean>(launched.app, `Boolean(document.querySelector('.backpack-card'))`), 10_000, 'initial Backpack picker');
     expect(await evalInHost<boolean>(launched.app, enterBackpack('Alpha'))).toBe(true);
     await waitFor(async () => (await call('inspect.surfaces') as Array<{ projectId: string; presentation: string }>)
       .some((surface) => surface.projectId === A && surface.presentation === 'visible'), 10_000, 'visible Alpha surface');
@@ -110,6 +111,20 @@ describe('A1 workspace tabs', () => {
     expect(await evalInHost<string[]>(launched.app, `[...document.querySelectorAll('.dv-tab')]
       .map((tab) => tab.textContent?.trim() ?? '').filter(Boolean)`)).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
     const hostPage = await launched.app.firstWindow();
+    await waitFor(() => hostPage.locator('.workspace-window-header-left.workspace-window-header-right').count().then(n => n === 1), 10_000, 'title-strip controls reservation');
+    const titleLayout = await hostPage.evaluate(() => {
+      const tab = document.querySelector('.dv-tab')!.getBoundingClientRect();
+      const bar = document.querySelector('.titlebar')!.getBoundingClientRect();
+      const left = document.querySelector('.titlebar-left')!.getBoundingClientRect();
+      const right = document.querySelector('.titlebar-actions')!.getBoundingClientRect();
+      return { tabTop: tab.top, barTop: bar.top, tabBottom: tab.bottom, barBottom: bar.bottom, tabLeft: tab.left, leftRight: left.right, tabRight: tab.right, rightLeft: right.left };
+    });
+    expect(titleLayout.tabTop).toBeLessThan(titleLayout.barBottom);
+    expect(titleLayout.tabBottom).toBeLessThanOrEqual(titleLayout.barBottom + 1);
+    expect(titleLayout.tabLeft).toBeGreaterThanOrEqual(titleLayout.leftRight);
+    expect(titleLayout.tabRight).toBeLessThanOrEqual(titleLayout.rightLeft);
+    await hostPage.screenshot({path:'D:/CodexTemp/title-tabs-single.png'});
+
     const windowId = (await call('inspect.surfaces') as Array<{ windowId: number }>)[0]!.windowId;
     const initialWorkspace = await call('inspect.workspace', { windowId }) as {
       topology: { surfaces: Array<{ surfaceId: string; projectId: string }> };
@@ -199,15 +214,35 @@ describe('A1 workspace tabs', () => {
       return surfaces.filter((surface) => surface.presentation === 'visible').length === 2;
     }, 10_000, 'two visible native split panes');
     expect(await hostPage.locator('.dv-groupview').count()).toBe(2);
+    await waitFor(() => hostPage.locator('.workspace-window-header').count().then(n => n === 2), 10_000, 'split headers share window strip');
+    expect(await hostPage.locator('.workspace-window-header-left').count()).toBe(1);
+    expect(await hostPage.locator('.workspace-window-header-right').count()).toBe(1);
+    await hostPage.screenshot({path:'D:/CodexTemp/title-tabs-split.png'});
+    const overflow = hostPage.locator('.workspace-window-header-right .dv-tabs-overflow-dropdown-default');
+    await overflow.click({timeout:10000});
+    await hostPage.screenshot({path:'D:/CodexTemp/title-tabs-dropdown.png'});
+    const menuGeometry = await hostPage.evaluate(() => {
+      const button = document.querySelector('.workspace-window-header-right .dv-tabs-overflow-dropdown-default')!.getBoundingClientRect();
+      const actions = document.querySelector('.titlebar-actions')!.getBoundingClientRect();
+      const menu = document.querySelector('.dv-tabs-overflow-container')!.getBoundingClientRect();
+      const bar = document.querySelector('.titlebar')!.getBoundingClientRect();
+      return {buttonRight:button.right,actionsLeft:actions.left,menuTop:menu.top,barBottom:bar.bottom};
+    });
+    expect(menuGeometry.buttonRight).toBeLessThanOrEqual(menuGeometry.actionsLeft);
+    expect(menuGeometry.menuTop).toBeGreaterThanOrEqual(menuGeometry.barBottom);
+    await hostPage.locator('.dv-tabs-overflow-container .dv-tab').first().click({timeout:10000});
+    await waitFor(() => hostPage.locator('.dv-tabs-overflow-container').count().then(n=>n===0), 5_000, 'tab menu closes after selection');
+
+
     expect(await hostPage.getByRole('button', { name: 'Split Right', exact: true }).count()).toBe(0);
     expect(await hostPage.getByRole('button', { name: 'Split Down', exact: true }).count()).toBe(0);
 
     const sash = hostPage.locator('.dv-sash.dv-enabled').first();
     const sashBox = await sash.boundingBox();
     expect(sashBox).not.toBeNull();
-    await hostPage.mouse.move((sashBox?.x ?? 0) + 2, (sashBox?.y ?? 0) + 20);
+    await hostPage.mouse.move((sashBox?.x ?? 0) + 2, (sashBox?.y ?? 0) + 80);
     await hostPage.mouse.down();
-    await hostPage.mouse.move((sashBox?.x ?? 0) + 100, (sashBox?.y ?? 0) + 20, { steps: 5 });
+    await hostPage.mouse.move((sashBox?.x ?? 0) + 100, (sashBox?.y ?? 0) + 80, { steps: 5 });
     await hostPage.mouse.up();
     await waitFor(async () => {
       const workspace = await call('inspect.workspace', { windowId }) as { topology: { root: { weights?: number[] } } };

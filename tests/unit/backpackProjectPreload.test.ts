@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
+  contextBridge: { exposeInMainWorld: vi.fn(), executeInMainWorld: vi.fn() },
   ipcRenderer: { invoke: mocks.invoke, send: mocks.send, on: mocks.on },
   webUtils: { getPathForFile: vi.fn() },
 }));
@@ -48,8 +49,9 @@ describe('Backpack project protocol alignment', () => {
     expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:subscribe-lifecycle', {});
   });
 
-  it('forwards the exact-icon candidate-list option through the project bridge', async () => {
-    await loadPreloadForTest();
+  it.each(['normal', 'diagnostic'])('forwards the exact-icon candidate-list option through the %s bridge', async (mode) => {
+    if (mode === 'diagnostic') await import('../../src/preload/backpackProjectDevControl');
+    else await loadPreloadForTest();
     const dispatch = (data: unknown) => messageHandlers.forEach((handler) => handler({ source: window, origin: window.location.origin, data }));
     mocks.invoke.mockResolvedValue({ outcome: 'success', candidates: [] });
     dispatch({ type: 'papers:project:window-candidates', requestId: 'candidate-list-1', includeNativeIcons: true });

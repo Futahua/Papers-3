@@ -469,12 +469,10 @@ export function App(): React.JSX.Element {
   };
 
   return (
-    <div className={`app${sidebarOpen ? ' backpack-sidebar-open' : ''}`}>
-      {/* Slim title bar: the whole band is an invisible OS drag region (so the
-          window still moves), with interactive controls opting out. It replaces
-          the generic dark Electron title bar and menu; the native
-          minimize/maximize/close controls are painted by the OS in the reserved
-          top-right inset. No wordmark, no File/Edit/View/Window menu. */}
+    <div className={`app${sidebarOpen ? ' backpack-sidebar-open' : ''}${openProjects.length > 0 && entered !== null && projectUrl !== null ? ' workspace-title-tabs' : ''}`}>
+      {/* Host controls share the workspace tab row. In Basic views the same
+          controls retain their ordinary draggable title strip. Native window
+          controls are painted by the OS in the reserved top-right inset. */}
       <header className="titlebar">
         <div className="titlebar-left" ref={basicRef}
           onMouseEnter={openSidebar}

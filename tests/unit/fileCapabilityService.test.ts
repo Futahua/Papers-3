@@ -69,6 +69,17 @@ function service(
 }
 
 describe('file capability service', () => {
+  it('creates a folder in the exact parent and refuses collisions or path traversal', async () => {
+    const api=service();
+    const result=await api.call({operation:'create-folder',params:{path:root,newName:'New folder'}});
+    expect(result.ok).toBe(true);
+    expect(result.entry).toMatchObject({path:path.join(root,'New folder'),kind:'folder'});
+    const duplicate=await api.call({operation:'create-folder',params:{path:root,newName:'New folder'}});
+    expect(duplicate).toMatchObject({ok:false,code:'EEXIST'});
+    const escape=await api.call({operation:'create-folder',params:{path:root,newName:'../escaped'}});
+    expect(escape.ok).toBe(false);
+    expect(await fs.readdir(root)).toEqual(['New folder']);
+  });
   it('describes and lists real filesystem entries with a stable identity hint', async () => {
     const folder = path.join(root, 'folder');
     const file = path.join(folder, 'alpha.txt');
