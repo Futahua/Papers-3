@@ -247,7 +247,7 @@ const delegateWaveRequestSchema = z
   .strict();
 const decisionSchema = z.enum(['allow-once', 'allow-program', 'deny']);
 
-export function registerHostIpc(facade: HostFacade): void {
+export function registerHostIpc(facade: HostFacade, nativeDrag?: (sender: WebContents, start: () => void) => Promise<void>): void {
   const guard = (event: IpcMainInvokeEvent, projectAllowed = false, channel = ''): void => {
     if (facade.isHostSender(event.sender)) return;
     if (!projectAllowed) throw new Error('host channel called from non-host sender');
@@ -510,7 +510,8 @@ export function registerHostIpc(facade: HostFacade): void {
       }
       const firstTarget = paths[0]!;
       const icon = await app.getFileIcon(firstTarget, { size: 'small' });
-      event.sender.startDrag({ file: firstTarget, files: paths, icon });
+      const start = () => event.sender.startDrag({ file: firstTarget, files: paths, icon });
+      if (nativeDrag) await nativeDrag(event.sender, start); else start();
       return { ok: true, count: paths.length };
     }
     return facade.callBackpackProjectFileCapability(

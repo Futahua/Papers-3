@@ -46,6 +46,28 @@ function harness(onCaptured: HoverInputBridgeOptions['onCaptured'] = vi.fn()) {
 }
 
 describe('hover input policy helper acknowledgement', () => {
+  it('acknowledges a native drag and returns only its correlated destination', async () => {
+    const { bridge, child, stdin } = harness();
+    const ready = bridge.beginNativeDrag(Buffer.from([123,0,0,0]));
+    expect(stdin.write).toHaveBeenLastCalledWith('DRAG_BEGIN\t1\t123\n');
+    child.stdout.write('DRAG_READY\t999\n');
+    child.stdout.write('DRAG_READY\t1\n');
+    await expect(ready).resolves.toBe(1);
+    await expect(bridge.beginNativeDrag(Buffer.from([123,0,0,0]))).rejects.toThrow('busy');
+    const ended=bridge.endNativeDrag(1);
+    child.stdout.write('DRAG_ENDED\t1\t456\t1\n');
+    await expect(ended).resolves.toEqual({destinationHandle:456,revealed:true});
+    const next=bridge.beginNativeDrag(Buffer.from([123,0,0,0]));
+    child.stdout.write('DRAG_READY\t2\n');await expect(next).resolves.toBe(2);
+    const cancelled=bridge.endNativeDrag(2);child.stdout.write('DRAG_ENDED\t2\t0\t1\n');
+    await expect(cancelled).resolves.toEqual({destinationHandle:null,revealed:true});
+    bridge.close();child.emit('exit',0);
+  });
+  it('rejects a lost helper instead of leaving a pending drag session',async()=>{
+    const {bridge,child}=harness();
+    const ready=bridge.beginNativeDrag(Buffer.from([123,0,0,0]));
+    const rejected=expect(ready).rejects.toThrow('disconnected');child.emit('exit',1);await rejected;
+  });
   it('preserves the native Alt+Q hit widget identity and represents foreign hits as outside', () => {
     const { bridge, child, options } = harness();
     child.stdout.write('ALTQ\t17\n');

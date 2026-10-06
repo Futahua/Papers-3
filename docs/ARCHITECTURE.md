@@ -1,5 +1,38 @@
 # Papers — current architecture boundary
 
+## Native file drag reveal — creator request, 2026-10-06
+
+During a Papers file drag, pressing Shift after the drag starts temporarily
+hides its originating Papers window; releasing Shift reveals that window again.
+Dropping restores Papers without activation and requests activation of the
+external root window captured beneath the pointer at release. Escape restores
+the source without requesting destination activation. Existing source windows
+are preserved; neither the taskbar nor unrelated windows are enumerated or
+restyled by this workflow.
+
+`windows/nativeFileDrag.ts` wraps the existing synchronous Electron native drag.
+`hoverInputBridge.ts` and its existing native keyboard hook/release watchdog own
+the temporary session. Shift presses consumed by this session have balanced
+releases and do not change its native copy/link effect. Shift already down at
+session start keeps its ordinary modifier behavior until released. The existing
+foreground bridge performs the single exact-window activation request.
+Project file drags and completed browser-download drags use the same wrapper.
+
+Electron does not expose the native accepted/cancelled drop result. The captured
+root is the window under the pointer at release, not proof that an application
+accepted a file. No accepted-file claim is made from that capture. Private-desktop
+OLE tests establish source-hide survival, real synthetic-file delivery, and
+cancellation restoration without desktop input; installed Electron end-to-end
+verification remains separate.
+
+Validation on 2026-10-06: the staged feature passed type checking and 1,378
+unit tests (four skipped) in an isolated source snapshot. The installed package
+matched the built package hash. The creator dragged an image through hidden
+Papers into Codex and confirmed that Papers returned behind the destination
+window after the drop. This establishes the installed primary workflow;
+Shift-release, cancellation, and repeated-session handling also have automated
+coverage without injected desktop input.
+
 This describes the current implementation, not the product ontology. Product meaning
 comes from [`PRODUCT.md`](PRODUCT.md), and agent behavior is governed by
 [`HERMES.md`](../HERMES.md).

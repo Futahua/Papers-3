@@ -92,6 +92,28 @@ internal sealed class AltQReleaseWatchdog
     }
 }
 
+internal sealed class NativeDragRevealState
+{
+    private readonly HashSet<uint> shifts = new HashSet<uint>();
+    private readonly HashSet<uint> preheld = new HashSet<uint>();
+    public bool Revealed { get; private set; }
+    public bool Cancelled { get; private set; }
+    public bool Released { get; private set; }
+    public bool WantsHidden { get { return shifts.Count > 0 && !Cancelled && !Released; } }
+    public void SetPreheld(uint key) { preheld.Add(key); }
+    public bool Shift(uint key, bool down) {
+        if (preheld.Contains(key)) { if (!down) preheld.Remove(key); return false; }
+        if (down) shifts.Add(key); else shifts.Remove(key);
+        return true;
+    }
+    public void Cancel() { Cancelled = true; }
+    public bool Observe(bool leftDown) {
+        if (!leftDown) Released = true;
+        if (WantsHidden) Revealed = true;
+        return WantsHidden;
+    }
+}
+
 internal static class HoverInputBridge
 {
     private const int WH_KEYBOARD_LL = 13;
@@ -183,10 +205,48 @@ internal static class HoverInputBridge
     [DllImport("user32.dll")] private static extern IntPtr GetKeyboardLayout(uint threadId);
     [DllImport("user32.dll")] private static extern bool GetKeyboardState(byte[] state);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
+    [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr window, int command);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int ToUnicodeEx(uint key, uint scan, byte[] state, [Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder text, int capacity, uint flags, IntPtr layout);
     [DllImport("imm32.dll")] private static extern bool ImmIsIME(IntPtr layout);
 
     private static void Emit(string line) { output.Enqueue(line); }
+    private static NativeDragRevealState nativeDrag;
+    private static IntPtr nativeDragWindow, nativeDragTarget;
+    private static uint nativeDragProcess;
+    private static long nativeDragId;
+    private static bool nativeDragHidden;
+    private static void ObserveNativeDrag()
+    {
+        lock (captureLock) {
+            if (nativeDrag == null) return;
+            bool wasReleased = nativeDrag.Released;
+            bool hide = nativeDrag.Observe((GetAsyncKeyState(1) & 0x8000) != 0);
+            if (nativeDrag.Released && nativeDragHidden && !nativeDrag.Cancelled) hide = true;
+            if (!wasReleased && nativeDrag.Released && nativeDrag.Revealed && !nativeDrag.Cancelled) {
+                POINT point; uint process;
+                if (GetCursorPos(out point)) {
+                    IntPtr hit = GetAncestor(WindowFromPoint(point), 2);
+                    GetWindowThreadProcessId(hit, out process);
+                    if (hit != IntPtr.Zero && process != nativeDragProcess && IsWindowVisible(hit)) nativeDragTarget = hit;
+                }
+            }
+            if (hide != nativeDragHidden && IsWindow(nativeDragWindow)) {
+                ShowWindowAsync(nativeDragWindow, hide ? 0 : 4);
+                nativeDragHidden = hide;
+            }
+        }
+    }
+    private static void FinishNativeDrag(bool acknowledge)
+    {
+        ObserveNativeDrag();
+        lock (captureLock) {
+            if (nativeDrag == null) return;
+            if (nativeDragHidden && IsWindow(nativeDragWindow)) ShowWindowAsync(nativeDragWindow, 4);
+            long target = nativeDrag.Revealed && !nativeDrag.Cancelled && IsWindow(nativeDragTarget) ? nativeDragTarget.ToInt64() : 0;
+            if (acknowledge) Emit("DRAG_ENDED\t" + nativeDragId + "\t" + target + "\t" + (nativeDrag.Revealed ? "1" : "0"));
+            nativeDrag = null; nativeDragWindow = IntPtr.Zero; nativeDragTarget = IntPtr.Zero; nativeDragHidden = false;
+        }
+    }
     private static void FlushOutput()
     {
         string line;
@@ -272,6 +332,21 @@ internal static class HoverInputBridge
                     lock (captureLock) outstandingCaptures.Remove(acknowledged);
                     CompleteOverlayReadyIfDrained();
                     continue;
+                }
+                if (parts[0] == "DRAG_BEGIN" && parts.Length == 3) {
+                    lock (captureLock) {
+                        IntPtr source = new IntPtr(long.Parse(parts[2], CultureInfo.InvariantCulture));
+                        if (nativeDrag != null || !IsWindow(source) || !IsWindowVisible(source)) { Emit("DRAG_REJECTED\t" + parts[1]); continue; }
+                        nativeDragId = long.Parse(parts[1], CultureInfo.InvariantCulture); nativeDragWindow = source;
+                        GetWindowThreadProcessId(source, out nativeDragProcess);
+                        nativeDrag = new NativeDragRevealState(); nativeDragTarget = IntPtr.Zero; nativeDragHidden = false;
+                        foreach (uint key in new uint[] { 0x10, 0xA0, 0xA1 }) if ((GetAsyncKeyState((int)key) & 0x8000) != 0) nativeDrag.SetPreheld(key);
+                    }
+                    Emit("DRAG_READY\t" + parts[1]); WakeMainLoop(); continue;
+                }
+                if (parts[0] == "DRAG_END" && parts.Length == 2) {
+                    if (long.Parse(parts[1], CultureInfo.InvariantCulture) == nativeDragId) FinishNativeDrag(true);
+                    WakeMainLoop(); continue;
                 }
                 if (parts[0] == "REMOVE" && parts.Length == 2)
                 {
@@ -487,6 +562,15 @@ internal static class HoverInputBridge
         bool up = message == WM_KEYUP || message == WM_SYSKEYUP;
         if (!down && !up) return CallNextHookEx(hookHandle, code, wParam, lParam);
         KBDLLHOOKSTRUCT key = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+        lock (captureLock) {
+            if (nativeDrag != null) {
+                if (key.vkCode == 27 && down) nativeDrag.Cancel();
+                if (key.vkCode == 0x10 || key.vkCode == 0xA0 || key.vkCode == 0xA1) {
+                    bool consume = nativeDrag.Shift(key.vkCode, down); WakeMainLoop();
+                    if (consume && down && !nativeDrag.Released) { swallowedKeys.Add(key.vkCode); return new IntPtr(1); }
+                }
+            }
+        }
         bool isAlt = key.vkCode == VK_MENU || key.vkCode == VK_LMENU || key.vkCode == VK_RMENU;
         bool injected = (key.flags & (LLKHF_INJECTED | LLKHF_LOWER_IL_INJECTED)) != 0;
         // Remote-control software such as Chrome Remote Desktop normally reaches
@@ -581,11 +665,14 @@ internal static class HoverInputBridge
                     Emit("ALTQ\t" + widgetId.ToString(CultureInfo.InvariantCulture));
                 }
             }
-            else if (message.message == WM_TIMER && releaseWatchdog.IsTimerMessage(message.wParam))
+            else if (message.message == WM_TIMER && releaseWatchdog.IsTimerMessage(message.wParam)) {
                 ReleaseAltQIfKeysAreUp();
+                ObserveNativeDrag();
+            }
             TranslateMessage(ref message); DispatchMessage(ref message); FlushOutput();
         }
         releaseWatchdog.Stop();
+        FinishNativeDrag(false);
         UnregisterHotKey(IntPtr.Zero, HOTKEY_ID);
         if (hookHandle != IntPtr.Zero) UnhookWindowsHookEx(hookHandle);
         FlushOutput();

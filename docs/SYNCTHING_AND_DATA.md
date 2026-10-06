@@ -127,3 +127,9 @@ Earlier revisions of this section referenced a Hermes install under
 longer depends on any recorded path (D-016).
 
 Do not open Papers or Hermes concurrently against the same live data on two machines.
+
+Native drag reveal sessions are process-local, ephemeral state: the source
+window, consumed Shift state, and captured external window handle are discarded
+when the drag ends. They have no saved files, synchronization or creator-data
+migration. The existing machine-local native helper cache owns the compiled
+helper; its existing source hash invalidates stale copies after a local update.

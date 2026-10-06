@@ -563,6 +563,7 @@ async function submitLensCrop(contents: WebContents, crop: LensCrop): Promise<st
 
 export function createWebBrowserHostBridge(input: {
   resolveWindow(ownerKey: string): BaseWindow | null;
+  nativeDrag?: (window: BaseWindow | null, start: () => void) => Promise<void>;
   onReservedTab?: (ownerKey: string) => void;
   downloadHistoryFile?: string;
   downloadRecoveryDir?: string;
@@ -731,7 +732,10 @@ export function createWebBrowserHostBridge(input: {
         }
         if (value.kind === 'drag' && record.state === 'completed') {
           void app.getFileIcon(path, { size: 'small' }).then((icon) => {
-            if (!view.webContents.isDestroyed()) view.webContents.startDrag({ file: path, icon });
+            if (!view.webContents.isDestroyed()) {
+              const start = () => view.webContents.startDrag({ file: path, icon });
+              return input.nativeDrag ? input.nativeDrag(input.resolveWindow(ownerKey), start) : start();
+            }
           }).catch(() => {});
         }
       });

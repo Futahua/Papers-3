@@ -7,6 +7,8 @@ export const HOVER_INPUT_BRIDGE_SOURCE_FILE = 'hover-input-bridge.cs';
 export const HOVER_INPUT_BRIDGE_EXECUTABLE = 'papers-hover-input-bridge.exe';
 
 export interface HoverInputBridge {
+  beginNativeDrag(nativeHandle: Buffer): Promise<number>;
+  endNativeDrag(id: number): Promise<{ destinationHandle: number | null; revealed: boolean }>;
   registerWidget(senderId: number, nativeHandle: Buffer): void;
   setPolicy(senderId: number, enabled: boolean, blockedBindings: readonly string[]): Promise<void>;
   setCaptureOpening(senderId: number): Promise<void>;
@@ -101,6 +103,9 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
   let overlayGenerationSequence = 0;
   let policyRequestSequence = 0;
   const policyAcks = new Map<number, { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
+  let nativeDragId: number | null = null;
+  let dragReady: { id: number; resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
+  let dragEnded: { id: number; resolve: (result: { destinationHandle: number | null; revealed: boolean }) => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
   let overlayReady: { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout } | null = null;
   const openingReady = new Map<number, { resolve: () => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
   const send = (record: string): boolean => {
@@ -109,6 +114,8 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
     catch { options.onError?.('native hover-input helper disconnected'); return false; }
   };
   const rejectPending = (error: Error): void => {
+    for (const pending of [dragReady, dragEnded]) { if (pending) { clearTimeout(pending.timer); pending.reject(error); } }
+    dragReady = null; dragEnded = null; nativeDragId = null;
     if (overlayReady) {
       clearTimeout(overlayReady.timer);
       overlayReady.reject(error);
@@ -160,7 +167,16 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
       const line = buffered.slice(0, newline).replace(/\r$/, '');
       buffered = buffered.slice(newline + 1);
       const parts = line.split('\t');
-      if (parts[0] === 'ALTQ') {
+      if (parts[0] === 'DRAG_READY' && dragReady?.id === Number(parts[1])) {
+        clearTimeout(dragReady.timer); dragReady.resolve(); dragReady = null;
+      } else if (parts[0] === 'DRAG_REJECTED' && dragReady?.id === Number(parts[1])) {
+        clearTimeout(dragReady.timer); dragReady.reject(new Error('native drag reveal is unavailable')); dragReady = null; nativeDragId = null;
+      } else if (parts[0] === 'DRAG_ENDED' && dragEnded?.id === Number(parts[1]) && parts.length === 4) {
+        const handle = Number(parts[2]);
+        clearTimeout(dragEnded.timer);
+        dragEnded.resolve({ destinationHandle: Number.isSafeInteger(handle) && handle > 0 ? handle : null, revealed: parts[3] === '1' });
+        dragEnded = null; nativeDragId = null;
+      } else if (parts[0] === 'ALTQ') {
         const senderId = parts.length === 2 && /^\d+$/.test(parts[1] ?? '') ? Number(parts[1]) : 0;
         options.onAltQ(Number.isSafeInteger(senderId) && senderId > 0 ? senderId : null);
       }
@@ -230,6 +246,25 @@ export function createHoverInputBridge(options: HoverInputBridgeOptions): HoverI
   });
 
   return {
+    async beginNativeDrag(nativeHandle) {
+      const handle = nativeHandleValue(nativeHandle);
+      if (closed || nativeDragId !== null) throw new Error('native drag reveal is unavailable or busy');
+      const id = ++policyRequestSequence; nativeDragId = id;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { dragReady = null; nativeDragId = null; send(`DRAG_END\t${id}`); reject(new Error('native drag helper did not acknowledge readiness')); }, 1500);
+        dragReady = { id, resolve, reject, timer };
+        if (!send(`DRAG_BEGIN\t${id}\t${handle}`)) { clearTimeout(timer); dragReady = null; nativeDragId = null; reject(new Error('native drag helper is unavailable')); }
+      });
+      return id;
+    },
+    endNativeDrag(id) {
+      if (closed || nativeDragId !== id || dragEnded) return Promise.reject(new Error('native drag session is unavailable'));
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { dragEnded = null; nativeDragId = null; reject(new Error('native drag helper did not restore the source')); }, 1500);
+        dragEnded = { id, resolve, reject, timer };
+        if (!send(`DRAG_END\t${id}`)) { clearTimeout(timer); dragEnded = null; nativeDragId = null; reject(new Error('native drag helper is unavailable')); }
+      });
+    },
     registerWidget(senderId, nativeHandle) {
       send(`WIDGET\t${senderId}\t${nativeHandleValue(nativeHandle)}`);
     },

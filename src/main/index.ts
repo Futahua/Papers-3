@@ -103,6 +103,7 @@ import {
 import { createForegroundBridge, resolveForegroundBridgeSourcePath } from './windows/foregroundBridge';
 import { COMPACT_WIDGET_TOPMOST_LEVEL, focusSurfaceForForeignActivation } from './windows/activationSurfaceFocus';
 import { createHoverInputBridge, resolveHoverInputBridgeSourcePath, type HoverInputBridge } from './windows/hoverInputBridge';
+import { runNativeFileDrag } from './windows/nativeFileDrag';
 import { createSurfaceContextRegistry } from './windows/surfaceContextRegistry';
 import { createWindowCapabilityService } from './windows/windowCapabilityService';
 import { createWindowControlBroker, resolveWindowControlSourcePath } from './windows/windowControlBroker';
@@ -741,7 +742,14 @@ async function bootstrap(): Promise<void> {
     },
   });
   app.once('will-quit', () => htmlPreview.dispose());
+  let hoverInputBridge: HoverInputBridge | null = null;
+  const nativeFileDrag = (window: BaseWindow | null, start: () => void) => runNativeFileDrag({
+    window, tracker: hoverInputBridge, start,
+    activateDestination: handle => foregroundBridge?.setForegroundWindow(handle) ?? Promise.resolve(false),
+    onError: error => console.error('[papers] native drag reveal:', error instanceof Error ? error.message : String(error)),
+  });
   const webBrowser = createWebBrowserHostBridge({
+    nativeDrag: nativeFileDrag,
     resolveWindow: (ownerKey) => {
       const separator = ownerKey.indexOf(':');
       if (separator <= 0) return null;
@@ -1710,7 +1718,10 @@ async function bootstrap(): Promise<void> {
 
   adapter.on('health-changed', () => facade.emitHermesHealth());
 
-  registerHostIpc(facade);
+  registerHostIpc(facade, (sender, start) => {
+    const id = papersWindows.windowForSender(sender.id);
+    return nativeFileDrag(id === null ? BrowserWindow.fromWebContents(sender) : papersWindows.get(id)?.owned.window ?? null, start);
+  });
   const windowCapabilityService = createWindowCapabilityService({
     // Papers itself is a useful saved layout member. Admit only the real main
     // shell by its fixed native title; same-process picker, widget, preview and
@@ -1946,7 +1957,6 @@ async function bootstrap(): Promise<void> {
   // (projectId, layoutKey), opened/focused by the registered live workspace via
   // opaque bounded keys. Papers binds identities and routes bounded opaque
   // messages only; it never parses AYG state or commands.
-  let hoverInputBridge: HoverInputBridge | null = null;
   // Widgets can be restored before the native Alt+Q helper is constructed.
   // Keep those HWND registrations instead of silently dropping them; otherwise
   // the helper sees the cursor over a live widget as "outside" until that widget
