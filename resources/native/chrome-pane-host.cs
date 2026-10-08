@@ -98,9 +98,10 @@ public sealed class ChromePaneHost : Form {
     string recovery;
     HostShape shape;
 
+    bool isolated;
     ChromePaneHost(string[] args) {
         chromePath=args[0]; owner=new IntPtr(long.Parse(args[1])); ownerPid=uint.Parse(args[2]);
-        linkState=args[3];
+        linkState=args[3];isolated=args.Length>4&&args[4]=="isolated";
         try {var saved=json.Deserialize<Dictionary<string,Link>>(File.ReadAllText(linkState));foreach(var pair in saved)links[pair.Key]=pair.Value;}catch{}
         var unused=Handle;
         events=OnNative;
@@ -127,7 +128,7 @@ public sealed class ChromePaneHost : Form {
             var serializer=new JavaScriptSerializer();
             Console.WriteLine(serializer.Serialize(Tabs().Select(t=>new{window=t.Window.ToInt64(),key=t.Key,title=t.Element.Current.Name,selected=Selected(t)}).ToArray()));return;
         }
-        if(args.Length!=4)return;
+        if(args.Length!=4&&args.Length!=5)return;
         Application.EnableVisualStyles();
         var host=new ChromePaneHost(args);
         Application.Run(new ApplicationContext());GC.KeepAlive(host);
@@ -259,7 +260,18 @@ public sealed class ChromePaneHost : Form {
         int left=nativeLeft?chromeLeft:local.X;
         double right=local.Right,bottom=local.Bottom;Native.Rect client;
         if(anchoredEdges&&GetClientRect(owner,out client)){right=client.R/scale-rightInset;bottom=client.B/scale-bottomInset;}
-        fitting=true;try{session.Fit(new Rectangle(point.X+(int)Math.Round(left*scale),point.Y+(int)Math.Round(local.Y*scale),Math.Max(1,(int)Math.Round((right-left)*scale)),Math.Max(1,(int)Math.Round((bottom-local.Y)*scale))),false);Native.Rect actual;if(Native.GetWindowRect(session.Handle,out actual)){
+        // Fixed-size utility windows reject pane dimensions and restore themselves.
+        // Keep their native size and anchor them to the pane's right edge instead
+        // of repeatedly fighting their own layout loop.
+        bool resizable=(Native.GetWindowLong(session.Handle,-16)&0x00040000)!=0;
+        Native.Rect fixedBox;
+        int width=Math.Max(1,(int)Math.Round((right-left)*scale));
+        int height=Math.Max(1,(int)Math.Round((bottom-local.Y)*scale));
+        if(!resizable&&Native.GetWindowRect(session.Handle,out fixedBox)){
+            width=fixedBox.R-fixedBox.L;height=fixedBox.B-fixedBox.T;
+            left=(int)Math.Round(right-width/scale);
+        }
+        fitting=true;try{session.Fit(new Rectangle(point.X+(int)Math.Round(left*scale),point.Y+(int)Math.Round(local.Y*scale),width,height),false);Native.Rect actual;if(Native.GetWindowRect(session.Handle,out actual)){
             int targetRight=point.X+(int)Math.Round(right*scale);
             if(actual.R>targetRight+1){Native.SetWindowPos(session.Handle,IntPtr.Zero,targetRight-(actual.R-actual.L),actual.T,0,0,0x15);left=(int)Math.Round((targetRight-(actual.R-actual.L)-point.X)/scale);}
         }chromeLeft=left;nativeLeft=true;PublishLayout();Mask();}finally{fitting=false;}
@@ -310,7 +322,7 @@ public sealed class ChromePaneHost : Form {
         if(released||fitting)return;
         // Windows can finish raising the newly activated host after this event.
         // Apply the peer ordering on the next message turn as well.
-        if(ev==3){if(h==owner||(session!=null&&h==session.Handle))Group(true);BeginInvoke((Action)(()=>{if(!released)Group(false);}));return;}
+        if(ev==3){var activated=peers.FirstOrDefault(p=>p.Session.Handle==h&&p.Session.Valid());if(activated!=null&&activated.Session!=session){visible=true;ActivatePeer(activated);}if(h==owner||(session!=null&&h==session.Handle))Group(true);BeginInvoke((Action)(()=>{if(!released)Group(false);}));return;}
         if(session!=null&&h==session.Handle&&ev==0xA){movingWindow=h;moveHadShift=ShiftDown();Native.GetWindowRect(h,out gestureStart);chromeSizing=true;return;}
         if(ev==0xA&&h!=owner){movingWindow=h;moveHadShift=ShiftDown();}
         if(ev==0xB){var moved=movingWindow!=IntPtr.Zero?movingWindow:h;FinishWindowMove(moved);}
@@ -329,7 +341,8 @@ public sealed class ChromePaneHost : Form {
         // Show before accessibility resolution, including panes hidden for Quick Run.
         var present=Convert.ToBoolean(request["present"]);
         UI(()=>{if(session!=null&&session.Valid()&&present){visible=true;session.Show(true);Group(true);}});
-        var tabs=Tabs();Link previous;
+        var allTabs=Tabs();
+        var tabs=isolated?allTabs.Where(t=>peers.Any(p=>p.Session.Handle==t.Window)).ToList():allTabs;Link previous;
         var selected=links.TryGetValue(source,out previous)&&previous.Url==url?tabs.FirstOrDefault(t=>t.Key==previous.TabKey):null;
         if(source=="workspace:resume") {
             selected=session!=null&&session.Valid()?tabs.FirstOrDefault(t=>t.Window==session.Handle&&Selected(t)):null;
@@ -341,8 +354,9 @@ public sealed class ChromePaneHost : Form {
         }
         bool reused=selected!=null;
         if(selected==null) {
-            var before=new HashSet<string>(tabs.Select(t=>t.Key));
-            var launch=Process.Start(new ProcessStartInfo(chromePath,"--new-tab \""+url+"\""){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,RedirectStandardInput=true});
+            var before=new HashSet<string>(allTabs.Select(t=>t.Key));
+            if(isolated&&tabs.Count>0)UI(()=>SetForegroundWindow(tabs[0].Window));
+            var launch=Process.Start(new ProcessStartInfo(chromePath,(isolated&&tabs.Count==0?"--new-window ":"--new-tab ")+"\""+url+"\""){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,RedirectStandardInput=true});
             launch.StandardInput.Close();launch.BeginOutputReadLine();launch.BeginErrorReadLine();
             var watch=Stopwatch.StartNew();
             while(watch.ElapsedMilliseconds<9000) {

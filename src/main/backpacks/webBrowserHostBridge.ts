@@ -4,6 +4,7 @@ import {
   app,
   BaseWindow,
   BrowserWindow,
+  clipboard,
   desktopCapturer,
   ipcMain,
   screen,
@@ -117,7 +118,7 @@ export interface WebBrowserHostBridge {
   hideDownloadsBubble(ownerKey: string, immediate?: boolean): void;
   getAdblockState(): BrowserAdblockState;
   setAdblockEnabled(enabled: boolean): Promise<BrowserAdblockState>;
-  captureLensScreenUrl?(): Promise<{ ok: boolean; url?: string; cancelled?: boolean; error?: string }>;
+  captureLensScreenUrl?(source?: 'screen' | 'clipboard'): Promise<{ ok: boolean; url?: string; cancelled?: boolean; error?: string }>;
   captureLensRegion(ownerKey: string, sourceTabId: string, targetTabId: string): Promise<BrowserLensResult>;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
@@ -1469,12 +1470,23 @@ export function createWebBrowserHostBridge(input: {
       return adblockState();
     },
 
-    async captureLensScreenUrl() {
+    async captureLensScreenUrl(source = 'screen') {
       let upload: BrowserWindow | null = null;
       try {
-        const selection = await pickLensRegion();
-        if (!selection) return { ok: false, cancelled: true };
-        const crop = cropLensSelection(selection.capture, selection.rect);
+        let crop: LensCrop;
+        if (source === 'clipboard') {
+          const image = clipboard.readImage();
+          if (image.isEmpty()) return { ok: false, error: 'Copy an image first, then click Lens.' };
+          const size = image.getSize();
+          const scale = Math.min(1, 1000 / Math.max(size.width, size.height));
+          const processed = scale < 1 ? image.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: 'good' }) : image;
+          const processedSize = processed.getSize();
+          crop = { jpeg: new Uint8Array(processed.toJPEG(40)), width: processedSize.width, height: processedSize.height };
+        } else {
+          const selection = await pickLensRegion();
+          if (!selection) return { ok: false, cancelled: true };
+          crop = cropLensSelection(selection.capture, selection.rect);
+        }
         upload = new BrowserWindow({ show: false, webPreferences: { partition: BROWSER_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false } });
         const url = await submitLensCrop(upload.webContents, crop);
         return { ok: true, url };

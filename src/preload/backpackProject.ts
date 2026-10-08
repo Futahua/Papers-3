@@ -185,6 +185,33 @@ const SCOPED_WORKSPACE_REQUESTS = new Set([
   'papers:project:file-capability',
 ]);
 
+// Embedded preview surfaces use the same native-window host as the parent
+// Backpack. Accept only these operations from an actual, origin-matched iframe.
+const EMBEDDED_WINDOW_REQUESTS = new Set([
+  'window-candidates', 'window-bind-candidate', 'window-resolve-instance',
+  'window-candidate-picker', 'window-candidate-picker-update', 'window-candidate-picker-close',
+  'window-lifecycle-snapshot', 'window-resolve-descriptor', 'window-observe-capability',
+  'window-control-sync', 'window-control-activate', 'window-control-group',
+  'window-activate-capability', 'window-toggle-capability', 'window-minimize-capability',
+  'window-restore-capability', 'window-close-capability', 'window-end-process-capability',
+  'window-apply-capability', 'window-peek-begin', 'window-peek-end',
+  'window-pick-begin', 'window-pick-stage', 'window-pick-commit', 'window-pick-cancel',
+  'window-thumbnail', 'window-thumbnail-cache', 'window-preview-show',
+  'window-preview-hide', 'window-preview-hold', 'window-preview-release',
+].map(operation => 'papers:project:' + operation));
+
+function isEmbeddedWindowRequest(event: MessageEvent, request: ProjectMessage): boolean {
+  if (typeof request.type !== 'string' || !EMBEDDED_WINDOW_REQUESTS.has(request.type)) return false;
+  for (const frame of document.querySelectorAll('iframe')) {
+    if (frame.contentWindow !== event.source) continue;
+    try {
+      const origin = new URL(frame.src);
+      return event.origin === `${origin.protocol}//${origin.host}`;
+    } catch { return false; }
+  }
+  return false;
+}
+
 const POSITIONED_PREVIEW_OPERATIONS = new Set([
   'office-editor-open',
   'office-editor-move',
@@ -195,6 +222,7 @@ const POSITIONED_PREVIEW_OPERATIONS = new Set([
   'preview-html-open',
   'preview-html-move',
   'pane-window-attach',
+  'pane-window-tabs',
   'chrome-pane-open',
   'chrome-pane-move',
   'browser-open',
@@ -217,6 +245,7 @@ function nativePreviewParams(event: MessageEvent, operation: string, params: Rec
   if (!POSITIONED_PREVIEW_OPERATIONS.has(operation)) return params;
   if (event.source === window) return params;
   const rect = params['rect'];
+  if (operation === 'pane-window-tabs' && rect === undefined) return params;
   if (!isPlainObject(rect)) throw new Error('native preview rect is malformed');
   let frameRect: DOMRect | null = null;
   for (const frame of document.querySelectorAll('iframe')) {
@@ -240,7 +269,7 @@ window.addEventListener('message', (event) => {
   if (!request || typeof request.type !== 'string') return;
   const workspaceOrigin = scopedWorkspaceOrigin(event, request);
   const workspaceOriginArgs = workspaceOrigin === undefined ? [] : [workspaceOrigin];
-  if (event.source !== window && workspaceOrigin === undefined) return;
+  if (event.source !== window && workspaceOrigin === undefined && !isEmbeddedWindowRequest(event, request)) return;
   if (event.source === window && event.origin !== window.location.origin) return;
   if (request.type === 'papers:project:widget-drag') {
     if (!widgetToken || !exactKeys(request as Record<string, unknown>, ['type', 'phase', 'x', 'y'])
@@ -903,7 +932,7 @@ ipcRenderer.on('papers:chrome-layout:changed', (_event, rect) => {
   for (const frame of document.querySelectorAll('iframe')) {
     if (frame.contentWindow !== target.source) continue;
     const box = frame.getBoundingClientRect();
-    target.source.postMessage({ type: 'papers:project:chrome-layout', rect: { ...rect, x: rect.x - box.x, y: rect.y - box.y } }, target.origin);
+    target.source.postMessage({ type: 'papers:project:chrome-layout', rect: { ...rect, parentX: rect.x, parentY: rect.y, x: rect.x - box.x, y: rect.y - box.y } }, target.origin);
     break;
   }
 });

@@ -117,3 +117,7 @@ Pencilcase also owns the ChatGPT local coder view, opened from its dedicated too
 entry as a separate page. The Delegate Wave Backpack is retired and archived. Its
 existing companion service remains the operational owner; Papers transfers the
 single trusted relay binding to Pencilcase. No second agent manager is introduced.
+
+Attached application windows remain available in the ordinary Windows taskbar and widget candidate list. Inactive pane tabs are minimized, never hidden. Release and recovery must not restore a temporary hidden state.
+
+Papers owns desktop window gestures and Direct Pick in the resident native window-control service. Do not restart SlopTop AHK or introduce separate durable gesture selection/groups. Preserve the independent display-toggle daemon.

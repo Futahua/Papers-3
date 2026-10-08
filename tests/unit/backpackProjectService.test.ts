@@ -816,6 +816,25 @@ describe('BackpackProjectService', () => {
     );
   });
 
+  it('scoped project workspace can add and edit items without touching outside folders', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {});
+    const root = 'group-proxima-edit';
+    await service.saveState(backpackId, JSON.stringify({ schemaVersion: 1,
+      groups: [{ id: 'outside', parentId: 'root', name: 'Untouched' }, { id: root, parentId: 'outside', name: 'Project' }], shortcuts: [] }));
+    const first = await service.loadStateVersioned(backpackId);
+    const project = { schemaVersion: 1, groups: [{ id: root, parentId: 'outside', name: 'Project' }],
+      shortcuts: [{ id: 'added', name: 'New link', target: 'https://example.com', placements: [{ id: 'placement', parentId: root }] }] };
+    const added = await service.saveState(backpackId, JSON.stringify(project), first.revision, root);
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    project.shortcuts[0]!.name = 'Edited link';
+    expect((await service.saveState(backpackId, JSON.stringify(project), added.revision, root)).ok).toBe(true);
+    const restored = await service.loadStateVersioned(backpackId);
+    expect(restored.state.shortcuts).toMatchObject([{ id: 'added', name: 'Edited link' }]);
+    expect(restored.state.groups).toContainEqual({ id: 'outside', parentId: 'root', name: 'Untouched' });
+  });
+
   it('a scoped save still refuses a binned scope root', async () => {
     await writeProject();
     const service = new BackpackProjectService(bindingsFile, undefined, undefined, undefined, {});

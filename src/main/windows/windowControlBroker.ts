@@ -8,6 +8,7 @@ import { defaultWindowGeometryJournal } from './windowGeometryJournal';
 
 export interface ControlRegistration {
   id: number;
+  groupKey?: string;
   hwnd: number;
   pid: number;
   processStartTicks: string;
@@ -102,7 +103,7 @@ export function createWindowControlBroker(input: {
       const compiler = resolveWindowsCscPath(process.env['SystemRoot'] ?? process.env['WINDIR'] ?? 'C:\\Windows');
       if (!compiler) { fail('Windows C# compiler is unavailable'); return false; }
       fs.mkdirSync(input.cacheDirectory, { recursive: true });
-      execFileSync(compiler, ['/nologo', '/optimize+', `/out:${executable}`, input.sourcePath], {
+      execFileSync(compiler, ['/nologo', '/optimize+', '/reference:System.Windows.Forms.dll', '/reference:System.Drawing.dll', '/reference:System.Web.Extensions.dll', `/out:${executable}`, input.sourcePath], {
         timeout: 15_000, windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'],
       });
       fs.writeFileSync(stampFile, stamp, 'utf8');
@@ -117,7 +118,8 @@ export function createWindowControlBroker(input: {
     return ['R', slot.id, slot.hwnd, slot.pid, slot.processStartTicks, slot.ownerHwnd,
       hit.x, hit.y, hit.width, hit.height,
       restore.x, restore.y, restore.width, restore.height,
-      Buffer.from(slot.windowClass, 'utf8').toString('base64')].join('|');
+      Buffer.from(slot.windowClass, 'utf8').toString('base64'),
+      Buffer.from(slot.groupKey ?? '', 'utf8').toString('base64')].join('|');
   }
   function scheduleRestart(): void {
     if (stopped || retryTimer) return;
@@ -141,7 +143,7 @@ export function createWindowControlBroker(input: {
     // The session id is that identity: it changes on every start, readiness is
     // reported against it, and a restart invalidates everything the old one said.
     sessionId = 'broker-' + instance;
-    child = spawn(executable, [telemetryFile], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    child = spawn(executable, [telemetryFile, path.join(path.dirname(input.sourcePath), 'gesture-cursors')], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
     child.once('error', (error) => {
       if (instance !== generation) return;
       fail('Native window control failed: ' + error.message);

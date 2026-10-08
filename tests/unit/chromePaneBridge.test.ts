@@ -103,3 +103,37 @@ it('presentation transfers retained tabs and switching back remains selectable',
   bridge.closeOwner('1:proxima');expect(child.commands.some((c:any)=>c.op==='release')).toBe(false);
   bridge.dispose();expect(child.commands.at(-1)).toMatchObject({op:'release'});
 });
+
+
+it('Backpacks keep independent native helpers, membership files and tab events', async () => {
+  const onTabs=vi.fn();
+  const bridge=createChromePaneBridge({cacheDirectory:'X:/cache',nativeDirectory:'X:/native',onTabs})!;
+  const ayg={...context('1:ayg'),paneGroup:'ayg'};
+  const proxima={...context('1:proxima'),paneGroup:'proxima'};
+  bridge.setOwnerVisible('1:ayg',true);
+  await bridge.open(ayg,'workspace:attach','',bounds);
+  bridge.setOwnerVisible('1:proxima',true);
+  await bridge.open(proxima,'workspace:attach','',bounds);
+  expect(h.spawn).toHaveBeenCalledTimes(2);
+  expect(h.spawn.mock.calls[0]![1][3]).not.toBe(h.spawn.mock.calls[1]![1][3]);
+  expect(h.children[0].commands.at(-1)).toMatchObject({op:'visible',visible:false});
+  h.children[1].stdout.write(JSON.stringify({kind:'tabs',tabs:[{id:'own',title:'Proxima',active:true}]})+'\n');
+  expect(onTabs).toHaveBeenLastCalledWith('1:proxima',expect.any(Array));
+  bridge.closeOwner('1:proxima');
+  expect(h.children[1].commands.at(-1)).toMatchObject({op:'release'});
+  expect(h.children[0].commands.some((command:any)=>command.op==='release')).toBe(false);
+  bridge.setOwnerVisible('1:ayg',true);
+  await bridge.selectTab!('1:ayg','original');
+  expect(h.children[0].commands.at(-1)).toMatchObject({op:'select',tabId:'original'});
+  bridge.dispose();
+});
+
+it('Backpack membership survives replacement surfaces without crossing Backpack identity', async () => {
+  const bridge=createChromePaneBridge({cacheDirectory:'X:/cache',nativeDirectory:'X:/native'})!;
+  await bridge.open({...context('1:old'),paneGroup:'proxima'},'workspace:attach','',bounds);
+  const saved=h.spawn.mock.calls[0]![1][3];
+  bridge.closeOwner('1:old');
+  await bridge.open({...context('1:new'),paneGroup:'proxima'},'workspace:attach','',bounds);
+  expect(h.spawn.mock.calls[1]![1][3]).toBe(saved);
+  bridge.dispose();
+});

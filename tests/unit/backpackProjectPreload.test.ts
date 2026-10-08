@@ -56,6 +56,45 @@ describe('Backpack project protocol alignment', () => {
     expect(posts).toContainEqual({ type: 'papers:host:result', requestId: 'file-search', ok: true, fileCapability: { ok: true, results: [] } });
   });
 
+  it('routes embedded preview picker and drag bindings through the parent window authority', async () => {
+    const child = {};
+    const previousDocument = globalThis.document;
+    globalThis.document = { querySelectorAll: () => [{ contentWindow: child, src: 'papers-backpack://bp-sidecar/preview.html' }] } as unknown as Document;
+    try {
+      await loadPreloadForTest();
+      mocks.invoke.mockResolvedValue({ action: 'cancel' });
+      const dispatch = (origin: string, data: unknown) => messageHandlers.forEach(handler => handler({ source: child, origin, data }));
+      const pickerId = '12345678-1234-1234-1234-123456789abc';
+      dispatch('papers-backpack://bp-sidecar', { type: 'papers:project:window-candidate-picker', requestId: 'embedded-picker', pickerId, candidates: [] });
+      dispatch('papers-backpack://bp-sidecar', { type: 'papers:project:window-candidates', requestId: 'embedded-list', includeNativeIcons: false });
+      dispatch('papers-backpack://bp-sidecar', { type: 'papers:project:window-lifecycle-snapshot', requestId: 'embedded-lifecycle' });
+      await Promise.resolve();
+      expect(mocks.invoke).toHaveBeenCalledWith('papers:backpack:window-candidate-picker', { projectId: 'bp-a', pickerId, candidates: [] });
+      expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:list', { includeNativeIcons: false });
+      expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:lifecycle-snapshot', {});
+      mocks.invoke.mockClear();
+      dispatch('papers-backpack://untrusted', { type: 'papers:project:window-candidates', requestId: 'wrong-origin', includeNativeIcons: false });
+      expect(mocks.invoke).not.toHaveBeenCalled();
+    } finally { globalThis.document = previousDocument; }
+  });
+
+  it('preserves the native parent edge when translating layout into an embedded preview', async () => {
+    const received: unknown[] = [];
+    const child = { postMessage: (value: unknown) => received.push(value) };
+    const previousDocument = globalThis.document;
+    globalThis.document = { querySelectorAll: () => [{ contentWindow: child, src: 'papers-backpack://bp-sidecar/preview.html', getBoundingClientRect: () => ({ x: 400, y: 20, right: 900, bottom: 700 }) }] } as unknown as Document;
+    try {
+      await loadPreloadForTest();
+      mocks.invoke.mockResolvedValue({ ok: true });
+      messageHandlers.forEach(handler => handler({ source: child, origin: 'papers-backpack://bp-sidecar', data: {
+        type: 'papers:project:file-capability', requestId: 'embedded-tabs', operation: 'pane-window-tabs', params: {},
+      } }));
+      const changed = mocks.on.mock.calls.find(([channel]) => channel === 'papers:chrome-layout:changed')?.[1];
+      changed({}, { x: 600, y: 80, width: 300, height: 600 });
+      expect(received).toContainEqual({ type: 'papers:project:chrome-layout', rect: { x: 200, y: 60, parentX: 600, parentY: 80, width: 300, height: 600 } });
+    } finally { globalThis.document = previousDocument; }
+  });
+
   it('subscribes to the native window lifecycle stream when the preload starts', async () => {
     await import('../../src/preload/backpackProject');
     expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:subscribe-lifecycle', {});

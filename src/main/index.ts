@@ -1441,7 +1441,7 @@ async function bootstrap(): Promise<void> {
       if (!owner || !surfaceBounds || owner.window.isDestroyed()) return null;
       const handle = owner.window.getNativeWindowHandle();
       const parentHwnd = handle.length >= 8 ? handle.readBigUInt64LE(0).toString() : BigInt(handle.readUInt32LE(0)).toString();
-      return { ownerKey: `${context.windowId}:${context.surfaceId}`, parentHwnd, surfaceBounds };
+      return { ownerKey: `${context.windowId}:${context.surfaceId}`, paneGroup: context.projectId, parentHwnd, surfaceBounds };
     },
     // The operator token comes from the launcher environment when present, or
     // from Delegate Wave's existing DPAPI-protected operator record otherwise.
@@ -1721,10 +1721,9 @@ async function bootstrap(): Promise<void> {
       return !owner || (!owner.isDestroyed() && owner.isVisible());
     },
   });
-  // One global direct-onscreen pick session. Papers sends one authenticated
-  // initial-member snapshot to the creator's already-running SlopTop AHK. AHK
-  // owns hover/click/rendering locally and returns one final green-set snapshot
-  // on Enter; no pointer event or click is routed through Papers.
+  // One global direct-onscreen pick session. The resident native control
+  // service owns input and temporary feedback, then returns identities to
+  // Papers for capability validation. No AHK process or renderer pointer RPC.
   const nativeSignalRoot = path.join(process.env.PUBLIC ?? 'C:\\Users\\Public', 'Documents', 'PapersNativeBridgeReceipts');
   const nativePickerSignal = path.join(nativeSignalRoot, 'picker-activate.signal');
   const nativePickerAck = path.join(nativeSignalRoot, 'picker-ack.signal');

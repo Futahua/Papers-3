@@ -385,7 +385,7 @@ export function createSlopTopPickerSession(
       if (code !== 'ENOENT' && active && token === expectedToken) {
         const detail = caught instanceof Error ? caught.message : String(caught);
         console.error('[sloptop-picker] result consumption failed', caught);
-        finish({ outcome: 'failed', error: `SlopTop picker commit failed: ${detail}` });
+        finish({ outcome: 'failed', error: `Native picker commit failed: ${detail}` });
       }
     } finally {
       resultInFlight = false;
@@ -434,13 +434,13 @@ export function createSlopTopPickerSession(
         pollTimer = setInterval(() => { void consumeResult(); }, resultPollMs);
         if (!(await awaitAck(beginToken))) {
           notePickerOutcome('picker-fail', 'the picker never acknowledged the activation');
-          finish({ outcome: 'failed', error: 'SlopTop did not acknowledge the picker activation.' });
-          return { outcome: 'failed', error: 'SlopTop did not acknowledge the picker activation.' };
+          finish({ outcome: 'failed', error: 'The native window service did not acknowledge the picker activation.' });
+          return { outcome: 'failed', error: 'The native window service did not acknowledge the picker activation.' };
         }
         return { outcome: 'started' };
       } catch {
-        finish({ outcome: 'failed', error: 'SlopTop picker activation failed.' });
-        return { outcome: 'failed', error: 'SlopTop picker activation failed.' };
+        finish({ outcome: 'failed', error: 'Native picker activation failed.' });
+        return { outcome: 'failed', error: 'Native picker activation failed.' };
       }
     },
     // Pointer staging and Enter commit are owned entirely by AHK. These

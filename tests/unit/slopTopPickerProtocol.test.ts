@@ -223,14 +223,14 @@ describe('SlopTop local picker protocol', () => {
     expect(test.cancelledToken()).toBe(activation.token);
   });
 
-  it('fails closed when AHK does not acknowledge activation', async () => {
+  it('fails closed when the native service does not acknowledge activation', async () => {
     const test = harness();
     test.transport.activate = (next) => { test.setAck({ version: 3, token: `${next.token}-wrong`, active: true }); };
     const session = createSlopTopPickerSession(test.service as never, test.transport, { ackTimeoutMs: 15, resultPollMs: 2 });
     let delivered: unknown = null;
     await expect(session.begin({ memberDescriptors: [], onResult: (next) => { delivered = next; } }))
-      .resolves.toEqual({ outcome: 'failed', error: 'SlopTop did not acknowledge the picker activation.' });
-    expect(delivered).toEqual({ outcome: 'failed', error: 'SlopTop did not acknowledge the picker activation.' });
+      .resolves.toEqual({ outcome: 'failed', error: 'The native window service did not acknowledge the picker activation.' });
+    expect(delivered).toEqual({ outcome: 'failed', error: 'The native window service did not acknowledge the picker activation.' });
     expect(session.active).toBe(false);
   });
 });

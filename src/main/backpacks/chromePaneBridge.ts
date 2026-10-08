@@ -6,7 +6,7 @@ import { createInterface } from 'node:readline';
 import { resolveWindowsCscPath } from '../windows/foregroundBridge';
 // Native peers use the caller's host and layout coordinates, not a preview session.
 interface LayoutRect { x: number; y: number; width: number; height: number; rightInset?: number; bottomInset?: number }
-interface LayoutHostContext { ownerKey: string; parentHwnd: string; surfaceBounds: LayoutRect }
+interface LayoutHostContext { paneGroup?: string; ownerKey: string; parentHwnd: string; surfaceBounds: LayoutRect }
 
 type Reply = { ok: boolean; error?: string; reused?: boolean; title?: string };
 interface Live {
@@ -71,12 +71,13 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
     void send(live, 'visible', { visible: ownerVisibility.get(owner) !== false && paneVisibility.get(owner) !== false });
   };
   const windowKey = (owner: string): string => owner.slice(0, owner.indexOf(':'));
+  const groupKey = (context: LayoutHostContext): string => context.paneGroup ? windowKey(context.ownerKey) + ':backpack:' + context.paneGroup : windowKey(context.ownerKey);
   const claim = (owner: string): Live | undefined => {
     if (ownerVisibility.get(owner) === false) return undefined;
     const existing = owners.get(owner); if (existing) return existing;
     const layout = viewLayouts.get(owner); if (!layout) return undefined;
     for (const [previous, live] of owners) {
-      if (windowKey(previous) !== windowKey(owner)) continue;
+      if (groupKey(live.context) !== groupKey(layout.context)) continue;
       owners.delete(previous); owners.set(owner, live);
       live.context = layout.context; live.rect = layout.rect;
       void rect(live); void send(live, 'tabs');
@@ -96,23 +97,23 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
         if (!live) {
           // A host has one Chrome connection, shared by its logical views.
           for (const [previousOwner, candidate] of owners) {
-            if (candidate.context.parentHwnd !== context.parentHwnd) continue;
+            if (candidate.context.parentHwnd !== context.parentHwnd || groupKey(candidate.context) !== groupKey(context)) continue;
             owners.delete(previousOwner); owners.set(context.ownerKey, candidate);
             live = candidate; break;
           }
         }
         if (!live) {
           ensureBinary();
-          const surface = 'window:' + context.ownerKey.slice(0, context.ownerKey.indexOf(':'));
+          const surface = 'window:' + groupKey(context);
           const linkState = path.join(input.cacheDirectory, 'chrome-link-tabs-' + createHash('sha256').update(surface).digest('hex').slice(0, 16) + '.json');
-          if (!fs.existsSync(linkState)) {
+          if (!fs.existsSync(linkState) && !context.paneGroup) {
             const inherited: Record<string, unknown> = {};
             const legacy = fs.readdirSync(input.cacheDirectory).filter(name => /^chrome-link-tabs-[a-f0-9]+\.json$/.test(name))
               .map(name => path.join(input.cacheDirectory, name)).sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs);
             for (const file of legacy) { try { Object.assign(inherited, JSON.parse(fs.readFileSync(file, 'utf8'))); } catch {} }
             fs.writeFileSync(linkState, JSON.stringify(inherited));
           }
-          const child = spawn(executable, [chrome, context.parentHwnd, String(process.pid), linkState], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+          const child = spawn(executable, [chrome, context.parentHwnd, String(process.pid), linkState, ...(context.paneGroup ? ['isolated'] : [])], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
           live = { child, context, rect: localRect, pending: new Map() }; owners.set(context.ownerKey, live);
           const current = live;
           createInterface({ input: child.stdout }).on('line', line => {
@@ -164,7 +165,7 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
     setOwnerVisible(owner, visible) {
       ownerVisibility.set(owner, visible);
       if (visible) {
-        for (const previous of ownerVisibility.keys()) if (previous !== owner && windowKey(previous) === windowKey(owner)) ownerVisibility.set(previous, false);
+        for (const previous of ownerVisibility.keys()) if (previous !== owner && windowKey(previous) === windowKey(owner)) { ownerVisibility.set(previous, false); visibility(previous); }
         const live = claim(owner);
         if (!live) { const layout = viewLayouts.get(owner); if (layout) void this.open(layout.context, 'workspace:attach', '', layout.rect); }
         else { visibility(owner); void send(live, 'tabs'); }
@@ -172,7 +173,7 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
     },
     setOwnerSurfaceBounds(owner, bounds) { const layout = viewLayouts.get(owner); if (layout) layout.context = { ...layout.context, surfaceBounds: bounds }; const live = owners.get(owner); if (live) { live.context = { ...live.context, surfaceBounds: bounds }; void rect(live); } },
     closeOwner(owner) { viewLayouts.delete(owner); const live = owners.get(owner);
-      if (live && [...viewLayouts.keys()].some(other => windowKey(other) === windowKey(owner))) {
+      if (live && [...viewLayouts.values()].some(other => groupKey(other.context) === groupKey(live.context))) {
         ownerVisibility.set(owner, false); paneVisibility.delete(owner); void send(live, 'visible', { visible: false }); return;
       }
       owners.delete(owner); ownerVisibility.delete(owner); paneVisibility.delete(owner); if (live) { void send(live, 'release'); live.child.stdin.end(); } },

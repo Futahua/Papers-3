@@ -369,7 +369,7 @@ export function registerWindowCapabilityIpc({
         && typeof observation.windowClass === 'string'
         && restore && restore.width > 0 && restore.height > 0)) return false;
       return controlBroker!.register({
-        id, hwnd: observation.handle, pid: observation.processId,
+        id, groupKey: entry.layoutId, hwnd: observation.handle, pid: observation.processId,
         processStartTicks: observation.processStartTicks, windowClass: observation.windowClass,
         ownerHwnd: surface.ownerHwnd, hit: surface.hit, restore: restore,
       });

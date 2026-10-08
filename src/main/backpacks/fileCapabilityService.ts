@@ -1150,7 +1150,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'browser-lens-screen': {
             if (params.nativeChrome === true) {
               if (!context.nativePreviewHost || !deps.webBrowser?.captureLensScreenUrl) return { ok: false, message: 'Lens screen capture is unavailable.' };
-              return deps.webBrowser.captureLensScreenUrl();
+              return deps.webBrowser.captureLensScreenUrl(params.source === 'clipboard' ? 'clipboard' : 'screen');
             }
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
             return await deps.webBrowser.captureLensRegion(
