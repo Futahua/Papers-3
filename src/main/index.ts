@@ -2,7 +2,7 @@
  * Papers — Electron main process bootstrap and composition root.
  */
 import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, dialog, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell, webContents, type WebContents } from 'electron';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
 import { BackpackRegistry } from './backpacks/backpackRegistry';
@@ -721,6 +721,7 @@ async function bootstrap(): Promise<void> {
   await capabilityRuntimes.initialize();
   app.once('will-quit', () => { void capabilityRuntimes.stopRecording(); });
   const fileCapability = createFileCapabilityService({
+    trashPath: target => shell.trashItem(target),
     runtimeControl: capabilityRuntimes,
     cacheDirectory: fileCapabilityCacheDirectory,
     everythingSearch,
@@ -981,10 +982,13 @@ async function bootstrap(): Promise<void> {
       });
     },
     onClose: async (instance: Parameters<typeof preparePapersWindow>[0]) => {
+      traceQuit('window:' + instance.window.id + ':flush:start');
       closingPapersWindows.add(instance.window.id);
       await instance.projectSurfaces.hideAll();
+      traceQuit('window:' + instance.window.id + ':flush:done');
     },
     finalize: async (windowId: number) => {
+      traceQuit('window:' + windowId + ':finalize:start');
       await facade.waitForWorkspaceMutation(windowId);
       try {
         await finalizePapersWindow(windowId, {
@@ -1001,6 +1005,8 @@ async function bootstrap(): Promise<void> {
             papersWindows.remove(id);
             if (papersWindows.windowIds.length === 0) {
               void commandSurfaceOverlay?.destroy().catch(() => undefined);
+              // Hidden auxiliary windows must not keep a hostless Papers alive.
+              app.quit();
             }
           },
         });
@@ -3104,6 +3110,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // Best-effort owned shutdown before app exit; the helper factory stop
   // owns stdin close, termination escalation and exactly-once terminal
   // reporting (Assignment 015).
+  const traceQuit = (stage: string): void => {
+    try { mkdirSync(path.join(baseDir, 'diagnostics'), { recursive: true }); appendFileSync(path.join(baseDir, 'diagnostics', 'shutdown.ndjson'), JSON.stringify({ at: new Date().toISOString(), pid: process.pid, stage }) + '\n'); } catch { /* diagnostics cannot block shutdown */ }
+  };
+  const quitStage = async (name: string, work: () => Promise<unknown> | unknown): Promise<void> => {
+    traceQuit(name + ':start');
+    try { await work(); traceQuit(name + ':done'); } catch (error) { traceQuit(name + ':failed:' + String(error)); }
+  };
   let capabilityQuitComplete = false;
   let capabilityQuitPromise: Promise<void> | null = null;
   app.on('before-quit', (event) => {
@@ -3130,16 +3143,17 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // overlap teardown of the services a newly created window depends on, so
       // the developer command plane is fully quiet before global shutdown
       // begins.
-      capabilityQuitPromise = (papersControlServer?.close().catch(() => undefined) ?? Promise.resolve())
+      capabilityQuitPromise = quitStage('control', () => papersControlServer?.close())
         .then(() => Promise.all([
           workspaceTopologyStore.flush().catch((error) => console.error('[workspace-topology] shutdown flush failed', error)),
           workspaceLayoutStore.flush().catch((error) => console.error('[workspace-layout] shutdown flush failed', error)),
-          detachSession!.closeAll().catch(() => undefined),
-          widgetSession!.closeAll().catch(() => undefined),
-          windowCapabilityService.stop().catch(() => undefined),
-          Promise.resolve(windowControlBroker.stop()),
+          quitStage('detached-windows', () => detachSession!.closeAll()),
+          quitStage('widget', () => widgetSession!.closeAll()),
+          quitStage('window-capabilities', () => windowCapabilityService.stop()),
+          quitStage('window-control', () => windowControlBroker.stop()),
         ]))
         .then(() => {
+        traceQuit('complete');
         capabilityQuitComplete = true;
         app.quit();
       });
@@ -3692,3 +3706,5 @@ app.on('window-all-closed', () => {
 app.on('web-contents-created', (_event, contents) => {
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
 });
+
+

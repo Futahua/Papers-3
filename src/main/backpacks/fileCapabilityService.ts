@@ -53,6 +53,7 @@ export interface FileCapabilityEntry {
   size: number | null; createdAt: number | null; modifiedAt: number | null; identity: string | null;
 }
 export interface FileCapabilityDeps {
+  trashPath?: (target: string) => Promise<void>;
   runtimeControl?: ReturnType<typeof createCapabilityRuntimeService>;
   everythingSearch: EverythingSearchBridge | null;
   previewResources: FilePreviewResourceRegistry;
@@ -777,9 +778,27 @@ async function operationViaOpus(
   }
 
   const targets = pathList(params.paths);
+  if (deps.trashPath) {
+    for (const target of targets) await deps.trashPath(target);
+    return { ok: true, provider: 'windows-recycle-bin', operation, recycle: true };
+  }
   if (!deps.dopusrtPath) return { ok: false, code: 'DOPUS_UNAVAILABLE', message: 'Directory Opus is unavailable.' };
   await runOpus(deps.dopusrtPath, ['Delete', ...targets, 'RECYCLE', 'QUIET']);
-  return { ok: true, provider: 'directory-opus', operation, recycle: true };
+  // dopusrt acknowledges dispatch, not completion of the queued file operation.
+  const deadline = Date.now() + 15_000;
+  let remaining = targets;
+  do {
+    remaining = (await Promise.all(remaining.map(async target => {
+      try { await fs.lstat(target); return target; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        throw error;
+      }
+    }))).filter((target): target is string => target !== null);
+    if (!remaining.length) return { ok: true, provider: 'directory-opus', operation, recycle: true };
+    await new Promise(resolve => setTimeout(resolve, 150));
+  } while (Date.now() < deadline);
+  return { ok: false, code: 'DELETE_INCOMPLETE', message: 'The file is still present. Check Directory Opus for a pending confirmation or file operation.' };
 }
 
 export function createFileCapabilityService(deps: FileCapabilityDeps): {

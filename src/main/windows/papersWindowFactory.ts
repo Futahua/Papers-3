@@ -87,6 +87,10 @@ export function createPapersWindow(options: PapersWindowFactoryOptions): PapersW
   };
   fit();
   window.on('resize', fit);
+  window.once('closed', () => {
+    // BaseWindow does not own the lifetime of its WebContentsView.
+    if (!hostView.webContents.isDestroyed()) hostView.webContents.close();
+  });
 
   hostView.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   hostView.webContents.on('will-navigate', (event, url) => {
@@ -104,3 +108,4 @@ export function createPapersWindow(options: PapersWindowFactoryOptions): PapersW
     },
   };
 }
+

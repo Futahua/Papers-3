@@ -43,10 +43,12 @@ function service(
   powerPointPreview: PowerPointPreviewBridge | null = null,
   mlightCadPreview: MlightCadPreviewBridge | null = null,
   chromePane: ChromePaneBridge | null = null,
+  trashPath?: (target: string) => Promise<void>,
 ) {
   const previewResources = createFilePreviewResourceRegistry();
   const inner = createFileCapabilityService({
     everythingSearch,
+    trashPath,
     previewResources,
     pdfPreview,
     revitPreview,
@@ -72,6 +74,25 @@ function service(
 }
 
 describe('file capability service', () => {
+  it('waits for Windows recycle completion and reports a rejected deletion', async () => {
+    const target = path.join(root, 'keep-until-recycled.txt');
+    await fs.writeFile(target, 'creator data');
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
+    const trash = vi.fn(async () => { await gate; });
+    const instance = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,trash);
+    let completed = false;
+    const pending = instance.call({operation:'delete',params:{paths:[target]}}).then(result => { completed=true;return result; });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    expect(trash).toHaveBeenCalledWith(target);
+    finish();
+    expect(await pending).toMatchObject({ok:true,provider:'windows-recycle-bin',recycle:true});
+    const rejected = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,async()=>{throw new Error('File is in use');});
+    expect(await rejected.call({operation:'delete',params:{paths:[target]}})).toMatchObject({ok:false,message:'File is in use'});
+    expect(await fs.readFile(target,'utf8')).toBe('creator data');
+  });
+
   it('routes Chrome through the calling pane and refuses malformed geometry before touching Chrome', async () => {
     const host = { ownerKey: '1:surface-chrome', parentHwnd: '456', surfaceBounds: { x: 0, y: 0, width: 1000, height: 800 } };
     const chrome: ChromePaneBridge = {
