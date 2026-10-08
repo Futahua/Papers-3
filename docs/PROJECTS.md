@@ -1,5 +1,9 @@
 # Projects created for Papers use
 
+> Reference / evidence under [AGENTS.md](../AGENTS.md), the sole governing document.
+> Dated instructions and implementation limits do not override current creator direction.
+> The current cleanup is docs/comments only; this file does not activate a code roadmap.
+
 This is the directory of independently maintained projects that the creator has made for
 use with Papers.
 
@@ -19,9 +23,6 @@ installation on another machine, or establish a common architecture for future p
   to this project, not to the Papers release.
 - **Machine boundary:** the remote is versioned recovery. It does not make the Backpack
   shared, install it, bind it to Papers, or update another machine.
-
-Agents changing this project must read its own `AGENTS.md` and `README.md`, then read the
-current Papers repository's `AGENTS.md` and `HERMES.md` completely before acting.
 
 ## Adding another project
 

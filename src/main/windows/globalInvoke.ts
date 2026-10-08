@@ -32,7 +32,7 @@
 /** The chords the creator asked for, by name. Overridable through
  * `GlobalInvokeDependencies.accelerators`. */
 export const DEFAULT_INVOKE_ACCELERATORS: GlobalInvokeAccelerators = {
-  invoke: 'Alt+Shift+A',
+  invoke: 'Alt+S',
   bringToFront: 'Alt+A',
 };
 

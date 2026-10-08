@@ -1,7 +1,8 @@
 # Papers — product definition
 
-This is the authoritative plain-language definition of Papers. [`HERMES.md`](../HERMES.md)
-is the mandatory agent contract for continuing from creator feedback.
+Product reference under [AGENTS.md](../AGENTS.md), the single governing document.
+This file describes vocabulary and accepted behavior; it does not override creator
+corrections or define an implementation ceiling.
 
 ## Accepted product truth
 
@@ -12,22 +13,8 @@ turn an implementation detail into product ontology.
 
 ### Basic
 
-Basic is the permanent Papers control. It contains Backpacks, Tools and Settings and
+Basic is the permanent Papers control. It contains Backpacks and Settings and
 remains available regardless of what a Backpack later displays.
-
-### Hermes
-
-Hermes is one global machine-wide AI interface. It is not owned by a Backpack and is not
-automatically scoped when a Backpack is selected. Papers reuses the existing Hermes
-interface rather than rebuilding chat, attachments, history, settings or tools.
-
-The ordinary flow is prompt, optional file or image attachments, and reply. The creator
-may explicitly name a folder or path when it is useful. Selecting or entering a Backpack
-must not silently change Hermes's conversation, working directory or context.
-
-The former Apers/Hermes integration is retired. References to Apers as a Hermes-backed
-remote client belong to historical implementation context and do not define current Papers
-or mobile product behavior.
 
 ### Mobile Backpack access
 
@@ -82,12 +69,12 @@ applies to its experience, implementation and data, not only its paths. Its ordi
 development must not update another machine or require a Papers release. This does not
 define a general Backpack scope system.
 
-### Tools
+### Pencilcase
 
-Tools is a permanent destination within Basic. Only the creator decides what is a Tool,
-either spontaneously or deliberately. A Backpack request, implementation detail, program,
-shortcut or script does not become a Tool unless the creator makes that decision. The
-Tool contract remains open.
+The creator defines tools in the independent Pencilcase Backpack. It lists the
+installed editors, previewers and other used capabilities, controls supported
+startup loading/warm retention and displays recordable measured usage. Papers
+owns execution machinery and observations, without a competing Tools destination.
 
 ### Existing products and visual character
 
@@ -98,7 +85,7 @@ Papers 1's custom agent workbench.
 
 ## Current behavior
 
-- Basic remains reachable and contains Backpacks, Tools and Settings.
+- Basic remains reachable and contains Backpacks and Settings.
 - Backpack creation asks only for a name and creates no folder, cover, canvas, Tool,
   conversation or invented contents.
 - Entering an empty Backpack truthfully displays
@@ -114,9 +101,7 @@ Papers 1's custom agent workbench.
 - Archived Backpacks can be deleted only after explicit confirmation naming that exact
   Backpack. External files, applications, scripts and folders remain untouched; Papers
   retains its internal record for recovery.
-- Hermes remains one existing global product with its own interface and capabilities.
-  Closing Papers leaves Hermes and its current session running independently.
-- The Tools destination is present and may honestly contain no configured Tools.
+- Tool management is provided by the Pencilcase Backpack.
 - Production contains no Programs, Agent Runs, invocation-validation workflow or seeded
   demonstration Backpack.
 
@@ -126,9 +111,14 @@ Backpack shape.
 ## Deliberately open
 
 The contents and behavior of each real Backpack, what unique and shared mean, the exact
-Tool contract, the Data Source contract, PowerToys integration and the behavior of
+future additions to Pencilcase, the Data Source contract, PowerToys integration and the behavior of
 entering a non-empty Backpack will be decided through real creator use.
 
 No plugin format, storage location, synchronization policy, portability rule, local
 binding, scope selector, editor, framework or shared Backpack schema is implied by those
 open questions. An agent must not silently settle them through implementation.
+
+Pencilcase also owns the ChatGPT local coder view, opened from its dedicated tool
+entry as a separate page. The Delegate Wave Backpack is retired and archived. Its
+existing companion service remains the operational owner; Papers transfers the
+single trusted relay binding to Pencilcase. No second agent manager is introduced.

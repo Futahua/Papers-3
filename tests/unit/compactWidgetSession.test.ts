@@ -58,23 +58,52 @@ function harness(cursor = { x: 537, y: 284 }) {
     on: vi.fn((channel: string, handler: (event: { sender: { id: number } }, payload?: unknown) => void) => listeners.set(channel, handler)),
     removeListener: vi.fn(),
   };
+  const resolveEntryUrl = vi.fn(() => 'papers-backpack://bp-a/_papers-open/a/public/index.html');
   const session = createCompactWidgetSession({
     onWidgetHidden: senderId => windows.find(window => window.webContents.id === senderId)?.webContents.send('test:peek-end'),
     registry,
     screen,
     ipcMain,
     preloadPath: 'backpack.cjs',
-    resolveEntryUrl: () => 'papers-backpack://bp-a/_papers-open/a/public/index.html',
+    resolveEntryUrl,
     createWindow: (options) => {
       const window = new FakeWindow();
       windows.push(window);
       return window as unknown as CompactWidgetWindow;
     },
   });
-  return { registry, session, windows, listeners, screenListeners };
+  return { registry, session, windows, listeners, screenListeners, resolveEntryUrl };
 }
 
 describe('compact widget session', () => {
+  it('resolves the widget document from the actual workspace sender', async () => {
+    const h = harness();
+    h.resolveEntryUrl.mockReturnValue('papers-backpack://bp-a/_papers-open/a/public/index.html?scope-root=folder-a');
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, workspaceSenderId: 27 });
+    expect(h.resolveEntryUrl).toHaveBeenCalledWith('bp-a', 1, 27);
+    expect(new URL(h.windows[0]!.loadedUrls[0]!).searchParams.get('scope-root')).toBe('folder-a');
+    await h.session.closeAll();
+  });
+  it('deleting a widget during a chord does not strand the replacement behind a stale gesture or close event', async () => {
+    const h = harness();
+    const request = { projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 };
+    await h.session.open(request);
+    const original = h.windows[0]!;
+    h.session.beginAltQGesture(original.webContents.id, 'peek');
+    await h.session.close('bp-a', 'layout-a', 1);
+    await h.session.open(request);
+    const replacement = h.windows[1]!;
+    for (const closed of original.closedHandlers) closed();
+    expect(replacement.destroyed).toBe(false);
+    await expect(h.session.beginAltQGesture(null, 'peek')).resolves.toBe(true);
+    expect(replacement.focusable).toBe(true);
+    h.session.endAltQGesture();
+    h.session.beginAltQGesture(replacement.webContents.id, 'legacy');
+    h.session.endAltQGesture();
+    await expect(h.session.beginAltQGesture(null, 'legacy')).resolves.toBe(true);
+    expect(h.registry.surface(replacement.webContents.id)?.kind).toBe('compact-widget');
+    h.session.endAltQGesture();
+  });
   it('accepts Alt+Q mouse activation on every summon and keeps legacy inactive', async () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });

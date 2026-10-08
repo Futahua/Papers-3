@@ -46,7 +46,7 @@ function taskCard(task) {
   },
     el('h4', { text: clampText(task.title, 60) }),
     el('div', { class: 'row small' },
-      el('span', { class: 'badge plain', text: task.worker || 'hermes' }),
+      el('span', { class: 'badge plain', text: task.worker || 'agent' }),
       runChip(task),
       task.status === 'rejected' ? el('span', { class: 'badge warn', text: 'rejected' }) : null,
       task.status === 'accepted' ? el('span', { class: 'badge', text: 'accepted' }) : null,
@@ -170,7 +170,7 @@ function detailPane(task) {
       disabled: !editable,
       onchange: (ev) => { task.worker = ev.target.value; task.updatedAt = nowIso(); mutated(); },
     },
-      ['hermes', 'codex', 'opencode'].map((w) => el('option', { value: w, selected: (task.worker || 'hermes') === w }, w)))));
+      ['agent', 'codex', 'opencode'].map((w) => el('option', { value: w, selected: (task.worker || 'agent') === w }, w)))));
 
   if (task.worktree) {
     box.append(el('div', { class: 'field' }, el('label', { text: 'Worktree' }),
@@ -241,7 +241,7 @@ function newTaskForm() {
   const title = el('input', { type: 'text', placeholder: 'Task title', style: 'width:100%' });
   const description = el('textarea', { rows: 3, placeholder: 'Description', style: 'width:100%' });
   const acceptance = el('textarea', { rows: 2, placeholder: 'Acceptance criteria', style: 'width:100%' });
-  const worker = el('select', {}, ['hermes', 'codex', 'opencode'].map((w) => el('option', { value: w }, w)));
+  const worker = el('select', {}, ['agent', 'codex', 'opencode'].map((w) => el('option', { value: w }, w)));
   return el('section', { class: 'block' },
     el('h3', { text: 'New task' }),
     el('div', { class: 'stack', style: 'max-width:560px' },

@@ -6,7 +6,6 @@ import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derived
 
 const CAD_EXTENSIONS = new Set(['.dwg', '.dxf']);
 const DEFAULT_ROOT = 'D:\\Programs\\MLightCADPreview';
-const SHARED_PLAYWRIGHT_ROOT = 'D:\\Letters\\MatTroiSeConMoc\\HermesAI\\ms-playwright';
 
 export interface MlightCadPreviewBridge {
   supports(extension: string): boolean;
@@ -68,7 +67,6 @@ function findPlaywrightRoot(installationRoot: string, explicit?: string): string
     explicit,
     process.env['PLAYWRIGHT_BROWSERS_PATH'],
     path.join(installationRoot, 'ms-playwright'),
-    SHARED_PLAYWRIGHT_ROOT,
   ].filter((item): item is string => Boolean(item));
   for (const candidate of candidates) {
     if (!isDirectory(candidate)) continue;

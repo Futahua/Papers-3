@@ -117,6 +117,7 @@ export interface WebBrowserHostBridge {
   hideDownloadsBubble(ownerKey: string, immediate?: boolean): void;
   getAdblockState(): BrowserAdblockState;
   setAdblockEnabled(enabled: boolean): Promise<BrowserAdblockState>;
+  captureLensScreenUrl?(): Promise<{ ok: boolean; url?: string; cancelled?: boolean; error?: string }>;
   captureLensRegion(ownerKey: string, sourceTabId: string, targetTabId: string): Promise<BrowserLensResult>;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
@@ -1468,6 +1469,18 @@ export function createWebBrowserHostBridge(input: {
       return adblockState();
     },
 
+    async captureLensScreenUrl() {
+      let upload: BrowserWindow | null = null;
+      try {
+        const selection = await pickLensRegion();
+        if (!selection) return { ok: false, cancelled: true };
+        const crop = cropLensSelection(selection.capture, selection.rect);
+        upload = new BrowserWindow({ show: false, webPreferences: { partition: BROWSER_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false } });
+        const url = await submitLensCrop(upload.webContents, crop);
+        return { ok: true, url };
+      } catch (error) { return { ok: false, error: boundedError(error) }; }
+      finally { if (upload && !upload.isDestroyed()) upload.destroy(); }
+    },
     async captureLensRegion(ownerKey, sourceTabId, targetTabId) {
       const sourceTab = tabs.get(tabKey(ownerKey, sourceTabId));
       if (!sourceTab || sourceTab.ownerKey !== ownerKey) return { ok: false, error: 'Browser tab is unavailable.' };

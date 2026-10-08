@@ -1,26 +1,4 @@
-/**
- * Papers updating itself.
- *
- * Papers runs on two machines the creator owns. Updating used to mean building
- * on one machine and hand-copying a folder to the other, and nothing in the
- * product knew a newer version existed. Now a packaged Papers asks GitHub on
- * launch, downloads a newer release in the background, and installs it when the
- * creator says so.
- *
- * Deliberate choices:
- *
- *   - **Never install without being asked.** `autoInstallOnAppQuit` is off, so
- *     closing Papers never silently swaps the application underneath a running
- *     Hermes. The creator decides when the restart happens.
- *   - **Never interrupt.** A failed or unavailable check is not an error the
- *     creator needs to see; Papers simply stays on the version it has. Only a
- *     genuine, downloaded, ready-to-install update surfaces in the interface.
- *   - **Packaged builds only.** A development run has no version to compare and
- *     no installer to hand off to, so the whole mechanism stays asleep.
- *
- * The repository is public, so the update feed is read anonymously and no token
- * is shipped inside the application.
- */
+
 import { app, type WebContents } from 'electron';
 import type { AppUpdater, UpdateInfo } from 'electron-updater';
 
@@ -89,7 +67,6 @@ export class PapersUpdater {
       // Imported lazily so a development run never loads the updater at all.
       const autoUpdater = await loadAutoUpdater();
 
-      // The creator chooses when to restart; Papers manages a live Hermes and
       // must not be replaced underneath it without warning.
       autoUpdater.autoDownload = true;
       autoUpdater.autoInstallOnAppQuit = false;

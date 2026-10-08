@@ -1,5 +1,9 @@
 # Papers — current architecture boundary
 
+> Reference / evidence under [AGENTS.md](../AGENTS.md), the sole governing document.
+> Dated instructions and implementation limits do not override current creator direction.
+> The current cleanup is docs/comments only; this file does not activate a code roadmap.
+
 ## Compact widget renderer resumption — 2026-10-06
 
 The creator reported a frozen/throttled widget on immediate Alt+Q resummon after
@@ -61,40 +65,7 @@ window after the drop. This establishes the installed primary workflow;
 Shift-release, cancellation, and repeated-session handling also have automated
 coverage without injected desktop input.
 
-This describes the current implementation, not the product ontology. Product meaning
-comes from [`PRODUCT.md`](PRODUCT.md), and agent behavior is governed by
-[`HERMES.md`](../HERMES.md).
-
 The production shell has four concepts:
-
-```text
-Papers  (slim theme-matched title bar; native window controls only)
-├── Basic
-│   ├── Backpacks
-│   ├── Tools
-│   └── Settings
-├── Global Hermes — the real Hermes Desktop, docked or detached (two SVG toggles)
-├── Backpack names and future contents
-└── Tools destination (meaning and contract still open)
-```
-
-## Global Hermes boundary
-
-Papers runs exactly one Hermes backend (`hermes dashboard` on 127.0.0.1:9119 with a
-Papers-generated session token) and shows the **real Hermes Desktop** against it in two
-placements — docked as a sidebar or detached as a window — controlled by two SVG toggles.
-There is no separate embedded Dashboard `/chat`. The Papers↔Hermes docking channel is a
-loopback seam authenticated with a per-launch shared token (see D-011…D-015 and
-`docs/evidence/hermes-batch/`). Backpack interaction does not provide a working directory,
-start a conversation, reset a session or limit Hermes context. Hermes owns its own chat,
-attachments, models, settings, history and tools.
-
-Papers owns the authenticated docking connection, not Hermes's lifetime. On ordinary
-Papers exit it closes that temporary connection and releases its process handles without
-terminating Hermes Desktop or the Hermes backend. Hermes therefore remains usable with its
-current session after Papers closes. Papers retains the authenticated loopback coordinates
-in its local data and, after reopening, rebinds the same report endpoint and probes the
-surviving Desktop before it is ever allowed to launch another instance.
 
 ## Backpack boundary
 
@@ -159,10 +130,10 @@ portability or the future architecture of any other Backpack.
 
 ## Tool boundary
 
-Basic contains a permanent Tools destination. Only the creator decides what is a Tool.
-Its discovery, persistence, configuration, scope and lifecycle are not yet decided. The
-Tools screen may therefore be honest and empty, but it must not be replaced with
-speculative architecture.
+The independent Pencilcase Backpack owns the creator's tool definitions and management
+UI. Papers exposes actual backend availability, supported execution controls and measured
+usage through capabilityRuntimeService and the existing file-capability seam. Runtime
+policies use the existing editor owner; the host has no competing Tools destination.
 
 ## Fixture boundary
 
@@ -184,3 +155,8 @@ Durable creator-authored work must be preserved, but preservation does not itsel
 whether it synchronizes. Caches, locks, credentials, browser profiles, live database
 journals and installations default toward machine-local state. Ambiguous data is
 preserved and documented until real use makes the decision auditable.
+
+Pencilcase also owns the ChatGPT local coder view, opened from its dedicated tool
+entry as a separate page. The Delegate Wave Backpack is retired and archived. Its
+existing companion service remains the operational owner; Papers transfers the
+single trusted relay binding to Pencilcase. No second agent manager is introduced.

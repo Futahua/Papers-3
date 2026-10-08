@@ -941,7 +941,6 @@ export class BackpackProjectService {
     expectedRevision?: BackpackProjectStateRevision,
     scopeRootId?: string,
   ): Promise<SaveStateResult> {
-    if (rawState.length > 5_000_000) throw new Error('Backpack project state is too large.');
     const manifest = await this.manifest(backpackId);
     if (!manifest) throw new Error('Backpack project is not bound on this machine.');
     let parsed: BackpackProjectState;

@@ -23,7 +23,7 @@ export interface BackpackSummary {
   createdAt: string;
   lastEnteredAt: string | null;
   archived: boolean;
-  /** Optional folder passed to the existing Hermes Desktop product on launch. */
+
   workspacePath: string | null;
 }
 
@@ -193,8 +193,7 @@ export interface AgentInvocation {
     resourceId?: string;
     /** Host-resolved path recorded after validation; never accepted from program code. */
     cwd?: string;
-    hermesProjectId?: string;
-    preferredWorker?: 'hermes' | 'codex' | 'opencode';
+    preferredWorker?: 'codex' | 'opencode';
   };
 }
 
@@ -213,11 +212,11 @@ export type AgentRunState =
 
 export interface AgentRunReference {
   runId: string;
-  /** Authoritative Hermes session id once known. */
+
   sessionId: string | null;
 }
 
-/** A public Hermes event, projected without interpretation. */
+
 export interface AgentRunEvent {
   runId: string;
   sequence: number;
@@ -259,7 +258,7 @@ export interface AgentRunSnapshot {
 }
 
 export interface RunFailure {
-  component: 'hermes' | 'papers' | 'worker' | 'invocation';
+  component: 'papers' | 'worker' | 'invocation';
   code: string;
   message: string;
   retryUseful: boolean;
@@ -306,13 +305,3 @@ export interface HostErrorReport {
   inspect: string;
   recover: string;
 }
-
-// ---------------------------------------------------------------------------
-// Hermes health
-// ---------------------------------------------------------------------------
-
-export type HermesHealth =
-  | { state: 'unavailable'; detail: string }
-  | { state: 'starting' }
-  | { state: 'connected'; protocolVersion: number; agentName: string }
-  | { state: 'disconnected'; detail: string };

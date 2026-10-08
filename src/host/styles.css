@@ -879,44 +879,7 @@ input:focus-visible {
 
 /* --------------------------------------------------------------- tools pane */
 
-.tools-empty {
-  display: grid;
-  grid-template-columns: 48px minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--card-surface);
-}
 
-.tools-empty .mark {
-  display: grid;
-  width: 48px;
-  height: 48px;
-  border-radius: 13px;
-  background: var(--paper-deep);
-  place-items: center;
-  color: var(--muted);
-}
-
-.tools-empty h3 {
-  margin: 3px 0 0;
-  font-family: var(--serif);
-  font-size: 20px;
-  font-weight: 400;
-}
-
-.tools-empty p {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.6;
-}
-
-.tools-empty p + p {
-  margin-top: 8px;
-}
 
 /* ------------------------------------------------------------ settings pane */
 
@@ -1057,83 +1020,6 @@ input:focus-visible {
   justify-content: center;
 }
 
-/* ------------------------------------------------ existing Hermes product */
-
-.hermes-dock {
-  position: fixed;
-  inset: 68px 0 0 auto;
-  width: min(560px, 48vw);
-  min-width: 420px;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  background: var(--raised);
-  border-left: 1px solid var(--line-strong);
-  box-shadow: -18px 0 48px var(--dock-shadow);
-}
-
-.hermes-dock header {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  height: 46px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--line);
-  background: var(--header-surface);
-  backdrop-filter: blur(12px);
-}
-
-.hermes-dock header .spacer {
-  flex: 1;
-}
-
-.hermes-dock header strong {
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.hermes-mark {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--ink);
-  color: var(--on-ink);
-  place-items: center;
-  font-size: 13px;
-}
-
-.hermes-surface {
-  flex: 1;
-  position: relative;
-  min-height: 0;
-}
-
-.hermes-notice {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 11px;
-  padding: 28px;
-  color: var(--muted);
-  font-size: 12px;
-  text-align: center;
-}
-
-.hermes-notice.error {
-  color: var(--red);
-}
-
-.hermes-notice strong {
-  color: var(--ink);
-  font-family: var(--serif);
-  font-size: 17px;
-  font-weight: 400;
-}
-
 /* --------------------------------------------------------------- error bar */
 
 .error-banner {
@@ -1172,10 +1058,6 @@ input:focus-visible {
 /* --------------------------------------------------------------- responsive */
 
 @media (max-width: 760px) {
-  .hermes-dock {
-    width: 100%;
-    min-width: 0;
-  }
   .pane-inner {
     width: calc(100% - 36px);
   }

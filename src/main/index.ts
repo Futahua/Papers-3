@@ -1,7 +1,7 @@
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
-import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell, webContents, type WebContents } from 'electron';
+import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, dialog, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell, webContents, type WebContents } from 'electron';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -12,6 +12,7 @@ import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOf
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
 import { createHtmlPreviewHostBridge } from './backpacks/htmlPreviewHostBridge';
+import { createChromePaneBridge } from './backpacks/chromePaneBridge';
 import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
@@ -19,6 +20,8 @@ import { createCalibrePreviewBridge } from './backpacks/calibrePreviewBridge';
 import { createAutoCadPreviewBridge } from './backpacks/autoCadPreviewBridge';
 import { createMlightCadPreviewBridge } from './backpacks/mlightCadPreviewBridge';
 import { createPowerPointPreviewBridge } from './backpacks/powerPointPreviewBridge';
+import { createLibreOfficeEditorBridge, resolveLibreOfficeEditorSourcePath } from './backpacks/libreOfficeEditorBridge';
+import { createCapabilityRuntimeService } from './backpacks/capabilityRuntimeService';
 import { createWindowsPreviewHandlerBridge, resolveWindowsPreviewHostSourcePath } from './backpacks/windowsPreviewHandlerBridge';
 import { createLocalServiceBridge, loadLocalServiceDeclaration, type LocalServiceResponse } from './backpacks/localServiceBridge';
 import { BackpackProjectRuntime } from './backpacks/backpackProjectRuntime';
@@ -32,13 +35,8 @@ import { registerCoreExecutors } from './capabilities/coreExecutors';
 import { PermissionStore } from './capabilities/permissionStore';
 import { registerExternalExecutors } from './external/externalBridge';
 import { GitService } from './git/gitService';
-import { HermesAdapter } from './hermes/hermesAdapter';
-import { HermesSurface } from './hermes/hermesSurface';
-import { isHermesUpdateHelper, runHermesUpdateHelper } from './hermes/hermesUpdater';
-import { startPhoneConnector } from './hermes/phoneConnector';
 import { ResourceService } from './resources/resourceService';
 import { registerResourceExecutors } from './resources/resourceExecutors';
-import { AgentRunService } from './agents/runService';
 import { PapersHostFacade } from './hostFacade';
 import { PapersUpdater } from './papersUpdater';
 import { createPapersControlEventHub, startPapersControlServer, type PapersControlEventHub, type PapersControlServer } from './control/papersControlServer';
@@ -144,12 +142,8 @@ import {
   registerBackpackProjectSchemePrivileges,
 } from './security/backpackProjectScheme';
 
-const hermesUpdateHelperMode = isHermesUpdateHelper();
-
-if (!hermesUpdateHelperMode) {
-  registerProgramSchemePrivileges();
-  registerBackpackProjectSchemePrivileges();
-}
+registerProgramSchemePrivileges();
+registerBackpackProjectSchemePrivileges();
 
 app.setName('Papers');
 
@@ -171,48 +165,9 @@ if (process.env['PAPERS_TEST_USER_DATA']) {
 }
 
 // Papers is a single-instance application (except under isolated test homes).
-let ownsSingleInstanceLock = true;
+const ownsSingleInstanceLock = Boolean(process.env['PAPERS_TEST_USER_DATA']) || app.requestSingleInstanceLock();
+if (!ownsSingleInstanceLock) app.quit();
 let foregroundBridge: ReturnType<typeof createForegroundBridge> = null;
-if (
-  !hermesUpdateHelperMode &&
-  !process.env['PAPERS_TEST_USER_DATA']
-) {
-  ownsSingleInstanceLock = app.requestSingleInstanceLock();
-  if (!ownsSingleInstanceLock) {
-    // A Windows shortcut-key launch gives the NEW process the only useful
-    // opportunity to hand foreground permission to the already-running one.
-    // The primary process's second-instance event still verifies activation;
-    // this pre-lock attempt is the permission handoff, not a success claim.
-    if (process.platform === 'win32') {
-      try {
-        foregroundBridge = createForegroundBridge({
-          cacheDirectory: app.getPath('userData'),
-          sourcePath: resolveForegroundBridgeSourcePath({
-            appPath: app.getAppPath(),
-            resourcesPath: process.resourcesPath,
-            packaged: app.isPackaged,
-          }),
-        });
-      } catch {
-        foregroundBridge = null;
-      }
-    }
-    if (foregroundBridge) {
-      void foregroundBridge.activatePapersProcess(process.execPath)
-        .then((result) => {
-          if (!result.activated && !result.foregroundGranted) {
-            console.warn(`[papers] shortcut process could not activate the existing window: ${result.detail}`);
-          }
-        })
-        .catch((error: unknown) => {
-          console.warn('[papers] shortcut-process foreground handoff failed', error);
-        })
-        .finally(() => app.quit());
-    } else {
-      app.quit();
-    }
-  }
-}
 
 let mainWindow: BaseWindow | null = null;
 /** Phase 1A: which project each sender may act for. One registry for the
@@ -224,12 +179,7 @@ const projectSurfaceAuthority = createProjectSurfaceAuthorityBarrier();
  * these; a renderer dying ends a binding, not a surface.
  */
 const logicalSurfaces = createLogicalSurfaceRegistry();
-/**
- * Phase 1B: what each Papers window owns. Its native window, its host view and
- * its project surface collection is per-window; the Backpack registry, project service,
- * Delegate Wave, updater, capabilities and the single Hermes backend are not,
- * and stay application-level.
- */
+
 interface PapersWindowOwned {
   window: BaseWindow;
   hostView: WebContentsView;
@@ -527,12 +477,6 @@ app.on('second-instance', () => {
 
 /** Height of the slim custom title bar / native window-controls overlay. */
 const TITLE_BAR_HEIGHT = 40;
-/** Papers band the docked Hermes window sits below (the slim title bar). */
-const TOP_BAR_HEIGHT = TITLE_BAR_HEIGHT;
-/** Fraction of Papers width the docked Hermes sidebar occupies (clamped). */
-const DOCK_WIDTH_FRACTION = 0.4;
-const DOCK_MIN_WIDTH = 380;
-const DOCK_MAX_WIDTH = 620;
 
 interface PapersSettings {
   transparentWindow: boolean;
@@ -540,30 +484,6 @@ interface PapersSettings {
    * Absent until "Save current window size" is used. */
   windowBounds?: WindowBounds;
   [key: string]: unknown;
-}
-
-/**
- * The docked Hermes rectangle in Papers content coordinates: a right-hand strip
- * below the top bar. The renderer and main process must agree on this so the
- * host UI leaves room for the docked window and Papers realignment matches.
- */
-/**
- * The dock strip, in the coordinates of the window that owns Hermes.
- *
- * Both dimensions come from that window. Taking the width from the owner and
- * the height from the primary window would size Hermes against two different
- * windows at once, which is invisible while there is one of them and wrong the
- * moment there are two.
- */
-function dockBoundsFor(content: { width: number; height: number }): {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-} {
-  const width = Math.max(DOCK_MIN_WIDTH, Math.min(DOCK_MAX_WIDTH, Math.round(content.width * DOCK_WIDTH_FRACTION)));
-  const height = Math.max(400, Math.round(content.height - TOP_BAR_HEIGHT));
-  return { x: Math.max(0, content.width - width), y: TOP_BAR_HEIGHT, width, height };
 }
 
 function discoverDelegateWaveBackpackId(projectBindingsFile: string): string | undefined {
@@ -577,9 +497,9 @@ function discoverDelegateWaveBackpackId(projectBindingsFile: string): string | u
         const projectPackage = JSON.parse(readFileSync(path.join(binding.root, 'package.json'), 'utf8')) as {
           name?: unknown;
         };
-        if (projectPackage.name === 'delegate-wave-backpack') return backpackId;
+        if (projectPackage.name === 'pencilcase-backpack') return backpackId;
       } catch {
-        // A missing project package is simply not the Delegate Wave binding.
+        // A missing project package is not the Pencilcase coder binding.
       }
     }
   } catch {
@@ -589,14 +509,14 @@ function discoverDelegateWaveBackpackId(projectBindingsFile: string): string | u
 }
 
 async function bootstrap(): Promise<void> {
-  // Claim Alt+Shift+A before any restored project renderer can receive keyboard
+  // Claim Alt+S before any restored project renderer can receive keyboard
   // input. The first press may arrive before the command-surface window exists;
   // the gate holds it and opens the real overlay as soon as it is attached.
   const commandSurfaceGate = createDeferredCommandSurfaceOverlay();
   startupCommandSurfaceGate = commandSurfaceGate;
   let earlyShortcutRegistered = false;
   try {
-    earlyShortcutRegistered = globalShortcut.register('Alt+Shift+A', () => {
+    earlyShortcutRegistered = globalShortcut.register('Alt+S', () => {
       void commandSurfaceGate.overlay.open().then((opened) => {
         if (!opened.ok) {
           hostView?.webContents.send('host:event:host-error', {
@@ -605,12 +525,12 @@ async function bootstrap(): Promise<void> {
             known: opened.detail,
             intact: 'Nothing was changed, and no other application was affected. Papers did not come forward.',
             retryUseful: true,
-            inspect: 'Shortcuts: bring Papers forward is Alt+A; open the command surface is Alt+Shift+A.',
+            inspect: 'Shortcuts: bring Papers forward is Alt+A; open the command surface is Alt+S.',
             recover: 'Open a Backpack in Papers, then press the shortcut again.',
           });
         }
       }).catch((error: unknown) => {
-        console.error('[papers] startup Alt+Shift+A dispatch failed:', error);
+        console.error('[papers] startup Alt+S dispatch failed:', error);
       });
     });
   } catch {
@@ -720,7 +640,12 @@ async function bootstrap(): Promise<void> {
       packaged: app.isPackaged,
     }),
   });
-  app.once('will-quit', () => windowsPreview?.dispose());
+  const officeEditor = createLibreOfficeEditorBridge({
+    officePath: resolveLibreOfficePath(),
+    cacheDirectory: fileCapabilityCacheDirectory,
+    sourcePath: resolveLibreOfficeEditorSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
+  });
+  app.once('will-quit', () => { windowsPreview?.dispose(); void officeEditor?.dispose().catch(() => undefined); });
   const pdfPreview = createPdfPreviewHostBridge({
     resolveWindow: (ownerKey) => {
       const separator = ownerKey.indexOf(':');
@@ -748,6 +673,26 @@ async function bootstrap(): Promise<void> {
     activateDestination: handle => foregroundBridge?.setForegroundWindow(handle) ?? Promise.resolve(false),
     onError: error => console.error('[papers] native drag reveal:', error instanceof Error ? error.message : String(error)),
   });
+  const chromePane = createChromePaneBridge({
+    cacheDirectory: path.join(paths.root, 'native-helpers'),
+    nativeDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native') : path.join(app.getAppPath(), 'resources', 'native'),
+    onLayout: (owner, rect) => {
+      const separator = owner.indexOf(':');
+      const runtime = papersWindows.get(Number(owner.slice(0, separator)))?.owned.projectSurfaces.get(owner.slice(separator + 1));
+      const contents = runtime?.webContents;
+      if (contents && !contents.isDestroyed()) contents.send('papers:chrome-layout:changed', rect);
+    },
+    onTabs: (owner, tabs) => {
+      const separator = owner.indexOf(':');
+      const runtime = papersWindows.get(Number(owner.slice(0, separator)))?.owned.projectSurfaces.get(owner.slice(separator + 1));
+      const contents = runtime?.webContents;
+      if (contents && !contents.isDestroyed()) contents.send('papers:pane-tabs:changed', tabs.map(tab => ({
+        id: tab.id, title: tab.title, active: tab.active, icon: tab.icon,
+        windowInstanceId: tab.handle && tab.pid ? windowCapabilityService.windowInstanceIdForHandle?.(tab.handle, tab.pid) : undefined,
+      })));
+    },
+  });
+  app.once('will-quit', () => chromePane?.dispose());
   const webBrowser = createWebBrowserHostBridge({
     nativeDrag: nativeFileDrag,
     resolveWindow: (ownerKey) => {
@@ -772,7 +717,11 @@ async function bootstrap(): Promise<void> {
     downloadRecoveryDir: paths.recoveryDir,
   });
   app.once('will-quit', () => webBrowser.dispose());
+  const capabilityRuntimes = createCapabilityRuntimeService(path.join(paths.root, 'native', 'capability-runtimes'), officeEditor ? { officeEditor } : {});
+  await capabilityRuntimes.initialize();
+  app.once('will-quit', () => { void capabilityRuntimes.stopRecording(); });
   const fileCapability = createFileCapabilityService({
+    runtimeControl: capabilityRuntimes,
     cacheDirectory: fileCapabilityCacheDirectory,
     everythingSearch,
     previewResources: filePreviewResources,
@@ -784,8 +733,16 @@ async function bootstrap(): Promise<void> {
     mlightCadPreview,
     htmlPreview,
     webBrowser,
+    chromePane,
+    resolvePaneWindow: async bindingId => {
+      const result = await windowCapabilityService.observeCapability({ version: 1, bindingId }, { seedFrame: false });
+      const observed = result.observation;
+      return result.outcome === 'success' && observed?.handle && observed.processId
+        ? { handle: observed.handle, pid: observed.processId } : null;
+    },
     powerPointPreview,
     windowsPreview,
+    officeEditor,
     dopusrtPath: resolveDirectoryOpusRtPath(),
     libreOfficePath: resolveLibreOfficePath(),
     openPath: (target) => shell.openPath(target),
@@ -838,19 +795,9 @@ async function bootstrap(): Promise<void> {
   let detachSession: WindowDetachSession | null = null;
   const widgetRegistry = new BackpackSurfaceRegistry();
   let widgetSession: CompactWidgetSession | null = null;
-  let reconcileHermesForClosingWindow: (windowId: number) => Promise<void> = async () => undefined;
   let primaryWindowIdForHydration: number | null = null;
   let primaryHydrationPromise: Promise<{ hydrated: boolean }> | null = null;
   let controlEventHub: PapersControlEventHub | null = null;
-  // One Hermes backend is shared by all Papers windows. The callback is late
-  // bound because the facade is composed after the first window is prepared.
-  const hermesSurface = new HermesSurface(
-    () => {
-      const owner = papersWindows.hermesDockOwner();
-      return owner === null ? null : papersWindows.get(owner)?.owned.window ?? null;
-    },
-    () => facade.emitHermesSurface(),
-  );
   const onProjectSurfaceClosed = (windowId: number, _surfaceId: string, projectId: string): void => {
     visualSemanticKeysBySurface.delete(visualSemanticKeyMapKey(windowId, _surfaceId));
     visualTimelinesBySurface.delete(visualSemanticKeyMapKey(windowId, _surfaceId));
@@ -1019,14 +966,18 @@ async function bootstrap(): Promise<void> {
     install: (instance: Parameters<typeof preparePapersWindow>[0]) => {
       const window = instance.window;
       const windowId = window.id;
-      const realignHermesDock = (): void => {
-        if (papersWindows.hermesDockOwner() !== windowId) return;
-        hermesSurface.setDockBounds(dockBoundsFor(window.getContentBounds()));
-      };
-      window.on('resize', realignHermesDock);
-      window.on('move', realignHermesDock);
-      window.on('focus', () => {
-        if (papersWindows.hermesDockOwner() === windowId) hermesSurface.onPapersActivated();
+      let officeClosePending = false;
+      window.on('close', (event) => {
+        if (!officeEditor?.hasWindow(windowId)) return;
+        event.preventDefault();
+        if (officeClosePending) return;
+        officeClosePending = true;
+        void officeEditor.closeWindow(windowId).then(() => {
+          if (!window.isDestroyed()) window.close();
+        }).catch((error: unknown) => {
+          void dialog.showMessageBox(window, { type: 'warning', title: 'Document still open',
+            message: error instanceof Error ? error.message : 'Save your document before closing Papers.' });
+        }).finally(() => { officeClosePending = false; });
       });
     },
     onClose: async (instance: Parameters<typeof preparePapersWindow>[0]) => {
@@ -1038,7 +989,6 @@ async function bootstrap(): Promise<void> {
       try {
         await finalizePapersWindow(windowId, {
           closeOwnedWidgets: async (id) => { await widgetSession?.closeOwnedByWindow(id); },
-          reconcileHermes: reconcileHermesForClosingWindow,
           unbindSurfaceSenders: (id) => surfaceContexts.unbindWindow(id),
           retireLogicalSurfaces: (id) => { retireLogicalSurfacesInWindow(id); },
           clearWorkspaceTopology: (id) => {
@@ -1053,7 +1003,6 @@ async function bootstrap(): Promise<void> {
               void commandSurfaceOverlay?.destroy().catch(() => undefined);
             }
           },
-          emitHermesSurface: () => facade.emitHermesSurface(),
         });
       } finally {
         closingPapersWindows.delete(windowId);
@@ -1104,8 +1053,6 @@ async function bootstrap(): Promise<void> {
   };
   applyHostSurface(papersSettings.transparentWindow);
 
-  // The production Hermes experience IS the existing Hermes Desktop product.
-  // Papers runs one Hermes backend and positions the real Hermes Desktop
   // window as a docked sidebar or a detached window — never a second chat UI.
   // ------------------------------------------------------------ composition
   const canvasState = new CanvasSessionState((items) => facade.emitShelfChanged(items));
@@ -1119,9 +1066,6 @@ async function bootstrap(): Promise<void> {
     onEscapeToHost: () => hostView?.webContents.focus(),
   });
 
-  const adapter = new HermesAdapter(paths);
-  await adapter.initialize();
-
   const stateService = new ProgramStateService(paths);
 
   const broker = new CapabilityBroker({
@@ -1134,27 +1078,6 @@ async function bootstrap(): Promise<void> {
 
   const gitService = new GitService();
   const resourceService = new ResourceService(paths);
-
-  const runService: AgentRunService = new AgentRunService({
-    paths,
-    adapter,
-    previewConfirmer: (preview) => facade.confirmInvocation(preview),
-    isKnownProgram: (programId) => catalog.programs.has(programId),
-    onRunsChanged: (snapshot) => facade.emitRunsChanged(snapshot),
-    notifyProgram: (programId, channel, payload) => {
-      if (runtime.activeProgram?.programId === programId) {
-        runtime.sendToActiveProgram(channel, payload);
-      }
-    },
-    defaultCwd: (backpackId) => facade.defaultRunCwd(backpackId),
-    resolveExecutionCwd: async (backpackId, programId, resourceId) => {
-      const resource = await resourceService.requireGranted(backpackId, programId, resourceId);
-      if (resource.type !== 'git-worktree') {
-        throw new Error('agent execution resource is not a git worktree');
-      }
-      return path.resolve(resource.path);
-    },
-  });
 
   // Application-level state, so every live host hears it. The updater itself
   // holds no window reference.
@@ -1323,7 +1246,6 @@ async function bootstrap(): Promise<void> {
     },
     hostWindowForSender: (senderId) => papersWindows.windowForSender(senderId),
     hostWindowIds: () => papersWindows.windowIds,
-    hermesDockOwner: () => papersWindows.hermesDockOwner(),
     enteredBackpack: (windowId) => papersWindows.enteredBackpack(windowId),
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
     workspaceTopology: (windowId) => currentWorkspaceTopology(windowId),
@@ -1481,10 +1403,11 @@ async function bootstrap(): Promise<void> {
       ]);
     },
     closeAttachedProjectSurface: async (windowId, surfaceId, options) => {
+      await officeEditor?.closeOwner(`${windowId}:${surfaceId}`);
       windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
       pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
       htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
-      webBrowser.closeOwner(`${windowId}:${surfaceId}`);
+      webBrowser.closeOwner(`${windowId}:${surfaceId}`); chromePane?.closeOwner(`${windowId}:${surfaceId}`);
       await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
     projectEntryUrlForSurface: (windowId, surfaceId) =>
@@ -1492,15 +1415,15 @@ async function bootstrap(): Promise<void> {
     closeBackpackProjectSurface: async (senderId, surfaceId) => {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) {
+        await officeEditor?.closeOwner(`${windowId}:${surfaceId}`);
         windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
         pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
         htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
-        webBrowser.closeOwner(`${windowId}:${surfaceId}`);
+        webBrowser.closeOwner(`${windowId}:${surfaceId}`); chromePane?.closeOwner(`${windowId}:${surfaceId}`);
         await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
       }
     },
     restoreBackpack: (windowId) => papersWindows.restoreBackpack(windowId),
-    setHermesDockOwner: (windowId) => papersWindows.setHermesDockOwner(windowId),
     // The Canvas runtime is still application-level and attached to the first
     // window, so this has one answer today. Recording the relationship rather
     // than assuming it means per-window Canvas would need no delivery change.
@@ -1585,10 +1508,11 @@ async function bootstrap(): Promise<void> {
           },
         });
         if (owningWindowId !== null) {
+          officeEditor?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
           windowsPreview?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
           pdfPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
           htmlPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
-          webBrowser.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+          webBrowser.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present); chromePane?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
         }
       } catch (caught) {
         if (stagedFrameSender !== null) surfaceContexts.unbind(stagedFrameSender);
@@ -1629,20 +1553,22 @@ async function bootstrap(): Promise<void> {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) {
         papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
+        officeEditor?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
         windowsPreview?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
         pdfPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
         htmlPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
-        webBrowser.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+        webBrowser.setOwnerVisible(`${windowId}:${surfaceId}`, false); chromePane?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
       }
     },
     setBackpackProjectSurfaceBounds: (senderId, surfaceId, bounds) => {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) {
         papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
+        officeEditor?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
         windowsPreview?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
         pdfPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
         htmlPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
-        webBrowser.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+        webBrowser.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds); chromePane?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
       }
     },
     setHostOverlayActive: (windowId, active, owner = 'legacy') => {
@@ -1661,15 +1587,13 @@ async function bootstrap(): Promise<void> {
         pdfPreview.raiseWindow(windowId);
         htmlPreview.raiseWindow(windowId);
         webBrowser.raiseWindow(windowId);
+        chromePane?.raiseWindow(windowId);
       }
     },
     runtime,
     canvasState,
     catalog: () => catalog,
     permissionStore,
-    adapter,
-    hermesSurface,
-    runService: () => runService,
     paths,
     setTitleBarOverlay: (senderId, color, symbolColor) => {
       // Repaint the native window controls to match the active Papers theme.
@@ -1711,13 +1635,10 @@ async function bootstrap(): Promise<void> {
       await settingsStore.save(papersSettings);
     },
   });
-  reconcileHermesForClosingWindow = (windowId) => facade.onPapersWindowClosing(windowId);
 
   registerCoreExecutors({ broker, paths, facade, stateService });
   registerResourceExecutors({ broker, resources: resourceService, git: gitService, paths });
   registerExternalExecutors({ broker, resources: resourceService });
-
-  adapter.on('health-changed', () => facade.emitHermesHealth());
 
   registerHostIpc(facade, (sender, start) => {
     const id = papersWindows.windowForSender(sender.id);
@@ -1991,8 +1912,14 @@ async function bootstrap(): Promise<void> {
     ipcMain,
     preloadPath: path.join(preloadDir, 'backpackProject.cjs'),
     // Owner-scoped: the entry URL comes from that window's own runtime.
-    resolveEntryUrl: (projectId, owningWindowId) =>
-      papersWindows.get(owningWindowId)?.owned.projectSurfaces.entryUrlForProject(projectId) ?? null,
+    resolveEntryUrl: (projectId, owningWindowId, workspaceSenderId) => {
+      const surfaces = papersWindows.get(owningWindowId)?.owned.projectSurfaces;
+      if (workspaceSenderId !== undefined) {
+        const runtime = surfaces?.all().find(candidate => candidate.senderId === workspaceSenderId);
+        return runtime?.liveProjectId === projectId ? runtime.liveEntryUrl : null;
+      }
+      return surfaces?.entryUrlForProject(projectId) ?? null;
+    },
     createWindow: ({ bounds, preloadPath: widgetPreloadPath, projectId, owningWindowId }) => {
       const widgetWindow = new BrowserWindow({
         x: bounds.x,
@@ -2973,13 +2900,6 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           // machine-stamped summary.
           build: controlBuildIdentity(),
           windows: windowsSnapshot(),
-          // Projected field by field, never spread: `detail` is UI prose that
-          // can name absolute paths.
-          hermes: {
-            placement: hermesSurface.state.placement,
-            status: hermesSurface.state.status,
-            ownerWindowId: papersWindows.hermesDockOwner(),
-          },
           // What Papers actually holds of the two invocation chords. A refusal
           // here is the honest record that a shortcut is unavailable.
           globalShortcuts: {
@@ -3058,11 +2978,6 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
               schemaVersion: 1,
               build: controlBuildIdentity(),
               windows: windowsSnapshot(),
-              hermes: {
-                placement: hermesSurface.state.placement,
-                status: hermesSurface.state.status,
-                ownerWindowId: papersWindows.hermesDockOwner(),
-              },
             },
             surface: surface ? projectSurfaceControlSnapshot(surface) : null,
             lifecycle: records.filter((record) => record.payload.kind === 'lifecycle'),
@@ -3201,7 +3116,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // exits - not even while the rest of teardown is still draining.
       globalInvoke?.release();
       globalInvoke = null;
-      if (earlyShortcutRegistered) globalShortcut.unregister('Alt+Shift+A');
+      if (earlyShortcutRegistered) globalShortcut.unregister('Alt+S');
       startupCommandSurfaceGate?.fail('Papers is shutting down before the command surface finished starting');
       startupCommandSurfaceGate = null;
       hoverInputBridge?.close();
@@ -3226,7 +3141,6 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           Promise.resolve(windowControlBroker.stop()),
         ]))
         .then(() => {
-        hermesSurface.shutdown();
         capabilityQuitComplete = true;
         app.quit();
       });
@@ -3238,16 +3152,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     broker,
     stateService,
     emitSaveStatus: (status, detail) => facade.emitSaveStatus(status, detail),
-    agentInvoke: (identity, invocation) =>
-      runService.invoke(identity.backpackId, identity.programId, invocation),
-    agentCancel: async (identity, runId) => {
-      const run = runService.get(runId);
-      if (!run) throw new Error(`run ${runId} not found`);
-      if (run.programId !== identity.programId || run.backpackId !== identity.backpackId) {
-        throw new Error('programs may only cancel their own runs');
-      }
-      await runService.cancel(runId);
-    },
+    agentInvoke: async () => { throw new Error("No agent invocation provider is installed."); },
+    agentCancel: async () => { throw new Error("No agent invocation provider is installed."); },
   });
 
   // Surface registry corruption honestly on startup.
@@ -3269,14 +3175,6 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     });
   }
 
-  // ACP is retained only for the opt-in legacy integration fixtures. The
-  // production UI never recreates Hermes sessions or approvals inside Papers.
-  if (fixtureMode) {
-    void adapter.connect().catch(() => {
-      /* health event carries the fixture failure detail */
-    });
-  }
-
   // ---------------------------------------------------------------- load UI
   await preparedWindow.loadAndRollback();
 
@@ -3284,49 +3182,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // update is downloaded and ready; a packaged build only.
   updater.start();
 
-  // The detached updater writes one result before it reopens Papers. Success is
-  // a quiet native notification; failure is kept visible in Papers with the log
-  // path so a non-coder never has to inspect a terminal to understand it.
-  const updateResultPath = path.join(baseDir, 'hermes-update-result.json');
-  if (existsSync(updateResultPath)) {
-    try {
-      const result = JSON.parse(readFileSync(updateResultPath, 'utf8')) as {
-        ok?: boolean;
-        detail?: string;
-        logPath?: string;
-      };
-      unlinkSync(updateResultPath);
-      if (result.ok) {
-        new Notification({
-          title: 'Hermes updated',
-          body: result.detail ?? 'Hermes and its Papers integration are ready.',
-        }).show();
-      } else {
-        hostView.webContents.send('host:event:host-error', {
-          component: 'hermes',
-          what: 'Hermes did not finish updating.',
-          known: result.detail ?? 'The update helper reported an unknown error.',
-          intact: 'Your conversations, settings, credentials and Backpacks were not changed.',
-          retryUseful: true,
-          inspect: result.logPath ? `Update log: ${result.logPath}` : 'See the Papers Data folder.',
-          recover: 'Open Hermes again and retry the update from its Settings page.',
-        });
-      }
-    } catch {
-      // A malformed status file must never prevent Papers from starting.
-    }
-  }
-
-  // Start the phone connector ("Run on Computer") so the Apers Android app can
-  // auto-discover this PC on the LAN and run tasks on the same Hermes. Best
-  // effort, own single-instance, decoupled from the Hermes Desktop surface.
-  startPhoneConnector();
-
   // ------------------------------------------------- global invocation chords
   // Two system-wide chords, live while Papers runs, working from inside any
   // other application:
   //   Alt+A        raises the existing Papers window directly.
-  //   Alt+Shift+A  pops the command surface OVER whatever the creator is doing.
+  //   Alt+S  pops the command surface OVER whatever the creator is doing.
   //                Papers does NOT come forward - this is a launcher, not a
   //                window switcher. The application they came from keeps its
   //                place and gets focus back when the overlay closes.
@@ -3597,7 +3457,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     },
   });
   // Load the launcher renderer while Papers is settling, without showing it or
-  // touching foreground focus. Later Alt+Shift+A presses reuse this hidden surface.
+  // touching foreground focus. Later Alt+S presses reuse this hidden surface.
   const startupOverlay = commandSurfaceOverlay;
   void startupOverlay.warm().catch((error) => {
     console.error('[papers] command surface warm-up failed:', error);
@@ -3685,6 +3545,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     },
   }); */
   globalInvoke = createGlobalInvoke({
+    // Alt+A belongs to the resident launcher, which survives Papers exiting.
+    accelerators: { invoke: 'Alt+S' },
     shortcut: globalShortcut,
     currentWindowId: () => {
       // Prefer an actually visible window, so a hidden or auxiliary surface is
@@ -3731,7 +3593,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         known: report.detail,
         intact: 'Nothing was changed, and no other application was affected. Papers did not come forward.',
         retryUseful: true,
-        inspect: 'Shortcuts: bring Papers forward is Alt+A; open the command surface is Alt+Shift+A.',
+        inspect: 'Shortcuts: bring Papers forward is Alt+A; open the command surface is Alt+S.',
         recover: report.outcome === 'window-unavailable'
           ? 'Open a Papers window, then press the shortcut again.'
           : 'Open a Backpack in Papers, then press the shortcut again.',
@@ -3742,7 +3604,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   // Transfer the already-held chord to the normal dispatcher without yielding
   // to the event loop; the startup callback above has been swallowing and
   // queueing the first press until the real overlay is available.
-  if (earlyShortcutRegistered) globalShortcut.unregister('Alt+Shift+A');
+  if (earlyShortcutRegistered) globalShortcut.unregister('Alt+S');
   const shortcutReport = globalInvoke.register();
   globalShortcutReport = shortcutReport;
   if (!shortcutReport.ok) {
@@ -3817,12 +3679,6 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
 
 app.whenReady().then(() => {
   if (!ownsSingleInstanceLock) return;
-  if (hermesUpdateHelperMode) {
-    return runHermesUpdateHelper().catch((err) => {
-      console.error('[papers] Hermes update helper failed:', err);
-      app.quit();
-    });
-  }
   return bootstrap().catch((err) => {
     // Surface bootstrap failures instead of dying silently.
     console.error('[papers] bootstrap failed:', err);

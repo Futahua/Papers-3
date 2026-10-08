@@ -1,8 +1,4 @@
-/**
- * PapersHostFacade — coordination between the host renderer, Backpack
- * registry, Canvas runtime, permissions, agent runs, and Hermes. Implements
- * the HostFacade IPC contract.
- */
+
 import { randomUUID } from 'node:crypto';
 import { withProjectSurfaceKey } from './backpacks/projectSurfaceUrl';
 import { clipboard, dialog, shell, webContents, type WebContents } from 'electron';
@@ -37,9 +33,6 @@ import type { CanvasRuntime } from './canvas/canvasRuntime';
 import type { CanvasSessionState } from './canvas/canvasState';
 import type { ProgramCatalog } from './canvas/programLoader';
 import type { PermissionStore } from './capabilities/permissionStore';
-import type { HermesAdapter } from './hermes/hermesAdapter';
-import type { HermesSurface, SurfaceBounds } from './hermes/hermesSurface';
-import type { AgentRunService, InvocationPreview } from './agents/runService';
 import type { PermissionPrompter } from './capabilities/capabilityBroker';
 import { AtomicJsonStore } from './persistence/atomicStore';
 import { backpackDir, canvasFile, type PapersPaths } from './persistence/paths';
@@ -109,11 +102,8 @@ export interface FacadeDeps {
   /** The window a HOST renderer belongs to, or null if this sender is not a
    * live host. Every registered host is legitimate; there is no primary. */
   hostWindowForSender: (senderId: number) => number | null;
-  /** Every live Papers window, for the per-recipient Hermes projection. */
+
   hostWindowIds: () => number[];
-  /** The docking relationship lives in the window registry, never inside
-   * HermesSurface -- one owner, one place. */
-  hermesDockOwner: () => number | null;
   /** Per-window Backpack identity. "Entered" belongs to a window; the
    * persisted most-recent Backpack stays application-level. */
   enteredBackpack: (windowId: number) => string | null;
@@ -139,7 +129,6 @@ export interface FacadeDeps {
    * renderer remount. */
   closeBackpackProjectSurface: (senderId: number, surfaceId: string) => void | Promise<void>;
   restoreBackpack: (windowId: number) => string | null;
-  setHermesDockOwner: (windowId: number | null) => void;
   /** The window whose Canvas runtime a program event belongs to. One runtime
    * today, so one answer -- but the relationship is recorded rather than
    * assumed, so per-window Canvas would keep the same delivery semantics. */
@@ -203,9 +192,6 @@ export interface FacadeDeps {
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
   permissionStore: PermissionStore;
-  adapter: HermesAdapter;
-  hermesSurface: HermesSurface;
-  runService: () => AgentRunService;
   paths: PapersPaths;
   /** Repaint the native window-controls overlay to match the active theme. */
   setTitleBarOverlay: (senderId: number, color: string, symbolColor: string) => void;
@@ -273,8 +259,6 @@ export interface WorkspaceSurfaceMoveProjection {
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private readonly pendingPermissionPrompts = new Map<string, (d: PermissionDecision) => void>();
-  private readonly pendingInvocationPreviews = new Map<string, (approved: boolean) => void>();
-  private hermesPlacementTail: Promise<void> = Promise.resolve();
   private workspaceMoveTail: Promise<void> = Promise.resolve();
   private readonly workspaceMutationLocks = new Set<number>();
   private readonly workspaceMutationWaiters = new Map<number, Set<() => void>>();
@@ -310,21 +294,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       // Visual observation is best effort and must never alter a workspace
       // transaction's canonical state or compensation outcome.
     }
-  }
-
-  /** Hermes has one physical/global placement. Serialize every mutation from
-   * request authorization through ownership commit/rollback and projection so
-   * an older operation can never finish after and overwrite a newer one. */
-  private runHermesPlacement<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.hermesPlacementTail.then(
-      () => operation(),
-      () => operation(),
-    );
-    this.hermesPlacementTail = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
   }
 
   private runWorkspaceMove<T>(operation: () => Promise<T>): Promise<T> {
@@ -439,12 +408,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     // Program state save (programIpc), not the Backpack document path.
     this.sendToRuntimeOwner('host:event:save-status', { status, detail: detail ?? null });
   }
-  emitRunsChanged(snapshot: AgentRunSnapshot): void {
-    this.broadcast('host:event:runs-changed', snapshot);
-  }
-  emitHermesHealth(): void {
-    this.broadcast('host:event:hermes-health', this.deps.adapter.health);
-  }
 
   /** Every registered host renderer is legitimate. There is no primary host:
    * a second window's renderer must pass this guard exactly as the first
@@ -473,14 +436,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   }
 
   // ------------------------------------------------------------- backpacks
-  /**
-   * The Backpack list, as this window sees it.
-   *
-   * The list itself is application-level; `activeBackpackId` is not -- it is
-   * whichever Backpack THIS window has entered. Two windows in different
-   * Backpacks must each see their own, which is the same recipient-projection
-   * shape as Hermes dock ownership.
-   */
+
   listBackpacksFor(windowId: number | null): { backpacks: BackpackSummary[]; activeBackpackId: string | null } {
     return {
       backpacks: this.deps.registry.list(),
@@ -646,7 +602,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
     const fixturePrograms = this.deps.catalog().programs;
     if (fixturePrograms.size > 0) {
-      await this.deps.runService().loadBackpackRuns(id);
 
       // Legacy fixture mode restores its last test program. Product-mode
       // Backpacks are environments and never enter the program runtime.
@@ -2253,85 +2208,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     pending(decision);
   }
 
-  /** Invocation preview confirmation used by the AgentRunService. */
-  confirmInvocation(preview: InvocationPreview): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
-      this.pendingInvocationPreviews.set(preview.previewId, resolve);
-      this.sendToRuntimeOwner('host:event:invocation-preview', preview);
-      setTimeout(() => {
-        const pending = this.pendingInvocationPreviews.get(preview.previewId);
-        if (pending) {
-          this.pendingInvocationPreviews.delete(preview.previewId);
-          pending(false);
-        }
-      }, 600_000);
-    });
-  }
-
-  respondInvocation(previewId: string, approved: boolean): void {
-    const pending = this.pendingInvocationPreviews.get(previewId);
-    if (!pending) throw new Error('invocation preview is no longer pending');
-    this.pendingInvocationPreviews.delete(previewId);
-    pending(approved);
-  }
-
-  // ------------------------------------------------------------------ runs
-  /** Runs are listed for the Backpack the asking window has entered. */
-  listRuns(senderId: number): unknown {
-    const windowId = this.deps.hostWindowForSender(senderId);
-    return this.deps.runService().list(windowId === null ? null : this.activeBackpackForWindow(windowId));
-  }
-
-  getRun(runId: string): unknown {
-    return this.deps.runService().get(runId);
-  }
-
-  async cancelRun(runId: string): Promise<void> {
-    await this.deps.runService().cancel(runId);
-  }
-
-  async respondRunInteraction(runId: string, requestId: string, optionId: string): Promise<void> {
-    await this.deps.runService().respondInteraction(runId, requestId, optionId);
-  }
-
-  async retryRun(runId: string): Promise<unknown> {
-    return this.deps.runService().retry(runId);
-  }
-
-  async replyToRun(runId: string, text: string): Promise<void> {
-    await this.deps.runService().continueRun(runId, text);
-  }
-
-  composedPrompt(runId: string): string {
-    return this.deps.runService().composedPrompt(runId);
-  }
-
-  /**
-   * Inspect in Hermes: no stable per-session deep link is documented for
-   * Hermes Desktop, so open/focus the Desktop and give the creator the
-   * authoritative session id to find or inspect.
-   */
-  async inspectRunInHermes(runId: string): Promise<{ sessionId: string | null; opened: boolean }> {
-    const run = this.deps.runService().get(runId);
-    const sessionId = run?.sessionId ?? null;
-    return { sessionId, opened: false };
-  }
-
-  /** Returning to a run's origin happens in the window that asked, so it does
-   * not drag another window into that Backpack. */
-  async returnToOrigin(senderId: number, runId: string): Promise<void> {
-    const run = this.deps.runService().get(runId);
-    if (!run) throw new Error(`run ${runId} not found`);
-    const windowId = this.deps.hostWindowForSender(senderId);
-    const entered = windowId === null ? null : this.activeBackpackForWindow(windowId);
-    if (entered !== run.backpackId) {
-      await this.enterBackpack(senderId, run.backpackId);
-    }
-    if (this.deps.runtime.activeProgram?.programId !== run.programId) {
-      await this.startProgram(run.programId);
-    }
-  }
-
   /** Which build this is and where it runs from, for telling machines apart. */
   buildIdentity(): unknown {
     return buildIdentity();
@@ -2347,134 +2223,6 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   installUpdate(): Promise<void> {
     return this.deps.updater.installNow();
-  }
-
-  hermesHealth(): unknown {
-    return this.deps.adapter.health;
-  }
-
-  /**
-   * Hermes presentation, as this particular window should read it.
-   *
-   * `placement` is global truth about Hermes -- closed, docked or detached.
-   * `ownedByThisWindow` is relative to the recipient. If Hermes is docked to
-   * window B, then B is told { docked, owned: true } and A is told
-   * { docked, owned: false }, and A's dock button therefore offers to TAKE
-   * Hermes rather than to hide someone else's. A fourth placement value would
-   * have mixed global state with the recipient's perspective.
-   *
-   * Ownership does not apply to closed or detached, where it is simply false.
-   */
-  private hermesPresentationFor(windowId: number | null): unknown {
-    const state = this.deps.hermesSurface.state;
-    return {
-      ...state,
-      ownedByThisWindow: state.placement === 'docked' && windowId !== null && this.deps.hermesDockOwner() === windowId,
-    };
-  }
-
-  hermesSurfaceStatus(senderId: number): unknown {
-    return this.hermesPresentationFor(this.deps.hostWindowForSender(senderId));
-  }
-
-  /**
-   * Dock the real Hermes Desktop window at Papers-relative bounds.
-   *
-   * This is the ONLY transfer of dock ownership, and it is deliberate: the
-   * creator pressed Dock in this window. Focus never transfers ownership,
-   * because a single global Hermes window that followed focus would move a
-   * live agent session between windows by accident (D-021).
-   */
-  async dockHermes(senderId: number, bounds: SurfaceBounds): Promise<unknown> {
-    return this.runHermesPlacement(async () => {
-      const windowId = this.deps.hostWindowForSender(senderId);
-      if (windowId === null) throw new Error('Only a Papers window may dock Hermes.');
-      const previousOwner = this.deps.hermesDockOwner();
-      this.deps.setHermesDockOwner(windowId);
-      const result = await this.deps.hermesSurface.dock(bounds);
-      if (result.placement !== 'docked' || result.status !== 'ready') {
-        this.deps.setHermesDockOwner(previousOwner);
-      }
-      this.emitHermesSurface();
-      return this.hermesPresentationFor(windowId);
-    });
-  }
-
-  /** Keep the docked Hermes window aligned as Papers moves/resizes. Accepted
-   * only from the current owner: a resize in one window must never reposition
-   * a Hermes docked to another. */
-  setHermesDockBounds(senderId: number, bounds: SurfaceBounds): void {
-    if (!this.isHermesDockOwner(senderId)) return;
-    this.deps.hermesSurface.setDockBounds(bounds);
-  }
-
-  /** Hide the docked placement without terminating Hermes or its session.
-   * Only the owner may hide it; a non-owner that wants Hermes uses dock,
-   * which transfers ownership rather than taking it away from someone. */
-  async hideHermesDock(senderId: number): Promise<void> {
-    return this.runHermesPlacement(async () => {
-      if (!this.isHermesDockOwner(senderId)) return;
-      await this.deps.hermesSurface.hideDock();
-      this.deps.setHermesDockOwner(null);
-      this.emitHermesSurface();
-    });
-  }
-
-  /** Detach Hermes into a free-floating window (same experience, same session). */
-  async showHermesWindow(): Promise<unknown> {
-    return this.runHermesPlacement(async () => {
-      // Hermes stays global. Entering a Backpack never changes Hermes's working
-      // directory, so the window launches with no Backpack-derived context.
-      const previousOwner = this.deps.hermesDockOwner();
-      const result = await this.deps.hermesSurface.showDetached();
-      if (result.placement === 'detached' && result.status === 'ready') {
-        // A detached Hermes belongs to no Papers window.
-        this.deps.setHermesDockOwner(null);
-      } else {
-        this.deps.setHermesDockOwner(previousOwner);
-      }
-      this.emitHermesSurface();
-      return result;
-    });
-  }
-
-  /** Hide the detached window without terminating Hermes or its session. */
-  async hideHermesWindow(): Promise<void> {
-    return this.runHermesPlacement(async () => {
-      await this.deps.hermesSurface.hideDetached();
-      this.emitHermesSurface();
-    });
-  }
-
-  /** Reconcile the one global Hermes placement before its dock-owning Papers
-   * window disappears. This shares the placement queue with renderer actions,
-   * so close can neither interleave with nor roll back a later dock/detach. */
-  async onPapersWindowClosing(windowId: number): Promise<void> {
-    return this.runHermesPlacement(async () => {
-      if (this.deps.hermesDockOwner() !== windowId) return;
-      if (this.deps.hermesSurface.state.placement === 'docked') {
-        await this.deps.hermesSurface.hideDock();
-      }
-      this.deps.setHermesDockOwner(null);
-      this.emitHermesSurface();
-    });
-  }
-
-  private isHermesDockOwner(senderId: number): boolean {
-    const windowId = this.deps.hostWindowForSender(senderId);
-    return windowId !== null && this.deps.hermesDockOwner() === windowId;
-  }
-
-  /** Every window hears the same placement, each with its own answer to
-   * whether it owns the dock. */
-  emitHermesSurface(): void {
-    for (const windowId of this.deps.hostWindowIds()) {
-      this.deps.sendToWindow(windowId, 'host:event:hermes-surface', this.hermesPresentationFor(windowId));
-    }
-  }
-
-  defaultRunCwd(backpackId: string): string {
-    return backpackDir(this.deps.paths, backpackId);
   }
 
   async openExternalUrl(url: string): Promise<void> {

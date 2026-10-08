@@ -4,7 +4,6 @@
 import type {
   AgentRunSnapshot,
   BackpackSummary,
-  HermesHealth,
   PendingPermissionPrompt,
   ProgramManifest,
   ProgramStatus,
@@ -36,25 +35,7 @@ export interface SaveStatusPayload {
   status: 'idle' | 'saving' | 'saved' | 'error';
   detail: string | null;
 }
-
-export type HermesPlacement = 'closed' | 'docked' | 'detached';
-export type HermesStatusKind = 'idle' | 'starting' | 'ready' | 'error';
 export type HostOverlayOwner = 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy';
-
-export interface HermesSurfaceStatus {
-  /** Global truth about Hermes: there is one Hermes, in one placement. */
-  placement: HermesPlacement;
-  status: HermesStatusKind;
-  detail?: string;
-  /**
-   * Whether THIS window owns the docked Hermes. Relative to the recipient, not
-   * a property of Hermes: with Hermes docked to another window, this window
-   * sees `docked` with `ownedByThisWindow: false`, and its dock control offers
-   * to take Hermes rather than to hide someone else's. False for closed and
-   * detached, where ownership does not apply.
-   */
-  ownedByThisWindow: boolean;
-}
 
 export interface HostErrorPayload {
   component: string;
@@ -186,31 +167,6 @@ interface HostBridge {
     revoke(backpackId: string, programId: string, capability: string): Promise<boolean>;
     respond(promptId: string, decision: string): Promise<void>;
   };
-  runs: {
-    list(): Promise<AgentRunSnapshot[]>;
-    get(runId: string): Promise<AgentRunSnapshot | null>;
-    cancel(runId: string): Promise<void>;
-    respondInteraction(runId: string, requestId: string, optionId: string): Promise<void>;
-    retry(runId: string): Promise<{ runId: string }>;
-    inspectInHermes(runId: string): Promise<{ sessionId: string | null; opened: boolean }>;
-    returnToOrigin(runId: string): Promise<void>;
-    respondInvocation(previewId: string, approved: boolean): Promise<void>;
-    reply(runId: string, text: string): Promise<void>;
-    composedPrompt(runId: string): Promise<string>;
-  };
-  hermes: {
-    health(): Promise<HermesHealth>;
-    surfaceStatus(): Promise<HermesSurfaceStatus>;
-    /** Dock the real Hermes Desktop window at Papers-relative bounds. */
-    dock(bounds: { x: number; y: number; width: number; height: number }): Promise<HermesSurfaceStatus>;
-    setDockBounds(bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
-    /** Hide the docked placement; Hermes and its session stay alive. */
-    hideDock(): Promise<void>;
-    /** Show the same Hermes as a detached window. */
-    showWindow(): Promise<HermesSurfaceStatus>;
-    /** Hide the detached window; Hermes and its session stay alive. */
-    hideWindow(): Promise<void>;
-  };
   events: {
     onBackpacksChanged(cb: (p: BackpacksList) => void): () => void;
     /** The project frame asked Papers to leave it. Carries the exact surface,
@@ -249,10 +205,6 @@ interface HostBridge {
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;
     onPermissionPrompt(cb: (p: PendingPermissionPrompt) => void): () => void;
-    onInvocationPreview(cb: (p: InvocationPreviewPayload) => void): () => void;
-    onRunsChanged(cb: (p: AgentRunSnapshot) => void): () => void;
-    onHermesHealth(cb: (p: HermesHealth) => void): () => void;
-    onHermesSurface(cb: (p: HermesSurfaceStatus) => void): () => void;
     onHostError(cb: (p: HostErrorPayload) => void): () => void;
     onUpdateStatus(cb: (p: UpdateState) => void): () => void;
   };

@@ -212,7 +212,7 @@ export function makeNote({ title, body, topicIds = [], evidenceIds = [], sourceR
   return { id: crypto.randomUUID(), title, body, topicIds, evidenceIds, sourceRunId, createdAt: at, updatedAt: at };
 }
 
-export function makeTask({ title, description, acceptance, worker = 'hermes' }) {
+export function makeTask({ title, description, acceptance, worker = 'agent' }) {
   const at = nowIso();
   return {
     id: crypto.randomUUID(), title, description, acceptance,

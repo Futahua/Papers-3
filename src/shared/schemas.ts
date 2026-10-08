@@ -118,8 +118,7 @@ export const agentInvocationSchema = z
     execution: z
       .object({
         resourceId: z.string().min(1).max(128).optional(),
-        hermesProjectId: z.string().max(128).optional(),
-        preferredWorker: z.enum(['hermes', 'codex', 'opencode']).optional(),
+        preferredWorker: z.enum(['codex', 'opencode']).optional(),
       })
       .strict()
       .optional(),

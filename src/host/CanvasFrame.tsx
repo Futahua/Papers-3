@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 
-import type { BackpackSummary, HermesHealth, ShelfContribution } from '@shared/types';
+import type { BackpackSummary, ShelfContribution } from '@shared/types';
 import { host, type CatalogInfo, type SaveStatusPayload } from './bridge';
 
 export function CanvasFrame(props: {
@@ -8,11 +8,7 @@ export function CanvasFrame(props: {
   catalog: CatalogInfo;
   shelf: ShelfContribution[];
   saveStatus: SaveStatusPayload;
-  hermes: HermesHealth;
-  busyRuns: number;
-  waitingRuns: number;
   onLeave: () => Promise<void>;
-  onOpenRuns: () => void;
   onOpenPermissions: () => void;
   onCatalogChanged: () => Promise<void>;
 }): React.JSX.Element {
@@ -71,19 +67,6 @@ export function CanvasFrame(props: {
     }
   })();
 
-  const hermesChip = (() => {
-    switch (props.hermes.state) {
-      case 'connected':
-        return { className: 'chip ok', text: 'Hermes' };
-      case 'starting':
-        return { className: 'chip busy', text: 'Hermes…' };
-      case 'disconnected':
-        return { className: 'chip warn', text: 'Hermes lost' };
-      default:
-        return { className: 'chip error', text: 'Hermes off' };
-    }
-  })();
-
   return (
     <div className="frame">
       <div className="topbar">
@@ -122,20 +105,11 @@ export function CanvasFrame(props: {
           ))}
         </div>
         <div className="spacer" />
-        <button
-          className="ghost"
-          onClick={props.onOpenRuns}
-          title="Agent runs"
-        >
-          Runs{props.busyRuns > 0 ? ` (${props.busyRuns} active)` : ''}
-          {props.waitingRuns > 0 ? ` ⚠ ${props.waitingRuns}` : ''}
-        </button>
+
         <button className="ghost" onClick={props.onOpenPermissions} title="Permissions">
           Permissions
         </button>
-        <span className={hermesChip.className} title={JSON.stringify(props.hermes)}>
-          <span className="dot" /> {hermesChip.text}
-        </span>
+
         <span className={saveChip.className} title={props.saveStatus.detail ?? ''}>
           <span className="dot" /> {saveChip.text}
         </span>

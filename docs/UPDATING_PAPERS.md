@@ -9,7 +9,6 @@ A packaged Papers checks its GitHub releases shortly after launch, downloads a n
 in the background, and shows **Restart and update** in Settings when one is ready.
 
 - It **never restarts on its own.** `autoInstallOnAppQuit` is off, so closing Papers can
-  never swap the application underneath a live Hermes. The creator chooses the moment.
 - It **never interrupts.** Offline, rate-limited, or no release yet all resolve quietly to
   "up to date". Only a genuine downloaded update surfaces. The reason is still kept, so a
   direct "Check for updates" can explain itself.
@@ -94,9 +93,6 @@ Investigated 2026-07-27 against commit `67c4597`. **Everything from here down de
 state before the updater above was built, and is kept only as the record of why.** For how
 updating works now, read the section above.
 
-Hermes updating is a separate, working mechanism documented in
-`HERMES_SKIN_INTEGRATION.md` and PROBLEMS.md 4.
-
 ## The finding in one line (as of `67c4597`)
 
 **Papers had no self-update mechanism of any kind.** Nothing was broken or
@@ -107,7 +103,6 @@ half-wired; the capability had never been built.
 | Question | Answer |
 | --- | --- |
 | Is `electron-updater` a dependency? | No — absent from `package.json`. |
-| Any `autoUpdater`, feed URL or update check in the source? | None. The only matches for "update" in `src/main` are the Hermes updater. |
 | Does `electron-builder.yml` have a `publish:` block? | No. Without one, no `latest.yml` update feed is produced even when packaging. |
 | Are there GitHub releases to update from? | Zero releases, and no git tags. |
 | Is there a CI release workflow? | No `.github/` folder at all. |
@@ -129,10 +124,6 @@ Entirely by hand, and the version number does not participate:
 1. A developer runs `npm run package` on the machine holding the source.
 2. `electron-builder` writes `release\Papers-Setup-1.0.0.exe`.
 3. That build is copied or installed over `Papers\App\`.
-
-`Data\` (the runtime profile, including `hermes-backend-token`) is a sibling of
-`App\` and is untouched by this, which is why hand-replacing `App\` has been safe
-so far.
 
 ## What is weak
 
@@ -169,13 +160,6 @@ Implemented 2026-07-27. Settings now opens with a **This build** card reporting
 version, commit, branch, build time, machine name, install folder and data
 folder, plus a **Copy build details** button.
 
-The commit is the part that actually answers "same build?". The version alone
-never could — it has been `1.0.0` on every build ever made, so two machines
-comparing versions would always agree even when running completely different
-code. The commit is stamped in at package time by `electron.vite.config.ts`;
-the paths and machine name are read at run time, because those are per-machine
-facts (the same distinction D-016 draws for Hermes).
-
 Marks worth knowing:
 
 - **`+local`** — the build included edits that were not committed, so it matches
@@ -190,12 +174,3 @@ folders show which copy is which.
 ## Remaining order, smallest useful step first
 
 These are proposals; neither is implemented.
-
-1. **Decide the supported install shape** (NSIS-managed vs. `App\`-replacement)
-   and make the machines match it. Until this is settled, adding an updater
-   would build on an assumption known to be false.
-3. **Only then consider automatic updating**, if manual updating turns out to
-   actually hurt in daily use. Per D-001 and the HERMES.md invariant against
-   speculative architecture, an auto-updater is not obviously warranted for a
-   two-machine personal product where the creator controls both machines — a
-   documented one-command rebuild-and-install may be the honest answer.

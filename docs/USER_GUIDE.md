@@ -5,22 +5,7 @@ This describes the current installed build. Verified behavior is recorded in
 
 ## Basic
 
-Basic is always available. It opens Backpacks, Tools or Settings.
-
-## Hermes
-
-Open Hermes from anywhere in Papers. It is global: selecting or entering a Backpack does
-not change its folder, conversation or context. Attach files and images or name paths
-inside Hermes when you want to provide context.
-
-**Hermes does not start when Papers opens.** It starts the first time you open it with one
-of the two symbol toggles, and can take up to a minute that first time. This is deliberate —
-Papers never forces Hermes open — so a quiet Papers with no Hermes running is working
-correctly, not stalled.
-
-Closing Papers does not close Hermes. Hermes remains open with its current conversation;
-close Hermes separately when you actually want to close it. Reopening Papers reconnects to
-that same Hermes window instead of starting another one.
+Basic is always available. It opens Backpacks or Settings.
 
 ## Backpacks
 
@@ -56,23 +41,17 @@ Backpack. Choose **Back to Papers** when you want the next launch to begin at th
 Backpack list. A Backpack with richer internal working state remains responsible for
 restoring that state itself.
 
-## Tools
+## Pencilcase
 
-Tools is a permanent destination within Basic. Only the creator decides what is a Tool.
-Its behavior has not yet been decided.
-
-The current installed screen still contains placeholder wording that calls Tools global
-and shared and lists possible examples. That wording is not an accepted Tool definition.
-The mismatch is recorded in [`PROBLEMS.md`](PROBLEMS.md); this documentation correction
-does not change the running interface.
+Open the Pencilcase Backpack to see the creator's tool list, availability, live usage
+and supported startup/warm settings. LibreOffice can load in the background at Papers
+startup and retain a clean ready engine. Unsupported runtime controls are unavailable.
+Record live usage explicitly and stop with the same button; Show file reveals a saved
+recording. Tool management belongs to Pencilcase rather than a built-in Tools pane.
 
 ## Settings
 
 Settings opens with two cards.
-
-**Updates** — Papers looks for a newer version shortly after it opens and downloads it in
-the background. When one is ready it offers **Restart and update**. Papers never restarts
-on its own, because it may be running Hermes at the time.
 
 **This build** — which version of Papers this is, including the exact code it was built
 from, the computer's name and the folders it uses. To check whether two computers are
@@ -83,3 +62,8 @@ puts all of it on the clipboard.
 
 Repository Research, Visual Dashboard, Kill Test, ACP and Agent Runs are not product
 features and are absent from normal builds.
+
+Pencilcase also owns the ChatGPT local coder view, opened from its dedicated tool
+entry as a separate page. The Delegate Wave Backpack is retired and archived. Its
+existing companion service remains the operational owner; Papers transfers the
+single trusted relay binding to Pencilcase. No second agent manager is introduced.

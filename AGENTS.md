@@ -1,93 +1,119 @@
-# Papers agent entry point
+# Papers — governing document
 
-Read [`HERMES.md`](HERMES.md) completely before changing Papers or proposing product
-behavior. It is the canonical agent contract and documentation map.
+Read this first and completely before working in this repository.
 
-Do not infer product rules from source code, old commits, predecessor projects or
-historical evidence. A current creator correction outranks those records.
+## Product north star
 
-## Intended debugging pipeline for agents
+Papers is the creator's **personal programmable environment on an actual machine,
+layered over Windows**. Its scope includes the machine's real files, installed
+applications, native windows, devices, running processes, services and working state.
+Actions must work with those real things and produce the intended result on the machine.
 
-Use Papers' existing visual diagnostics as the default workflow for Papers and
-hosted Backpack rendering problems. Read
-[`docs/DEVELOPER_CONTROL.md`](docs/DEVELOPER_CONTROL.md) for the connection and
-MCP contract, and
-[`docs/WORKSPACE_AND_CONTROL_PROGRESS.md`](docs/WORKSPACE_AND_CONTROL_PROGRESS.md)
-for scope, acceptance evidence, and exact reviewer sign-offs. The completed
-C1/P1-P4 infrastructure is reusable; future Backpacks do not require rebuilding
-the debugging pipeline from scratch. Project-specific semantic keys, fixtures,
-and assertions belong in the independent Backpack project when needed.
+It keeps the best tools, applications, native machinery, agents, custom surfaces,
+scripts and behaviors under the creator's fingers with minimal cognitive overhead.
+Windows is the compatibility substrate for the software and machine the creator uses.
+Electron, C#, Win32, Chromium, external programs, local services, agents and remote
+systems are implementation choices; none defines or limits the product.
 
-1. **Establish the running instance.** Inspect repository/remote parity and
-   preserve unrelated changes. Use an existing diagnostic instance launched
-   with `PAPERS_DEV_CONTROL=1` and its explicit descriptor. Check
-   `inspect.process` for process/start/build identity, then `inspect.windows`
-   and `inspect.surfaces` to identify the exact `windowId` and `surfaceId`.
-   A source checkout or executable path alone does not prove which build is
-   running. Ordinary production launches do not expose this endpoint; report
-   that condition accurately and use the existing authorization for any
-   diagnostic restart, or obtain authorization if none exists. Use isolated
-   synthetic profiles for reproductions and tests. Treat the descriptor as a
-   credential: never print, commit, or include its contents in evidence.
-2. **Collect visual evidence.** Start with `papers:visual-debug` below. It
-   composes exact-target inspection, lifecycle/diagnostic subscription, a
-   bounded wait, composed-window capture, a surface report, and artifact SHA
-   verification. Inspect the resulting `summary.json`, `events.ndjson`,
-   `report.zip`, and available PNGs. Check capture consistency and reported
-   failures; file existence or valid saved state does not prove rendered
-   success. A surface PNG and a composed-window PNG answer different questions;
-   neither alone proves the Windows desktop-compositor appearance.
-3. **Use semantic control for targeted investigation.** Through the stdio MCP
-   adapter (`papers_control`, with `{ method, params }`) or shared control
-   client, use `visual.wait`, `inspect.visual.diagnostics`,
-   `inspect.visual.timeline`, `inspect.visual.elements`, `visual.assert`,
-   `capture.surface`, `capture.element`, and `capture.window` as appropriate.
-   Name explicit targets and use registered element keys. Wait for events with
-   bounded timeouts; do not repeatedly poll screenshots or invent arbitrary
-   JavaScript/selector access. MCP forwards the existing control contract.
-4. **Preserve intermittent incidents.** Use `papers:visual-incident` for a
-   session-local transcript, bounded to at most 120 seconds, 1024 records, and
-   4 MiB. Inspect truncation and recovered/cross-surface/unrecoverable sequence
-   gaps. This extends client evidence without increasing Papers' ordinary
-   history retention; missing evidence is not proof that no failure occurred.
-5. **Compare against an explicit baseline.** Use `papers:visual-compare` with
-   the selected synthetic fixture's baseline manifest and PNG, plus either a
-   live exact target or an existing P1 evidence directory. Inspect dimension,
-   pixel, and semantic differences separately. The comparison verifies input
-   hashes and has no automatic baseline update/blessing path. Keep baseline
-   approval separate from diagnosing a regression.
-6. **Fix and verify the observed cause.** Keep host fixes generic and Backpack
-   behavior in its own project. Reproduce using synthetic data, test the
-   affected visual path, and record the actual validation results and exact
-   pushed SHA. Distinguish source, development, packaged, and installed-runtime
-   evidence. Reviewer sign-off does not imply every E2E test passes or that an
-   installed copy contains the latest source. Update the progress document
-   with remaining failures as well as successful evidence.
+The creator describes the desired experience. Agents own architecture, implementation,
+migration, testing and evidence. Internal implementation state must not become work
+for the creator to manage.
 
-Run these templates from the source root, replacing placeholders with verified
-values. Baseline paths are local client inputs, never Papers control parameters:
+The goal is maximum useful capability and excellent UX without growth making the
+system progressively more brittle or expensive for agents to change.
+**Capability is unbounded. Coupling is bounded.** Architecture preserves freedom.
+Use the existing owner when it owns the truth; widen its contract when needed; create
+another owner when the truth or lifecycle differs. Do not make unrelated systems own
+new truth or sacrifice accepted behavior for architectural uniformity.
 
-```text
-npm run papers:visual-debug -- --descriptor <descriptor> --window <windowId> --surface <surfaceId> --output-dir <new-evidence-directory>
-npm run papers:mcp -- --descriptor <descriptor>
-npm run papers:visual-incident -- --descriptor <descriptor> --window <windowId> --surface <surfaceId> --duration-ms 60000 --output-dir <new-incident-directory>
-npm run papers:visual-compare -- --baseline-manifest <manifest.json> --baseline-png <baseline.png> --descriptor <descriptor> --window <windowId> --surface <surfaceId>
-npm run papers:visual-compare -- --baseline-manifest <manifest.json> --baseline-png <baseline.png> --evidence-dir <existing-P1-evidence-directory>
-```
+This vision is recorded in the opening of [the original north-star handoff](https://github.com/Futahua/Papers-3/blob/251aa0bf9e9ba3fe336b3354c3cd4b7f972af5c6/REFACTOR-HANDOFF.md).
+Its dated paths, implementation plans and old runtime instructions are historical.
 
-Diagnostic access does not authorize creator-data mutation, desktop control or
-capture, automatic restarts, installation, publication, or release. Preserve
-existing authorization boundaries and user-owned changes. Additional host-layer
-inspection is conditional on a concrete diagnosis gap, not an unfinished
-requirement to expand the host proactively.
+## Authority and working rules
 
-## Reviewer handoff
+This is this repository's single governing document. Current creator instructions
+outrank it. Other documents supply technical reference, evidence, history or proposals;
+they do not independently govern product direction or authorize work. Record accepted
+corrections here rather than making several competing contracts.
 
-The browser reviewer is audit-only. Supply an exact pushed SHA, source links,
-validation evidence, and a question about the intended agenda's completeness.
-Implement any concrete correction locally and resubmit its new SHA. Follow the
-one-shot watcher contract in the progress document: one deferred operation must
-observe `Stop answering` appear and disappear, then notify the current task
-once. Keep the initiating turn alive; do not repeatedly inspect the browser or
-create a recurring polling automation. Continue in a fresh reviewer conversation
-with the same evidence and scope if the previous conversation reaches its limit.
+- Preserve accepted behavior, creator data and unrelated changes. If recently working
+  behavior regresses, compare history before inventing replacement architecture.
+- Reuse existing trackers, services, applications and native behavior. Equivalent actions
+  should converge on the same owner before identity, mutation and persistence.
+- Keep failure local. A preview failure must not disable unrelated work or durable state.
+- Inspect the actual source and running build; distinguish source tests from installed
+  behavior. Use isolated fixtures and avoid taking the creator's mouse or keyboard.
+- Honor authorization already given in the conversation. A document does not revoke it
+  or require repeated permission. Publishing, installing, restarting or destructive work
+  needs applicable authorization; ordinary inspection and reversible fixes can proceed.
+- **Current cleanup scope (2026-10-07): documentation and comments first.** Reconcile
+  stale or conflicting descriptions and clarify ownership. This cleanup does not authorize
+  code rewrites, refactoring, behavior changes, deployment or publication. Historical
+  refactor roadmaps are not the current assignment.
+
+## Papers and Backpack ownership
+
+Backpacks are independently evolvable compositions of behavior and presentation. They
+may differ in UI, storage, lifecycle, languages and processes. One Backpack's design
+must not become a universal ontology or framework. Share only after demonstrated reuse.
+Backpack behavior belongs in its independent project; Papers owns reusable host
+capabilities. A concrete Backpack experience can require host support: identify the
+right owner and evolve its contract without moving Backpack-specific policy into it.
+Ordinary Backpack changes do not require a Papers release or distribution elsewhere.
+
+Reuse the best existing applications instead of rebuilding their interfaces or agent
+systems. Native resident machinery is appropriate when timing and truth live at the
+Windows input layer; do not force a renderer round trip merely for uniformity.
+
+## Accepted product boundaries
+
+- Basic remains reachable with Backpacks and Settings. Tool definitions and their
+  management belong to the creator's Pencilcase Backpack, not a built-in Tools pane.
+- Backpacks have no mandatory contents or common schema. Only the creator identifies
+  something as a Tool; an implementation detail does not settle that product question.
+- Mobile Backpack access uses the creator's PC as execution/state authority and Android
+  as a live client, prioritizing latency and phone usability over desktop mirroring.
+- Preserve the established Papers visual character while honoring explicitly requested
+  surface themes. A historical warm-paper rule must not override approved blue panes.
+- Preserve durable creator work. Document each feature's owner, location, sync, secrets,
+  concurrency and recovery. Live profiles, credentials and process state default local;
+  copying them does not install capabilities on another machine.
+- State saves have no fixed character ceiling. Keep validation, checked revisions and
+  atomic replacement. Keep snapshots out of ordinary state payloads and preserve the
+  snapshot list when restoring a snapshot.
+- Inline office editing is explicit and uses installed LibreOffice against original
+  files. Preserve unsaved models when leaving or closing their native host. Only
+  proven editor families are enabled; see docs/INLINE_OFFICE_EDITING.md for evidence.
+- Current and future inline editors separate runtime startup from document loading.
+  Reuse healthy clean engines, bound idle retention, issue fresh document identities,
+  and preserve unsaved work before retiring an engine. Use the shared editor runtime
+  lifecycle where applicable. Loading progress comes from the provider's reported
+  stage/range; stages with no measured total remain indeterminate.
+
+## Pickup and reference map
+
+State the intended experience, owner, unresolved product questions and relevant delivery
+scope briefly. Resolve implementation choices as an agent; do not ask the creator to
+choose frameworks. Inspect Git status and preserve unrelated work before editing.
+
+The source checkout containing this file is the working authority; use its actual path
+instead of old absolute checkout paths. Installed binaries and copied debug/build trees
+are not documentation authorities. Each independent Backpack has its own AGENTS.md.
+
+- [Product reference](docs/PRODUCT.md): vocabulary and accepted behavior details.
+- [Architecture](docs/ARCHITECTURE.md): implementation owners and dated evidence.
+- [Decisions](docs/DECISIONS.md), [problems](docs/PROBLEMS.md), [acceptance](docs/ACCEPTANCE.md).
+- [Projects](docs/PROJECTS.md), [data inventory](docs/SYNCTHING_AND_DATA.md).
+- [Diagnostics and review procedures](docs/AGENT_WORKFLOWS.md), [control API](docs/DEVELOPER_CONTROL.md).
+- [Update procedure](docs/UPDATING_PAPERS.md): use the supported installer, not hand-copying over App.
+- [Reincarnation handoff](REINCARNATION-HANDOFF.md): historical refactor context, not an active rewrite assignment.
+
+Run checks appropriate to the changed owner. Documentation-only edits need link,
+consistency and diff checks, not an application rebuild or desktop interaction.
+
+- [New-machine dependency and recovery checklist](docs/NEW_MACHINE_SETUP.md).
+
+Pencilcase also owns the ChatGPT local coder view, opened from its dedicated tool
+entry as a separate page. The Delegate Wave Backpack is retired and archived. Its
+existing companion service remains the operational owner; Papers transfers the
+single trusted relay binding to Pencilcase. No second agent manager is introduced.

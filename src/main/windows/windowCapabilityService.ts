@@ -243,6 +243,7 @@ export type NativePickerBindResult =
   | { outcome: 'missing' | 'ambiguous' | 'helper-unavailable' | 'timeout'; error?: string };
 
 export interface WindowCapabilityService {
+  windowInstanceIdForHandle?(handle: number, pid: number): string | undefined;
   listCandidates(options?: { includeNativeIcons?: boolean }): Promise<WindowCandidateListResult>;
   windowLifecycleSnapshot(): Promise<{ snapshot: WindowInstanceSnapshot }>;
   resolveWindowInstance(windowInstanceId: string): Promise<WindowInstanceProbe>;
@@ -2150,6 +2151,11 @@ export function createWindowCapabilityService(options: WindowCapabilityServiceOp
   }
 
   return {
+    windowInstanceIdForHandle(handle, pid) {
+      const known = [...lifecycleCurrent.values()].map(entry => entry.observation)
+        .concat([...bindingObservations.values()].map(entry => entry.observation), lifecycleLastObservations ?? []);
+      return known.find(observation => observation.handle === handle && observation.processId === pid)?.windowInstanceId;
+    },
     listCandidates,
     windowLifecycleSnapshot,
     resolveWindowInstance,

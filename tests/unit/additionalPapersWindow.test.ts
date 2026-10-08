@@ -90,13 +90,11 @@ describe('additional Papers window composer', () => {
     });
 
     await createAdditionalPapersWindow({ createWindow: () => second, lifecycleDependencies });
-    windows.setHermesDockOwner(second.window.id);
     (second.window as never as EventEmitter).emit('close');
     (second.window as never as EventEmitter).emit('closed');
 
     expect(second.projectSurfaces.hideAll).toHaveBeenCalledTimes(1);
     expect(windows.windowIds).toEqual([21]);
-    expect(windows.hermesDockOwner()).toBeNull();
     expect(windows.windowForSender(121)).toBe(21);
   });
 });

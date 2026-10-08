@@ -93,7 +93,6 @@ describe('developer control plane', () => {
     await expect(call('inspect.snapshot')).resolves.toMatchObject({
       schemaVersion: 1,
       windows: [{ hostAlive: true, nativeWindowAlive: true }],
-      hermes: { ownerWindowId: null },
     });
 
     await expect(call('window.create')).resolves.toEqual(expect.objectContaining({

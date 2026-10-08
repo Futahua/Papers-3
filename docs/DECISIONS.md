@@ -1,10 +1,8 @@
 # Papers — consequential decisions
 
-This is a chronological decision record, not a source from which agents may expand product
-ontology. Read [`PRODUCT.md`](PRODUCT.md) for current product truth and
-[`HERMES.md`](../HERMES.md) before acting. Preserve historical entries; when the creator
-corrects an earlier interpretation, record the current truth before implementation rather
-than rewriting history afterward to manufacture consent.
+> Reference / evidence under [AGENTS.md](../AGENTS.md), the sole governing document.
+> Dated instructions and implementation limits do not override current creator direction.
+> The current cleanup is docs/comments only; this file does not activate a code roadmap.
 
 ## Creator clarification — Backpack projects stay outside Papers binaries (2026-07-30)
 
@@ -40,23 +38,7 @@ log, which remain available in Git history.
 > portable or synchronized. Those meanings remain open until real Backpack work requires
 > them. The original decision is preserved below as a chronological record.
 
-A Backpack is not a Canvas. It can eventually span application windows, folders, browser
-destinations, documents, multiple monitors and Papers surfaces. It does not own or scope
-Hermes. Entering an empty Backpack currently warns that no contents exist.
-
-## D-003 — Hermes UI is reused, not recreated (2026-07-21)
-
-The installed Hermes Agent already provides:
-
-- `hermes dashboard`, including an unconditional embedded `/chat` surface;
-- Hermes Desktop with chat, attachments, streaming tools, previews, file browsing,
   conversation history, voice, settings, models and credentials;
-- `hermes desktop --cwd <folder>` for an initial project directory.
-
-Decision: production Papers embeds the dashboard chat and launches Hermes Desktop without
-Backpack-derived arguments. The `--cwd` capability exists but is not inferred from a
-Backpack. Papers does not own chat messages, session state, agent approvals or settings.
-The ACP integration is a fixture only.
 
 ## D-004 — PowerToys proposal (deferred, 2026-07-21)
 
@@ -79,29 +61,10 @@ must not call itself complete while its primary everyday workflow remains absent
 
 ## D-007 — Folder/cover first-Backpack proposal (superseded, 2026-07-21)
 
-This proposal treated a compact name/folder/cover flow as the first useful Backpack. D-008
-supersedes it: creation is name-only, Hermes stays global, and no contents are invented
-before the creator shapes the Backpack through use.
-
-## D-008 — Global Hermes and name-only Backpacks (2026-07-21)
-
-> **Current clarification (2026-07-30):** Hermes remains global. The wording about Tools
-> below does not define what a Tool is: only the creator decides that, spontaneously or
-> deliberately. A request about one Backpack cannot create a global Tool definition.
-> The original decision is preserved below as a chronological record.
-
-The creator corrected the first-Backpack plan. Hermes is global and Backpack interaction
-must not change its working directory, conversation or context automatically. Creating a
-Backpack asks only for a name and creates no folder, cover, canvas or contents. Entering a
-new empty Backpack displays `Nothing here yet. Create something under “name”.`
-
 A Backpack is a machine-wide environment or lens that may later contain several pages,
 views, features and uses of shared Tools. It is not a single boxed application to enter
 and leave. Basic remains permanent with Backpacks, Tools and Settings. Tools are global
 reusable machine capabilities; their exact contract remains explicitly undecided.
-
-This decision supersedes the folder/cover first-release flow and any automatic
-`hermes desktop --cwd <Backpack folder>` behavior in earlier Papers 3 documents.
 
 ## D-009 — Reuse Papers 1's visual theme (2026-07-21)
 
@@ -109,9 +72,6 @@ The creator likes the feel of Papers 1 and wants it carried forward. Papers 3 wi
 the actual warm paper palette, faint grid, translucent permanent top bar, fine borders,
 rounded controls, restrained shadows, muted green accent and compact desktop typography
 from `Futahua/papers-are-papers/src/styles.css`.
-
-This is visual reuse only. Papers 1's custom agent workbench, Work rail, provider wizard,
-Inspect, approval and self-edit behaviors do not return. Hermes keeps its existing UI.
 
 ## D-010 — Sync classification evolves with real features (2026-07-21)
 
@@ -132,51 +92,7 @@ ambiguous data is preserved and recorded until use makes its value clear. Every 
 feature must update `docs/SYNCTHING_AND_DATA.md` with ownership, location, sync behavior,
 secret status, concurrency limits and recovery.
 
-Hermes uses the `HERMES.md` in the Papers master folder as its native pickup instruction
-when the creator points Hermes at that folder. Papers does not automatically change the
-global Hermes working directory to force this context.
-
-## D-011 — One Hermes backend, real Hermes Desktop in both placements (2026-07-21)
-
-The prior build ran two Hermes backends for one experience: Papers embedded the terminal
-`hermes dashboard /chat` (port 9119) in its sidebar, while `hermes desktop` spawned a
-second identical `hermes dashboard` backend on another port behind the polished React UI.
-Same data, two frontends, two Python backends. This was the central defect (PROBLEMS.md 1).
-
-Proven from the Hermes Desktop source (`apps/desktop/electron/main.cjs`): the desktop's
-own local backend is literally `hermes dashboard --no-open --host 127.0.0.1 --port <n>`
-with a per-launch `HERMES_DASHBOARD_SESSION_TOKEN`, and the desktop honours
-`HERMES_DESKTOP_REMOTE_URL` + `HERMES_DESKTOP_REMOTE_TOKEN` to connect to an existing
-token-auth backend instead of spawning its own.
-
-Decision: Papers starts exactly one `hermes dashboard` backend (127.0.0.1:9119) with a
-Papers-generated session token, then launches the real Hermes Desktop app pointed at that
-backend via the two env vars. Both the docked sidebar placement and the detached window
-are the same real Hermes Desktop frontend on the same single backend. The terminal `/chat`
-embedding is removed entirely.
-
 ## D-012 — Papers-managed snap-dock, not window reparenting (2026-07-21)
-
-Hermes Desktop exposes no companion/dock mode and no renderer set-bounds IPC; it is a
-frameless top-level Electron `BrowserWindow` in its own process. Native cross-process
-window reparenting on Windows (`SetParent`) is fragile through focus, keyboard input, DPI,
-sleep/wake and crash — the handoff permits it only if demonstrably stable.
-
-Decision (creator-approved): Papers manages the real Hermes Desktop window as a placement
-it positions flush against its docking edge ("docked sidebar"), keeps aligned on Papers
-move/resize, and offers a visible dock target when the detached window is dragged back.
-Hermes remains a real, independently-stable window the whole time; docking never destroys
-the session. This is the handoff's "Papers-managed Hermes window that visually docks
-without cloning the UI."
-
-## D-013 — Restrained skin as external theme data on a Hermes tracking branch (2026-07-21)
-
-The Papers Light/Dark skin (HERMES_SKIN.md, PROBLEMS.md 3-4) lives as versioned external
-theme data plus one narrow theme-loading seam in Hermes Desktop, on a tracking branch of
-`NousResearch/hermes-agent` that can be rebased onto selected upstream releases. Updates
-run through a documented source-based rebuild command, never by overwriting the only
-working build. If theme loading fails, Hermes falls back to its stock appearance rather
-than failing to start.
 
 ## D-014 — Slim theme-matched title bar, no wordmark or menu (2026-07-22)
 
@@ -200,20 +116,10 @@ D-016 and D-018 removed recorded paths from Papers, and `b7d2787` removed the la
 the companion connector. All three fix what a process resolves **when it starts**. None of
 them reach a process that is **already running**.
 
-A process inherits its environment at launch and keeps that snapshot for life. After Hermes
-was relocated, every long-lived process started beforehand went on handing the old
-`HERMES_HOME` to its children, and nothing in its command line revealed it. Two consequences
-were observed:
-
 - The connector rebuilt a whole directory tree under the abandoned path and minted a second
   device identity there, breaking the phone pairing. Fixed at the source in `b7d2787`.
-- Hermes Desktop, running since before the move, read the phantom's empty 180 KB `state.db`
   while the real 5.1 MB one sat untouched — presenting as an empty, flashing session list
   with no error anywhere.
-
-Decision: relocating a Hermes home is not complete until every process that predates the
-move has been restarted. Code-level resolution is necessary but not sufficient, and this
-step belongs in any relocation procedure rather than being rediscovered from symptoms.
 
 The general form, now seen three times: **a path captured at any moment — build time,
 process start, or first write — is wrong as soon as the thing it names moves.** Resolution
@@ -236,11 +142,7 @@ Decision: `electron-updater` against the public `Futahua/Papers-3` releases.
 `npm run release` builds and publishes; installed copies check on launch and download in the
 background.
 
-Two deliberate restraints, both following the D-011 principle that Papers must not disturb a
-live Hermes:
-
 - **Never install unasked.** `autoInstallOnAppQuit` is off, so quitting Papers never swaps
-  the application underneath a running Hermes. Restarting is the creator's choice.
 - **Never interrupt.** A failed or offline check resolves quietly to "up to date"; only a
   downloaded, ready update surfaces. The reason is retained so an explicit check can explain
   itself — silence and failure must not be indistinguishable to someone asking directly.
@@ -253,23 +155,11 @@ Consequence for both machines: Papers must be installed once by its own installe
 at the existing `App` folder so `Data` stays beside it. A hand-copied install has no Windows
 record and would receive a second copy rather than an upgrade.
 
-## D-018 — The Hermes backend runs from the located install, not from PATH (2026-07-27)
-
-D-016 removed the build-time path for Hermes *Desktop*, but the *backend* was still
-spawned as a bare `hermes`, resolved through PATH. Found on the laptop during the D-016
-verification: Desktop resolution succeeded, and Hermes still failed to start.
-
 PATH is machine setup a build cannot carry. Worse, it is not even stable within a machine —
 a process started before the venv was added to PATH inherits a stale copy, so the same
 build works or fails depending on when the launching shell started. Papers reported only
 "exited before it became ready", naming neither the command nor a path, because
 `stdio: 'ignore'` discarded the reason.
-
-Decision: the backend runs `<hermesRoot>\venv\Scripts\hermes.exe` — the interpreter beside
-the code Papers has already located — falling back to a bare `hermes` only when no venv is
-present, for a differently-arranged Hermes where PATH may still be correct. Backend stderr
-is captured (tail only) and every failure names the exact command Papers ran plus whatever
-Hermes reported.
 
 Verified with PATH deliberately reduced to the bare Windows system directories: the backend
 reaches ready, which was a guaranteed failure before.
@@ -302,53 +192,10 @@ Paths and machine name are properties of a MACHINE and are read at run time.
 The version field remains `1.0.0` and is still shown. Bumping it on real releases stays
 worth doing, but it is no longer what tells two machines apart.
 
-## D-016 — Hermes is located at run time, never baked into a build (2026-07-27)
-
-Papers located Hermes Desktop through a single absolute path written into the source
-(`D:\LapSlop brotherhood\Programs\Assistant\HermesAI\.hermes\...`). That path was
-whatever the packaging machine happened to use, so every build was correct on exactly
-one computer. When Hermes moved, Papers showed "Hermes Desktop is not installed where
-Papers expects it" and the banner never said which path it had tried. Papers runs on two
-machines with different roots (`D:\Letters\...` and `C:\This is Minh\...`), so a
-build-time path is wrong by construction.
-
-Decision: Papers resolves Hermes at run time in `src/main/hermes/hermesLocation.ts`,
-taking the first hit from: an explicit `PAPERS_HERMES_DESKTOP_EXE` override; the location
-Papers itself resolved and remembered last time (kept in the Papers data folder, written
-only after a successful resolution, so a move self-heals); `HERMES_HOME`, which the Hermes
-installer already sets on every machine; then a short probe of ordinary locations,
-including a `HermesAI\.hermes` beside the Papers installation. No layout from the build
-machine survives in the build.
-
-`HERMES_HOME` alone was rejected as the sole rule: a process started before Hermes moves
-keeps a stale copy of it, which was observed on the primary machine. Remembering plus
-probing survives that; a single source of truth would not have.
-
 When every rule misses, the banner lists each path tried and what suggested it, so a
 moved folder is visible at a glance instead of requiring a search.
 
-The Hermes root is now derived from the executable rather than configured separately, so
-the two cannot disagree. A `PAPERS_HERMES_ROOT` pointing at the `.hermes` home is
-corrected to the `hermes-agent` folder beneath it — the machine-local stopgap was set that
-way, and it would have sent the update helper looking for `venv\Scripts\hermes.exe` one
-level too high.
-
-This removes the need for the per-machine `PAPERS_HERMES_DESKTOP_EXE` and
-`PAPERS_HERMES_ROOT` environment variables. They remain supported as deliberate overrides.
-
 ## D-015 — Docking is a deliberate toggle, not drag-to-dock (2026-07-22)
-
-An earlier iteration docked the real Hermes window when it was dragged to a Papers edge.
-The creator found even a tight edge-sliver activation unnecessary and preferred to leave a
-detached Hermes wherever it is dropped.
-
-Decision: docking and detaching are done only through the two SVG toggles (sidebar / window).
-Dragging a detached Hermes never docks it; there is no drag activation zone and no edge
-highlight. Papers still keeps a *docked* window aligned and raised above Papers (non-topmost
-moveTop) as Papers moves/resizes, and dragging a docked window off its strip frees it so the
-drag wins over realignment. This supersedes the "drag docking / dock target / edge sliver"
-parts of the earlier docking notes; the one-backend surface and non-topmost raise (D-011,
-D-012 and the security hardening) are unchanged.
 
 ## D-019 — A Backpack document is saved by compare-and-set, not by last writer (2026-09-01)
 
@@ -388,18 +235,6 @@ semantic coordination; Papers provides only a generic lease and message transpor
 never interprets the document. This follows the existing detached-surface handshake, which
 already transfers ownership rather than permitting two independent writers.
 
-## D-021 — Hermes has one explicit dock owner and never follows focus (2026-09-01)
-
-With several Papers windows, a single global Hermes has to belong somewhere.
-
-Focus-following was rejected: a globally singular Hermes window would jump between Papers
-windows whenever one was clicked, which would move a live agent session by accident.
-
-Decision: one Hermes backend and one Hermes Desktop, as today. Exactly one Papers window
-owns the dock. Clicking another window changes nothing. Pressing Dock in another window
-explicitly transfers ownership to it. A detached Hermes belongs to no Papers window. This
-keeps the deliberate-docking rule of D-015 intact under multiple windows.
-
 ## D-022 — A surface carries an opaque project-defined key (2026-09-01)
 
 Two windows showing the same Backpack differently — a “variation” — must not become a
@@ -421,3 +256,43 @@ Alt+Shift+A belongs in Papers code and must bring its existing window forward
 quickly. The creator explicitly rejected relying on a Windows shortcut hotkey.
 Restore the application registration and direct foreground handler; remove the
 Windows shortcut binding added during diagnosis so it cannot compete.
+
+## 2026-10-07 — Remove the fixed project-state size ceiling
+
+The creator explicitly removed the unproven five-million-character restriction. Valid state saves have no fixed character limit in the IPC schema or project service. Existing shape validation, checked revisions, and atomic replacement remain the save contract.
+
+## D-020 — Pencilcase tool ownership (2026-10-07)
+
+The creator explicitly defines tool management as an independent Backpack named Pencilcase.
+This supersedes the built-in Tools destination and undecided placeholder contract described
+in earlier decisions. Papers retains execution owners, supported runtime controls and measured
+observations. Pencilcase owns definitions, catalog and the management/recording interface.
+
+## Pencilcase retirement correction — 2026-10-07
+
+Retiring Delegate Wave also migrates its saved workspace surface references to
+Pencilcase. Merely archiving the registry entry leaves unavailable project ids in
+startup layouts and blocks hydration and subsequent opens. Two saved references
+were migrated, preserving surface identities, group structure, sizes and focus.
+The original workspace file is preserved in the migration backup. Full Basic pages
+also hold the native host overlay lease so background project/browser views cannot
+intercept their controls.
+
+## Diagnostic bridge parity — 2026-10-07
+
+Diagnostic project preloads add observations to the production bridge. They do
+not maintain a second request dispatcher. The shared production source is inlined
+into the diagnostic sandbox entry using a distinct build module identity; local
+CommonJS requires are not supported by sandboxed Electron preloads. Both modes
+forward file requests and preserve the production gesture and scope checks.
+Packaged diagnostics-enabled search replies and Pencilcase controls are covered
+by regression tests. The former diagnostic dispatcher silently dropped searches.
+
+## Failed native preview fallback — 2026-10-07
+
+A registered Windows preview handler can still fail to host a particular file.
+AYG then requests the existing preview chain with that handler bypassed; Office
+files can use the existing cached LibreOffice PDF conversion. Navigation fences
+discard stale results and release their resources. A failed handler does not leave
+the pane at a permanent hosting error or implicitly open an editor. The creator's
+EXCHANGE.xlsx converted successfully without changing its source hash.

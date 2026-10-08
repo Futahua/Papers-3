@@ -83,7 +83,7 @@ export interface CompactWidgetSessionDependencies {
   /** Owner-scoped: two Papers windows may show one project, and each has its
    * own project runtime, so the entry URL cannot be derived from the project
    * alone. */
-  resolveEntryUrl: (projectId: string, owningWindowId: number) => string | null;
+  resolveEntryUrl: (projectId: string, owningWindowId: number, workspaceSenderId?: number) => string | null;
   isSurfaceOrigin?: (senderId: number, projectId: string) => boolean;
   onSurfaceClosed?: (projectId: string, layoutKey: string, owningWindowId: number) => void;
   onWidgetRegistered?: (senderId: number, nativeHandle: Buffer) => void;
@@ -92,7 +92,7 @@ export interface CompactWidgetSessionDependencies {
 }
 
 export interface CompactWidgetSession {
-  open(request: { projectId: string; layoutKey: string; owningWindowId: number; bounds?: WindowBounds | null; activate?: boolean }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }>;
+  open(request: { projectId: string; layoutKey: string; owningWindowId: number; workspaceSenderId?: number; bounds?: WindowBounds | null; activate?: boolean }): Promise<{ ok: true; reused: boolean } | { ok: false; error: string }>;
   /** Authenticated live widgets can host a project's declared command surface
    * after its ordinary workspace tab has been closed. */
   liveProjectOwners(): Array<{ projectId: string; owningWindowId: number }>;
@@ -288,7 +288,8 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     const key = keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId);
     if (entries.get(key) !== entry) return;
     entries.delete(key);
-    if (followedEntry === entry) stopFollowing();
+    if (followedEntry === entry) { stopFollowing(); altQGesture = null; }
+    if (altQGesture?.kind === 'inside' && altQGesture.entry === entry) altQGesture = null;
     if (latestWidgetKey === key) {
       const remainingKeys = [...entries.keys()];
       latestWidgetKey = remainingKeys[remainingKeys.length - 1] ?? null;
@@ -299,11 +300,6 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     if (!entry.window.isDestroyed()) entry.window.destroy();
     deps.onSurfaceClosed?.(entry.projectId, entry.layoutKey, entry.owningWindowId);
   }
-
-  const onClosed = (projectId: string, layoutKey: string, owningWindowId: number): void => {
-    const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
-    if (entry) destroy(entry);
-  };
 
   const readyHandler = (event: { sender: { id: number } }, payload?: unknown): void => {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
@@ -374,7 +370,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
         }
         return { ok: true, reused: true };
       }
-      const entryUrl = deps.resolveEntryUrl(request.projectId, request.owningWindowId);
+      const entryUrl = deps.resolveEntryUrl(request.projectId, request.owningWindowId, request.workspaceSenderId);
       if (!entryUrl) return { ok: false, error: 'no live workspace entry for this project' };
       let url: string;
       try { url = widgetUrl(entryUrl, request.layoutKey, request.projectId); } catch { return { ok: false, error: 'widget entry is not a bound project surface' }; }
@@ -392,8 +388,10 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
         // This non-activating widget can report a delayed focus notification
         // during minimize. Only explicit restore paths release suppression.
       });
-      window.on('closed', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));
-      window.webContents.on('render-process-gone', () => onClosed(request.projectId, request.layoutKey, request.owningWindowId));
+      // A late notification from a deleted widget must not unregister its
+      // replacement, which can have the same layout key and a fresh sender.
+      window.on('closed', () => destroy(entry));
+      window.webContents.on('render-process-gone', () => destroy(entry));
       try { await window.loadURL(url); }
       catch { destroy(entry); return { ok: false, error: 'compact widget failed to load' }; }
       if (entries.get(key) !== entry || window.isDestroyed()) return { ok: false, error: 'compact widget closed during load' };

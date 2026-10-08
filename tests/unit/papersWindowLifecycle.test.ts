@@ -163,3 +163,11 @@ describe('prepared Papers window lifecycle', () => {
     expect(current.window.destroy).toHaveBeenCalledTimes(1);
   });
 });
+
+it('honors an earlier native editor close fence before retiring the Papers window', async () => {
+  const current = instance(async () => {}), onClose = vi.fn();
+  preparePapersWindow(current, { register: vi.fn(), finalize: vi.fn(), onClose });
+  (current.window as never as EventEmitter).emit('close', { defaultPrevented: true, preventDefault: vi.fn() });
+  await Promise.resolve();
+  expect(onClose).not.toHaveBeenCalled(); expect(current.window.destroy).not.toHaveBeenCalled();
+});

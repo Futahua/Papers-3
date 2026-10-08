@@ -11,7 +11,6 @@ than a situation to unwind.
 This is the right boundary, and it should be kept:
 
 - `Papers/Data` is a mixed Electron profile holding caches, locks, browser state, a live
-  SQLite journal and the Hermes session token. It is not a safe multi-machine,
   simultaneous-write data model, and syncing it would risk corrupting live state.
 - `Papers/App` is a running application binary. Sync propagates files as they finish, so a
   mid-sync `App` is a half-replaced application; Windows also locks the executable while
@@ -20,12 +19,6 @@ This is the right boundary, and it should be kept:
 **Papers is distributed by its own updater instead** (D-019): each machine installs from the
 published GitHub release, so the application arrives complete or not at all. See
 [UPDATING_PAPERS.md](UPDATING_PAPERS.md).
-
-Hermes is likewise a local runtime, not a folder of portable files. A synchronized copy
-does not reproduce Python runtimes, an editable pip install, services or an available local
-port. Its live credentials, sessions and databases must not be treated as ordinary shared
-documents. Papers locates Hermes at run time on each machine (D-016) rather than carrying a
-path between them.
 
 ## Policy for features built later
 
@@ -61,14 +54,6 @@ machines. The plugin analogy does not itself choose where projects live or how t
 
 ## Intended direction, not a frozen schema
 
-```text
-Papers/
-├── App/                 installed application; replaced by the updater, not by hand
-├── Data/                mixed local runtime; machine-local, not multi-writer safe
-├── Backpack projects/   outside App; exact location established by each real project
-└── HERMES.md            pickup instructions for building Backpacks
-```
-
 `Migration Backup/` appeared in an earlier version of this diagram. It does not exist on
 the primary machine (verified 2026-07-27) and is not created by anything; the migration it
 referred to is long finished.
@@ -92,9 +77,6 @@ Update this table whenever a real feature creates persistent data.
 | “As you Go” explorer state | `Papers/Backpack projects/As you Go/state.json` | The creator's local “As you Go” experience | **Machine-local**; no Papers release or other-machine update | No expected secrets; contains local shortcut targets (including references created by Windows Explorer drops), web-link URLs, optional descriptions/icons, nesting, manual order, Bin recovery records and icon-size preference. A web link may load its origin's `/favicon.ico` while displayed | One local project instance; queued atomic writes prevent overlapping saves | Delete first moves items into the in-project Bin; Restore returns them to their recorded location; permanent deletion requires a separate confirmed action inside the Bin. Dropped external files/folders are never copied, moved or changed |
 | Legacy “As you Go” action record | `Papers/Shared/backpacks/bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d/buttons.json` | Preserved historical/recovery evidence; no 1.2.3 runtime dependency | **Do not sync or migrate by inference** | No, but contains absolute local paths | None | Preserve the existing file and adjacent backup unchanged |
 | Migration material | `Papers/Migration Backup` | Creator | Archive; no runtime dependency | Possibly | No | Original moved material |
-| Hermes runtime and state | Resolved per machine by `hermesLocation.ts` (D-016); the backend runs from `<hermesRoot>\venv\Scripts\hermes.exe` (D-018) | Hermes | Install/configure per machine unless Hermes provides supported sync | Yes | No raw multi-machine writers | Hermes-owned recovery/export mechanisms |
-| Hermes session token | `Papers/Data/hermes-backend-token` | Papers | **Machine-local. Never sync** | **Yes** | One Papers per machine | Regenerated on next launch; delete freely |
-| Resolved Hermes location | `Papers/Data/hermes-location.json` | Papers | **Machine-local. Never sync** — it names one machine's folders | No | No | Rewritten automatically on next successful resolution; delete freely |
 | Downloaded Papers updates | `Papers/Data/papers-updater` (electron-updater cache) | electron-updater | Machine-local cache | No | No | Re-downloaded from the GitHub release |
 | Opt-in developer-control descriptor | Explicit `PAPERS_DEV_CONTROL_DESCRIPTOR` path, or `<userData>/dev-control.json` while enabled | Running Papers process | **Ephemeral and machine-local. Never sync or commit** | **Yes: contains a process-specific bearer token and named-pipe address** | One running Papers process owns and replaces its descriptor | Removed on normal shutdown; stale files are harmless after the owning process/pipe exits and may be deleted |
 
@@ -111,22 +93,11 @@ is not restorable through the UI, while execution audit and repository data rema
 Deleting a custom group resets membership without deleting waves. The Papers relay
 stores no second copy and exposes only fixed, authenticated organizer operations.
 
-The Papers master folder is outside Syncthing today, so nothing needs unwinding. **Keep it
-that way**: do not add `Papers/` to a synchronized folder, and in particular never sync
-`Papers/Data` (live SQLite state and the Hermes token) or `Papers/App` (a running binary
-that Windows locks). Papers is distributed by its updater instead.
-
 Syncthing ignore patterns are relative to the Syncthing root and `.stignore` is local to
 each device, so an exclusion added on one machine does not protect another. Any future
 decision to bring part of `Papers/` into sync must be made deliberately on every trusted
 device, and must name what is included rather than relying on an ignore rule to exclude the
 dangerous parts.
-
-Earlier revisions of this section referenced a Hermes install under
-`Programs/Assistant/HermesAI/...`. That path is obsolete — Hermes has moved, and Papers no
-longer depends on any recorded path (D-016).
-
-Do not open Papers or Hermes concurrently against the same live data on two machines.
 
 Browser failure diagnostics are machine-local under `PapersData/diagnostics/browser-errors.ndjson`
 and its `.previous` rotation. The host owns this disposable diagnostic data; it is not

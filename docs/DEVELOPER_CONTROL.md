@@ -33,10 +33,6 @@ npm run papersctl -- backpack.archive --project bp-… --confirmation 'ARCHIVE B
 npm run papersctl -- backpack.remove --project bp-… --confirmation 'DELETE BACKPACK "Exact name"' --descriptor D:\temp\papers-control.json
 ```
 
-`inspect.snapshot` is a coherent, versioned, redacted view of current Papers
-authority: build identity, native windows and global Hermes placement/owner. It
-does not expose project roots, tokens, credentials or Backpack documents.
-
 The protocol is newline-delimited JSON over a Windows named pipe, never TCP.
 Requests are size-limited, versioned, token-authenticated and Zod-validated.
 The control actor uses explicit semantic commands; it never fabricates an

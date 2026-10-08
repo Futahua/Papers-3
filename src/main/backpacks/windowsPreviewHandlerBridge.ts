@@ -84,3 +84,6 @@ export function createWindowsPreviewHandlerBridge(input:{cacheDirectory:string;s
     dispose(){for(const s of [...sessions.values()])stop(s)}
   };
 }
+
+// Native editor hosts share the preview surface coordinate contract.
+export { validRect as validPreviewRect, absoluteRect as absolutePreviewRect };

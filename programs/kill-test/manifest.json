@@ -12,5 +12,5 @@
     "agent.invoke",
     "agent.cancel-own"
   ],
-  "description": "Vertical kill-test program: state persistence, capability prompts, crash isolation, exact Hermes invocation, cancellation, structured results."
+  "description": "Vertical kill-test program: state persistence, capability prompts, crash isolation, exact agent invocation, cancellation, structured results."
 }

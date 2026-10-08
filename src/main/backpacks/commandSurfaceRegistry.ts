@@ -9,7 +9,7 @@
  * effectively random. It showed Proxima's task board - a project with no command
  * surface of any kind - squeezed into the launcher's 640x220 letterbox.
  *
- * Alt+Shift+A has ONE meaning: show me my command surface. A chord whose meaning
+ * Alt+S has ONE meaning: show me my command surface. A chord whose meaning
  * depended on an invisible tab could not hold one.
  *
  * THE RULE

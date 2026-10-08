@@ -132,35 +132,6 @@ const api = {
       ipcRenderer.invoke('host:permissions:respond', promptId, decision),
   },
 
-  runs: {
-    list: () => ipcRenderer.invoke('host:runs:list'),
-    get: (runId: string) => ipcRenderer.invoke('host:runs:get', runId),
-    cancel: (runId: string) => ipcRenderer.invoke('host:runs:cancel', runId),
-    respondInteraction: (runId: string, requestId: string, optionId: string) =>
-      ipcRenderer.invoke('host:runs:respond-interaction', runId, requestId, optionId),
-    retry: (runId: string) => ipcRenderer.invoke('host:runs:retry', runId),
-    inspectInHermes: (runId: string) => ipcRenderer.invoke('host:runs:inspect-in-hermes', runId),
-    returnToOrigin: (runId: string) => ipcRenderer.invoke('host:runs:return-to-origin', runId),
-    respondInvocation: (previewId: string, approved: boolean) =>
-      ipcRenderer.invoke('host:runs:respond-invocation', previewId, approved),
-    reply: (runId: string, text: string) => ipcRenderer.invoke('host:runs:reply', runId, text),
-    composedPrompt: (runId: string) => ipcRenderer.invoke('host:runs:composed-prompt', runId),
-  },
-
-  hermes: {
-    health: () => ipcRenderer.invoke('host:hermes:health'),
-    surfaceStatus: () => ipcRenderer.invoke('host:hermes:surface-status'),
-    // Dock/detach the one real Hermes Desktop window. Docked and detached are
-    // placements of the same experience; hiding never terminates the session.
-    dock: (bounds: { x: number; y: number; width: number; height: number }) =>
-      ipcRenderer.invoke('host:hermes:dock', bounds),
-    setDockBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
-      ipcRenderer.invoke('host:hermes:set-dock-bounds', bounds),
-    hideDock: () => ipcRenderer.invoke('host:hermes:hide-dock'),
-    showWindow: () => ipcRenderer.invoke('host:hermes:show-window'),
-    hideWindow: () => ipcRenderer.invoke('host:hermes:hide-window'),
-  },
-
   events: {
     onBackpacksChanged: subscribe('host:event:backpacks-changed'),
     onBackpackProjectCloseRequest: subscribe('host:event:backpack-project-close-request'),
@@ -176,10 +147,6 @@ const api = {
     onShelfChanged: subscribe('host:event:shelf-changed'),
     onSaveStatus: subscribe('host:event:save-status'),
     onPermissionPrompt: subscribe('host:event:permission-prompt'),
-    onInvocationPreview: subscribe('host:event:invocation-preview'),
-    onRunsChanged: subscribe('host:event:runs-changed'),
-    onHermesHealth: subscribe('host:event:hermes-health'),
-    onHermesSurface: subscribe('host:event:hermes-surface'),
     onHostError: subscribe('host:event:host-error'),
     onUpdateStatus: subscribe('host:event:update-status'),
   },

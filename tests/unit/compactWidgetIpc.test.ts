@@ -107,7 +107,7 @@ describe('compact widget IPC', () => {
     const h = harness();
     await expect(h.invoke('papers:backpack:widget-open', 1, { projectId: 'bp-a', layoutKey: 'layout-a', activate: false }))
       .resolves.toEqual({ ok: true, reused: false });
-    expect(h.session.open).toHaveBeenCalledWith({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1, activate: false });
+    expect(h.session.open).toHaveBeenCalledWith({ projectId: 'bp-a', layoutKey: 'layout-a', workspaceSenderId: 1, owningWindowId: 1, activate: false });
     await expect(h.invoke('papers:backpack:widget-open', 1, { projectId: 'bp-a', layoutKey: 'layout-a', activate: 'false' }))
       .rejects.toThrow(/malformed/);
   });
@@ -116,7 +116,7 @@ describe('compact widget IPC', () => {
     const h = harness();
     h.registry.register(1, 'bp-a', WORKSPACE_SURFACE_KIND);
     await expect(h.invoke('papers:backpack:widget-open', 1, { projectId: 'bp-a', layoutKey: 'layout-a' })).resolves.toEqual({ ok: true, reused: false });
-    expect(h.session.open).toHaveBeenCalledWith({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    expect(h.session.open).toHaveBeenCalledWith({ projectId: 'bp-a', layoutKey: 'layout-a', workspaceSenderId: 1, owningWindowId: 1 });
     await expect(h.invoke('papers:backpack:widget-focus', 1, { projectId: 'bp-a', layoutKey: 'layout-a' })).resolves.toEqual({ ok: true });
     await expect(h.invoke('papers:backpack:widget-open', 9, { projectId: 'bp-a', layoutKey: 'layout-a' })).rejects.toThrow(/denied/);
   });

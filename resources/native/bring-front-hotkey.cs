@@ -175,7 +175,12 @@ internal static class Program
         using (Mutex mutex = new Mutex(true, "Papers.BringFrontHotkey.v1", out first))
         {
             if (!first) return 0;
-            if (!RegisterHotKey(IntPtr.Zero, HotkeyId, ModAlt | ModShift | ModNoRepeat, VkA)) return 3;
+            if (!RegisterHotKey(IntPtr.Zero, HotkeyId, ModAlt | ModNoRepeat, VkA))
+            {
+                if (!string.IsNullOrWhiteSpace(telemetry)) File.AppendAllText(telemetry, "Alt+A registration failed" + Environment.NewLine);
+                return 3;
+            }
+            if (!string.IsNullOrWhiteSpace(telemetry)) File.AppendAllText(telemetry, "Alt+A registered" + Environment.NewLine);
             // Pay the process/window scan once at helper startup, never on the
             // creator's first hotkey press. A destroyed/recreated Papers window
             // is detected and rediscovered lazily by GetPapersWindow().

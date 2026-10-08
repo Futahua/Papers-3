@@ -321,16 +321,6 @@ const snapshotSchema = z.object({
   schemaVersion: z.literal(1),
   build: safeBuildSchema,
   windows: z.array(controlWindowSchema),
-  // No `detail`. HermesSurface.detail is UI-facing human text and carries
-  // machine-local absolute paths -- the missing-Hermes message lists every
-  // location it searched. Forwarding it would disclose exactly the roots this
-  // boundary promises to withhold. A safe error code can be added later if
-  // programmatic diagnostics need one; UI prose is not that.
-  hermes: z.object({
-    placement: z.enum(['closed', 'docked', 'detached']),
-    status: z.enum(['idle', 'starting', 'ready', 'error']),
-    ownerWindowId: z.number().int().nullable(),
-  }).strict(),
   // The two system-wide invocation chords and whether Papers actually holds
   // them. Registration can fail because another application owns the chord, and
   // a silent failure would leave the creator pressing a key that does nothing.

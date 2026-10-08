@@ -15,6 +15,7 @@ import type { MlightCadPreviewBridge } from '../../src/main/backpacks/mlightCadP
 import type { HtmlPreviewHostBridge } from '../../src/main/backpacks/htmlPreviewHostBridge';
 import type { PowerPointPreviewBridge } from '../../src/main/backpacks/powerPointPreviewBridge';
 import type { WindowsPreviewHandlerBridge } from '../../src/main/backpacks/windowsPreviewHandlerBridge';
+import type { ChromePaneBridge } from '../../src/main/backpacks/chromePaneBridge';
 
 let root: string;
 let fileIcon: Mock<(target: string) => Promise<string | null>>;
@@ -41,6 +42,7 @@ function service(
   htmlPreview: HtmlPreviewHostBridge | null = null,
   powerPointPreview: PowerPointPreviewBridge | null = null,
   mlightCadPreview: MlightCadPreviewBridge | null = null,
+  chromePane: ChromePaneBridge | null = null,
 ) {
   const previewResources = createFilePreviewResourceRegistry();
   const inner = createFileCapabilityService({
@@ -54,6 +56,7 @@ function service(
     mlightCadPreview,
     htmlPreview,
     webBrowser: null,
+    chromePane,
     powerPointPreview,
     windowsPreview,
     dopusrtPath: null,
@@ -69,6 +72,39 @@ function service(
 }
 
 describe('file capability service', () => {
+  it('routes Chrome through the calling pane and refuses malformed geometry before touching Chrome', async () => {
+    const host = { ownerKey: '1:surface-chrome', parentHwnd: '456', surfaceBounds: { x: 0, y: 0, width: 1000, height: 800 } };
+    const chrome: ChromePaneBridge = {
+      open: vi.fn(async () => ({ ok: true, reused: true })), move: vi.fn(),
+      setPaneVisible: vi.fn(), setOwnerVisible: vi.fn(), setOwnerSurfaceBounds: vi.fn(), closeOwner: vi.fn(), raiseWindow: vi.fn(), dispose: vi.fn(),
+    };
+    const caller = service(null, null, null, { ...CONTEXT, nativePreviewHost: host }, null, null, null, null, null, null, null, chrome);
+    const rect = { x: 20, y: 30, width: 400, height: 500 };
+    expect(await caller.call({ operation: 'chrome-pane-open', params: { source: 'shortcut:link-1', url: 'https://example.com/', rect } })).toEqual({ ok: true, reused: true });
+    expect(chrome.open).toHaveBeenCalledWith(host, 'shortcut:link-1', 'https://example.com/', rect);
+    expect((await caller.call({ operation: 'chrome-pane-open', params: { source: 'shortcut:link-1', url: 'https://example.com/', rect: { ...rect, width: -1 } } })).ok).toBe(false);
+    expect(chrome.open).toHaveBeenCalledTimes(1);
+    await caller.call({ operation: 'chrome-pane-visible', params: { visible: false } });
+    expect(chrome.setPaneVisible).toHaveBeenCalledWith(host.ownerKey, false);
+  });
+
+  it('can bypass a registered native handler and use the remaining preview providers', async () => {
+    const target = path.join(root, 'workbook.xlsx');
+    await fs.writeFile(target, Buffer.from([0, 1, 2, 3]));
+    const probe = vi.fn(async () => ({ available: true, clsid: '{11111111-1111-1111-1111-111111111111}' }));
+    const windowsPreview: WindowsPreviewHandlerBridge = {
+      probe, open: vi.fn(async () => ({ ok: false as const })),
+      move: vi.fn(() => false), focus: vi.fn(() => false), close: vi.fn(() => false),
+      setOwnerSurfaceBounds: vi.fn(), setOwnerVisible: vi.fn(), closeOwner: vi.fn(), dispose: vi.fn(),
+    };
+    const thumbnail: ShellThumbnailBridge = { preview: vi.fn(async () => ({ ok: true as const, png: Buffer.from('thumbnail'), width: 1, height: 1 })) };
+    const api = service(null, null, windowsPreview, CONTEXT, null, thumbnail);
+    expect(await api.call({ operation: 'preview', params: { path: target } })).toMatchObject({ ok: true, preview: { kind: 'windows-preview-handler' } });
+    expect(await api.call({ operation: 'preview', params: { path: target, skipWindowsPreview: true } })).toMatchObject({ ok: true, preview: { kind: 'image', extractedBy: 'windows-shell-thumbnail' } });
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(thumbnail.preview).toHaveBeenCalledWith(target, 1600);
+    expect(await fs.readFile(target)).toEqual(Buffer.from([0, 1, 2, 3]));
+  });
   it('creates a folder in the exact parent and refuses collisions or path traversal', async () => {
     const api=service();
     const result=await api.call({operation:'create-folder',params:{path:root,newName:'New folder'}});

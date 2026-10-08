@@ -1,9 +1,13 @@
 # Reincarnated Papers — Current Refactor Guardrail / Durable Handoff
 
+> Historical handoff / proposal under [AGENTS.md](AGENTS.md), the sole governing document.
+> Dated instructions and implementation limits do not override current creator direction.
+> The current cleanup is docs/comments only; this file does not activate a code roadmap.
+
 Read this before doing refactor work on branch `reincarnated-i-was-stargazing`.
 
 This document is the current durable record for the reincarnation effort. It does **not**
-replace the product authority in `HERMES.md`, `docs/PRODUCT.md`, or creator corrections.
+replace the governing authority in `AGENTS.md` or current creator corrections.
 It points back to the refactor north star and narrows it to the work we are doing now.
 
 ## North star
@@ -21,7 +25,9 @@ For AYG's detailed extraction sequence, also use:
 - durable URL:
   `https://github.com/Futahua/Papers-3/blob/251aa0bf9e9ba3fe336b3354c3cd4b7f972af5c6/backpacks/as-you-go/POST-FEATURE-REFACTOR-PLAN.md`
 
-The governing ideas remain:
+The complete product vision leads [AGENTS.md](AGENTS.md): Papers is the creator's
+personal programmable environment over Windows; technologies serve that experience.
+The architectural principles supporting it are:
 
 > **Maximum useful capability and excellent UX, without capability growth making the system
 > progressively more brittle or expensive for coding agents to change.**
@@ -248,18 +254,6 @@ This refactor does not authorize:
 ## Resume checklist
 
 Before the next code edit on this branch:
-
-1. read `HERMES.md` and relevant local project instructions;
-2. read this file;
-3. read the exact north star linked above;
-4. confirm both coordinated repos are still on `reincarnated-i-was-stargazing`;
-5. inspect Git status and preserve unrelated/untracked creator work;
-6. name the slice and declare its blast radius;
-7. characterize stable behavior before moving code;
-8. keep browser/filesystem/unrelated Backpacks frozen unless explicitly in scope;
-9. run focused + project-level gates before accepting the slice;
-10. commit one concept at a time and leave live installation/release alone unless separately
-    authorized.
 
 ## Definition of success
 

@@ -303,7 +303,7 @@ export async function runAction(actionId, selection) {
   if (action.id === 'implement-task' && task && task.worktree) {
     invocation.execution = {
       resourceId: task.worktree.resourceId,
-      preferredWorker: task.worker || 'hermes',
+      preferredWorker: task.worker || 'agent',
     };
   }
 

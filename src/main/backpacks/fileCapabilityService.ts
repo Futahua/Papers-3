@@ -16,7 +16,10 @@ import type { HtmlPreviewHostBridge } from './htmlPreviewHostBridge';
 import type { WebBrowserHostBridge } from './webBrowserHostBridge';
 import type { PowerPointPreviewBridge } from './powerPointPreviewBridge';
 import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
+import type { LibreOfficeEditorBridge } from './libreOfficeEditorBridge';
+import type { ChromePaneBridge } from './chromePaneBridge';
 import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
+import { capabilityForOperation, type createCapabilityRuntimeService } from './capabilityRuntimeService';
 
 const MAX_PATH_BYTES = 32_768;
 const MAX_SEARCH_BYTES = 2_048;
@@ -50,6 +53,7 @@ export interface FileCapabilityEntry {
   size: number | null; createdAt: number | null; modifiedAt: number | null; identity: string | null;
 }
 export interface FileCapabilityDeps {
+  runtimeControl?: ReturnType<typeof createCapabilityRuntimeService>;
   everythingSearch: EverythingSearchBridge | null;
   previewResources: FilePreviewResourceRegistry;
   pdfPreview: PdfPreviewHostBridge | null;
@@ -60,8 +64,11 @@ export interface FileCapabilityDeps {
   mlightCadPreview: MlightCadPreviewBridge | null;
   htmlPreview: HtmlPreviewHostBridge | null;
   webBrowser: WebBrowserHostBridge | null;
+  chromePane?: ChromePaneBridge | null;
+  resolvePaneWindow?: (bindingId: string) => Promise<{ handle: number; pid: number } | null>;
   powerPointPreview: PowerPointPreviewBridge | null;
   windowsPreview: WindowsPreviewHandlerBridge | null;
+  officeEditor?: LibreOfficeEditorBridge | null;
   cacheDirectory?: string;
   dopusrtPath: string | null;
   libreOfficePath: string | null;
@@ -182,6 +189,18 @@ function previewRect(value: unknown): PreviewRect {
     || Math.abs(rect.x) > 100_000 || Math.abs(rect.y) > 100_000
     || rect.width > 100_000 || rect.height > 100_000) throw new Error('rect is outside the allowed bounds.');
   return rect;
+}
+function chromePaneRect(value: unknown): PreviewRect & { rightInset?: number; bottomInset?: number } {
+  const rect = previewRect(value);
+  const edges: { rightInset?: number; bottomInset?: number } = {};
+  for (const edge of ['rightInset', 'bottomInset'] as const) {
+    if (isRecord(value) && value[edge] !== undefined) {
+      const inset = Number(value[edge]);
+      if (!Number.isFinite(inset) || inset < 0 || inset > 100_000) throw new Error('native pane edge inset is outside the allowed bounds.');
+      edges[edge] = inset;
+    }
+  }
+  return { ...rect, ...edges };
 }
 function previewSessionId(value: unknown): string {
   const id = boundedString(value, 'sessionId', 64);
@@ -430,7 +449,7 @@ async function readTextChunk(target: string, offset: number, maxBytes: number): 
   }
 }
 
-async function previewFile(target: string, deps: FileCapabilityDeps, context: FileCapabilityContext): Promise<Record<string, unknown>> {
+async function previewFile(target: string, deps: FileCapabilityDeps, context: FileCapabilityContext, skipWindowsPreview = false): Promise<Record<string, unknown>> {
   const entry = await describe(target);
   if (entry.kind === 'folder') {
     const listing = await listDirectory(target, 200);
@@ -571,7 +590,7 @@ async function previewFile(target: string, deps: FileCapabilityDeps, context: Fi
       }
     }
   }
-  if (deps.windowsPreview) {
+  if (deps.windowsPreview && !skipWindowsPreview) {
     const available = await deps.windowsPreview.probe(target);
     if (available.available) {
       return { ok: true, entry, preview: { kind: 'windows-preview-handler', provider: 'windows-preview-handler', clsid: available.clsid } };
@@ -786,8 +805,8 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
       previewLaunches.delete(first);
     }
   };
-  return {
-    async call(raw, context) {
+  const service = {
+    async call(raw: unknown, context: FileCapabilityContext): Promise<Record<string, unknown>> {
       if (!isRecord(raw)) {
         return { ok: false, code: 'REQUEST_INVALID', message: 'File capability request must be an object.' };
       }
@@ -795,10 +814,26 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
       const params = isRecord(raw.params) ? raw.params : {};
       try {
         switch (operation) {
+          case 'runtime-snapshot':
+            return { ok: true, ...deps.runtimeControl?.snapshot(), providers: (await service.call({ operation: 'providers' }, context)).providers };
+          case 'runtime-configure':
+            if (!deps.runtimeControl) return { ok: false };
+            return { ok: true, snapshot: await deps.runtimeControl.configure(boundedString(params.id, 'id', 128), { startupLoad: params.startupLoad as boolean, keepWarm: params.keepWarm as boolean }) };
+          case 'runtime-prepare':
+            if (!deps.runtimeControl) return { ok: false };
+            return await deps.runtimeControl.prepare(boundedString(params.id, 'id', 128));
+          case 'runtime-recording-start':
+            return { ok: Boolean(deps.runtimeControl), recording: await deps.runtimeControl?.startRecording() };
+          case 'runtime-recording-stop':
+            return { ok: Boolean(deps.runtimeControl), recording: await deps.runtimeControl?.stopRecording() };
+          case 'runtime-recordings':
+            return { ok: Boolean(deps.runtimeControl), recordings: await deps.runtimeControl?.recordings() ?? [] };
           case 'providers':
             return {
               ok: true,
               providers: {
+                filePreview: true,
+                pdfPreview: Boolean(deps.pdfPreview),
                 everything: Boolean(deps.everythingSearch),
                 revitPreview: Boolean(deps.revitPreview),
                 shellThumbnail: Boolean(deps.shellThumbnail),
@@ -810,6 +845,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
                 webBrowser: Boolean(deps.webBrowser),
                 powerPointPreview: Boolean(deps.powerPointPreview),
                 windowsPreview: Boolean(deps.windowsPreview),
+                officeEditor: Boolean(deps.officeEditor),
                 directoryOpus: Boolean(deps.dopusrtPath),
                 libreOffice: Boolean(deps.libreOfficePath),
               },
@@ -874,7 +910,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             };
           }
           case 'preview':
-            return await previewFile(absolutePath(params.path), deps, context);
+            return await previewFile(absolutePath(params.path), deps, context, params.skipWindowsPreview === true);
           case 'preview-markdown-obsidian': {
             const target = absolutePath(params.path);
             const extension = path.extname(target).toLocaleLowerCase();
@@ -882,6 +918,32 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               return { ok: false, code: 'NOT_MARKDOWN', message: 'Obsidian rendering is available only for Markdown files.' };
             }
             return await renderMarkdownWithObsidian(target, deps.cacheDirectory);
+          }
+          case 'office-editor-close-owner': {
+            if (!deps.officeEditor || !context.nativePreviewHost) return { ok: true };
+            await deps.officeEditor.closeOwner(context.nativePreviewHost.ownerKey);
+            return { ok: true };
+          }
+          case 'office-editor-open': {
+            if (!deps.officeEditor || !context.nativePreviewHost) return { ok: false, code: 'OFFICE_EDITOR_UNAVAILABLE', message: 'Install LibreOffice with its Python component to edit documents inline.' };
+            return await deps.officeEditor.open(context.nativePreviewHost, absolutePath(params.path), previewRect(params.rect), params.loadId == null ? undefined : boundedString(params.loadId, 'loadId', 128));
+          }
+          case 'office-editor-status': {
+            if (!deps.officeEditor || !context.nativePreviewHost) return { ok: false };
+            return { ok: true, progress: deps.officeEditor.status(context.nativePreviewHost.ownerKey, boundedString(params.loadId, 'loadId', 128)) };
+          }
+          case 'office-editor-move':
+          case 'office-editor-visible':
+          case 'office-editor-focus':
+          case 'office-editor-save':
+          case 'office-editor-close': {
+            if (!deps.officeEditor || !context.nativePreviewHost) return { ok: false, code: 'OFFICE_EDITOR_UNAVAILABLE', message: 'Inline office editing is unavailable.' };
+            const owner = context.nativePreviewHost.ownerKey, id = previewSessionId(params.sessionId);
+            if (operation === 'office-editor-move') return { ok: deps.officeEditor.move(owner, id, previewRect(params.rect)) };
+            if (operation === 'office-editor-visible') return { ok: deps.officeEditor.visible(owner, id, params.visible === true) };
+            if (operation === 'office-editor-focus') return { ok: deps.officeEditor.focus(owner, id) };
+            if (operation === 'office-editor-save') return await deps.officeEditor.save(owner, id);
+            return await deps.officeEditor.close(owner, id);
           }
           case 'preview-native-open': {
             if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
@@ -946,6 +1008,46 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'preview-html-close': {
             if (!deps.htmlPreview || !context.nativePreviewHost) return { ok: false, code: 'HTML_PREVIEW_UNAVAILABLE', message: 'Interactive HTML preview hosting is unavailable.' };
             return { ok: deps.htmlPreview.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
+          }
+          case 'pane-window-attach': {
+            if (!deps.chromePane?.attachWindow || !context.nativePreviewHost || !deps.resolvePaneWindow) return { ok: false, message: 'Window hosting unavailable.' };
+            const rect = chromePaneRect(params.rect);
+            const window = await deps.resolvePaneWindow(boundedString(params.bindingId, 'bindingId', 512));
+            if (!window) return { ok: false, message: 'This window has closed or changed.' };
+            return deps.chromePane.attachWindow(context.nativePreviewHost, window.handle, window.pid, rect);
+          }
+          case 'pane-window-drop': {
+            if (!deps.chromePane?.dropTab || !context.nativePreviewHost) return { ok: false };
+            return deps.chromePane.dropTab(context.nativePreviewHost.ownerKey, boundedString(params.tabId, 'tabId', 64), typeof params.beforeId === 'string' && params.beforeId ? boundedString(params.beforeId, 'beforeId', 64) : '', params.shiftHeld === true);
+          }
+          case 'pane-window-reorder': {
+            if (!deps.chromePane?.reorderTab || !context.nativePreviewHost) return { ok: false };
+            return deps.chromePane.reorderTab(context.nativePreviewHost.ownerKey, boundedString(params.tabId, 'tabId', 64), typeof params.beforeId === 'string' && params.beforeId ? boundedString(params.beforeId, 'beforeId', 64) : '');
+          }
+          case 'pane-window-select':
+          case 'pane-window-detach': {
+            if (!deps.chromePane || !context.nativePreviewHost) return { ok: false, message: 'Window hosting unavailable.' };
+            const id = boundedString(params.tabId, 'tabId', 64);
+            const result = operation === 'pane-window-select' ? await deps.chromePane.selectTab?.(context.nativePreviewHost.ownerKey, id) : await deps.chromePane.detachTab?.(context.nativePreviewHost.ownerKey, id);
+            return result ?? { ok: false, message: 'Window hosting unavailable.' };
+          }
+          case 'pane-window-tabs': {
+            if (params.rect && context.nativePreviewHost && deps.chromePane) await deps.chromePane.open(context.nativePreviewHost, 'workspace:attach', '', chromePaneRect(params.rect));
+            if (context.nativePreviewHost) deps.chromePane?.listTabs?.(context.nativePreviewHost.ownerKey);
+            return { ok: true };
+          }
+          case 'chrome-pane-open': {
+            if (!deps.chromePane || !context.nativePreviewHost) return { ok: false, code: 'CHROME_PANE_UNAVAILABLE', message: 'Chrome pane hosting is unavailable.' };
+            return deps.chromePane.open(context.nativePreviewHost, boundedString(params.source, 'source', 8192), boundedString(params.url, 'url', 8192), chromePaneRect(params.rect));
+          }
+          case 'chrome-pane-move': {
+            if (!deps.chromePane || !context.nativePreviewHost) return { ok: false, code: 'CHROME_PANE_UNAVAILABLE', message: 'Chrome pane hosting is unavailable.' };
+            deps.chromePane.move(context.nativePreviewHost.ownerKey, chromePaneRect(params.rect));
+            return { ok: true };
+          }
+          case 'chrome-pane-visible': {
+            if (context.nativePreviewHost) deps.chromePane?.setPaneVisible(context.nativePreviewHost.ownerKey, params.visible === true);
+            return { ok: true };
           }
           case 'browser-open': {
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Link viewer hosting is unavailable.' };
@@ -1046,6 +1148,10 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             return { ok: true, adblock: await deps.webBrowser.setAdblockEnabled(params.enabled === true) };
           }
           case 'browser-lens-screen': {
+            if (params.nativeChrome === true) {
+              if (!context.nativePreviewHost || !deps.webBrowser?.captureLensScreenUrl) return { ok: false, message: 'Lens screen capture is unavailable.' };
+              return deps.webBrowser.captureLensScreenUrl();
+            }
             if (!deps.webBrowser || !context.nativePreviewHost) return { ok: false, code: 'WEB_BROWSER_UNAVAILABLE', message: 'Browser hosting is unavailable.' };
             return await deps.webBrowser.captureLensRegion(
               context.nativePreviewHost.ownerKey,
@@ -1097,4 +1203,20 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
       }
     },
   };
+  return { async call(raw, context) {
+    const operation = isRecord(raw) && typeof raw.operation === 'string' ? raw.operation : '';
+    const finish = deps.runtimeControl?.begin(capabilityForOperation(operation));
+    const started = performance.now();
+    try {
+      const result = await service.call(raw, context);
+      finish?.(result.ok === true);
+      if (operation === 'preview' && isRecord(result.preview)) {
+        const source = String(result.preview.convertedBy ?? result.preview.extractedBy ?? result.preview.provider ?? '');
+        const provider = source.startsWith('libreoffice') ? 'officeEditor' : source.startsWith('powerpoint') ? 'powerPointPreview' : source.startsWith('calibre') ? 'calibrePreview' : source.startsWith('mlightcad') ? 'mlightCadPreview' : source.startsWith('autocad') ? 'autoCadPreview' : source.includes('shell-thumbnail') ? 'shellThumbnail' : source.startsWith('revit') ? 'revitPreview' : source === 'windows-preview-handler' ? 'windowsPreview' : null;
+        if (provider) deps.runtimeControl?.begin(provider)(result.ok === true, performance.now() - started);
+      }
+      return result;
+    }
+    catch (error) { finish?.(false); throw error; }
+  } };
 }

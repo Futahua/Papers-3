@@ -36,8 +36,8 @@ export function preparePapersWindow(
   dependencies.install?.(instance);
   let closePreparationStarted = false;
   let closePreparationFinished = false;
-  instance.window.on('close', (event?: { preventDefault?: () => void }) => {
-    if (closePreparationFinished) return;
+  instance.window.on('close', (event?: { preventDefault?: () => void; defaultPrevented?: boolean }) => {
+    if (closePreparationFinished || event?.defaultPrevented) return;
     // Keep the native window (and its project renderers) alive while each
     // project gets its bounded close-time durability opportunity. Every close
     // attempt remains fenced until the one preparation completes.

@@ -1,6 +1,6 @@
 /**
- * Production Papers shell: Basic (Backpacks, Tools, Settings) plus the global
- * existing Hermes surface. Runs with fixtures OFF so it validates exactly what
+ * Production Papers shell: Basic (Backpacks, Settings) plus the global
+ * Backpack surfaces. Runs with fixtures OFF so it validates exactly what
  * the creator sees in the shipped product.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -117,7 +117,7 @@ beforeAll(async () => {
       window.parent.postMessage({ type, requestId: crypto.randomUUID(), ...detail }, '*');
     document.querySelector('#copy-prompt').addEventListener('click', () =>
       send('papers:project:copy-text', {
-        text: 'Read AGENTS.md and HERMES.md completely before acting. Backpack work stays outside Papers binaries. My request:'
+        text: 'Read AGENTS.md completely before acting. Backpack work stays outside Papers binaries. My request:'
       })
     );
     document.querySelectorAll('.action').forEach((button) =>
@@ -413,7 +413,7 @@ describe('production Papers shell', () => {
     expect(await nativeWindowCount()).toBe(1);
   }, 60_000);
 
-  it('shows Basic with Backpacks, Tools and Settings and hosts Hermes own chat', async () => {
+  it('shows Basic with Backpacks and Settings and hosts Backpack projects', async () => {
     const { app } = launched;
 
     // The shell uses a slim custom title bar (no wordmark, no File/Edit/View/
@@ -430,7 +430,7 @@ describe('production Papers shell', () => {
       'slim title bar with section-name control (no wordmark)',
     );
 
-    // Open the Basic menu and confirm it contains Backpacks, Tools and Settings.
+    // Open the Basic menu and confirm it contains Backpacks and Settings.
     await evalInHost(app, clickScript('.pill-button', 'Backpacks'));
     await waitFor(
       () =>
@@ -438,7 +438,7 @@ describe('production Papers shell', () => {
           app,
           `(() => {
             const rows = [...document.querySelectorAll('.basic-menu .basic-row')].map(r => r.textContent);
-            return rows.some(t => t.includes('Backpacks')) && rows.some(t => t.includes('Tools')) && rows.some(t => t.includes('Settings'));
+            return rows.some(t => t.includes('Backpacks')) && !rows.some(t => t.includes('Tools')) && rows.some(t => t.includes('Settings'));
           })()`,
         ),
       10_000,
@@ -503,19 +503,13 @@ describe('production Papers shell', () => {
       'warning dismissed',
     );
 
-    // Tools is a real permanent destination with an honest empty state.
+    // The host has no competing Tools definition; Pencilcase is a Backpack.
     await evalInHost(app, clickScript('.pill-button', 'Backpacks'));
-    await evalInHost(app, clickScript('.basic-row', 'Tools'));
-    await waitFor(
-      () => evalInHost<boolean>(app, `document.querySelector('.tools-empty') !== null && document.querySelector('.pane-head h1')?.textContent === 'Tools'`),
-      10_000,
-      'Tools empty state',
-    );
-    // Tools does not imply it belongs to a Backpack.
-    expect(await evalInHost<boolean>(app, `!document.querySelector('.tools-empty').textContent.includes('Backpack ')`)).toBe(true);
+    await evalInHost(app, clickScript('.basic-row', 'Settings'));
+    await waitFor(() => evalInHost<boolean>(app, `document.querySelector('.pane-head h1')?.textContent === 'Settings'`), 10_000, 'Settings destination');
 
     // The Backpack name persists (still listed after navigating away and back).
-    await evalInHost(app, clickScript('.pill-button', 'Tools'));
+    await evalInHost(app, clickScript('.pill-button', 'Settings'));
     await evalInHost(app, clickScript('.basic-row', 'Backpacks'));
     await waitFor(
       () =>
@@ -527,19 +521,6 @@ describe('production Papers shell', () => {
       'Backpack name retained',
     );
 
-    // Hermes integration is retired: Papers exposes no Hermes launch or placement controls.
-    expect(
-      await evalInHost<number>(app, `document.querySelectorAll('.hermes-controls .hermes-toggle').length`),
-    ).toBe(0);
-    expect(
-      await evalInHost<boolean>(
-        app,
-        `document.querySelector('.hermes-badge') === null &&
-         document.querySelector('.hermes-dock') === null &&
-         ![...document.querySelectorAll('button')].some((b) =>
-           /Hermes/i.test((b.textContent ?? '') + ' ' + (b.getAttribute('aria-label') ?? '')))`,
-      ),
-    ).toBe(true);
   }, 240_000);
 
   it('deletes an archived Backpack only after confirming that exact name', async () => {

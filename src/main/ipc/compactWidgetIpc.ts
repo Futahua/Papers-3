@@ -85,7 +85,7 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     if (!surface || surface.projectId !== projectId || surface.kind !== WORKSPACE_SURFACE_KIND) throw new Error('denied: workspace is not registered');
     const owningWindowId = windowIdForWorkspaceSender(event.sender);
     if (owningWindowId === null) throw new Error('denied: workspace has no Papers window');
-    return session.open({ projectId, layoutKey, owningWindowId, ...(raw.activate === undefined ? {} : { activate: raw.activate }) });
+    return session.open({ projectId, layoutKey, owningWindowId, workspaceSenderId: event.sender.id, ...(raw.activate === undefined ? {} : { activate: raw.activate }) });
   });
 
   ipcMain.handle('papers:backpack:widget-focus', async (event, raw) => {

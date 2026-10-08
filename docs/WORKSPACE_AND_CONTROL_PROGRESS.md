@@ -384,8 +384,6 @@ authorization. The only current friction blocker is that normal Papers runs do
 not expose C1; the safe interim workflow is an explicitly authorized diagnostic
 restart plus the read-only runner.
 
-This document replaces the completed workspace/control agenda at this path. The prior A3/B2/B3 completion record remains available in Git history. Read [`../HERMES.md`](../HERMES.md) before acting, preserve user-owned worktree changes, and advance only one reviewed C1.x gate at a time.
-
 ## Multi-session reviewer continuation
 
 If the in-app reviewer reaches its message limit before issuing a verdict,
@@ -2822,23 +2820,6 @@ Before and after any packaged diagnostic acceptance:
 # 5. Persistent multi-session workflow
 
 For every C1 implementation session:
-
-1. [x] Read `HERMES.md` and the current persistent progress/visual-observability plan.
-2. [x] Inspect branch/head/origin parity and dirty worktree.
-3. [x] Preserve all user-owned modifications.
-4. [x] Identify the single active C1.x gate.
-5. [x] Re-read the previous exact-SHA reviewer verdict.
-6. [x] Do not implement later phases opportunistically.
-7. [x] Run focused tests before changing the seam.
-8. [x] Keep Papers-generic logic free of project identities.
-9. [x] Keep project-specific fixtures/assertions in their own repositories.
-10. [x] Add control schemas concurrently with each new semantic capability.
-11. [x] Verify authority/redaction before adding MCP exposure.
-12. [x] Run typecheck + focused tests + full suite + build + packaged E2E + diff check as appropriate.
-13. [x] Record evidence using exact commit SHA.
-14. [x] Obtain explicit reviewer SIGNED OFF or concrete blocker.
-15. [x] Update the persistent checklist only after the reviewer verdict.
-16. [x] Do not release/install/package beyond the packaged test artifact required for acceptance unless separately authorized.
 
 ---
 

@@ -43,7 +43,7 @@ const container = document.getElementById('root');
 if (!container) throw new Error('missing #root');
 
 // The historical program/ACP demonstrations render only under the fixture flag.
-// Production always mounts the Papers shell (Basic, Backpacks, Tools, Settings).
+// Production always mounts the Papers shell (Basic, Backpacks, Settings).
 const Root = host().fixtureMode ? FixtureApp : App;
 
 createRoot(container).render(

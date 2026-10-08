@@ -61,7 +61,7 @@ async function init() {
       'Papers 3 kill-test note.',
       `Created at ${new Date().toISOString()} by the sandboxed Kill Test program.`,
       'Papers gives work persistent places called Backpacks; the Canvas Backpack hosts',
-      'purpose-built programs which invoke Hermes only from exact, previewed selections.',
+      'purpose-built programs which invoke agent only from exact, previewed selections.',
     ].join('\n');
     const contentHash = await sha256Hex(note);
 

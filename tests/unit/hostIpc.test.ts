@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
-import { commandSurfaceDismissDestinationSchema, hostWorkspaceSurfaceMoveTargetSchema, parseWindowsClipboardFileDrop, parseWindowsClipboardFileNameW } from '../../src/main/ipc/hostIpc';
+import { backpackProjectStateSchema, commandSurfaceDismissDestinationSchema, hostWorkspaceSurfaceMoveTargetSchema, parseWindowsClipboardFileDrop, parseWindowsClipboardFileNameW } from '../../src/main/ipc/hostIpc';
 
 describe('authenticated host workspace-move IPC shape', () => {
   it('accepts only the logical surface and explicit destination fields', () => {
@@ -60,5 +60,15 @@ describe('command-surface dismissal IPC shape', () => {
       expect(commandSurfaceDismissDestinationSchema.parse(destination)).toBe(destination);
     }
     expect(() => commandSurfaceDismissDestinationSchema.parse('desktop')).toThrow();
+  });
+});
+
+
+describe('project state IPC size',()=>{
+  it('accepts state strings beyond the former fixed cap while retaining type validation',()=>{
+    const state=JSON.stringify({schemaVersion:1,groups:[],shortcuts:[],view:{notes:'x'.repeat(5_100_000)}});
+    expect(backpackProjectStateSchema.parse(state)).toBe(state);
+    expect(()=>backpackProjectStateSchema.parse(null)).toThrow();
+    expect(()=>backpackProjectStateSchema.parse('')).toThrow();
   });
 });

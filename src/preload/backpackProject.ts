@@ -186,12 +186,17 @@ const SCOPED_WORKSPACE_REQUESTS = new Set([
 ]);
 
 const POSITIONED_PREVIEW_OPERATIONS = new Set([
+  'office-editor-open',
+  'office-editor-move',
   'preview-native-open',
   'preview-native-move',
   'preview-pdf-open',
   'preview-pdf-move',
   'preview-html-open',
   'preview-html-move',
+  'pane-window-attach',
+  'chrome-pane-open',
+  'chrome-pane-move',
   'browser-open',
   'browser-move',
   'browser-tab-open',
@@ -205,6 +210,8 @@ function scopedWorkspaceOrigin(event: MessageEvent, request: ProjectMessage): st
     ? event.origin
     : undefined;
 }
+
+let chromeLayoutTarget: { source: Window; origin: string } | null = null;
 
 function nativePreviewParams(event: MessageEvent, operation: string, params: Record<string, unknown>): Record<string, unknown> {
   if (!POSITIONED_PREVIEW_OPERATIONS.has(operation)) return params;
@@ -222,6 +229,8 @@ function nativePreviewParams(event: MessageEvent, operation: string, params: Rec
       ...rect,
       x: Number(rect['x']) + frameRect.x,
       y: Number(rect['y']) + frameRect.y,
+      ...(rect['rightInset'] === undefined ? {} : { rightInset: Number(rect['rightInset']) + Math.max(0, window.innerWidth - frameRect.right) }),
+      ...(rect['bottomInset'] === undefined ? {} : { bottomInset: Number(rect['bottomInset']) + Math.max(0, window.innerHeight - frameRect.bottom) }),
     },
   };
 }
@@ -346,6 +355,9 @@ window.addEventListener('message', (event) => {
     } catch (caught) {
       immediateHostError(request.requestId, event.origin, caught instanceof Error ? caught.message : String(caught));
       return;
+    }
+    if (['chrome-pane-open', 'pane-window-attach', 'pane-window-select', 'pane-window-detach', 'pane-window-tabs'].includes(request.operation) && event.source) {
+      chromeLayoutTarget = { source: event.source as Window, origin: event.origin };
     }
     task = ipcRenderer.invoke('host:backpack-project:file-capability', {
       operation: request.operation,
@@ -882,6 +894,20 @@ window.addEventListener('message', (event) => {
 
 
 // The direct-pick session pushes its typed result to the project frame.
+ipcRenderer.on('papers:chrome-layout:changed', (_event, rect) => {
+  const target = chromeLayoutTarget;
+  if (!target || target.source === window) {
+    window.postMessage({ type: 'papers:project:chrome-layout', rect }, window.location.origin);
+    return;
+  }
+  for (const frame of document.querySelectorAll('iframe')) {
+    if (frame.contentWindow !== target.source) continue;
+    const box = frame.getBoundingClientRect();
+    target.source.postMessage({ type: 'papers:project:chrome-layout', rect: { ...rect, x: rect.x - box.x, y: rect.y - box.y } }, target.origin);
+    break;
+  }
+});
+
 ipcRenderer.on('papers:window-pick:result', (_event, result) => {
   window.postMessage({ type: 'papers:project:window-pick-result', result }, window.location.origin);
 });
@@ -977,4 +1003,11 @@ window.addEventListener('message', (event) => {
     });
     immediateHostResult(request.requestId, event.origin);
   }
+});
+
+
+ipcRenderer.on('papers:pane-tabs:changed', (_event, tabs) => {
+  const target = chromeLayoutTarget;
+  if (target && target.source !== window) target.source.postMessage({ type: 'papers:project:pane-tabs', tabs }, target.origin);
+  else window.postMessage({ type: 'papers:project:pane-tabs', tabs }, window.location.origin);
 });

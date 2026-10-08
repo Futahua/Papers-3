@@ -4,7 +4,6 @@ import { host, type BackpacksList, type HostErrorPayload } from './bridge';
 import { BackpacksPane } from './BackpacksPane';
 import { installChromeFocusPolicy } from './chromeFocusPolicy';
 import { BackpackSidebar } from './BackpackSidebar';
-import { ToolsPane } from './ToolsPane';
 import { SettingsPane } from './SettingsPane';
 import { EmptyBackpackWarning } from './EmptyBackpackWarning';
 import { WorkspaceDock, type OpenWorkspaceProject } from './WorkspaceDock';
@@ -20,11 +19,10 @@ import {
   splitWorkspaceSurfaceAtTarget,
 } from '@shared/workspaceTopology';
 
-type BasicView = 'backpacks' | 'tools' | 'settings';
+type BasicView = 'backpacks' | 'settings';
 
 const VIEW_LABEL: Record<BasicView, string> = {
   backpacks: 'Backpacks',
-  tools: 'Tools',
   settings: 'Settings',
 };
 
@@ -34,14 +32,7 @@ function closeTopologySurface(topology: ReturnType<typeof createWorkspaceTopolog
     : topology;
 }
 
-/**
- * Papers production shell.
- *
- * Basic is the permanent control that reaches Backpacks, Tools and Settings.
- * The retired Hermes integration exposes no launch or placement controls in
- * the Papers shell. Legacy host machinery may remain during retirement, but it
- * is not part of the active Papers UI.
- */
+
 export function App(): React.JSX.Element {
   useEffect(() => installChromeFocusPolicy(document), []);
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });
@@ -281,17 +272,17 @@ export function App(): React.JSX.Element {
   }, []);
 
 
-  // The Hermes surface (a native view) must sit behind renderer overlays.
   useEffect(() => {
     void host().layout.setOverlayActive(basicOpen || entered !== null);
   }, [basicOpen, entered]);
 
-  // Native Backpack views are child surfaces and otherwise sit above host DOM
-  // regardless of CSS z-index. Raise the host only while this picker is open,
-  // then restore project surfaces without changing their bounds or identities.
+  // Native project and browser views can cover visible host controls regardless
+  // of CSS z-index. Both full Basic pages and the sidebar need the host raised;
+  // release this lease only when the workspace is actually showing.
   useEffect(() => {
-    void host().layout.setHostOverlayActive(sidebarOpen, 'picker').catch(() => undefined);
-  }, [sidebarOpen]);
+    const hostPageVisible = sidebarOpen || basicOpen || entered === null || projectUrl === null || view === 'settings';
+    void host().layout.setHostOverlayActive(hostPageVisible, 'picker').catch(() => undefined);
+  }, [sidebarOpen, basicOpen, entered, projectUrl, view]);
 
   useEffect(() => {
     void host().layout.setHostOverlayActive(workspaceOverlayActive, 'workspace-drag').catch(() => undefined);
@@ -511,17 +502,6 @@ export function App(): React.JSX.Element {
                 <span className="row-value">{backpacks.backpacks.filter((b) => !b.archived).length}</span>
               </button>
               <button
-                className={`basic-row${view === 'tools' ? ' active' : ''}`}
-                role="menuitem"
-                onClick={() => goto('tools')}
-              >
-                <span className="glyph">⚙</span>
-                <span className="copy">
-                  <strong>Tools</strong>
-                  <small>Reusable machine-wide capabilities.</small>
-                </span>
-              </button>
-              <button
                 className={`basic-row${view === 'settings' ? ' active' : ''}`}
                 role="menuitem"
                 onClick={() => goto('settings')}
@@ -556,7 +536,6 @@ export function App(): React.JSX.Element {
       {view === 'backpacks' && entered === null && (
         <BackpacksPane list={backpacks} onChanged={refreshBackpacks} onEnter={enterBackpack} />
       )}
-      {view === 'tools' && <ToolsPane />}
       {view === 'settings' && <SettingsPane />}
 
       {openProjects.length > 0 && entered !== null && projectUrl !== null && (

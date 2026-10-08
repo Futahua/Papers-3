@@ -60,7 +60,7 @@ function UpdatesCard(): React.JSX.Element {
       ) : null}
       <small>
         {ready
-          ? 'Restart Papers to finish updating. Your Backpacks, settings and Hermes are not affected.'
+          ? 'Restart Papers to finish updating. Your Backpacks and settings are not affected.'
           : downloading
             ? 'Papers is downloading in the background. You can keep working.'
             : 'Papers checks for a newer version shortly after it opens, and downloads it in the background.'}
@@ -172,13 +172,7 @@ function ThisBuildCard(): React.JSX.Element {
   );
 }
 
-/**
- * Settings — ordinary Papers application settings.
- *
- * Papers keeps its own surface honest: it states what it persists and how it
- * relates to the existing Hermes product, without inventing account, billing,
- * model or provider systems that belong to Hermes.
- */
+
 export function SettingsPane(): React.JSX.Element {
   const [transparentWindow, setTransparentWindow] = React.useState(false);
   const [settingsLoaded, setSettingsLoaded] = React.useState(false);
@@ -221,7 +215,7 @@ export function SettingsPane(): React.JSX.Element {
       <div className="pane-inner">
         <div className="pane-head">
           <h1>Settings</h1>
-          <p>Papers application settings. Hermes keeps its own settings inside the Hermes product.</p>
+          <p>Papers application settings.</p>
         </div>
 
         <div className="settings-grid">

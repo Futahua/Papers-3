@@ -11,6 +11,6 @@
     "clipboard.write", "external.open", "external.launch-approved",
     "agent.invoke", "agent.cancel-own"
   ],
-  "description": "Treat a real repository as research material: select exact files and regions, capture hash-provenanced evidence, link notes, invoke precise Hermes actions, delegate coding tasks to isolated worktrees, and produce an editable report.",
+  "description": "Treat a real repository as research material: select exact files and regions, capture hash-provenanced evidence, link notes, invoke precise agent actions, delegate coding tasks to isolated worktrees, and produce an editable report.",
   "accentColor": "#2f6f4f"
 }

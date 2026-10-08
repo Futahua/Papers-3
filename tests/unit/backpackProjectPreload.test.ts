@@ -44,6 +44,18 @@ describe('Backpack project protocol alignment', () => {
     vi.resetModules();
   });
 
+  it.each(['normal', 'diagnostic'])('answers file searches through the %s bridge', async (mode) => {
+    if (mode === 'diagnostic') await import('../../src/preload/backpackProjectDevControl');
+    else await loadPreloadForTest();
+    mocks.invoke.mockResolvedValue({ ok: true, results: [] });
+    messageHandlers.forEach(handler => handler({ source: window, origin: window.location.origin, data: {
+      type: 'papers:project:file-capability', requestId: 'file-search', operation: 'search', params: { query: 'xlsx', limit: 1000 },
+    } }));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(mocks.invoke).toHaveBeenCalledWith('host:backpack-project:file-capability', { operation: 'search', params: { query: 'xlsx', limit: 1000 } });
+    expect(posts).toContainEqual({ type: 'papers:host:result', requestId: 'file-search', ok: true, fileCapability: { ok: true, results: [] } });
+  });
+
   it('subscribes to the native window lifecycle stream when the preload starts', async () => {
     await import('../../src/preload/backpackProject');
     expect(mocks.invoke).toHaveBeenCalledWith('papers:window-capability:subscribe-lifecycle', {});
@@ -154,6 +166,8 @@ describe('Backpack project protocol alignment', () => {
     } as unknown as Document;
     mocks.invoke.mockResolvedValue({ ok: true, sessionId: '11111111-2222-4333-8444-555555555555' });
     const operations = [
+      'office-editor-open',
+      'office-editor-move',
       'preview-native-open',
       'preview-native-move',
       'preview-pdf-open',

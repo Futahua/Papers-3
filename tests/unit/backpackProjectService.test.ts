@@ -68,6 +68,15 @@ afterEach(async () => {
 });
 
 describe('BackpackProjectService', () => {
+  it('saves and reloads valid state beyond the former five-million-character cap', async () => {
+    await writeProject();
+    const service = new BackpackProjectService(bindingsFile);
+    const state = {schemaVersion: 1, groups: [], shortcuts: [], view: {preferences: {largeRecord: 'x'.repeat(5_100_000)}}};
+    const serialized = JSON.stringify(state);
+    await service.saveState(backpackId, serialized);
+    expect(JSON.parse(await fs.readFile(path.join(projectRoot, 'state.json'), 'utf8'))).toEqual(state);
+    expect(await service.loadState(backpackId)).toEqual(state);
+  });
   it('opens a bound external project without exposing its filesystem path', async () => {
     const files = await writeProject();
     const before = await Promise.all(files.map(hash));

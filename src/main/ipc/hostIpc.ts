@@ -170,25 +170,6 @@ export interface HostFacade {
   listPermissions(): unknown;
   revokePermission(backpackId: string, programId: string, capability: string): Promise<boolean>;
   respondToPrompt(promptId: string, decision: PermissionDecision): void;
-
-  listRuns(senderId: number): unknown;
-  getRun(runId: string): unknown;
-  cancelRun(runId: string): Promise<void>;
-  respondRunInteraction(runId: string, requestId: string, optionId: string): Promise<void>;
-  retryRun(runId: string): Promise<unknown>;
-  inspectRunInHermes(runId: string): Promise<unknown>;
-  returnToOrigin(senderId: number, runId: string): Promise<void>;
-  respondInvocation(previewId: string, approved: boolean): void;
-  replyToRun(runId: string, text: string): Promise<void>;
-  composedPrompt(runId: string): string;
-
-  hermesHealth(): unknown;
-  hermesSurfaceStatus(senderId: number): unknown;
-  dockHermes(senderId: number, bounds: { x: number; y: number; width: number; height: number }): Promise<unknown>;
-  setHermesDockBounds(senderId: number, bounds: { x: number; y: number; width: number; height: number }): void;
-  hideHermesDock(senderId: number): Promise<void>;
-  showHermesWindow(): Promise<unknown>;
-  hideHermesWindow(): Promise<void>;
 }
 
 const boundsSchema = z
@@ -208,7 +189,7 @@ const backpackRemovalIdSchema = z
   .string()
   .regex(/^bp-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const backpackProjectActionIdSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/i);
-const backpackProjectStateSchema = z.string().min(2).max(5_000_000);
+export const backpackProjectStateSchema = z.string().min(2);
 const backpackProjectWorkspaceOriginSchema = z.string().url().max(2_048).optional();
 /** An opaque logical surface id. Never parsed for meaning. */
 const surfaceIdSchema = z.string().min(1).max(128);
@@ -602,44 +583,4 @@ export function registerHostIpc(facade: HostFacade, nativeDrag?: (sender: WebCon
   handle('host:permissions:respond', (_e, promptId, decision) =>
     facade.respondToPrompt(idSchema.parse(promptId), decisionSchema.parse(decision)),
   );
-
-  handle('host:runs:list', (event) => facade.listRuns(event.sender.id));
-  handle('host:runs:get', (_e, runId) => facade.getRun(idSchema.parse(runId)));
-  handle('host:runs:cancel', (_e, runId) => facade.cancelRun(idSchema.parse(runId)));
-  handle('host:runs:respond-interaction', (_e, runId, requestId, optionId) =>
-    facade.respondRunInteraction(
-      idSchema.parse(runId),
-      idSchema.parse(requestId),
-      idSchema.parse(optionId),
-    ),
-  );
-  handle('host:runs:retry', (_e, runId) => facade.retryRun(idSchema.parse(runId)));
-  handle('host:runs:inspect-in-hermes', (_e, runId) =>
-    facade.inspectRunInHermes(idSchema.parse(runId)),
-  );
-  handle('host:runs:return-to-origin', (event, runId) =>
-    facade.returnToOrigin(event.sender.id, idSchema.parse(runId)),
-  );
-  handle('host:runs:respond-invocation', (_e, previewId, approved) =>
-    facade.respondInvocation(idSchema.parse(previewId), z.boolean().parse(approved)),
-  );
-  handle('host:runs:reply', (_e, runId, text) =>
-    facade.replyToRun(idSchema.parse(runId), z.string().min(1).max(10_000).parse(text)),
-  );
-  handle('host:runs:composed-prompt', (_e, runId) =>
-    facade.composedPrompt(idSchema.parse(runId)),
-  );
-
-  handle('host:hermes:health', () => facade.hermesHealth());
-  // Phase 1B.4: every dock operation is sender-authorized. Docking transfers
-  // ownership to the asking window; repositioning and hiding are accepted only
-  // from the window that currently owns the dock.
-  handle('host:hermes:surface-status', (event) => facade.hermesSurfaceStatus(event.sender.id));
-  handle('host:hermes:dock', (event, bounds) => facade.dockHermes(event.sender.id, boundsSchema.parse(bounds)));
-  handle('host:hermes:set-dock-bounds', (event, bounds) =>
-    facade.setHermesDockBounds(event.sender.id, boundsSchema.parse(bounds)),
-  );
-  handle('host:hermes:hide-dock', (event) => facade.hideHermesDock(event.sender.id));
-  handle('host:hermes:show-window', () => facade.showHermesWindow());
-  handle('host:hermes:hide-window', () => facade.hideHermesWindow());
 }
