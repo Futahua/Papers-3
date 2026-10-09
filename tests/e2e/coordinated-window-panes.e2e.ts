@@ -39,11 +39,13 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
  await fs.writeFile(path.join(project,'public','pane-test.html'),`<!doctype html><html class="workspace-two-pane"><head><link rel="stylesheet" href="styles/base.css"><link rel="stylesheet" href="styles/file-capability.css"><link rel="stylesheet" href="styles/workspace-pane-layout.css"></head><body><div id="right" style="position:fixed;left:35%;right:8px;top:8px;bottom:8px"></div><script type="module">
  import {createHostBridge} from './app/host/host-bridge.js';
  import {installCoordinatedWindowSlices} from './app/coordinated-window-slices.js';
+ import {installPreviewPinDrag} from './app/preview-pin-drag.js';
  window.errors=[];window.addEventListener('error',e=>errors.push(e.message));window.addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));
  window.host=createHostBridge(window);window.calls=[];const call=host.fileCapability;host.fileCapability=async(...args)=>{const reply=await call(...args);calls.push({args,reply});return reply;};const root={element:document.querySelector('#right'),replaceNativeTabs(){window.legacyTeardown=host.fileCapability('chrome-pane-visible',{visible:false});},restoreWindows(){throw Error('Unexpected legacy fallback');}};
  host.onPaneLayout(s=>window.latest=s);window.previews=[];
  root.element.style.width='300px';root.element.style.transition='width 160ms ease';
- window.panes=installCoordinatedWindowSlices({document,host,root,onStatus:e=>errors.push(e),onPreviews:tabs=>window.previews=tabs,onOuterEdge:r=>{root.element.style.left=r.x+'px';}});
+ window.pin=document.createElement('button');pin.textContent='Pin preview';document.body.append(pin);window.resolvePreviewDrag=installPreviewPinDrag({pin,getItem:()=>({path:${JSON.stringify(imagePath)},name:'Dragged image'}),createId:()=> 'pin-drag-image'});
+ window.panes=installCoordinatedWindowSlices({document,host,root,resolvePreviewDrag,onStatus:e=>errors.push(e),onPreviews:tabs=>window.previews=tabs,onOuterEdge:r=>{root.element.style.left=r.x+'px';}});
  // Load the saved width before restore; a legacy transition must not expose
  // intermediate narrow geometry to the retained-window mount.
  window.ready=(async()=>{while(innerWidth<500||innerHeight<300)await new Promise(r=>setTimeout(r,50));root.element.style.boxSizing='border-box';root.element.style.width=(innerWidth*.65-8)+'px';return panes.restore();})();
@@ -169,6 +171,12 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   expect(await evaluate<boolean>(`(()=>{const opened=calls.filter(c=>c.args[0]==='preview-pdf-open'&&c.reply.ok);return new Set(opened.map(c=>c.args[1].surfaceId)).size===2;})()`)).toBe(true);
   await evaluate(`panes.selectPreview(previews.find(p=>p.id==='doc-image'));`);
   await waitFor(async()=>await evaluate<boolean>(`(()=>{const image=document.querySelector('.slice-file-preview:not([hidden]) img');return image?.complete&&image.naturalWidth>0&&image.getBoundingClientRect().width>0;})()`),10000,'pinned image decoded and rendered');
+  expect(await evaluate<boolean>(`!document.querySelector('.slice-file-preview:not([hidden]) .file-capability-image-toolbar')`)).toBe(true);
+  expect(await evaluate<boolean>(`(()=>{const pane=document.querySelector('.slice-file-preview:not([hidden])'),width=pane.style.width;pane.style.width='180px';const header=pane.querySelector('.file-capability-header'),path=header.querySelector('.file-capability-path'),copy=header.querySelector('[aria-label="Copy path"]'),h=header.getBoundingClientRect(),p=path.getBoundingClientRect(),c=copy.getBoundingClientRect();pane.style.width=width;return h.width<=180&&p.right<=c.left+1&&c.right<=h.right+1&&c.width>=20;})()`)).toBe(true);
+  await evaluate(`(()=>{const g=latest.groups.find(g=>g.selected==='preview:doc-image'),x=g.content.x+g.content.width/2,y=g.content.y+g.content.height/2,t=new DataTransfer();pin.dispatchEvent(new DragEvent('dragstart',{dataTransfer:t,bubbles:true,cancelable:true}));const target=document.elementFromPoint(x,y);target.dispatchEvent(new DragEvent('dragover',{dataTransfer:t,clientX:x,clientY:y,bubbles:true,cancelable:true}));target.dispatchEvent(new DragEvent('drop',{dataTransfer:t,clientX:x,clientY:y,bubbles:true,cancelable:true}));pin.dispatchEvent(new DragEvent('dragend',{dataTransfer:t,bubbles:true}));})()`);
+  await waitFor(()=>evaluate<boolean>(`latest.groups.some(g=>g.selected==='preview:pin-drag-image')&&previews.some(p=>p.id==='pin-drag-image')`),10000,'pin drag creates persisted preview in target group');
+  await evaluate(`(async()=>{const r=await host.fileCapability('pane-layout-command',{command:'document-remove',tabId:'preview:pin-drag-image',revision:latest.stateRevision});if(!r.ok)throw Error(r.error);previews=previews.filter(p=>p.id!=='pin-drag-image');panes.setPreviews(previews);panes.selectPreview(previews.find(p=>p.id==='doc-image'));})()`);
+  await waitFor(()=>evaluate<boolean>(`latest.groups.some(g=>g.selected==='preview:doc-image')`),5000,'fixture returns to original preview');
   await waitFor(()=>launched.app.evaluate(({webContents})=>webContents.getAllWebContents().filter(w=>w.mainFrame.frames.some(f=>f.url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'))).length===2),10000,'switching tabs retains both independent PDF viewer sessions');
   expect(await evaluate<string[]>('errors')).toEqual([]);
   if(!embedded){
