@@ -31,6 +31,7 @@ export interface NativePaneBridge {
   reveal(owner: string, transferId: string): Promise<PaneReply>;
   transfer(owner: string, transferId: string, groupId: string, side?: string): Promise<PaneReply>;
   dragOverlay(owner: string, active: boolean): Promise<PaneReply>;
+  setHostOverlayActive?(windowId: number, active: boolean): Promise<void>;
   setOwnerVisible(owner: string, visible: boolean): void;
   setOwnerSurfaceBounds(owner: string, bounds: PaneRect): void;
   closeOwner(owner: string): Promise<void>;
@@ -49,6 +50,8 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     'pane-documents.cs', 'pane-mount.cs', 'pane-region-contract.cs', 'pane-host-region.cs', 'pane-chrome-resolver.cs', 'pane-coordinator-host.cs'].map(p => path.join(input.nativeDirectory, p));
   const hosts = new Map<string, Host>(), owners = new Map<string, Scope>(), scopes = new Map<string, Scope>(), visibility = new Map<string, boolean>();
   const dragOwners = new Map<string,ReturnType<typeof setTimeout>>();
+  const hostOverlays = new Set<number>();
+  const hostOverlayActive = (owner: string): boolean => hostOverlays.has(Number(owner.split(':')[0]));
   let overlayTail: Promise<unknown> = Promise.resolve();
   const autoResumed = new Set<string>(); const locked = new Set<Scope>(); let transferTail: Promise<unknown> = Promise.resolve();
   const journalFile = path.join(input.cacheDirectory, 'pane-transfer-journal.json');
@@ -145,7 +148,8 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     const token = scope.token, owner = scope.context.ownerKey;
     const task = scope.host.queue.then(async () => {
       if (scope.token !== token || owners.get(owner) !== scope || (!transaction && (locked.has(scope) || visibility.get(owner) === false && !['present', 'release'].includes(op)))) return unavailable();
-      const result = await send(scope.host, { ...params, op, scope: scope.key, binding: token, revision: revision ?? scope.snapshot?.stateRevision ?? 0 });
+      const presentationParams = (op === 'present' || op === 'mount') && params.visible === true && hostOverlayActive(owner) ? { ...params, visible: false } : params;
+      const result = await send(scope.host, { ...presentationParams, op, scope: scope.key, binding: token, revision: revision ?? scope.snapshot?.stateRevision ?? 0 });
       accept(scope, result.snapshot); return result.snapshot ? { ...result, snapshot: localSnapshot(scope, result.snapshot) } : result;
     });
     scope.host.queue = task.catch(() => undefined); return task;
@@ -279,7 +283,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
                 restoreCheckpoint(scope.key, { ...record.mount, BindingGeneration: generation + 1 });
                 scope.token = randomUUID(); scope.snapshot = undefined;
                 await run(scope, 'mount', { rect: absolute(scope, scope.rect), headerHeight: scope.headerHeight });
-                await run(scope, 'present', {visible:visibility.get(scope.context.ownerKey)!==false&&dragOwners.size===0});
+                await run(scope, 'present', {visible:visibility.get(scope.context.ownerKey)!==false&&dragOwners.size===0&&!hostOverlayActive(scope.context.ownerKey)});
               } catch (rollback) {
                 return { ok: false, error: 'Transfer stopped. Recovery is saved for the next Papers launch: ' + String(rollback) };
               }
@@ -307,6 +311,11 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       return {ok:true,...(scope?.snapshot?{snapshot:localSnapshot(scope,scope.snapshot)}:{})};
       });
       overlayTail=task.catch(()=>undefined);return task;
+    },
+    async setHostOverlayActive(windowId, active) {
+      if(active)hostOverlays.add(windowId);else hostOverlays.delete(windowId);
+      await Promise.all([...owners.values()].filter(scope=>Number(scope.context.ownerKey.split(':')[0])===windowId)
+        .map(scope=>queued(scope,'present',{visible:!active&&dragOwners.size===0&&visibility.get(scope.context.ownerKey)!==false})));
     },
     setOwnerVisible(owner, visible) { visibility.set(owner, visible); const scope = owners.get(owner); if (scope) {void queued(scope, 'present', { visible:visible&&dragOwners.size===0 });if(visible)for(const group of scope.snapshot?.groups??[]){const tab=group.tabs.find(tab=>tab.id===group.selected&&tab.kind==='dormant'&&(tab as any).canOpen);if(tab&&!autoResumed.has(`${scope.key}:${tab.id}`)){autoResumed.add(`${scope.key}:${tab.id}`);void queued(scope,'resume',{tabId:tab.id});}}} },
     setOwnerSurfaceBounds(owner, bounds) { const scope = owners.get(owner); if (scope) { scope.context = { ...scope.context, surfaceBounds: bounds }; void api.move(owner, scope.rect); } },

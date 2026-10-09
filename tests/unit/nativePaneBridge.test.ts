@@ -102,3 +102,15 @@ it('a simultaneous drag heartbeat waits for initial presentation and returns its
  const [begin,heartbeat]=await Promise.all([bridge.dragOverlay('1:first',true),bridge.dragOverlay('1:first',true)]);
  expect(heartbeat.snapshot?.stateRevision).toBe(begin.snapshot?.stateRevision);expect(heartbeat.snapshot?.stateRevision).toBe(bridge.snapshot('1:first')?.stateRevision);await bridge.dispose();
 });
+it('host menus suspend only their window and block presentation replay until the menu closes',async()=>{
+ const bridge=make();await bridge.mount(context('1:first'),rect,32);await bridge.mount(context('2:second','ayg','1000'),rect,32);
+ await bridge.setHostOverlayActive!(1,true);
+ expect(h.children[0].commands.at(-1)).toMatchObject({op:'present',visible:false});
+ expect(h.children[1].commands.some((c:any)=>c.op==='present'&&c.visible===false)).toBe(false);
+ await bridge.command('1:first','present',{visible:true});expect(h.children[0].commands.at(-1).visible).toBe(false);
+ bridge.setOwnerVisible('1:first',true);await bridge.command('1:first','snapshot');
+ expect(h.children[0].commands.findLast((c:any)=>c.op==='present').visible).toBe(false);
+ await bridge.setHostOverlayActive!(1,false);expect(h.children[0].commands.at(-1)).toMatchObject({op:'present',visible:true});
+ bridge.setOwnerVisible('1:first',false);await bridge.setHostOverlayActive!(1,true);await bridge.setHostOverlayActive!(1,false);
+ expect(h.children[0].commands.at(-1).visible).toBe(false);await bridge.dispose();
+});

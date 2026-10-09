@@ -92,6 +92,10 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await waitFor(async()=>await evaluate<number>(`host.windowCandidates({includeNativeIcons:false}).then(r=>{window.candidates=r;return r.candidates.filter(c=>c.title.includes(${JSON.stringify(marker)})).length;})`)===2,12000,'isolated native candidates');
   const attached=await evaluate<any>(`(async()=>{const listed=window.candidates;const ids=[];for(const c of listed.candidates.filter(c=>c.title.includes(${JSON.stringify(marker)}))){const bound=await host.bindWindowCandidate(c.id);if(bound.outcome!=='success')throw Error(JSON.stringify(bound));const result=await host.fileCapability('pane-window-attach',{bindingId:bound.capability.bindingId,groupId:'main',rect:latest.groups[0].content});if(!result.ok)throw Error(JSON.stringify(result));ids.push(result.tabId);}return ids;})()`);
   expect(attached).toHaveLength(2);
+  await evalInHost(launched.app, "window.papersHost.layout.setHostOverlayActive(true,'picker')");
+  await waitFor(async()=>await evaluate<boolean>("host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot?.presented===false)"),5000,'host menu suspends native cut-outs');
+  await evalInHost(launched.app, "window.papersHost.layout.setHostOverlayActive(false,'picker')");
+  await waitFor(async()=>await evaluate<boolean>("host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot?.presented===true)"),5000,'closing host menu restores native panes');
   await waitFor(async()=>await evaluate<number>('document.querySelectorAll("[data-pane-tab-id]").length')===2,10000,'two native strip tabs');
   expect(await evaluate<boolean>('Math.abs(latest.viewport.x-document.querySelector("#right").getBoundingClientRect().left)<1')).toBe(true);
   const safe=await evaluate<any>('latest');expect(safe.groups[0].tabs.every((t:any)=>!t.handle&&!t.pid&&t.windowInstanceId)).toBe(true);

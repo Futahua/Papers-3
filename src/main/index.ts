@@ -1629,6 +1629,8 @@ async function bootstrap(): Promise<void> {
       if (owners.size === 0) hostOverlayOwners.delete(windowId);
       else hostOverlayOwners.set(windowId, owners);
 
+      void chromePane?.coordinator?.setHostOverlayActive?.(windowId, owners.size > 0);
+
       applyHostViewBackground(windowId, context.owned.hostView);
       if (owners.size > 0) context.owned.window.contentView.addChildView(context.owned.hostView);
       else {
