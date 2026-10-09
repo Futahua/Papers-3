@@ -1245,6 +1245,10 @@ export function WorkspaceDock(props: {
       }
     }));
     apiSubscriptions.current.push(event.api.onWillDragPanel(({ panel, nativeEvent }) => {
+      if (nativeEvent instanceof DragEvent && nativeEvent.dataTransfer) {
+        nativeEvent.dataTransfer.setData('application/x-papers-page', panel.id);
+        nativeEvent.dataTransfer.effectAllowed = 'move';
+      }
       // Track the drag from its first pointer event. The host is raised and
       // acknowledged as soon as Dockview identifies an eligible edge target;
       // keeping this start hook state-only preserves tab-strip reordering.

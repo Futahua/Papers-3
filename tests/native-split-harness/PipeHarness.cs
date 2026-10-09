@@ -20,7 +20,7 @@ public sealed class PipeHarness:Form {
     readonly Dictionary<string,Dictionary<string,object>> snapshots=new Dictionary<string,Dictionary<string,object>>();
     readonly List<Form> fixtures=new List<Form>();
     readonly List<Native.Rect> originals=new List<Native.Rect>();
-    readonly string cache=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"pipe-run-"+Guid.NewGuid().ToString("N"));
+    readonly string cache=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"pipe-run-"+Guid.NewGuid().ToString("N"),"native-helpers");
     Process endpoint;long requestId;string scope=new string('a',64),token="first";
     protected override bool ShowWithoutActivation{get{return true;}}
     [STAThread]public static void Main(){try{SetProcessDpiAwarenessContext(new IntPtr(-4));}catch{}Application.EnableVisualStyles();Application.Run(new PipeHarness());}

@@ -160,8 +160,8 @@ export interface FacadeDeps {
   updater: PapersUpdater;
   registry: BackpackRegistry;
   backpackProjects: BackpackProjectService;
-  fileCapability: { call(request: unknown, context: { backpackId: string; nativePreviewHost?: { ownerKey: string; parentHwnd: string; surfaceBounds: { x: number; y: number; width: number; height: number } } }): Promise<Record<string, unknown>> };
-  filePreviewHostForSender?: (senderId: number) => { ownerKey: string; parentHwnd: string; surfaceBounds: { x: number; y: number; width: number; height: number } } | null;
+  fileCapability: { call(request: unknown, context: { backpackId: string; nativePreviewHost?: { ownerKey: string; layoutKey?: string; paneGroup?: string; parentHwnd: string; surfaceBounds: { x: number; y: number; width: number; height: number } } }): Promise<Record<string, unknown>> };
+  filePreviewHostForSender?: (senderId: number) => { ownerKey: string; layoutKey?: string; paneGroup?: string; parentHwnd: string; surfaceBounds: { x: number; y: number; width: number; height: number } } | null;
   delegateWave: DelegateWaveRelay;
   isBackpackProjectSender: (sender: WebContents) => boolean;
   /**
@@ -1257,7 +1257,9 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   ): Promise<Record<string, unknown>> {
     const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
     const backpackId = scope?.backpackId ?? this.requireProjectForSender(senderId);
-    const nativePreviewHost = this.deps.filePreviewHostForSender?.(senderId) ?? undefined;
+    const baseHost = this.deps.filePreviewHostForSender?.(senderId);
+    const nativePreviewHost = baseHost && scope ? { ...baseHost,
+      layoutKey: `${baseHost.layoutKey ?? baseHost.ownerKey}:embedded:${scope.backpackId}:${scope.rootGroupId}` } : baseHost ?? undefined;
     return this.deps.fileCapability.call(request, { backpackId, ...(nativePreviewHost ? { nativePreviewHost } : {}) });
   }
 
@@ -1921,6 +1923,19 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       targetWindowId: target.targetWindowId,
       targetGroupId: target.targetGroupId,
       targetIndex: target.targetIndex,
+    });
+  }
+
+  /** A drop recipient may adopt a live page. Derive both owners in main;
+   * renderer drag data supplies only the page and insertion position. */
+  async adoptWorkspaceSurfaceFromHost(senderId: number, surfaceId: string, targetGroupId: string, targetIndex: number): Promise<unknown> {
+    const targetWindowId = this.deps.hostWindowForSender(senderId);
+    const source = this.deps.logicalSurfaces.get(surfaceId);
+    if (targetWindowId === null || !source || source.kind !== 'project') {
+      throw new Error('That live Papers page is unavailable.');
+    }
+    return this.moveWorkspaceSurfaceAcrossWindows({
+      sourceWindowId: source.windowId, targetWindowId, surfaceId, targetGroupId, targetIndex,
     });
   }
 

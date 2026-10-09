@@ -2,8 +2,8 @@
 
 The creator accepted the isolated experiment committed as `07091d9` and requested
 Papers integration. The source now connects it to AYG and Proxima. After source
-verification, the creator authorized installation; the local installer and restart
-completed successfully. This remains an unpublished `07091d9+local` build.
+verification, the creator authorized local installation. Source changes and local
+builds do not publish a new Papers version.
 
 ## Ownership
 
@@ -259,3 +259,54 @@ placement rollback. Membership, ordering, selection and HWND leases stay attache
 to the same group. A full target overlay means swap; a half target overlay means
 resplit at that edge. Direct and embedded Electron checks exercise the actual grip,
 cue geometry, mixed-group swap and vertical/horizontal edge repositioning.
+
+## Unclosed pages and runtime windows, 2026-10-09
+
+The creator's revised recovery model saves pages, not physical windows. Each page
+has a durable `surfaceKey`; runtime surface IDs, HWNDs and renderer bindings may
+change without changing its layout. Two pages of the same Backpack have independent
+native scopes and page/root-keyed AYG preferences. Proxima adds its project ID to
+the parent page key. The first legacy claimant migrates old layout preferences once.
+
+Closing a Papers window preserves its pages. A page tab's X or its X in the Pages
+list explicitly removes that page from the restore set, including a saved page
+whose window is already closed. Reload/reboot atomically consolidates all unclosed
+pages into one window and one strip, retaining each page's own native layout.
+Physical window positions and groupings are not session intent. Dragging an outer
+page tab out creates a runtime window; dropping it on another Papers strip/titlebar
+adopts it through the existing checked cross-window surface transaction. Escape and
+missing drop coordinates cannot create a window. The Pages list also offers moves.
+
+The picker distinguishes Add, Remove here and In use at another owner. Selecting
+an In use row reveals its page; only Move here transfers it. Group/tab drag tickets
+are opaque and bound to the current coordinator binding. Cross-page native handoffs
+checkpoint both scopes and journal a compensated transaction before release.
+Prepared crash records restore the before-state; committed records finish the
+after-state; settled records never replay over subsequent edits. Native hosts yield
+for cross-window drag overlays and resume after the drop transaction.
+
+Local storage owners:
+
+- `workspace-topologies.json`: atomic unclosed-page set and runtime partitions.
+- `PapersData/pane-layouts/`: atomic page split/membership intent, preview references
+  and supported reopen URLs, without HWND/PID/process or recovery identities.
+- `PapersData/native-helpers/`: disposable process checkpoints, native recovery
+  guards and the transfer journal. Original application placement restoration is
+  independent of page/session restoration.
+- AYG's existing checked document preferences: page/root-specific previews and UI
+  settings. Credentials remain in their existing application profiles.
+
+Native restoration requires the same live process start time and stamped window
+instance. Recycled HWNDs cannot silently acquire an old tab. Missing applications
+retain compact unavailable tabs rather than blank allocated content. Known Chrome
+URLs reopen lazily; Resume remaining retries supported recipes. The picker can
+replace an unavailable tab without changing its ID or ordering. Arbitrary CAD or
+other application's unsaved work is not an automatic relaunch recipe. Reconnect it
+from the picker; Papers does not invent launch commands or credentials.
+
+Host tests exercise direct saved-page destruction and compensated/settled journal
+recovery. The isolated Electron route deletes native process checkpoints before
+reload, verifies two independent pages in one window, transfers groups and pages,
+and checks dormant replacement. DOM-dispatched dragging verifies production routing
+without taking physical mouse/keyboard input. Physical drag acceptance and an actual
+Windows reboot remain distinct manual checks; neither is claimed by these tests.

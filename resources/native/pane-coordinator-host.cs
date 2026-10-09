@@ -123,8 +123,9 @@ public sealed class PaneCoordinatorHost:Form {
             viewport=Local(scope.Viewport),tree=Tree(scope.Root),presented=scope.Presented,
             groups=scope.Order.Select(id=>{var g=pane.Group(id);bool max=g.Presentation=="maximized";return new{id,selected=g.SelectedTab,presentation=g.Presentation,
                 slot=Local(max?scope.Viewport:PaneLayout.Slot(scope,g)),content=Local(max?PaneLayout.Content(scope,scope.Viewport):g.ResolvedFrame),
-                tabs=g.OrderedTabs.Select(tab=>{if(pane.IsDocument(tab))return (object)new{id=tab,kind="document",active=g.SelectedTab==tab};
-                    var p=pane.Find(tab);var text=new System.Text.StringBuilder(512);GetWindowText(p.Session.Handle,text,text.Capacity);
+                tabs=g.OrderedTabs.Select(tab=>{var dormant=pane.Dormant(tab);if(dormant!=null)return (object)new{id=tab,kind="dormant",active=g.SelectedTab==tab,title=dormant.Title??"Unavailable application",icon=dormant.Icon,canOpen=!string.IsNullOrEmpty(dormant.Url)};
+                    if(pane.IsDocument(tab))return (object)new{id=tab,kind="document",active=g.SelectedTab==tab,preview=pane.DocumentReference(tab)};
+                    var p=pane.Find(tab);var text=new System.Text.StringBuilder(512);GetWindowText(p.Session.Handle,text,text.Capacity);p.LastTitle=text.ToString();p.LastIcon=PeerIcon(p.Session.Saved.Pid);
                     return new{id=tab,kind="native",active=g.SelectedTab==tab,title=text.ToString(),icon=PeerIcon(p.Session.Saved.Pid),handle=p.Session.Handle.ToInt64(),pid=p.Session.Saved.Pid};}).ToArray()};}).ToArray()};
     }
     void Publish(string key,Binding binding){
@@ -147,7 +148,7 @@ public sealed class PaneCoordinatorHost:Form {
                 scopes.Add(key,binding);
                 binding.Pane.Scope.Presented=false;binding.Rect=(Dictionary<string,object>)r["rect"];
                 try{
-                    if(File.Exists(binding.Mount))binding.Pane.RestoreMount(binding.Mount,ScreenRect(binding.Rect));
+                    if(File.Exists(binding.Mount)||File.Exists(PaneCoordinator.IntentPath(binding.Mount)))binding.Pane.RestoreMount(binding.Mount,ScreenRect(binding.Rect),false);
                     else{
                         binding.Pane.SetViewport(ScreenRect(binding.Rect),++binding.ViewportRevision);
                         string legacy=ReadText(r,"legacyMount");string active=null;
@@ -168,11 +169,13 @@ public sealed class PaneCoordinatorHost:Form {
             binding.Token=ReadText(r,"binding");binding.Pane.Scope.BindingGeneration++;
             binding.Rect=(Dictionary<string,object>)r["rect"];
             binding.Pane.SetViewport(ScreenRect(binding.Rect),++binding.ViewportRevision);
-            foreach(var other in scopes.Values)if(other!=binding)other.Pane.SetPresented(false);
-            binding.Pane.SetPresented(true);Publish(key,binding);return new{ok=true,snapshot=Snapshot(binding)};
+            bool show=!r.ContainsKey("visible")||Convert.ToBoolean(r["visible"]);
+            if(show)foreach(var other in scopes.Values)if(other!=binding)other.Pane.SetPresented(false);
+            binding.Pane.SetPresented(show);Publish(key,binding);return new{ok=true,snapshot=Snapshot(binding)};
         }
         if(!scopes.TryGetValue(key,out binding)||binding.Token!=ReadText(r,"binding"))throw new Exception("Stale surface binding.");
         var pane=binding.Pane;var scope=pane.Scope;
+        if(op=="checkpoint"){pane.SaveMount(binding.Mount);return new{ok=true,snapshot=Snapshot(binding)};}
         if(op=="snapshot")return new{ok=true,snapshot=Snapshot(binding)};
         if(op=="raise"){pane.Raise();return new{ok=true,snapshot=Snapshot(binding)};}
         if(op=="viewport"){
@@ -188,13 +191,16 @@ public sealed class PaneCoordinatorHost:Form {
         long generation=scope.BindingGeneration,state=scope.StateRevision;string tab=ReadText(r,"tabId"),group=ReadText(r,"groupId","main");
         if(op=="attach"){
             var hwnd=new IntPtr(Number(r,"handle"));uint pid=(uint)Number(r,"pid");
-            tab=pane.Attach(hwnd,pid,group,generation,state,ReadText(r,"retainedId",null));pane.SelectTab(group,tab,generation,scope.StateRevision);
-        }else if(op=="document-add")pane.AddDocument(tab,group,generation,state);
+            tab=pane.Attach(hwnd,pid,group,generation,state,ReadText(r,"retainedId",null));pane.Find(tab).RestoreUrl=ReadText(r,"restoreUrl",null);pane.SelectTab(group,tab,generation,scope.StateRevision);
+        }else if(op=="reconnect")tab=pane.Reconnect(ReadText(r,"retainedId"),new IntPtr(Number(r,"handle")),(uint)Number(r,"pid"),generation,state);
+        else if(op=="dormant-add")pane.AddDormant(json.Deserialize<PaneMountPeer>(json.Serialize(r["peer"])),group);
+        else if(op=="document-add"){pane.AddDocument(tab,group,generation,state);if(r.ContainsKey("preview"))pane.SetDocumentReference(json.Deserialize<PaneDocumentRef>(json.Serialize(r["preview"])));}
         else if(op=="document-remove")pane.RemoveDocument(tab,generation,state);
         else if(op=="select")pane.SelectTab(group,tab,generation,state);
         else if(op=="reorder")pane.ReorderTab(group,tab,ReadText(r,"beforeId"),generation,state);
         else if(op=="move")pane.MoveTab(tab,group,generation,state);
         else if(op=="split")pane.SplitAndMove(tab,group,ReadText(r,"newGroupId"),ReadText(r,"side"),generation,state);
+        else if(op=="create-group")pane.CreateGroup(group,ReadText(r,"newGroupId"),ReadText(r,"side"),generation,state);
         else if(op=="relocate-group")pane.RelocateGroup(group,ReadText(r,"destination"),ReadText(r,"side"),generation,state);
         else if(op=="close-group")pane.CloseGroup(group,ReadText(r,"destination"),generation,state);
         else if(op=="presentation")pane.SetGroupPresentation(group,ReadText(r,"mode"),generation,state);
@@ -207,18 +213,30 @@ public sealed class PaneCoordinatorHost:Form {
     void Read(){string line;while((line=Console.ReadLine())!=null){string id="";
         try{var r=json.Deserialize<Dictionary<string,object>>(line);id=ReadText(r,"id");
             // UIA can block; resolve on this reader thread, then acquire/fit on the UI owner.
-            if(ReadText(r,"op")=="open"){
+            if(ReadText(r,"op")=="open"||ReadText(r,"op")=="resume"){
                 string scopeKey=ReadText(r,"scope");var state=UI(()=>{
                     Binding b;if(!scopes.TryGetValue(scopeKey,out b)||b.Token!=ReadText(r,"binding"))throw new Exception("Stale surface binding.");
                     return b;
                 });
                 var handles=UI(()=>state.Pane.Scope.Groups.Values.SelectMany(g=>g.OrderedTabs).Where(t=>!state.Pane.IsDocument(t)).Select(t=>state.Pane.Find(t).Session.Handle.ToInt64()).ToArray());
-                long hwnd=state.Chrome.Resolve(ReadText(r,"source"),ReadText(r,"url"),handles);
-                r["op"]="attach";r["handle"]=hwnd;uint pid;Native.GetWindowThreadProcessId(new IntPtr(hwnd),out pid);r["pid"]=pid;
+                bool resume=ReadText(r,"op")=="resume";
+                string retained=ReadText(r,"tabId"),url=ReadText(r,"url"),source=ReadText(r,"source");
+                if(resume){var dormant=UI(()=>state.Pane.Dormant(retained));if(dormant==null||string.IsNullOrEmpty(dormant.Url))throw new Exception("Choose a replacement window for this application.");url=dormant.Url;source="resume:"+retained;}
+                Uri parsed;if(!Uri.TryCreate(url,UriKind.Absolute,out parsed)||!new[]{"http","https","file"}.Contains(parsed.Scheme))throw new Exception("Unsupported reopen address.");
+                long hwnd=state.Chrome.Resolve(source,url,handles);
+                r["op"]=resume?"reconnect":"attach";if(resume)r["retainedId"]=retained;r["handle"]=hwnd;uint pid;Native.GetWindowThreadProcessId(new IntPtr(hwnd),out pid);r["pid"]=pid;
                 var found=UI(()=>state.Pane.Scope.Groups.Values.SelectMany(g=>g.OrderedTabs).FirstOrDefault(t=>!state.Pane.IsDocument(t)&&state.Pane.Find(t).Session.Handle.ToInt64()==hwnd));
+                if(found!=null&&resume)throw new Exception("That address is already open in this page; choose a replacement window.");
                 if(found!=null){r["op"]="select";r["tabId"]=found;r["groupId"]=UI(()=>state.Pane.TabGroup(found));}
             }
-            UI(()=>{var result=Execute(r);Emit(new{id,result});return true;});
+            UI(()=>{var result=Execute(r);
+                if(r.ContainsKey("url")&&(ReadText(r,"op")=="attach"||ReadText(r,"op")=="select")){
+                    Binding b;var reply=json.Deserialize<Dictionary<string,object>>(json.Serialize(result));
+                    if(scopes.TryGetValue(ReadText(r,"scope"),out b)&&reply.ContainsKey("tabId")){
+                        var tabId=Convert.ToString(reply["tabId"]);if(!b.Pane.IsDocument(tabId))b.Pane.Find(tabId).RestoreUrl=ReadText(r,"url");
+                    }
+                }
+                Emit(new{id,result});return true;});
         }catch(Exception error){Console.Error.WriteLine(error);Emit(new{id,result=new{ok=false,error=error.Message}});}
     }try{BeginInvoke((Action)Release);}catch{}}
     void Release(){if(released)return;released=true;

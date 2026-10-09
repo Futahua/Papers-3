@@ -2,10 +2,32 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
+public sealed class PaneDocumentRef {public string Id,Path,Name;}
+
 public sealed partial class PaneCoordinator {
     // Opaque renderer document references only. File paths and preview engines
     // remain owned by the Backpack and its existing preview capability.
     readonly Dictionary<string,string> documentGroups=new Dictionary<string,string>();
+    readonly Dictionary<string,PaneMountPeer> dormantPeers=new Dictionary<string,PaneMountPeer>();
+    readonly Dictionary<string,PaneDocumentRef> documentReferences=new Dictionary<string,PaneDocumentRef>();
+    public PaneDocumentRef DocumentReference(string id){PaneDocumentRef data;return documentReferences.TryGetValue(id,out data)?data:null;}
+    public void SetDocumentReference(PaneDocumentRef data){if(data!=null&&IsDocument(data.Id)&&Dormant(data.Id)==null)documentReferences[data.Id]=data;}
+    public PaneMountPeer Dormant(string id){PaneMountPeer peer;return dormantPeers.TryGetValue(id,out peer)?peer:null;}
+    public void AddDormant(PaneMountPeer peer,string groupId){
+        if(peer==null||string.IsNullOrEmpty(peer.TabId)||tabIndex.ContainsKey(peer.TabId)||documentGroups.ContainsKey(peer.TabId))throw new Exception("Invalid dormant reference.");
+        var group=Group(groupId);peer.GroupId=groupId;dormantPeers.Add(peer.TabId,peer);documentGroups.Add(peer.TabId,groupId);
+        group.OrderedTabs.Add(peer.TabId);if(group.SelectedTab==null)group.SelectedTab=peer.TabId;Scope.StateRevision++;
+    }
+    public string Reconnect(string id,IntPtr handle,uint pid,long binding,long state){
+        Check(binding,state);var saved=Dormant(id);if(saved==null)throw new Exception("That tab is already connected.");
+        var group=Group(TabGroup(id));string oldPresentation=group.Presentation;if(group.Presentation=="minimized")SetGroupPresentation(group.Id,"normal",binding,Scope.StateRevision);int index=group.OrderedTabs.IndexOf(id);bool selected=group.SelectedTab==id;
+        group.OrderedTabs.Remove(id);documentGroups.Remove(id);dormantPeers.Remove(id);if(selected)group.SelectedTab=null;
+        try{
+            string tab=Attach(handle,pid,group.Id,binding,Scope.StateRevision,id);
+            var peer=Find(tab);peer.RestoreUrl=saved.Url;peer.LastTitle=saved.Title;peer.LastIcon=saved.Icon;
+            group.OrderedTabs.Remove(id);group.OrderedTabs.Insert(index,id);if(selected)SelectTab(group.Id,id,binding,Scope.StateRevision);Notify("reconnect");return tab;
+        }catch{documentGroups[id]=group.Id;dormantPeers[id]=saved;group.OrderedTabs.Remove(id);group.OrderedTabs.Insert(index,id);if(selected)group.SelectedTab=id;if(oldPresentation=="minimized")SetGroupPresentation(group.Id,oldPresentation,binding,Scope.StateRevision);Paint();throw;}
+    }
     public string TabGroup(string id){PanePeer peer;string group;
         if(tabIndex.TryGetValue(id,out peer))return peer.GroupId;
         if(documentGroups.TryGetValue(id,out group))return group;
@@ -38,7 +60,7 @@ public sealed partial class PaneCoordinator {
     public void RemoveDocument(string id,long binding,long state){
         Check(binding,state);if(!documentGroups.ContainsKey(id))return;
         var group=Group(documentGroups[id]);
-        Change("removeDocument",()=>{group.OrderedTabs.Remove(id);documentGroups.Remove(id);
+        Change("removeDocument",()=>{group.OrderedTabs.Remove(id);documentGroups.Remove(id);dormantPeers.Remove(id);documentReferences.Remove(id);
             if(group.SelectedTab==id)group.SelectedTab=group.OrderedTabs.FirstOrDefault();});
     }
 }

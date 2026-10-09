@@ -76,7 +76,9 @@ async function hydrateStartupWorkspaceUngated(
       fresh.surfaceId = surface.surfaceId;
     }
     const oldToFresh = new Map(opened.map(({ old, fresh }) => [old.surfaceId, fresh.surfaceId]));
-    const topology = remapWorkspaceTopologySurfaceIds(snapshot.topology, oldToFresh);
+    const topology = remapWorkspaceTopologySurfaceIds({ ...snapshot.topology,
+      surfaces: snapshot.topology.surfaces.map(surface => ({ ...surface,
+        surfaceKey: surface.surfaceKey ?? surface.surfaceId })) }, oldToFresh);
     deps.validate(topology);
     deps.deliver(opened.map(({ fresh }) => fresh), topology);
     deps.commit(snapshot.workspaceId, topology);

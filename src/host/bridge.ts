@@ -84,6 +84,12 @@ interface HostBridge {
     installUpdate(): Promise<void>;
     /** Create one fresh secondary Papers window. */
     newWindow(): Promise<void>;
+    windows(): Promise<Array<{windowId:number;title:string;groupId:string;current:boolean}>>;
+    pages(): Promise<Array<{key:string;title:string;windowId:number|null;current:boolean}>>;
+    closePage(key:string): Promise<void>;
+    adoptPage(surfaceId:string): Promise<unknown>;
+    detachPage(surfaceId:string): Promise<unknown>;
+    showPage(key:string): Promise<void>;
   };
   backpacks: {
     list(): Promise<BackpacksList>;

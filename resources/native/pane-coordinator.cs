@@ -124,13 +124,17 @@ public sealed partial class PaneCoordinator : IDisposable {
         var data=new PaneRecovery{Generation=recoveryGeneration,HostPid=Process.GetCurrentProcess().Id,Started=Started((uint)Process.GetCurrentProcess().Id),Region=presentation.Saved};
         foreach(var p in tabIndex.Values)data.Peers.Add(new PaneRecoveryPeer{Window=p.Session.Saved,Started=Started(p.Session.Saved.Pid)});
         Directory.CreateDirectory(Path.GetDirectoryName(recoveryFile));
-        var tmp=recoveryFile+".tmp";File.WriteAllText(tmp,json.Serialize(data));
-        if(File.Exists(recoveryFile))File.Replace(tmp,recoveryFile,null);else File.Move(tmp,recoveryFile);
+        WriteDurableJson(recoveryFile,json.Serialize(data));
         if(!guardStarted) {
             guardStarted=true;
             try{Process.Start(new ProcessStartInfo(Application.ExecutablePath,"--guard \""+recoveryFile+"\""){UseShellExecute=false,CreateNoWindow=true});}
             catch{guardStarted=false;throw;}
         }
+    }
+    public static void WriteDurableJson(string filename,string value){
+        var temp=filename+".tmp";var bytes=new System.Text.UTF8Encoding(false).GetBytes(value);
+        using(var file=new FileStream(temp,FileMode.Create,FileAccess.Write,FileShare.None)){file.Write(bytes,0,bytes.Length);file.Flush(true);}
+        if(File.Exists(filename))File.Replace(temp,filename,filename+".backup");else File.Move(temp,filename);
     }
     public static void Guard(string filename) {
         var ser=new JavaScriptSerializer();PaneRecovery data;
@@ -181,6 +185,8 @@ public sealed partial class PaneCoordinator : IDisposable {
         var frames=groups.ToDictionary(p=>p.Key,p=>p.Value.ResolvedFrame);
         var ownership=tabIndex.Values.ToDictionary(p=>p.TabId,p=>p.GroupId);
         var docs=new Dictionary<string,string>(documentGroups);
+        var dormant=new Dictionary<string,PaneMountPeer>(dormantPeers);
+        var references=new Dictionary<string,PaneDocumentRef>(documentReferences);
         var actual=tabIndex.Values.Where(p=>p.Session.Valid()).Select(p=>new WindowSession(p.Session.Handle.ToInt64(),p.Session.Saved.Pid).Saved).ToArray();
         long state=Scope.StateRevision,geometry=Scope.GeometryRevision;double ratio=Scope.Ratio;bool shown=Scope.Presented;
         var viewport=Scope.Viewport;var leftOffset=authoredLeftOffset;long nativeEdge=Scope.NativeEdgeRevision;
@@ -196,6 +202,8 @@ public sealed partial class PaneCoordinator : IDisposable {
                 g.Presentation=modes[pair.Key];g.ResolvedFrame=frames[pair.Key];}
             foreach(var pair in ownership)tabIndex[pair.Key].GroupId=pair.Value;
             documentGroups.Clear();foreach(var pair in docs)documentGroups.Add(pair.Key,pair.Value);
+            dormantPeers.Clear();foreach(var pair in dormant)dormantPeers.Add(pair.Key,pair.Value);
+            documentReferences.Clear();foreach(var pair in references)documentReferences.Add(pair.Key,pair.Value);
             Scope.StateRevision=state;Scope.GeometryRevision=geometry;
             // Rejected pure layout changes have not touched HWNDs. Replaying a
             // normal placement anyway can make an application restore cached
@@ -334,6 +342,12 @@ public sealed partial class PaneCoordinator : IDisposable {
             MoveMembership(tabId,from,to);Scope.Order.Clear();Scope.Order.AddRange(PaneLayout.Leaves(Scope.Root));
         });
     }
+    public void CreateGroup(string target,string added,string side,long binding,long state){
+        Check(binding,state);Group(target);
+        if(string.IsNullOrWhiteSpace(added)||Scope.Groups.ContainsKey(added)||!new[]{"left","right","top","bottom"}.Contains(side))throw new Exception("Invalid new group.");
+        Change("createGroup",()=>{Scope.Add(added);if(!PaneLayout.Split(Scope.Root,target,added,side))throw new Exception("Missing split target.");
+            Scope.Order.Clear();Scope.Order.AddRange(PaneLayout.Leaves(Scope.Root));});
+    }
     public void RelocateGroup(string id,string target,string side,long binding,long state){
         Check(binding,state);Group(id);Group(target);
         if(id==target)return;
@@ -349,6 +363,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         SwapGroupLeaves(node.First,a,b);SwapGroupLeaves(node.Second,a,b);
     }
     public void DetachTab(string tabId,long binding,long state) {
+        if(Dormant(tabId)!=null){RemoveDocument(tabId,binding,state);return;}
         Check(binding,state);PanePeer p=Find(tabId);PaneGroup g=Group(p.GroupId);
         g.OrderedTabs.Remove(tabId);if(g.SelectedTab==tabId)g.SelectedTab=g.OrderedTabs.FirstOrDefault();
         tabIndex.Remove(tabId);hwndIndex.Remove(p.Session.Handle);
@@ -548,8 +563,11 @@ public sealed partial class PaneCoordinator : IDisposable {
         if(!hwndIndex.ContainsKey(peer.Session.Handle))return;
         PaneGroup group=Group(peer.GroupId);
         hwndIndex.Remove(peer.Session.Handle);tabIndex.Remove(peer.TabId);
-        group.OrderedTabs.Remove(peer.TabId);
-        if(group.SelectedTab==peer.TabId)group.SelectedTab=group.OrderedTabs.FirstOrDefault();
+        if(group.SelectedTab==peer.TabId)group.SelectedTab=group.OrderedTabs.FirstOrDefault(id=>id!=peer.TabId&&!dormantPeers.ContainsKey(id))??peer.TabId;
+        documentGroups[peer.TabId]=group.Id;
+        dormantPeers[peer.TabId]=new PaneMountPeer{TabId=peer.TabId,GroupId=group.Id,Title=peer.LastTitle,Icon=peer.LastIcon,Url=peer.RestoreUrl,
+            Handle=peer.Session.Handle.ToInt64(),InstanceMark=peer.Session.Saved.InstanceMark,Pid=peer.Session.Saved.Pid,Started=Started(peer.Session.Saved.Pid)};
+        if(group.OrderedTabs.All(id=>dormantPeers.ContainsKey(id)))group.Presentation="minimized";
         bool interrupted=group.Gesture!=null;group.Gesture=null;
         try{peer.Lease.ReleaseMutex();}catch(Exception error){Log("retire-lease",peer,null,null,error.Message);}
         try{peer.Lease.Dispose();}catch{}
@@ -597,13 +615,13 @@ public sealed partial class PaneCoordinator : IDisposable {
     static bool SavedWindowUnchanged(SavedWindow saved){
         var hwnd=new IntPtr(saved.Handle);var placement=new Native.Placement{Length=Marshal.SizeOf(typeof(Native.Placement))};
         uint pid;Native.GetWindowThreadProcessId(hwnd,out pid);
-        return pid==saved.Pid&&Native.GetWindowPlacement(hwnd,ref placement)&&
+        return pid==saved.Pid&&WindowSession.SameInstance(saved)&&Native.GetWindowPlacement(hwnd,ref placement)&&
             placement.Equals(saved.Placement)&&Native.IsWindowVisible(hwnd)==saved.Visible&&
             (Native.GetWindowLong(hwnd,-20)&8)==(saved.ExStyle&8);
     }
     static void RestoreSavedWindow(SavedWindow saved){
         var hwnd=new IntPtr(saved.Handle);uint pid;Native.GetWindowThreadProcessId(hwnd,out pid);
-        if(pid!=saved.Pid)return;
+        if(pid!=saved.Pid||!WindowSession.SameInstance(saved))return;
         if(!Native.SetWindowPos(hwnd,new IntPtr((saved.ExStyle&8)!=0?-1:-2),0,0,0,0,0x13))throw new Exception("Cannot restore native topmost state.");
         // Restore before applying the original normal/maximized placement.
         // Otherwise some apps replay their retained pane-sized restore bounds
@@ -634,7 +652,7 @@ public sealed partial class PaneCoordinator : IDisposable {
             try{peer.Lease.Dispose();}catch(Exception error){failures.Add(error);}
             ForgetLease(peer);Log("release",peer,null,null,"Restore");
         }
-        hwndIndex.Clear();tabIndex.Clear();documentGroups.Clear();
+        hwndIndex.Clear();tabIndex.Clear();documentGroups.Clear();dormantPeers.Clear();documentReferences.Clear();
         try{if(hub==null)presentation.Reset();else hub.Remove(this);}catch(Exception error){failures.Add(error);}
         if(guardStarted&&failures.Count==0)try{File.WriteAllText(recoveryFile+".released",recoveryGeneration);}
             catch(Exception error){failures.Add(error);}

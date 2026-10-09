@@ -45,6 +45,12 @@ const api = {
     installUpdate: () => ipcRenderer.invoke('host:app:install-update'),
     // Create one fresh Papers window; all policy stays in the main process.
     newWindow: () => ipcRenderer.invoke('host:window:new'),
+    windows: () => ipcRenderer.invoke('host:window:list'),
+    pages: () => ipcRenderer.invoke('host:pages:list'),
+    closePage: (key:string) => ipcRenderer.invoke('host:pages:close',key),
+    adoptPage: (surfaceId:string) => ipcRenderer.invoke('host:pages:adopt',surfaceId),
+    detachPage: (surfaceId:string) => ipcRenderer.invoke('host:pages:detach',surfaceId),
+    showPage: (key:string) => ipcRenderer.invoke('host:pages:show',key),
   },
 
   backpacks: {

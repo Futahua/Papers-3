@@ -9,7 +9,7 @@ import { getOrCreateSourceSnapshot } from './derivedPreviewCache';
 const EXE = 'papers-windows-preview-host.exe';
 const STAMP = 'papers-windows-preview-host.stamp';
 export interface PreviewRect { x:number; y:number; width:number; height:number }
-export interface PreviewHostContext { ownerKey:string; parentHwnd:string; surfaceBounds:PreviewRect }
+export interface PreviewHostContext { ownerKey:string; layoutKey?:string; paneGroup?:string; parentHwnd:string; surfaceBounds:PreviewRect }
 interface Live { id:string; ownerKey:string; process:ChildProcessWithoutNullStreams; localRect:PreviewRect; surfaceBounds:PreviewRect; clsid:string }
 
 export interface WindowsPreviewHandlerBridge {

@@ -1068,11 +1068,44 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               if (params[key] === '') args[key] = '';
               else if (params[key] !== undefined) args[key] = boundedString(params[key], key, 64);
             }
+            if (op === 'document-add' && params.preview !== undefined) {
+              if (!isRecord(params.preview)) throw new Error('Invalid preview reference.');
+              args.preview = { Id: boundedString(params.tabId,'tabId',64), Path:absolutePath(params.preview.path), Name:boundedString(params.preview.name,'name',512) };
+            }
             if (op === 'document-edge') { const position = Number(params.position); if (!Number.isFinite(position) || Math.abs(position) > 65536) throw new Error('Invalid document edge position.'); args.position = position; }
             if (params.visible !== undefined) { if (typeof params.visible !== 'boolean') throw new Error('visible must be a boolean.'); args.visible = params.visible; }
             const revision = params.revision;
             if (op !== 'snapshot' && (!Number.isSafeInteger(revision) || Number(revision) < 1)) throw new Error('Layout revision is required.');
             return bridge.command(owner, op, args, typeof revision === 'number' ? revision : undefined);
+          }
+          case 'pane-transfer-overlay': {
+            const bridge=deps.chromePane?.coordinator,owner=context.nativePreviewHost?.ownerKey;
+            if(!bridge||!owner)return {ok:false,message:'Window layout is unavailable.'};
+            if(typeof params.active!=='boolean')throw new Error('active must be a boolean.');
+            return bridge.dragOverlay(owner,params.active);
+          }
+          case 'pane-window-transfer': {
+            const bridge=deps.chromePane?.coordinator, owner=context.nativePreviewHost?.ownerKey;
+            if (!bridge || !owner) return {ok:false,message:'Window layout is unavailable.'};
+            return bridge.transfer(owner,boundedString(params.transferId,'transferId',64),boundedString(params.groupId??'main','groupId',64),
+              params.side===undefined?'center':boundedString(params.side,'side',8));
+          }
+          case 'pane-window-resume': {
+            const bridge=deps.chromePane?.coordinator, owner=context.nativePreviewHost?.ownerKey;
+            if (!bridge || !owner) return {ok:false,message:'Window layout is unavailable.'};
+            return bridge.command(owner,'resume',{tabId:boundedString(params.tabId,'tabId',64)});
+          }
+          case 'pane-window-reveal': {
+            const bridge=deps.chromePane?.coordinator, owner=context.nativePreviewHost?.ownerKey;
+            if (!bridge || !owner) return {ok:false,message:'Window layout is unavailable.'};
+            return bridge.reveal(owner,boundedString(params.transferId,'transferId',64));
+          }
+          case 'pane-window-replace': {
+            const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;
+            if (!bridge || !owner || !deps.resolvePaneWindow) return {ok:false,message:'Window layout is unavailable.'};
+            const window = await deps.resolvePaneWindow(boundedString(params.bindingId,'bindingId',512));
+            if (!window) return {ok:false,message:'This window has closed or changed.'};
+            return bridge.command(owner,'reconnect',{retainedId:boundedString(params.tabId,'tabId',64),handle:window.handle,pid:window.pid});
           }
           case 'pane-window-attach': {
             if (!deps.chromePane?.attachWindow || !context.nativePreviewHost || !deps.resolvePaneWindow) return { ok: false, message: 'Window hosting unavailable.' };

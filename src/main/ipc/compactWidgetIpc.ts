@@ -28,8 +28,8 @@ export interface CompactWidgetIpcDependencies {
   showPreview?: (sender: WebContents, preview: { imageUrl: string; title: string; width: number; height: number; anchor: { x: number; y: number; width: number; height: number } }) => void;
   hidePreview?: (senderId: number) => void;
   showContextMenu?: (sender: WebContents) => Promise<'remove' | 'cancel'>;
-  showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>, pickerId: string) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>;
-  updateCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean }>, pickerId: string) => Promise<'applied' | 'buffered' | 'stale' | 'failed' | boolean> | 'applied' | 'buffered' | 'stale' | 'failed' | boolean;
+  showCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean; inUse?: {transferId:string;label:string;samePage:boolean} }>, pickerId: string) => Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick' | 'move'; candidateId: string | null }>;
+  updateCandidatePicker?: (sender: WebContents, candidates: Array<{ id: string; title: string; icon: string | null; current: boolean; inUse?: {transferId:string;label:string;samePage:boolean} }>, pickerId: string) => Promise<'applied' | 'buffered' | 'stale' | 'failed' | boolean> | 'applied' | 'buffered' | 'stale' | 'failed' | boolean;
   dismissCandidatePicker?: (sender: WebContents) => Promise<void> | void;
 }
 
@@ -293,14 +293,18 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     }
     if (!authorized) throw new Error('denied: sender is not a registered project surface');
     const candidates = raw.candidates.map((value) => {
-      if (!object(value) || !exact(value, ['id', 'title', 'icon', 'current'])) throw new Error('window candidate picker item is malformed');
+      if (!object(value) || !exact(value, ['id', 'title', 'icon', 'current', ...(value.inUse === undefined ? [] : ['inUse'])])) throw new Error('window candidate picker item is malformed');
       const id = key(value.id, 'candidate id');
       const title = key(value.title, 'candidate title');
       const icon = value.icon;
       if (icon !== null && (typeof icon !== 'string' || Buffer.byteLength(icon, 'utf8') > 256 * 1024
         || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(icon))) throw new Error('candidate icon is malformed');
       if (typeof value.current !== 'boolean') throw new Error('candidate current state is malformed');
-      return { id, title, icon, current: value.current };
+      const inUse = value.inUse;
+      if (inUse !== undefined && (!object(inUse) || !exact(inUse, ['transferId','label','samePage']) ||
+        typeof inUse.transferId !== 'string' || !/^[a-f0-9]{32}$/.test(inUse.transferId) || typeof inUse.label !== 'string' ||
+        !inUse.label.length || Buffer.byteLength(inUse.label,'utf8')>512 || typeof inUse.samePage !== 'boolean')) throw new Error('Candidate ownership is malformed');
+      return { id, title, icon, current: value.current, ...(inUse ? {inUse:inUse as {transferId:string;label:string;samePage:boolean}} : {}) };
     });
     return showCandidatePicker
       ? showCandidatePicker(event.sender, candidates, raw.pickerId)
@@ -325,14 +329,18 @@ export function registerCompactWidgetIpc({ ipcMain, registry, session, isWorkspa
     }
     if (!authorized) throw new Error('denied: sender is not a registered project surface');
     const candidates = raw.candidates.map((value) => {
-      if (!object(value) || !exact(value, ['id', 'title', 'icon', 'current'])) throw new Error('window candidate picker item is malformed');
+      if (!object(value) || !exact(value, ['id', 'title', 'icon', 'current', ...(value.inUse === undefined ? [] : ['inUse'])])) throw new Error('window candidate picker item is malformed');
       const id = key(value.id, 'candidate id');
       const title = key(value.title, 'candidate title');
       const icon = value.icon;
       if (icon !== null && (typeof icon !== 'string' || Buffer.byteLength(icon, 'utf8') > 256 * 1024
         || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(icon))) throw new Error('candidate icon is malformed');
       if (typeof value.current !== 'boolean') throw new Error('candidate current state is malformed');
-      return { id, title, icon, current: value.current };
+      const inUse = value.inUse;
+      if (inUse !== undefined && (!object(inUse) || !exact(inUse, ['transferId','label','samePage']) ||
+        typeof inUse.transferId !== 'string' || !/^[a-f0-9]{32}$/.test(inUse.transferId) || typeof inUse.label !== 'string' ||
+        !inUse.label.length || Buffer.byteLength(inUse.label,'utf8')>512 || typeof inUse.samePage !== 'boolean')) throw new Error('Candidate ownership is malformed');
+      return { id, title, icon, current: value.current, ...(inUse ? {inUse:inUse as {transferId:string;label:string;samePage:boolean}} : {}) };
     });
     const rawDelivery = await updateCandidatePicker?.(event.sender, candidates, raw.pickerId);
     const delivery = rawDelivery === true ? 'applied' : rawDelivery === false ? 'stale' : rawDelivery ?? 'failed';

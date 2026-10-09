@@ -20,6 +20,7 @@ import { defaultWindowInteractionJournal, type WindowInteractionJournal, type Wi
 import {
   type PersistedWindowMemberDescriptor,
   type WindowBindResult,
+  type WindowCandidate,
   type WindowCandidateListResult,
   type WindowCapabilityService,
   type WindowInstanceSnapshot,
@@ -82,6 +83,7 @@ export interface WindowCapabilityIpcDependencies {
   } | null;
   /** Optional test seam for the bounded machine-local interaction journal. */
   diagnosticJournal?: Pick<WindowInteractionJournal, 'record'>;
+  decorateCandidates?: (sender: WebContents, candidates: WindowCandidate[]) => WindowCandidate[];
   /** Optional test seam for resolving registered control recipients by id. */
   controlSenderForId?: (senderId: number) => WebContents | null;
 }
@@ -251,6 +253,7 @@ export function registerWindowCapabilityIpc({
   focusForActivation,
   diagnosticJournal,
   controlSenderForId,
+  decorateCandidates,
 }: WindowCapabilityIpcDependencies): void {
   const journal = diagnosticJournal ?? defaultWindowInteractionJournal();
   const recordDiagnostic = (
@@ -515,9 +518,10 @@ export function registerWindowCapabilityIpc({
     if (!isPlainObject(raw) || Object.keys(raw).some((key) => key !== 'includeNativeIcons')) throw new Error('list payload contains unknown fields');
     if (raw['includeNativeIcons'] !== undefined && typeof raw['includeNativeIcons'] !== 'boolean') throw new Error('includeNativeIcons must be boolean');
     return { includeNativeIcons: raw['includeNativeIcons'] !== false };
-  }, async (options) => {
+  }, async (options, event) => {
     const startedAt = Date.now();
     const result = await service.listCandidates(options ?? { includeNativeIcons: true });
+    if (result.outcome === 'success' && decorateCandidates) result.candidates = decorateCandidates(event.sender, result.candidates);
     recordDiagnostic('candidate-list', `${result.outcome === 'success' ? result.candidates.length : 0} rows ${Math.max(0, Date.now() - startedAt)}ms`, result.outcome);
     return result;
   });

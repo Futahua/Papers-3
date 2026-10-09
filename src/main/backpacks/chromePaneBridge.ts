@@ -7,7 +7,7 @@ import { createNativePaneBridge, type NativePaneBridge, type NativePaneSnapshot 
 import { resolveWindowsCscPath } from '../windows/foregroundBridge';
 // Native peers use the caller's host and layout coordinates, not a preview session.
 interface LayoutRect { x: number; y: number; width: number; height: number; rightInset?: number; bottomInset?: number }
-interface LayoutHostContext { paneGroup?: string; ownerKey: string; parentHwnd: string; surfaceBounds: LayoutRect }
+interface LayoutHostContext { paneGroup?: string; layoutKey?: string; ownerKey: string; parentHwnd: string; surfaceBounds: LayoutRect }
 
 type Reply = { ok: boolean; error?: string; reused?: boolean; title?: string };
 interface Live {
@@ -30,11 +30,11 @@ export interface ChromePaneBridge {
   setPaneVisible(owner: string, visible: boolean): void;
   setOwnerVisible(owner: string, visible: boolean): void;
   setOwnerSurfaceBounds(owner: string, bounds: LayoutRect): void;
-  closeOwner(owner: string): void;
+  closeOwner(owner: string): void | Promise<void>;
   raiseWindow(windowId: number): void;
   dispose(): void;
 }
-export function createChromePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; onLayout?: (owner: string, rect: LayoutRect) => void; onTabs?: (owner: string, tabs: PaneWindowTab[]) => void; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined }): ChromePaneBridge | null {
+export function createChromePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; onLayout?: (owner: string, rect: LayoutRect) => void; onTabs?: (owner: string, tabs: PaneWindowTab[]) => void; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined; ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void> }): ChromePaneBridge | null {
   if (process.platform !== 'win32') return null;
   const chrome = [process.env['PROGRAMFILES'], process.env['PROGRAMFILES(X86)'], process.env['LOCALAPPDATA']]
     .filter((v): v is string => Boolean(v)).map(v => path.join(v, 'Google', 'Chrome', 'Application', 'chrome.exe')).find(v => fs.existsSync(v));
@@ -52,7 +52,7 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
     execFileSync(compiler, ['/nologo', '/target:exe', `/out:${executable}`, '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Web.Extensions.dll', ...['UIAutomationClient.dll', 'UIAutomationTypes.dll', 'WindowsBase.dll'].map(f => `/r:${path.join(wpf, f)}`), ...sources], { windowsHide: true, timeout: 15000, stdio: 'pipe' });
     fs.writeFileSync(stamp, digest);
   };
-  const coordinator = createNativePaneBridge({ cacheDirectory: input.cacheDirectory, nativeDirectory: input.nativeDirectory, onSnapshot: input.onSnapshot, windowInstanceId: input.windowInstanceId });
+  const coordinator = createNativePaneBridge({ cacheDirectory: input.cacheDirectory, nativeDirectory: input.nativeDirectory, onSnapshot: input.onSnapshot, windowInstanceId: input.windowInstanceId, ownerLabel:input.ownerLabel,revealOwner:input.revealOwner });
   const nativeGroup = (owner: string, tab: string): string => coordinator?.snapshot(owner)?.groups.find(g => g.tabs.some(t => t.id === tab))?.id ?? 'main';
   const owners = new Map<string, Live>();
   const viewLayouts = new Map<string, { context: LayoutHostContext; rect: LayoutRect }>();
@@ -197,11 +197,11 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
       } else visibility(owner);
     },
     setOwnerSurfaceBounds(owner, bounds) { coordinator?.setOwnerSurfaceBounds(owner, bounds); if (coordinator?.has(owner)) return; const layout = viewLayouts.get(owner); if (layout) layout.context = { ...layout.context, surfaceBounds: bounds }; const live = owners.get(owner); if (live) { live.context = { ...live.context, surfaceBounds: bounds }; void rect(live); } },
-    closeOwner(owner) { if (coordinator?.has(owner)) void coordinator.closeOwner(owner); viewLayouts.delete(owner); const live = owners.get(owner);
+    closeOwner(owner) { const released=coordinator?.has(owner)?coordinator.closeOwner(owner):Promise.resolve(); viewLayouts.delete(owner); const live = owners.get(owner);
       if (live && [...viewLayouts.values()].some(other => groupKey(other.context) === groupKey(live.context))) {
-        ownerVisibility.set(owner, false); paneVisibility.delete(owner); void send(live, 'visible', { visible: false }); return;
+        ownerVisibility.set(owner, false); paneVisibility.delete(owner); void send(live, 'visible', { visible: false }); return released;
       }
-      owners.delete(owner); ownerVisibility.delete(owner); paneVisibility.delete(owner); if (live) { void send(live, 'release'); live.child.stdin.end(); } },
+      owners.delete(owner); ownerVisibility.delete(owner); paneVisibility.delete(owner); if (live) { void send(live, 'release'); live.child.stdin.end(); } return released; },
     raiseWindow(windowId) { for (const owner of ownerVisibility.keys()) if (owner.startsWith(`${windowId}:`) && ownerVisibility.get(owner) !== false && coordinator?.has(owner)) void coordinator.command(owner, 'raise'); for (const [owner, live] of owners) if (owner.startsWith(`${windowId}:`) && ownerVisibility.get(owner) !== false && paneVisibility.get(owner) !== false) void send(live, 'raise'); },
     dispose() { void coordinator?.dispose(); viewLayouts.clear(); for (const owner of [...owners.keys()]) this.closeOwner(owner); },
   };

@@ -331,3 +331,33 @@ describe('WorkspaceTopologyStore', () => {
     expect((await fs.readdir(paths.recoveryDir)).some((name) => name.endsWith('.corrupt'))).toBe(true);
   });
 });
+
+
+
+describe('Papers unclosed pages',()=>{
+ const a='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',b='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+ const page=(name:string,key:string)=>openWorkspaceSurface(createWorkspaceTopology(),{surfaceId:'runtime-'+key,surfaceKey:key,projectId:'same-backpack',title:name});
+ it('consolidates two window partitions into one strip while retaining two independent pages of the same Backpack',async()=>{
+  const store=new WorkspaceTopologyStore(papersPaths(directory));await store.savePages(a,page('First','page-one'));await store.savePages(b,page('Second','page-two'));
+  const result=await new WorkspaceTopologyStore(papersPaths(directory)).consolidatePages();
+  expect(result?.topology.groups).toHaveLength(1);expect(result?.topology.surfaces.map(p=>p.surfaceKey)).toEqual(['page-one','page-two']);expect(result?.window).toBeUndefined();
+  expect((await new WorkspaceTopologyStore(papersPaths(directory)).sessionSnapshots())).toHaveLength(1);
+ });
+ it('closing a saved page directly excludes it from startup without reopening its window',async()=>{
+  const store=new WorkspaceTopologyStore(papersPaths(directory));await store.savePages(a,page('First','page-one'));await store.savePages(b,page('Second','page-two'));
+  await store.closeSavedPage('page-two');const result=await new WorkspaceTopologyStore(papersPaths(directory)).consolidatePages();
+  expect(result?.topology.surfaces.map(p=>p.surfaceKey)).toEqual(['page-one']);
+ });
+ it('does not resurrect historical non-session records or duplicate a transferred durable page',async()=>{
+  const store=new WorkspaceTopologyStore(papersPaths(directory));await store.commit(a,page('Historical','old'));await store.savePages(b,page('Current','current'));
+  const result=await store.consolidatePages();expect(result?.topology.surfaces.map(p=>p.surfaceKey)).toEqual(['current']);
+  await store.savePages(a,page('Duplicate','current'));expect((await store.consolidatePages())?.topology.surfaces).toHaveLength(1);
+ });
+ it('compensates failed consolidation and close saves, retaining every previously unclosed page',async()=>{
+  const store=new WorkspaceTopologyStore(papersPaths(directory));await store.savePages(a,page('First','one'));await store.savePages(b,page('Second','two'));
+  const internal=store as unknown as {store:{save(value:unknown):Promise<void>}};const save=internal.store.save.bind(internal.store);internal.store.save=async()=>{throw Error('disk unavailable');};
+  await expect(store.consolidatePages()).rejects.toThrow('disk unavailable');expect((await store.sessionSnapshots()).flatMap(r=>r.topology.surfaces)).toHaveLength(2);
+  await expect(store.closeSavedPage('two')).rejects.toThrow('disk unavailable');expect((await store.sessionSnapshots()).flatMap(r=>r.topology.surfaces)).toHaveLength(2);
+  internal.store.save=save;await store.flush();expect((await new WorkspaceTopologyStore(papersPaths(directory)).sessionSnapshots()).flatMap(r=>r.topology.surfaces)).toHaveLength(2);
+ });
+});

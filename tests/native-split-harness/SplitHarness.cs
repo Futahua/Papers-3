@@ -141,6 +141,7 @@ public sealed class SplitHarness:Form {
                 Small(strip,g.Presentation=="maximized"?"❐":"□",()=>Present(group,g.Presentation=="maximized"?"normal":"maximized"));
                 if(engine.Scope.Order.Count>1)Small(strip,"×",()=>Merge(group,engine.Scope.Order.First(other=>other!=group)));
                 foreach(var tab in g.OrderedTabs.ToArray()){
+                    var dormant=engine.Dormant(tab);if(dormant!=null){strip.Controls.Add(new Button{Text=(dormant.Title??"Unavailable")+" · unavailable",Width=85,Height=30,Enabled=false});continue;}
                     var peer=engine.Find(tab);string target=tab;
                     var button=new Button{Text=WindowTitle(peer.Session.Handle).Replace("Native split fixture: ",""),Tag=target,Width=85,Height=30};
                     button.Click+=(sender,e)=>Run(()=>engine.SelectTab(group,target,engine.Scope.BindingGeneration,engine.Scope.StateRevision));
@@ -393,8 +394,8 @@ public sealed class SplitHarness:Form {
             engine.SetViewport(beforeInterrupted,++viewportSerial);
             for(int i=0;i<50&&closingPeer.Session.Valid();i++){Application.DoEvents();Thread.Sleep(35);}
             engine.ReconcileClosed();Application.DoEvents();
-            check(!engine.Group("B").OrderedTabs.Contains(alternateB)&&engine.Group("B").SelectedTab==retainedB&&
-                engine.Find(retainedB).Session.Valid(),"closing selected application retires dead tab and selects survivor");
+            check(engine.Group("B").OrderedTabs.Contains(alternateB)&&engine.Dormant(alternateB)!=null&&engine.Group("B").SelectedTab==retainedB&&
+                engine.Find(retainedB).Session.Valid(),"closing selected application retains dormant intent and selects live survivor");
             // Additional acceptance cases run against the same retained real fixture HWNDs.
             var otherClient=engine.HostRegionForHarness;
             var external=new SavedShape{Handle=otherClient.Handle,Pid=otherClient.Pid,Data=otherClient.Data,ClientPid=(int)engine.Find(retainedB).Session.Saved.Pid};
@@ -520,7 +521,7 @@ public sealed class SplitHarness:Form {
             bool oldBindingRejected=false;
             try{engine.SelectTab("A",beforeMount[0],oldBinding,engine.Scope.StateRevision);}catch{oldBindingRejected=true;}
             check(oldBindingRejected,"remounted scope rejects commands from its previous surface binding");
-            var saves=engine.Scope.Order.SelectMany(g=>engine.Group(g).OrderedTabs).Select(id=>engine.Find(id).Session.Saved).ToArray();
+            var saves=engine.Scope.Order.SelectMany(g=>engine.Group(g).OrderedTabs).Where(id=>engine.Dormant(id)==null).Select(id=>engine.Find(id).Session.Saved).ToArray();
             engine.Release();
             check(engine.Released,"release completes cleanly");
             bool restored=true;foreach(var saved in saves){var placed=new Native.Placement{Length=System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.Placement))};

@@ -49,6 +49,7 @@ public sealed class PanePeer {
     public readonly WindowSession Session;
     public readonly Mutex Lease;
     public string GroupId;
+    public string LastTitle,LastIcon,RestoreUrl;
     public int MinTrackWidth=240,MinTrackHeight=160;
     public bool FixedSize;
     public Rectangle ObservedOuter, ObservedVisible;

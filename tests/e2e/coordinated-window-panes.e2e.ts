@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { expect, it } from 'vitest';
-import { evalInHost, launchPapers, waitFor } from './helpers';
+import { evalInHost, evalInHostWindow, launchPapers, waitFor } from './helpers';
 
 function previewPdf(): Buffer {
  const stream='BT /F1 18 Tf 20 100 Td (Pinned PDF fixture) Tj ET';
@@ -66,13 +66,14 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   // The same response relay and scoped iframe contract used by Proxima.
   await fs.writeFile(path.join(shell,'public','shell.js'),`window.shellErrors=[];window.addEventListener('error',e=>shellErrors.push(e.message));const routes=new Set();let child;const scopeId=crypto.randomUUID();window.addEventListener('message',e=>{if(e.source===child?.contentWindow&&e.data?.requestId)routes.add(e.data.requestId);if(e.source!==window||e.data?.type!=='papers:host:result')return;if(e.data.requestId===scopeId){if(!e.data.ok)throw Error(e.data.error);child=document.createElement('iframe');child.src=e.data.workspaceScope.url;document.body.append(child);}else if(routes.delete(e.data.requestId))child.contentWindow.postMessage(e.data,'papers-backpack://${id}');});window.postMessage({type:'papers:project:workspace-scope',requestId:scopeId,projectKey:'pane-test',projectName:'Pane test'},location.origin);`);
  }
- const launched=await launchPapers(profile,{fixtures:false});
+ let launched=await launchPapers(profile,{fixtures:false});
+ let primaryContentsId=0;
  const evaluate=<T>(js:string)=>launched.app.evaluate(async({webContents},args)=>{
-  const view=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+args.topId+'/'));
+  const view=webContents.getAllWebContents().find(w=>(!args.primaryContentsId||w.id===args.primaryContentsId)&&w.getURL().startsWith('papers-backpack://'+args.topId+'/'));
   if(!view)throw Error('Project has not loaded');
   const target=args.embedded?view.mainFrame.frames.find(f=>f.url.startsWith('papers-backpack://'+args.id+'/')):view.mainFrame;
   if(!target)throw Error('Embedded project has not loaded');return target.executeJavaScript(args.js,true);
- },{js,topId,embedded,id}) as Promise<T>;
+ },{js,topId,embedded,id,primaryContentsId}) as Promise<T>;
  try{
   await waitFor(()=>launched.app.evaluate(({BaseWindow})=>BaseWindow.getAllWindows().length>0),10000,'Papers host window');
   // Keep fixture heights below Windows' current monitor maximum tracking size.
@@ -164,6 +165,83 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await waitFor(async()=>await evaluate<boolean>(`(()=>{const image=document.querySelector('.slice-file-preview:not([hidden]) img');return image?.complete&&image.naturalWidth>0&&image.getBoundingClientRect().width>0;})()`),10000,'pinned image decoded and rendered');
   await waitFor(()=>launched.app.evaluate(({webContents})=>webContents.getAllWebContents().filter(w=>w.mainFrame.frames.some(f=>f.url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'))).length===1),10000,'switching one split leaves neighboring PDF viewer alive');
   expect(await evaluate<string[]>('errors')).toEqual([]);
- }catch(error){console.error(await evaluate('JSON.stringify({calls:window.calls?.filter(c=>c.reply?.ok===false).map(c=>({args:c.args,error:c.reply.error||c.reply.message})),errors:window.errors,panes:typeof window.panes,size:[innerWidth,innerHeight]})').catch(String));console.error(await launched.app.evaluate(async({webContents},id)=>{const v=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'));return v?{url:v.getURL(),frames:v.mainFrame.frames.map(f=>f.url),body:await v.executeJavaScript('({html:document.body.innerHTML,errors:window.shellErrors,origin:location.origin})')}:null;},topId));console.error(fixtures.map(f=>({pid:f.pid,exit:f.exitCode})));throw error;}
+  if(!embedded){
+    // Same Backpack, two real Papers windows: pages own independent persistent scopes.
+    const firstContents=await launched.app.evaluate(({webContents},id)=>webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'))!.id,id);
+    primaryContentsId=firstContents;
+    const firstWindow=await launched.app.evaluate(({BaseWindow})=>BaseWindow.getAllWindows()[0]!.id);
+    await evalInHost(launched.app,'papersHost.app.newWindow()');
+    const secondWindow=await launched.app.evaluate(({BaseWindow},first)=>BaseWindow.getAllWindows().find(w=>w.id!==first&&w.getTitle()==='Papers')!.id,firstWindow);
+    await launched.app.evaluate(({BaseWindow},id)=>BaseWindow.getAllWindows().find(w=>w.id===id)!.setBounds({x:2100,y:20,width:1500,height:700}),secondWindow);
+    await waitFor(()=>evalInHostWindow<boolean>(launched.app,secondWindow,`Boolean(document.querySelector('.backpack-card'))`),10000,'second host');
+    await evalInHostWindow(launched.app,secondWindow,`[...document.querySelectorAll('.backpack-card button')].find(b=>b.textContent==='Enter').click()`);
+    const evaluateSecond=<T>(js:string)=>launched.app.evaluate(async({webContents},args)=>{
+      const view=webContents.getAllWebContents().find(w=>w.id!==args.first&&w.getURL().startsWith('papers-backpack://'+args.id+'/'));
+      if(!view)throw Error('Second page has not loaded');return view.executeJavaScript(args.js,true);
+    },{js,first:firstContents,id}) as Promise<T>;
+    await waitFor(()=>evaluateSecond<boolean>('Boolean(window.ready)'),10000,'second pane module');await evaluateSecond('ready');
+    expect(await evaluateSecond<number>('latest.groups.flatMap(g=>g.tabs).length')).toBe(0);
+    const claims=await evaluateSecond<any>(`host.windowCandidates({includeNativeIcons:false}).then(r=>r.candidates.filter(c=>c.title.includes(${JSON.stringify(marker)})))`);
+    expect(claims).toHaveLength(2);expect(claims.every((c:any)=>c.inUse&&!c.inUse.samePage&&c.inUse.label.includes('window'))).toBe(true);
+    expect((await evaluateSecond<any>(`host.fileCapability('pane-window-transfer',{transferId:'00000000000000000000000000000000',groupId:'main'})`)).ok).toBe(false);
+    const before=await evaluate<any>('latest.groups.map(g=>({id:g.id,selected:g.selected,tabs:g.tabs.map(t=>t.id)}))');
+    const source=await evaluate<any>(`latest.groups.find(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])}))`);
+    await evaluateSecond(`document.querySelector('#right').style.width='400px';`);
+    await waitFor(()=>evaluateSecond<boolean>('latest.viewport.width===400'),10000,'narrow transfer destination');
+    const refused=await evaluateSecond<any>(`host.fileCapability('pane-window-transfer',{transferId:${JSON.stringify(source.transferId)},groupId:'main',side:'right'})`);
+    expect(refused.ok).toBe(false);
+    expect(await evaluate('latest.groups.map(g=>({id:g.id,selected:g.selected,tabs:g.tabs.map(t=>t.id)}))')).toEqual(before);
+    expect(await evaluateSecond<number>('latest.groups.flatMap(g=>g.tabs).length')).toBe(0);
+    await evaluateSecond(`document.querySelector('#right').style.width=(innerWidth*.65-8)+'px';`);
+    await waitFor(()=>evaluateSecond<boolean>('latest.viewport.width>900'),10000,'room for incoming group');
+    const refreshed=await evaluate<any>(`latest.groups.find(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])}))`);
+    const payload=await evaluate<Array<[string,string]>>(`(()=>{window.crossDrag=new DataTransfer();document.querySelector('[data-slice-id="${refreshed.id}"] .slice-group-handle').dispatchEvent(new DragEvent('dragstart',{dataTransfer:crossDrag,bubbles:true}));return [...crossDrag.types].map(type=>[type,crossDrag.getData(type)]);})()`);
+    await waitFor(()=>evaluateSecond<boolean>('latest.presented===false'),10000,'cross-window drag yields native destination');
+    await evaluateSecond(`(()=>{const data=new DataTransfer();for(const [type,value] of ${JSON.stringify(payload)})data.setData(type,value);const target=document.querySelector('[data-slice-id="main"]'),box=latest.groups[0].slot;target.dispatchEvent(new DragEvent('dragover',{dataTransfer:data,clientX:box.x+box.width-4,clientY:box.y+80,bubbles:true,cancelable:true}));target.dispatchEvent(new DragEvent('drop',{dataTransfer:data,clientX:box.x+box.width-4,clientY:box.y+80,bubbles:true,cancelable:true}));})()`);
+    await waitFor(()=>evaluateSecond<boolean>(`latest.groups.some(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])}))&&previews.some(p=>p.id==='doc-image')`),10000,'incoming mixed group rendered');
+    await evaluate(`document.dispatchEvent(new DragEvent('dragend',{dataTransfer:crossDrag,bubbles:true}))`);
+    await waitFor(()=>evaluateSecond<boolean>('latest.presented===true'),10000,'drag completion restores native targets');
+    expect(await evaluate<boolean>(`!latest.groups.some(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])}))&&!previews.some(p=>p.id==='doc-image')`)).toBe(true);
+    expect(JSON.parse(await fs.readFile(path.join(data,'native-helpers','pane-transfer-journal.json'),'utf8')).status).toBe('settled');
+    // Lost applications keep compact recoverable membership; replacing one preserves tab identity.
+    for(const fixture of fixtures)if(fixture.exitCode===null)fixture.kill();
+    await waitFor(()=>evaluateSecond<boolean>(`latest.groups.flatMap(g=>g.tabs).some(t=>t.id===${JSON.stringify(attached[0])}&&t.kind==='dormant')`),12000,'closed native window becomes dormant');
+    fixtures.push(spawn(fixtureExe,['--fixture',marker+'C'],{stdio:'ignore'}));
+    await waitFor(()=>evaluateSecond<boolean>(`host.windowCandidates({includeNativeIcons:false}).then(r=>r.candidates.some(c=>c.title.includes(${JSON.stringify(marker+'C')})))`),10000,'replacement fixture');
+    const replaced=await evaluateSecond<any>(`(async()=>{const c=(await host.windowCandidates({includeNativeIcons:false})).candidates.find(c=>c.title.includes(${JSON.stringify(marker+'C')}));const bound=await host.bindWindowCandidate(c.id);return host.fileCapability('pane-window-replace',{bindingId:bound.capability.bindingId,tabId:${JSON.stringify(attached[0])}});})()`);
+    expect(replaced.ok).toBe(true);expect(replaced.snapshot.groups.flatMap((g:any)=>g.tabs).some((t:any)=>t.id===attached[0]&&t.kind==='native')).toBe(true);
+    fixtures.at(-1)!.kill();await waitFor(()=>evaluateSecond<boolean>(`latest.groups.flatMap(g=>g.tabs).some(t=>t.id===${JSON.stringify(attached[0])}&&t.kind==='dormant')`),10000,'replacement retires');
+    const pageKey=await evaluateSecond<string>(`new URL(location.href).searchParams.get('papers-surface-key')`);
+    await launched.app.evaluate(({BaseWindow},id)=>BaseWindow.getAllWindows().find(w=>w.id===id)!.close(),secondWindow);
+    await waitFor(()=>evalInHost<boolean>(launched.app,`papersHost.app.pages().then(rows=>rows.some(p=>p.key===${JSON.stringify(pageKey)}&&p.windowId===null))`),15000,'window close preserves page without preserving window');
+    await launched.close();
+    // Simulate reboot with lost process cache. Durable page layouts are enough.
+    for(const file of await fs.readdir(path.join(data,'native-helpers')))if(/^pane-mount-.*\.json(?:\.bak)?$/.test(file))await fs.unlink(path.join(data,'native-helpers',file));
+    launched=await launchPapers(profile,{fixtures:false});
+    await waitFor(()=>launched.app.evaluate(({webContents},id)=>webContents.getAllWebContents().filter(w=>w.getURL().startsWith('papers-backpack://'+id+'/')).length===2,id),20000,'both saved Papers pages restored');
+    const resumed=<T>(js:string)=>launched.app.evaluate(async({webContents},args)=>{const page=webContents.getAllWebContents().find(w=>w.getURL().includes('papers-surface-key='+args.key));if(!page)throw Error('Saved page missing');return page.executeJavaScript(args.js,true);},{key:pageKey,js}) as Promise<T>;
+    await evalInHost(launched.app,`papersHost.app.showPage(${JSON.stringify(pageKey)})`);
+    await waitFor(()=>resumed<boolean>('Boolean(window.panes?.active())'),20000,'page-scoped native checkpoint remount');
+    expect(await resumed<boolean>(`latest.groups.flatMap(g=>g.tabs).some(t=>t.id===${JSON.stringify(attached[0])}&&t.kind==='dormant')&&previews.some(p=>p.id==='doc-image')`)).toBe(true);
+    expect(await evalInHost<number>(launched.app,'papersHost.app.windows().then(rows=>rows.length)')).toBe(1);
+    expect(await evalInHost<number>(launched.app,'papersHost.app.pages().then(rows=>rows.length)')).toBe(2);
+    const intentFiles=await fs.readdir(path.join(data,'pane-layouts'));const intents=await Promise.all(intentFiles.filter(f=>f.endsWith('.json')).map(f=>fs.readFile(path.join(data,'pane-layouts',f),'utf8')));
+    expect(intents.length).toBe(2);expect(intents.join('')).not.toMatch(/"(?:Handle|Pid|Started|OwnerPid|OwnerStarted|Recovery)"/);
+
+    // Tear out and adopt the entire page through the real DOM drop route.
+    const restoredWindow=(await evalInHost<any[]>(launched.app,'papersHost.app.windows()'))[0]!.windowId;
+    // Pick the exact tab from Dockview's panel DOM; data is supplied by the
+    // same synchronous drag hook used by physical desktop drags.
+    const dragPage=await evalInHost<string>(launched.app,`(()=>{const tab=[...document.querySelectorAll('.dv-tab')].at(-1);window.pageDrag=new DataTransfer();tab.dispatchEvent(new DragEvent('dragstart',{dataTransfer:pageDrag,bubbles:true,cancelable:true}));return pageDrag.getData('application/x-papers-page');})()`);
+    expect(dragPage).toBeTruthy();
+    await evalInHost(launched.app,`window.dispatchEvent(new DragEvent('dragend',{dataTransfer:pageDrag,clientX:innerWidth+100,clientY:70,screenX:2100,screenY:70,bubbles:true}))`);
+    await waitFor(()=>evalInHost<boolean>(launched.app,'papersHost.app.windows().then(rows=>rows.length===2)'),20000,'page drag out creates runtime window');
+    const windows=await evalInHost<any[]>(launched.app,'papersHost.app.windows()');const recipient=windows.find(w=>w.windowId===restoredWindow)!;
+    await evalInHostWindow(launched.app,recipient.windowId,`(()=>{const data=new DataTransfer();data.setData('application/x-papers-page',${JSON.stringify(dragPage)});document.querySelector('.titlebar').dispatchEvent(new DragEvent('dragover',{dataTransfer:data,bubbles:true,cancelable:true}));document.querySelector('.titlebar').dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));})()`);
+    await waitFor(()=>evalInHostWindow<boolean>(launched.app,recipient.windowId,'papersHost.app.pages().then(rows=>rows.filter(p=>p.current).length===2)'),20000,'page drop combines windows');
+    await evalInHostWindow(launched.app,recipient.windowId,`papersHost.app.closePage(${JSON.stringify(pageKey)})`);
+    await waitFor(()=>evalInHostWindow<boolean>(launched.app,recipient.windowId,`papersHost.app.pages().then(rows=>!rows.some(p=>p.key===${JSON.stringify(pageKey)}))`),10000,'explicit page close removes restore record');
+  }
+ }catch(error){console.error(await evaluate('JSON.stringify({calls:window.calls?.filter(c=>String(c.args[0]).startsWith("pane-")).map(c=>({args:c.args,ok:c.reply.ok,revision:c.reply.snapshot?.stateRevision,error:c.reply.error||c.reply.message})),errors:window.errors,panes:typeof window.panes,size:[innerWidth,innerHeight]})').catch(String));console.error(await launched.app.evaluate(async({webContents},id)=>{const v=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'));return v?{url:v.getURL(),frames:v.mainFrame.frames.map(f=>f.url),body:await v.executeJavaScript('({html:document.body.innerHTML,errors:window.shellErrors,origin:location.origin})')}:null;},topId));console.error(fixtures.map(f=>({pid:f.pid,exit:f.exitCode})));throw error;}
  finally{await launched.close();for(const fixture of fixtures)if(fixture.exitCode===null)fixture.kill();}
 });

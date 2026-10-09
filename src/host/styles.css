@@ -311,6 +311,16 @@ input:focus-visible {
   padding: 5px 8px 10px;
 }
 
+.titlebar-menu-wrap { position: relative; }
+.pages-menu { top: 36px; left: auto; right: 0; transform: none; max-height: min(65vh, 500px); overflow-y: auto; }
+.saved-page-row { display: flex; align-items: center; gap: 4px; }
+.saved-page-row > button:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.saved-page-row > button:last-child { flex: 0 0 28px; }
+.pages-menu button { padding: 8px; border: 0; background: transparent; color: inherit; border-radius: 5px; cursor: pointer; }
+.pages-menu button:hover { background: var(--menu-hover, #8882); }
+.pages-menu button:disabled { opacity: .65; cursor: default; }
+.papers-page-drop { box-shadow: inset 0 -3px #71b9eb; background-color: #71b9eb20 !important; }
+
 .basic-row {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr) auto;

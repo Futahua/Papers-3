@@ -121,10 +121,10 @@ import { finalizePapersWindow } from './windows/papersWindowFinalization';
 import { papersPaths } from './persistence/paths';
 import { ProgramStateService } from './persistence/programStateService';
 import { AtomicJsonStore } from './persistence/atomicStore';
-import { WorkspaceTopologyStore } from './persistence/workspaceTopologyStore';
+import { WorkspaceTopologyStore, type SelectedWorkspaceSnapshot } from './persistence/workspaceTopologyStore';
 import { WorkspaceLayoutStore } from './persistence/workspaceLayoutStore';
 import { hydrateStartupWorkspace } from './persistence/startupWorkspaceHydration';
-import type { WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { activateWorkspaceSurface, createWorkspaceTopology, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { workspaceTopologyMatchesSurfaceSet } from './workspaceTopologyAuthority';
 import {
   OPAQUE_SURFACE_COLOR,
@@ -541,6 +541,13 @@ async function bootstrap(): Promise<void> {
   const paths = papersPaths(baseDir);
   const workspaceTopologyStore = new WorkspaceTopologyStore(paths);
   await workspaceTopologyStore.initialize();
+  const oldSessionPages = await workspaceTopologyStore.sessionSnapshots();
+  const startupPageSnapshot = await workspaceTopologyStore.consolidatePages();
+  const legacyPageClaims = new Map<string,string>();
+  for(const window of oldSessionPages)if(!window.window&&!window.session)for(const page of window.topology.surfaces)
+    if(!legacyPageClaims.has(page.projectId))legacyPageClaims.set(page.projectId,page.surfaceKey??page.surfaceId);
+  const windowRestoreSnapshots = new Map<number, SelectedWorkspaceSnapshot>();
+  const hydrationPromises = new Map<number, Promise<{ hydrated: boolean }>>();
   const workspaceLayoutStore = new WorkspaceLayoutStore(paths);
   await workspaceLayoutStore.initialize();
   // Opt-in diagnostics get one process identity for the lifetime of this
@@ -677,6 +684,21 @@ async function bootstrap(): Promise<void> {
     cacheDirectory: path.join(paths.root, 'native-helpers'),
     nativeDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native') : path.join(app.getAppPath(), 'resources', 'native'),
     windowInstanceId: (handle, pid) => windowCapabilityService.windowInstanceIdForHandle?.(handle, pid),
+    ownerLabel: owner => {
+      const [window, surface] = owner.split(':');
+      return (currentWorkspaceTopology(Number(window))?.surfaces.find(page => page.surfaceId === surface)?.title ?? 'Papers page') + ` · window ${window}`;
+    },
+    revealOwner: async owner => {
+      const [window, surface] = owner.split(':'); const windowId = Number(window);
+      const context = papersWindows.get(windowId), current = currentWorkspaceTopology(windowId);
+      if (!context || !current || !surface) throw new Error('That Papers page is closed.');
+      facade.assertWorkspaceMutationAvailable(windowId);
+      const topology = activateWorkspaceSurface(current, surface);
+      workspaceTopologies.set(windowId, topology);
+      context.owned.hostView.webContents.send('host:event:workspace-topology', topology);
+      if (context.owned.window.isMinimized()) context.owned.window.restore();
+      context.owned.window.focus();
+    },
     onSnapshot: (owner, snapshot) => {
       const separator = owner.indexOf(':');
       const contents = papersWindows.get(Number(owner.slice(0, separator)))?.owned.projectSurfaces.get(owner.slice(separator + 1))?.webContents;
@@ -803,8 +825,6 @@ async function bootstrap(): Promise<void> {
   let detachSession: WindowDetachSession | null = null;
   const widgetRegistry = new BackpackSurfaceRegistry();
   let widgetSession: CompactWidgetSession | null = null;
-  let primaryWindowIdForHydration: number | null = null;
-  let primaryHydrationPromise: Promise<{ hydrated: boolean }> | null = null;
   let controlEventHub: PapersControlEventHub | null = null;
   const onProjectSurfaceClosed = (windowId: number, _surfaceId: string, projectId: string): void => {
     visualSemanticKeysBySurface.delete(visualSemanticKeyMapKey(windowId, _surfaceId));
@@ -962,7 +982,13 @@ async function bootstrap(): Promise<void> {
     return instance;
   };
   const windowInstance = makePapersWindow(savedBounds ?? undefined);
-  const lifecycleDependencies = (restoreBackpackId: string | null) => ({
+  const saveSessionWindow = async (instance: Parameters<typeof preparePapersWindow>[0]): Promise<void> => {
+    const id = workspaceIds.get(instance.window.id);
+    if (!id || instance.window.isDestroyed()) return;
+    const topology = workspaceTopologies.get(instance.window.id) ?? windowRestoreSnapshots.get(instance.window.id)?.topology ?? createWorkspaceTopology();
+    await workspaceTopologyStore.savePages(id, topology);
+  };
+  const lifecycleDependencies = (restoreBackpackId: string | null, snapshot?: SelectedWorkspaceSnapshot) => ({
     register: (instance: Parameters<typeof preparePapersWindow>[0]) => {
       papersWindows.add(instance.window.id, {
         window: instance.window,
@@ -970,6 +996,9 @@ async function bootstrap(): Promise<void> {
         projectSurfaces: instance.projectSurfaces,
       }, restoreBackpackId);
       papersWindows.setHostSender(instance.window.id, instance.hostView.webContents.id);
+      workspaceIds.set(instance.window.id, snapshot?.workspaceId ?? randomUUID());
+      if (snapshot) windowRestoreSnapshots.set(instance.window.id, snapshot);
+      void saveSessionWindow(instance).catch(error => console.error('[session] register failed', error));
     },
     install: (instance: Parameters<typeof preparePapersWindow>[0]) => {
       const window = instance.window;
@@ -991,7 +1020,9 @@ async function bootstrap(): Promise<void> {
     onClose: async (instance: Parameters<typeof preparePapersWindow>[0]) => {
       traceQuit('window:' + instance.window.id + ':flush:start');
       closingPapersWindows.add(instance.window.id);
+      await facade.waitForWorkspaceMutation(instance.window.id);
       await instance.projectSurfaces.hideAll();
+      await saveSessionWindow(instance);
       traceQuit('window:' + instance.window.id + ':flush:done');
     },
     finalize: async (windowId: number) => {
@@ -1006,6 +1037,8 @@ async function bootstrap(): Promise<void> {
             workspaceTopologies.delete(id);
             workspaceTopologyRevisions.delete(id);
             workspaceIds.delete(id);
+            hydrationPromises.delete(id);
+            windowRestoreSnapshots.delete(id);
           },
           removeWindow: (id) => {
             hostOverlayOwners.delete(id);
@@ -1024,16 +1057,15 @@ async function bootstrap(): Promise<void> {
   });
   const createAdditionalPapersWindow = async (): Promise<number> => {
     const created = await composeAdditionalPapersWindow({
-      createWindow: () => makePapersWindow(undefined),
-      lifecycleDependencies,
+      createWindow: () => makePapersWindow(),
+      lifecycleDependencies: () => lifecycleDependencies(null),
     });
     return created.window.id;
   };
-  const preparedWindow = preparePapersWindow(windowInstance, lifecycleDependencies(registry.lastActiveBackpackId));
+  const preparedWindow = preparePapersWindow(windowInstance, lifecycleDependencies(registry.lastActiveBackpackId, startupPageSnapshot??undefined));
   mainWindow = windowInstance.window;
   hostView = windowInstance.hostView;
   const primaryWindow = windowInstance.window;
-  primaryWindowIdForHydration = primaryWindow.id;
   // These aliases are bootstrap/fixture compatibility only. Their cleanup is
   // deliberately first-window-specific; reusable window finalization must not
   // let a later window rewrite or clear the primary fixture relationship.
@@ -1263,11 +1295,12 @@ async function bootstrap(): Promise<void> {
     setEnteredBackpack: (windowId, backpackId) => papersWindows.setEnteredBackpack(windowId, backpackId),
     workspaceTopology: (windowId) => currentWorkspaceTopology(windowId),
     hydrateStartupWorkspace: (windowId) => {
-      if (windowId !== primaryWindowIdForHydration) return Promise.resolve({ hydrated: false });
-      if (primaryHydrationPromise) return primaryHydrationPromise;
-      primaryHydrationPromise = (async () => {
+      if (!windowRestoreSnapshots.has(windowId)) return Promise.resolve({ hydrated: false });
+      const pending = hydrationPromises.get(windowId);
+      if (pending) return pending;
+      const hydration = (async () => {
         const result = await hydrateStartupWorkspace(windowId, {
-        snapshot: await workspaceTopologyStore.selectedSnapshot(),
+        snapshot: windowRestoreSnapshots.get(windowId) ?? null,
         findAvailableBackpack: (projectId) => {
           const backpack = registry.find(projectId);
           return backpack && !backpack.archived ? { name: backpack.name } : null;
@@ -1282,7 +1315,7 @@ async function bootstrap(): Promise<void> {
           const keyedProjects = projects.map((project) => {
             const surface = topology.surfaces.find((candidate) => candidate.surfaceId === project.surfaceId);
             return surface
-              ? { ...project, url: withProjectSurfaceKey(project.url, surface.surfaceKey ?? surface.surfaceId) }
+              ? { ...project, url: (() => { const url = new URL(withProjectSurfaceKey(project.url, surface.surfaceKey ?? surface.surfaceId)); if (legacyPageClaims.get(surface.projectId)===(surface.surfaceKey??surface.surfaceId)) url.searchParams.set('papers-pane-legacy', '1'); return url.toString(); })() }
               : project;
           });
           contents.send('host:event:workspace-hydrated', { projects: keyedProjects, topology });
@@ -1306,7 +1339,8 @@ async function bootstrap(): Promise<void> {
         });
         return { hydrated: Boolean(result) };
       })();
-      return primaryHydrationPromise;
+      hydrationPromises.set(windowId, hydration);
+      return hydration;
     },
     setWorkspaceTopology: (windowId, topology) => {
       workspaceTopologies.set(windowId, topology);
@@ -1420,7 +1454,7 @@ async function bootstrap(): Promise<void> {
       windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
       pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
       htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
-      webBrowser.closeOwner(`${windowId}:${surfaceId}`); chromePane?.closeOwner(`${windowId}:${surfaceId}`);
+      webBrowser.closeOwner(`${windowId}:${surfaceId}`); await chromePane?.closeOwner(`${windowId}:${surfaceId}`);
       await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
     projectEntryUrlForSurface: (windowId, surfaceId) =>
@@ -1432,7 +1466,7 @@ async function bootstrap(): Promise<void> {
         windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
         pdfPreview.closeOwner(`${windowId}:${surfaceId}`);
         htmlPreview.closeOwner(`${windowId}:${surfaceId}`);
-        webBrowser.closeOwner(`${windowId}:${surfaceId}`); chromePane?.closeOwner(`${windowId}:${surfaceId}`);
+        webBrowser.closeOwner(`${windowId}:${surfaceId}`); await chromePane?.closeOwner(`${windowId}:${surfaceId}`);
         await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId);
       }
     },
@@ -1454,7 +1488,9 @@ async function bootstrap(): Promise<void> {
       if (!owner || !surfaceBounds || owner.window.isDestroyed()) return null;
       const handle = owner.window.getNativeWindowHandle();
       const parentHwnd = handle.length >= 8 ? handle.readBigUInt64LE(0).toString() : BigInt(handle.readUInt32LE(0)).toString();
-      return { ownerKey: `${context.windowId}:${context.surfaceId}`, paneGroup: context.projectId, parentHwnd, surfaceBounds };
+      const page = currentWorkspaceTopology(context.windowId)?.surfaces.find(surface => surface.surfaceId === context.surfaceId);
+      return { ownerKey: `${context.windowId}:${context.surfaceId}`, paneGroup: context.projectId,
+        layoutKey: `${context.projectId}:${page?.surfaceKey ?? context.surfaceId}`, parentHwnd, surfaceBounds };
     },
     // The operator token comes from the launcher environment when present, or
     // from Delegate Wave's existing DPAPI-protected operator record otherwise.
@@ -1684,6 +1720,14 @@ async function bootstrap(): Promise<void> {
   registerWindowCapabilityIpc({
     ipcMain,
     service: windowCapabilityService,
+    decorateCandidates: (sender,candidates) => {
+      const context = surfaceContexts.contextForSender(sender.id);
+      const owner = context?.surfaceId ? `${context.windowId}:${context.surfaceId}` : undefined;
+      return candidates.map(candidate => {
+        const inUse = candidate.windowInstanceId ? chromePane?.coordinator?.ownership(candidate.windowInstanceId,owner) : undefined;
+        return inUse ? {...candidate,inUse} : candidate;
+      });
+    },
     isSender: isProjectSurfaceSender,
     waitForAuthority: (sender) => projectSurfaceAuthority.wait(sender.id),
     controlBroker: windowControlBroker,
@@ -2216,14 +2260,14 @@ async function bootstrap(): Promise<void> {
     pendingHoverWidgetRegistrations.clear();
   }
   const widgetPreviewWindows = new Map<number, BrowserWindow>();
-  type PickerCandidate = { id: string; title: string; icon: string | null; current: boolean };
+  type PickerCandidate = { id: string; title: string; icon: string | null; current: boolean; inUse?: {transferId:string;label:string;samePage:boolean} };
   type CandidatePickerSession = {
     window: BrowserWindow;
     pickerId: string;
     candidateIds: Set<string>;
     documentReady: boolean;
     delivery?: ReturnType<typeof createCandidatePickerDelivery<PickerCandidate>>;
-    resolve: ((result: { action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }) => void) | null;
+    resolve: ((result: { action: 'select' | 'close' | 'cancel' | 'direct-pick' | 'move'; candidateId: string | null }) => void) | null;
     dismiss?: () => void;
   };
   const candidatePickerSessions = new Map<number, CandidatePickerSession>();
@@ -2444,7 +2488,7 @@ async function bootstrap(): Promise<void> {
         if (delivered === 'failed' || delivered === 'stale') return { action: 'cancel', candidateId: null };
         if (!active.window.isVisible()) active.window.show();
         active.window.focus();
-        return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
+        return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick' | 'move'; candidateId: string | null }>((resolve) => {
           // The Backpack requests the next choice only after the previous one
           // settled. Fail closed if a malformed caller overlaps requests.
           active.resolve?.({ action: 'cancel', candidateId: null });
@@ -2485,17 +2529,17 @@ async function bootstrap(): Promise<void> {
       const encoded = JSON.stringify(candidates).replace(/</g, '\\u003c');
       const html = `<!doctype html><meta charset="utf-8"><title>Papers Window Chooser</title><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
 <style>
- *{box-sizing:border-box}html,body{margin:0;height:100%;background:#161b22;color:#dbe7f3;font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}body{border:1px solid #465462;border-radius:12px;display:flex;flex-direction:column;box-shadow:0 14px 38px #0009}.head{padding:7px 13px 10px;border-bottom:1px solid #2b3742}.titleline{display:flex;align-items:center;justify-content:space-between;min-height:27px;margin-bottom:4px;-webkit-app-region:drag}.close,.search,.row,.empty,.filters,.state-filter,.direct-pick,.list{-webkit-app-region:no-drag}.filters{display:flex;align-items:center;gap:8px}.state-filter{display:grid;place-items:center;width:18px;height:18px;margin:0;border:1px solid currentColor;border-radius:4px;background:transparent;cursor:pointer;appearance:none}.state-filter:checked::after{content:'✓';font-size:13px;font-weight:800;line-height:1;color:currentColor}.state-filter.current-filter{color:#ef9c77}.state-filter.available-filter{color:#72a7d5}.state-filter:hover,.state-filter:focus-visible{background:currentColor;box-shadow:0 0 0 2px #ffffff18;outline:none}.state-filter:hover::after,.state-filter:focus-visible::after{color:#161b22}.direct-pick{display:grid;place-items:center;width:18px;height:18px;margin:0 0 0 2px;padding:0;border:1px solid #b782f0;border-radius:4px;background:#8f4bd129;color:#d9b8ff;cursor:pointer}.direct-pick:hover,.direct-pick:focus-visible{background:#8f4bd152;color:#fff;box-shadow:0 0 9px #9d55f699;outline:none}.direct-pick svg{display:block;width:12px;height:12px}.close{border:0;background:transparent;color:#9cacba;font-size:19px;line-height:20px;border-radius:5px;cursor:pointer}.close:hover{background:#31404b;color:#fff}.search{width:100%;height:34px;border:1px solid #536372;border-radius:8px;background:#0e141a;color:#f3f8fc;padding:0 11px;outline:none}.search:focus{border-color:#72a7d5;box-shadow:0 0 0 2px #72a7d533}.list{padding:7px;overflow:auto;flex:1;scrollbar-color:#4b5b68 transparent;display:flex;flex-direction:column}.row,.empty{flex:0 0 auto}.row{width:100%;border:0;background:transparent;color:inherit;display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px;border-radius:8px;text-align:left;cursor:pointer}.row:hover,.row:focus-visible{background:#273540;outline:none}.busy .row{pointer-events:none;opacity:.68}.icon{width:20px;height:20px;object-fit:contain}.fallback{width:16px;height:16px;border:1px solid #83919d;border-radius:3px}.label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#72a7d5}.state{font-size:11px;color:#72a7d5}.current .label,.current .state{color:#ef9c77}.empty{padding:24px;text-align:center;color:#8898a7}.drag-space{flex:1 0 28px;min-height:28px;-webkit-app-region:drag}
+ *{box-sizing:border-box}html,body{margin:0;height:100%;background:#161b22;color:#dbe7f3;font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}body{border:1px solid #465462;border-radius:12px;display:flex;flex-direction:column;box-shadow:0 14px 38px #0009}.head{padding:7px 13px 10px;border-bottom:1px solid #2b3742}.titleline{display:flex;align-items:center;justify-content:space-between;min-height:27px;margin-bottom:4px;-webkit-app-region:drag}.close,.search,.row,.empty,.filters,.state-filter,.direct-pick,.list{-webkit-app-region:no-drag}.filters{display:flex;align-items:center;gap:8px}.state-filter{display:grid;place-items:center;width:18px;height:18px;margin:0;border:1px solid currentColor;border-radius:4px;background:transparent;cursor:pointer;appearance:none}.state-filter:checked::after{content:'✓';font-size:13px;font-weight:800;line-height:1;color:currentColor}.state-filter.current-filter{color:#ef9c77}.state-filter.available-filter{color:#72a7d5}.state-filter:hover,.state-filter:focus-visible{background:currentColor;box-shadow:0 0 0 2px #ffffff18;outline:none}.state-filter:hover::after,.state-filter:focus-visible::after{color:#161b22}.direct-pick{display:grid;place-items:center;width:18px;height:18px;margin:0 0 0 2px;padding:0;border:1px solid #b782f0;border-radius:4px;background:#8f4bd129;color:#d9b8ff;cursor:pointer}.direct-pick:hover,.direct-pick:focus-visible{background:#8f4bd152;color:#fff;box-shadow:0 0 9px #9d55f699;outline:none}.direct-pick svg{display:block;width:12px;height:12px}.close{border:0;background:transparent;color:#9cacba;font-size:19px;line-height:20px;border-radius:5px;cursor:pointer}.close:hover{background:#31404b;color:#fff}.search{width:100%;height:34px;border:1px solid #536372;border-radius:8px;background:#0e141a;color:#f3f8fc;padding:0 11px;outline:none}.search:focus{border-color:#72a7d5;box-shadow:0 0 0 2px #72a7d533}.list{padding:7px;overflow:auto;flex:1;scrollbar-color:#4b5b68 transparent;display:flex;flex-direction:column}.row,.empty{flex:0 0 auto}.row{width:100%;border:0;background:transparent;color:inherit;display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:9px;align-items:center;padding:9px;border-radius:8px;text-align:left;cursor:pointer}.row:hover,.row:focus-visible{background:#273540;outline:none}.busy .row{pointer-events:none;opacity:.68}.icon{width:20px;height:20px;object-fit:contain}.fallback{width:16px;height:16px;border:1px solid #83919d;border-radius:3px}.label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#72a7d5}.state{font-size:11px;color:#72a7d5}.row:has(button){grid-template-columns:24px minmax(0,1fr) auto auto}.row>button{border:1px solid #536372;border-radius:4px;color:#dbe7f3;background:transparent;padding:4px;cursor:pointer}.current .label,.current .state{color:#ef9c77}.empty{padding:24px;text-align:center;color:#8898a7}.drag-space{flex:1 0 28px;min-height:28px;-webkit-app-region:drag}
 </style><div class="head"><div class="titleline"><div class="filters" aria-label="Filter window states"><input class="state-filter current-filter" type="checkbox" aria-label="Show layout members" title="Show layout members (remove)"><input class="state-filter available-filter" type="checkbox" aria-label="Show available windows" title="Show available windows (add)"><button class="direct-pick" type="button" aria-label="Pick windows directly" title="Pick windows directly"><svg viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(-1 1)" d="M6.5 3.5l13.5 6.5-6.3 2.1-2.1 6.3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></button></div><button class="close" aria-label="Close">×</button></div><input class="search" type="search" placeholder="Search windows…" autocomplete="off" spellcheck="false"></div><div class="list" aria-live="polite"></div><script id="data" type="application/json">${encoded}</script><script>
  let all=JSON.parse(document.getElementById('data').textContent),loading=${candidates.length === 0};const list=document.querySelector('.list'),search=document.querySelector('.search'),currentFilter=document.querySelector('.current-filter'),availableFilter=document.querySelector('.available-filter');
 function signal(path,id=''){window.candidatePicker.signal(path,id)}
  function appendDragSpace(){const d=document.createElement('div');d.className='drag-space';d.setAttribute('aria-hidden','true');list.append(d)}
-function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent=loading?'Loading windows…':'No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement('button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'remove':'add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onclick=()=>{if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('select',c.id)};b.onmousedown=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};b.onmouseup=e=>{if(e.button!==1)return;e.preventDefault();e.stopPropagation();if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('close',c.id)};b.onauxclick=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};list.append(b)}appendDragSpace()}
+function render(){const q=search.value.trim().toLowerCase(),filtering=currentFilter.checked||availableFilter.checked,rows=all.filter(x=>x.title.toLowerCase().includes(q)&&(!filtering||(currentFilter.checked&&x.current)||(availableFilter.checked&&!x.current)));list.replaceChildren();if(!rows.length){const e=document.createElement('div');e.className='empty';e.textContent=loading?'Loading windows…':'No matching windows';list.append(e);appendDragSpace();return}for(const c of rows){const b=document.createElement(c.inUse&&!c.current?'div':'button');b.className='row'+(c.current?' current':'');b.type='button';if(c.icon){const i=document.createElement('img');i.className='icon';i.src=c.icon;b.append(i)}else{const i=document.createElement('span');i.className='fallback';b.append(i)}const l=document.createElement('span');l.className='label';l.textContent=c.title;b.append(l);const s=document.createElement('span');s.className='state';s.textContent=c.current?'Remove':c.inUse?'In use · '+c.inUse.label:'Add';b.append(s);b.onpointerenter=()=>signal('peek',c.id);b.onclick=()=>{if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('select',c.id)};b.onmousedown=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};b.onmouseup=e=>{if(e.button!==1)return;e.preventDefault();e.stopPropagation();if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('close',c.id)};b.onauxclick=e=>{if(e.button===1){e.preventDefault();e.stopPropagation()}};if(c.inUse&&!c.current){const m=document.createElement('button');m.type='button';m.textContent='Move here';m.title='Move this window from '+c.inUse.label;m.onclick=e=>{e.preventDefault();e.stopPropagation();if(document.body.classList.contains('busy'))return;document.body.classList.add('busy');signal('move',c.id)};b.append(m)}list.append(b)}appendDragSpace()}
  list.onpointerleave=()=>signal('peek-end');
  window.__papersPickerUpdate=(next)=>{all=next;loading=false;document.body.classList.remove('busy');render()};
 const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=false;render()};const cancel=()=>signal('cancel');document.querySelector('.close').onclick=cancel;document.querySelector('.direct-pick').onclick=()=>{document.body.classList.add('busy');signal('direct-pick')};search.oninput=render;currentFilter.onchange=()=>setExclusiveFilter(currentFilter,availableFilter);availableFilter.onchange=()=>setExclusiveFilter(availableFilter,currentFilter);document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();cancel()}else if(e.key==='Enter'&&document.activeElement===search){e.preventDefault();if(!loading&&!document.body.classList.contains('busy'))list.querySelector('.row')?.click()}else if(e.key==='ArrowDown'){e.preventDefault();list.querySelector('.row')?.focus()}});render();search.focus();
 </script>`;
-      return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick'; candidateId: string | null }>((resolve) => {
+      return new Promise<{ action: 'select' | 'close' | 'cancel' | 'direct-pick' | 'move'; candidateId: string | null }>((resolve) => {
         const pickerOpenedAt = Date.now();
         let pickerPointerEntered = false;
         let pickerOutsideSince: number | null = null;
@@ -2554,7 +2598,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         };
         session.delivery = makeCandidatePickerDelivery(sender.id, session);
         candidatePickerSessions.set(sender.id, session);
-        const finishAction = (action: 'select' | 'close', candidateId: string): void => {
+        const finishAction = (action: 'select' | 'close' | 'move', candidateId: string): void => {
           const current = candidatePickerSessions.get(sender.id);
           if (!current || current.window !== picker || !current.resolve || actionFinishing) return;
           actionFinishing = true;
@@ -2646,7 +2690,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
             }
             if (url.host !== 'papers-picker.invalid') return;
             const action = url.pathname.startsWith('/select/') ? 'select'
-              : url.pathname.startsWith('/close/') ? 'close' : null;
+              : url.pathname.startsWith('/close/') ? 'close' : url.pathname.startsWith('/move/') ? 'move' : null;
             if (!action) return;
             const candidateId = decodeURIComponent(url.pathname.slice(`/${action}/`.length));
             if (session.candidateIds.has(candidateId)) finishAction(action, candidateId);
@@ -2659,7 +2703,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           if (Object.keys(record).some((key) => key !== 'action' && key !== 'candidateId')) return;
           const action = record.action;
           const candidateId = record.candidateId;
-          if (typeof action !== 'string' || !['select', 'close', 'cancel', 'peek', 'peek-end', 'direct-pick'].includes(action)) return;
+          if (typeof action !== 'string' || !['select', 'close', 'move', 'cancel', 'peek', 'peek-end', 'direct-pick'].includes(action)) return;
           if (typeof candidateId !== 'string' || Buffer.byteLength(candidateId, 'utf8') > 512) return;
           handlePickerUrl(`https://papers-picker.invalid/${action}${candidateId ? `/${encodeURIComponent(candidateId)}` : ''}`);
         };
@@ -2740,6 +2784,44 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     ipcMain,
     isHostSender: (sender) => facade.isHostSender(sender),
     createAdditionalWindow: async () => { await createAdditionalPapersWindow(); },
+    adoptPage: async (sender,surfaceId) => {
+      const targetWindowId = papersWindows.windowForSender(sender.id);
+      if(targetWindowId===null)throw new Error('Papers window is unavailable.');
+      return facade.adoptWorkspaceSurfaceFromHost(sender.id,surfaceId,
+        currentWorkspaceTopology(targetWindowId)?.focusedGroupId??'group-main',2147483647);
+    },
+    detachPage: async (sender,surfaceId) => {
+      const sourceWindowId = papersWindows.windowForSender(sender.id);
+      if(sourceWindowId===null || !logicalSurfaces.isLiveIn(surfaceId,sourceWindowId))throw new Error('That page is no longer here.');
+      const targetWindowId = await createAdditionalPapersWindow();
+      try {
+        return await facade.moveWorkspaceSurfaceFromHost(sender.id,{surfaceId,targetWindowId,targetGroupId:'group-main',targetIndex:0});
+      } catch(error) {
+        if(!currentWorkspaceTopology(targetWindowId)?.surfaces.length)papersWindows.get(targetWindowId)?.owned.window.close();
+        throw error;
+      }
+    },
+    listWindows: async sender => papersWindows.windowIds.map(windowId=>({
+      windowId,current:papersWindows.windowForSender(sender.id)===windowId,
+      title:currentWorkspaceTopology(windowId)?.surfaces.map(page=>page.title).join(' · ')||'Papers',
+      groupId:currentWorkspaceTopology(windowId)?.groups[0]?.groupId??'group-main',
+    })),
+    listPages: async sender => (await workspaceTopologyStore.sessionSnapshots()).flatMap(record=>record.topology.surfaces.map(page=>{
+      const windowId=[...workspaceIds].find(([,id])=>id===record.workspaceId)?.[0]??null;
+      return {key:page.surfaceKey??page.surfaceId,title:page.title,windowId,current:windowId===papersWindows.windowForSender(sender.id)};
+    })),
+    closePage: async key => {
+      for(const windowId of papersWindows.windowIds){const page=currentWorkspaceTopology(windowId)?.surfaces.find(page=>(page.surfaceKey??page.surfaceId)===key);
+        if(page){const sender=papersWindows.get(windowId)!.owned.hostView.webContents.id;await facade.closeBackpackProject(sender,page.surfaceId);await workspaceTopologyStore.closeSavedPage(key);return;}
+      }
+      await workspaceTopologyStore.closeSavedPage(key);
+    },
+    showPage: async key => {
+      for(const windowId of papersWindows.windowIds){const page=currentWorkspaceTopology(windowId)?.surfaces.find(page=>(page.surfaceKey??page.surfaceId)===key);
+        if(page){await facade.activateBackpackProjectSurface(papersWindows.get(windowId)!.owned.hostView.webContents.id,page.surfaceId);const window=papersWindows.get(windowId)!.owned.window;if(window.isMinimized())window.restore();window.focus();return;}
+      }
+      throw new Error('This page is saved for the next reload.');
+    },
   });
   const resolveVisualTarget = (sender: { id: number }) => resolveVisualDiagnosticTarget(sender, {
     hostWindowForSender: (senderId) => papersWindows.windowForSender(senderId),
@@ -3156,6 +3238,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
           workspaceLayoutStore.flush().catch((error) => console.error('[workspace-layout] shutdown flush failed', error)),
           quitStage('detached-windows', () => detachSession!.closeAll()),
           quitStage('widget', () => widgetSession!.closeAll()),
+          quitStage('native-panes', () => chromePane?.coordinator?.dispose()),
           quitStage('window-capabilities', () => windowCapabilityService.stop()),
           quitStage('window-control', () => windowControlBroker.stop()),
         ]))
@@ -3197,6 +3280,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
 
   // ---------------------------------------------------------------- load UI
   await preparedWindow.loadAndRollback();
+  // Every saved/parked window belongs to the same session. A failed secondary
+  // restore leaves its durable snapshot intact for the window menu to retry.
 
   // Look for a newer Papers once the interface is up. Silent unless a real
   // update is downloaded and ready; a packaged build only.

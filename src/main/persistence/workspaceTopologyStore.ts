@@ -1,9 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
-import { parseWorkspaceTopology, validatedWorkspaceTopologySchema, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { activateWorkspaceSurface, closeWorkspaceSurface, createWorkspaceTopology, openWorkspaceSurface, parseWorkspaceTopology, validatedWorkspaceTopologySchema, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { AtomicJsonStore } from './atomicStore';
 import type { PapersPaths } from './paths';
+
+const sessionWindowSchema = z.object({
+  bounds: z.object({ x: z.number().finite(), y: z.number().finite(), width: z.number().positive(), height: z.number().positive() }).strict().optional(),
+  parked: z.boolean(),
+}).strict();
 
 const legacySchema = z.object({
   schemaVersion: z.literal(1),
@@ -19,6 +24,8 @@ const durableSchema = z.object({
   lastWorkspaceId: z.string().uuid().nullable(),
   workspaces: z.array(z.object({
     workspaceId: z.string().uuid(), topology: validatedWorkspaceTopologySchema, updatedAt: z.string().datetime(),
+    window: sessionWindowSchema.optional(),
+    session: z.boolean().optional(),
   }).strict()),
 }).strict().superRefine((value, context) => {
   const ids = value.workspaces.map((entry) => entry.workspaceId);
@@ -105,6 +112,7 @@ export class WorkspaceTopologyStore {
     return this.enqueue(async () => {
       await this.initialize();
       this.workspaces.set(workspaceId, {
+        ...this.workspaces.get(workspaceId),
         workspaceId, topology: parseWorkspaceTopology(topology), updatedAt: this.now(),
       });
       this.lastWorkspaceId = workspaceId;
@@ -137,11 +145,13 @@ export class WorkspaceTopologyStore {
       const previousLastWorkspaceId = this.lastWorkspaceId;
       const previousDirty = this.dirty;
       this.workspaces.set(pair.source.workspaceId, {
+        ...previousSource,
         workspaceId: pair.source.workspaceId,
         topology: sourceTopology,
         updatedAt: this.now(),
       });
       this.workspaces.set(pair.target.workspaceId, {
+        ...previousTarget,
         workspaceId: pair.target.workspaceId,
         topology: targetTopology,
         updatedAt: this.now(),
@@ -222,6 +232,61 @@ export class WorkspaceTopologyStore {
     if (!this.lastWorkspaceId) return null;
     const selected = this.workspaces.get(this.lastWorkspaceId);
     return selected ? structuredClone(selected) : null;
+  }
+
+  /** Runtime partitions of the unclosed page set. Old window records remain
+   * readable solely for migration; historical snapshots are not extra pages. */
+  async sessionSnapshots(): Promise<SelectedWorkspaceSnapshot[]> {
+    await this.initialize();
+    const members = [...this.workspaces.values()].filter(record => record.session || record.window);
+    if (!members.length) {
+      const selected = await this.selectedSnapshot();
+      return selected ? [selected] : [];
+    }
+    return members.sort((a, b) => Number(b.workspaceId === this.lastWorkspaceId) - Number(a.workspaceId === this.lastWorkspaceId))
+      .map(record => structuredClone(record));
+  }
+
+  /** Runtime windows partition pages only; startup flattens those partitions. */
+  async savePages(workspaceId: string, topology: WorkspaceTopologyV1): Promise<void> {
+    return this.enqueue(async () => {
+      await this.initialize();const previous=this.workspaces.get(workspaceId);
+      this.workspaces.set(workspaceId,{workspaceId,topology:parseWorkspaceTopology(topology),session:true,updatedAt:this.now()});
+      try {await this.persistDirty();}catch(error){if(previous)this.workspaces.set(workspaceId,previous);else this.workspaces.delete(workspaceId);this.dirty=true;throw error;}
+    });
+  }
+
+  async closeSavedPage(pageKey: string): Promise<void> {
+    return this.enqueue(async()=>{
+      await this.initialize();const before=new Map(this.workspaces);
+      for(const [id,record] of this.workspaces){let topology=record.topology;
+        for(const page of record.topology.surfaces)if((page.surfaceKey??page.surfaceId)===pageKey)topology=closeWorkspaceSurface(topology,page.surfaceId);
+        if(topology!==record.topology)this.workspaces.set(id,{...record,topology,updatedAt:this.now()});
+      }
+      try{await this.persistDirty();}catch(error){this.workspaces.clear();for(const [id,record] of before)this.workspaces.set(id,record);this.dirty=true;throw error;}
+    });
+  }
+
+  /** Restore every unclosed page once, in one strip, regardless of old windows. */
+  async consolidatePages(): Promise<SelectedWorkspaceSnapshot | null> {
+    return this.enqueue(async()=>{
+      const records=await this.sessionSnapshots();if(!records.length)return null;
+      const before=new Map(this.workspaces),selected=this.lastWorkspaceId;
+      let topology=createWorkspaceTopology();const keys=new Set<string>(),ids=new Set<string>();
+      let active:string|undefined;
+      for(const record of records){const focus=record.topology.groups.find(g=>g.groupId===record.topology.focusedGroupId)?.activeSurfaceId;
+        for(const page of record.topology.surfaces){const key=page.surfaceKey??page.surfaceId;if(keys.has(key))continue;keys.add(key);
+          const surfaceId=ids.has(page.surfaceId)?randomUUID():page.surfaceId;ids.add(surfaceId);
+          topology=openWorkspaceSurface(topology,{...page,surfaceId,surfaceKey:key});if(!active&&focus===page.surfaceId)active=surfaceId;
+        }
+      }
+      if(active)topology=activateWorkspaceSurface(topology,active);
+      const workspaceId=records[0]!.workspaceId;
+      for(const record of records)this.workspaces.delete(record.workspaceId);
+      const result={workspaceId,topology,session:true,updatedAt:this.now()};this.workspaces.set(workspaceId,result);this.lastWorkspaceId=workspaceId;
+      try{await this.persistDirty();}catch(error){this.workspaces.clear();for(const [id,record] of before)this.workspaces.set(id,record);this.lastWorkspaceId=selected;this.dirty=true;throw error;}
+      return structuredClone(result);
+    });
   }
 
   async flush(): Promise<void> {

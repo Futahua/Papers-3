@@ -84,6 +84,7 @@ function hasStableThumbnailIdentity(descriptor: PersistedWindowMemberDescriptor)
 }
 
 export interface WindowCandidate {
+  inUse?: { transferId: string; label: string; samePage: boolean };
   /** Host-issued opaque candidate id; never a helper token or HWND. */
   id: string;
   title: string;

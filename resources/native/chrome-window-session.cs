@@ -1,5 +1,7 @@
 using System;using System.Collections.Generic;using System.Diagnostics;using System.Drawing;using System.IO;using System.Runtime.InteropServices;using System.Threading;using System.Web.Script.Serialization;using System.Windows.Forms;
 public static class Native {
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)]public static extern IntPtr GetProp(IntPtr h,string name);
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)]public static extern bool SetProp(IntPtr h,string name,IntPtr value);
  [StructLayout(LayoutKind.Sequential)]public struct Rect{public int L,T,R,B;public Rectangle Box{get{return Rectangle.FromLTRB(L,T,R,B);}}}
  [StructLayout(LayoutKind.Sequential)]public struct Point{public int X,Y;}
  [StructLayout(LayoutKind.Sequential)]public struct Placement{public int Length,Flags,Show;public Point Min,Max;public Rect Normal;}
@@ -23,16 +25,17 @@ public static class Native {
  [DllImport("user32.dll")]public static extern IntPtr SetWinEventHook(uint a,uint b,IntPtr m,Event callback,uint pid,uint thread,uint flags);
  [DllImport("user32.dll")]public static extern bool UnhookWinEvent(IntPtr h);
 }
-public class SavedWindow{public long Handle;public uint Pid;public int ExStyle;public Native.Placement Placement;public bool Visible;}
+public class SavedWindow{public long Handle,InstanceMark;public uint Pid;public int ExStyle;public Native.Placement Placement;public bool Visible;}
 public class RecoveryFile{public int HostPid;public List<SavedWindow> Windows=new List<SavedWindow>();}
 public sealed class WindowSession:IDisposable{
  public readonly SavedWindow Saved;public IntPtr Handle{get{return new IntPtr(Saved.Handle);}}public bool Fullscreen,Visible;public Rectangle Requested;
- public WindowSession(long hwnd,uint pid){uint actual;Native.GetWindowThreadProcessId(new IntPtr(hwnd),out actual);if(actual!=pid)throw new Exception("Window identity changed: "+hwnd);var p=new Native.Placement{Length=Marshal.SizeOf(typeof(Native.Placement))};if(!Native.GetWindowPlacement(new IntPtr(hwnd),ref p))throw new Exception("Cannot save placement: "+hwnd);Saved=new SavedWindow{Handle=hwnd,Pid=pid,ExStyle=Native.GetWindowLong(new IntPtr(hwnd),-20),Placement=p,Visible=Native.IsWindowVisible(new IntPtr(hwnd))};}
- public bool Valid(){uint pid;Native.GetWindowThreadProcessId(Handle,out pid);return pid==Saved.Pid;}
+ public WindowSession(long hwnd,uint pid){uint actual;Native.GetWindowThreadProcessId(new IntPtr(hwnd),out actual);if(actual!=pid)throw new Exception("Window identity changed: "+hwnd);var p=new Native.Placement{Length=Marshal.SizeOf(typeof(Native.Placement))};if(!Native.GetWindowPlacement(new IntPtr(hwnd),ref p))throw new Exception("Cannot save placement: "+hwnd);var mark=Native.GetProp(new IntPtr(hwnd),"Papers.WindowInstance").ToInt64();if(mark==0){mark=(Guid.NewGuid().GetHashCode()&0x7fffffff)|1;if(!Native.SetProp(new IntPtr(hwnd),"Papers.WindowInstance",new IntPtr(mark)))throw new Exception("Cannot stamp native window identity.");}Saved=new SavedWindow{Handle=hwnd,InstanceMark=mark,Pid=pid,ExStyle=Native.GetWindowLong(new IntPtr(hwnd),-20),Placement=p,Visible=Native.IsWindowVisible(new IntPtr(hwnd))};}
+ public static bool SameInstance(SavedWindow saved){return saved.InstanceMark==0||Native.GetProp(new IntPtr(saved.Handle),"Papers.WindowInstance").ToInt64()==saved.InstanceMark;}
+ public bool Valid(){uint pid;Native.GetWindowThreadProcessId(Handle,out pid);return pid==Saved.Pid&&SameInstance(Saved);}
  public void Show(bool show){Visible=show;if(!Valid())return;if(show&&Native.IsWindowVisible(Handle)&&!Native.IsIconic(Handle))return;if(!show&&Native.IsIconic(Handle))return;Native.ShowWindow(Handle,show?4:7);}
  public void Fit(Rectangle box,bool top){Requested=box;if(!Valid()||Fullscreen)return;Native.Rect current;Native.GetWindowRect(Handle,out current);if(current.Box!=box)Native.SetWindowPos(Handle,top?new IntPtr(-1):IntPtr.Zero,box.X,box.Y,box.Width,box.Height,top?0x10u:0x14u);}
  public Rectangle Frame(){Native.Rect r;if(Native.DwmGetWindowAttribute(Handle,9,out r,16)!=0)Native.GetWindowRect(Handle,out r);return r.Box;}
  public void Top(bool top){if(Valid())Native.SetWindowPos(Handle,new IntPtr(top||(Saved.ExStyle&8)!=0?-1:-2),0,0,0,0,0x13);}
- public static void Restore(SavedWindow w){var h=new IntPtr(w.Handle);uint pid;Native.GetWindowThreadProcessId(h,out pid);if(pid!=w.Pid)return;Native.SetWindowPos(h,new IntPtr((w.ExStyle&8)!=0?-1:-2),0,0,0,0,0x13);var p=w.Placement;if(p.Show==0)p.Show=1;Native.SetWindowPlacement(h,ref p);Native.ShowWindow(h,p.Show==2||p.Show==6||p.Show==7?7:4);}
+ public static void Restore(SavedWindow w){var h=new IntPtr(w.Handle);uint pid;Native.GetWindowThreadProcessId(h,out pid);if(pid!=w.Pid||!SameInstance(w))return;Native.SetWindowPos(h,new IntPtr((w.ExStyle&8)!=0?-1:-2),0,0,0,0,0x13);var p=w.Placement;if(p.Show==0)p.Show=1;Native.SetWindowPlacement(h,ref p);Native.ShowWindow(h,p.Show==2||p.Show==6||p.Show==7?7:4);}
  public void Dispose(){Restore(Saved);}
 }

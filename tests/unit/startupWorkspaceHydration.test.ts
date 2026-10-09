@@ -26,6 +26,7 @@ describe('startup workspace hydration transaction', () => {
     expect(result?.workspaceId).toBe('11111111-1111-4111-8111-111111111111');
     expect(result?.topology.surfaces.map((surface) => surface.surfaceId)).toEqual(['fresh-bp-a', 'fresh-bp-b']);
     expect(result?.topology.groups[1]?.surfaceIds).toEqual(['fresh-bp-b']);
+    expect(result?.topology.surfaces.map(surface=>surface.surfaceKey)).toEqual(['old-a','old-b']);
     expect(deliver).toHaveBeenCalledTimes(1);
     expect(commit).toHaveBeenCalledTimes(1);
     expect(created).toHaveLength(2);

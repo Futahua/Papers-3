@@ -7,6 +7,7 @@ import { BackpackSidebar } from './BackpackSidebar';
 import { SettingsPane } from './SettingsPane';
 import { EmptyBackpackWarning } from './EmptyBackpackWarning';
 import { WorkspaceDock, type OpenWorkspaceProject } from './WorkspaceDock';
+import { usePageWindowDrag } from './usePageWindowDrag';
 import {
   activateWorkspaceSurface,
   closeWorkspaceSurface,
@@ -254,6 +255,13 @@ export function App(): React.JSX.Element {
     return () => media.removeEventListener('change', apply);
   }, []);
 
+  const [savedWindows,setSavedWindows]=useState<Array<{windowId:number;title:string;groupId:string;current:boolean}>>([]);
+  const [savedPages,setSavedPages]=useState<Array<{key:string;title:string;windowId:number|null;current:boolean}>>([]);
+  const [windowMenuOpen,setWindowMenuOpen]=useState(false);
+  const pageMoveError = useCallback((message: string): void => setSplitNotice({id:Date.now(),message}), []);
+  usePageWindowDrag(openProjects.map(page=>page.surfaceId),pageMoveError);
+  const refreshWindows=async():Promise<void>=>{const [windows,pages]=await Promise.all([host().app.windows(),host().app.pages()]);setSavedWindows(windows);setSavedPages(pages);};
+
   const createNewWindow = useCallback((): void => {
     void host().app.newWindow().catch((caught) => {
       setHostErrors((previous) => [
@@ -280,9 +288,9 @@ export function App(): React.JSX.Element {
   // of CSS z-index. Both full Basic pages and the sidebar need the host raised;
   // release this lease only when the workspace is actually showing.
   useEffect(() => {
-    const hostPageVisible = sidebarOpen || basicOpen || entered === null || projectUrl === null || view === 'settings';
+    const hostPageVisible = sidebarOpen || basicOpen || windowMenuOpen || entered === null || projectUrl === null || view === 'settings';
     void host().layout.setHostOverlayActive(hostPageVisible, 'picker').catch(() => undefined);
-  }, [sidebarOpen, basicOpen, entered, projectUrl, view]);
+  }, [sidebarOpen, basicOpen, windowMenuOpen, entered, projectUrl, view]);
 
   useEffect(() => {
     void host().layout.setHostOverlayActive(workspaceOverlayActive, 'workspace-drag').catch(() => undefined);
@@ -519,6 +527,19 @@ export function App(): React.JSX.Element {
         <div className="titlebar-drag" />
 
         <div className="titlebar-actions">
+          <div className="titlebar-menu-wrap">
+            <button type="button" className="titlebar-icon-button" aria-label="Pages" title="Open and saved pages"
+              onClick={() => { setWindowMenuOpen(!windowMenuOpen); void refreshWindows(); }}>▾</button>
+            {windowMenuOpen && <div className="basic-menu pages-menu" role="menu">
+              {savedPages.map(page=><div key={page.key} className="saved-page-row">
+                <button type="button" role="menuitem" disabled={page.windowId===null} title={page.windowId===null?'Saved for next reload':'Show page'} onClick={()=>{void host().app.showPage(page.key).then(()=>setWindowMenuOpen(false));}}>{page.title}{page.windowId===null?' · saved':''}</button>
+                <button type="button" aria-label={'Close saved page '+page.title} title="Close page" onClick={()=>{void host().app.closePage(page.key).then(refreshWindows);}}>×</button>
+              </div>)}
+              {surfaceId && savedWindows.filter(window=>!window.current).map(target=><button type="button" key={target.windowId} role="menuitem" onClick={()=>{
+                void host().layout.moveSurfaceToWindow({surfaceId,targetWindowId:target.windowId,targetGroupId:target.groupId,targetIndex:2147483647}).then(()=>setWindowMenuOpen(false)).catch(error=>setSplitNotice({id:Date.now(),message:String(error)}));
+              }}>Move current page · {target.title}</button>)}
+            </div>}
+          </div>
           <button
             type="button"
             className="titlebar-icon-button"
