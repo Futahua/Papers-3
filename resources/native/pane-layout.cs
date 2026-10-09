@@ -83,13 +83,21 @@ public static class PaneLayout {
             bool firstCollapsed=Collapsed(node.First,scope);
             var collapsed=firstCollapsed?node.First:node.Second;
             var active=firstCollapsed?node.Second:node.First;
-            var strip=firstCollapsed?left:right;
-            int height=PresentedMinimum(collapsed,scope,minimum).Height;
-            strip.Height=height;
-            var expanded=new Rectangle(area.X,area.Y+height,area.Width,area.Height-height);
-            return ResolvePresentation(collapsed,strip,scope,minimum,frames)&&ResolvePresentation(active,expanded,scope,minimum,frames);
+            int width=StripHeight(scope);
+            var strip=new Rectangle(firstCollapsed?area.Left:area.Right-width,area.Top,width,area.Height);
+            var expanded=new Rectangle(firstCollapsed?area.Left+width:area.Left,area.Top,area.Width-width,area.Height);
+            ResolveVerticalStrip(collapsed,strip,scope,frames);
+            return ResolvePresentation(active,expanded,scope,minimum,frames);
         }
         return ResolvePresentation(node.First,left,scope,minimum,frames)&&ResolvePresentation(node.Second,right,scope,minimum,frames);
+    }
+    static void ResolveVerticalStrip(PaneSplit node,Rectangle area,PaneScope scope,Dictionary<string,Rectangle> frames){
+        var ids=Leaves(node).ToArray();
+        for(int i=0;i<ids.Length;i++){
+            int top=area.Top+(int)Math.Round((double)area.Height*i/ids.Length);
+            int bottom=area.Top+(int)Math.Round((double)area.Height*(i+1)/ids.Length);
+            frames[ids[i]]=Rectangle.FromLTRB(area.Left,top,area.Right,bottom);
+        }
     }
     static PaneSplit Projection(PaneSplit node,PaneScope scope){
         if(node==null)return null;

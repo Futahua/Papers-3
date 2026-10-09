@@ -234,3 +234,10 @@ minimized, its compact strip stays at that column's authored position and the
 active subtree fills the width beneath it. Nested vertical leaves still collapse
 locally. The production fixture now verifies the creator's exact case: minimizing
 the right column while two left panes remain, then restoration and recovery.
+
+Vertical restore rails, 2026-10-09: an entirely minimized horizontal subtree now
+uses one 32-pixel vertical rail on its original side. Its minimized groups divide
+that rail into adjacent sections in authored leaf order; active content fills
+the remaining width without a top-row offset. The shared renderer displays only
+restorable tab icons in vertical rails. Ordinary vertical-sibling minimize stays
+horizontal. Native fixture checks cover both sides and a two-group shared rail.

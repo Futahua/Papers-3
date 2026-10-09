@@ -73,8 +73,8 @@ public sealed class PipeHarness:Form {
         var beforeMinA=a;var beforeMinB=b;var beforeMinTree=json.Serialize(State["tree"]);
         Call("presentation",Args("groupId","main","mode","minimized"));b=Frame(2);
         var minimizedSlot=D(Group("main")["slot"]);var remainingSlot=D(Group("right")["slot"]);var rootViewport=D(State["viewport"]);
-        Check(Convert.ToDouble(minimizedSlot["height"])==32&&Convert.ToDouble(minimizedSlot["width"])==beforeMinA.R-beforeMinA.L&&
-            Frame(2).L==beforeMinA.L&&Frame(2).R-Frame(2).L==Convert.ToDouble(rootViewport["width"])&&Frame(2).T==beforeMinB.T+32&&Native.IsIconic(fixtures[0].Handle),"minimized column keeps its local strip while active content reclaims the width");
+        Check(Convert.ToDouble(minimizedSlot["width"])==32&&Convert.ToDouble(minimizedSlot["height"])==Convert.ToDouble(rootViewport["height"])&&
+            Frame(2).L==beforeMinA.L+32&&Frame(2).R-Frame(2).L==Convert.ToDouble(rootViewport["width"])-32&&Frame(2).T==beforeMinB.T&&Native.IsIconic(fixtures[0].Handle),"minimized column keeps its local strip while active content reclaims the width");
         Call("viewport",Args("rect",Rect()));
         Check(Frame(2).Box==b.Box&&json.Serialize(State["tree"])==beforeMinTree,"viewport replay preserves collapsed presentation without rewriting authored split");
         Call("presentation",Args("groupId","main","mode","normal"));
@@ -90,10 +90,15 @@ public sealed class PipeHarness:Form {
         Call("presentation",Args("groupId","bottom","mode","normal"));
         Call("presentation",Args("groupId","right","mode","minimized"));
         var rightStrip=D(Group("right")["slot"]);var expandedLeft=D(Group("main")["slot"]);
-        Check(Convert.ToDouble(rightStrip["x"])>Convert.ToDouble(D(State["viewport"])["x"])&&Convert.ToDouble(rightStrip["height"])==32&&
-            Convert.ToDouble(expandedLeft["width"])==Convert.ToDouble(D(State["viewport"])["width"]),"minimized right column retains right-hand strip while nested left panes reclaim its width");
+        Check(Convert.ToDouble(rightStrip["x"])>Convert.ToDouble(D(State["viewport"])["x"])&&Convert.ToDouble(rightStrip["width"])==32&&
+            Convert.ToDouble(expandedLeft["width"])==Convert.ToDouble(D(State["viewport"])["width"])-32,"minimized right column retains right-hand strip while nested left panes reclaim its width");
         Call("presentation",Args("groupId","right","mode","normal"));
         Call("presentation",Args("groupId","bottom","mode","minimized"));
+        Call("presentation",Args("groupId","main","mode","minimized"));
+        var upperRail=D(Group("main")["slot"]);var lowerRail=D(Group("bottom")["slot"]);
+        Check(Convert.ToDouble(upperRail["width"])==32&&Convert.ToDouble(lowerRail["width"])==32&&
+            Convert.ToDouble(upperRail["x"])==Convert.ToDouble(lowerRail["x"])&&Convert.ToDouble(upperRail["y"])+Convert.ToDouble(upperRail["height"])==Convert.ToDouble(lowerRail["y"]),"fully minimized nested column shares one vertical strip in adjacent sections");
+        Call("presentation",Args("groupId","main","mode","normal"));
         var minimizedFrame=Frame(2);Call("release-host");endpoint.WaitForExit(5000);
         snapshots.Clear();StartEndpoint();token="minimized-remount";Call("mount",Args("rect",Rect(),"headerHeight",32));
         Check((string)Group("bottom")["presentation"]=="minimized"&&Frame(2).Box==minimizedFrame.Box,"fresh process restores minimized topology and compact native presentation");
