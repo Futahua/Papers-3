@@ -44,6 +44,20 @@ it('protected Files/Preview remain distinct, movable and durable', async () => {
   const movedEdge=await evalInBackpackProject<{ok:boolean;error?:string}>(launched.app,`nativeCommand('document-edge',{groupId:'system-workspace-files',edge:'right',position:${before.edge+12-before.viewportX}})`);
   expect(movedEdge.ok,movedEdge.error).toBe(true);
   await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`latest.groups.find(g=>g.id==='system-workspace-files').slot.width!==${before.width}`),5000,'Files pane resizable via native edge');
+  // A zero-tab group has no favicon to click when minimized vertically. The
+  // restore/maximize/close controls must remain exposed in that strip.
+  const collapsed=await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('presentation',{groupId:'main',mode:'minimized'})`);
+  expect(collapsed.ok).toBe(true);
+  const emptyRail=`(()=>{const group=latest.groups.find(g=>g.id==='main'),rail=document.querySelector('[data-slice-id="main"] .slice-vertical-restore');return group?.presentation==='minimized'&&group.tabs.length===0&&group.slot.width===32&&rail&&!rail.hidden&&['Restore group','Maximize group','Remove window group'].every(label=>{const button=[...rail.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')===label);return button&&!button.hidden&&getComputedStyle(button).display!=='none'})})()`;
+  await waitFor(()=>evalInBackpackProject<boolean>(launched.app,emptyRail),5000,'empty minimized rail has three usable controls');
+  await evalInBackpackProject(launched.app,`document.querySelector('[data-slice-id="main"] .slice-vertical-controls [aria-label="Restore group"]').click()`);
+  await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`latest.groups.find(g=>g.id==='main')?.presentation==='normal'`),5000,'restore empty group without a tab');
+  expect((await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('presentation',{groupId:'main',mode:'minimized'})`)).ok).toBe(true);
+  await evalInBackpackProject(launched.app,`document.querySelector('[data-slice-id="main"] .slice-vertical-controls [aria-label="Maximize group"]').click()`);
+  await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`latest.groups.find(g=>g.id==='main')?.presentation==='maximized'`),5000,'maximize empty minimized group');
+  expect((await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('presentation',{groupId:'main',mode:'minimized'})`)).ok).toBe(true);
+  await evalInBackpackProject(launched.app,`document.querySelector('[data-slice-id="main"] .slice-vertical-controls [aria-label="Remove window group"]').click()`);
+  await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`!latest.groups.some(g=>g.id==='main')`),5000,'close empty minimized group without a tab');
   expect(await evalInBackpackProject<string[]>(launched.app,'errors')).toEqual([]);
   expect(await evalInBackpackProject<boolean>(launched.app,`[...document.querySelectorAll('[data-preview-tab-id="workspace-files"],[data-preview-tab-id="workspace-preview"]')].every(tab=>!tab.querySelector('.file-capability-browser-tab-close'))`)).toBe(true);
   expect((await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('document-remove',{tabId:'preview:workspace-files'})`)).ok).toBe(false);
