@@ -118,7 +118,7 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await evaluate(`dragGroup('main',otherGroup,'center');finishGroup();`);
   await waitFor(async()=>await evaluate<boolean>(`latest.groups.find(g=>g.id==='main').slot.x<latest.groups.find(g=>g.id===otherGroup).slot.x&&latest.presented`),10000,'handle swap restores original positions');
   await evaluate(`dragGroup('main',otherGroup,'top');`);
-  expect(await evaluate<string>(`document.querySelector('.window-slice-drop').textContent`)).toBe('Move group top');
+  expect(await evaluate<boolean>(`(()=>{const cue=document.querySelector('.window-slice-drop'),box=latest.groups.find(g=>g.id===otherGroup).slot;return cue.classList.contains('is-group-insertion')&&parseFloat(cue.style.height)===6&&parseFloat(cue.style.width)===box.width&&parseFloat(cue.style.top)===box.y&&cue.textContent==='';})()`)).toBe(true);
   await evaluate('finishGroup()');
   await waitFor(async()=>await evaluate<boolean>(`latest.tree.axis==='y'&&latest.presented`),10000,'handle edge drop resplits entire group');
   await evaluate(`dragGroup('main',otherGroup,'left');finishGroup();`);
