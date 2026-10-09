@@ -204,6 +204,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         var references=new Dictionary<string,PaneDocumentRef>(documentReferences);
         var actual=tabIndex.Values.Where(p=>p.Session.Valid()).Select(p=>new WindowSession(p.Session.Handle.ToInt64(),p.Session.Saved.Pid).Saved).ToArray();
         long state=Scope.StateRevision,geometry=Scope.GeometryRevision;double ratio=Scope.Ratio;bool shown=Scope.Presented;
+        bool priorPanelMigration=protectedPanelsMigrated;
         var viewport=Scope.Viewport;var leftOffset=authoredLeftOffset;long nativeEdge=Scope.NativeEdgeRevision;
         try{
             action();
@@ -211,6 +212,7 @@ public sealed partial class PaneCoordinator : IDisposable {
             RefreshGroupVisibility();Reflow(null,cause);Paint();
         }catch{
             Scope.Root=root;Scope.Ratio=ratio;Scope.Presented=shown;Scope.Viewport=viewport;authoredLeftOffset=leftOffset;Scope.NativeEdgeRevision=nativeEdge;
+            protectedPanelsMigrated=priorPanelMigration;
             Scope.Order.Clear();Scope.Order.AddRange(order);Scope.Groups.Clear();
             foreach(var pair in groups){Scope.Groups.Add(pair.Key,pair.Value);var g=pair.Value;
                 g.OrderedTabs.Clear();g.OrderedTabs.AddRange(tabs[pair.Key]);g.SelectedTab=selected[pair.Key];

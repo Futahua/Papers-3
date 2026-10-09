@@ -14,6 +14,7 @@ public sealed class PaneMount {
     public long OwnerStarted,BindingGeneration;
     public string Recovery,RecoveryGeneration;
     public int? LeftOffset;
+    public bool ProtectedPanelsMigrated;
     public PaneSplit Root;
     public List<PaneMountGroup> Groups=new List<PaneMountGroup>();
     public List<PaneMountPeer> Peers=new List<PaneMountPeer>();
@@ -27,7 +28,7 @@ public sealed partial class PaneCoordinator {
         RecoverWrite();
         PaneLayout.Ensure(Scope);
         var data=new PaneMount{OwnerPid=Process.GetCurrentProcess().Id,OwnerStarted=Started((uint)Process.GetCurrentProcess().Id),
-            BindingGeneration=Scope.BindingGeneration,Recovery=recoveryFile,RecoveryGeneration=recoveryGeneration,LeftOffset=authoredLeftOffset,Root=Scope.Root.Copy(),HeaderHeight=Scope.HeaderHeight};
+            BindingGeneration=Scope.BindingGeneration,Recovery=recoveryFile,RecoveryGeneration=recoveryGeneration,LeftOffset=authoredLeftOffset,Root=Scope.Root.Copy(),HeaderHeight=Scope.HeaderHeight,ProtectedPanelsMigrated=protectedPanelsMigrated};
         foreach(var id in Scope.Order){var g=Group(id);data.Groups.Add(new PaneMountGroup{Id=id,Selected=g.SelectedTab,Presentation=g.Presentation,Tabs=g.OrderedTabs.ToArray()});}
         foreach(var peer in tabIndex.Values)data.Peers.Add(new PaneMountPeer{TabId=peer.TabId,GroupId=peer.GroupId,
             Title=peer.LastTitle,Icon=peer.LastIcon,Url=peer.RestoreUrl,
@@ -39,7 +40,7 @@ public sealed partial class PaneCoordinator {
         WriteDurableJson(full,json.Serialize(data));
         // Durable intent is independent of the helper/PID/HWND checkpoint.
         string intent=IntentPath(full);Directory.CreateDirectory(Path.GetDirectoryName(intent));
-        WriteDurableJson(intent,json.Serialize(new{Version=1,HeaderHeight=data.HeaderHeight,LeftOffset=data.LeftOffset,Root=data.Root,Groups=data.Groups,
+        WriteDurableJson(intent,json.Serialize(new{Version=1,HeaderHeight=data.HeaderHeight,LeftOffset=data.LeftOffset,ProtectedPanelsMigrated=data.ProtectedPanelsMigrated,Root=data.Root,Groups=data.Groups,
             Peers=data.Peers.Select(p=>new{p.TabId,p.GroupId,p.Title,p.Icon,p.Url}).ToArray(),Documents=data.Documents,DocumentReferences=data.DocumentReferences}));
         Log("checkpoint",null,null,null,full);
     }
@@ -69,7 +70,7 @@ public sealed partial class PaneCoordinator {
         }
         var omitted=new List<string>();
         Scope.Groups.Clear();Scope.Order.Clear();Scope.Root=data.Root.Copy();Scope.Presented=false;
-        Scope.BindingGeneration=data.BindingGeneration+1;authoredLeftOffset=data.LeftOffset;
+        Scope.BindingGeneration=data.BindingGeneration+1;authoredLeftOffset=data.LeftOffset;protectedPanelsMigrated=data.ProtectedPanelsMigrated;
         foreach(var g in data.Groups)Scope.Add(g.Id);
         SetViewport(viewport,Scope.ViewportRevision+1);
         try{

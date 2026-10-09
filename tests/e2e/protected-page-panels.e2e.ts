@@ -15,6 +15,7 @@ it('protected Files/Preview remain distinct, movable and durable', async () => {
  await fs.writeFile(path.join(root,'public','protected-panels.js'),`
  import {createHostBridge} from './app/host/host-bridge.js';
  import {installCoordinatedWindowSlices} from './app/coordinated-window-slices.js';
+ document.documentElement.classList.add('workspace-unified-panes');
  window.errors=[];window.addEventListener('error',e=>errors.push(e.message));window.addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));
  const host=createHostBridge(window),root={element:document.querySelector('#right'),replaceNativeTabs(){},restoreWindows(){throw Error('Legacy fallback')}};
  const files={element:document.querySelector('#files')},preview={element:document.querySelector('#preview'),setPreviewSuspended(){},refreshPreviewGeometry(){}};
@@ -35,6 +36,14 @@ it('protected Files/Preview remain distinct, movable and durable', async () => {
   await waitFor(()=>evalInBackpackProject<boolean>(launched.app,'Boolean(window.panes?.active())'),15000,'native pane mounted');
   await evalInBackpackProject(launched.app,'ready');
   await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`latest.groups.flatMap(g=>g.tabs).filter(t=>['preview:workspace-files','preview:workspace-preview'].includes(t.id)).length===2`),15000,'both protected panels');
+  await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`['files','preview'].every(id=>{const e=document.querySelector('#'+id),r=e.getBoundingClientRect();return !e.hidden&&r.width>=120&&r.height>=120&&getComputedStyle(e).display!=='none'})`),12000,'both visibly sized page panels');
+  const ownership=await evalInBackpackProject<{files:string;preview:string;filesSelected:boolean;previewSelected:boolean}>(launched.app,`(()=>{const files=latest.groups.find(g=>g.tabs.some(t=>t.id==='preview:workspace-files')),preview=latest.groups.find(g=>g.tabs.some(t=>t.id==='preview:workspace-preview'));return {files:files.id,preview:preview.id,filesSelected:files.selected==='preview:workspace-files',previewSelected:preview.selected==='preview:workspace-preview'};})()`);
+  expect(ownership.files).not.toBe(ownership.preview);
+  expect(ownership.filesSelected&&ownership.previewSelected).toBe(true);
+  const before=await evalInBackpackProject<{width:number;viewportX:number;edge:number}>(launched.app,`(()=>{const group=latest.groups.find(g=>g.id===${JSON.stringify('system-workspace-files')});return {width:group.slot.width,viewportX:latest.viewport.x,edge:group.slot.x+group.slot.width}})()`);
+  const movedEdge=await evalInBackpackProject<{ok:boolean;error?:string}>(launched.app,`nativeCommand('document-edge',{groupId:'system-workspace-files',edge:'right',position:${before.edge+12-before.viewportX}})`);
+  expect(movedEdge.ok,movedEdge.error).toBe(true);
+  await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`latest.groups.find(g=>g.id==='system-workspace-files').slot.width!==${before.width}`),5000,'Files pane resizable via native edge');
   expect(await evalInBackpackProject<string[]>(launched.app,'errors')).toEqual([]);
   expect(await evalInBackpackProject<boolean>(launched.app,`[...document.querySelectorAll('[data-preview-tab-id="workspace-files"],[data-preview-tab-id="workspace-preview"]')].every(tab=>!tab.querySelector('.file-capability-browser-tab-close'))`)).toBe(true);
   expect((await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('document-remove',{tabId:'preview:workspace-files'})`)).ok).toBe(false);

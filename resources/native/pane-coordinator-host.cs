@@ -196,6 +196,7 @@ public sealed class PaneCoordinatorHost:Form {
         else if(op=="dormant-add")pane.AddDormant(json.Deserialize<PaneMountPeer>(json.Serialize(r["peer"])),group);
         else if(op=="document-add"){pane.AddDocument(tab,group,generation,state);if(r.ContainsKey("preview"))pane.SetDocumentReference(json.Deserialize<PaneDocumentRef>(json.Serialize(r["preview"])));}
         else if(op=="document-remove")pane.RemoveDocument(tab,generation,state);
+        else if(op=="ensure-panels")pane.EnsureWorkspacePanels(ScreenRect(binding.Rect),generation,state);
         else if(op=="select")pane.SelectTab(group,tab,generation,state);
         else if(op=="reorder")pane.ReorderTab(group,tab,ReadText(r,"beforeId"),generation,state);
         else if(op=="move")pane.MoveTab(tab,group,generation,state);

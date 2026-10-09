@@ -106,6 +106,7 @@ public static class PaneLayout {
         return new PaneSplit{Axis=node.Axis,Ratio=node.Ratio,First=first,Second=second,Source=node,Frame=Rectangle.Union(first.Frame,second.Frame)};
     }
     public static Size PresentationMinimum(PaneScope scope,Func<PaneGroup,Size> minimum){return PresentedMinimum(scope.Root,scope,minimum);}
+    public static Size PresentedMinimumForWorkspace(PaneSplit root,PaneScope scope,Func<PaneGroup,Size> minimum){return PresentedMinimum(root,scope,minimum);}
     static bool Contains(PaneSplit node,string group){return Leaves(node).Contains(group);}
     public static PaneSplit Boundary(PaneScope scope,string group,string edge){
         Ensure(scope);var node=Projection(scope.Root,scope);var path=new List<PaneSplit>();

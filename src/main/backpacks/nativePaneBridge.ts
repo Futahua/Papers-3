@@ -38,7 +38,7 @@ export interface NativePaneBridge {
   dispose(): Promise<void>;
 }
 const unavailable = (): PaneReply => ({ ok: false, error: 'Window layout is not mounted.' });
-const commandNames = new Set(['checkpoint', 'reconnect', 'resume', 'snapshot', 'raise', 'select', 'reorder', 'move', 'split', 'relocate-group', 'close-group', 'presentation', 'detach', 'document-add', 'document-remove', 'document-edge', 'present']);
+const commandNames = new Set(['checkpoint', 'reconnect', 'resume', 'snapshot', 'raise', 'select', 'reorder', 'move', 'split', 'relocate-group', 'close-group', 'presentation', 'detach', 'document-add', 'document-remove', 'document-edge', 'ensure-panels', 'present']);
 export function createNativePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined;
   ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void> }): NativePaneBridge | null {
   if (process.platform !== 'win32') return null;
@@ -66,7 +66,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
   function restoreCheckpoint(key: string, mount: any): void {
     durableWrite(mountFile(key),mount);
     durableWrite(path.join(path.dirname(input.cacheDirectory),'pane-layouts',`pane-mount-${key}.json`), {
-      Version:1,HeaderHeight:mount.HeaderHeight,LeftOffset:mount.LeftOffset,Root:mount.Root,Groups:mount.Groups,
+      Version:1,HeaderHeight:mount.HeaderHeight,LeftOffset:mount.LeftOffset,ProtectedPanelsMigrated:mount.ProtectedPanelsMigrated,Root:mount.Root,Groups:mount.Groups,
       Peers:mount.Peers?.map((peer:any)=>({TabId:peer.TabId,GroupId:peer.GroupId,Title:peer.Title,Icon:peer.Icon,Url:peer.Url})),
       Documents:mount.Documents,DocumentReferences:mount.DocumentReferences,
     });
