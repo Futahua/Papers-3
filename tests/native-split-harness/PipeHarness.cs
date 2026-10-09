@@ -165,7 +165,32 @@ public sealed class PipeHarness:Form {
         snapshots.Clear();StartEndpoint();token="narrow-restart";Call("mount",Args("rect",Rect(),"headerHeight",32));
         Check(Frame(0).L==narrowLeft&&Frame(0).R==a.R&&Tabs("main").Contains(ids[1])&&Native.IsIconic(fixtures[1].Handle),
             "restart restores narrow selected pane while retaining oversized inactive tab");
+        Call("checkpoint");
+        string checkpoint=Path.Combine(cache,"pane-mount-"+scope+".json");
+        var retained=json.Deserialize<PaneMount>(File.ReadAllText(checkpoint));
+        var savedRecovery=json.Deserialize<PaneRecovery>(File.ReadAllText(retained.Recovery));
+        string contested=Path.Combine(cache,"contested-recovery.json");
+        savedRecovery.HostPid=int.MaxValue;savedRecovery.Started=1;savedRecovery.Generation=Guid.NewGuid().ToString("N");savedRecovery.Region=null;
+        File.WriteAllText(contested,json.Serialize(savedRecovery));
+        var leasedFrame=Frame(0);PaneCoordinator.Guard(contested);
+        Check(File.Exists(contested+".failed")&&!File.Exists(contested+".recovered")&&Frame(0).Box==leasedFrame.Box,
+            "recovery refuses a HWND leased by a live endpoint without moving it");
         Call("release-host");endpoint.WaitForExit(5000);
+        // Reproduce a dead old helper whose guard never wrote a completion marker.
+        // Keep the real recorded original placements, displace the released fixture,
+        // and require recovery before a new endpoint captures its originals.
+        retained=json.Deserialize<PaneMount>(File.ReadAllText(checkpoint));
+        savedRecovery=json.Deserialize<PaneRecovery>(File.ReadAllText(retained.Recovery));
+        retained.OwnerPid=int.MaxValue;retained.OwnerStarted=1;
+        savedRecovery.HostPid=int.MaxValue;savedRecovery.Started=1;
+        File.WriteAllText(checkpoint,json.Serialize(retained));File.WriteAllText(retained.Recovery,json.Serialize(savedRecovery));
+        foreach(var suffix in new[]{".released",".recovered",".failed"})if(File.Exists(retained.Recovery+suffix))File.Delete(retained.Recovery+suffix);
+        Native.SetWindowPos(fixtures[0].Handle,IntPtr.Zero,180,180,640,420,0x14);
+        snapshots.Clear();StartEndpoint();token="missing-guard-marker";Call("mount",Args("rect",Rect(),"headerHeight",32));
+        Check(File.Exists(retained.Recovery+".recovered")&&Tabs("main").Contains(ids[0])&&!Native.IsIconic(fixtures[0].Handle),
+            "dead owner with missing guard marker recovers and remounts retained native tabs");
+        Call("release-host");endpoint.WaitForExit(5000);
+        Check(Frame(0).Box==originals[0].Box,"remount recovery captures the true original placement instead of the stranded pane placement");
     }catch(Exception e){checks.Add("FAIL "+e);}finally{
         try{if(endpoint!=null&&!endpoint.HasExited){endpoint.StandardInput.Close();if(!endpoint.WaitForExit(5000))endpoint.Kill();}}catch{}
         if(checks.Any(c=>c.StartsWith("FAIL"))&&endpoint!=null&&endpoint.HasExited)checks.Add("FAIL endpoint diagnostics: "+endpoint.StandardError.ReadToEnd());

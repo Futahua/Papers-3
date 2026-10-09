@@ -59,6 +59,10 @@ public sealed partial class PaneCoordinator {
             if(Started((uint)data.OwnerPid)==data.OwnerStarted)throw new Exception("Checkpoint owner is still running.");
             var until=DateTime.UtcNow.AddSeconds(4);
             while(!File.Exists(data.Recovery+".recovered")&&!File.Exists(data.Recovery+".failed")&&DateTime.UtcNow<until)Thread.Sleep(25);
+            // An old guard may have exited before recording completion. The
+            // former owner is proven dead above; recover through the same
+            // lease-checked guard instead of permanently stranding this page.
+            if(!File.Exists(data.Recovery+".recovered")&&!File.Exists(data.Recovery+".failed")&&File.Exists(data.Recovery))Guard(data.Recovery);
             // After reboot none of the old processes/windows need restoration.
             // Do not require a marker from a guard that died with Windows.
             if(!File.Exists(data.Recovery+".recovered")&&data.Peers.Any(p=>Started(p.Pid)==p.Started&&p.Started!=0))throw new Exception("Wait for successful crash recovery before remount.");

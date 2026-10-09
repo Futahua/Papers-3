@@ -310,3 +310,12 @@ reload, verifies two independent pages in one window, transfers groups and pages
 and checks dormant replacement. DOM-dispatched dragging verifies production routing
 without taking physical mouse/keyboard input. Physical drag acceptance and an actual
 Windows reboot remain distinct manual checks; neither is claimed by these tests.
+
+Installed-profile migration exposed a dead legacy helper whose recovery guard had
+not recorded completion. Remount now runs the recorded recovery after verifying the
+former owner is dead. Guards serialize by recovery generation and acquire the same
+per-window leases as attachment before restoring original placements. A live lease
+blocks recovery. Production pipe assertions cover the missing-marker case, rejection
+of a live leased window, and release back to the true original placement. With this
+follow-up, 44 pipe assertions, 70 broader native assertions, and both isolated
+Electron integration routes pass.

@@ -140,14 +140,29 @@ public sealed partial class PaneCoordinator : IDisposable {
         var ser=new JavaScriptSerializer();PaneRecovery data;
         try{data=ser.Deserialize<PaneRecovery>(File.ReadAllText(filename));}catch{return;}
         try{using(var p=Process.GetProcessById(data.HostPid))if(p.StartTime.ToUniversalTime().Ticks==data.Started)p.WaitForExit();}catch{}
+        using(var recoveryLease=new Mutex(false,"Local\\NativePaneRecovery-"+data.Generation)){
+        bool recoveryHeld=false;
+        try{try{recoveryHeld=recoveryLease.WaitOne(10000);}catch(AbandonedMutexException){recoveryHeld=true;}
+        if(!recoveryHeld)return;
         if(ReleasedMarker(filename,data.Generation))return;
+        if(File.Exists(filename+".recovered"))return;
         try{data=ser.Deserialize<PaneRecovery>(File.ReadAllText(filename));}catch{return;}
         var failures=new List<string>();
-        foreach(var peer in data.Peers)if(Started(peer.Window.Pid)==peer.Started)
-            try{RestoreSavedWindow(peer.Window);}catch(Exception error){failures.Add(error.Message);}
+        foreach(var peer in data.Peers)if(Started(peer.Window.Pid)==peer.Started){
+            using(var lease=new Mutex(false,"Local\\ChromePaneExperiment-"+peer.Window.Handle)){
+                bool held=false;
+                try{try{held=lease.WaitOne(0);}catch(AbandonedMutexException){held=true;}
+                    if(!held)throw new Exception("Native window belongs to another live pane; recovery deferred.");
+                    RestoreSavedWindow(peer.Window);
+                }catch(Exception error){failures.Add(error.Message);}
+                finally{if(held)try{lease.ReleaseMutex();}catch{}}
+            }
+        }
         try{PanePresentation.Restore(data.Region);}catch(Exception error){failures.Add(error.Message);}
         try{File.WriteAllText(filename+(failures.Count==0?".recovered":".failed"),
             failures.Count==0?DateTime.UtcNow.ToString("o"):string.Join(Environment.NewLine,failures));}catch{}
+        }finally{if(recoveryHeld)try{recoveryLease.ReleaseMutex();}catch{}}
+        }
     }
     static bool ReleasedMarker(string recovery,string generation){
         try{return File.Exists(recovery+".released")&&(generation==null||File.ReadAllText(recovery+".released").Trim()==generation);}catch{return false;}
