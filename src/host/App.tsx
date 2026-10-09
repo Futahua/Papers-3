@@ -532,7 +532,7 @@ export function App(): React.JSX.Element {
               onClick={() => { setWindowMenuOpen(!windowMenuOpen); void refreshWindows(); }}>▾</button>
             {windowMenuOpen && <div className="basic-menu pages-menu" role="menu">
               {savedPages.map(page=><div key={page.key} className="saved-page-row">
-                <button type="button" role="menuitem" disabled={page.windowId===null} title={page.windowId===null?'Saved for next reload':'Show page'} onClick={()=>{void host().app.showPage(page.key).then(()=>setWindowMenuOpen(false));}}>{page.title}{page.windowId===null?' · saved':''}</button>
+                <button type="button" role="menuitem" title={page.windowId===null?'Reopen saved page':'Show page'} onClick={()=>{void host().app.showPage(page.key).then(()=>setWindowMenuOpen(false)).catch(error=>setSplitNotice({id:Date.now(),message:'Page could not reopen: '+String(error)}));}}>{page.title}{page.windowId===null?' · saved':''}</button>
                 <button type="button" aria-label={'Close saved page '+page.title} title="Close page" onClick={()=>{void host().app.closePage(page.key).then(refreshWindows);}}>×</button>
               </div>)}
               {surfaceId && savedWindows.filter(window=>!window.current).map(target=><button type="button" key={target.windowId} role="menuitem" onClick={()=>{

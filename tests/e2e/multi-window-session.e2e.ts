@@ -82,8 +82,13 @@ it('reopens unclosed Papers windows separately after process restart and parks e
     launched = await launchPapers(profile, { fixtures: false });
     await waitFor(async () => (await findWindows()).length === 1, 25000, 'closed window stays parked after restart');
     expect((await findPages()).find(p => p.key === 'page-second')?.windowId).toBeNull();
-    await evalInHost(launched.app, `papersHost.app.showPage('page-second')`);
+    await evalInHost(launched.app, `document.querySelector('[aria-label="Pages"]').click()`);
+    await waitFor(()=>evalInHost<boolean>(launched!.app, `Array.from(document.querySelectorAll('.saved-page-row [role="menuitem"]')).some(button=>button.textContent==='Second · saved')`),5000,'saved page menu entry');
+    expect(await evalInHost<boolean>(launched.app, `(()=>{const button=Array.from(document.querySelectorAll('.saved-page-row [role="menuitem"]')).find(button=>button.textContent==='Second · saved');return !!button&&!button.disabled&&button.title==='Reopen saved page';})()`)).toBe(true);
+    await evalInHost(launched.app, `Array.from(document.querySelectorAll('.saved-page-row [role="menuitem"]')).find(button=>button.textContent==='Second · saved').click()`);
     await waitFor(async () => (await findWindows()).length === 2, 25000, 'saved parked window manually reopened');
+    expect((await findPages()).find(page=>page.key==='page-second')?.windowId).not.toBeNull();
+    expect(await evalInHost<boolean>(launched.app, `!document.querySelector('.pages-menu')`)).toBe(true);
   } finally {
     await launched?.close();
     await fs.rm(profile, { recursive: true, force: true });
