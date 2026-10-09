@@ -195,6 +195,7 @@ public sealed class PaneCoordinatorHost:Form {
         else if(op=="reorder")pane.ReorderTab(group,tab,ReadText(r,"beforeId"),generation,state);
         else if(op=="move")pane.MoveTab(tab,group,generation,state);
         else if(op=="split")pane.SplitAndMove(tab,group,ReadText(r,"newGroupId"),ReadText(r,"side"),generation,state);
+        else if(op=="relocate-group")pane.RelocateGroup(group,ReadText(r,"destination"),ReadText(r,"side"),generation,state);
         else if(op=="close-group")pane.CloseGroup(group,ReadText(r,"destination"),generation,state);
         else if(op=="presentation")pane.SetGroupPresentation(group,ReadText(r,"mode"),generation,state);
         else if(op=="document-edge")pane.ResizeDocumentEdge(group,ReadText(r,"edge"),(int)Math.Round(Convert.ToDouble(r["position"])*DpiScale),generation,state);

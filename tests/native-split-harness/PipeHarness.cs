@@ -70,6 +70,14 @@ public sealed class PipeHarness:Form {
         Call("split",Args("groupId","main","tabId",ids[2],"newGroupId","right","side","right"));
         Check(Groups.Length==2&&!Native.IsIconic(fixtures[0].Handle)&&!Native.IsIconic(fixtures[2].Handle),"two selected native groups present together");
         var a=Frame(0);var b=Frame(2);Check(a.R==b.L&&a.T==b.T,"production pipe fits adjoining native frames without a gap");
+        var originalMainTabs=Tabs("main");var selectedMain=(string)Group("main")["selected"];
+        Call("relocate-group",Args("groupId","main","destination","right","side","center"));
+        Check(Frame(0).Box==b.Box&&Frame(2).Box==a.Box&&Tabs("main").SequenceEqual(originalMainTabs)&&(string)Group("main")["selected"]==selectedMain,"group swap exchanges slots without changing membership or selection");
+        Call("relocate-group",Args("groupId","main","destination","right","side","center"));
+        Call("relocate-group",Args("groupId","main","destination","right","side","right"));
+        Check(Frame(0).L==b.L&&Tabs("main").SequenceEqual(originalMainTabs),"whole group edge reorder retains all native tabs");
+        Call("relocate-group",Args("groupId","main","destination","right","side","left"));
+        Check(Frame(0).Box==a.Box&&Frame(2).Box==b.Box,"reverse whole-group reorder restores original layout");
         var beforeMinA=a;var beforeMinB=b;var beforeMinTree=json.Serialize(State["tree"]);
         Call("presentation",Args("groupId","main","mode","minimized"));b=Frame(2);
         var minimizedSlot=D(Group("main")["slot"]);var remainingSlot=D(Group("right")["slot"]);var rootViewport=D(State["viewport"]);

@@ -334,6 +334,20 @@ public sealed partial class PaneCoordinator : IDisposable {
             MoveMembership(tabId,from,to);Scope.Order.Clear();Scope.Order.AddRange(PaneLayout.Leaves(Scope.Root));
         });
     }
+    public void RelocateGroup(string id,string target,string side,long binding,long state){
+        Check(binding,state);Group(id);Group(target);
+        if(id==target)return;
+        if(!new[]{"center","left","right","top","bottom"}.Contains(side))throw new Exception("Invalid group destination.");
+        Change("relocateGroup",()=>{
+            if(side=="center")SwapGroupLeaves(Scope.Root,id,target);
+            else{Scope.Root=PaneLayout.Remove(Scope.Root,id);if(!PaneLayout.Split(Scope.Root,target,id,side))throw new Exception("Missing group destination.");}
+            Scope.Order.Clear();Scope.Order.AddRange(PaneLayout.Leaves(Scope.Root));
+        });
+    }
+    static void SwapGroupLeaves(PaneSplit node,string a,string b){
+        if(node.Leaf){if(node.GroupId==a)node.GroupId=b;else if(node.GroupId==b)node.GroupId=a;return;}
+        SwapGroupLeaves(node.First,a,b);SwapGroupLeaves(node.Second,a,b);
+    }
     public void DetachTab(string tabId,long binding,long state) {
         Check(binding,state);PanePeer p=Find(tabId);PaneGroup g=Group(p.GroupId);
         g.OrderedTabs.Remove(tabId);if(g.SelectedTab==tabId)g.SelectedTab=g.OrderedTabs.FirstOrDefault();

@@ -32,7 +32,7 @@ export interface NativePaneBridge {
   dispose(): Promise<void>;
 }
 const unavailable = (): PaneReply => ({ ok: false, error: 'Window layout is not mounted.' });
-const commandNames = new Set(['snapshot', 'raise', 'select', 'reorder', 'move', 'split', 'close-group', 'presentation', 'detach', 'document-add', 'document-remove', 'document-edge', 'present']);
+const commandNames = new Set(['snapshot', 'raise', 'select', 'reorder', 'move', 'split', 'relocate-group', 'close-group', 'presentation', 'detach', 'document-add', 'document-remove', 'document-edge', 'present']);
 export function createNativePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined }): NativePaneBridge | null {
   if (process.platform !== 'win32') return null;
   const compiler = resolveWindowsCscPath(process.env['WINDIR'] ?? 'C:\\Windows');

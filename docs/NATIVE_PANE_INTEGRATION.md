@@ -249,3 +249,13 @@ owner visibility restoration respects session suspension. Selection changes and
 explicit minimize retain the existing close lifecycle. The Electron fixture now
 maximizes a neighboring native group and verifies the same PDF session resumes
 without any close call. Both direct and embedded routes pass.
+
+Whole-group handle, 2026-10-09: group numbers are removed. Lens uses the existing
+camera control in the file-pane toolbar, retaining screen/clipboard activation.
+A grip beside each group picker carries a whole-group drag. Center drops swap
+leaf identities; edge drops remove/reinsert the existing leaf beside the target.
+The coordinator applies this atomically through its normal minimum-size and native
+placement rollback. Membership, ordering, selection and HWND leases stay attached
+to the same group. A full target overlay means swap; a half target overlay means
+resplit at that edge. Direct and embedded Electron checks exercise the actual grip,
+cue geometry, mixed-group swap and vertical/horizontal edge repositioning.

@@ -1061,7 +1061,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;
             if (!bridge || !owner || !bridge.has(owner)) return { ok: false, message: 'Window layout is not mounted.' };
             const op = boundedString(params.command, 'command', 32);
-            const allowed = new Set(['snapshot', 'select', 'reorder', 'move', 'split', 'close-group', 'presentation', 'detach', 'document-add', 'document-remove', 'document-edge', 'present']);
+            const allowed = new Set(['snapshot', 'select', 'reorder', 'move', 'split', 'relocate-group', 'close-group', 'presentation', 'detach', 'document-add', 'document-remove', 'document-edge', 'present']);
             if (!allowed.has(op)) throw new Error('Unsupported layout command.');
             const args: Record<string, unknown> = {};
             for (const key of ['groupId', 'tabId', 'beforeId', 'side', 'newGroupId', 'destination', 'mode', 'edge']) {
