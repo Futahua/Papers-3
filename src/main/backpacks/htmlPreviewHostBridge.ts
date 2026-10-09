@@ -36,6 +36,7 @@ function hardenHtmlPreviewSession(previewSession: Session): void {
 interface LiveHtmlPreview {
   id: string;
   ownerKey: string;
+  surfaceKey: string;
   window: BaseWindow;
   view: WebContentsView;
   webContents: WebContents;
@@ -53,6 +54,7 @@ export interface HtmlPreviewHostBridge {
     filePath: string,
     localRect: PreviewRect,
     cleanup: () => void,
+    surfaceId?: string,
   ): Promise<{ ok: true; sessionId: string } | { ok: false; error?: string }>;
   move(ownerKey: string, sessionId: string, localRect: PreviewRect, visible?: boolean): boolean;
   close(ownerKey: string, sessionId: string): boolean;
@@ -97,10 +99,11 @@ export function createHtmlPreviewHostBridge(input: {
 }): HtmlPreviewHostBridge {
   const sessions = new Map<string, LiveHtmlPreview>();
   const owners = new Map<string, string>();
+  const ownerVisibility = new Map<string, boolean>();
 
   const forget = (session: LiveHtmlPreview): void => {
     if (sessions.get(session.id) === session) sessions.delete(session.id);
-    if (owners.get(session.ownerKey) === session.id) owners.delete(session.ownerKey);
+    if (owners.get(session.surfaceKey) === session.id) owners.delete(session.surfaceKey);
   };
 
   const cleanupSession = (session: LiveHtmlPreview): void => {
@@ -121,13 +124,15 @@ export function createHtmlPreviewHostBridge(input: {
   };
 
   return {
-    async open(context, filePath, localRect, cleanup) {
+    async open(context, filePath, localRect, cleanup, surfaceId) {
       if (!validRect(context.surfaceBounds) || !validRect(localRect)) {
         cleanup();
         return { ok: false, error: 'Invalid HTML preview geometry.' };
       }
 
-      this.closeOwner(context.ownerKey);
+      const surfaceKey = context.ownerKey + '\0' + (surfaceId || 'default');
+      const previous = owners.get(surfaceKey);
+      if (previous) { const old = sessions.get(previous); if (old) cleanupSession(old); }
       const window = input.resolveWindow(context.ownerKey);
       if (!window || window.isDestroyed()) {
         cleanup();
@@ -158,6 +163,7 @@ export function createHtmlPreviewHostBridge(input: {
       const session: LiveHtmlPreview = {
         id: randomUUID(),
         ownerKey: context.ownerKey,
+        surfaceKey,
         window,
         view,
         webContents: contents,
@@ -169,7 +175,7 @@ export function createHtmlPreviewHostBridge(input: {
         cleanup,
       };
       sessions.set(session.id, session);
-      owners.set(session.ownerKey, session.id);
+      owners.set(session.surfaceKey, session.id);
       contents.once('destroyed', () => {
         allowedDocuments.delete(contentsId);
         if (sessions.get(session.id) !== session) return;
@@ -178,8 +184,10 @@ export function createHtmlPreviewHostBridge(input: {
       });
 
       try {
-        window.contentView.addChildView(view);
-        session.presented = true;
+        if (ownerVisibility.get(context.ownerKey) !== false) {
+          window.contentView.addChildView(view);
+          session.presented = true;
+        }
         place(session);
         await contents.loadFile(filePath);
         await contents.executeJavaScript(`
@@ -209,7 +217,8 @@ export function createHtmlPreviewHostBridge(input: {
       const session = sessions.get(sessionId);
       if (!session || session.ownerKey !== ownerKey || !validRect(localRect)) return false;
       session.localRect = { ...localRect };
-      if(visible!==undefined){session.suspended=!visible;if(!visible&&session.presented){session.window.contentView.removeChildView(session.view);session.presented=false;}else if(visible&&!session.presented){session.window.contentView.addChildView(session.view);session.presented=true;}}
+      if (visible !== undefined) session.suspended = !visible;
+      this.setOwnerVisible(ownerKey, ownerVisibility.get(ownerKey) !== false);
       place(session);
       return true;
     },
@@ -223,33 +232,32 @@ export function createHtmlPreviewHostBridge(input: {
 
     setOwnerSurfaceBounds(ownerKey, bounds) {
       if (!validRect(bounds)) return;
-      const id = owners.get(ownerKey);
-      const session = id ? sessions.get(id) : undefined;
-      if (!session) return;
-      session.surfaceBounds = { ...bounds };
-      place(session);
+      for (const session of sessions.values()) if (session.ownerKey === ownerKey) {
+        session.surfaceBounds = { ...bounds };
+        place(session);
+      }
     },
 
     setOwnerVisible(ownerKey, visible) {
-      const id = owners.get(ownerKey);
-      const session = id ? sessions.get(id) : undefined;
-      if (!session || session.window.isDestroyed() || session.webContents.isDestroyed()) return;
-      if (visible && !session.suspended) {
-        if (!session.presented) {
-          session.window.contentView.addChildView(session.view);
-          session.presented = true;
+      ownerVisibility.set(ownerKey, visible);
+      for (const session of sessions.values()) {
+        if (session.ownerKey !== ownerKey || session.window.isDestroyed() || session.webContents.isDestroyed()) continue;
+        if (visible && !session.suspended) {
+          if (!session.presented) {
+            session.window.contentView.addChildView(session.view);
+            session.presented = true;
+          }
+          place(session);
+        } else if (session.presented) {
+          session.window.contentView.removeChildView(session.view);
+          session.presented = false;
         }
-        place(session);
-      } else if (session.presented) {
-        session.window.contentView.removeChildView(session.view);
-        session.presented = false;
       }
     },
 
     closeOwner(ownerKey) {
-      const id = owners.get(ownerKey);
-      const session = id ? sessions.get(id) : undefined;
-      if (session) cleanupSession(session);
+      for (const session of [...sessions.values()]) if (session.ownerKey === ownerKey) cleanupSession(session);
+      ownerVisibility.delete(ownerKey);
     },
 
     raiseWindow(windowId) {

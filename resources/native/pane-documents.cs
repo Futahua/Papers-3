@@ -58,6 +58,7 @@ public sealed partial class PaneCoordinator {
         Change("addDocument",()=>{documentGroups.Add(id,groupId);group.OrderedTabs.Add(id);if(group.SelectedTab==null)group.SelectedTab=id;});
     }
     public void RemoveDocument(string id,long binding,long state){
+        if(id=="preview:workspace-files"||id=="preview:workspace-preview")throw new Exception("Files and Preview belong to this page and cannot be deleted.");
         Check(binding,state);if(!documentGroups.ContainsKey(id))return;
         var group=Group(documentGroups[id]);
         Change("removeDocument",()=>{group.OrderedTabs.Remove(id);documentGroups.Remove(id);dormantPeers.Remove(id);documentReferences.Remove(id);

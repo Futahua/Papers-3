@@ -236,6 +236,9 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
           : queued(target, 'relocate-group', { groupId: source.groupId, destination: groupId, side });
         if (!['center','left', 'right', 'top', 'bottom'].includes(side)) return { ok: false, error: 'Choose an edge for the incoming group.' };
         const from = source.scope;
+        const movedGroup = from.snapshot?.groups.find(group=>group.id===source.groupId);
+        if(movedGroup?.tabs.some(tab=>(!source.tabId||source.tabId===tab.id)&&['preview:workspace-files','preview:workspace-preview'].includes(tab.id)))
+          return {ok:false,error:'Files and Preview stay with their page. Move the page to another Papers window instead.'};
         locked.add(from); locked.add(target);
         const records: Array<{ key: string; mount: Record<string, any> }> = [];
         const run = async (scope: Scope, op: string, params: Record<string, unknown> = {}): Promise<PaneReply> => {

@@ -966,11 +966,11 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'preview-native-open': {
             if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
-            return await deps.windowsPreview.open(context.nativePreviewHost, absolutePath(params.path), previewRect(params.rect));
+            return await deps.windowsPreview.open(context.nativePreviewHost, absolutePath(params.path), previewRect(params.rect), ...(params.surfaceId == null ? [] : [boundedString(params.surfaceId, 'surfaceId', 128)]));
           }
           case 'preview-native-move': {
             if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
-            return { ok: deps.windowsPreview.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect)) };
+            return { ok: deps.windowsPreview.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect), ...(typeof params.visible === 'boolean' ? [params.visible] : [])) };
           }
           case 'preview-native-focus': {
             if (!deps.windowsPreview || !context.nativePreviewHost) return { ok: false, code: 'WINDOWS_PREVIEW_UNAVAILABLE', message: 'Windows preview hosting is unavailable.' };
@@ -1020,6 +1020,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               record.filePath,
               previewRect(params.rect),
               () => { deps.previewResources.revoke(context.backpackId, resourceId); },
+              ...(params.surfaceId == null ? [] : [boundedString(params.surfaceId, 'surfaceId', 128)]),
             );
           }
           case 'preview-html-move': {

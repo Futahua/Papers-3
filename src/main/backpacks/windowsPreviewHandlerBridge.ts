@@ -10,12 +10,12 @@ const EXE = 'papers-windows-preview-host.exe';
 const STAMP = 'papers-windows-preview-host.stamp';
 export interface PreviewRect { x:number; y:number; width:number; height:number }
 export interface PreviewHostContext { ownerKey:string; layoutKey?:string; paneGroup?:string; parentHwnd:string; surfaceBounds:PreviewRect }
-interface Live { id:string; ownerKey:string; process:ChildProcessWithoutNullStreams; localRect:PreviewRect; surfaceBounds:PreviewRect; clsid:string }
+interface Live { id:string; ownerKey:string; surfaceKey:string; suspended:boolean; process:ChildProcessWithoutNullStreams; localRect:PreviewRect; surfaceBounds:PreviewRect; clsid:string }
 
 export interface WindowsPreviewHandlerBridge {
   probe(target:string):Promise<{available:boolean; clsid?:string}>;
-  open(context:PreviewHostContext,target:string,localRect:PreviewRect):Promise<{ok:true;sessionId:string;clsid:string}|{ok:false;error?:string}>;
-  move(ownerKey:string,sessionId:string,localRect:PreviewRect):boolean;
+  open(context:PreviewHostContext,target:string,localRect:PreviewRect,surfaceId?:string):Promise<{ok:true;sessionId:string;clsid:string}|{ok:false;error?:string}>;
+  move(ownerKey:string,sessionId:string,localRect:PreviewRect,visible?:boolean):boolean;
   focus(ownerKey:string,sessionId:string):boolean;
   close(ownerKey:string,sessionId:string):boolean;
   setOwnerSurfaceBounds(ownerKey:string,bounds:PreviewRect):void;
@@ -52,7 +52,8 @@ export function createWindowsPreviewHandlerBridge(input:{cacheDirectory:string;s
   }catch{try{fs.rmSync(executable,{force:true});fs.rmSync(stampFile,{force:true})}catch{};return null}}
 
   const sessions=new Map<string,Live>(), owners=new Map<string,string>();
-  const forget=(s:Live)=>{if(sessions.get(s.id)===s)sessions.delete(s.id);if(owners.get(s.ownerKey)===s.id)owners.delete(s.ownerKey)};
+  const ownerVisibility=new Map<string,boolean>();
+  const forget=(s:Live)=>{if(sessions.get(s.id)===s)sessions.delete(s.id);if(owners.get(s.surfaceKey)===s.id)owners.delete(s.surfaceKey)};
   const stop=(s:Live)=>{forget(s);try{s.process.stdin.write('CLOSE\n')}catch{};const timer=setTimeout(()=>{try{s.process.kill()}catch{}},750);timer.unref?.()};
   const sendMove=(s:Live)=>{const r=absoluteRect(s.surfaceBounds,s.localRect);if(!validRect(r))return;try{s.process.stdin.write(`MOVE\t${r.x}\t${r.y}\t${r.width}\t${r.height}\n`)}catch{stop(s)}};
 
@@ -60,7 +61,7 @@ export function createWindowsPreviewHandlerBridge(input:{cacheDirectory:string;s
     probe(target){return new Promise(resolve=>execFile(executable,['--probe',target],{timeout:4000,windowsHide:true,encoding:'utf8',maxBuffer:16384},(_e,stdout)=>{
       const p=parseLine(String(stdout??'').split(/\r?\n/).find(Boolean)??''); resolve(p.kind==='available'&&p.value?{available:true,clsid:p.value}:{available:false});
     }))},
-    async open(context,target,localRect){
+    async open(context,target,localRect,surfaceId){
       if(!validRect(context.surfaceBounds)||!validRect(localRect)||!/^\d+$/.test(context.parentHwnd))return{ok:false,error:'Invalid native preview host geometry.'};
       let safeTarget:string;
       try {
@@ -68,19 +69,19 @@ export function createWindowsPreviewHandlerBridge(input:{cacheDirectory:string;s
       } catch(error) {
         return{ok:false,error:error instanceof Error?error.message:String(error)};
       }
-      this.closeOwner(context.ownerKey); const r=absoluteRect(context.surfaceBounds,localRect);
+      const surfaceKey=context.ownerKey+'\0'+(surfaceId||'default'),previous=owners.get(surfaceKey);if(previous){const old=sessions.get(previous);if(old)stop(old);} const r=absoluteRect(context.surfaceBounds,localRect);
       const child=spawn(executable,['--host',safeTarget,context.parentHwnd,String(r.x),String(r.y),String(r.width),String(r.height)],{windowsHide:true,stdio:['pipe','pipe','pipe']});
       const line=await new Promise<string>(resolve=>{let done=false;const finish=(v:string)=>{if(done)return;done=true;clearTimeout(timer);resolve(v)};createInterface({input:child.stdout}).once('line',finish);child.once('error',e=>finish('ERR\t'+Buffer.from(String(e)).toString('base64')));child.once('exit',()=>finish('NONE'));const timer=setTimeout(()=>finish('NONE'),7000);timer.unref?.()});
       const p=parseLine(line); if(p.kind!=='ready'||!p.value){try{child.kill()}catch{};return{ok:false,...(p.value?{error:p.value}:{})}};
-      const s:Live={id:randomUUID(),ownerKey:context.ownerKey,process:child,localRect:{...localRect},surfaceBounds:{...context.surfaceBounds},clsid:p.value};
-      sessions.set(s.id,s);owners.set(s.ownerKey,s.id);child.once('exit',()=>forget(s));child.once('error',()=>forget(s));return{ok:true,sessionId:s.id,clsid:s.clsid};
+      const s:Live={id:randomUUID(),ownerKey:context.ownerKey,surfaceKey,suspended:false,process:child,localRect:{...localRect},surfaceBounds:{...context.surfaceBounds},clsid:p.value};
+      sessions.set(s.id,s);owners.set(surfaceKey,s.id);if(ownerVisibility.get(s.ownerKey)===false)child.stdin.write('HIDE\n');child.once('exit',()=>forget(s));child.once('error',()=>forget(s));return{ok:true,sessionId:s.id,clsid:s.clsid};
     },
-    move(ownerKey,sessionId,localRect){const s=sessions.get(sessionId);if(!s||s.ownerKey!==ownerKey||!validRect(localRect))return false;s.localRect={...localRect};sendMove(s);return true},
+    move(ownerKey,sessionId,localRect,visible){const s=sessions.get(sessionId);if(!s||s.ownerKey!==ownerKey||!validRect(localRect))return false;s.localRect={...localRect};if(visible!==undefined){s.suspended=!visible;try{s.process.stdin.write(visible&&ownerVisibility.get(ownerKey)!==false?'SHOW\n':'HIDE\n')}catch{stop(s);return false;}}sendMove(s);return true},
     focus(ownerKey,sessionId){const s=sessions.get(sessionId);if(!s||s.ownerKey!==ownerKey)return false;try{s.process.stdin.write('FOCUS\n');return true}catch{stop(s);return false}},
     close(ownerKey,sessionId){const s=sessions.get(sessionId);if(!s||s.ownerKey!==ownerKey)return false;stop(s);return true},
-    setOwnerSurfaceBounds(ownerKey,bounds){if(!validRect(bounds))return;const id=owners.get(ownerKey),s=id?sessions.get(id):undefined;if(!s)return;s.surfaceBounds={...bounds};sendMove(s)},
-    setOwnerVisible(ownerKey,visible){const id=owners.get(ownerKey),s=id?sessions.get(id):undefined;if(!s)return;try{s.process.stdin.write(visible?'SHOW\n':'HIDE\n')}catch{stop(s)}},
-    closeOwner(ownerKey){const id=owners.get(ownerKey),s=id?sessions.get(id):undefined;if(s)stop(s)},
+    setOwnerSurfaceBounds(ownerKey,bounds){if(!validRect(bounds))return;for(const s of sessions.values())if(s.ownerKey===ownerKey){s.surfaceBounds={...bounds};sendMove(s)}},
+    setOwnerVisible(ownerKey,visible){ownerVisibility.set(ownerKey,visible);for(const s of sessions.values())if(s.ownerKey===ownerKey)try{s.process.stdin.write(visible&&!s.suspended?'SHOW\n':'HIDE\n')}catch{stop(s)}},
+    closeOwner(ownerKey){for(const s of [...sessions.values()])if(s.ownerKey===ownerKey)stop(s);ownerVisibility.delete(ownerKey)},
     dispose(){for(const s of [...sessions.values()])stop(s)}
   };
 }
