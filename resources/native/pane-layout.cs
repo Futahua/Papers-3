@@ -79,6 +79,16 @@ public static class PaneLayout {
         if(!x){if(Collapsed(node.First,scope))first=a.Height;else if(Collapsed(node.Second,scope))first=extent-b.Height;}
         var left=x?new Rectangle(area.X,area.Y,first,area.Height):new Rectangle(area.X,area.Y,area.Width,first);
         var right=x?new Rectangle(area.X+first,area.Y,extent-first,area.Height):new Rectangle(area.X,area.Y+first,area.Width,extent-first);
+        if(x&&Collapsed(node.First,scope)!=Collapsed(node.Second,scope)){
+            bool firstCollapsed=Collapsed(node.First,scope);
+            var collapsed=firstCollapsed?node.First:node.Second;
+            var active=firstCollapsed?node.Second:node.First;
+            var strip=firstCollapsed?left:right;
+            int height=PresentedMinimum(collapsed,scope,minimum).Height;
+            strip.Height=height;
+            var expanded=new Rectangle(area.X,area.Y+height,area.Width,area.Height-height);
+            return ResolvePresentation(collapsed,strip,scope,minimum,frames)&&ResolvePresentation(active,expanded,scope,minimum,frames);
+        }
         return ResolvePresentation(node.First,left,scope,minimum,frames)&&ResolvePresentation(node.Second,right,scope,minimum,frames);
     }
     static PaneSplit Projection(PaneSplit node,PaneScope scope){

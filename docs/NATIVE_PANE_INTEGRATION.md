@@ -228,3 +228,9 @@ pane therefore leaves its restore strip in the left column and does not move
 the right column down. Authored ratios remain unchanged for restoration.
 Validation: 36 production pipe checks and 70 broader native checks pass, including
 an unchanged neighboring quadrant, restart recovery and subsequent edge authority.
+
+Whole-column minimize follow-up: when one horizontal subtree is entirely
+minimized, its compact strip stays at that column's authored position and the
+active subtree fills the width beneath it. Nested vertical leaves still collapse
+locally. The production fixture now verifies the creator's exact case: minimizing
+the right column while two left panes remain, then restoration and recovery.

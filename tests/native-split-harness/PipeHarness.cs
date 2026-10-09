@@ -74,7 +74,7 @@ public sealed class PipeHarness:Form {
         Call("presentation",Args("groupId","main","mode","minimized"));b=Frame(2);
         var minimizedSlot=D(Group("main")["slot"]);var remainingSlot=D(Group("right")["slot"]);var rootViewport=D(State["viewport"]);
         Check(Convert.ToDouble(minimizedSlot["height"])==32&&Convert.ToDouble(minimizedSlot["width"])==beforeMinA.R-beforeMinA.L&&
-            Frame(2).Box==beforeMinB.Box&&Native.IsIconic(fixtures[0].Handle),"minimized restore strip stays in its column and unrelated quadrant is unchanged");
+            Frame(2).L==beforeMinA.L&&Frame(2).R-Frame(2).L==Convert.ToDouble(rootViewport["width"])&&Frame(2).T==beforeMinB.T+32&&Native.IsIconic(fixtures[0].Handle),"minimized column keeps its local strip while active content reclaims the width");
         Call("viewport",Args("rect",Rect()));
         Check(Frame(2).Box==b.Box&&json.Serialize(State["tree"])==beforeMinTree,"viewport replay preserves collapsed presentation without rewriting authored split");
         Call("presentation",Args("groupId","main","mode","normal"));
@@ -87,6 +87,13 @@ public sealed class PipeHarness:Form {
         Call("presentation",Args("groupId","bottom","mode","minimized"));
         Check(Convert.ToDouble(D(Group("main")["slot"])["height"])==Convert.ToDouble(D(State["viewport"])["height"])-32&&
             Frame(2).Box==rightBeforeCollapse.Box&&json.Serialize(State["tree"])==nestedNormal,"nested minimized leaf releases its vertical space without destroying saved topology");
+        Call("presentation",Args("groupId","bottom","mode","normal"));
+        Call("presentation",Args("groupId","right","mode","minimized"));
+        var rightStrip=D(Group("right")["slot"]);var expandedLeft=D(Group("main")["slot"]);
+        Check(Convert.ToDouble(rightStrip["x"])>Convert.ToDouble(D(State["viewport"])["x"])&&Convert.ToDouble(rightStrip["height"])==32&&
+            Convert.ToDouble(expandedLeft["width"])==Convert.ToDouble(D(State["viewport"])["width"]),"minimized right column retains right-hand strip while nested left panes reclaim its width");
+        Call("presentation",Args("groupId","right","mode","normal"));
+        Call("presentation",Args("groupId","bottom","mode","minimized"));
         var minimizedFrame=Frame(2);Call("release-host");endpoint.WaitForExit(5000);
         snapshots.Clear();StartEndpoint();token="minimized-remount";Call("mount",Args("rect",Rect(),"headerHeight",32));
         Check((string)Group("bottom")["presentation"]=="minimized"&&Frame(2).Box==minimizedFrame.Box,"fresh process restores minimized topology and compact native presentation");
@@ -153,3 +160,4 @@ public sealed class PipeHarness:Form {
         BeginInvoke((Action)(()=>{foreach(var f in fixtures)f.Close();Close();}));
     }}
 }
+
