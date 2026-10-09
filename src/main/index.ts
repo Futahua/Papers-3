@@ -542,7 +542,8 @@ async function bootstrap(): Promise<void> {
   const workspaceTopologyStore = new WorkspaceTopologyStore(paths);
   await workspaceTopologyStore.initialize();
   const oldSessionPages = await workspaceTopologyStore.sessionSnapshots();
-  const startupPageSnapshot = await workspaceTopologyStore.consolidatePages();
+  const startupWindowSnapshots = await workspaceTopologyStore.startupWindowSnapshots();
+  const startupPageSnapshot = startupWindowSnapshots[0] ?? null;
   const legacyPageClaims = new Map<string,string>();
   for(const window of oldSessionPages)if(!window.window&&!window.session)for(const page of window.topology.surfaces)
     if(!legacyPageClaims.has(page.projectId))legacyPageClaims.set(page.projectId,page.surfaceKey??page.surfaceId);
@@ -981,12 +982,16 @@ async function bootstrap(): Promise<void> {
     }
     return instance;
   };
-  const windowInstance = makePapersWindow(savedBounds ?? undefined);
-  const saveSessionWindow = async (instance: Parameters<typeof preparePapersWindow>[0]): Promise<void> => {
+  const displays = () => screen.getAllDisplays().map(display => display.workArea);
+  const windowInstance = makePapersWindow(resolveWindowBounds(startupPageSnapshot?.window?.bounds, displays()) ?? savedBounds ?? undefined);
+  let preservingShutdown = false;
+  app.on('before-quit', () => { preservingShutdown = true; });
+  const saveTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  const saveSessionWindow = async (instance: Parameters<typeof preparePapersWindow>[0], parked = false): Promise<void> => {
     const id = workspaceIds.get(instance.window.id);
     if (!id || instance.window.isDestroyed()) return;
     const topology = workspaceTopologies.get(instance.window.id) ?? windowRestoreSnapshots.get(instance.window.id)?.topology ?? createWorkspaceTopology();
-    await workspaceTopologyStore.savePages(id, topology);
+    await workspaceTopologyStore.savePages(id, topology, {bounds: instance.window.getNormalBounds(), parked});
   };
   const lifecycleDependencies = (restoreBackpackId: string | null, snapshot?: SelectedWorkspaceSnapshot) => ({
     register: (instance: Parameters<typeof preparePapersWindow>[0]) => {
@@ -998,6 +1003,18 @@ async function bootstrap(): Promise<void> {
       papersWindows.setHostSender(instance.window.id, instance.hostView.webContents.id);
       workspaceIds.set(instance.window.id, snapshot?.workspaceId ?? randomUUID());
       if (snapshot) windowRestoreSnapshots.set(instance.window.id, snapshot);
+      const saveGeometry = () => {
+        const id = instance.window.id;
+        const previous = saveTimers.get(id);
+        if (previous) clearTimeout(previous);
+        saveTimers.set(id, setTimeout(() => {
+          saveTimers.delete(id);
+          void saveSessionWindow(instance).catch(error => console.error('[session] geometry save failed', error));
+        }, 500));
+      };
+      instance.window.on('move', saveGeometry);
+      instance.window.on('resize', saveGeometry);
+      instance.window.on('query-session-end', () => { preservingShutdown = true; });
       void saveSessionWindow(instance).catch(error => console.error('[session] register failed', error));
     },
     install: (instance: Parameters<typeof preparePapersWindow>[0]) => {
@@ -1020,9 +1037,12 @@ async function bootstrap(): Promise<void> {
     onClose: async (instance: Parameters<typeof preparePapersWindow>[0]) => {
       traceQuit('window:' + instance.window.id + ':flush:start');
       closingPapersWindows.add(instance.window.id);
+      const timer = saveTimers.get(instance.window.id);
+      if (timer) clearTimeout(timer);
+      saveTimers.delete(instance.window.id);
       await facade.waitForWorkspaceMutation(instance.window.id);
       await instance.projectSurfaces.hideAll();
-      await saveSessionWindow(instance);
+      await saveSessionWindow(instance, !preservingShutdown);
       traceQuit('window:' + instance.window.id + ':flush:done');
     },
     finalize: async (windowId: number) => {
@@ -1055,10 +1075,10 @@ async function bootstrap(): Promise<void> {
       }
     },
   });
-  const createAdditionalPapersWindow = async (): Promise<number> => {
+  const createAdditionalPapersWindow = async (snapshot?: SelectedWorkspaceSnapshot): Promise<number> => {
     const created = await composeAdditionalPapersWindow({
-      createWindow: () => makePapersWindow(),
-      lifecycleDependencies: () => lifecycleDependencies(null),
+      createWindow: () => makePapersWindow(resolveWindowBounds(snapshot?.window?.bounds, displays()) ?? undefined),
+      lifecycleDependencies: () => lifecycleDependencies(null, snapshot),
     });
     return created.window.id;
   };
@@ -2822,7 +2842,14 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       for(const windowId of papersWindows.windowIds){const page=currentWorkspaceTopology(windowId)?.surfaces.find(page=>(page.surfaceKey??page.surfaceId)===key);
         if(page){await facade.activateBackpackProjectSurface(papersWindows.get(windowId)!.owned.hostView.webContents.id,page.surfaceId);const window=papersWindows.get(windowId)!.owned.window;if(window.isMinimized())window.restore();window.focus();return;}
       }
-      throw new Error('This page is saved for the next reload.');
+      // A window explicitly closed with X stays parked after reboot. The
+      // Pages menu can reopen that saved window on demand, with its other
+      // pages and native layout still associated with the same workspace ID.
+      const saved=(await workspaceTopologyStore.sessionSnapshots()).find(record=>record.topology.surfaces.some(page=>(page.surfaceKey??page.surfaceId)===key));
+      if(!saved)throw new Error('That saved page no longer exists.');
+      const id=await createAdditionalPapersWindow(saved);
+      const window=papersWindows.get(id)?.owned.window;
+      if(window&&!window.isDestroyed()){if(window.isMinimized())window.restore();window.focus();}
     },
   });
   const resolveVisualTarget = (sender: { id: number }) => resolveVisualDiagnosticTarget(sender, {
@@ -3282,8 +3309,12 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
 
   // ---------------------------------------------------------------- load UI
   await preparedWindow.loadAndRollback();
-  // Every saved/parked window belongs to the same session. A failed secondary
-  // restore leaves its durable snapshot intact for the window menu to retry.
+  // Retain each unclosed window as its own page partition; never flatten them
+  // into one strip. A failed restore stays durable for later recovery.
+  for (const snapshot of startupWindowSnapshots.slice(1)) {
+    try { await createAdditionalPapersWindow(snapshot); }
+    catch (error) { console.error('[session] secondary restore failed:', snapshot.workspaceId, error); }
+  }
 
   // Look for a newer Papers once the interface is up. Silent unless a real
   // update is downloaded and ready; a packaged build only.

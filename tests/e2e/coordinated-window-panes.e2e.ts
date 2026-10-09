@@ -159,15 +159,17 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await evaluate(`host.fileCapability('pane-layout-command',{command:'close-group',groupId:'fullscreen-test',destination:latest.groups.find(g=>g.id!=='fullscreen-test').id,revision:latest.stateRevision})`);
   await waitFor(async()=>await evaluate<boolean>(`latest.groups.length===1`),10000,'temporary test group merged');
   await evaluate(`(async()=>{const r=await host.fileCapability('pane-layout-command',{command:'select',groupId:latest.groups[0].id,tabId:${JSON.stringify(attached[0])},revision:latest.stateRevision});if(!r.ok)throw Error(r.error);})()`);
-  await waitFor(async()=>await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-close'&&c.args[1].sessionId===${JSON.stringify(pdfSession)}&&c.reply.ok)`),10000,'switching to native tab closes hosted pinned PDF');
+  await waitFor(async()=>await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-move'&&c.args[1].sessionId===${JSON.stringify(pdfSession)}&&c.args[1].visible===false&&c.reply.ok)`),10000,'switching to native tab hides hosted pinned PDF');
+  expect(await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-close'&&c.args[1].sessionId===${JSON.stringify(pdfSession)})`)).toBe(false);
   await evaluate(`panes.selectPreview(previews.find(p=>p.id==='doc-pdf'));`);
-  await waitFor(async()=>await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-open'&&c.reply.ok&&c.reply.sessionId!==${JSON.stringify(pdfSession)})`),12000,'returning to pinned PDF reopens viewer');
+  await waitFor(async()=>await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-move'&&c.args[1].sessionId===${JSON.stringify(pdfSession)}&&c.args[1].visible===true&&c.reply.ok)`),12000,'returning to pinned PDF restores same viewer');
+  expect(await evaluate<number>(`calls.filter(c=>c.args[0]==='preview-pdf-open'&&c.reply.ok&&c.args[1].surfaceId==='tab:doc-pdf').length`)).toBe(1);
   await evaluate(`previews.push({id:'doc-pdf-two',path:${JSON.stringify(secondPdfPath)},name:'preview-two.pdf'});panes.setPreviews(previews);panes.splitPreview('doc-pdf-two','left');`);
   await waitFor(()=>launched.app.evaluate(({webContents})=>webContents.getAllWebContents().filter(w=>w.mainFrame.frames.some(f=>f.url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'))).length===2),12000,'two split PDFs retain independent live viewers');
   expect(await evaluate<boolean>(`(()=>{const opened=calls.filter(c=>c.args[0]==='preview-pdf-open'&&c.reply.ok);return new Set(opened.map(c=>c.args[1].surfaceId)).size===2;})()`)).toBe(true);
   await evaluate(`panes.selectPreview(previews.find(p=>p.id==='doc-image'));`);
   await waitFor(async()=>await evaluate<boolean>(`(()=>{const image=document.querySelector('.slice-file-preview:not([hidden]) img');return image?.complete&&image.naturalWidth>0&&image.getBoundingClientRect().width>0;})()`),10000,'pinned image decoded and rendered');
-  await waitFor(()=>launched.app.evaluate(({webContents})=>webContents.getAllWebContents().filter(w=>w.mainFrame.frames.some(f=>f.url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'))).length===1),10000,'switching one split leaves neighboring PDF viewer alive');
+  await waitFor(()=>launched.app.evaluate(({webContents})=>webContents.getAllWebContents().filter(w=>w.mainFrame.frames.some(f=>f.url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'))).length===2),10000,'switching tabs retains both independent PDF viewer sessions');
   expect(await evaluate<string[]>('errors')).toEqual([]);
   if(!embedded){
     // Same Backpack, two real Papers windows: pages own independent persistent scopes.
@@ -222,12 +224,12 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
     // Simulate reboot with lost process cache. Durable page layouts are enough.
     for(const file of await fs.readdir(path.join(data,'native-helpers')))if(/^pane-mount-.*\.json(?:\.bak)?$/.test(file))await fs.unlink(path.join(data,'native-helpers',file));
     launched=await launchPapers(profile,{fixtures:false});
-    await waitFor(()=>launched.app.evaluate(({webContents},id)=>webContents.getAllWebContents().filter(w=>w.getURL().startsWith('papers-backpack://'+id+'/')).length===2,id),20000,'both saved Papers pages restored');
+    await waitFor(()=>launched.app.evaluate(({webContents},id)=>webContents.getAllWebContents().filter(w=>w.getURL().startsWith('papers-backpack://'+id+'/')).length===1,id),20000,'only unclosed Papers window restored automatically');
     const resumed=<T>(js:string)=>launched.app.evaluate(async({webContents},args)=>{const page=webContents.getAllWebContents().find(w=>w.getURL().includes('papers-surface-key='+args.key));if(!page)throw Error('Saved page missing');return page.executeJavaScript(args.js,true);},{key:pageKey,js}) as Promise<T>;
     await evalInHost(launched.app,`papersHost.app.showPage(${JSON.stringify(pageKey)})`);
     await waitFor(()=>resumed<boolean>('Boolean(window.panes?.active())'),20000,'page-scoped native checkpoint remount');
     expect(await resumed<boolean>(`latest.groups.flatMap(g=>g.tabs).some(t=>t.id===${JSON.stringify(attached[0])}&&t.kind==='dormant')&&previews.some(p=>p.id==='doc-image')`)).toBe(true);
-    expect(await evalInHost<number>(launched.app,'papersHost.app.windows().then(rows=>rows.length)')).toBe(1);
+    expect(await evalInHost<number>(launched.app,'papersHost.app.windows().then(rows=>rows.length)')).toBe(2);
     expect(await evalInHost<number>(launched.app,'papersHost.app.pages().then(rows=>rows.length)')).toBe(2);
     const intentFiles=await fs.readdir(path.join(data,'pane-layouts'));const intents=await Promise.all(intentFiles.filter(f=>f.endsWith('.json')).map(f=>fs.readFile(path.join(data,'pane-layouts',f),'utf8')));
     expect(intents.length).toBe(2);expect(intents.join('')).not.toMatch(/"(?:Handle|Pid|Started|OwnerPid|OwnerStarted|Recovery)"/);
@@ -239,10 +241,10 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
     const dragPage=await evalInHost<string>(launched.app,`(()=>{const tab=[...document.querySelectorAll('.dv-tab')].at(-1);window.pageDrag=new DataTransfer();tab.dispatchEvent(new DragEvent('dragstart',{dataTransfer:pageDrag,bubbles:true,cancelable:true}));return pageDrag.getData('application/x-papers-page');})()`);
     expect(dragPage).toBeTruthy();
     await evalInHost(launched.app,`window.dispatchEvent(new DragEvent('dragend',{dataTransfer:pageDrag,clientX:innerWidth+100,clientY:70,screenX:2100,screenY:70,bubbles:true}))`);
-    await waitFor(()=>evalInHost<boolean>(launched.app,'papersHost.app.windows().then(rows=>rows.length===2)'),20000,'page drag out creates runtime window');
+    await waitFor(()=>evalInHost<boolean>(launched.app,'papersHost.app.windows().then(rows=>rows.length===3)'),20000,'page drag out creates a third runtime window');
     const windows=await evalInHost<any[]>(launched.app,'papersHost.app.windows()');const recipient=windows.find(w=>w.windowId===restoredWindow)!;
     await evalInHostWindow(launched.app,recipient.windowId,`(()=>{const data=new DataTransfer();data.setData('application/x-papers-page',${JSON.stringify(dragPage)});document.querySelector('.titlebar').dispatchEvent(new DragEvent('dragover',{dataTransfer:data,bubbles:true,cancelable:true}));document.querySelector('.titlebar').dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));})()`);
-    await waitFor(()=>evalInHostWindow<boolean>(launched.app,recipient.windowId,'papersHost.app.pages().then(rows=>rows.filter(p=>p.current).length===2)'),20000,'page drop combines windows');
+    await waitFor(()=>evalInHostWindow<boolean>(launched.app,recipient.windowId,'papersHost.app.pages().then(rows=>rows.filter(p=>p.current).length===1)'),20000,'page drop returns to its original window');
     await evalInHostWindow(launched.app,recipient.windowId,`papersHost.app.closePage(${JSON.stringify(pageKey)})`);
     await waitFor(()=>evalInHostWindow<boolean>(launched.app,recipient.windowId,`papersHost.app.pages().then(rows=>!rows.some(p=>p.key===${JSON.stringify(pageKey)}))`),10000,'explicit page close removes restore record');
   }

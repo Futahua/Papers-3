@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
-import { activateWorkspaceSurface, closeWorkspaceSurface, createWorkspaceTopology, openWorkspaceSurface, parseWorkspaceTopology, validatedWorkspaceTopologySchema, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import { closeWorkspaceSurface, parseWorkspaceTopology, validatedWorkspaceTopologySchema, type WorkspaceTopologyV1 } from '@shared/workspaceTopology';
 import { AtomicJsonStore } from './atomicStore';
 import type { PapersPaths } from './paths';
 
@@ -39,6 +39,7 @@ const durableSchema = z.object({
 });
 const readableSchema = z.union([legacySchema, durableSchema]);
 type DurableRecord = z.infer<typeof durableSchema>['workspaces'][number];
+type SessionWindow = z.infer<typeof sessionWindowSchema>;
 export type SelectedWorkspaceSnapshot = Readonly<DurableRecord>;
 
 export interface WorkspacePairCommit {
@@ -247,11 +248,17 @@ export class WorkspaceTopologyStore {
       .map(record => structuredClone(record));
   }
 
-  /** Runtime windows partition pages only; startup flattens those partitions. */
-  async savePages(workspaceId: string, topology: WorkspaceTopologyV1): Promise<void> {
+  /** Retain separate unclosed window identities. Parked windows keep their
+   * pages but do not open automatically after an explicit window close. */
+  async startupWindowSnapshots(): Promise<SelectedWorkspaceSnapshot[]> {
+    return (await this.sessionSnapshots()).filter(record => !record.window?.parked);
+  }
+
+  async savePages(workspaceId: string, topology: WorkspaceTopologyV1, window?: SessionWindow): Promise<void> {
     return this.enqueue(async () => {
       await this.initialize();const previous=this.workspaces.get(workspaceId);
-      this.workspaces.set(workspaceId,{workspaceId,topology:parseWorkspaceTopology(topology),session:true,updatedAt:this.now()});
+      this.workspaces.set(workspaceId,{...previous,workspaceId,topology:parseWorkspaceTopology(topology),session:true,
+        ...(window ? {window} : {}),updatedAt:this.now()});
       try {await this.persistDirty();}catch(error){if(previous)this.workspaces.set(workspaceId,previous);else this.workspaces.delete(workspaceId);this.dirty=true;throw error;}
     });
   }
@@ -264,28 +271,6 @@ export class WorkspaceTopologyStore {
         if(topology!==record.topology)this.workspaces.set(id,{...record,topology,updatedAt:this.now()});
       }
       try{await this.persistDirty();}catch(error){this.workspaces.clear();for(const [id,record] of before)this.workspaces.set(id,record);this.dirty=true;throw error;}
-    });
-  }
-
-  /** Restore every unclosed page once, in one strip, regardless of old windows. */
-  async consolidatePages(): Promise<SelectedWorkspaceSnapshot | null> {
-    return this.enqueue(async()=>{
-      const records=await this.sessionSnapshots();if(!records.length)return null;
-      const before=new Map(this.workspaces),selected=this.lastWorkspaceId;
-      let topology=createWorkspaceTopology();const keys=new Set<string>(),ids=new Set<string>();
-      let active:string|undefined;
-      for(const record of records){const focus=record.topology.groups.find(g=>g.groupId===record.topology.focusedGroupId)?.activeSurfaceId;
-        for(const page of record.topology.surfaces){const key=page.surfaceKey??page.surfaceId;if(keys.has(key))continue;keys.add(key);
-          const surfaceId=ids.has(page.surfaceId)?randomUUID():page.surfaceId;ids.add(surfaceId);
-          topology=openWorkspaceSurface(topology,{...page,surfaceId,surfaceKey:key});if(!active&&focus===page.surfaceId)active=surfaceId;
-        }
-      }
-      if(active)topology=activateWorkspaceSurface(topology,active);
-      const workspaceId=records[0]!.workspaceId;
-      for(const record of records)this.workspaces.delete(record.workspaceId);
-      const result={workspaceId,topology,session:true,updatedAt:this.now()};this.workspaces.set(workspaceId,result);this.lastWorkspaceId=workspaceId;
-      try{await this.persistDirty();}catch(error){this.workspaces.clear();for(const [id,record] of before)this.workspaces.set(id,record);this.lastWorkspaceId=selected;this.dirty=true;throw error;}
-      return structuredClone(result);
     });
   }
 

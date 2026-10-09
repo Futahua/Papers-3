@@ -337,26 +337,43 @@ describe('WorkspaceTopologyStore', () => {
 describe('Papers unclosed pages',()=>{
  const a='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',b='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
  const page=(name:string,key:string)=>openWorkspaceSurface(createWorkspaceTopology(),{surfaceId:'runtime-'+key,surfaceKey:key,projectId:'same-backpack',title:name});
- it('consolidates two window partitions into one strip while retaining two independent pages of the same Backpack',async()=>{
-  const store=new WorkspaceTopologyStore(papersPaths(directory));await store.savePages(a,page('First','page-one'));await store.savePages(b,page('Second','page-two'));
-  const result=await new WorkspaceTopologyStore(papersPaths(directory)).consolidatePages();
-  expect(result?.topology.groups).toHaveLength(1);expect(result?.topology.surfaces.map(p=>p.surfaceKey)).toEqual(['page-one','page-two']);expect(result?.window).toBeUndefined();
-  expect((await new WorkspaceTopologyStore(papersPaths(directory)).sessionSnapshots())).toHaveLength(1);
+ const firstBounds={x:-1100,y:90,width:1050,height:750},secondBounds={x:1400,y:120,width:1000,height:750};
+ it('reboots as two separate windows with stable identities and separate page topologies',async()=>{
+  const store=new WorkspaceTopologyStore(papersPaths(directory));
+  await store.savePages(a,page('First','page-one'),{parked:false,bounds:firstBounds});
+  await store.savePages(b,page('Second','page-two'),{parked:false,bounds:secondBounds});
+  const rebooted=new WorkspaceTopologyStore(papersPaths(directory));
+  const windows=await rebooted.startupWindowSnapshots();
+  expect(windows.map(w=>w.workspaceId)).toEqual([a,b]);
+  expect(windows.map(w=>w.topology.surfaces.map(p=>p.surfaceKey))).toEqual([['page-one'],['page-two']]);
+  expect(windows.map(w=>w.window?.bounds)).toEqual([firstBounds,secondBounds]);
+  expect((await rebooted.sessionSnapshots())).toHaveLength(2);
  });
- it('closing a saved page directly excludes it from startup without reopening its window',async()=>{
-  const store=new WorkspaceTopologyStore(papersPaths(directory));await store.savePages(a,page('First','page-one'));await store.savePages(b,page('Second','page-two'));
-  await store.closeSavedPage('page-two');const result=await new WorkspaceTopologyStore(papersPaths(directory)).consolidatePages();
-  expect(result?.topology.surfaces.map(p=>p.surfaceKey)).toEqual(['page-one']);
+ it('explicit X parks a window without destroying pages; OS shutdown leaves it active',async()=>{
+  const store=new WorkspaceTopologyStore(papersPaths(directory));
+  await store.savePages(a,page('First','page-one'),{parked:false,bounds:firstBounds});
+  await store.savePages(b,page('Second','page-two'),{parked:false,bounds:secondBounds});
+  await store.savePages(b,page('Second','page-two'),{parked:true,bounds:secondBounds});
+  const rebooted=new WorkspaceTopologyStore(papersPaths(directory));
+  expect((await rebooted.startupWindowSnapshots()).map(w=>w.workspaceId)).toEqual([a]);
+  expect((await rebooted.sessionSnapshots()).flatMap(r=>r.topology.surfaces.map(p=>p.surfaceKey))).toEqual(['page-one','page-two']);
+  await rebooted.savePages(b,page('Second','page-two'),{parked:false,bounds:secondBounds});
+  expect((await new WorkspaceTopologyStore(papersPaths(directory)).startupWindowSnapshots())).toHaveLength(2);
  });
- it('does not resurrect historical non-session records or duplicate a transferred durable page',async()=>{
+ it('closing a saved page excludes it without closing other windows',async()=>{
+  const store=new WorkspaceTopologyStore(papersPaths(directory));await store.savePages(a,page('First','page-one'));await store.savePages(b,page('Second','page-two'));
+  await store.closeSavedPage('page-two');const windows=await new WorkspaceTopologyStore(papersPaths(directory)).startupWindowSnapshots();
+  expect(windows.map(r=>r.topology.surfaces.map(p=>p.surfaceKey))).toEqual([['page-one'],[]]);
+ });
+ it('does not resurrect historical non-session records',async()=>{
   const store=new WorkspaceTopologyStore(papersPaths(directory));await store.commit(a,page('Historical','old'));await store.savePages(b,page('Current','current'));
-  const result=await store.consolidatePages();expect(result?.topology.surfaces.map(p=>p.surfaceKey)).toEqual(['current']);
-  await store.savePages(a,page('Duplicate','current'));expect((await store.consolidatePages())?.topology.surfaces).toHaveLength(1);
+  expect((await new WorkspaceTopologyStore(papersPaths(directory)).startupWindowSnapshots()).map(w=>w.workspaceId)).toEqual([b]);
  });
- it('compensates failed consolidation and close saves, retaining every previously unclosed page',async()=>{
-  const store=new WorkspaceTopologyStore(papersPaths(directory));await store.savePages(a,page('First','one'));await store.savePages(b,page('Second','two'));
+ it('compensates failed page parking and close saves, retaining every previously unclosed page',async()=>{
+  const store=new WorkspaceTopologyStore(papersPaths(directory));await store.savePages(a,page('First','one'),{parked:false,bounds:firstBounds});await store.savePages(b,page('Second','two'));
   const internal=store as unknown as {store:{save(value:unknown):Promise<void>}};const save=internal.store.save.bind(internal.store);internal.store.save=async()=>{throw Error('disk unavailable');};
-  await expect(store.consolidatePages()).rejects.toThrow('disk unavailable');expect((await store.sessionSnapshots()).flatMap(r=>r.topology.surfaces)).toHaveLength(2);
+  await expect(store.savePages(a,page('First','one'),{parked:true,bounds:firstBounds})).rejects.toThrow('disk unavailable');
+  expect((await store.startupWindowSnapshots()).map(w=>w.workspaceId)).toContain(a);
   await expect(store.closeSavedPage('two')).rejects.toThrow('disk unavailable');expect((await store.sessionSnapshots()).flatMap(r=>r.topology.surfaces)).toHaveLength(2);
   internal.store.save=save;await store.flush();expect((await new WorkspaceTopologyStore(papersPaths(directory)).sessionSnapshots()).flatMap(r=>r.topology.surfaces)).toHaveLength(2);
  });
