@@ -1001,7 +1001,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'preview-pdf-move': {
             if (!deps.pdfPreview || !context.nativePreviewHost) return { ok: false, code: 'PDF_PREVIEW_UNAVAILABLE', message: 'PDF preview hosting is unavailable.' };
-            return { ok: deps.pdfPreview.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect)) };
+            return { ok: deps.pdfPreview.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect), ...(typeof params.visible === 'boolean' ? [params.visible] : [])) };
           }
           case 'preview-pdf-close': {
             if (!deps.pdfPreview || !context.nativePreviewHost) return { ok: false, code: 'PDF_PREVIEW_UNAVAILABLE', message: 'PDF preview hosting is unavailable.' };
@@ -1024,7 +1024,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'preview-html-move': {
             if (!deps.htmlPreview || !context.nativePreviewHost) return { ok: false, code: 'HTML_PREVIEW_UNAVAILABLE', message: 'Interactive HTML preview hosting is unavailable.' };
-            return { ok: deps.htmlPreview.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect)) };
+            return { ok: deps.htmlPreview.move(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId), previewRect(params.rect), ...(typeof params.visible === 'boolean' ? [params.visible] : [])) };
           }
           case 'preview-html-close': {
             if (!deps.htmlPreview || !context.nativePreviewHost) return { ok: false, code: 'HTML_PREVIEW_UNAVAILABLE', message: 'Interactive HTML preview hosting is unavailable.' };

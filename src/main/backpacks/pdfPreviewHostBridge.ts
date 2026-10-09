@@ -20,6 +20,7 @@ interface LivePdfPreview {
   localRect: PreviewRect;
   surfaceBounds: PreviewRect;
   presented: boolean;
+  suspended: boolean;
   cleanup: () => void;
   stateKey: string | null;
   checkpointTimer: NodeJS.Timeout | null;
@@ -35,7 +36,7 @@ export interface PdfPreviewHostBridge {
     stateKey?: string | null,
     surfaceId?: string | null,
   ): Promise<{ ok: true; sessionId: string } | { ok: false; error?: string }>;
-  move(ownerKey: string, sessionId: string, localRect: PreviewRect): boolean;
+  move(ownerKey: string, sessionId: string, localRect: PreviewRect, visible?: boolean): boolean;
   close(ownerKey: string, sessionId: string): Promise<boolean>;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
@@ -275,6 +276,7 @@ export function createPdfPreviewHostBridge(input: {
         localRect: { ...localRect },
         surfaceBounds: { ...context.surfaceBounds },
         presented: false,
+        suspended: false,
         cleanup,
         stateKey,
         checkpointTimer: null,
@@ -310,10 +312,11 @@ export function createPdfPreviewHostBridge(input: {
       }
     },
 
-    move(ownerKey, sessionId, localRect) {
+    move(ownerKey, sessionId, localRect, visible) {
       const session = sessions.get(sessionId);
       if (!session || session.ownerKey !== ownerKey || !validRect(localRect)) return false;
       session.localRect = { ...localRect };
+      if(visible!==undefined){session.suspended=!visible;if(!visible&&session.presented){session.window.contentView.removeChildView(session.view);session.presented=false;}else if(visible&&!session.presented){session.window.contentView.addChildView(session.view);session.presented=true;}}
       place(session);
       return true;
     },
@@ -337,7 +340,7 @@ export function createPdfPreviewHostBridge(input: {
     setOwnerVisible(ownerKey, visible) {
       for (const session of sessions.values()) {
         if (session.ownerKey !== ownerKey || session.window.isDestroyed() || session.view.webContents.isDestroyed()) continue;
-        if (visible) {
+        if (visible && !session.suspended) {
           if (!session.presented) {
             session.window.contentView.addChildView(session.view);
             session.presented = true;

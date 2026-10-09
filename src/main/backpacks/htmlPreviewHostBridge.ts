@@ -43,6 +43,7 @@ interface LiveHtmlPreview {
   localRect: PreviewRect;
   surfaceBounds: PreviewRect;
   presented: boolean;
+  suspended: boolean;
   cleanup: () => void;
 }
 
@@ -53,7 +54,7 @@ export interface HtmlPreviewHostBridge {
     localRect: PreviewRect,
     cleanup: () => void,
   ): Promise<{ ok: true; sessionId: string } | { ok: false; error?: string }>;
-  move(ownerKey: string, sessionId: string, localRect: PreviewRect): boolean;
+  move(ownerKey: string, sessionId: string, localRect: PreviewRect, visible?: boolean): boolean;
   close(ownerKey: string, sessionId: string): boolean;
   setOwnerSurfaceBounds(ownerKey: string, bounds: PreviewRect): void;
   setOwnerVisible(ownerKey: string, visible: boolean): void;
@@ -164,6 +165,7 @@ export function createHtmlPreviewHostBridge(input: {
         localRect: { ...localRect },
         surfaceBounds: { ...context.surfaceBounds },
         presented: false,
+        suspended: false,
         cleanup,
       };
       sessions.set(session.id, session);
@@ -203,10 +205,11 @@ export function createHtmlPreviewHostBridge(input: {
       }
     },
 
-    move(ownerKey, sessionId, localRect) {
+    move(ownerKey, sessionId, localRect, visible) {
       const session = sessions.get(sessionId);
       if (!session || session.ownerKey !== ownerKey || !validRect(localRect)) return false;
       session.localRect = { ...localRect };
+      if(visible!==undefined){session.suspended=!visible;if(!visible&&session.presented){session.window.contentView.removeChildView(session.view);session.presented=false;}else if(visible&&!session.presented){session.window.contentView.addChildView(session.view);session.presented=true;}}
       place(session);
       return true;
     },
@@ -231,7 +234,7 @@ export function createHtmlPreviewHostBridge(input: {
       const id = owners.get(ownerKey);
       const session = id ? sessions.get(id) : undefined;
       if (!session || session.window.isDestroyed() || session.webContents.isDestroyed()) return;
-      if (visible) {
+      if (visible && !session.suspended) {
         if (!session.presented) {
           session.window.contentView.addChildView(session.view);
           session.presented = true;

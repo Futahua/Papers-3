@@ -241,3 +241,11 @@ that rail into adjacent sections in authored leaf order; active content fills
 the remaining width without a top-row offset. The shared renderer displays only
 restorable tab icons in vertical rails. Ordinary vertical-sibling minimize stays
 horizontal. Native fixture checks cover both sides and a two-group shared rail.
+
+Fullscreen preview lifetime, 2026-10-09: temporary occlusion by another maximized
+group suspends the existing preview instead of collapsing and reopening it.
+PDF/HTML move requests can detach presentation while retaining their live viewer;
+owner visibility restoration respects session suspension. Selection changes and
+explicit minimize retain the existing close lifecycle. The Electron fixture now
+maximizes a neighboring native group and verifies the same PDF session resumes
+without any close call. Both direct and embedded routes pass.

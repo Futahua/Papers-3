@@ -73,3 +73,13 @@ it('invalid PDF surface identities clean up the resource without opening a view'
   expect(cleanup).toHaveBeenCalledTimes(2);
   expect(views).toHaveLength(0);
 });
+
+it('temporary fullscreen suspension preserves the same viewer and survives owner hide/show',async()=>{
+ const f=fixture(),opened=await f.open('pane:first');if(!opened.ok)throw Error('open failed');
+ expect(f.bridge.move('wrong-owner',opened.sessionId,f.rect,false)).toBe(false);
+ expect(f.bridge.move(f.context.ownerKey,opened.sessionId,f.rect,false)).toBe(true);
+ expect(f.visible.size).toBe(0);f.bridge.setOwnerVisible(f.context.ownerKey,false);f.bridge.setOwnerVisible(f.context.ownerKey,true);
+ expect(f.visible.size).toBe(0);expect(views[0].closed).toBe(false);
+ f.bridge.move(f.context.ownerKey,opened.sessionId,f.rect,true);
+ expect(f.visible.size).toBe(1);expect(views).toHaveLength(1);expect(views[0].webContents.loadURL).toHaveBeenCalledTimes(1);f.bridge.dispose();
+});

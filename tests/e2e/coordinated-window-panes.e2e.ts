@@ -129,6 +129,15 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await waitFor(async()=>await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-open'&&c.reply.ok&&c.args[1].rect.width>100&&c.args[1].rect.height>100)`),12000,'pinned PDF viewer opened at usable bounds');
   await waitFor(()=>launched.app.evaluate(({webContents})=>webContents.getAllWebContents().some(w=>w.mainFrame.frames.some(f=>f.url.startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/')))),12000,'actual pinned PDF viewer frame');
   const pdfSession=await evaluate<string>(`calls.findLast(c=>c.args[0]==='preview-pdf-open'&&c.reply.ok).reply.sessionId`);
+  await evaluate(`host.fileCapability('pane-layout-command',{command:'split',tabId:${JSON.stringify(attached[1])},groupId:latest.groups[0].id,newGroupId:'fullscreen-test',side:'right',revision:latest.stateRevision})`);
+  await waitFor(async()=>await evaluate<boolean>(`latest.groups.length===2`),10000,'fullscreen neighbor created');
+  await evaluate(`(async()=>{const other=latest.groups.find(g=>g.id==='fullscreen-test');window.fullscreenOther=other.id;await host.fileCapability('pane-layout-command',{command:'presentation',groupId:other.id,mode:'maximized',revision:latest.stateRevision});})()`);
+  await waitFor(async()=>await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-move'&&c.args[1].sessionId===${JSON.stringify(pdfSession)}&&c.args[1].visible===false&&c.reply.ok)`),10000,'fullscreen suspends neighboring PDF without closing it');
+  await evaluate(`host.fileCapability('pane-layout-command',{command:'presentation',groupId:fullscreenOther,mode:'normal',revision:latest.stateRevision})`);
+  await waitFor(async()=>await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-move'&&c.args[1].sessionId===${JSON.stringify(pdfSession)}&&c.args[1].visible===true&&c.reply.ok)`),10000,'fullscreen exit restores same PDF session');
+  expect(await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-close'&&c.args[1].sessionId===${JSON.stringify(pdfSession)})`)).toBe(false);
+  await evaluate(`host.fileCapability('pane-layout-command',{command:'close-group',groupId:'fullscreen-test',destination:latest.groups.find(g=>g.id!=='fullscreen-test').id,revision:latest.stateRevision})`);
+  await waitFor(async()=>await evaluate<boolean>(`latest.groups.length===1`),10000,'temporary test group merged');
   await evaluate(`(async()=>{const r=await host.fileCapability('pane-layout-command',{command:'select',groupId:latest.groups[0].id,tabId:${JSON.stringify(attached[0])},revision:latest.stateRevision});if(!r.ok)throw Error(r.error);})()`);
   await waitFor(async()=>await evaluate<boolean>(`calls.some(c=>c.args[0]==='preview-pdf-close'&&c.args[1].sessionId===${JSON.stringify(pdfSession)}&&c.reply.ok)`),10000,'switching to native tab closes hosted pinned PDF');
   await evaluate(`panes.selectPreview(previews.find(p=>p.id==='doc-pdf'));`);
