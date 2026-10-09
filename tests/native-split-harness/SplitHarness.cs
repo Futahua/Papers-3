@@ -531,6 +531,39 @@ public sealed class SplitHarness:Form {
                   Native.IsWindowVisible(hwnd)!=saved.Visible||
                   ((Native.GetWindowLong(hwnd,-20)&8)!=(saved.ExStyle&8)))restored=false;}
             check(restored,"released windows restore size, position, show state and topmost bit");
+            using(var physical=new PaneCoordinatorHub(Handle)){
+                var peers=fixtures.Where(p=>!p.HasExited&&p.MainWindowHandle!=IntPtr.Zero).Take(2).ToArray();
+                if(peers.Length!=2)throw new Exception("Two live fixture peers required for physical scope tests.");
+                using(var first=new PaneCoordinator(Handle,Path.Combine(directory,"scope-A-"+Guid.NewGuid()+".json"),null,null,44,physical,"ayg",true))
+                using(var second=new PaneCoordinator(Handle,Path.Combine(directory,"scope-B-"+Guid.NewGuid()+".json"),null,null,44,physical,"proxima",true)){
+                    var area=Viewport();int half=area.Width/2;
+                    first.SetViewport(new Rectangle(area.X,area.Y,half,area.Height),1);
+                    second.SetViewport(new Rectangle(area.X+half,area.Y,area.Width-half,area.Height),1);
+                    second.SetPresented(false);
+                    string one=first.Attach(peers[0].MainWindowHandle,(uint)peers[0].Id,"main",first.Scope.BindingGeneration,first.Scope.StateRevision);
+                    string two=second.Attach(peers[1].MainWindowHandle,(uint)peers[1].Id,"main",second.Scope.BindingGeneration,second.Scope.StateRevision);
+                    check(first.Scope.ScopeId=="ayg"&&second.Scope.ScopeId=="proxima"&&first.Group("main").SelectedTab==one&&
+                        second.Group("main").SelectedTab==two&&Native.IsIconic(second.Find(two).Session.Handle)&&!Native.IsIconic(first.Find(one).Session.Handle),
+                        "one physical event owner retains independent AYG and Proxima scope selection and visibility");
+                    first.AddDocument("preview:fixture","main",first.Scope.BindingGeneration,first.Scope.StateRevision);
+                    first.SelectTab("main","preview:fixture",first.Scope.BindingGeneration,first.Scope.StateRevision);
+                    second.SetPresented(true);
+                    check(first.Group("main").SelectedTab=="preview:fixture"&&Native.IsIconic(first.Find(one).Session.Handle)&&
+                        !Native.IsIconic(second.Find(two).Session.Handle),"document selection suppresses only its own group's native peer");
+                    first.SplitAndMove("preview:fixture","main","document-bottom","bottom",first.Scope.BindingGeneration,first.Scope.StateRevision);
+                    first.MoveTab("preview:fixture","main",first.Scope.BindingGeneration,first.Scope.StateRevision);
+                    first.CloseGroup("document-bottom","main",first.Scope.BindingGeneration,first.Scope.StateRevision);
+                    first.ReorderTab("main","preview:fixture",one,first.Scope.BindingGeneration,first.Scope.StateRevision);
+                    first.SelectTab("main",one,first.Scope.BindingGeneration,first.Scope.StateRevision);
+                    check(first.IsDocument("preview:fixture")&&first.Group("main").OrderedTabs[0]=="preview:fixture"&&
+                        first.Find(one).Session.Handle==peers[0].MainWindowHandle,"document split, transfer, group merge and mixed-strip reorder preserve the native session");
+                    var secondBox=second.Group("main").ResolvedFrame;long secondMoves=second.PlacementGeneration;
+                    first.Release();Pump(70);
+                    Native.Rect actualSecond;Native.GetWindowRect(second.Find(two).Session.Handle,out actualSecond);
+                    check(actualSecond.Box==secondBox&&second.PlacementGeneration==secondMoves&&
+                        !HostContains(new Point(secondBox.X+30,secondBox.Y+50)),"releasing one Backpack scope preserves another scope's HWND geometry and host cutout");
+                }
+            }
         }catch(Exception ex){passed=false;report.Add("EXCEPTION "+ex);}
         File.WriteAllLines(Path.Combine(directory,"smoke-result.txt"),report);
         status.Text=passed?"Smoke PASS; all leased windows released.":"Smoke FAIL; inspect smoke-result.txt";

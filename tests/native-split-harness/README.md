@@ -1,6 +1,6 @@
 # Native split experiment
 
-This is the visible test host for the experimental coordinator in `resources/native/pane-*.cs`. It does not install or activate a replacement in Papers, AYG or Proxima. The production bridge still compiles only the accepted single-pane helper and WindowSession.
+This is the visible test host for the accepted coordinator in `resources/native/pane-*.cs`. Running it does not install or activate a replacement in the installed Papers application. Source integration now connects the coordinator to AYG and Proxima; see [the integration record](../../docs/NATIVE_PANE_INTEGRATION.md).
 
 ## Build and test
 
@@ -29,7 +29,7 @@ The default host starts three disposable native fixture applications, with two t
 
 ## Latest evidence, 2026-10-09
 
-The final validation run passed **66 checks**, including:
+The experiment commit recorded **66 checks**; the integrated native source now passes **70 checks**, including:
 
 - repeated selection, unchanged neighboring placements and idle settling;
 - headers following asymmetric native divider movement, lower headers between their own window and the upper window, and host-region hit areas;
@@ -47,11 +47,11 @@ The final validation run passed **66 checks**, including:
 
 The border tests change actual HWND rectangles and invoke gesture start/end callbacks. They do not synthesize mouse or keyboard input and do not establish physical mouse-drag acceptance. The fullscreen check uses a fixture's real borderless monitor-sized window; it does not establish Chrome/AutoCAD fullscreen behavior. Shared-region checks exercise the existing compositor with independent client identities; coexistence in a live Papers host remains unsigned.
 
-## Remaining acceptance before integration
+## Remaining live acceptance
 
 Physically drag borders out and back, rapidly click tabs, reorder/transfer/drop onto split arrows, and type/click in a dialog crossing a divider. Try a real application's fullscreen/restore and moving the host across monitors with different DPI settings. Verify the same behavior after remount and with other Papers native surfaces present.
 
-AYG mixed native/document strips, pinned-preview group content, the authorized Electron bridge, and the sticky Proxima sidecar are the next integration stage. They are deliberately not connected by this experiment. Their current single-pane route remains available.
+The mixed native/document strips, pinned-preview group content, authorized Electron bridge and sticky Proxima sidecar are connected in source. `build-pipe.ps1` additionally verifies the production endpoint with 25 assertions. Installed behavior has not been replaced. The legacy single-pane route remains available to clients that do not mount the coordinator.
 
 Continuation backup: `D:\CodexTemp\native-split-before-continuation-20261009-083422`.
 

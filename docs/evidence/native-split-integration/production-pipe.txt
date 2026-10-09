@@ -1,0 +1,25 @@
+PASS production mount begins with one group
+PASS first production mount migrates legacy membership and stable active identity
+PASS attach retains all peers and minimizes inactive tabs
+PASS actual pipe selection changes native show states
+PASS two selected native groups present together
+PASS production pipe fits adjoining native frames without a gap
+PASS document selection suppresses only its own group's native peer
+PASS mixed preview/native order is authoritative
+PASS document edge resizes the shared native boundary through the same layout owner
+PASS rejected document edge leaves neighboring placement intact
+PASS rejected root viewport preserves native placement and retained host geometry
+PASS stale command cannot reverse the current tab
+PASS native outer edge authors the production viewport
+PASS old page viewport replay cannot undo native edge authority
+PASS moving Papers translates all native frames once
+PASS selection in another group honors maximized visibility
+PASS mounting another Backpack suspends previous membership
+PASS same-host remount retains topology and mixed membership
+PASS old surface binding cannot select retained windows
+PASS production endpoint exits after release acknowledgement
+PASS release restores exact original fixture 0
+PASS release restores exact original fixture 1
+PASS release restores exact original fixture 2
+PASS fresh production process restores checkpoint topology and stable tab identities
+PASS group X merges documents and windows without detaching

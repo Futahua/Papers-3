@@ -14,6 +14,7 @@ interface PdfReadingState {
 interface LivePdfPreview {
   id: string;
   ownerKey: string;
+  surfaceKey: string;
   window: BaseWindow;
   view: WebContentsView;
   localRect: PreviewRect;
@@ -32,6 +33,7 @@ export interface PdfPreviewHostBridge {
     localRect: PreviewRect,
     cleanup: () => void,
     stateKey?: string | null,
+    surfaceId?: string | null,
   ): Promise<{ ok: true; sessionId: string } | { ok: false; error?: string }>;
   move(ownerKey: string, sessionId: string, localRect: PreviewRect): boolean;
   close(ownerKey: string, sessionId: string): Promise<boolean>;
@@ -181,11 +183,11 @@ export function createPdfPreviewHostBridge(input: {
   stateDirectory: string;
 }): PdfPreviewHostBridge {
   const sessions = new Map<string, LivePdfPreview>();
-  const owners = new Map<string, string>();
+  const surfaces = new Map<string, string>();
 
   const forget = (session: LivePdfPreview): void => {
     if (sessions.get(session.id) === session) sessions.delete(session.id);
-    if (owners.get(session.ownerKey) === session.id) owners.delete(session.ownerKey);
+    if (surfaces.get(session.surfaceKey) === session.id) surfaces.delete(session.surfaceKey);
   };
 
   const cleanupSession = async (session: LivePdfPreview): Promise<void> => {
@@ -220,7 +222,7 @@ export function createPdfPreviewHostBridge(input: {
   };
 
   return {
-    async open(context, url, localRect, cleanup, stateKey = null) {
+    async open(context, url, localRect, cleanup, stateKey = null, surfaceId = null) {
       if (!validRect(context.surfaceBounds) || !validRect(localRect)) {
         cleanup();
         return { ok: false, error: 'Invalid PDF preview geometry.' };
@@ -241,7 +243,14 @@ export function createPdfPreviewHostBridge(input: {
         return { ok: false, error: 'PDF preview state key is invalid.' };
       }
 
-      const priorId = owners.get(context.ownerKey);
+      // A surface names presentation within this already-authorized owner. It
+      // cannot grant authority over a different Backpack or Papers window.
+      if (surfaceId !== null && (typeof surfaceId !== 'string' || !surfaceId.length || surfaceId.length > 128)) {
+        cleanup();
+        return { ok: false, error: 'PDF preview surface identity is invalid.' };
+      }
+      const surfaceKey = JSON.stringify([context.ownerKey, surfaceId]);
+      const priorId = surfaces.get(surfaceKey);
       const prior = priorId ? sessions.get(priorId) : undefined;
       if (prior) await cleanupSession(prior);
       const window = input.resolveWindow(context.ownerKey);
@@ -260,6 +269,7 @@ export function createPdfPreviewHostBridge(input: {
       const session: LivePdfPreview = {
         id: randomUUID(),
         ownerKey: context.ownerKey,
+        surfaceKey,
         window,
         view,
         localRect: { ...localRect },
@@ -271,7 +281,7 @@ export function createPdfPreviewHostBridge(input: {
         closing: false,
       };
       sessions.set(session.id, session);
-      owners.set(session.ownerKey, session.id);
+      surfaces.set(session.surfaceKey, session.id);
       view.webContents.once('destroyed', () => {
         if (sessions.get(session.id) !== session) return;
         forget(session);
@@ -317,33 +327,33 @@ export function createPdfPreviewHostBridge(input: {
 
     setOwnerSurfaceBounds(ownerKey, bounds) {
       if (!validRect(bounds)) return;
-      const id = owners.get(ownerKey);
-      const session = id ? sessions.get(id) : undefined;
-      if (!session) return;
-      session.surfaceBounds = { ...bounds };
-      place(session);
+      for (const session of sessions.values()) {
+        if (session.ownerKey !== ownerKey) continue;
+        session.surfaceBounds = { ...bounds };
+        place(session);
+      }
     },
 
     setOwnerVisible(ownerKey, visible) {
-      const id = owners.get(ownerKey);
-      const session = id ? sessions.get(id) : undefined;
-      if (!session || session.window.isDestroyed() || session.view.webContents.isDestroyed()) return;
-      if (visible) {
-        if (!session.presented) {
-          session.window.contentView.addChildView(session.view);
-          session.presented = true;
+      for (const session of sessions.values()) {
+        if (session.ownerKey !== ownerKey || session.window.isDestroyed() || session.view.webContents.isDestroyed()) continue;
+        if (visible) {
+          if (!session.presented) {
+            session.window.contentView.addChildView(session.view);
+            session.presented = true;
+          }
+          place(session);
+        } else if (session.presented) {
+          session.window.contentView.removeChildView(session.view);
+          session.presented = false;
         }
-        place(session);
-      } else if (session.presented) {
-        session.window.contentView.removeChildView(session.view);
-        session.presented = false;
       }
     },
 
     closeOwner(ownerKey) {
-      const id = owners.get(ownerKey);
-      const session = id ? sessions.get(id) : undefined;
-      if (session) void cleanupSession(session);
+      for (const session of [...sessions.values()]) {
+        if (session.ownerKey === ownerKey) void cleanupSession(session);
+      }
     },
 
     raiseWindow(windowId) {

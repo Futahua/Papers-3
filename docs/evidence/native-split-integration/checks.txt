@@ -1,0 +1,49 @@
+typecheck.txt
+
+> papers@1.3.11 typecheck
+> tsc --noEmit -p tsconfig.json
+
+papers-unit-tests.txt
+
+> papers@1.3.11 test
+> vitest run
+
+
+ RUN  v4.1.10 D:/Letters/MatTroiSeConMoc/Products/Papers/Source
+
+
+ Test Files  138 passed | 1 skipped (139)
+      Tests  1375 passed | 4 skipped (1379)
+   Start at  10:38:01
+   Duration  5.08s (transform 7.15s, setup 0ms, import 11.95s, tests 29.24s, environment 19ms)
+
+ayg-tests.txt
+✔ C1: malformed broadcast reports decode failure without replacing the model (0.1571ms)
+✔ 018: the reservation holds ordinary surfaces out until the designated surface owns the lock (10.6694ms)
+✔ 018: a transfer aborted before release leaves the old writer still writing (0.2064ms)
+✔ 018: a transfer aborted after release still forces a disk reload before anyone writes (0.1183ms)
+✔ stale preference edits preserve newer pills and explicit pill removal survives rebase (0.0829ms)
+✔ embedded project editing uses its Papers scope lease even when browser locks are exposed (0.0552ms)
+ℹ tests 1986
+ℹ suites 0
+ℹ pass 1986
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16094.1387
+build.txt
+out/preload/program.cjs                     1.82 kB
+out/preload/host.cjs                        7.14 kB
+out/preload/hostDevControl.cjs              7.70 kB
+out/preload/backpackProject.cjs            52.22 kB
+out/preload/backpackProjectDevControl.cjs  72.76 kB
+✓ built in 55ms
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 130 modules transformed.
+rendering chunks...
+../../out/renderer/index.html                     0.63 kB
+../../out/renderer/assets/index-DDED9636.css    191.06 kB
+../../out/renderer/assets/index-KLcj3a_6.js   1,610.27 kB
+✓ built in 1.11s

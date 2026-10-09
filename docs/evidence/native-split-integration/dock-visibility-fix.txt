@@ -1,0 +1,10 @@
+Docking follow-up 2026-10-09
+Focused bridge checks: 15 passed.
+Typecheck/build: passed.
+Electron direct and authorized embedded routes: 2 passed.
+Late legacy teardown leaves scope presented and native placements match requested bounds.
+Root animation suppressed before saved-width mount; first mount observes final width.
+NSIS installer exit: 0. Installed app.asar matches package.
+Live ChatGPT HWND matches content frame; visible, non-iconic; host region cut-out verified.
+Five-second idle bounds unchanged. No mouse/keyboard input synthesized.
+Evidence: D:\CodexTemp\papers-dock-visibility-fix-20261009\live-verification.json

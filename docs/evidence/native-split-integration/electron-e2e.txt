@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 D:/Letters/MatTroiSeConMoc/Products/Papers/Source
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  10:37:31
+   Duration  18.54s (transform 32ms, setup 0ms, import 216ms, tests 18.21s, environment 0ms)
+

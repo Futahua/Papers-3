@@ -25,6 +25,23 @@ afterEach(() => { Object.defineProperty(process, 'platform', { value: platform }
 const bounds = { x: 20, y: 30, width: 400, height: 500 };
 const context = (ownerKey: string, parentHwnd = '456') => ({ ownerKey, parentHwnd, surfaceBounds: { x: 10, y: 15, width: 1000, height: 800 } });
 
+it('legacy pane teardown cannot hide a mounted native composition', async () => {
+  const bridge = createChromePaneBridge({ cacheDirectory: 'X:/cache', nativeDirectory: 'X:/native' })!;
+  await bridge.coordinator!.mount(context('1:ayg'), bounds, 32);
+  const child = h.children[0]; const before = child.commands.length;
+  bridge.setPaneVisible('1:ayg', false);
+  bridge.setPaneVisible('1:ayg', true);
+  await bridge.coordinator!.command('1:ayg', 'snapshot');
+  expect(child.commands.slice(before).map((c: any) => c.op)).toEqual(['snapshot']);
+  bridge.setOwnerVisible('1:ayg', false);
+  await bridge.coordinator!.command('1:ayg', 'present', { visible: false });
+  expect(child.commands.at(-1)).toMatchObject({ op: 'present', visible: false });
+  bridge.setOwnerVisible('1:ayg', true);
+  await bridge.coordinator!.command('1:ayg', 'snapshot');
+  expect(child.commands.findLast((c: any) => c.op === 'present')).toMatchObject({ visible: true });
+  await bridge.coordinator!.dispose();
+});
+
 it('attaching an application creates no Chrome tab and routes retained tabs to the active view', async () => {
   const onTabs = vi.fn();
   const bridge = createChromePaneBridge({ cacheDirectory: 'X:/cache', nativeDirectory: 'X:/native', onTabs })!;

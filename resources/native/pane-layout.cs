@@ -56,14 +56,41 @@ public static class PaneLayout {
         if(scope.Order.Count==0)return true;
         Ensure(scope);if(scope.Root==null)return false;
         var candidate=scope.Root.Copy();var frames=new Dictionary<string,Rectangle>();
-        if(!ResolveNode(candidate,scope.Viewport,id=>SlotMinimum(scope,scope.Groups[id],minimum),frames))return false;
+        // Resolve presentation inside each authored branch. Horizontal columns
+        // retain their quadrant; vertical siblings reclaim only local height.
+        var unused=new Dictionary<string,Rectangle>();
+        ResolveNode(candidate,scope.Viewport,id=>Size.Empty,unused);
+        if(!ResolvePresentation(candidate,scope.Viewport,scope,minimum,frames))return false;
         scope.Root=candidate;
         foreach(var pair in frames)scope.Groups[pair.Key].ResolvedFrame=Content(scope,pair.Value);
         return true;
     }
+    static int StripHeight(PaneScope scope){return Math.Max(32,scope.HeaderHeight);}
+    static bool Collapsed(PaneSplit node,PaneScope scope){return Leaves(node).All(id=>scope.Groups[id].Presentation=="minimized");}
+    static Size PresentedMinimum(PaneSplit node,PaneScope scope,Func<PaneGroup,Size> minimum){
+        return Minimum(node,id=>scope.Groups[id].Presentation=="minimized"?new Size(DefaultMinWidth,StripHeight(scope)):SlotMinimum(scope,scope.Groups[id],minimum));
+    }
+    static bool ResolvePresentation(PaneSplit node,Rectangle area,PaneScope scope,Func<PaneGroup,Size> minimum,Dictionary<string,Rectangle> frames){
+        var min=PresentedMinimum(node,scope,minimum);if(area.Width<min.Width||area.Height<min.Height)return false;
+        if(node.Leaf){frames[node.GroupId]=scope.Groups[node.GroupId].Presentation=="minimized"?new Rectangle(area.X,area.Y,area.Width,StripHeight(scope)):area;return true;}
+        bool x=node.Axis=="X";var a=PresentedMinimum(node.First,scope,minimum);var b=PresentedMinimum(node.Second,scope,minimum);
+        int extent=x?area.Width:area.Height;
+        int first=Math.Max(x?a.Width:a.Height,Math.Min(extent-(x?b.Width:b.Height),(int)Math.Round(extent*node.Ratio)));
+        if(!x){if(Collapsed(node.First,scope))first=a.Height;else if(Collapsed(node.Second,scope))first=extent-b.Height;}
+        var left=x?new Rectangle(area.X,area.Y,first,area.Height):new Rectangle(area.X,area.Y,area.Width,first);
+        var right=x?new Rectangle(area.X+first,area.Y,extent-first,area.Height):new Rectangle(area.X,area.Y+first,area.Width,extent-first);
+        return ResolvePresentation(node.First,left,scope,minimum,frames)&&ResolvePresentation(node.Second,right,scope,minimum,frames);
+    }
+    static PaneSplit Projection(PaneSplit node,PaneScope scope){
+        if(node==null)return null;
+        if(node.Leaf)return new PaneSplit{GroupId=node.GroupId,Frame=Slot(scope,scope.Groups[node.GroupId]),Source=node};
+        var first=Projection(node.First,scope);var second=Projection(node.Second,scope);
+        return new PaneSplit{Axis=node.Axis,Ratio=node.Ratio,First=first,Second=second,Source=node,Frame=Rectangle.Union(first.Frame,second.Frame)};
+    }
+    public static Size PresentationMinimum(PaneScope scope,Func<PaneGroup,Size> minimum){return PresentedMinimum(scope.Root,scope,minimum);}
     static bool Contains(PaneSplit node,string group){return Leaves(node).Contains(group);}
     public static PaneSplit Boundary(PaneScope scope,string group,string edge){
-        Ensure(scope);var node=scope.Root;var path=new List<PaneSplit>();
+        Ensure(scope);var node=Projection(scope.Root,scope);var path=new List<PaneSplit>();
         while(node!=null&&!node.Leaf){path.Add(node);node=Contains(node.First,group)?node.First:node.Second;}
         var frame=Slot(scope,scope.Groups[group]);
         for(int i=path.Count-1;i>=0;i--){
@@ -83,10 +110,10 @@ public static class PaneLayout {
         int extent=x?boundary.Frame.Width:boundary.Frame.Height;
         int current=x?boundary.First.Frame.Right:boundary.First.Frame.Bottom;
         if(position==current)return false;
-        var a=Minimum(boundary.First,id=>SlotMinimum(scope,scope.Groups[id],minimum));var b=Minimum(boundary.Second,id=>SlotMinimum(scope,scope.Groups[id],minimum));
+        var a=PresentedMinimum(boundary.First,scope,minimum);var b=PresentedMinimum(boundary.Second,scope,minimum);
         if(position<start+(x?a.Width:a.Height)||position>start+extent-(x?b.Width:b.Height))return false;
-        double previous=boundary.Ratio;boundary.Ratio=(double)(position-start)/extent;
-        if(!Resolve(scope,minimum)){boundary.Ratio=previous;return false;}
+        var source=boundary.Source;double previous=source.Ratio;source.Ratio=(double)(position-start)/extent;
+        if(!Resolve(scope,minimum)){source.Ratio=previous;return false;}
         scope.Ratio=scope.Root.Ratio;scope.GeometryRevision++;return true;
     }
     public static bool AcceptRightGroupLeftEdge(PaneScope scope,int proposed,Func<PaneGroup,int> width){
@@ -110,6 +137,9 @@ public static class PaneLayout {
         var a=x?Rectangle.FromLTRB(area.Left,area.Top,seam,area.Bottom):Rectangle.FromLTRB(area.Left,area.Top,area.Right,seam);
         var b=x?Rectangle.FromLTRB(seam,area.Top,area.Right,area.Bottom):Rectangle.FromLTRB(area.Left,seam,area.Right,area.Bottom);
         PreserveBoundaries(node.First,a);PreserveBoundaries(node.Second,b);
+    }
+    public static void PreserveScopeBoundaries(PaneScope scope,Rectangle area){
+        PreserveBoundaries(scope.Root,area);
     }
     public static PaneSplit Remove(PaneSplit node,string id){
         if(node.Leaf)return node.GroupId==id?null:node;

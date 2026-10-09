@@ -1,0 +1,70 @@
+PASS zero-header callers retain original native rectangles and boundary authority
+PASS vertical minimum includes both headers and rejects clipping either native window
+PASS fixture refusing programmatic bounds fails attachment without committing contradictory geometry
+PASS two simultaneous groups; 2+1 attached windows
+PASS requested and actual top-level rectangles match on both sides
+PASS all attached sessions retain their native HWND identity
+PASS real A switch minimizes prior peer, restores incoming, leaves B selected
+PASS reverse A switch restores original and keeps B independent
+PASS tab selection foreground belongs to selected A peer or owned dialog
+PASS 24 rapid selections preserve both final frames without placing the neighboring window
+PASS header boundaries follow asymmetric native resize instead of equal-width columns
+PASS synthetic native edge out/back returns boundary and both real rectangles
+PASS detach restores original native state: OriginalMax
+PASS detach restores original native state: OriginalMin
+PASS detach restores original native state: OriginalTop
+PASS fixture Win32 minimum track is observed
+PASS synthetic resize below B minimum is rejected without contradictory overlapping geometry
+PASS idempotent viewport cannot alter tabs/selection
+PASS transfer preserves original WindowSession and HWND lease
+PASS HWND indexes into destination group
+PASS fixture exposes a real owned modal dialog
+PASS cross-divider owned modal remains above B in non-focus stack pass
+PASS impossible fixed-size attachment rejected without changing group
+PASS selecting B under A maximize cannot expose suppressed B window
+PASS group A maximize fills content below its header and preserves explicit B selection
+PASS return from group maximize restores selected B group bounds
+PASS post-registration attach failure rolls back membership and leaves leases valid
+PASS same HWND reacquires lease after a failed attach and detaches cleanly
+PASS closing an application during native resize drains deferred viewport and restores survivor
+PASS closing selected application retires dead tab and selects survivor
+PASS suspending coordinator removes only its own holes and preserves another region client
+PASS removing another region client preserves coordinator holes
+PASS minimizing physical host suspends all attached group windows
+PASS restoring physical host resumes selected windows at resolved frames
+PASS hidden physical host minimizes peers while preserving ordinary taskbar visibility
+PASS showing physical host resumes its selected peers
+PASS A right edge and B left edge author the same boundary, including out/back
+PASS scope resume refits selected peers to geometry changed while suspended
+PASS same-process reentrant mutex cannot create a second coordinator for one host
+PASS dropping tab onto itself is an idempotent reorder
+PASS stale command is rejected without changing state
+PASS tab reorder changes strip order without changing selection or HWND membership
+PASS incoming tab refusing placement rolls back selection, visibility and previous HWND geometry
+PASS native fullscreen fixture suspends pane fitting while viewport changes
+PASS native fullscreen exit resumes current group geometry
+PASS idle settling produces zero unsolicited native geometry placements
+PASS three groups split and transfer without releasing or replacing the native session
+PASS nested horizontal native edge changes its own ancestor boundary
+PASS split below combined native minima rolls back topology, membership and actual windows
+PASS nested vertical split accepts either adjacent native edge without overlap
+PASS lower group's strip lives between its own native window and the upper native window
+PASS lower group's controls remain in the host region outside all native window cutouts
+PASS closing nested groups collapses tree and preserves original native sessions
+PASS group X merges tab membership without replacing native peer
+PASS single-pane outer left edge returns to start within the SAME native gesture
+PASS single pane native left edge survives stale renderer viewport replay
+PASS single pane returns smoothly to its starting seam
+PASS release and remount retain topology, stable tab order and HWNDs with a new binding generation
+PASS remounted scope rejects commands from its previous surface binding
+PASS release completes cleanly
+PASS released windows restore size, position, show state and topmost bit
+PASS one physical event owner retains independent AYG and Proxima scope selection and visibility
+PASS document selection suppresses only its own group's native peer
+PASS document split, transfer, group merge and mixed-strip reorder preserve the native session
+PASS releasing one Backpack scope preserves another scope's HWND geometry and host cutout
+PASS stale release marker cannot disable current crash recovery generation
+PASS independent crash guard restores full native state for fixture 28910564
+PASS independent crash guard restores full native state for fixture 43128056
+PASS independent crash guard restores full native state for fixture 33035510
+PASS crash/restart remount: topology, tab order, identities and actual frames

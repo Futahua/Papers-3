@@ -982,6 +982,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'preview-pdf-open': {
             if (!deps.pdfPreview || !context.nativePreviewHost) return { ok: false, code: 'PDF_PREVIEW_UNAVAILABLE', message: 'PDF preview hosting is unavailable.' };
+            const surfaceId = params.surfaceId == null ? null : boundedString(params.surfaceId, 'surfaceId', 128);
             const resourceId = boundedString(params.resourceId, 'resourceId', 64);
             if (!PREVIEW_RESOURCE_ID_PATTERN.test(resourceId)) throw new Error('resourceId is not a valid preview resource.');
             const record = deps.previewResources.resolve(context.backpackId, resourceId);
@@ -995,6 +996,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               previewRect(params.rect),
               () => { deps.previewResources.revoke(context.backpackId, resourceId); },
               previewStateKey(params.stateKey),
+              ...(surfaceId === null ? [] : [surfaceId]),
             );
           }
           case 'preview-pdf-move': {
@@ -1028,11 +1030,57 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             if (!deps.htmlPreview || !context.nativePreviewHost) return { ok: false, code: 'HTML_PREVIEW_UNAVAILABLE', message: 'Interactive HTML preview hosting is unavailable.' };
             return { ok: deps.htmlPreview.close(context.nativePreviewHost.ownerKey, previewSessionId(params.sessionId)) };
           }
+          case 'pane-layout-mount': {
+            const bridge = deps.chromePane?.coordinator, contextHost = context.nativePreviewHost;
+            if (!bridge || !contextHost) return { ok: false, message: 'Native window layouts are unavailable.' };
+            const rect = chromePaneRect(params.rect), height = Number(params.headerHeight ?? 32);
+            if (!Number.isFinite(height) || height < 0 || height > 128) throw new Error('Invalid group header height.');
+            const inherited = bridge.has(contextHost.ownerKey) ? [] : await deps.chromePane?.releaseForCoordinator?.(contextHost.ownerKey) ?? [];
+            const mounted = await bridge.mount(contextHost, rect, height);
+            if (!mounted.ok) return mounted;
+            for (const tab of inherited) if (tab.handle && tab.pid && !bridge.snapshot(contextHost.ownerKey)?.groups.some(g => g.tabs.some(t => t.handle === tab.handle))) {
+              const adopted = await bridge.attach(contextHost.ownerKey, tab.handle, tab.pid, 'main', tab.id);
+              if (!adopted.ok) return adopted;
+            }
+            const active = inherited.find(tab => tab.active);
+            const activeGroup = active && bridge.snapshot(contextHost.ownerKey)?.groups.find(g => g.tabs.some(t => t.id === active.id));
+            if (active && activeGroup) await bridge.command(contextHost.ownerKey, 'select', { groupId: activeGroup.id, tabId: active.id });
+            return bridge.command(contextHost.ownerKey, 'snapshot');
+          }
+          case 'pane-layout-open': {
+            const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;
+            if (!bridge || !owner || !bridge.has(owner)) return { ok: false, message: 'Window layout is not mounted.' };
+            return bridge.open(owner, boundedString(params.source, 'source', 8192), boundedString(params.url, 'url', 8192), boundedString(params.groupId, 'groupId', 64));
+          }
+          case 'pane-layout-viewport': {
+            const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;
+            if (!bridge || !owner || !bridge.has(owner)) return { ok: false, message: 'Window layout is not mounted.' };
+            return bridge.move(owner, chromePaneRect(params.rect));
+          }
+          case 'pane-layout-command': {
+            const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;
+            if (!bridge || !owner || !bridge.has(owner)) return { ok: false, message: 'Window layout is not mounted.' };
+            const op = boundedString(params.command, 'command', 32);
+            const allowed = new Set(['snapshot', 'select', 'reorder', 'move', 'split', 'close-group', 'presentation', 'detach', 'document-add', 'document-remove', 'document-edge', 'present']);
+            if (!allowed.has(op)) throw new Error('Unsupported layout command.');
+            const args: Record<string, unknown> = {};
+            for (const key of ['groupId', 'tabId', 'beforeId', 'side', 'newGroupId', 'destination', 'mode', 'edge']) {
+              if (params[key] === '') args[key] = '';
+              else if (params[key] !== undefined) args[key] = boundedString(params[key], key, 64);
+            }
+            if (op === 'document-edge') { const position = Number(params.position); if (!Number.isFinite(position) || Math.abs(position) > 65536) throw new Error('Invalid document edge position.'); args.position = position; }
+            if (params.visible !== undefined) { if (typeof params.visible !== 'boolean') throw new Error('visible must be a boolean.'); args.visible = params.visible; }
+            const revision = params.revision;
+            if (op !== 'snapshot' && (!Number.isSafeInteger(revision) || Number(revision) < 1)) throw new Error('Layout revision is required.');
+            return bridge.command(owner, op, args, typeof revision === 'number' ? revision : undefined);
+          }
           case 'pane-window-attach': {
             if (!deps.chromePane?.attachWindow || !context.nativePreviewHost || !deps.resolvePaneWindow) return { ok: false, message: 'Window hosting unavailable.' };
             const rect = chromePaneRect(params.rect);
             const window = await deps.resolvePaneWindow(boundedString(params.bindingId, 'bindingId', 512));
             if (!window) return { ok: false, message: 'This window has closed or changed.' };
+            if (deps.chromePane.coordinator?.has(context.nativePreviewHost.ownerKey)) return deps.chromePane.coordinator.attach(context.nativePreviewHost.ownerKey, window.handle, window.pid,
+              typeof params.groupId === 'string' ? boundedString(params.groupId, 'groupId', 64) : 'main');
             return deps.chromePane.attachWindow(context.nativePreviewHost, window.handle, window.pid, rect);
           }
           case 'pane-window-drop': {

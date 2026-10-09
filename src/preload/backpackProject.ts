@@ -1,3 +1,4 @@
+import type { NativePaneSnapshot } from '../main/backpacks/nativePaneBridge';
 import { ipcRenderer, webUtils } from 'electron';
 
 interface ProjectMessage {
@@ -221,6 +222,8 @@ const POSITIONED_PREVIEW_OPERATIONS = new Set([
   'preview-pdf-move',
   'preview-html-open',
   'preview-html-move',
+  'pane-layout-mount',
+  'pane-layout-viewport',
   'pane-window-attach',
   'pane-window-tabs',
   'chrome-pane-open',
@@ -239,7 +242,17 @@ function scopedWorkspaceOrigin(event: MessageEvent, request: ProjectMessage): st
     : undefined;
 }
 
+let paneLayoutTarget: { source: Window; origin: string } | null = null;
 let chromeLayoutTarget: { source: Window; origin: string } | null = null;
+
+function paneSnapshotForSource(snapshot: NativePaneSnapshot, source: Window): NativePaneSnapshot {
+  if (source === window) return snapshot;
+  const frame = Array.from(document.querySelectorAll('iframe')).find(node => node.contentWindow === source);
+  if (!frame) throw new Error('Window layout source frame is unavailable.');
+  const box = frame.getBoundingClientRect();
+  const local = (rect: NativePaneSnapshot['viewport']) => ({ ...rect, x: rect.x - box.x, y: rect.y - box.y });
+  return { ...snapshot, viewport: { ...local(snapshot.viewport), parentX: snapshot.viewport.x, parentY: snapshot.viewport.y }, groups: snapshot.groups.map(g => ({ ...g, slot: local(g.slot), content: local(g.content) })) } as NativePaneSnapshot;
+}
 
 function nativePreviewParams(event: MessageEvent, operation: string, params: Record<string, unknown>): Record<string, unknown> {
   if (!POSITIONED_PREVIEW_OPERATIONS.has(operation)) return params;
@@ -385,13 +398,19 @@ window.addEventListener('message', (event) => {
       immediateHostError(request.requestId, event.origin, caught instanceof Error ? caught.message : String(caught));
       return;
     }
+    if (request.operation === 'pane-layout-mount' && event.source) paneLayoutTarget = { source: event.source as Window, origin: event.origin };
     if (['chrome-pane-open', 'pane-window-attach', 'pane-window-select', 'pane-window-detach', 'pane-window-tabs'].includes(request.operation) && event.source) {
       chromeLayoutTarget = { source: event.source as Window, origin: event.origin };
     }
     task = ipcRenderer.invoke('host:backpack-project:file-capability', {
       operation: request.operation,
       params,
-    }, ...workspaceOriginArgs).then((result) => ({ fileCapability: result }));
+    }, ...workspaceOriginArgs).then((result) => {
+        if ((request.operation?.toString().startsWith('pane-layout-') || request.operation === 'pane-window-attach') && isPlainObject(result) && result['snapshot'] && event.source) {
+        return { fileCapability: { ...result, snapshot: paneSnapshotForSource(result['snapshot'] as NativePaneSnapshot, event.source as Window) } };
+      }
+      return { fileCapability: result };
+    });
   }
   // The local-service capability: this page asking Papers to reach an HTTP
   // service the creator runs on this machine. The page supplies an address, a
@@ -923,6 +942,12 @@ window.addEventListener('message', (event) => {
 
 
 // The direct-pick session pushes its typed result to the project frame.
+ipcRenderer.on('papers:pane-layout:changed', (_event, snapshot: NativePaneSnapshot) => {
+  const target = paneLayoutTarget;
+  if (!target) return;
+  try { target.source.postMessage({ type: 'papers:project:pane-layout', snapshot: paneSnapshotForSource(snapshot, target.source) }, target.origin); } catch { /* departed binding */ }
+});
+
 ipcRenderer.on('papers:chrome-layout:changed', (_event, rect) => {
   const target = chromeLayoutTarget;
   if (!target || target.source === window) {

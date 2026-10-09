@@ -227,9 +227,11 @@ public sealed class ChromePaneHost : Form {
     [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetWindowText(IntPtr h,System.Text.StringBuilder text,int size);
     static string WindowTitle(IntPtr h){var text=new System.Text.StringBuilder(512);GetWindowText(h,text,text.Capacity);return text.Length==0?"Window":text.ToString();}
     [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr window);
+    bool OwnedBy(IntPtr popup,IntPtr main){var next=Native.GetWindow(popup,4);var seen=new HashSet<IntPtr>();while(next!=IntPtr.Zero&&seen.Add(next)){if(next==main)return true;next=Native.GetWindow(next,4);}return false;}
+    List<IntPtr> PeerPopups(IntPtr main){var found=new List<IntPtr>();EnumWindows((h,d)=>{if(h!=main&&Native.IsWindowVisible(h)&&!IsIconic(h)&&OwnedBy(h,main))found.Add(h);return true;},IntPtr.Zero);return found;}
     void FocusSelectedPeer(){
         if(session==null||!session.Valid())return;
-        SetForegroundWindow(session.Handle);Group(true);
+        var popup=PeerPopups(session.Handle).FirstOrDefault();SetForegroundWindow(popup==IntPtr.Zero?session.Handle:popup);Group(true);
         BeginInvoke((Action)(()=>{if(!released)Group(false);}));
     }
     object SelectPeer(string id){var peer=peers.FirstOrDefault(p=>p.Id==id&&p.Session.Valid());if(peer==null)throw new Exception("This window has closed.");visible=true;ActivatePeer(peer);FocusSelectedPeer();return new{ok=true};}
@@ -316,6 +318,7 @@ public sealed class ChromePaneHost : Form {
         if(top!=peerTop)Native.SetWindowPos(session.Handle,new IntPtr(top?-1:-2),0,0,0,0,0x213);
         Native.SetWindowPos(owner,IntPtr.Zero,0,0,0,0,0x213);
         Native.SetWindowPos(session.Handle,IntPtr.Zero,0,0,0,0,0x213);
+        var popups=PeerPopups(session.Handle);for(int i=popups.Count-1;i>=0;i--)Native.SetWindowPos(popups[i],IntPtr.Zero,0,0,0,0,0x213);
         Mask();
     }
     void OnNative(IntPtr hook,uint ev,IntPtr h,int obj,int child,uint thread,uint time) {
@@ -396,7 +399,7 @@ public sealed class ChromePaneHost : Form {
                 else if(op=="rect")UI(()=>{local=new Rectangle(Convert.ToInt32(request["x"]),Convert.ToInt32(request["y"]),Convert.ToInt32(request["width"]),Convert.ToInt32(request["height"]));hasRect=true;anchoredEdges=request.ContainsKey("rightInset")&&request.ContainsKey("bottomInset");if(anchoredEdges){rightInset=Convert.ToDouble(request["rightInset"]);bottomInset=Convert.ToDouble(request["bottomInset"]);}RestorePeers();if(!chromeSizing)Fit();});
                 else if(op=="visible")UI(()=>{visible=Convert.ToBoolean(request["visible"]);if(session!=null)session.Show(visible);Fit();Mask();if(visible)Group(true);});
                 else if(op=="raise")UI(()=>Group(true));
-                else if(op=="release"){UI(Release);return;}
+                else if(op=="release"){UI(()=>{Release();lock(output)Console.WriteLine(json.Serialize(new{id=id,result=new{ok=true}}));});return;}
                 else throw new Exception("Unknown Chrome pane operation.");
                 lock(output)Console.WriteLine(json.Serialize(new{id=id,result=result}));
             }catch(Exception e){lock(output)Console.WriteLine(json.Serialize(new{id=id,result=new{ok=false,error=e.Message}}));}

@@ -688,6 +688,11 @@ describe('file capability service', () => {
       expect.any(Function),
       null,
     );
+    await previewService.call({ operation: 'preview-pdf-open', params: { resourceId, rect, surfaceId: 'pane:group-one' } });
+    expect(open).toHaveBeenLastCalledWith(nativePreviewHost, expect.any(String), rect, expect.any(Function), null, 'pane:group-one');
+    const callsBeforeInvalidSurface = open.mock.calls.length;
+    expect((await previewService.call({ operation: 'preview-pdf-open', params: { resourceId, rect, surfaceId: 'x'.repeat(129) } })).ok).toBe(false);
+    expect(open.mock.calls.length).toBe(callsBeforeInvalidSurface);
 
     const sessionId = (opened as { sessionId: string }).sessionId;
     expect((await previewService.call({ operation: 'preview-pdf-move', params: { sessionId, rect } })).ok).toBe(true);

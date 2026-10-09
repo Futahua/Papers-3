@@ -29,6 +29,8 @@ public sealed class PaneSplit {
     public string Axis;
     public double Ratio=0.5;
     public PaneSplit First,Second;
+    // Transient projection link. Never copied or persisted with authored topology.
+    internal PaneSplit Source;
     public Rectangle Frame;
     public bool Leaf { get { return GroupId!=null; } }
     public PaneSplit Copy(){return new PaneSplit{GroupId=GroupId,Axis=Axis,Ratio=Ratio,Frame=Frame,
@@ -58,9 +60,10 @@ public sealed class PanePeer {
 
 public sealed class PaneScope {
     public readonly string ScopeId;
-    public readonly int HeaderHeight;
+    public int HeaderHeight {get;internal set;}
     public long BindingGeneration = 1;
     public long StateRevision = 1, GeometryRevision = 1;
+    public long NativeEdgeRevision;
     public long ViewportRevision;
     public Rectangle? PendingViewport;
     public long PendingViewportRevision;

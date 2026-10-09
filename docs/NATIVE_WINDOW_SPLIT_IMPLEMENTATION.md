@@ -1,6 +1,6 @@
 # Native window splits: implementation proposal
 
-Status: experimental native coordinator and visible harness implemented, 2026-10-09. Production single-pane routing remains active. See the [current harness and acceptance record](../tests/native-split-harness/README.md).
+Status: the isolated coordinator was accepted and committed as `07091d9`, followed by source integration into Papers, AYG and Proxima. See the [current integration record](NATIVE_PANE_INTEGRATION.md) and [harness acceptance record](../tests/native-split-harness/README.md). The experiment milestone below records the state at that commit; it does not describe the later integration or an installed release.
 
 ## Implemented experiment, 2026-10-09
 

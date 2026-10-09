@@ -676,6 +676,13 @@ async function bootstrap(): Promise<void> {
   const chromePane = createChromePaneBridge({
     cacheDirectory: path.join(paths.root, 'native-helpers'),
     nativeDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native') : path.join(app.getAppPath(), 'resources', 'native'),
+    windowInstanceId: (handle, pid) => windowCapabilityService.windowInstanceIdForHandle?.(handle, pid),
+    onSnapshot: (owner, snapshot) => {
+      const separator = owner.indexOf(':');
+      const contents = papersWindows.get(Number(owner.slice(0, separator)))?.owned.projectSurfaces.get(owner.slice(separator + 1))?.webContents;
+      if (!contents || contents.isDestroyed()) return;
+      contents.send('papers:pane-layout:changed', snapshot);
+    },
     onLayout: (owner, rect) => {
       const separator = owner.indexOf(':');
       const runtime = papersWindows.get(Number(owner.slice(0, separator)))?.owned.projectSurfaces.get(owner.slice(separator + 1));
