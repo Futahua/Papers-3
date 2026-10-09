@@ -1,0 +1,11 @@
+9E66A11CB59BD6D4B4FA5DE8724B3CA8F67E7F75D57DAB07A43275195829BAF8  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\resources\native\pane-coordinator.cs
+55E35D3A4601B476FC39468E69C653972C1A89F04A157AB029236A137C16F952  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\resources\native\pane-group.cs
+8A16D95E8069564BA6EC90435F0C19CECCB8F68EC29B0A2DAC19C8ED62C338F0  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\resources\native\pane-layout.cs
+3BAC5CC065B2B14151D3CC88C0599BCB0B329632ED8CF5C06BCC8D96977B1557  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\resources\native\pane-presentation.cs
+FCBA2BB7FB3B52DCEC912CC08C1651AE82DBC87E7760AB84706200B0A88C2FA8  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\resources\native\pane-mount.cs
+B26204B4005951E6B06FCFD4F7A31D82CB68AEF09C02847FC965BE98AC759BB8  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\resources\native\pane-region-contract.cs
+EB7CAA34423E7935E8AFE5B3217CD041E36246CC1027DE9B8A423E95DDBAF65E  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\tests\native-split-harness\Program.cs
+16BCC0F8FC034388CA79D0741F7DC99BE53FD438FA6C88288B520DA0CA8F53FE  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\tests\native-split-harness\SplitHarness.cs
+DF9EEC5B4DB61C65DDB1C1EEA557F0D14D415BAF8D7493B2850261F957CC2677  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\tests\native-split-harness\build.ps1
+1C614B58945EB4FE5DBB34B9F899444F656F08AB758381AAE610CF6EDEF261E3  D:\Letters\MatTroiSeConMoc\Products\Papers\Source\tests\native-split-harness\test-next.ps1
+BB4ED636A91F4B03F271D83FCFC2124E7FF0EEA81B9E334876DAB26CDEB73106  D:\CodexTemp\native-split-harness\native-split-next.exe
