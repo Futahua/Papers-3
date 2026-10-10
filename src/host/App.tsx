@@ -53,10 +53,6 @@ export function App(): React.JSX.Element {
     window.clearTimeout(sidebarCloseTimer.current);
     sidebarCloseTimer.current = null;
   }, []);
-  const openSidebar = useCallback((): void => {
-    cancelSidebarClose();
-    if (view === 'backpacks' && !basicOpen) setSidebarOpen(true);
-  }, [basicOpen, cancelSidebarClose, view]);
   const scheduleSidebarClose = useCallback((): void => {
     cancelSidebarClose();
     sidebarCloseTimer.current = window.setTimeout(() => {
@@ -459,17 +455,14 @@ export function App(): React.JSX.Element {
   }, []);
 
   const openBasicOrReturnToBackpacks = (): void => {
-    setSidebarOpen(false);
+    cancelSidebarClose();
     if (entered !== null) {
-      setView('backpacks');
       setBasicOpen(false);
-      // This is a picker transition, not semantic close. Dockview unmounts
-      // and hides the native presentation while the logical tabs stay alive.
-      setEntered(null);
-      setProjectUrl(null);
+      setSidebarOpen((open) => !open);
       return;
     }
 
+    setSidebarOpen(false);
     setBasicOpen((open) => !open);
   };
 
@@ -480,9 +473,8 @@ export function App(): React.JSX.Element {
           controls are painted by the OS in the reserved top-right inset. */}
       <header className="titlebar">
         <div className="titlebar-left" ref={basicRef}
-          onMouseEnter={openSidebar}
+          onMouseEnter={cancelSidebarClose}
           onMouseLeave={scheduleSidebarClose}
-          onFocus={openSidebar}
           onKeyDown={(event) => { if (event.key === 'Escape') { setSidebarOpen(false); setBasicOpen(false); } }}>
           <button
             draggable data-window-grip
@@ -493,7 +485,7 @@ export function App(): React.JSX.Element {
             aria-label={
               entered === null
                 ? `${VIEW_LABEL[view]} — open Basic menu`
-                : 'Backpacks — return to Backpack list'
+                : 'Backpacks — choose Backpack'
             }
             onClick={openBasicOrReturnToBackpacks}
           >
