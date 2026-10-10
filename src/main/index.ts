@@ -1094,7 +1094,7 @@ async function bootstrap(): Promise<void> {
             hostOverlayOwners.delete(id);
             papersWindows.remove(id);
             if (papersWindows.windowIds.length === 0) {
-              void commandSurfaceOverlay?.destroy().catch(() => undefined);
+              // Keep auxiliary windows alive until native pane release completes.
               // Closed-event finalization can run inside an earlier quit pass.
               // Defer until Electron has left that pass before requesting exit.
               setImmediate(() => { if(papersWindows.windowIds.length===0)app.quit(); });
@@ -3385,8 +3385,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       hoverInputBridge?.close();
       hoverInputBridge = null;
       // A launcher left open would be a focus-holding window with no owner.
-      void commandSurfaceOverlay?.destroy().catch(() => undefined);
-      commandSurfaceOverlay = null;
+      // Keep auxiliary windows alive until native pane release completes.
+
       visualResourceMonitor?.detach();
       visualResourceMonitor = null;
       windowPickSession.cancel().catch(() => undefined);
@@ -3395,12 +3395,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // the developer command plane is fully quiet before global shutdown
       // begins.
       capabilityQuitPromise = quitStage('control', () => papersControlServer?.close())
+        .then(() => quitStage('native-panes', () => chromePane?.coordinator?.dispose()))
+        .then(async () => { await commandSurfaceOverlay?.destroy().catch(() => undefined); commandSurfaceOverlay = null; })
         .then(() => Promise.all([
           workspaceTopologyStore.flush().catch((error) => console.error('[workspace-topology] shutdown flush failed', error)),
           workspaceLayoutStore.flush().catch((error) => console.error('[workspace-layout] shutdown flush failed', error)),
           quitStage('detached-windows', () => detachSession!.closeAll()),
           quitStage('widget', () => widgetSession!.closeAll()),
-          quitStage('native-panes', () => chromePane?.coordinator?.dispose()),
           quitStage('window-capabilities', () => windowCapabilityService.stop()),
           quitStage('window-control', () => windowControlBroker.stop()),
         ]))
