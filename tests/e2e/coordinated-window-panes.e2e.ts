@@ -164,6 +164,17 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   const childBefore=await childState();expect(childBefore).not.toBeNull();
   await evalInHost(launched.app,`papersHost.app.showPage(${JSON.stringify(parentSurface)})`);
   await waitFor(()=>evaluate<boolean>("host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot?.presented===true)"),5000,'parent page active for hosting');
+  // Physical drags begin with an inactive tab press. A bare dragstart missed
+  // Dockview's next-frame activation, which used to hide the destination page.
+  await evalInHost(launched.app,`document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').dispatchEvent(new PointerEvent('pointerdown',{pointerType:'mouse',button:0,bubbles:true,cancelable:true}))`);
+  await evalInHost(launched.app,`new Promise(resolve=>setTimeout(resolve,100))`);
+  expect(await evalInHost<string>(launched.app,`document.querySelector('.dv-tab[aria-selected="true"]').getAttribute('data-tab-panel-id')`)).not.toBe(childPage.surfaceId);
+  expect(await evaluate<boolean>("host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot?.presented===true)")).toBe(true);
+  await evalInHost(launched.app,`(()=>{const tab=document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]');tab.dispatchEvent(new PointerEvent('pointerup',{pointerType:'mouse',button:0,bubbles:true}));tab.dispatchEvent(new MouseEvent('click',{button:0,bubbles:true}));})()`);
+  await waitFor(()=>evalInHost<boolean>(launched.app,`document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').getAttribute('aria-selected')==='true'`),5000,'plain click still activates on release');
+  await evalInHost(launched.app,`papersHost.app.showPage(${JSON.stringify(parentSurface)})`);
+  await waitFor(()=>evaluate<boolean>("host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot?.presented===true)"),5000,'return to destination before drag');
+  await evalInHost(launched.app,`document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').dispatchEvent(new PointerEvent('pointerdown',{pointerType:'mouse',button:0,bubbles:true,cancelable:true}))`);
   const pageDrag=await evalInHost<Array<[string,string]>>(launched.app,`(()=>{window.pageDrag=new DataTransfer();document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').dispatchEvent(new DragEvent('dragstart',{dataTransfer:pageDrag,bubbles:true}));return [...pageDrag.types].map(type=>[type,pageDrag.getData(type)]);})()`);
   expect(pageDrag.some(([type,value])=>type==='application/x-papers-page'&&value===childPage.surfaceId)).toBe(true);
   await evaluate(`(()=>{window.hostedPageDrag=new DataTransfer();for(const [type,value] of ${JSON.stringify(pageDrag)})hostedPageDrag.setData(type,value);const g=latest.groups[0],strip=document.querySelector('[data-slice-id="'+g.id+'"] .pane-window-tabs');strip.dispatchEvent(new DragEvent('dragover',{dataTransfer:hostedPageDrag,clientX:g.slot.x+g.slot.width/2,clientY:g.slot.y+16,bubbles:true,cancelable:true}));})()`);

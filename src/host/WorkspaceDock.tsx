@@ -209,6 +209,7 @@ export function WorkspaceDock(props: {
   }, []);
 
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
+  const pendingTabClick = useRef<string | null>(null);
   const resizing = useRef(false);
   const resizeSession = useRef<{ pointerId: number; generation: number; terminal: 'active' | 'success' | 'cancelled'; focusedGroupId: string; activeByGroup: Map<string, string | null>; captureTarget: HTMLElement | null } | null>(null);
   const resizeUiGeneration = useRef(0);
@@ -1246,6 +1247,7 @@ export function WorkspaceDock(props: {
       }
     }));
     apiSubscriptions.current.push(event.api.onWillDragPanel(({ panel, nativeEvent }) => {
+      pendingTabClick.current = null;
       if (nativeEvent instanceof DragEvent && nativeEvent.dataTransfer) {
         nativeEvent.dataTransfer.setData('application/x-papers-page', panel.id);
         nativeEvent.dataTransfer.effectAllowed = 'move';
@@ -1354,6 +1356,17 @@ export function WorkspaceDock(props: {
     <section ref={workspaceRef} className="workspace-dock" aria-label="Workspace tabs"
       onClickCapture={(event) => {
         if (!(event.target instanceof Element)) return;
+        const clickedTab = event.target.closest<HTMLElement>('.dv-tab[data-tab-panel-id]');
+        const pending = pendingTabClick.current;
+        pendingTabClick.current = null;
+        if (pending && clickedTab?.dataset.tabPanelId === pending
+          && !interactionDisabled && !resizing.current && !dragActive.current) {
+          const panel = apiRef.current?.getPanel(pending);
+          if (panel) {
+            reconciliationFeedback.current.apply(() => panel.api.setActive());
+            onActivate(pending);
+          }
+        }
         const trigger = event.target.closest('.dv-tabs-overflow-dropdown-root');
         if (trigger) event.currentTarget.dataset.titleMenu = String(Boolean(trigger.closest('.workspace-window-header')));
       }}
@@ -1398,6 +1411,7 @@ export function WorkspaceDock(props: {
         }
       }}
       onPointerDownCapture={(event) => {
+        pendingTabClick.current = null;
         if (interactionDisabled) {
           if (event.target instanceof Element && event.target.closest('.dv-sash')) {
             event.preventDefault();
@@ -1419,6 +1433,20 @@ export function WorkspaceDock(props: {
           event.stopPropagation();
           event.nativeEvent.stopImmediatePropagation?.();
           return;
+        }
+        // Dockview activates inactive tabs on pointerdown (next frame for
+        // HTML5). That conceals the destination Backpack before a slow drag
+        // can arm. Keep native draggable defaults, but activate on click.
+        if (event.button === 0 && event.pointerType === 'mouse'
+          && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey
+          && event.target instanceof Element
+          && !event.target.closest('button, .dv-default-tab-action')) {
+          const tab = event.target.closest<HTMLElement>('.dv-tab[draggable="true"][data-tab-panel-id]');
+          if (tab?.dataset.tabPanelId) {
+            pendingTabClick.current = tab.dataset.tabPanelId;
+            event.stopPropagation();
+            return;
+          }
         }
         if (event.button !== 0 || !(event.target instanceof Element)
           || !event.target.closest('.dv-sash')) return;
@@ -1462,6 +1490,7 @@ export function WorkspaceDock(props: {
             if (resizeSession.current?.generation === generation) finishResizeRef.current?.(true);
           });
       }}
+      onPointerCancelCapture={() => { pendingTabClick.current = null; }}
       onDragLeaveCapture={(event) => {
         if (!dragActive.current) return;
         const next = event.relatedTarget;
