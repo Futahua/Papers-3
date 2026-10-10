@@ -2854,7 +2854,13 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   const reloadPapers=createPapersReload({file:reloadIntentFile,args:process.argv.slice(1),
     flush:async()=>{
       for(const id of papersWindows.windowIds)await facade.waitForWorkspaceMutation(id);
-      const frames=webContents.getAllWebContents().filter(w=>!w.isDestroyed()&&w.getURL().startsWith('papers-backpack://')).flatMap(w=>[w.mainFrame,...w.mainFrame.frames]);
+      const frames=webContents.getAllWebContents().filter(w=>{
+        if(w.isDestroyed())return false;
+        const context=surfaceContexts.contextForSender(w.id);
+        // Retired/preload renderers can outlive their document binding. Only
+        // registered live page surfaces participate in the save barrier.
+        return context!==null&&context!==undefined&&context.kind!=='launcher';
+      }).flatMap(w=>[w.mainFrame,...w.mainFrame.frames]);
       for(const frame of frames){
         if(!shouldFlushReloadSurface(frame.url))continue;
         let timer:ReturnType<typeof setTimeout>|undefined;
