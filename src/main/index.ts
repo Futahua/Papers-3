@@ -2873,7 +2873,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       for(const instance of instances)await saveSessionWindow(instance);
       await workspaceTopologyStore.flush();await workspaceLayoutStore.flush();
       return instances.map(instance=>workspaceIds.get(instance.window.id)!);
-    },restart:args=>{if(!drainCapabilitiesForReload)throw Error('Reload is not ready.');app.relaunch({args});setImmediate(()=>{void drainCapabilitiesForReload!().then(()=>process.exit(0));});},
+    },restart:args=>{if(!drainCapabilitiesForReload)throw Error('Reload is not ready.');app.relaunch({args});setImmediate(()=>{void drainCapabilitiesForReload!().then(()=>(process as unknown as {reallyExit:(code:number)=>never}).reallyExit(0));});},
   });
   registerPapersWindowIpc({
     reload:reloadPapers,
