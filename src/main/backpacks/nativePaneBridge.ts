@@ -53,6 +53,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
   const sources = ['chrome-window-session.cs', 'pane-group.cs', 'pane-layout.cs', 'pane-presentation.cs', 'pane-coordinator.cs', 'pane-coordinator-hub.cs',
     'pane-documents.cs', 'pane-mount.cs', 'pane-region-contract.cs', 'pane-host-region.cs', 'pane-chrome-resolver.cs', 'pane-coordinator-host.cs'].map(p => path.join(input.nativeDirectory, p));
   const hosts = new Map<string, Host>(), owners = new Map<string, Scope>(), scopes = new Map<string, Scope>(), visibility = new Map<string, boolean>();
+  let disposing = false;
   const dragOwners = new Map<string,ReturnType<typeof setTimeout>>();
   let draggedTransfer:{owner:string;id:string}|undefined;
   let refusedDrag:string|undefined;
@@ -153,6 +154,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
   function queued(scope: Scope, op: string, params: Record<string, unknown> = {}, revision?: number, transaction = false): Promise<PaneReply> {
     const token = scope.token, owner = scope.context.ownerKey;
     const task = scope.host.queue.then(async () => {
+      if (disposing && !transaction && op !== 'release') return unavailable();
       if (scope.token !== token || owners.get(owner) !== scope || (!transaction && (locked.has(scope) || visibility.get(owner) === false && !['present', 'release', 'document-remove'].includes(op)))) return unavailable();
       const presentationParams = (op === 'present' || op === 'mount') && params.visible === true && hostOverlayActive(owner) ? { ...params, visible: false } : params;
       const result = await send(scope.host, { ...presentationParams, op, scope: scope.key, binding: token, revision: revision ?? scope.snapshot?.stateRevision ?? 0 });
@@ -392,7 +394,21 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     async closeOwner(owner) { await transferTail; await api.dragOverlay(owner,false); const scope = owners.get(owner); if (!scope) return;
       await queued(scope, 'release'); if (owners.get(owner) === scope) owners.delete(owner); if (scopes.get(scope.key) === scope) scopes.delete(scope.key); visibility.delete(owner);
     },
-    async dispose() { await transferTail; await overlayTail; for(const timer of dragOwners.values())clearTimeout(timer);dragOwners.clear(); const all = [...hosts.values()]; await Promise.all(all.map(async live => { await live.queue.catch(() => undefined); await send(live, { op: 'release-host' }); live.child.stdin.end(); })); owners.clear(); scopes.clear(); hosts.clear(); },
+    async dispose() {
+      disposing = true;
+      for(const timer of dragOwners.values())clearTimeout(timer);dragOwners.clear();
+      const all = [...hosts.values()];
+      let deadline:ReturnType<typeof setTimeout>|undefined;
+      const drain=(async()=>{await transferTail;await overlayTail;await Promise.all(all.map(async live=>{await live.queue.catch(()=>undefined);await send(live,{op:'release-host'});live.child.stdin.end();}));})();
+      try {
+        await Promise.race([drain,new Promise<void>(resolve=>{deadline=setTimeout(()=>{
+          // A stalled helper must not trap a saved restart. Its independent
+          // recovery guard owns original native-window restoration.
+          for(const live of all){live.stopped=true;for(const request of live.pending.values()){clearTimeout(request.timer);request.resolve(unavailable());}live.pending.clear();live.child.kill();}
+          resolve();
+        },20000);})]);
+      } finally {if(deadline)clearTimeout(deadline);owners.clear();scopes.clear();hosts.clear();}
+    },
   };
   return api;
 }

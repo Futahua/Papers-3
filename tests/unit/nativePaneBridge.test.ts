@@ -27,6 +27,10 @@ beforeEach(()=>{
 });
 afterEach(()=>Object.defineProperty(process,'platform',{value:platform}));
 const make=(onSnapshot=vi.fn())=>createNativePaneBridge({cacheDirectory:'X:/cache',nativeDirectory:'X:/native',onSnapshot,windowInstanceId:()=> 'opaque-instance'})!;
+it('saved shutdown is bounded when a helper stops answering and queued presentation is retired',async()=>{
+ const bridge=make();await bridge.mount(context('1:first'),rect,32);const child=h.children[0];child.kill=vi.fn();child.stdin.removeAllListeners('data');
+ vi.useFakeTimers();try{const pending=bridge.command('1:first','snapshot');await Promise.resolve();const stopped=bridge.dispose();await vi.advanceTimersByTimeAsync(20000);await stopped;expect(child.kill).toHaveBeenCalledOnce();expect((await pending).ok).toBe(false);expect(bridge.snapshot('1:first')).toBeUndefined();}finally{vi.useRealTimers();}
+});
 it.each(['prepared','committed'])('recovers a %s handoff before mounting and saves only durable references in page intent',async status=>{
  const a='a'.repeat(64),b='b'.repeat(64),mount={Version:1,HeaderHeight:28,Root:{GroupId:'main'},Groups:[],Peers:[{TabId:'peer',GroupId:'main',Handle:123,Pid:456,Started:789,Title:'CAD'}],Documents:[]};
  h.journal={status,records:[{key:a,mount},{key:b,mount}]};const bridge=make();
