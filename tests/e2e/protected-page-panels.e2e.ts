@@ -2,7 +2,16 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { expect, it } from 'vitest';
-import { evalInBackpackProject, evalInHost, launchPapers, waitFor } from './helpers';
+import type {ElectronApplication} from 'playwright-core';
+import { evalInHost, launchPapers, waitFor } from './helpers';
+
+async function evalInBackpackProject<T>(app:ElectronApplication,script:string):Promise<T>{
+ return app.evaluate(async({webContents},js)=>{
+  const project=webContents.getAllWebContents().find(w=>w.getURL().includes('/public/protected-panels.html'));
+  if(!project)throw Error('Protected panel fixture has not loaded');
+  return project.executeJavaScript(js,true);
+ },script) as Promise<T>;
+}
 
 it.each(['normal', 'minimized', 'maximized'])('protected Files/Preview remount their authored mixed group (%s)', async (mode) => {
  const profile=await fs.mkdtemp(path.join(os.tmpdir(),'papers-page-panels-'));
@@ -92,5 +101,6 @@ it.each(['normal', 'minimized', 'maximized'])('protected Files/Preview remount t
   expect(await evalInBackpackProject<boolean>(launched.app,`document.querySelector('#preview').hidden`)).toBe(true);
   expect(await evalInBackpackProject<string[]>(launched.app,'errors')).toEqual([]);
   expect(await evalInHost<number>(launched.app,'papersHost.app.windows().then(w=>w.length)')).toBe(2);
- }finally{await launched.close();await fs.rm(profile,{recursive:true,force:true});}
+ }catch(error){console.error(JSON.stringify({profile,store:JSON.parse(await fs.readFile(path.join(data,'workspace-topologies.json'),'utf8')),windows:await launched.app.evaluate(({BaseWindow,webContents})=>({windows:BaseWindow.getAllWindows().map(w=>({id:w.id,urls:w.contentView.children.map(v=>(v as Electron.WebContentsView).webContents?.getURL())})),urls:webContents.getAllWebContents().map(w=>w.getURL()),argv:process.argv}))}));throw error;}
+ finally{await launched.close();await fs.rm(profile,{recursive:true,force:true});}
 });
