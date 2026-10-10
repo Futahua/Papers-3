@@ -119,8 +119,10 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await evaluate(`window.previews=[{id:'doc-one',path:${JSON.stringify(documentPath)},name:'preview.txt'}];panes.setPreviews(previews);panes.selectPreview(previews[0]);`);
   await waitFor(async()=>await evaluate<boolean>('latest.groups.some(g=>g.selected==="preview:doc-one")&&Boolean(document.querySelector(".slice-file-preview:not([hidden])"))'),12000,'selected document preview');
   await waitFor(async()=>await evaluate<boolean>(`(()=>{const pane=document.querySelector('.slice-file-preview:not([hidden])'),body=pane?.querySelector('.file-capability-body');return pane?.classList.contains('expanded')&&getComputedStyle(body).display!=='none'&&body.getBoundingClientRect().height>100&&body.textContent.includes('An isolated preview fixture.');})()`),5000,'pinned preview content is visible');
-  await evaluate(`(()=>{const grip=document.querySelector('.slice-group-handle'),data=new DataTransfer();grip.dispatchEvent(new DragEvent('dragstart',{dataTransfer:data,bubbles:true}));})()`);
+  await evaluate(`(()=>{const grip=document.querySelector('.slice-group-handle'),data=new DataTransfer();grip.dispatchEvent(new DragEvent('dragstart',{dataTransfer:data,bubbles:true}));Object.defineProperty(data,'getData',{value:()=>''});})()`);
   await waitFor(()=>evaluate<boolean>(`latest.presented===false&&document.querySelector('.slice-file-preview').hidden`),5000,'group drag yields native and document content together');
+  const activeDrag=await evaluate<any>(`host.fileCapability('pane-transfer-check',{groupId:latest.groups[0].id,side:'center'})`);
+  expect(activeDrag.error).not.toBe('That group drag is no longer active.');
   // End at the host without a source DOM dragend, as can happen after rerender.
   await evaluate(`host.fileCapability('pane-transfer-overlay',{active:false})`);
   await waitFor(()=>evaluate<boolean>(`latest.presented===true&&!document.querySelector('.slice-file-preview').hidden`),5000,'host drag completion restores retained previews without source dragend');
