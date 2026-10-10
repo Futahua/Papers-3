@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { expect, it } from 'vitest';
 import { evalInBackpackProject, evalInHost, launchPapers, waitFor } from './helpers';
 
-it('protected Files/Preview remain distinct, movable and durable', async () => {
+it.each(['normal', 'minimized', 'maximized'])('protected Files/Preview remount their authored mixed group (%s)', async (mode) => {
  const profile=await fs.mkdtemp(path.join(os.tmpdir(),'papers-page-panels-'));
  const id='bp-41414141-4141-4141-8141-414141414141';
  const root=path.join(profile,'project'),data=path.join(profile,'PapersData');
@@ -65,8 +65,20 @@ it('protected Files/Preview remain distinct, movable and durable', async () => {
   const moved=await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('move',{tabId:'preview:workspace-files',groupId:${JSON.stringify(group)}})`);
   expect(moved.ok).toBe(true);
   await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`latest.groups.some(g=>g.tabs.some(t=>t.id==='preview:workspace-files')&&g.tabs.some(t=>t.id==='preview:workspace-preview'))`),5000,'protected panels moved together');
+  expect((await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('select',{groupId:${JSON.stringify(group)},tabId:'preview:workspace-files'})`)).ok).toBe(true);
+  expect((await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('presentation',{groupId:${JSON.stringify(group)},mode:${JSON.stringify(mode)}})`)).ok).toBe(true);
+  const authored=await evalInBackpackProject(launched.app,`({tree:latest.tree,groups:latest.groups.map(g=>({id:g.id,selected:g.selected,presentation:g.presentation,tabs:g.tabs.map(t=>t.id)}))})`);
   await launched.app.evaluate(({app})=>app.quit());await launched.close();
   launched=await launchPapers(profile,{fixtures:false});
   await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`Boolean(window.latest?.groups?.some(g=>g.tabs.some(t=>t.id==='preview:workspace-files')&&g.tabs.some(t=>t.id==='preview:workspace-preview')))`),18000,'protected membership recovered after restart');
+  // A native snapshot alone does not prove the renderer mounted. The former
+  // startup guard rejected mixed/minimized groups after native recovery succeeded.
+  await evalInBackpackProject(launched.app,'ready');
+  expect(await evalInBackpackProject<boolean>(launched.app,'panes.active()')).toBe(true);
+  await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`document.querySelectorAll('.window-slice-header').length===latest.groups.length`),5000,'group controls rendered after restart');
+  expect(await evalInBackpackProject(launched.app,`({tree:latest.tree,groups:latest.groups.map(g=>({id:g.id,selected:g.selected,presentation:g.presentation,tabs:g.tabs.map(t=>t.id)}))})`)).toEqual(authored);
+  expect(await evalInBackpackProject<boolean>(launched.app,`document.querySelector('#files').hidden`)).toBe(mode==='minimized');
+  expect(await evalInBackpackProject<boolean>(launched.app,`document.querySelector('#preview').hidden`)).toBe(true);
+  expect(await evalInBackpackProject<string[]>(launched.app,'errors')).toEqual([]);
  }finally{await launched.close();await fs.rm(profile,{recursive:true,force:true});}
 });
