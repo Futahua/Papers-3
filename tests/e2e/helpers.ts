@@ -63,7 +63,7 @@ export async function evalInHost<T>(app: ElectronApplication, script: string): P
     const win = BaseWindow.getAllWindows()[0];
     if (!win) throw new Error('no window');
     const views = win.contentView.children as Electron.WebContentsView[];
-    const host = views.find((view) => !view.webContents.getURL().startsWith('papers-backpack://'));
+    const host = views.find((view) => view.webContents.getURL().includes('/renderer/index.html'));
     if (!host) throw new Error('no host view');
     return host.webContents.executeJavaScript(js, true);
   }, script) as Promise<T>;
@@ -81,7 +81,7 @@ export async function evalInHostWindow<T>(
     const win = BaseWindow.getAllWindows().find((candidate) => candidate.id === args.windowId);
     if (!win) throw new Error(`no window with id ${args.windowId}`);
     const views = win.contentView.children as Electron.WebContentsView[];
-    const host = views.find((view) => !view.webContents.getURL().startsWith('papers-backpack://'));
+    const host = views.find((view) => view.webContents.getURL().includes('/renderer/index.html'));
     if (!host) throw new Error('no host view');
     return host.webContents.executeJavaScript(args.script, true);
   }, { windowId, script }) as Promise<T>;

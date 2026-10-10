@@ -5,7 +5,7 @@ import * as path from 'node:path';
 
 import { WorkspaceTopologyStore } from '../../src/main/persistence/workspaceTopologyStore';
 import { papersPaths } from '../../src/main/persistence/paths';
-import { createWorkspaceTopology, openWorkspaceSurface } from '../../src/shared/workspaceTopology';
+import { closeWorkspaceSurface, createWorkspaceTopology, openWorkspaceSurface } from '../../src/shared/workspaceTopology';
 
 let directory: string;
 
@@ -18,6 +18,25 @@ afterEach(async () => {
 });
 
 describe('WorkspaceTopologyStore', () => {
+  it('atomically extracts one parked page, preserves siblings and rejects stale extraction',async()=>{
+    const store=new WorkspaceTopologyStore(papersPaths(directory));
+    const sourceId='11111111-1111-4111-8111-111111111111',targetId='22222222-2222-4222-8222-222222222222';
+    let source=openWorkspaceSurface(createWorkspaceTopology(),{surfaceId:'a',surfaceKey:'saved-a',projectId:'p',title:'A'});
+    source=openWorkspaceSurface(source,{surfaceId:'b',surfaceKey:'saved-b',projectId:'p',title:'B'});
+    const target=createWorkspaceTopology();
+    await store.savePages(sourceId,source,{parked:true});await store.savePages(targetId,target,{parked:false});
+    const before=await store.snapshotPair(sourceId,targetId);
+    const pair={source:{workspaceId:sourceId,topology:closeWorkspaceSurface(source,'a')},target:{workspaceId:targetId,topology:openWorkspaceSurface(target,{surfaceId:'fresh-a',surfaceKey:'saved-a',projectId:'p',title:'A'})},lastWorkspaceId:before.lastWorkspaceId};
+    await store.commitPair(pair,'saved-a',source);
+    let records=await store.sessionSnapshots();expect(records.find(r=>r.workspaceId===sourceId)?.topology.surfaces.map(p=>p.surfaceKey)).toEqual(['saved-b']);
+    expect(records.find(r=>r.workspaceId===sourceId)?.window?.parked).toBe(true);
+    await expect(store.commitPair(pair,'saved-a',source)).rejects.toThrow('no longer saved');
+    await store.restorePairWithIds(before,sourceId,targetId);records=await store.sessionSnapshots();
+    expect(records.find(r=>r.workspaceId===sourceId)?.topology).toEqual(source);expect(records.find(r=>r.workspaceId===targetId)?.topology).toEqual(target);
+    await store.closeSavedPage('saved-b');
+    await expect(store.commitPair(pair,'saved-a',source)).rejects.toThrow('no longer saved');
+    expect((await store.sessionSnapshots()).find(r=>r.workspaceId===sourceId)?.topology.surfaces.map(p=>p.surfaceKey)).toEqual(['saved-a']);
+  });
   it('reuses durable workspace ids across commits and records last selection metadata', async () => {
     const paths = papersPaths(directory);
     const store = new WorkspaceTopologyStore(paths);

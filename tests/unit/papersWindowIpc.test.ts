@@ -11,6 +11,25 @@ function harness() {
 }
 
 describe('Papers window IPC', () => {
+  it.each(['host:window:drag','host:window:drag-state','host:window:swap','host:pages:drop'])('refuses %s from project senders',async channel=>{
+    const h=harness(),callback=vi.fn(async()=>{});
+    registerPapersWindowIpc({ipcMain:h.ipcMain as PapersWindowIpcDependencies['ipcMain'],isHostSender:()=>false,createAdditionalWindow:callback,drag:callback,swapWindow:callback,dropSavedPage:callback});
+    await expect(h.handlers.get(channel)!({sender:{}},{})).rejects.toThrow('non-host sender');expect(callback).not.toHaveBeenCalled();
+  });
+  it('rejects malformed drag commands before invoking an owner',async()=>{
+    const h=harness(),callback=vi.fn(async()=>{});
+    registerPapersWindowIpc({ipcMain:h.ipcMain as PapersWindowIpcDependencies['ipcMain'],isHostSender:()=>true,createAdditionalWindow:callback,drag:callback,swapWindow:callback,dropSavedPage:callback});
+    for(const value of [null,{},true,{active:true,key:'x'.repeat(513)}])await expect(h.handlers.get('host:window:drag')!({sender:{}},value)).rejects.toThrow('Invalid');
+    for(const value of [null,{}, {sourceId:1.5,commit:true},{sourceId:1,commit:'yes'}])await expect(h.handlers.get('host:window:swap')!({sender:{}},value)).rejects.toThrow('Invalid');
+    for(const value of [null,{}, {key:'a',groupId:'main',side:'diagonal',commit:true},{key:'',groupId:'main',side:'center',commit:true}])await expect(h.handlers.get('host:pages:drop')!({sender:{}},value)).rejects.toThrow('Invalid');
+    expect(callback).not.toHaveBeenCalled();
+  });
+  it('does not mark a new drag as refused when an old preflight finishes late',async()=>{
+    const h=harness(),outcome=vi.fn();let state={sourceId:1,key:'old'};let finish!:(value:{ok:boolean})=>void;
+    registerPapersWindowIpc({ipcMain:h.ipcMain as PapersWindowIpcDependencies['ipcMain'],isHostSender:()=>true,createAdditionalWindow:async()=>{},dragState:()=>state,dragOutcome:outcome,swapWindow:()=>new Promise(resolve=>{finish=resolve;})});
+    const pending=h.handlers.get('host:window:swap')!({sender:{}},{sourceId:1,commit:false});
+    state={sourceId:2,key:'new'};finish({ok:false});await pending;expect(outcome).not.toHaveBeenCalled();
+  });
   it('closes a saved page directly without constructing or showing a window',async()=>{
     const h=harness(),closePage=vi.fn(async()=>{}),showPage=vi.fn(async()=>{}),createAdditionalWindow=vi.fn(async()=>{});
     registerPapersWindowIpc({ipcMain:h.ipcMain as PapersWindowIpcDependencies['ipcMain'],isHostSender:()=>true,createAdditionalWindow,closePage,showPage});

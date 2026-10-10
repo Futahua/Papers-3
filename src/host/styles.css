@@ -314,6 +314,9 @@ input:focus-visible {
 .titlebar-menu-wrap { position: relative; }
 .pages-menu { top: 36px; left: auto; right: 0; transform: none; max-height: min(65vh, 500px); overflow-y: auto; }
 .saved-page-row { display: flex; align-items: center; gap: 4px; }
+.saved-page-group { position:relative; margin:5px 0; padding-left:10px; }
+.saved-page-group::before { content:"";position:absolute;left:2px;top:3px;bottom:3px;width:2px;background:var(--branch-color);border-radius:1px;pointer-events:none; }
+.saved-pages-empty { margin:8px;color:var(--text-secondary); }
 .saved-page-row > button:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .saved-page-row > button:last-child { flex: 0 0 28px; }
 .pages-menu button { padding: 8px; border: 0; background: transparent; color: inherit; border-radius: 5px; cursor: pointer; }
@@ -1172,3 +1175,14 @@ input:focus-visible {
   --dv-inactivegroup-visiblepanel-tab-color: var(--ink);
   --dv-inactivegroup-hiddenpanel-tab-color: var(--muted);
 }
+
+.papers-container-drop{position:fixed;z-index:2147483647;pointer-events:none;border:2px solid #90adbf;background:#90adbf30;border-radius:5px;display:flex;align-items:center;justify-content:center;color:var(--text-primary);font-weight:600}
+.papers-container-drop[hidden]{display:none}
+.papers-container-drop.is-insertion{background:#90adbf;border:0}
+.papers-container-drop.is-rejected{background:#b4616133;border-color:#d08484}
+.pill-button[data-window-grip]{-webkit-app-region:no-drag;cursor:grab}
+
+.move-refusal-feedback { position:fixed;box-sizing:border-box;z-index:2147483647;pointer-events:none;border:2px solid #ef7373;border-radius:5px;animation:move-refusal 400ms linear forwards; }
+@keyframes move-refusal { 0%{transform:translateX(0);opacity:1} 8%{transform:translateX(-5px)} 16%{transform:translateX(5px)} 25%{transform:translateX(-4px)} 36%{transform:translateX(3px);opacity:.9} 50%{transform:translateX(-2px)} 68%{transform:translateX(1px);opacity:.5} 100%{transform:translateX(0);opacity:0} }
+@media(prefers-reduced-motion:reduce){.move-refusal-feedback{animation-name:move-refusal-fade}}
+@keyframes move-refusal-fade { from{opacity:1}to{opacity:0} }

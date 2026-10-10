@@ -445,6 +445,7 @@ export function WorkspaceDock(props: {
       api.groups.map((group) => ({ id: group.id, panelIds: group.panels.map((panel) => panel.id) })),
       topologyRef.current.groups,
     );
+    for(const group of api.groups)group.element.dataset.papersGroupId=groupIds.current.get(group.id)??'';
   }, []);
 
   const commitLayout = useCallback((api: DockviewApi): void => {

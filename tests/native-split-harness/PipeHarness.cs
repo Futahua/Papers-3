@@ -70,6 +70,11 @@ public sealed class PipeHarness:Form {
         Call("split",Args("groupId","main","tabId",ids[2],"newGroupId","right","side","right"));
         Check(Groups.Length==2&&!Native.IsIconic(fixtures[0].Handle)&&!Native.IsIconic(fixtures[2].Handle),"two selected native groups present together");
         var a=Frame(0);var b=Frame(2);Check(a.R==b.L&&a.T==b.T,"production pipe fits adjoining native frames without a gap");
+        var beforeFit=json.Serialize(State);
+        Check(Convert.ToBoolean(Call("can-fit",Args("rect",Rect()))["ok"]),"read-only fit accepts the current viewport");
+        Check(!Convert.ToBoolean(Call("can-replace-group",Args("groupId","main","width",5000,"height",5000),false)["ok"]),"exchange preflight rejects impossible incoming native minimums");
+        Check(!Convert.ToBoolean(Call("can-insert-group",Args("groupId","right","side","right","width",5000,"height",5000),false)["ok"]),"insertion preflight rejects impossible extra split");
+        Call("snapshot");Check(json.Serialize(State)==beforeFit&&Frame(0).Box==a.Box&&Frame(2).Box==b.Box,"preflight never changes live topology, revisions, selection or native placement");
         var originalMainTabs=Tabs("main");var selectedMain=(string)Group("main")["selected"];
         Call("relocate-group",Args("groupId","main","destination","right","side","center"));
         Check(Frame(0).Box==b.Box&&Frame(2).Box==a.Box&&Tabs("main").SequenceEqual(originalMainTabs)&&(string)Group("main")["selected"]==selectedMain,"group swap exchanges slots without changing membership or selection");

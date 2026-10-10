@@ -319,3 +319,31 @@ blocks recovery. Production pipe assertions cover the missing-marker case, rejec
 of a live leased window, and release back to the true original placement. With this
 follow-up, 44 pipe assertions, 70 broader native assertions, and both isolated
 Electron integration routes pass.
+
+
+## Container drops and hosted Backpack pages, 2026-10-10
+
+The Pages menu contains parked pages only. A stable colored branch joins siblings
+that reopen together; dragging one into an outer layout separates only that page.
+The existing saved-page transaction stages the renderer, validates the destination,
+commits source and target together, then delivers it. Rejected delivery restores both.
+Backpacks-pill drags exchange window bounds, preserving page membership. Restored
+windows must fit both native layouts and have the same display scale; placement
+failure restores both bounds. Group-center drops exchange memberships across native
+scopes using the existing journal; protected Files/Preview and hosted-page references
+cannot move across scopes behind their logical owner. Insertion uses a thin edge cue,
+tab addition softly lights the destination strip, and refusal pulses the source red
+for 400ms with a decaying shake. Reduced-motion settings retain only the fade.
+
+`paneBackpackPages.ts` composes an existing logical Backpack WebContentsView in a
+native group. The native document reference stores its stable PageKey and optional
+tab style; it stores no duplicate document or renderer state. Outer workspace
+topology and the existing page transfer remain identity/persistence authorities.
+Selection changes conceal and restore the same renderer. Self-containing and
+recursive page layouts are refused. Closing the logical page removes its membership;
+remount checks stale references against the authoritative saved-page set. The group
+tab X removes membership while leaving the page available in the outer Papers strip.
+Proxima uses its blue time-pill appearance, Files muted yellow, and follow Preview
+purple. Both direct AYG and embedded Proxima integration checks exercise DOM tab
+drops, retained content, splitting and explicit closure. Physical mouse dragging and
+an actual Windows reboot remain separate acceptance checks.

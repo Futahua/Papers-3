@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import {showMoveRefusal} from './moveFeedback';
 import { host } from './bridge';
 
 const MIME = 'application/x-papers-page';
@@ -8,6 +9,7 @@ const MIME = 'application/x-papers-page';
 export function usePageWindowDrag(surfaceIds: string[], onError: (message: string) => void): void {
   const identity = surfaceIds.join('\0');
   useEffect(() => {
+    const unsubscribe=host().events.onMoveRejected(item=>{if(!item.surfaceId)return;showMoveRefusal(Array.from(document.querySelectorAll('.dv-tab[data-tab-panel-id]')).find(n=>n.getAttribute('data-tab-panel-id')===item.surfaceId)??null);});
     const own = new Set(identity ? identity.split('\0') : []);
     let dragged: string | null = null;
     let cancelled = false;
@@ -18,7 +20,7 @@ export function usePageWindowDrag(surfaceIds: string[], onError: (message: strin
     const start = (event: DragEvent): void => {
       const id = event.dataTransfer?.getData(MIME);
       dragged = id && own.has(id) ? id : null;
-      cancelled = false;
+      cancelled = false;if(dragged)void host().app.pageDrag(true,dragged).catch(onError);
     };
     const over = (event: DragEvent): void => {
       if (!event.dataTransfer?.types.includes(MIME) || dragged) return;
@@ -36,14 +38,14 @@ export function usePageWindowDrag(surfaceIds: string[], onError: (message: strin
       void host().app.adoptPage(id).catch(error => onError(String(error)));
     };
     const end = (event: DragEvent): void => {
-      const id = dragged; dragged = null; clear();
+      const id = dragged;if(id)void host().app.pageDrag(false).catch(onError); dragged = null; clear();
       // Escape and absent terminal coordinates are cancellation, not tear-out.
       const outside = event.clientX < 0 || event.clientY < 0 || event.clientX > innerWidth || event.clientY > innerHeight;
       if (!id || cancelled || !outside || (event.screenX === 0 && event.screenY === 0)
         || event.dataTransfer?.dropEffect !== 'none') return;
       void host().app.detachPage(id).catch(error => onError(String(error)));
     };
-    const key = (event: KeyboardEvent): void => { if (event.key === 'Escape') cancelled = true; };
+    const key = (event: KeyboardEvent): void => { if (event.key === 'Escape') {cancelled = true;if(dragged)void host().app.pageDrag(false).catch(onError);} };
     window.addEventListener('dragstart', start);
     window.addEventListener('dragover', over, true);
     window.addEventListener('drop', drop, true);
@@ -51,7 +53,8 @@ export function usePageWindowDrag(surfaceIds: string[], onError: (message: strin
     window.addEventListener('keydown', key, true);
     window.addEventListener('dragleave', clear);
     return () => {
-      clear(); window.removeEventListener('dragstart', start); window.removeEventListener('dragover', over, true);
+      if(dragged)void host().app.pageDrag(false).catch(onError);
+      unsubscribe();clear(); window.removeEventListener('dragstart', start); window.removeEventListener('dragover', over, true);
       window.removeEventListener('drop', drop, true); window.removeEventListener('dragend', end);
       window.removeEventListener('keydown', key, true); window.removeEventListener('dragleave', clear);
     };

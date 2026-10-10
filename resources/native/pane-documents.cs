@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Drawing;
 
-public sealed class PaneDocumentRef {public string Id,Path,Name;}
+public sealed class PaneDocumentRef {public string Id,Path,Name,PageKey,TabStyle;}
 
 public sealed partial class PaneCoordinator {
     // Opaque renderer document references only. File paths and preview engines

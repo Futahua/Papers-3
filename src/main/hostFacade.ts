@@ -42,9 +42,11 @@ import type { HostFacade } from './ipc/hostIpc';
 import {
   assertValidWorkspaceTopology,
   closeWorkspaceSurface,
+  activateWorkspaceSurface,
   createWorkspaceTopology,
   insertWorkspaceSurface,
   openWorkspaceSurface,
+  splitWorkspaceGroup,
   remapWorkspaceTopologySurfaceIds,
   type WorkspaceTopologyV1,
 } from '@shared/workspaceTopology';
@@ -144,6 +146,8 @@ export interface FacadeDeps {
   logicalSurfaces: LogicalSurfaceRegistry;
   /** Optional lifecycle hook for per-surface diagnostic state cleanup. */
   retireLogicalSurface?: (surfaceId: string) => boolean;
+  /** Remove hosted group references after an explicit logical page close. */
+  pageClosed?: (surfaceId: string) => Promise<void>;
   /** Move logical identity while retiring its old-window visual state. */
   moveLogicalSurface?: (surfaceId: string, targetWindowId: number) => boolean;
   /** Refresh the fixed semantic observation after a canonical sender is bound. */
@@ -187,7 +191,7 @@ export interface FacadeDeps {
   ) => void;
   /** Temporarily raise the host renderer above native project views for
    * clickable DOM popovers/drag overlays, then restore project z-order. */
-  setHostOverlayActive?: (windowId: number, active: boolean, owner?: 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy') => void;
+  setHostOverlayActive?: (windowId: number, active: boolean, owner?: 'picker' | 'workspace-drag' | 'workspace-resize' | 'window-drag' | 'legacy') => void;
   runtime: CanvasRuntime;
   canvasState: CanvasSessionState;
   catalog: () => ProgramCatalog;
@@ -983,6 +987,8 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   activateBackpackProjectSurface(senderId: number, surfaceId: string): void {
     const { windowId, projectId } = this.requireHostSurfaceTarget(senderId, surfaceId);
+    this.assertWorkspaceMutationAvailable(windowId);
+    const current=this.deps.workspaceTopology?.(windowId);if(current){const next=activateWorkspaceSurface(current,surfaceId);this.deps.setWorkspaceTopology(windowId,next);this.deps.sendToWindow(windowId,'host:event:workspace-topology',next);}
     this.deps.setActiveSurfaceId(windowId, surfaceId);
     this.deps.setEnteredBackpack(windowId, projectId);
     this.emitBackpacksChanged();
@@ -1364,7 +1370,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     this.deps.runtime.setOverlayVisible(!active);
   }
 
-  setHostOverlayActive(senderId: number, active: boolean, owner: 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy' = 'legacy'): void {
+  setHostOverlayActive(senderId: number, active: boolean, owner: 'picker' | 'workspace-drag' | 'workspace-resize' | 'window-drag' | 'legacy' = 'legacy'): void {
     const windowId = this.deps.windowIdForSender(senderId);
     if (windowId === null) throw new Error('Only a Papers window may change host overlay composition.');
     this.deps.setHostOverlayActive?.(windowId, active, owner);
@@ -2008,7 +2014,15 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return this.runProjectOwnership(projectId, () => this.openWorkspaceSurfaceFromControlUngated(windowId, projectId));
   }
 
-  private async openWorkspaceSurfaceFromControlUngated(windowId: number, projectId: string, requestedUrl?: string): Promise<{
+  async openSavedPageFromControl(windowId: number, page: {projectId:string;surfaceKey:string;title:string},
+    destination: {groupId:string;side:string}, commit: (topology:WorkspaceTopologyV1)=>Promise<void>, rollback:()=>Promise<void>): Promise<unknown> {
+    return this.runProjectOwnership(page.projectId,()=>this.openWorkspaceSurfaceFromControlUngated(windowId,page.projectId,undefined,{page,destination,commit,rollback}));
+  }
+
+  private async openWorkspaceSurfaceFromControlUngated(windowId: number, projectId: string, requestedUrl?: string, saved?: {
+    page:{surfaceKey:string;title:string};destination:{groupId:string;side:string};
+    commit:(topology:WorkspaceTopologyV1)=>Promise<void>;rollback:()=>Promise<void>;
+  }): Promise<{
     windowId: number; surfaceId: string; projectId: string; topology: WorkspaceTopologyV1;
   }> {
     const initialBackpack = this.deps.registry.find(projectId);
@@ -2031,27 +2045,36 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const releaseMutation = this.acquireWorkspaceMutation([windowId]);
     let surfaceId: string | null = null;
     let prepared: PreparedProjectSurface | null = null;
+    let committed = false;
     try {
       const latest = this.deps.workspaceTopology?.(windowId) ?? topology;
       this.validateWorkspaceTopology(windowId, latest);
       const surface = this.deps.logicalSurfaces.create({ windowId, projectId, kind: 'project' });
       surfaceId = surface.surfaceId;
-      const surfaceKey = randomUUID();
+      const surfaceKey = saved?.page.surfaceKey ?? randomUUID();
       const keyedUrl = withProjectSurfaceKey(requestedUrl ?? project.url, surfaceKey);
       prepared = await this.deps.workspaceMove!.prepareProjectSurface(windowId, surface.surfaceId, keyedUrl);
-      const next = openWorkspaceSurface(latest, {
+      const descriptor = {
         surfaceId: surface.surfaceId,
         surfaceKey,
         projectId,
-        title: backpack.name,
+        title: saved?.page.title ?? backpack.name,
+      };
+      let next = saved ? insertWorkspaceSurface(latest,descriptor,saved.destination.groupId) : openWorkspaceSurface(latest,descriptor);
+      if(saved && saved.destination.side!=='center') next=splitWorkspaceGroup(next,{
+        groupId:saved.destination.groupId,newGroupId:'group-'+randomUUID(),surfaceId:surface.surfaceId,
+        orientation:['left','right'].includes(saved.destination.side)?'horizontal':'vertical',
+        position:['left','top'].includes(saved.destination.side)?'before':'after',
       });
       this.validateWorkspaceTopologyAgainst(windowId, next, this.currentProjectSurfaceSet(windowId));
+      this.requireLiveWorkspaceWindow(windowId);
+      if(saved){await saved.commit(next);committed=true;this.requireLiveWorkspaceWindow(windowId);}
       // Adopt the prepared native view only after the topology is validated.
       // It is still hidden from the renderer until this event is delivered;
       // any delivery failure can discard it without an orphaned logical tab.
       prepared.adopt();
       this.deps.sendToWindowOrThrow(windowId, 'host:event:workspace-project-opened', {
-        project: { surfaceId: surface.surfaceId, projectId, title: backpack.name, url: keyedUrl },
+        project: { surfaceId: surface.surfaceId, projectId, title: descriptor.title, url: keyedUrl },
         topology: next,
       });
       this.deps.setActiveSurfaceId(windowId, surface.surfaceId);
@@ -2061,6 +2084,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     } catch (caught) {
       if (prepared) prepared.discard();
       if (surfaceId) this.retireLogicalSurface(surfaceId);
+      if(committed && saved) await saved.rollback();
       throw caught;
     } finally {
       releaseMutation();
@@ -2086,6 +2110,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const releaseMutation = mutationAlreadyHeld ? null : this.acquireWorkspaceMutation([windowId]);
     try {
       this.validateWorkspaceTopology(windowId, topology);
+      await this.deps.pageClosed?.(surfaceId);
       await this.deps.closeAttachedProjectSurface(windowId, surfaceId);
       this.retireLogicalSurface(surfaceId);
       for (const senderId of this.deps.surfaces.sendersForSurface(surfaceId)) this.deps.surfaces.unbind(senderId);

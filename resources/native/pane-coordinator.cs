@@ -179,6 +179,39 @@ public sealed partial class PaneCoordinator : IDisposable {
         int height=peer==null?PaneLayout.DefaultMinHeight:Math.Max(PaneLayout.DefaultMinHeight,peer.MinTrackHeight);
         return new Size(Minimum(group),height);
     }
+    public bool CanFit(Rectangle viewport){
+        if(Scope.Groups.Values.Any(g=>g.Gesture!=null))return false;
+        var candidate=new PaneScope(Scope.ScopeId,Scope.HeaderHeight){Viewport=viewport,Root=Scope.Root==null?null:Scope.Root.Copy(),Ratio=Scope.Ratio};
+        foreach(var id in Scope.Order){var current=Scope.Groups[id];var group=candidate.Add(id);group.SelectedTab=current.SelectedTab;group.Presentation=current.Presentation;}
+        return PaneLayout.Resolve(candidate,MinimumSize);
+    }
+    public Size GroupMinimum(string groupId){return MinimumSize(Group(groupId));}
+    public bool CanReplaceGroup(string groupId,int width,int height){
+        if(Scope.Groups.Values.Any(g=>g.Gesture!=null))return false;
+        Group(groupId);
+        var candidate=new PaneScope(Scope.ScopeId,Scope.HeaderHeight){Viewport=Scope.Viewport,Root=Scope.Root.Copy(),Ratio=Scope.Ratio};
+        foreach(var id in Scope.Order){var current=Scope.Groups[id];var group=candidate.Add(id);group.SelectedTab=current.SelectedTab;group.Presentation=current.Presentation;}
+        return PaneLayout.Resolve(candidate,g=>g.Id==groupId?new Size(width,height):MinimumSize(g));
+    }
+    public bool CanInsertGroup(string groupId,string side,int width,int height){
+        if(!new[]{"left","right","top","bottom"}.Contains(side)||Scope.Groups.Values.Any(g=>g.Gesture!=null))return false;
+        var candidate=new PaneScope(Scope.ScopeId,Scope.HeaderHeight){Viewport=Scope.Viewport,Root=Scope.Root.Copy(),Ratio=Scope.Ratio};
+        foreach(var id in Scope.Order){var current=Scope.Groups[id];var group=candidate.Add(id);group.SelectedTab=current.SelectedTab;group.Presentation=current.Presentation;}
+        string added="preflight-incoming";while(candidate.Groups.ContainsKey(added))added+="-";
+        candidate.Add(added);if(!PaneLayout.Split(candidate.Root,groupId,added,side))return false;
+        candidate.Order.Clear();candidate.Order.AddRange(PaneLayout.Leaves(candidate.Root));
+        return PaneLayout.Resolve(candidate,g=>g.Id==added?new Size(width,height):MinimumSize(g));
+    }
+    public bool CanRelocateGroup(string id,string target,string side){
+        Group(id);Group(target);if(id==target)return false;
+        if(Scope.Groups.Values.Any(g=>g.Gesture!=null))return false;
+        var candidate=new PaneScope(Scope.ScopeId,Scope.HeaderHeight){Viewport=Scope.Viewport,Root=Scope.Root.Copy(),Ratio=Scope.Ratio};
+        foreach(var key in Scope.Order){var current=Scope.Groups[key];var group=candidate.Add(key);group.SelectedTab=current.SelectedTab;group.Presentation=current.Presentation;}
+        if(side=="center")SwapGroupLeaves(candidate.Root,id,target);
+        else{candidate.Root=PaneLayout.Remove(candidate.Root,id);if(!PaneLayout.Split(candidate.Root,target,id,side))return false;}
+        candidate.Order.Clear();candidate.Order.AddRange(PaneLayout.Leaves(candidate.Root));
+        return PaneLayout.Resolve(candidate,MinimumSize);
+    }
     bool WidenForSelection(){
         var minimum=PaneLayout.PresentationMinimum(Scope,MinimumSize);
         Native.Rect owner;

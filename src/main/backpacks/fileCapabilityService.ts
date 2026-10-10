@@ -53,6 +53,8 @@ export interface FileCapabilityEntry {
   size: number | null; createdAt: number | null; modifiedAt: number | null; identity: string | null;
 }
 export interface FileCapabilityDeps {
+  panePageDrag?:()=>string|null;
+  panePages?:{check:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>;attach:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>};
   trashPath?: (target: string) => Promise<void>;
   runtimeControl?: ReturnType<typeof createCapabilityRuntimeService>;
   everythingSearch: EverythingSearchBridge | null;
@@ -1083,7 +1085,18 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             const bridge=deps.chromePane?.coordinator,owner=context.nativePreviewHost?.ownerKey;
             if(!bridge||!owner)return {ok:false,message:'Window layout is unavailable.'};
             if(typeof params.active!=='boolean')throw new Error('active must be a boolean.');
-            return bridge.dragOverlay(owner,params.active);
+            return bridge.dragOverlay(owner,params.active,params.transferId===undefined?undefined:boundedString(params.transferId,'transferId',64),params.cancelled===true);
+          }
+          case 'pane-page-check':
+          case 'pane-page-attach': {
+            const owner=context.nativePreviewHost?.ownerKey;if(!owner||!deps.panePages)return {ok:false,error:'Page groups are unavailable.'};
+            const side=boundedString(params.side,'side',8);if(!['center','left','right','top','bottom'].includes(side))throw Error('Invalid page drop side.');
+            return deps.panePages[operation==='pane-page-check'?'check':'attach'](owner,boundedString(params.pageId??deps.panePageDrag?.(),'pageId',128),boundedString(params.groupId,'groupId',64),side);
+          }
+          case 'pane-transfer-check': {
+            const bridge=deps.chromePane?.coordinator,owner=context.nativePreviewHost?.ownerKey;
+            if(!bridge||!owner)return {ok:false,error:'Window layout is unavailable.'};
+            return bridge.transferCheck(owner,boundedString(params.groupId,'groupId',64),boundedString(params.side,'side',8));
           }
           case 'pane-window-transfer': {
             const bridge=deps.chromePane?.coordinator, owner=context.nativePreviewHost?.ownerKey;

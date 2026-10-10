@@ -2,12 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { host, type BackpacksList, type HostErrorPayload } from './bridge';
 import { BackpacksPane } from './BackpacksPane';
+import {savedPageGroups, type SavedPage} from './savedPageGroups';
 import { installChromeFocusPolicy } from './chromeFocusPolicy';
 import { BackpackSidebar } from './BackpackSidebar';
 import { SettingsPane } from './SettingsPane';
 import { EmptyBackpackWarning } from './EmptyBackpackWarning';
 import { WorkspaceDock, type OpenWorkspaceProject } from './WorkspaceDock';
 import { usePageWindowDrag } from './usePageWindowDrag';
+import {useHostWindowDrag} from './useHostWindowDrag';
 import {
   activateWorkspaceSurface,
   closeWorkspaceSurface,
@@ -255,12 +257,13 @@ export function App(): React.JSX.Element {
     return () => media.removeEventListener('change', apply);
   }, []);
 
-  const [savedWindows,setSavedWindows]=useState<Array<{windowId:number;title:string;groupId:string;current:boolean}>>([]);
-  const [savedPages,setSavedPages]=useState<Array<{key:string;title:string;windowId:number|null;current:boolean}>>([]);
+  const [savedPages,setSavedPages]=useState<SavedPage[]>([]);
   const [windowMenuOpen,setWindowMenuOpen]=useState(false);
   const pageMoveError = useCallback((message: string): void => setSplitNotice({id:Date.now(),message}), []);
   usePageWindowDrag(openProjects.map(page=>page.surfaceId),pageMoveError);
-  const refreshWindows=async():Promise<void>=>{const [windows,pages]=await Promise.all([host().app.windows(),host().app.pages()]);setSavedWindows(windows);setSavedPages(pages);};
+  const refreshWindows=useCallback(async():Promise<void>=>{setSavedPages(await host().app.pages());},[]);
+  const savedMoved=useCallback(()=>{setWindowMenuOpen(false);void refreshWindows();},[refreshWindows]);
+  useHostWindowDrag(pageMoveError,savedMoved);
 
   const createNewWindow = useCallback((): void => {
     void host().app.newWindow().catch((caught) => {
@@ -296,7 +299,7 @@ export function App(): React.JSX.Element {
     void host().layout.setHostOverlayActive(workspaceOverlayActive, 'workspace-drag').catch(() => undefined);
   }, [workspaceOverlayActive]);
 
-  const setWorkspaceOverlayFromDock = useCallback((active: boolean, owner: 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy' = 'workspace-drag'): Promise<void> => {
+  const setWorkspaceOverlayFromDock = useCallback((active: boolean, owner: 'picker' | 'workspace-drag' | 'workspace-resize' | 'window-drag' | 'legacy' = 'workspace-drag'): Promise<void> => {
     if (owner === 'workspace-drag') setWorkspaceOverlayActive(active);
     // A drag needs an acknowledgement that Electron has raised the host
     // child view before its preview may become armed. Native ownership is
@@ -479,6 +482,7 @@ export function App(): React.JSX.Element {
           onFocus={openSidebar}
           onKeyDown={(event) => { if (event.key === 'Escape') { setSidebarOpen(false); setBasicOpen(false); } }}>
           <button
+            draggable data-window-grip
             className={`pill-button${basicOpen ? ' active' : ''}`}
             aria-haspopup={basicOpen ? 'menu' : undefined}
             aria-controls={basicOpen ? 'basic-menu' : sidebarOpen ? 'backpack-sidebar' : undefined}
@@ -528,16 +532,15 @@ export function App(): React.JSX.Element {
 
         <div className="titlebar-actions">
           <div className="titlebar-menu-wrap">
-            <button type="button" className="titlebar-icon-button" aria-label="Pages" title="Open and saved pages"
+            <button type="button" className="titlebar-icon-button" aria-label="Pages" title="Saved pages"
               onClick={() => { setWindowMenuOpen(!windowMenuOpen); void refreshWindows(); }}>▾</button>
             {windowMenuOpen && <div className="basic-menu pages-menu" role="menu">
-              {savedPages.map(page=><div key={page.key} className="saved-page-row">
-                <button type="button" role="menuitem" title={page.windowId===null?'Reopen saved page':'Show page'} onClick={()=>{void host().app.showPage(page.key).then(()=>setWindowMenuOpen(false)).catch(error=>setSplitNotice({id:Date.now(),message:'Page could not reopen: '+String(error)}));}}>{page.title}{page.windowId===null?' · saved':''}</button>
+              {savedPageGroups(savedPages).map(group=><div key={group.id} className="saved-page-group" role="group" aria-label="Pages that reopen together" style={{'--branch-color':`hsl(${group.hue} 45% 65%)`} as React.CSSProperties}>
+              {group.pages.map(page=><div key={page.key} className="saved-page-row">
+                <button draggable data-saved-page={page.key} type="button" role="menuitem" title={page.windowId===null?'Reopen saved page':'Show page'} onClick={()=>{void host().app.showPage(page.key).then(()=>setWindowMenuOpen(false)).catch(error=>setSplitNotice({id:Date.now(),message:'Page could not reopen: '+String(error)}));}}>{page.title}{page.windowId===null?' · saved':''}</button>
                 <button type="button" aria-label={'Close saved page '+page.title} title="Close page" onClick={()=>{void host().app.closePage(page.key).then(refreshWindows);}}>×</button>
-              </div>)}
-              {surfaceId && savedWindows.filter(window=>!window.current).map(target=><button type="button" key={target.windowId} role="menuitem" onClick={()=>{
-                void host().layout.moveSurfaceToWindow({surfaceId,targetWindowId:target.windowId,targetGroupId:target.groupId,targetIndex:2147483647}).then(()=>setWindowMenuOpen(false)).catch(error=>setSplitNotice({id:Date.now(),message:String(error)}));
-              }}>Move current page · {target.title}</button>)}
+              </div>)}</div>)}
+              {!savedPages.some(page=>page.windowId===null)&&<p className="saved-pages-empty">No closed pages</p>}
             </div>}
           </div>
           <button

@@ -46,6 +46,11 @@ const api = {
     // Create one fresh Papers window; all policy stays in the main process.
     newWindow: () => ipcRenderer.invoke('host:window:new'),
     windows: () => ipcRenderer.invoke('host:window:list'),
+    pageDrag:(active:boolean,pageId?:string)=>ipcRenderer.invoke('host:pages:drag',{active,pageId}),
+    windowDrag: (active:boolean,key?:string,cancelled?:boolean) => ipcRenderer.invoke('host:window:drag',{active,key,cancelled}),
+    windowDragState: () => ipcRenderer.invoke('host:window:drag-state'),
+    swapWindow: (sourceId:number,commit:boolean) => ipcRenderer.invoke('host:window:swap',{sourceId,commit}),
+    dropSavedPage: (key:string,groupId:string,side:string,commit:boolean) => ipcRenderer.invoke('host:pages:drop',{key,groupId,side,commit}),
     pages: () => ipcRenderer.invoke('host:pages:list'),
     closePage: (key:string) => ipcRenderer.invoke('host:pages:close',key),
     adoptPage: (surfaceId:string) => ipcRenderer.invoke('host:pages:adopt',surfaceId),
@@ -107,7 +112,7 @@ const api = {
     setProgramBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke('host:layout:set-program-bounds', bounds),
     setOverlayActive: (active: boolean) => ipcRenderer.invoke('host:layout:set-overlay', active),
-    setHostOverlayActive: (active: boolean, owner: 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy' = 'legacy') =>
+    setHostOverlayActive: (active: boolean, owner: 'picker' | 'workspace-drag' | 'workspace-resize' | 'window-drag' | 'legacy' = 'legacy') =>
       ipcRenderer.invoke('host:layout:set-host-overlay', active, owner),
     setTitleBarOverlay: (color: string, symbolColor: string) =>
       ipcRenderer.invoke('host:layout:set-titlebar', color, symbolColor),
@@ -153,6 +158,7 @@ const api = {
     onShelfChanged: subscribe('host:event:shelf-changed'),
     onSaveStatus: subscribe('host:event:save-status'),
     onPermissionPrompt: subscribe('host:event:permission-prompt'),
+    onMoveRejected: subscribe('host:event:move-rejected'),
     onHostError: subscribe('host:event:host-error'),
     onUpdateStatus: subscribe('host:event:update-status'),
   },

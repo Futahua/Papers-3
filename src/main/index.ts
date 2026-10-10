@@ -12,6 +12,7 @@ import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOf
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
 import { createHtmlPreviewHostBridge } from './backpacks/htmlPreviewHostBridge';
+import {createPaneBackpackPages,type PanePage} from './backpacks/paneBackpackPages';
 import { createChromePaneBridge } from './backpacks/chromePaneBridge';
 import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
@@ -53,6 +54,9 @@ import { registerCompactWidgetIpc } from './ipc/compactWidgetIpc';
 import { registerVisualDiagnosticsIpc, resolveVisualDiagnosticTarget } from './ipc/visualDiagnosticsIpc';
 import { registerVisualSemanticKeysIpc } from './ipc/visualSemanticKeysIpc';
 import { registerPapersWindowIpc } from './ipc/papersWindowIpc';
+import {swapPapersWindows} from './windows/papersWindowSwap';
+import {savedPageDropFits,savedPageDropArea} from './windows/savedPageDrop';
+import {closeWorkspaceSurface} from '@shared/workspaceTopology';
 import { BackpackSurfaceRegistry, DETACHED_SURFACE_KIND, COMPACT_WIDGET_SURFACE_KIND, isAllowedProjectSurfaceSender, decideProjectSurfaceRequest } from './backpacks/backpackSurfaceRegistry';
 import { createProjectSurfaceAuthorityBarrier } from './backpacks/projectSurfaceAuthorityBarrier';
 import { controlBuildIdentity } from './buildIdentity';
@@ -187,7 +191,7 @@ interface PapersWindowOwned {
 }
 
   const papersWindows = createPapersWindowRegistry<PapersWindowOwned>();
-  const hostOverlayOwners = new Map<number, Set<'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy'>>();
+  const hostOverlayOwners = new Map<number, Set<'picker' | 'workspace-drag' | 'workspace-resize' | 'window-drag' | 'legacy'>>();
 const workspaceTopologies = new Map<number, WorkspaceTopologyV1>();
 const workspaceTopologyRevisions = new Map<number, number>();
 /** Live-only association. Durable workspace IDs persist; native window IDs do not. */
@@ -681,6 +685,10 @@ async function bootstrap(): Promise<void> {
     activateDestination: handle => foregroundBridge?.setForegroundWindow(handle) ?? Promise.resolve(false),
     onError: error => console.error('[papers] native drag reveal:', error instanceof Error ? error.message : String(error)),
   });
+  let pageDragActive=false,pageDragId:string|null=null;
+  let pageDragExpiry:ReturnType<typeof setTimeout>|undefined;
+  let panePages:ReturnType<typeof createPaneBackpackPages>|undefined;
+  const outerPagePresentation=new Map<string,{bounds:import('./backpacks/nativePaneBridge').PaneRect|null;visible:boolean}>();
   const chromePane = createChromePaneBridge({
     cacheDirectory: path.join(paths.root, 'native-helpers'),
     nativeDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native') : path.join(app.getAppPath(), 'resources', 'native'),
@@ -701,6 +709,9 @@ async function bootstrap(): Promise<void> {
       context.owned.window.focus();
     },
     onSnapshot: (owner, snapshot) => {
+      const livePages=papersWindows.windowIds.flatMap(id=>currentWorkspaceTopology(id)?.surfaces??[]);
+      snapshot={...snapshot,groups:snapshot.groups.map(g=>({...g,tabs:g.tabs.map(t=>t.preview?.PageKey?{...t,preview:{...t.preview,Name:livePages.find(p=>(p.surfaceKey??p.surfaceId)===t.preview!.PageKey)?.title??t.preview.Name}}:t)}))};
+      panePages?.accept(owner,snapshot);
       const separator = owner.indexOf(':');
       const contents = papersWindows.get(Number(owner.slice(0, separator)))?.owned.projectSurfaces.get(owner.slice(separator + 1))?.webContents;
       if (!contents || contents.isDestroyed()) return;
@@ -750,7 +761,23 @@ async function bootstrap(): Promise<void> {
   const capabilityRuntimes = createCapabilityRuntimeService(path.join(paths.root, 'native', 'capability-runtimes'), officeEditor ? { officeEditor } : {});
   await capabilityRuntimes.initialize();
   app.once('will-quit', () => { void capabilityRuntimes.stopRecording(); });
+  const presentPanePage=(page:PanePage,bounds:import('./backpacks/nativePaneBridge').PaneRect|null,visible:boolean):void=>{
+    const runtime=papersWindows.get(page.windowId)?.owned.projectSurfaces.get(page.surfaceId);if(!runtime)return;
+    if(runtime.isPresented===visible&&(!bounds||JSON.stringify(runtime.currentBounds)===JSON.stringify({x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height})))return;
+    if(bounds)runtime.setBounds(bounds);if(visible)runtime.present();else runtime.conceal();
+    const owner=`${page.windowId}:${page.surfaceId}`;
+    officeEditor?.setOwnerVisible(owner,visible);windowsPreview?.setOwnerVisible(owner,visible);pdfPreview.setOwnerVisible(owner,visible);htmlPreview.setOwnerVisible(owner,visible);webBrowser.setOwnerVisible(owner,visible);chromePane?.setOwnerVisible(owner,visible);
+    if(bounds){officeEditor?.setOwnerSurfaceBounds(owner,bounds);windowsPreview?.setOwnerSurfaceBounds(owner,bounds);pdfPreview.setOwnerSurfaceBounds(owner,bounds);htmlPreview.setOwnerSurfaceBounds(owner,bounds);webBrowser.setOwnerSurfaceBounds(owner,bounds);chromePane?.setOwnerSurfaceBounds(owner,bounds);}
+  };
+  panePages=createPaneBackpackPages({exists:async key=>(await workspaceTopologyStore.sessionSnapshots()).some(record=>record.topology.surfaces.some(page=>(page.surfaceKey??page.surfaceId)===key)),bridge:()=>chromePane?.coordinator,pages:()=>papersWindows.windowIds.flatMap(windowId=>(currentWorkspaceTopology(windowId)?.surfaces??[]).map(p=>({windowId,surfaceId:p.surfaceId,key:p.surfaceKey??p.surfaceId,projectId:p.projectId,title:p.title,tabStyle:registry.list().find(b=>b.id===p.projectId)?.name.toLowerCase().includes('proxima')?'proxima':undefined}))),
+    outer:page=>outerPagePresentation.get(`${page.windowId}:${page.surfaceId}`)??{bounds:papersWindows.get(page.windowId)?.owned.projectSurfaces.get(page.surfaceId)?.currentBounds??null,visible:false},present:presentPanePage,
+    adopt:async(page,parent)=>{const windowId=parent.windowId;const hostId=papersWindows.get(windowId)?.owned.hostView.webContents.id;if(hostId===undefined)throw Error('Destination window closed.');await facade.adoptWorkspaceSurfaceFromHost(hostId,page.surfaceId,currentWorkspaceTopology(windowId)?.focusedGroupId??'group-main',2147483647);facade.activateBackpackProjectSurface(hostId,parent.surfaceId);}});
   const fileCapability = createFileCapabilityService({
+    panePageDrag:()=>pageDragId,
+    panePages:{check:(...args)=>panePages!.check(...args),attach:async(...args)=>{
+      const source=papersWindows.windowIds.map(id=>({id,page:currentWorkspaceTopology(id)?.surfaces.find(p=>p.surfaceId===args[1]||(p.surfaceKey??p.surfaceId)===args[1])})).find(p=>p.page);
+      const result=await panePages!.attach(...args);if(!result.ok&&source){const wc=papersWindows.get(source.id)?.owned.hostView.webContents;if(wc&&!wc.isDestroyed())wc.send('host:event:move-rejected',{surfaceId:source.page!.surfaceId});}return result;
+    }},
     trashPath: target => shell.trashItem(target),
     runtimeControl: capabilityRuntimes,
     cacheDirectory: fileCapabilityCacheDirectory,
@@ -1048,9 +1075,10 @@ async function bootstrap(): Promise<void> {
     finalize: async (windowId: number) => {
       traceQuit('window:' + windowId + ':finalize:start');
       await facade.waitForWorkspaceMutation(windowId);
+      traceQuit('window:' + windowId + ':finalize:unlocked');
       try {
         await finalizePapersWindow(windowId, {
-          closeOwnedWidgets: async (id) => { await widgetSession?.closeOwnedByWindow(id); },
+          closeOwnedWidgets: async (id) => { await widgetSession?.closeOwnedByWindow(id);traceQuit('window:'+id+':finalize:widgets'); },
           unbindSurfaceSenders: (id) => surfaceContexts.unbindWindow(id),
           retireLogicalSurfaces: (id) => { retireLogicalSurfacesInWindow(id); },
           clearWorkspaceTopology: (id) => {
@@ -1065,12 +1093,14 @@ async function bootstrap(): Promise<void> {
             papersWindows.remove(id);
             if (papersWindows.windowIds.length === 0) {
               void commandSurfaceOverlay?.destroy().catch(() => undefined);
-              // Hidden auxiliary windows must not keep a hostless Papers alive.
-              app.quit();
+              // Closed-event finalization can run inside an earlier quit pass.
+              // Defer until Electron has left that pass before requesting exit.
+              setImmediate(() => { if(papersWindows.windowIds.length===0)app.quit(); });
             }
           },
         });
-      } finally {
+        traceQuit('window:'+windowId+':finalize:done');
+      } catch(error) {traceQuit('window:'+windowId+':finalize:failed:'+String(error));throw error;} finally {
         closingPapersWindows.delete(windowId);
       }
     },
@@ -1469,6 +1499,7 @@ async function bootstrap(): Promise<void> {
         widgetSession?.closeProject(backpackId).catch(() => undefined),
       ]);
     },
+    pageClosed: async (surfaceId) => { await panePages?.removePage(surfaceId); },
     closeAttachedProjectSurface: async (windowId, surfaceId, options) => {
       await officeEditor?.closeOwner(`${windowId}:${surfaceId}`);
       windowsPreview?.closeOwner(`${windowId}:${surfaceId}`);
@@ -1577,11 +1608,12 @@ async function bootstrap(): Promise<void> {
           },
         });
         if (owningWindowId !== null) {
+          const state=outerPagePresentation.get(`${owningWindowId}:${surfaceId}`);outerPagePresentation.set(`${owningWindowId}:${surfaceId}`,{bounds:state?.bounds??runtime.currentBounds,visible:present});
           officeEditor?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
           windowsPreview?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
           pdfPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
           htmlPreview.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
-          webBrowser.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present); chromePane?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);
+          webBrowser.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present); chromePane?.setOwnerVisible(`${owningWindowId}:${surfaceId}`, present);panePages?.refresh();
         }
       } catch (caught) {
         if (stagedFrameSender !== null) surfaceContexts.unbind(stagedFrameSender);
@@ -1621,35 +1653,39 @@ async function bootstrap(): Promise<void> {
       // one host can never hide another surface in the same native window.
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) {
+        const state=outerPagePresentation.get(`${windowId}:${surfaceId}`);outerPagePresentation.set(`${windowId}:${surfaceId}`,{bounds:state?.bounds??null,visible:false});
+        if(panePages?.controls(surfaceId)){panePages.refresh();return;}
         papersWindows.get(windowId)?.owned.projectSurfaces.hide(surfaceId);
         officeEditor?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
         windowsPreview?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
         pdfPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
         htmlPreview.setOwnerVisible(`${windowId}:${surfaceId}`, false);
-        webBrowser.setOwnerVisible(`${windowId}:${surfaceId}`, false); chromePane?.setOwnerVisible(`${windowId}:${surfaceId}`, false);
+        webBrowser.setOwnerVisible(`${windowId}:${surfaceId}`, false); chromePane?.setOwnerVisible(`${windowId}:${surfaceId}`, false);panePages?.refresh();
       }
     },
     setBackpackProjectSurfaceBounds: (senderId, surfaceId, bounds) => {
       const windowId = papersWindows.windowForSender(senderId);
       if (windowId !== null) {
+        const state=outerPagePresentation.get(`${windowId}:${surfaceId}`);outerPagePresentation.set(`${windowId}:${surfaceId}`,{bounds,visible:state?.visible??false});
+        if(panePages?.controls(surfaceId)){panePages.refresh();return;}
         papersWindows.get(windowId)?.owned.projectSurfaces.setBounds(surfaceId, bounds);
         officeEditor?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
         windowsPreview?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
         pdfPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
         htmlPreview.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
-        webBrowser.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds); chromePane?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);
+        webBrowser.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds); chromePane?.setOwnerSurfaceBounds(`${windowId}:${surfaceId}`, bounds);panePages?.refresh();
       }
     },
     setHostOverlayActive: (windowId, active, owner = 'legacy') => {
       const context = papersWindows.get(windowId);
       if (!context || context.owned.window.isDestroyed()) return;
-      const owners = hostOverlayOwners.get(windowId) ?? new Set<'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy'>();
+      const owners = hostOverlayOwners.get(windowId) ?? new Set<'picker' | 'workspace-drag' | 'workspace-resize' | 'window-drag' | 'legacy'>();
       if (active) owners.add(owner);
       else owners.delete(owner);
       if (owners.size === 0) hostOverlayOwners.delete(windowId);
       else hostOverlayOwners.set(windowId, owners);
 
-      void chromePane?.coordinator?.setHostOverlayActive?.(windowId, owners.size > 0);
+      void chromePane?.coordinator?.setHostOverlayActive?.(windowId, owners.size > 0||pageDragActive);
 
       applyHostViewBackground(windowId, context.owned.hostView);
       if (owners.size > 0) context.owned.window.contentView.addChildView(context.owned.hostView);
@@ -2802,10 +2838,77 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   });
   // Keep the constructor behind the complete application-global composition
   // barrier. A newly loaded host may call any registered bridge immediately.
+  let windowDragFailed=false;
+  let windowDragSource:number|null=null;
+  let windowDragPage:string|undefined;
+  let windowDragTimer:ReturnType<typeof setTimeout>|undefined;
+  const clearWindowDrag=():void=>{
+    if(windowDragTimer)clearTimeout(windowDragTimer);windowDragSource=null;windowDragPage=undefined;
+    for(const id of papersWindows.windowIds){const wc=papersWindows.get(id)?.owned.hostView.webContents;if(wc&&!wc.isDestroyed())facade.setHostOverlayActive(wc.id,false,'window-drag');}
+  };
+  const savedPageMoves=new Set<string>();
+  const savedWorkspaceMoves=new Set<string>();
   registerPapersWindowIpc({
     ipcMain,
     isHostSender: (sender) => facade.isHostSender(sender),
     createAdditionalWindow: async () => { await createAdditionalPapersWindow(); },
+    pageDrag:async(sender,active,pageId)=>{const id=papersWindows.windowForSender(sender.id);if(active&&(id===null||!pageId||!logicalSurfaces.isLiveIn(pageId,id)))throw Error('That page is not available to drag.');pageDragActive=active;pageDragId=active?pageId!:null;if(pageDragExpiry)clearTimeout(pageDragExpiry);if(active)pageDragExpiry=setTimeout(()=>{pageDragActive=false;pageDragId=null;for(const id of papersWindows.windowIds)void chromePane?.coordinator?.setHostOverlayActive?.(id,Boolean(hostOverlayOwners.get(id)?.size));},30000);await Promise.all(papersWindows.windowIds.map(id=>chromePane?.coordinator?.setHostOverlayActive?.(id,active||Boolean(hostOverlayOwners.get(id)?.size))));},
+    moveFailed:(sender,item)=>{
+      const id=item.surfaceId?papersWindows.windowIds.find(id=>currentWorkspaceTopology(id)?.surfaces.some(p=>p.surfaceId===item.surfaceId))
+        :item.sourceId??papersWindows.windowForSender(sender.id);
+      const wc=id==null?undefined:papersWindows.get(id)?.owned.hostView.webContents;
+      if(wc&&!wc.isDestroyed())wc.send('host:event:move-rejected',{key:item.key,surfaceId:item.surfaceId,window:!item.key&&!item.surfaceId});
+    },
+    dragOutcome:ok=>{windowDragFailed=!ok;},
+    dragState:()=>windowDragSource===null?null:{sourceId:windowDragSource,key:windowDragPage},
+    drag:async(sender,active,key,cancelled)=>{
+      const id=papersWindows.windowForSender(sender.id);if(id===null)throw Error('Papers window unavailable.');
+      if(!active){if(windowDragSource===id){if(windowDragFailed&&!cancelled){const wc=papersWindows.get(id)?.owned.hostView.webContents;if(wc&&!wc.isDestroyed())wc.send('host:event:move-rejected',{key:windowDragPage,window:!windowDragPage});}clearWindowDrag();windowDragFailed=false;}return;}
+      if(windowDragSource!==null&&windowDragSource!==id)throw Error('Another drag is active.');
+      if(windowDragSource!==id||windowDragPage!==key)windowDragFailed=false;windowDragSource=id;windowDragPage=key;if(windowDragTimer)clearTimeout(windowDragTimer);
+      windowDragTimer=setTimeout(clearWindowDrag,30000);
+      for(const target of papersWindows.windowIds)facade.setHostOverlayActive(papersWindows.get(target)!.owned.hostView.webContents.id,true,'window-drag');
+    },
+    swapWindow:async(sender,sourceId,commit)=>{
+      const targetId=papersWindows.windowForSender(sender.id);
+      const source=papersWindows.get(sourceId)?.owned.window,target=targetId===null?undefined:papersWindows.get(targetId)?.owned.window;
+      if(windowDragSource!==sourceId||!source||!target)return {ok:false,error:'That window drag is no longer active.'};
+      if(screen.getDisplayMatching(source.getBounds()).scaleFactor!==screen.getDisplayMatching(target.getBounds()).scaleFactor)
+        return {ok:false,error:'These windows use different display scales.'};
+      return swapPapersWindows(source,target,async(window,bounds)=>{
+        const id=window===source?sourceId:targetId!;const old=window.getBounds();
+        return await chromePane?.coordinator?.canFitWindow(id,bounds.width-old.width,bounds.height-old.height)??true;
+      },commit);
+    },
+    dropSavedPage:async(sender,key,groupId,side,commit)=>{
+      const targetId=papersWindows.windowForSender(sender.id);
+      const topology=targetId===null?null:currentWorkspaceTopology(targetId);
+      const window=targetId===null?undefined:papersWindows.get(targetId)?.owned.window;
+      const saved=(await workspaceTopologyStore.sessionSnapshots()).find(record=>record.topology.surfaces.some(page=>(page.surfaceKey??page.surfaceId)===key));
+      if(!topology||!window||window.isDestroyed()||!saved||[...workspaceIds.values()].includes(saved.workspaceId))return {ok:false,error:'That saved page or destination is no longer available.'};
+      const bounds=window.getContentBounds();
+      if(!savedPageDropFits(topology,groupId,side,bounds.width,bounds.height-32))return {ok:false,error:'There is not enough room for that split.'};
+      const area=savedPageDropArea(topology,groupId,side,bounds.width,bounds.height-32)!;
+      if(side!=='center'&&chromePane?.coordinator&&!await chromePane.coordinator.canFitPageGroup(targetId!,topology.groups.find(g=>g.groupId===groupId)!.surfaceIds,area.width,area.height-32))
+        return {ok:false,error:'The existing applications cannot fit in that split.'};
+      if(!commit)return {ok:true};
+      if(savedPageMoves.has(key)||savedWorkspaceMoves.has(saved.workspaceId))throw Error('That page is already moving.');savedPageMoves.add(key);savedWorkspaceMoves.add(saved.workspaceId);
+      try{
+        const targetWorkspaceId=workspaceIds.get(targetId!)!;
+        const before=await workspaceTopologyStore.snapshotPair(saved.workspaceId,targetWorkspaceId);
+        const page=saved.topology.surfaces.find(page=>(page.surfaceKey??page.surfaceId)===key)!;
+        await facade.openSavedPageFromControl(targetId!,{projectId:page.projectId,surfaceKey:key,title:page.title},{groupId,side},
+          async next=>{if([...workspaceIds.values()].includes(saved.workspaceId))throw Error('That saved window reopened during the drag.');
+            const current=window.getContentBounds();
+            // The prepared page already exists in the logical registry, but is not
+            // adopted into the canonical tree yet. Compare that committed tree.
+            if(JSON.stringify(workspaceTopologies.get(targetId!))!==JSON.stringify(topology)||current.width!==bounds.width||current.height!==bounds.height)
+              throw Error('The destination layout changed during the drag. Try again.');
+            await workspaceTopologyStore.commitPair({source:{workspaceId:saved.workspaceId,topology:closeWorkspaceSurface(saved.topology,page.surfaceId)},target:{workspaceId:targetWorkspaceId,topology:next},lastWorkspaceId:before.lastWorkspaceId},key,saved.topology);},
+          ()=>workspaceTopologyStore.restorePairWithIds(before,saved.workspaceId,targetWorkspaceId));
+        return {ok:true};
+      }finally{savedPageMoves.delete(key);savedWorkspaceMoves.delete(saved.workspaceId);}
+    },
     adoptPage: async (sender,surfaceId) => {
       const targetWindowId = papersWindows.windowForSender(sender.id);
       if(targetWindowId===null)throw new Error('Papers window is unavailable.');
@@ -2830,9 +2933,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
     })),
     listPages: async sender => (await workspaceTopologyStore.sessionSnapshots()).flatMap(record=>record.topology.surfaces.map(page=>{
       const windowId=[...workspaceIds].find(([,id])=>id===record.workspaceId)?.[0]??null;
-      return {key:page.surfaceKey??page.surfaceId,title:page.title,windowId,current:windowId===papersWindows.windowForSender(sender.id)};
+      return {key:page.surfaceKey??page.surfaceId,title:page.title,workspaceId:record.workspaceId,windowId,current:windowId===papersWindows.windowForSender(sender.id)};
     })),
     closePage: async key => {
+      const record=(await workspaceTopologyStore.sessionSnapshots()).find(r=>r.topology.surfaces.some(p=>(p.surfaceKey??p.surfaceId)===key));
+      if(savedPageMoves.has(key)||record&&savedWorkspaceMoves.has(record.workspaceId))throw Error('Wait for the page move to finish.');
       for(const windowId of papersWindows.windowIds){const page=currentWorkspaceTopology(windowId)?.surfaces.find(page=>(page.surfaceKey??page.surfaceId)===key);
         if(page){const sender=papersWindows.get(windowId)!.owned.hostView.webContents.id;await facade.closeBackpackProject(sender,page.surfaceId);await workspaceTopologyStore.closeSavedPage(key);return;}
       }
@@ -2847,6 +2952,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // pages and native layout still associated with the same workspace ID.
       const saved=(await workspaceTopologyStore.sessionSnapshots()).find(record=>record.topology.surfaces.some(page=>(page.surfaceKey??page.surfaceId)===key));
       if(!saved)throw new Error('That saved page no longer exists.');
+      if(savedWorkspaceMoves.has(saved.workspaceId))throw Error('Wait for the page move to finish.');
       const id=await createAdditionalPapersWindow(saved);
       const window=papersWindows.get(id)?.owned.window;
       if(window&&!window.isDestroyed()){if(window.isMinimized())window.restore();window.focus();}

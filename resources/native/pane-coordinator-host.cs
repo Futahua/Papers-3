@@ -177,6 +177,11 @@ public sealed class PaneCoordinatorHost:Form {
         var pane=binding.Pane;var scope=pane.Scope;
         if(op=="checkpoint"){pane.SaveMount(binding.Mount);return new{ok=true,snapshot=Snapshot(binding)};}
         if(op=="snapshot")return new{ok=true,snapshot=Snapshot(binding)};
+        if(op=="can-fit")return new{ok=pane.CanFit(ScreenRect((Dictionary<string,object>)r["rect"]))};
+        if(op=="group-minimum"){var minimum=pane.GroupMinimum(ReadText(r,"groupId"));return new{ok=true,width=minimum.Width,height=minimum.Height};}
+        if(op=="can-replace-group")return new{ok=pane.CanReplaceGroup(ReadText(r,"groupId"),(int)Number(r,"width"),(int)Number(r,"height"))};
+        if(op=="can-insert-group")return new{ok=pane.CanInsertGroup(ReadText(r,"groupId"),ReadText(r,"side"),(int)Number(r,"width"),(int)Number(r,"height"))};
+        if(op=="can-relocate-group")return new{ok=pane.CanRelocateGroup(ReadText(r,"source"),ReadText(r,"groupId"),ReadText(r,"side"))};
         if(op=="raise"){pane.Raise();return new{ok=true,snapshot=Snapshot(binding)};}
         if(op=="viewport"){
             var nextRect=(Dictionary<string,object>)r["rect"];pane.SetViewport(ScreenRect(nextRect),++binding.ViewportRevision);binding.Rect=nextRect;

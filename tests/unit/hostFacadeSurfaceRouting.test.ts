@@ -57,7 +57,7 @@ function createFacade(delegateWave?: FacadeDeps['delegateWave']) {
     lastWorkspaceId: sourceWorkspaceId,
   }));
   const restorePair = vi.fn(async () => {});
-  const prepareProjectSurface = vi.fn(async () => ({
+  const prepareProjectSurface = vi.fn(async (_windowId:number,_surfaceId:string,_url:string) => ({
     senderId: 99,
     adopt: vi.fn(),
     discard: vi.fn(),
@@ -441,6 +441,28 @@ describe('surface routing in the host facade', () => {
     await expect(facade.openWorkspaceSurfaceFromControl(1, PROJECT)).rejects.toThrow(/host unavailable/);
     expect(logicalSurfaces.project()).toEqual([]);
     expect(workspaceTopologies.get(1)).toEqual(original);
+  });
+  it('restores a saved page key and title into a requested split before committing delivery',async()=>{
+    const {facade,workspaceTopologies,prepareProjectSurface}=createFacade();
+    await facade.openWorkspaceSurfaceFromControl(1,OTHER);
+    const commit=vi.fn(async()=>{}),rollback=vi.fn(async()=>{});
+    await facade.openSavedPageFromControl(1,{projectId:PROJECT,surfaceKey:'durable-key',title:'Authored page'},{groupId:'group-main',side:'bottom'},commit,rollback);
+    const next=workspaceTopologies.get(1)!;
+    expect(next.groups).toHaveLength(2);expect(next.surfaces.find(p=>p.surfaceKey==='durable-key')?.title).toBe('Authored page');
+    expect(commit).toHaveBeenCalledWith(next);expect(rollback).not.toHaveBeenCalled();
+    expect(prepareProjectSurface.mock.calls.at(-1)?.[2]).toContain('papers-surface-key=durable-key');
+  });
+  it.each(['commit','delivery','closing'])('compensates saved-page %s failure without losing existing tabs',async failure=>{
+    const {facade,workspaceTopologies,logicalSurfaces,sendToWindow,closingWindows}=createFacade();
+    await facade.openWorkspaceSurfaceFromControl(1,OTHER);
+    const original=structuredClone(workspaceTopologies.get(1));
+    const commit=vi.fn(async()=>{if(failure==='commit')throw Error('disk refused');if(failure==='closing')closingWindows.add(1);});
+    const rollback=vi.fn(async()=>{});
+    if(failure==='delivery')sendToWindow.mockImplementationOnce(()=>{throw Error('delivery refused');});
+    await expect(facade.openSavedPageFromControl(1,{projectId:PROJECT,surfaceKey:'durable-key',title:'Saved'},{groupId:'group-main',side:'center'},commit,rollback)).rejects.toThrow();
+    expect(workspaceTopologies.get(1)).toEqual(original);
+    expect(logicalSurfaces.project().filter(s=>s.projectId===PROJECT)).toHaveLength(0);
+    expect(rollback).toHaveBeenCalledTimes(failure==='commit'?0:1);
   });
 
   it('derives a host move source from the authenticated sender, never payload data', async () => {

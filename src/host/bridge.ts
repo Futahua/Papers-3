@@ -35,7 +35,7 @@ export interface SaveStatusPayload {
   status: 'idle' | 'saving' | 'saved' | 'error';
   detail: string | null;
 }
-export type HostOverlayOwner = 'picker' | 'workspace-drag' | 'workspace-resize' | 'legacy';
+export type HostOverlayOwner = 'picker' | 'workspace-drag' | 'workspace-resize' | 'window-drag' | 'legacy';
 
 export interface HostErrorPayload {
   component: string;
@@ -85,11 +85,16 @@ interface HostBridge {
     /** Create one fresh secondary Papers window. */
     newWindow(): Promise<void>;
     windows(): Promise<Array<{windowId:number;title:string;groupId:string;current:boolean}>>;
-    pages(): Promise<Array<{key:string;title:string;windowId:number|null;current:boolean}>>;
+    pages(): Promise<Array<{key:string;title:string;windowId:number|null;current:boolean;workspaceId?:string}>>;
     closePage(key:string): Promise<void>;
     adoptPage(surfaceId:string): Promise<unknown>;
     detachPage(surfaceId:string): Promise<unknown>;
     showPage(key:string): Promise<void>;
+    pageDrag(active:boolean,pageId?:string):Promise<void>;
+    windowDrag(active:boolean,key?:string,cancelled?:boolean):Promise<void>;
+    windowDragState():Promise<{sourceId:number;key?:string}|null>;
+    swapWindow(sourceId:number,commit:boolean):Promise<{ok:boolean;error?:string}>;
+    dropSavedPage(key:string,groupId:string,side:string,commit:boolean):Promise<{ok:boolean;error?:string}>;
   };
   backpacks: {
     list(): Promise<BackpacksList>;
@@ -211,6 +216,7 @@ interface HostBridge {
     onShelfChanged(cb: (p: ShelfContribution[]) => void): () => void;
     onSaveStatus(cb: (p: SaveStatusPayload) => void): () => void;
     onPermissionPrompt(cb: (p: PendingPermissionPrompt) => void): () => void;
+    onMoveRejected(cb:(item:{key?:string;surfaceId?:string;window?:boolean})=>void):()=>void;
     onHostError(cb: (p: HostErrorPayload) => void): () => void;
     onUpdateStatus(cb: (p: UpdateState) => void): () => void;
   };

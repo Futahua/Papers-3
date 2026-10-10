@@ -127,12 +127,17 @@ export class WorkspaceTopologyStore {
    * writes, because a process death between ordinary commits would leave a
    * half-move on disk.
    */
-  async commitPair(pair: WorkspacePairCommit): Promise<void> {
+  async commitPair(pair: WorkspacePairCommit, savedPageKey?: string, expectedSourceTopology?:WorkspaceTopologyV1): Promise<void> {
     if (pair.source.workspaceId === pair.target.workspaceId) {
       throw new Error('workspace pair must name two distinct workspaces');
     }
     return this.enqueue(async () => {
       await this.initialize();
+      if(savedPageKey){
+        const source=this.workspaces.get(pair.source.workspaceId);
+        if(JSON.stringify(source?.topology)!==JSON.stringify(expectedSourceTopology) || !source?.window?.parked || !source.topology.surfaces.some(page=>(page.surfaceKey??page.surfaceId)===savedPageKey))
+          throw new Error('That page is no longer saved.');
+      }
       const sourceTopology = parseWorkspaceTopology(pair.source.topology);
       const targetTopology = parseWorkspaceTopology(pair.target.topology);
       if (pair.lastWorkspaceId !== null
