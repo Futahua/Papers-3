@@ -20,6 +20,7 @@ const api = {
   fixtureMode: process.env['PAPERS_ENABLE_FIXTURES'] === '1',
 
   app: {
+    reload:()=>ipcRenderer.invoke('host:app:reload'),
     // Which build this is and where it runs from, so two machines running
     // Papers can be told apart and compared.
     buildIdentity: () => ipcRenderer.invoke('host:app:build-identity'),

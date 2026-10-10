@@ -1,7 +1,10 @@
 import React from 'react';
 import type { BackpacksList } from './bridge';
 
-export function BackpackSidebar({ list, activeId, onEnter, onMouseEnter, onMouseLeave }: {
+export function BackpackSidebar({ list, activeId, onEnter, onMouseEnter, onMouseLeave, onReload, reloading, reloadError }: {
+  onReload?:()=>void;
+  reloading?:boolean;
+  reloadError?:string;
   list: BackpacksList;
   activeId: string | null;
   onEnter: (id: string, newTab?: boolean) => void;
@@ -29,5 +32,7 @@ export function BackpackSidebar({ list, activeId, onEnter, onMouseEnter, onMouse
       >{backpack.name}</button>)}
       {backpacks.length === 0 && <p className="backpack-sidebar-empty">No Backpacks yet.</p>}
     </div>
+    {onReload&&<button type="button" className="secondary" onClick={onReload} disabled={reloading}>{reloading?'Saving and reloading…':'↻ Reload Papers'}</button>}
+    {reloadError&&<p role="alert">{reloadError}</p>}
   </nav>;
 }

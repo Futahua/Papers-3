@@ -41,6 +41,9 @@ export function App(): React.JSX.Element {
   const [backpacks, setBackpacks] = useState<BackpacksList>({ backpacks: [], activeBackpackId: null });
   const [view, setView] = useState<BasicView>('backpacks');
   const [basicOpen, setBasicOpen] = useState(false);
+  const [reloading,setReloading]=useState(false);
+  const [reloadError,setReloadError]=useState('');
+  const reloadPapers=()=>{setReloading(true);setReloadError('');void host().app.reload().catch(error=>{setReloading(false);setReloadError(String(error));});};
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspaceOverlayActive, setWorkspaceOverlayActive] = useState(false);
   const [splitNotice, setSplitNotice] = useState<{ id: number; message: string } | null>(null);
@@ -497,7 +500,7 @@ export function App(): React.JSX.Element {
             {VIEW_LABEL[view]}
           </button>
           {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack}
-            onMouseEnter={cancelSidebarClose} onMouseLeave={scheduleSidebarClose} />}
+            onMouseEnter={cancelSidebarClose} onMouseLeave={scheduleSidebarClose} onReload={reloadPapers} reloading={reloading} reloadError={reloadError} />}
           {basicOpen && (
             <div id="basic-menu" className="basic-menu" role="menu">
               <p className="eyebrow">Basic</p>
@@ -524,6 +527,8 @@ export function App(): React.JSX.Element {
                   <small>Papers application settings.</small>
                 </span>
               </button>
+              <button className="basic-row" role="menuitem" disabled={reloading} onClick={reloadPapers}><span className="glyph">↻</span><span className="copy"><strong>{reloading?'Saving and reloading…':'Reload Papers'}</strong><small>Keep your pages and layouts.</small></span></button>
+              {reloadError&&<p role="alert">{reloadError}</p>}
             </div>
           )}
         </div>

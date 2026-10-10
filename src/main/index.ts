@@ -1,3 +1,4 @@
+import {consumeReloadWindows,createPapersReload} from './windows/papersReload';
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
@@ -546,7 +547,8 @@ async function bootstrap(): Promise<void> {
   const workspaceTopologyStore = new WorkspaceTopologyStore(paths);
   await workspaceTopologyStore.initialize();
   const oldSessionPages = await workspaceTopologyStore.sessionSnapshots();
-  const startupWindowSnapshots = await workspaceTopologyStore.startupWindowSnapshots();
+  const reloadIntentFile=path.join(paths.root,'reload-once.json');
+  const startupWindowSnapshots = consumeReloadWindows(reloadIntentFile,process.argv,oldSessionPages) ?? await workspaceTopologyStore.startupWindowSnapshots();
   const startupPageSnapshot = startupWindowSnapshots[0] ?? null;
   const legacyPageClaims = new Map<string,string>();
   for(const window of oldSessionPages)if(!window.window&&!window.session)for(const page of window.topology.surfaces)
@@ -1014,7 +1016,7 @@ async function bootstrap(): Promise<void> {
   let preservingShutdown = false;
   app.on('before-quit', () => { preservingShutdown = true; });
   const saveTimers = new Map<number, ReturnType<typeof setTimeout>>();
-  const saveSessionWindow = async (instance: Parameters<typeof preparePapersWindow>[0], parked = false): Promise<void> => {
+  const saveSessionWindow = async (instance: Pick<Parameters<typeof preparePapersWindow>[0], 'window'>, parked = false): Promise<void> => {
     const id = workspaceIds.get(instance.window.id);
     if (!id || instance.window.isDestroyed()) return;
     const topology = workspaceTopologies.get(instance.window.id) ?? windowRestoreSnapshots.get(instance.window.id)?.topology ?? createWorkspaceTopology();
@@ -2848,7 +2850,25 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   };
   const savedPageMoves=new Set<string>();
   const savedWorkspaceMoves=new Set<string>();
+  const reloadPapers=createPapersReload({file:reloadIntentFile,args:process.argv.slice(1),
+    flush:async()=>{
+      for(const id of papersWindows.windowIds)await facade.waitForWorkspaceMutation(id);
+      const frames=webContents.getAllWebContents().filter(w=>!w.isDestroyed()&&w.getURL().startsWith('papers-backpack://')).flatMap(w=>[w.mainFrame,...w.mainFrame.frames]);
+      for(const frame of frames){
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        try{const result=await Promise.race([frame.executeJavaScript('globalThis.__papersFlushBeforeClose?.()'),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('A page did not finish saving. Papers remains open.')),8000);})]);
+          if(result&&typeof result==='object'&&(result as {ok?:boolean}).ok===false)throw Error('A page could not save. Papers remains open.');
+        }finally{if(timer)clearTimeout(timer);}
+      }
+    },save:async()=>{
+      const instances=papersWindows.windowIds.map(id=>papersWindows.get(id)!.owned);
+      for(const instance of instances)await saveSessionWindow(instance);
+      await workspaceTopologyStore.flush();await workspaceLayoutStore.flush();
+      return instances.map(instance=>workspaceIds.get(instance.window.id)!);
+    },restart:args=>{app.relaunch({args});setImmediate(()=>app.quit());},
+  });
   registerPapersWindowIpc({
+    reload:reloadPapers,
     ipcMain,
     isHostSender: (sender) => facade.isHostSender(sender),
     createAdditionalWindow: async () => { await createAdditionalPapersWindow(); },

@@ -175,8 +175,10 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await evalInHost(launched.app,`papersHost.app.showPage(${JSON.stringify(parentSurface)})`);
   await waitFor(()=>evaluate<boolean>("host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot?.presented===true)"),5000,'return to destination before drag');
   await evalInHost(launched.app,`document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').dispatchEvent(new PointerEvent('pointerdown',{pointerType:'mouse',button:0,bubbles:true,cancelable:true}))`);
-  const pageDrag=await evalInHost<Array<[string,string]>>(launched.app,`(()=>{window.pageDrag=new DataTransfer();document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').dispatchEvent(new DragEvent('dragstart',{dataTransfer:pageDrag,bubbles:true}));return [...pageDrag.types].map(type=>[type,pageDrag.getData(type)]);})()`);
+  const pageDrag=await evalInHost<Array<[string,string]>>(launched.app,`(()=>{window.pageDrag=new DataTransfer();document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').dispatchEvent(new DragEvent('dragstart',{dataTransfer:pageDrag,shiftKey:true,bubbles:true}));return [...pageDrag.types].map(type=>[type,pageDrag.getData(type)]);})()`);
   expect(pageDrag.some(([type,value])=>type==='application/x-papers-page'&&value===childPage.surfaceId)).toBe(true);
+  await evalInHost(launched.app,'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+  expect(await evalInHost<string>(launched.app,'document.documentElement.dataset.workspaceDrag')).toBe('false');
   await evaluate(`(()=>{window.hostedPageDrag=new DataTransfer();for(const [type,value] of ${JSON.stringify(pageDrag)})hostedPageDrag.setData(type,value);const g=latest.groups[0],strip=document.querySelector('[data-slice-id="'+g.id+'"] .pane-window-tabs');strip.dispatchEvent(new DragEvent('dragover',{dataTransfer:hostedPageDrag,clientX:g.slot.x+g.slot.width/2,clientY:g.slot.y+16,bubbles:true,cancelable:true}));})()`);
   await waitFor(()=>evaluate<boolean>(`calls.some(c=>c.args[0]==='pane-page-check'&&c.reply.ok)`),5000,'Backpack page drop preflight');
   expect(await evaluate<boolean>(`Boolean(document.querySelector('.is-tab-drop-target'))`)).toBe(true);

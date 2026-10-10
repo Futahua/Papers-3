@@ -11,7 +11,7 @@ function harness() {
 }
 
 describe('Papers window IPC', () => {
-  it.each(['host:window:drag','host:window:drag-state','host:window:swap','host:pages:drop'])('refuses %s from project senders',async channel=>{
+  it.each(['host:app:reload','host:window:drag','host:window:drag-state','host:window:swap','host:pages:drop'])('refuses %s from project senders',async channel=>{
     const h=harness(),callback=vi.fn(async()=>{});
     registerPapersWindowIpc({ipcMain:h.ipcMain as PapersWindowIpcDependencies['ipcMain'],isHostSender:()=>false,createAdditionalWindow:callback,drag:callback,swapWindow:callback,dropSavedPage:callback});
     await expect(h.handlers.get(channel)!({sender:{}},{})).rejects.toThrow('non-host sender');expect(callback).not.toHaveBeenCalled();

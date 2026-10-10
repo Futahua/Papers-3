@@ -68,8 +68,19 @@ it.each(['normal', 'minimized', 'maximized'])('protected Files/Preview remount t
   expect((await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('select',{groupId:${JSON.stringify(group)},tabId:'preview:workspace-files'})`)).ok).toBe(true);
   expect((await evalInBackpackProject<{ok:boolean}>(launched.app,`nativeCommand('presentation',{groupId:${JSON.stringify(group)},mode:${JSON.stringify(mode)}})`)).ok).toBe(true);
   const authored=await evalInBackpackProject(launched.app,`({tree:latest.tree,groups:latest.groups.map(g=>({id:g.id,selected:g.selected,presentation:g.presentation,tabs:g.tabs.map(t=>t.id)}))})`);
-  await launched.app.evaluate(({app})=>app.quit());await launched.close();
-  launched=await launchPapers(profile,{fixtures:false});
+  await evalInBackpackProject(launched.app,`void(window.__papersFlushBeforeClose=async()=>({ok:false}))`);
+  await expect(evalInHost(launched.app,'papersHost.app.reload()')).rejects.toThrow('could not save');
+  expect(await evalInHost<number>(launched.app,'papersHost.app.windows().then(w=>w.length)')).toBe(1);
+  await expect(fs.access(path.join(data,'reload-once.json'))).rejects.toThrow();
+  await evalInBackpackProject(launched.app,`void(window.__papersFlushBeforeClose=async()=>({ok:true}))`);
+  await evalInHost(launched.app,'papersHost.app.newWindow()');
+  // Exercise the button's real IPC/save owner; the driver launches the next
+  // process explicitly so it can inspect its main process after relaunch.
+  await launched.app.evaluate(({app})=>{app.relaunch=()=>{};});
+  await evalInHost(launched.app,'papersHost.app.reload()').catch(()=>undefined);
+  await launched.close();
+  const reloadIntent=JSON.parse(await fs.readFile(path.join(data,'reload-once.json'),'utf8'));
+  launched=await launchPapers(profile,{fixtures:false,launchArgs:['--papers-reload-token='+reloadIntent.token]});
   await waitFor(()=>evalInBackpackProject<boolean>(launched.app,`Boolean(window.latest?.groups?.some(g=>g.tabs.some(t=>t.id==='preview:workspace-files')&&g.tabs.some(t=>t.id==='preview:workspace-preview')))`),18000,'protected membership recovered after restart');
   // A native snapshot alone does not prove the renderer mounted. The former
   // startup guard rejected mixed/minimized groups after native recovery succeeded.
@@ -80,5 +91,6 @@ it.each(['normal', 'minimized', 'maximized'])('protected Files/Preview remount t
   expect(await evalInBackpackProject<boolean>(launched.app,`document.querySelector('#files').hidden`)).toBe(mode==='minimized');
   expect(await evalInBackpackProject<boolean>(launched.app,`document.querySelector('#preview').hidden`)).toBe(true);
   expect(await evalInBackpackProject<string[]>(launched.app,'errors')).toEqual([]);
+  expect(await evalInHost<number>(launched.app,'papersHost.app.windows().then(w=>w.length)')).toBe(2);
  }finally{await launched.close();await fs.rm(profile,{recursive:true,force:true});}
 });

@@ -210,6 +210,7 @@ export function WorkspaceDock(props: {
 
   const reconciliationFeedback = useRef(createWorkspaceReconciliationFeedbackGate());
   const pendingTabClick = useRef<string | null>(null);
+  const innerGroupDrag = useRef(false);
   const resizing = useRef(false);
   const resizeSession = useRef<{ pointerId: number; generation: number; terminal: 'active' | 'success' | 'cancelled'; focusedGroupId: string; activeByGroup: Map<string, string | null>; captureTarget: HTMLElement | null } | null>(null);
   const resizeUiGeneration = useRef(0);
@@ -269,6 +270,19 @@ export function WorkspaceDock(props: {
   const setDragSurfaceActive = useCallback((active: boolean): void => {
     document.documentElement.dataset.workspaceDrag = active ? 'true' : 'false';
   }, []);
+
+  useEffect(()=>{
+    const mode=(shift:boolean)=>{
+      if(!dragActive.current||innerGroupDrag.current===shift)return;
+      innerGroupDrag.current=shift;setDragSurfaceActive(!shift);
+      if(shift){clearPreview(false);sideDrop.current=null;setHostOverlay(false);}
+      else void setHostOverlayAwaited(true,()=>dragActive.current&&!innerGroupDrag.current);
+    };
+    const over=(event:DragEvent)=>mode(event.shiftKey);
+    const key=(event:KeyboardEvent)=>{if(event.key==='Shift')mode(event.type==='keydown');};
+    window.addEventListener('dragover',over,true);window.addEventListener('keydown',key);window.addEventListener('keyup',key);
+    return()=>{window.removeEventListener('dragover',over,true);window.removeEventListener('keydown',key);window.removeEventListener('keyup',key);};
+  });
 
   const measureSplitRect = useCallback((group: { id?: string; element: HTMLElement }, position: SplitEdge, sourceGroupId?: string, targetGroupId?: string): PreviewRect | null => {
     const workspace = workspaceRef.current;
@@ -942,6 +956,7 @@ export function WorkspaceDock(props: {
       if (!interactionDisabledRef.current && !resizing.current && !reconciliationFeedback.current.isSuppressed()) commitLayout(event.api);
     }));
     apiSubscriptions.current.push(event.api.onWillShowOverlay((overlay) => {
+      if (innerGroupDrag.current || overlay.nativeEvent.shiftKey) {overlay.preventDefault();sideDrop.current=null;clearPreview(false);return;}
       if (overlay.kind === 'edge') {
         // Dockview's root-layout edge is not a Papers split target. It can be
         // re-emitted after a group-content edge has armed; ignore it without
@@ -1101,6 +1116,7 @@ export function WorkspaceDock(props: {
       }
     }));
     apiSubscriptions.current.push(event.api.onWillDrop((drop) => {
+      if (innerGroupDrag.current || drop.nativeEvent.shiftKey) {drop.preventDefault();sideDrop.current=null;clearPreview(false);return;}
       if (!dragActive.current) {
         drop.preventDefault();
         sideDrop.current = null;
@@ -1248,6 +1264,7 @@ export function WorkspaceDock(props: {
     }));
     apiSubscriptions.current.push(event.api.onWillDragPanel(({ panel, nativeEvent }) => {
       pendingTabClick.current = null;
+      innerGroupDrag.current = nativeEvent.shiftKey;
       if (nativeEvent instanceof DragEvent && nativeEvent.dataTransfer) {
         nativeEvent.dataTransfer.setData('application/x-papers-page', panel.id);
         nativeEvent.dataTransfer.effectAllowed = 'move';
@@ -1268,12 +1285,12 @@ export function WorkspaceDock(props: {
       dragActive.current = true;
       hostRaised.current = false;
       const session = ++dragSessionGeneration.current;
-      setDragSurfaceActive(true);
+      setDragSurfaceActive(!innerGroupDrag.current);
       // Let Dockview finish establishing its drag backend before requesting
       // native child-view reordering. The acknowledgement is generation
       // guarded so a fast cancellation cannot resurrect host ownership.
       requestAnimationFrame(() => {
-        if (!dragActive.current || dragSessionGeneration.current !== session) return;
+        if (!dragActive.current || innerGroupDrag.current || dragSessionGeneration.current !== session) return;
         void setHostOverlayAwaited(true, () => dragActive.current && dragSessionGeneration.current === session);
       });
       pointerDragCleanup.current?.();
@@ -1438,7 +1455,7 @@ export function WorkspaceDock(props: {
         // HTML5). That conceals the destination Backpack before a slow drag
         // can arm. Keep native draggable defaults, but activate on click.
         if (event.button === 0 && event.pointerType === 'mouse'
-          && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey
+          && !event.ctrlKey && !event.altKey && !event.metaKey
           && event.target instanceof Element
           && !event.target.closest('button, .dv-default-tab-action')) {
           const tab = event.target.closest<HTMLElement>('.dv-tab[draggable="true"][data-tab-panel-id]');

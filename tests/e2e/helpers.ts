@@ -19,7 +19,7 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 
 export async function launchPapers(
   existingUserData?: string,
-  options: { fixtures?: boolean; devControlDescriptor?: string; testInvokeChannel?: boolean } = { fixtures: true },
+  options: { fixtures?: boolean; devControlDescriptor?: string; testInvokeChannel?: boolean; launchArgs?:string[] } = { fixtures: true },
 ): Promise<LaunchedApp> {
   const userDataDir =
     existingUserData ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'papers3-e2e-')));
@@ -27,7 +27,7 @@ export async function launchPapers(
   // installed) so the same tests validate the packaged application.
   const packagedExe = process.env['PAPERS_E2E_EXE'];
   const app = await electron.launch({
-    ...(packagedExe ? { executablePath: packagedExe, args: [] } : { args: [repoRoot] }),
+    ...(packagedExe ? { executablePath: packagedExe, args: [] } : { args: [repoRoot,...(options.launchArgs??[])] }),
     cwd: repoRoot,
     env: {
       ...process.env,
