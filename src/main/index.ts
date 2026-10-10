@@ -2859,7 +2859,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         const context=surfaceContexts.contextForSender(w.id);
         // Retired/preload renderers can outlive their document binding. Only
         // registered live page surfaces participate in the save barrier.
-        return context!==null&&context!==undefined&&context.kind!=='launcher';
+        return context?.kind==='project'||context?.kind==='detached';
       }).flatMap(w=>[w.mainFrame,...w.mainFrame.frames]);
       for(const frame of frames){
         if(!shouldFlushReloadSurface(frame.url))continue;
