@@ -7,7 +7,14 @@ vi.mock('node:fs',()=>({existsSync:(file:string)=>file.endsWith('pane-transfer-j
  readFileSync:(file:string)=>file.endsWith('pane-transfer-journal.json')?JSON.stringify(h.journal):Buffer.from('source'),mkdirSync:vi.fn(),
  openSync:(file:string)=>file,writeFileSync:(file:string,value:string)=>h.writes.set(file,value),fsyncSync:vi.fn(),closeSync:vi.fn(),renameSync:(from:string,to:string)=>{h.writes.set(to,h.writes.get(from)!);h.writes.delete(from);}}));
 vi.mock('../../src/main/windows/foregroundBridge',()=>({resolveWindowsCscPath:()=> 'X:/csc.exe'}));
-import { createNativePaneBridge } from '../../src/main/backpacks/nativePaneBridge';
+import { createNativePaneBridge, parseNativeCheckpoint } from '../../src/main/backpacks/nativePaneBridge';
+it('native rollback and recovery preserve exact .NET process identity ticks',()=>{
+ const original='{"OwnerStarted":638956295641234567,"Peers":[{"Started":638956295641234569,"Pid":123,"Handle":456}]}';
+ const mount=parseNativeCheckpoint(original);
+ expect(JSON.stringify(mount)).toBe(original);
+ const recovered=parseNativeCheckpoint(JSON.stringify({status:'prepared',records:[{mount}]}));
+ expect(JSON.stringify(recovered.records[0].mount)).toBe(original);
+});
 const platform=process.platform;
 const rect={x:400,y:20,width:500,height:600};
 const context=(ownerKey:string,paneGroup='ayg',parentHwnd='456')=>({ownerKey,paneGroup,parentHwnd,surfaceBounds:{x:10,y:30,width:1000,height:800}});
@@ -27,6 +34,24 @@ beforeEach(()=>{
 });
 afterEach(()=>Object.defineProperty(process,'platform',{value:platform}));
 const make=(onSnapshot=vi.fn())=>createNativePaneBridge({cacheDirectory:'X:/cache',nativeDirectory:'X:/native',onSnapshot,windowInstanceId:()=> 'opaque-instance'})!;
+it('a foreign destination completes the source overlay by ticket without dragend',async()=>{
+ const bridge=make();const source=await bridge.mount(context('1:source'),rect,32);
+ await bridge.mount(context('2:destination','ayg','999'),rect,32);
+ const ticket=(source.snapshot!.groups[0]!.tabs[0]! as any).transferId;
+ await bridge.dragOverlay('1:source',true,ticket);
+ await bridge.dragOverlay('2:destination',false,'invalid');
+ expect(h.children[0].commands.findLast((c:any)=>c.op==='present').visible).toBe(false);
+ await bridge.dragOverlay('2:destination',false,ticket);
+ for(const child of h.children)expect(child.commands.findLast((c:any)=>c.op==='present').visible).toBe(true);
+ await bridge.dispose();
+});
+it('Move here selects an incoming same-page window after moving its membership',async()=>{
+ const bridge=make();const source=await bridge.mount(context('1:source'),rect,32);
+ const reply=await bridge.transfer('1:source',(source.snapshot!.groups[0]!.tabs[0]! as any).transferId,'destination');
+ expect(reply.ok).toBe(true);expect(reply.tabId).toBe('peer');
+ expect(h.children[0].commands.slice(-2).map((c:any)=>[c.op,c.groupId,c.tabId])).toEqual([['move','destination','peer'],['select','destination','peer']]);
+ await bridge.dispose();
+});
 it('saved shutdown is bounded when a helper stops answering and queued presentation is retired',async()=>{
  const bridge=make();await bridge.mount(context('1:first'),rect,32);const child=h.children[0];child.kill=vi.fn();child.stdin.removeAllListeners('data');
  vi.useFakeTimers();try{const pending=bridge.command('1:first','snapshot');await Promise.resolve();const stopped=bridge.dispose();await vi.advanceTimersByTimeAsync(20000);await stopped;expect(child.kill).toHaveBeenCalledOnce();expect((await pending).ok).toBe(false);expect(bridge.snapshot('1:first')).toBeUndefined();}finally{vi.useRealTimers();}

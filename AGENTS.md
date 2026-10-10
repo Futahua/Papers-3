@@ -1,5 +1,7 @@
 # Papers — governing document
 
+Relocation repair, 2026-10-10: a foreign pane destination may finish the exact source drag-overlay ticket so source DOM teardown cannot leave every window suspended until the watchdog. Cross-scope group transfers acquire the selected member first, then restore authored tab order; inactive wider native tabs must not become a temporary selection and veto a valid swap. Move here selects its incoming native tab after same-scope membership transfer. Preserve journal compensation and native size checks. Journal and rollback checkpoint decoding retains exact unsafe integer tokens with JSON.rawJSON; .NET process-start ticks must never pass through rounded JavaScript numbers, which incorrectly turns live native peers into dormant tabs on remount.
+
 Read this first and completely before working in this repository.
 
 ## Product north star

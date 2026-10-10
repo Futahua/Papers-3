@@ -304,8 +304,7 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
     await waitFor(()=>evaluateSecond<boolean>('latest.presented===false'),10000,'cross-window drag yields native destination');
     await evaluateSecond(`(()=>{const data=new DataTransfer();for(const [type,value] of ${JSON.stringify(payload)})data.setData(type,value);const target=document.querySelector('[data-slice-id="main"]'),box=latest.groups[0].slot;target.dispatchEvent(new DragEvent('dragover',{dataTransfer:data,clientX:box.x+box.width-4,clientY:box.y+80,bubbles:true,cancelable:true}));target.dispatchEvent(new DragEvent('drop',{dataTransfer:data,clientX:box.x+box.width-4,clientY:box.y+80,bubbles:true,cancelable:true}));})()`);
     await waitFor(()=>evaluateSecond<boolean>(`latest.groups.some(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])}))&&previews.some(p=>p.id==='doc-image')`),10000,'incoming mixed group rendered');
-    await evaluate(`document.dispatchEvent(new DragEvent('dragend',{dataTransfer:crossDrag,bubbles:true}))`);
-    await waitFor(()=>evaluateSecond<boolean>('latest.presented===true'),10000,'drag completion restores native targets');
+    await waitFor(async()=>await evaluateSecond<boolean>('latest.presented===true')&&await evaluate<boolean>('latest.presented===true'),2000,'foreign drop restores both windows without source dragend');
     expect(await evaluate<boolean>(`!latest.groups.some(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])}))&&!previews.some(p=>p.id==='doc-image')`)).toBe(true);
     expect(JSON.parse(await fs.readFile(path.join(data,'native-helpers','pane-transfer-journal.json'),'utf8')).status).toBe('settled');
     const incoming=await evaluateSecond<any>(`latest.groups.find(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])}))`);
@@ -318,7 +317,7 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
     await evaluate(`(()=>{const g=document.querySelector('[data-slice-id="${destinationGroup.id}"]'),r=latest.groups.find(g=>g.id==='${destinationGroup.id}').slot;g.dispatchEvent(new DragEvent('drop',{dataTransfer:incomingSwap,clientX:r.x+r.width/2,clientY:r.y+r.height/2,bubbles:true,cancelable:true}));})()`);
     await waitFor(()=>evaluate<boolean>(`latest.groups.find(g=>g.id==='${destinationGroup.id}').tabs.some(t=>t.id===${JSON.stringify(attached[0])})`),12000,'group moved into existing destination slot');
     await waitFor(()=>evaluateSecond<boolean>(`latest.groups.find(g=>g.id==='${incoming.id}').tabs.some(t=>t.id===${JSON.stringify(destinationGroup.tabs[0].id)})`),12000,'other group moved into existing source slot');
-    await evaluateSecond(`document.dispatchEvent(new DragEvent('dragend',{dataTransfer:swapDrag,bubbles:true}))`);
+    await waitFor(async()=>await evaluateSecond<boolean>('latest.presented===true')&&await evaluate<boolean>('latest.presented===true'),2000,'foreign swap restores both windows without source dragend');
     expect([await evaluate('JSON.stringify(latest.tree)'),await evaluateSecond('JSON.stringify(latest.tree)')]).toEqual(originalTrees);
     expect(await evaluate(`latest.groups.find(g=>g.id==='${destinationGroup.id}').tabs.map(t=>t.id)`)).toEqual(incoming.tabs.map((t:any)=>t.id));
     expect(await evaluateSecond(`latest.groups.find(g=>g.id==='${incoming.id}').tabs.map(t=>t.id)`)).toEqual(destinationGroup.tabs.map((t:any)=>t.id));

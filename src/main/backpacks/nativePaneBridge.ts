@@ -43,6 +43,16 @@ export interface NativePaneBridge {
 }
 const unavailable = (): PaneReply => ({ ok: false, error: 'Window layout is not mounted.' });
 const commandNames = new Set(['checkpoint', 'reconnect', 'resume', 'snapshot', 'raise', 'select', 'reorder', 'move', 'split', 'relocate-group', 'close-group', 'presentation', 'detach', 'document-add', 'document-remove', 'document-edge', 'ensure-panels', 'present', 'can-insert-group']);
+export function parseNativeCheckpoint(text: string): any {
+  // .NET process-start ticks exceed JS integer precision. Preserve their
+  // original numeric tokens through journal/rollback serialization.
+  return JSON.parse(text, (_key, value, ...context: Array<{source?: string}>) => {
+    if (typeof value !== 'number' || !Number.isInteger(value) || Number.isSafeInteger(value)) return value;
+    const source = context[0]?.source;
+    if (!source) throw new Error('Exact native checkpoint decoding is unavailable.');
+    return (JSON as unknown as {rawJSON(source: string): unknown}).rawJSON(source);
+  });
+}
 export function createNativePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined;
   ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void> }): NativePaneBridge | null {
   if (process.platform !== 'win32') return null;
@@ -84,7 +94,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     const text = fs.readFileSync(journalFile, 'utf8');
     if (Buffer.byteLength(text) <= 16 * 1024 * 1024) {
       let journal: { status?: string; records?: Array<{ key: string; mount: unknown }> } | undefined;
-      try { journal = JSON.parse(text); } catch { /* malformed journal is retained for inspection */ }
+      try { journal = parseNativeCheckpoint(text); } catch { /* malformed journal is retained for inspection */ }
       if ((journal?.status === 'prepared' || journal?.status === 'committed') && journal.records?.length === 2 && journal.records.every(record => /^[a-f0-9]{64}$/.test(record.key))) {
         for (const record of journal.records) restoreCheckpoint(record.key, record.mount);
         durableWrite(journalFile, { ...journal, status: journal.status === 'prepared' ? 'rolled-back' : 'recovered-commit' });
@@ -280,9 +290,16 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       const task = transferTail.then(async (): Promise<PaneReply> => {
         const target = owners.get(owner), source = claimFor(id);
         if (!target || !source) return { ok: false, error: 'That window or group is no longer available.' };
-        if (target === source.scope) return source.tabId
-          ? side==='center' ? queued(target, 'move', { tabId: source.tabId, groupId }) : queued(target,'split',{tabId:source.tabId,groupId,newGroupId:randomUUID().replaceAll('-',''),side})
-          : queued(target, 'relocate-group', { groupId: source.groupId, destination: groupId, side });
+        if (target === source.scope) {
+          if (!source.tabId) return queued(target, 'relocate-group', { groupId: source.groupId, destination: groupId, side });
+          const destination = side === 'center' ? groupId : randomUUID().replaceAll('-', '');
+          const moved = await queued(target, side === 'center' ? 'move' : 'split', {
+            tabId: source.tabId, groupId, ...(side === 'center' ? {} : { newGroupId: destination, side }),
+          });
+          if (!moved.ok) return moved;
+          const selected = await queued(target, 'select', { tabId: source.tabId, groupId: destination });
+          return { ...selected, tabId: source.tabId };
+        }
         if (!['center','left', 'right', 'top', 'bottom'].includes(side)) return { ok: false, error: 'Choose an edge for the incoming group.' };
         const from = source.scope;
         const movedGroup = from.snapshot?.groups.find(group=>group.id===source.groupId);
@@ -298,7 +315,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
         };
         try {
           await run(from, 'checkpoint'); await run(target, 'checkpoint');
-          for (const scope of [from, target]) records.push({ key: scope.key, mount: JSON.parse(fs.readFileSync(mountFile(scope.key), 'utf8')) });
+          for (const scope of [from, target]) records.push({ key: scope.key, mount: parseNativeCheckpoint(fs.readFileSync(mountFile(scope.key), 'utf8')) });
           durableWrite(journalFile, { status: 'prepared', records });
           const group = from.snapshot!.groups.find(group => group.id === source.groupId)!;
           const tabs = group.tabs.filter(tab => !source.tabId || tab.id === source.tabId);
@@ -320,19 +337,28 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
             else if(tab.kind==='document')await run(scope,'document-add',{tabId:tab.id,groupId:destination,preview:mount.DocumentReferences?.find((p:any)=>p.Id===tab.id)});
             else await run(scope,'dormant-add',{peer:mount.Peers.find((p:any)=>p.TabId===tab.id),groupId:destination});
           };
-          for (const tab of tabs) {
+          // Fit the selected member first. An inactive, wider tab must not
+          // become the temporary selection and veto a valid group exchange.
+          const acquisitionOrder = (members: typeof tabs, selected?: string | null) =>
+            [...members].sort((a,b) => Number(b.id === selected) - Number(a.id === selected));
+          const restoreOrder = async (scope: Scope, members: typeof tabs, destination: string) => {
+            for (const tab of members) await run(scope,'reorder',{groupId:destination,tabId:tab.id});
+          };
+          for (const tab of acquisitionOrder(tabs, source.tabId ?? group.selected)) {
             const op = tab.kind === 'document' ? 'document-remove' : 'detach';
             if(!swap)await run(from, op, { tabId: tab.id });
             await add(target,tab,destination,records[0]!.mount);
           }
-          if(swap){for(const tab of other!.tabs)await add(from,tab,source.groupId,records[1]!.mount);
+          await restoreOrder(target,tabs,destination);
+          if(swap){for(const tab of acquisitionOrder(other!.tabs,other!.selected))await add(from,tab,source.groupId,records[1]!.mount);
+            await restoreOrder(from,other!.tabs,source.groupId);
             if(other!.selected)await run(from,'select',{groupId:source.groupId,tabId:other!.selected});}
           if (!swap&&!source.tabId && from.snapshot!.groups.length > 1) await run(from, 'close-group', { groupId: source.groupId,
             destination: from.snapshot!.groups.find(group => group.id !== source.groupId)!.id });
           const selected = source.tabId ?? group.selected;
           if (selected) await run(target, 'select', { groupId: destination, tabId: selected });
           await run(from, 'checkpoint'); await run(target, 'checkpoint');
-          durableWrite(journalFile, { status: 'committed', records: [from,target].map(scope=>({key:scope.key,mount:JSON.parse(fs.readFileSync(mountFile(scope.key),'utf8'))})) });
+          durableWrite(journalFile, { status: 'committed', records: [from,target].map(scope=>({key:scope.key,mount:parseNativeCheckpoint(fs.readFileSync(mountFile(scope.key),'utf8'))})) });
           // Settling prevents a later startup from replaying over subsequent edits.
           durableWrite(journalFile, { status: 'settled' });
           from.removedDocuments = tabs.filter(tab=>tab.kind==='document').map(tab=>tab.id);
@@ -374,10 +400,14 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     dragOverlay(owner,active,transferId,cancelled=false) {
       const task=overlayTail.then(async()=>{
       if(active&&!owners.has(owner))return unavailable();
+      // The source DOM can disappear during a foreign drop, so its dragend is
+      // not a completion guarantee. The destination may end that exact ticket.
+      const overlayOwner = !active && transferId && draggedTransfer?.id === transferId
+        ? draggedTransfer.owner : owner;
       if(active&&transferId){const claim=claimFor(transferId);if(!claim||claim.scope!==owners.get(owner))return unavailable();if(draggedTransfer?.id!==transferId)refusedDrag=undefined;draggedTransfer={owner,id:transferId};}
-      if(!active&&draggedTransfer?.owner===owner){const source=refusedDrag===draggedTransfer.id?claimFor(draggedTransfer.id):undefined;if(!cancelled&&source?.scope.snapshot)input.onSnapshot?.(owner,{...localSnapshot(source.scope,source.scope.snapshot),moveRejected:{id:randomUUID(),groupId:source.groupId,tabId:source.tabId}});draggedTransfer=undefined;refusedDrag=undefined;}
-      const previous=dragOwners.size, timer=dragOwners.get(owner);if(timer)clearTimeout(timer);
-      if(active)dragOwners.set(owner,setTimeout(()=>{void api.dragOverlay(owner,false);},10000));else dragOwners.delete(owner);
+      if(!active&&draggedTransfer?.owner===overlayOwner){const source=refusedDrag===draggedTransfer.id?claimFor(draggedTransfer.id):undefined;if(!cancelled&&source?.scope.snapshot)input.onSnapshot?.(overlayOwner,{...localSnapshot(source.scope,source.scope.snapshot),moveRejected:{id:randomUUID(),groupId:source.groupId,tabId:source.tabId}});draggedTransfer=undefined;refusedDrag=undefined;}
+      const previous=dragOwners.size, timer=dragOwners.get(overlayOwner);if(timer)clearTimeout(timer);
+      if(active)dragOwners.set(owner,setTimeout(()=>{void api.dragOverlay(owner,false);},10000));else dragOwners.delete(overlayOwner);
       if(Boolean(previous)!==Boolean(dragOwners.size))await Promise.all([...owners.values()].map(scope=>queued(scope,'present',{visible:dragOwners.size===0&&visibility.get(scope.context.ownerKey)!==false})));
       const scope=owners.get(owner);
       return {ok:true,...(scope?.snapshot?{snapshot:localSnapshot(scope,scope.snapshot)}:{})};
