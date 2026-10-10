@@ -2850,6 +2850,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   };
   const savedPageMoves=new Set<string>();
   const savedWorkspaceMoves=new Set<string>();
+  let drainCapabilitiesForReload: (() => Promise<void>) | undefined;
   const reloadPapers=createPapersReload({file:reloadIntentFile,args:process.argv.slice(1),
     flush:async()=>{
       for(const id of papersWindows.windowIds)await facade.waitForWorkspaceMutation(id);
@@ -2866,7 +2867,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       for(const instance of instances)await saveSessionWindow(instance);
       await workspaceTopologyStore.flush();await workspaceLayoutStore.flush();
       return instances.map(instance=>workspaceIds.get(instance.window.id)!);
-    },restart:args=>{app.relaunch({args});setImmediate(()=>app.quit());},
+    },restart:args=>{if(!drainCapabilitiesForReload)throw Error('Reload is not ready.');app.relaunch({args});setImmediate(()=>{void drainCapabilitiesForReload!().then(()=>app.exit(0));});},
   });
   registerPapersWindowIpc({
     reload:reloadPapers,
@@ -3364,9 +3365,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   };
   let capabilityQuitComplete = false;
   let capabilityQuitPromise: Promise<void> | null = null;
-  app.on('before-quit', (event) => {
-    if (capabilityQuitComplete) return;
-    event.preventDefault();
+  const drainCapabilities = (): Promise<void> => {
+    if (capabilityQuitComplete) return Promise.resolve();
     if (!capabilityQuitPromise) {
       // Release the global chords FIRST. They are a claim on every other
       // application's keyboard, and nothing may be left captured after Papers
@@ -3401,9 +3401,15 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         .then(() => {
         traceQuit('complete');
         capabilityQuitComplete = true;
-        app.quit();
       });
     }
+    return capabilityQuitPromise;
+  };
+  drainCapabilitiesForReload = drainCapabilities;
+  app.on('before-quit', event => {
+    if (capabilityQuitComplete) return;
+    event.preventDefault();
+    void drainCapabilities().then(()=>app.quit());
   });
   registerProgramIpc({
     runtime,
