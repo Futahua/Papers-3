@@ -45,6 +45,7 @@ import {
   activateWorkspaceSurface,
   createWorkspaceTopology,
   insertWorkspaceSurface,
+  moveWorkspaceSurface,
   openWorkspaceSurface,
   splitWorkspaceGroup,
   remapWorkspaceTopologySurfaceIds,
@@ -1939,6 +1940,16 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const source = this.deps.logicalSurfaces.get(surfaceId);
     if (targetWindowId === null || !source || source.kind !== 'project') {
       throw new Error('That live Papers page is unavailable.');
+    }
+    if (source.windowId === targetWindowId) {
+      return this.runWorkspaceMove(async () => {
+        this.requireLiveWorkspaceWindow(targetWindowId);
+        const current = this.deps.workspaceTopology?.(targetWindowId);
+        if (!current) throw new Error('That Papers layout is unavailable.');
+        const next = moveWorkspaceSurface(current, surfaceId, targetGroupId, targetIndex);
+        this.restoreWorkspaceTopology(targetWindowId, next);
+        return next;
+      });
     }
     return this.moveWorkspaceSurfaceAcrossWindows({
       sourceWindowId: source.windowId, targetWindowId, surfaceId, targetGroupId, targetIndex,

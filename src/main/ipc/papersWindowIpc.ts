@@ -13,7 +13,7 @@ export interface PapersWindowIpcDependencies {
   drag?:(sender:WebContents,active:boolean,key?:string,cancelled?:boolean)=>Promise<unknown>;
   dragState?:()=>unknown;
   dragOutcome?:(ok:boolean)=>void;
-  pageDrag?:(sender:WebContents,active:boolean,pageId?:string)=>Promise<void>;
+  pageDrag?:(sender:WebContents,active:boolean,pageId?:string,groupTarget?:boolean)=>Promise<void>;
   moveFailed?:(sender:WebContents,item:{sourceId?:number;key?:string;surfaceId?:string})=>void;
   swapWindow?:(sender:WebContents,sourceId:number,commit:boolean)=>Promise<unknown>;
   dropSavedPage?:(sender:WebContents,key:string,groupId:string,side:string,commit:boolean)=>Promise<unknown>;
@@ -39,7 +39,7 @@ export function registerPapersWindowIpc(deps:PapersWindowIpcDependencies):void {
     if(!v||typeof v.active!=='boolean'||v.cancelled!==undefined&&typeof v.cancelled!=='boolean'||v.key!==undefined&&(typeof v.key!=='string'||!v.key.trim()||Buffer.byteLength(v.key)>512))throw Error('Invalid drag');
     return deps.drag?.(event.sender,v.active,v.key,v.cancelled);
   });
-  handle('host:pages:drag',async(event,value)=>{const v=value as {active:boolean;pageId?:string};if(!v||typeof v.active!=='boolean'||v.pageId!==undefined&&(typeof v.pageId!=='string'||!v.pageId||v.pageId.length>128))throw Error('Invalid page drag');return deps.pageDrag?.(event.sender,v.active,v.pageId);});
+  handle('host:pages:drag',async(event,value)=>{const v=value as {active:boolean;pageId?:string;groupTarget?:boolean};if(!v||typeof v.active!=='boolean'||v.groupTarget!==undefined&&typeof v.groupTarget!=='boolean'||v.pageId!==undefined&&(typeof v.pageId!=='string'||!v.pageId||v.pageId.length>128))throw Error('Invalid page drag');return deps.pageDrag?.(event.sender,v.active,v.pageId,v.groupTarget);});
   handle('host:window:drag-state',async()=>deps.dragState?.()??null);
   handle('host:window:swap',async(event,value)=>{
     const v=value as {sourceId:number;commit:boolean};

@@ -8,6 +8,7 @@ class FakeWindow {
   readonly webContents = { id: ++FakeWindow.nextId, send: vi.fn(), on: vi.fn() };
   readonly closedHandlers: Array<() => void> = [];
   readonly focusHandlers: Array<() => void> = [];
+  readonly closeHandlers: Array<(event: { preventDefault(): void }) => void> = [];
   destroyed = false;
   bounds = { x: 0, y: 0, width: 420, height: 180 };
   visible = true;
@@ -34,8 +35,9 @@ class FakeWindow {
     this.destroyed = true;
     for (const handler of [...this.closedHandlers]) handler();
   });
-  on(event: 'closed' | 'focus', handler: () => void): void {
+  on(event: 'closed' | 'focus' | 'close', handler: any): void {
     if (event === 'closed') this.closedHandlers.push(handler);
+    else if (event === 'close') this.closeHandlers.push(handler);
     else this.focusHandlers.push(handler);
   }
   loadURL = vi.fn(async (url: string) => { this.loadedUrls.push(url); });
@@ -90,7 +92,7 @@ describe('compact widget session', () => {
     await h.session.open(request);
     const original = h.windows[0]!;
     h.session.beginAltQGesture(original.webContents.id, 'peek');
-    await h.session.close('bp-a', 'layout-a', 1);
+    await h.session.closeOwnedByWindow(1);
     await h.session.open(request);
     const replacement = h.windows[1]!;
     for (const closed of original.closedHandlers) closed();
@@ -150,7 +152,7 @@ describe('compact widget session', () => {
     expect(window.focus).not.toHaveBeenCalled();
   });
 
-  it('opens one authenticated widget per layout, reuses duplicates, and never sends 018 transfer traffic', async () => {
+  it('keeps one authenticated widget, reuses duplicates, and replaces a different layout', async () => {
     const h = harness();
     const first = await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     const duplicate = await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
@@ -163,7 +165,7 @@ describe('compact widget session', () => {
     expect(h.windows[0]!.loadedUrls[0]).toContain('papers-layout-key=layout-a');
     expect(h.windows[0]!.webContents.send).toHaveBeenCalledWith('papers:backpack:widget-token', expect.objectContaining({ token: expect.any(String) }));
     expect(h.windows[0]!.webContents.send.mock.calls.map(([channel]) => channel)).not.toContain('papers:backpack:detach-stop-request');
-    expect(h.registry.surfaceForWidget('bp-a', 'layout-a')).not.toBeNull();
+    expect(h.registry.surfaceForWidget('bp-a', 'layout-a')).toBeNull();
     expect(h.registry.surfaceForWidget('bp-a', 'layout-b')).not.toBeNull();
     expect(h.session.liveProjectOwners()).toEqual([{ projectId: 'bp-a', owningWindowId: 1 }]);
     expect(h.session.entryUrlForOwner('bp-a', 1)).toBe('papers-backpack://bp-a/_papers-open/a/public/index.html');
@@ -180,8 +182,10 @@ describe('compact widget session', () => {
     expect(h.session.ready(window.webContents.id, { token })).toBe(true);
     expect(h.session.focus('bp-a', 'layout-a', 1)).toBe(true);
     await h.session.closeFromSender(window.webContents.id, token);
-    expect(h.registry.surface(window.webContents.id)).toBeNull();
-    expect(h.session.focus('bp-a', 'layout-a', 1)).toBe(false);
+    expect(window.visible).toBe(false);
+    expect(window.destroyed).toBe(false);
+    expect(h.registry.surface(window.webContents.id)).not.toBeNull();
+    await h.session.closeOwnedByWindow(1);
 
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     const replacement = h.windows[1]!;
@@ -406,22 +410,15 @@ describe('compact widget session', () => {
     expect(target.showInactive).not.toHaveBeenCalled();
   });
 
-  it('Alt+Q hides the exact widget under the starting cursor even if another becomes latest', async () => {
-    const cursor = { x: 100, y: 50 };
-    const h = harness(cursor);
+  it('Alt+Q inside the replacement hides it using the original behavior', async () => {
+    const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 1 });
-    const target = h.windows[0]!;
-    const other = h.windows[1]!;
-    // Both widgets overlap. The native hit test reports the actual topmost
-    // HWND, independently of which widget is latest or was created last.
-
+    expect(h.windows[0]!.destroyed).toBe(true);
+    const target = h.windows[1]!;
     h.session.beginAltQGesture(target.webContents.id);
-    h.session.focus('bp-a', 'layout-b', 1);
     h.session.endAltQGesture();
-
     expect(target.hide).toHaveBeenCalledOnce();
-    expect(other.hide).not.toHaveBeenCalled();
   });
 
   it('parks hidden composition outside the displays and restores bounds on summon', async () => {
@@ -498,39 +495,20 @@ describe('compact widget session', () => {
     }
   });
 
-  it('releasing an inside-widget Alt+Q press does not stop an unrelated follow', async () => {
-    vi.useFakeTimers();
-    try {
-      const cursor = { x: 600, y: 50 };
-      const h = harness(cursor);
-      await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
-      await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 1 });
-      const inside = h.windows[0]!;
-      const followed = h.windows[1]!;
-      followed.bounds = { x: 500, y: 0, width: 420, height: 180 };
-      expect(await h.session.bringLatestToCursor()).toBe(true);
-
-      cursor.x = 100;
-      cursor.y = 50;
-      h.session.beginAltQGesture(inside.webContents.id);
-      h.session.endAltQGesture();
-      const beforeMove = followed.setBounds.mock.calls.length;
-      cursor.x = 800;
-      cursor.y = 500;
-      await vi.advanceTimersByTimeAsync(16);
-
-      expect(inside.hide).toHaveBeenCalledOnce();
-      expect(followed.setBounds.mock.calls.length).toBeGreaterThan(beforeMove);
-    } finally {
-      vi.useRealTimers();
-    }
+  it('background reconciliation does not replace the single live widget', async () => {
+    const h = harness();
+    await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
+    const result = await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 2, activate: false });
+    expect(result).toEqual({ ok: true, reused: true });
+    expect(h.windows).toHaveLength(1);
+    expect(h.session.focus('bp-a', 'layout-a', 1)).toBe(true);
   });
 
   it('moves the most recently focused widget to the exact pointer and raises it when minimized', async () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 1 });
-    const target = h.windows[0]!;
+    const target = h.windows[1]!;
     target.focusHandlers[0]!();
     target.minimized = true;
     target.visible = false;
@@ -543,7 +521,7 @@ describe('compact widget session', () => {
     expect(target.isVisible()).toBe(true);
     expect(target.focus).not.toHaveBeenCalled();
     expect(target.moveTop).toHaveBeenCalledOnce();
-    expect(h.windows[1]!.restore).not.toHaveBeenCalled();
+    expect(h.windows[0]!.restore).not.toHaveBeenCalled();
     h.session.stopFollowing();
   });
 
@@ -592,10 +570,10 @@ describe('compact widget session', () => {
     const h = harness();
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-b', owningWindowId: 1 });
-    const pillDocked = h.windows[0]!;
-    const otherWidget = h.windows[1]!;
+    const pillDocked = h.windows[1]!;
+    const otherWidget = h.windows[0]!;
 
-    expect(h.session.minimize('bp-a', 'layout-a', 1)).toBe(true);
+    expect(h.session.minimize('bp-a', 'layout-b', 1)).toBe(true);
     expect(await h.session.bringLatestToCursor()).toBe(true);
 
     expect(pillDocked.restore).toHaveBeenCalledOnce();
@@ -650,7 +628,7 @@ describe('compact widget session', () => {
 });
 
 describe('compact widget ownership by Papers window', () => {
-  it('gives two windows their own widget for the same layout, rather than sharing one', async () => {
+  it('replaces the widget when explicitly opened from another window', async () => {
     const h = harness();
 
     const fromA = await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
@@ -662,6 +640,8 @@ describe('compact widget ownership by Papers window', () => {
     expect(fromA).toEqual({ ok: true, reused: false });
     expect(fromB).toEqual({ ok: true, reused: false });
     expect(h.windows).toHaveLength(2);
+    expect(h.windows[0]!.destroyed).toBe(true);
+    expect(h.windows[1]!.destroyed).toBe(false);
   });
 
   it('reuses only within the same window', async () => {
@@ -677,7 +657,7 @@ describe('compact widget ownership by Papers window', () => {
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 1 });
     await h.session.open({ projectId: 'bp-a', layoutKey: 'layout-a', owningWindowId: 2 });
 
-    expect(h.session.focus('bp-a', 'layout-a', 1)).toBe(true);
+    expect(h.session.focus('bp-a', 'layout-a', 1)).toBe(false);
     expect(h.session.focus('bp-a', 'layout-a', 99)).toBe(false);
 
     await h.session.close('bp-a', 'layout-a', 1);
@@ -700,4 +680,13 @@ describe('compact widget ownership by Papers window', () => {
     expect(h.session.focus('bp-a', 'layout-b', 1)).toBe(false);
     expect(h.session.focus('bp-a', 'layout-a', 2)).toBe(true);
   });
+});
+
+it('native close hides the original widget and Alt+Q restores the same instance',async()=>{
+ const h=harness();await h.session.open({projectId:'bp-a',layoutKey:'layout-a',owningWindowId:1});
+ const win=h.windows[0]!;const event={preventDefault:vi.fn()};for(const handler of win.closeHandlers)handler(event);
+ expect(event.preventDefault).toHaveBeenCalledOnce();expect(win.visible).toBe(false);expect(win.destroyed).toBe(false);
+ await expect(h.session.bringLatestToCursor()).resolves.toBe(true);expect(win.visible).toBe(true);expect(h.windows).toHaveLength(1);
+ await h.session.close('bp-a','layout-a',1);expect(win.destroyed).toBe(false);
+ await h.session.closeAll();expect(win.destroyed).toBe(true);
 });

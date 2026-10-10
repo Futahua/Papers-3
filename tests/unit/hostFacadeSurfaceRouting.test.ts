@@ -187,6 +187,30 @@ describe('surface routing in the host facade', () => {
   const FRAME = 12;
   const WIDGET = 13;
 
+  it('adopts a page from a same-window outer split without replacing its renderer or closing the logical page', async () => {
+    const { facade, workspaceTopologies, logicalSurfaces, closeAttachedProjectSurface, prepareProjectSurface, sendToWindow } = createFacade();
+    workspaceTopologies.set(1, createWorkspaceTopology());
+    const parent = await facade.openWorkspaceSurfaceFromControl(1, PROJECT);
+    const child = await facade.openWorkspaceSurfaceFromControl(1, OTHER);
+    const split = splitWorkspaceGroup(child.topology, {
+      groupId: 'group-main', newGroupId: 'child', surfaceId: child.surfaceId,
+      orientation: 'vertical', position: 'before',
+    });
+    workspaceTopologies.set(1, split);
+    prepareProjectSurface.mockClear();
+    await facade.adoptWorkspaceSurfaceFromHost(HOST, child.surfaceId, 'group-main', Number.MAX_SAFE_INTEGER);
+    expect(workspaceTopologies.get(1)?.groups).toEqual([expect.objectContaining({
+      groupId: 'group-main', surfaceIds: [parent.surfaceId, child.surfaceId],
+    })]);
+    expect(workspaceTopologies.get(1)?.root).toEqual({ kind: 'group', groupId: 'group-main' });
+    expect(logicalSurfaces.isLiveIn(child.surfaceId, 1)).toBe(true);
+    expect(closeAttachedProjectSurface).not.toHaveBeenCalled();
+    expect(prepareProjectSurface).not.toHaveBeenCalled();
+    expect(sendToWindow).toHaveBeenLastCalledWith(1, 'host:event:workspace-topology', workspaceTopologies.get(1));
+    await expect(facade.adoptWorkspaceSurfaceFromHost(HOST, child.surfaceId, 'missing', 0)).rejects.toThrow();
+    expect(workspaceTopologies.get(1)?.groups).toHaveLength(1);
+  });
+
   it('replaces one tab after its saves flush, preserving group and split geometry', async () => {
     const { facade, workspaceTopologies, logicalSurfaces, closeAttachedProjectSurface, sendToWindow } = createFacade();
     workspaceTopologies.set(1, createWorkspaceTopology());

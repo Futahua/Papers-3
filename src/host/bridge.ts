@@ -91,7 +91,7 @@ interface HostBridge {
     adoptPage(surfaceId:string): Promise<unknown>;
     detachPage(surfaceId:string): Promise<unknown>;
     showPage(key:string): Promise<void>;
-    pageDrag(active:boolean,pageId?:string):Promise<void>;
+    pageDrag(active:boolean,pageId?:string,groupTarget?:boolean):Promise<void>;
     windowDrag(active:boolean,key?:string,cancelled?:boolean):Promise<void>;
     windowDragState():Promise<{sourceId:number;key?:string}|null>;
     swapWindow(sourceId:number,commit:boolean):Promise<{ok:boolean;error?:string}>;

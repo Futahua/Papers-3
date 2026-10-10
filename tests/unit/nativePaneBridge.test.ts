@@ -118,3 +118,11 @@ it('host menus suspend only their window and block presentation replay until the
  bridge.setOwnerVisible('1:first',false);await bridge.setHostOverlayActive!(1,true);await bridge.setHostOverlayActive!(1,false);
  expect(h.children[0].commands.at(-1).visible).toBe(false);await bridge.dispose();
 });
+
+it('concealed pages can inspect their scope but cannot mutate hidden layouts',async()=>{
+ const bridge=make();await bridge.mount(context('1:child'),rect,32);bridge.setOwnerVisible('1:child',false);
+ expect((await bridge.command('1:child','snapshot')).ok).toBe(true);
+ const count=h.children[0].commands.length;
+ expect((await bridge.command('1:child','select',{groupId:'main',tabId:'peer'})).ok).toBe(false);
+ expect(h.children[0].commands).toHaveLength(count);await bridge.dispose();
+});

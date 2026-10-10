@@ -93,3 +93,12 @@ describe('Papers window IPC', () => {
     await expect(h.getHandler()({ sender: {} })).rejects.toThrow('construction failed');
   });
 });
+
+it('page group drags retain identity without requesting the outer overlay',async()=>{
+ const h=harness(),pageDrag=vi.fn(async()=>{}),sender={};
+ registerPapersWindowIpc({ipcMain:h.ipcMain as PapersWindowIpcDependencies['ipcMain'],isHostSender:()=>true,createAdditionalWindow:async()=>{},pageDrag});
+ await h.handlers.get('host:pages:drag')!({sender},{active:true,pageId:'page',groupTarget:true});
+ expect(pageDrag).toHaveBeenCalledWith(sender,true,'page',true);
+ await expect(h.handlers.get('host:pages:drag')!({sender},{active:true,pageId:'page',groupTarget:'yes'})).rejects.toThrow('Invalid page drag');
+ expect(pageDrag).toHaveBeenCalledTimes(1);
+});

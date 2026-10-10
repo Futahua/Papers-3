@@ -23,6 +23,7 @@ export function createPaneBackpackPages(input: {
     exists: (key: string) => Promise<boolean>;
 }) {
     const layouts = new Map<string, NativePaneSnapshot>(), checking = new Set<string>();
+    const titleUpdates = new Map<string, Promise<void>>();
     let tail = Promise.resolve();
     const locate = (id: string) => input.pages().find(p => p.surfaceId === id || p.key === id);
     function placement(page: PanePage) {
@@ -46,6 +47,33 @@ export function createPaneBackpackPages(input: {
             input.present(page, parent.visible ? parent.bounds ? { x: parent.bounds.x + r.x, y: parent.bounds.y + r.y, width: r.width, height: r.height } : null : outer.bounds, parent.visible ? visible : outer.visible);
         }
     }
+    function syncTitles(): Promise<void> {
+        for (const [owner, layout] of layouts) {
+            // Presentation snapshots may decorate a page title for the UI.
+            // Compare the native reference itself so its durable name is updated.
+            const snapshot = input.bridge()?.snapshot(owner) ?? layout;
+            if (!snapshot.presented) continue;
+            for (const group of snapshot.groups) for (const tab of group.tabs) {
+                const page = tab.preview?.PageKey ? locate(tab.preview.PageKey) : null;
+                const identity = owner + ':' + tab.id;
+                if (!page || tab.preview?.Name === page.title || titleUpdates.has(identity)) continue;
+                const task = tail.then(async () => {
+                    const bridge = input.bridge(), current = bridge?.snapshot(owner);
+                    const currentGroup = current?.groups.find(g => g.tabs.some(t => t.id === tab.id));
+                    const currentTab = currentGroup?.tabs.find(t => t.id === tab.id);
+                    const livePage = currentTab?.preview?.PageKey ? locate(currentTab.preview.PageKey) : null;
+                    if (!bridge?.has(owner) || !current?.presented || !currentGroup || !livePage || currentTab?.preview?.Name === livePage.title) return;
+                    await bridge.command(owner, 'document-add', {
+                        tabId: tab.id, groupId: currentGroup.id,
+                        preview: { ...currentTab!.preview, Name: livePage.title },
+                    });
+                }).catch(() => {}).finally(() => { titleUpdates.delete(identity); });
+                titleUpdates.set(identity, task);
+                tail = task;
+            }
+        }
+        return Promise.all([...titleUpdates.values()]).then(() => undefined);
+    }
     function accept(owner: string, snapshot: NativePaneSnapshot) {
         const old = layouts.get(owner);
         if (old && snapshot.binding === old.binding && (snapshot.stateRevision < old.stateRevision || snapshot.geometryRevision < old.geometryRevision))
@@ -62,6 +90,7 @@ export function createPaneBackpackPages(input: {
                 }
             }
         refresh();
+        void syncTitles();
         // A parked parent's checkpoint may outlive a page explicitly destroyed
         // elsewhere. The authoritative page set decides whether that ref survives.
         for (const group of snapshot.groups)
@@ -124,12 +153,12 @@ export function createPaneBackpackPages(input: {
                         throw Error(result.error || 'The page cannot fit here.');
                     groupId = bridge.snapshot(owner)!.groups.find(g => g.tabs.some(t => t.id === tabId))!.id;
                 }
-                // Existing page transfer owns its durable cross-window commit and rollback.
+                // Existing topology transfer also collapses the former outer
+                // split when the retained page joins a layout in the same window.
                 result = await bridge.command(owner, 'select', { groupId, tabId });
                 if (!result.ok)
                     throw Error(result.error || 'Page selection failed.');
-                if (page.windowId !== parent.windowId)
-                    await input.adopt(page, parent);
+                await input.adopt(page, parent);
                 accept(owner, bridge.snapshot(owner)!);
                 return result;
             }
@@ -164,5 +193,5 @@ export function createPaneBackpackPages(input: {
                             accept(owner, reply.snapshot);
                     }
     }
-    return { accept, refresh, check, attach, removePage, controls: (id: string) => { const p = locate(id); return Boolean(p && placement(p) && input.outer(placement(p)!.parent).visible); } };
+    return { accept, refresh, syncTitles, check, attach, removePage, controls: (id: string) => { const p = locate(id); return Boolean(p && placement(p) && input.outer(placement(p)!.parent).visible); } };
 }

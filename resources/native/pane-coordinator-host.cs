@@ -170,7 +170,7 @@ public sealed class PaneCoordinatorHost:Form {
             binding.Rect=(Dictionary<string,object>)r["rect"];
             binding.Pane.SetViewport(ScreenRect(binding.Rect),++binding.ViewportRevision);
             bool show=!r.ContainsKey("visible")||Convert.ToBoolean(r["visible"]);
-            if(show)foreach(var other in scopes.Values)if(other!=binding)other.Pane.SetPresented(false);
+            // Papers owns page visibility; nested pages can share this physical host.
             binding.Pane.SetPresented(show);Publish(key,binding);return new{ok=true,snapshot=Snapshot(binding)};
         }
         if(!scopes.TryGetValue(key,out binding)||binding.Token!=ReadText(r,"binding"))throw new Exception("Stale surface binding.");
@@ -189,7 +189,7 @@ public sealed class PaneCoordinatorHost:Form {
         }
         if(op=="present"){
             bool value=Convert.ToBoolean(r["visible"]);
-            if(value)foreach(var other in scopes.Values)if(other!=binding)other.Pane.SetPresented(false);
+            // Present only this scope; the containing page may remain visible.
             pane.SetPresented(value);return new{ok=true,snapshot=Snapshot(binding)};
         }
         if(Number(r,"revision")!=scope.StateRevision) return new{ok=false,error="Layout changed; try the action again.",code="STALE_REVISION",snapshot=Snapshot(binding)};

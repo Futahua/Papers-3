@@ -46,7 +46,7 @@ const api = {
     // Create one fresh Papers window; all policy stays in the main process.
     newWindow: () => ipcRenderer.invoke('host:window:new'),
     windows: () => ipcRenderer.invoke('host:window:list'),
-    pageDrag:(active:boolean,pageId?:string)=>ipcRenderer.invoke('host:pages:drag',{active,pageId}),
+    pageDrag:(active:boolean,pageId?:string,groupTarget?:boolean)=>ipcRenderer.invoke('host:pages:drag',{active,pageId,groupTarget}),
     windowDrag: (active:boolean,key?:string,cancelled?:boolean) => ipcRenderer.invoke('host:window:drag',{active,key,cancelled}),
     windowDragState: () => ipcRenderer.invoke('host:window:drag-state'),
     swapWindow: (sourceId:number,commit:boolean) => ipcRenderer.invoke('host:window:swap',{sourceId,commit}),

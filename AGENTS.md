@@ -153,6 +153,10 @@ Container and hosted-page acceptance, 2026-10-10: the Pages menu lists only park
 
 An independent Backpack page can enter an AYG native layout as a retained logical page view. AYG cannot contain its own page or recursive page layouts. Native intent stores an opaque PageKey for membership; workspace topology remains the page/session authority, and the existing transfer owner handles cross-window adoption. Switching group tabs conceals presentation without restarting the page. Explicit page closure removes references, and remount prunes references absent from the authoritative unclosed-page set. Proxima retains its blue time-pill tab style; Files uses muted yellow and follow Preview purple. These are local source/install changes, not a new published version.
 
+Hosting a retained page also relocates its outer tab into the containing page's actual outer group, including moves within one Papers window. The existing workspace topology owner collapses an emptied source split without closing the logical page or replacing its renderer; do not leave a blank outer slot or infer the destination from whichever group happens to be focused.
+
+Retained page tabs follow authenticated live page-title changes, including Proxima's clock. Synchronize the native document reference as well as the displayed label without changing selection, membership or renderer identity; hidden layouts catch up when presented again.
+
 Inactive outer page mouse drags keep the current destination page presented. For native draggable tabs, defer activation from pointerdown to the completed click; dragstart clears pending click intent. Preserve tab actions, modifier gestures and pointer-backend input. Drag regression checks include the inactive pointer press and a frame delay before dragstart, plus ordinary click activation on release.
 
 Shift-drag of an outer page targets AYG native groups: suppress Dockview content/edge split handling and release the workspace-drag compositor lease while Shift is held. Ordinary drags retain outer splits and reordering. Shift does not activate an inactive source tab on press.

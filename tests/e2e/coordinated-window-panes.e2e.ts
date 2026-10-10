@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { evalInHost, evalInHostWindow, launchPapers, waitFor } from './helpers';
+import { splitWorkspaceGroup, type WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 
 function previewPdf(): Buffer {
  const stream='BT /F1 18 Tf 20 100 Td (Pinned PDF fixture) Tj ET';
@@ -69,7 +70,9 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await fs.writeFile(path.join(shell,'public','shell.js'),`window.shellErrors=[];window.addEventListener('error',e=>shellErrors.push(e.message));const routes=new Set();let child;const scopeId=crypto.randomUUID();window.addEventListener('message',e=>{if(e.source===child?.contentWindow&&e.data?.requestId)routes.add(e.data.requestId);if(e.source!==window||e.data?.type!=='papers:host:result')return;if(e.data.requestId===scopeId){if(!e.data.ok)throw Error(e.data.error);child=document.createElement('iframe');child.src=e.data.workspaceScope.url;document.body.append(child);}else if(routes.delete(e.data.requestId))child.contentWindow.postMessage(e.data,'papers-backpack://${id}');});window.postMessage({type:'papers:project:workspace-scope',requestId:scopeId,projectKey:'pane-test',projectName:'Pane test'},location.origin);`);
  }
  const childId='bp-50505050-5050-4050-8050-505050505050',childRoot=path.join(profile,'child-page');
- await fs.mkdir(path.join(childRoot,'public'),{recursive:true});await fs.writeFile(path.join(childRoot,'public','index.html'),'<html><body>Retained Backpack page<script>window.marker=crypto.randomUUID()</script></body></html>');
+ await fs.cp(path.join(ayg,'public'),path.join(childRoot,'public'),{recursive:true});
+ await fs.writeFile(path.join(childRoot,'public','index.html'),'<html><body>Retained Backpack page<script type="module" src="nested-pane-test.js"></script></body></html>');
+ await fs.writeFile(path.join(childRoot,'public','nested-pane-test.js'),`import {createHostBridge} from './app/host/host-bridge.js';window.marker=crypto.randomUUID();window.host=createHostBridge(window);const rect=()=>({x:10,y:40,width:innerWidth-20,height:innerHeight-50});host.onPaneLayout(s=>window.latest=s);window.ready=(async()=>{while(innerWidth<500||innerHeight<300)await new Promise(r=>setTimeout(r,50));const r=await host.fileCapability('pane-layout-mount',{rect:rect(),headerHeight:32});if(!r.ok)throw Error(JSON.stringify(r));window.latest=r.snapshot;return r;})();window.addEventListener('resize',()=>void ready.then(()=>host.fileCapability('pane-layout-viewport',{rect:rect()})));window.snapshot=()=>host.fileCapability('pane-layout-command',{command:'snapshot'});`);
  await fs.writeFile(path.join(childRoot,'project.json'),JSON.stringify({schemaVersion:1,backpackId:childId,entry:'public/index.html'}));
  const childBackpack={...backpack,id:childId,name:'Proxima page fixture'};await fs.mkdir(path.join(data,'backpacks',childId),{recursive:true});await fs.writeFile(path.join(data,'backpacks',childId,'backpack.json'),JSON.stringify({schemaVersion:1,...childBackpack}));
  const registry=JSON.parse(await fs.readFile(path.join(data,'registry.json'),'utf8'));registry.backpacks.push(childBackpack);await fs.writeFile(path.join(data,'registry.json'),JSON.stringify(registry));
@@ -116,6 +119,12 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await evaluate(`window.previews=[{id:'doc-one',path:${JSON.stringify(documentPath)},name:'preview.txt'}];panes.setPreviews(previews);panes.selectPreview(previews[0]);`);
   await waitFor(async()=>await evaluate<boolean>('latest.groups.some(g=>g.selected==="preview:doc-one")&&Boolean(document.querySelector(".slice-file-preview:not([hidden])"))'),12000,'selected document preview');
   await waitFor(async()=>await evaluate<boolean>(`(()=>{const pane=document.querySelector('.slice-file-preview:not([hidden])'),body=pane?.querySelector('.file-capability-body');return pane?.classList.contains('expanded')&&getComputedStyle(body).display!=='none'&&body.getBoundingClientRect().height>100&&body.textContent.includes('An isolated preview fixture.');})()`),5000,'pinned preview content is visible');
+  await evaluate(`(()=>{const grip=document.querySelector('.slice-group-handle'),data=new DataTransfer();grip.dispatchEvent(new DragEvent('dragstart',{dataTransfer:data,bubbles:true}));})()`);
+  await waitFor(()=>evaluate<boolean>(`latest.presented===false&&document.querySelector('.slice-file-preview').hidden`),5000,'group drag yields native and document content together');
+  // End at the host without a source DOM dragend, as can happen after rerender.
+  await evaluate(`host.fileCapability('pane-transfer-overlay',{active:false})`);
+  await waitFor(()=>evaluate<boolean>(`latest.presented===true&&!document.querySelector('.slice-file-preview').hidden`),5000,'host drag completion restores retained previews without source dragend');
+  await evaluate(`document.dispatchEvent(new DragEvent('dragend',{bubbles:true}))`);
   const boxes=await evaluate<any>('latest.groups[0].slot');
   await evaluate(`dropTab('application/x-papers-native-pane-tab',JSON.stringify({id:${JSON.stringify(attached[0])},sliceId:'main'}),${boxes.x+boxes.width-20},${boxes.y+boxes.height/2});`);
   await waitFor(async()=>await evaluate<number>('latest.groups.length')===2,10000,'native tab split from actual strip drag contract');
@@ -159,8 +168,9 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   expect(final.latest.groups[0].tabs).toHaveLength(3);expect(final.headers).toBe(1);expect(final.errors).toEqual([]);
   // A real retained Backpack WebContentsView can join a native layout group.
   const parentSurface=await evalInHost<string>(launched.app,`papersHost.app.pages().then(p=>p[0].key)`);
+  await evalInHost(launched.app,`papersHost.events.onWorkspaceTopology(t=>window.outerTopology=t);papersHost.events.onWorkspaceProjectOpened(e=>window.outerTopology=e.topology);void 0;`);
   const childPage=await evalInHost<any>(launched.app,`papersHost.backpackProject.open('${childId}')`);
-  const childState=()=>launched.app.evaluate(async({webContents,BaseWindow},id)=>{const w=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'));if(!w)return null;const view=BaseWindow.getAllWindows().flatMap(win=>win.contentView.children).find(v=>(v as Electron.WebContentsView).webContents?.id===w.id);return {id:w.id,marker:await w.executeJavaScript('window.marker'),bounds:view?.getBounds()??null};},childId);
+  const childState=()=>launched.app.evaluate(async({webContents,BaseWindow},id)=>{const w=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'));if(!w)return null;const view=BaseWindow.getAllWindows().flatMap(win=>win.contentView.children).find(v=>(v as Electron.WebContentsView).webContents?.id===w.id);return {id:w.id,marker:await w.executeJavaScript('window.marker'),snapshot:await w.executeJavaScript('ready.then(()=>snapshot()).then(r=>r.snapshot)'),bounds:view?.getBounds()??null};},childId);
   const childBefore=await childState();expect(childBefore).not.toBeNull();
   await evalInHost(launched.app,`papersHost.app.showPage(${JSON.stringify(parentSurface)})`);
   await waitFor(()=>evaluate<boolean>("host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot?.presented===true)"),5000,'parent page active for hosting');
@@ -174,23 +184,42 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
   await waitFor(()=>evalInHost<boolean>(launched.app,`document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').getAttribute('aria-selected')==='true'`),5000,'plain click still activates on release');
   await evalInHost(launched.app,`papersHost.app.showPage(${JSON.stringify(parentSurface)})`);
   await waitFor(()=>evaluate<boolean>("host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot?.presented===true)"),5000,'return to destination before drag');
-  await evalInHost(launched.app,`document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').dispatchEvent(new PointerEvent('pointerdown',{pointerType:'mouse',button:0,bubbles:true,cancelable:true}))`);
+  // The source page can occupy a separate outer split. Hosting it must retire
+  // that empty slot without retiring or reloading the retained page renderer.
+  const outerBefore=await evalInHost<WorkspaceTopologyV1>(launched.app,'outerTopology');
+  const sourceGroup=outerBefore.groups.find(g=>g.surfaceIds.includes(childPage.surfaceId))!;
+  const outerSplit=splitWorkspaceGroup(outerBefore,{groupId:sourceGroup.groupId,newGroupId:'child-outer-split',surfaceId:childPage.surfaceId,orientation:'vertical',position:'before'});
+  if(outerSplit.root.kind==='split')outerSplit.root.weights=[0.25,0.75];
+  await evalInHost(launched.app,`papersHost.layout.commitWorkspaceTopology(${JSON.stringify(outerSplit)}).then(()=>papersHost.layout.refreshWorkspaceTopology())`);
+  await waitFor(()=>evalInHost<boolean>(launched.app,"document.querySelectorAll('.dv-groupview').length===2"),5000,'source page occupies its own outer split');
+  await evalInHost(launched.app,`document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').dispatchEvent(new PointerEvent('pointerdown',{pointerType:'mouse',button:0,shiftKey:true,bubbles:true,cancelable:true}))`);
   const pageDrag=await evalInHost<Array<[string,string]>>(launched.app,`(()=>{window.pageDrag=new DataTransfer();document.querySelector('[data-tab-panel-id="${childPage.surfaceId}"]').dispatchEvent(new DragEvent('dragstart',{dataTransfer:pageDrag,shiftKey:true,bubbles:true}));return [...pageDrag.types].map(type=>[type,pageDrag.getData(type)]);})()`);
   expect(pageDrag.some(([type,value])=>type==='application/x-papers-page'&&value===childPage.surfaceId)).toBe(true);
   await evalInHost(launched.app,'new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   expect(await evalInHost<string>(launched.app,'document.documentElement.dataset.workspaceDrag')).toBe('false');
+  expect(await evalInHost<boolean>(launched.app,`[...document.querySelectorAll('iframe')].every(frame=>frame.style.pointerEvents!=='none')`)).toBe(true);
   await evaluate(`(()=>{window.hostedPageDrag=new DataTransfer();for(const [type,value] of ${JSON.stringify(pageDrag)})hostedPageDrag.setData(type,value);const g=latest.groups[0],strip=document.querySelector('[data-slice-id="'+g.id+'"] .pane-window-tabs');strip.dispatchEvent(new DragEvent('dragover',{dataTransfer:hostedPageDrag,clientX:g.slot.x+g.slot.width/2,clientY:g.slot.y+16,bubbles:true,cancelable:true}));})()`);
   await waitFor(()=>evaluate<boolean>(`calls.some(c=>c.args[0]==='pane-page-check'&&c.reply.ok)`),5000,'Backpack page drop preflight');
   expect(await evaluate<boolean>(`Boolean(document.querySelector('.is-tab-drop-target'))`)).toBe(true);
   await evaluate(`(()=>{const g=latest.groups[0];document.querySelector('[data-slice-id="'+g.id+'"] .pane-window-tabs').dispatchEvent(new DragEvent('drop',{dataTransfer:hostedPageDrag,clientX:g.slot.x+g.slot.width/2,clientY:g.slot.y+16,bubbles:true,cancelable:true}));})()`);
   await waitFor(()=>evaluate<boolean>(`calls.some(c=>c.args[0]==='pane-page-attach'&&c.reply.ok)`),5000,'actual Backpack tab drop joins group');
+  await waitFor(()=>evalInHost<boolean>(launched.app,"outerTopology.groups.length===1&&document.querySelectorAll('.dv-groupview').length===1"),5000,'moving page into native layout collapses its former outer split');
+  expect((await evalInHost<WorkspaceTopologyV1>(launched.app,'outerTopology')).surfaces).toHaveLength(2);
   await evalInHost(launched.app,`document.dispatchEvent(new DragEvent('dragend',{dataTransfer:pageDrag,bubbles:true}))`);
   await waitFor(()=>evaluate<boolean>(`Boolean(document.querySelector('.is-proxima-page'))`),5000,'Proxima retains blue time tab styling');
   const pageTab=await evaluate<string>(`latest.groups.flatMap(g=>g.tabs).find(t=>t.preview?.PageKey).id`);
   const hostedState=await childState();expect(hostedState?.id).toBe(childBefore?.id);expect(hostedState?.marker).toBe(childBefore?.marker);
-  expect(hostedState?.bounds?.width).toBe((await evaluate<any>('latest.groups[0].content')).width);
+  await waitFor(async()=>Boolean((await childState())?.snapshot?.presented)&&await evaluate<boolean>("host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot?.presented===true)"),5000,'nested native scope and containing AYG scope stay presented together');
+  await waitFor(async()=>(await childState())?.bounds?.width===(await evaluate<any>('latest.groups[0].content')).width,5000,'retained page geometry settles after outer split collapses');
+  await launched.app.evaluate(async({webContents},id)=>{const w=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'));await w!.executeJavaScript("document.title='22:09';void 0");},childId);
+  await waitFor(()=>evaluate<boolean>(`latest.groups.flatMap(g=>g.tabs).some(t=>t.id===${JSON.stringify(pageTab)}&&t.preview?.Name==='22:09')`),5000,'hosted Proxima time label follows its live page title');
+  await waitFor(()=>evaluate<boolean>(`host.fileCapability('pane-layout-command',{command:'snapshot'}).then(r=>r.snapshot.groups.flatMap(g=>g.tabs).some(t=>t.id===${JSON.stringify(pageTab)}&&t.preview?.Name==='22:09'))`),5000,'native reference receives the live title rather than a presentation-only label');
+  await waitFor(()=>evaluate<boolean>(`Boolean(document.querySelector('.is-proxima-page')?.innerText.includes('22:09'))`),5000,'rendered Proxima strip shows the updated clock');
+  expect((await childState())?.marker).toBe(childBefore?.marker);
+  await launched.app.evaluate(async({webContents},id)=>{const w=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'));await w!.executeJavaScript("document.title='Proxima page fixture';void 0");},childId);
+  await waitFor(()=>evaluate<boolean>(`latest.groups.flatMap(g=>g.tabs).some(t=>t.id===${JSON.stringify(pageTab)}&&t.preview?.Name==='Proxima page fixture')`),5000,'page title update preserves its existing native tab');
   await evaluate(`host.fileCapability('pane-layout-command',{command:'select',groupId:latest.groups[0].id,tabId:'preview:doc-one',revision:latest.stateRevision})`);
-  await waitFor(async()=>(await childState())?.bounds===null,5000,'inactive hosted page is concealed but retained');
+  await waitFor(async()=>(await childState())?.bounds===null&&(await childState())?.snapshot?.presented===false,5000,'inactive hosted page and its native scope are concealed but retained');
   await evaluate(`host.fileCapability('pane-layout-command',{command:'select',groupId:latest.groups[0].id,tabId:${JSON.stringify(pageTab)},revision:latest.stateRevision})`);
   expect((await childState())?.marker).toBe(childBefore?.marker);
   const deniedSelf=await evaluate<any>(`host.fileCapability('pane-page-check',{pageId:${JSON.stringify(parentSurface)},groupId:latest.groups[0].id,side:'center'})`);expect(deniedSelf.ok).toBe(false);
@@ -321,7 +350,7 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
     expect(await evalInHost<number>(launched.app,'papersHost.app.windows().then(rows=>rows.length)')).toBe(2);
     expect(await evalInHost<number>(launched.app,'papersHost.app.pages().then(rows=>rows.length)')).toBe(2);
     const intentFiles=await fs.readdir(path.join(data,'pane-layouts'));const intents=await Promise.all(intentFiles.filter(f=>f.endsWith('.json')).map(f=>fs.readFile(path.join(data,'pane-layouts',f),'utf8')));
-    expect(intents.length).toBe(2);expect(intents.join('')).not.toMatch(/"(?:Handle|Pid|Started|OwnerPid|OwnerStarted|Recovery)"/);
+    expect(intents.length).toBe(3);expect(intents.join('')).not.toMatch(/"(?:Handle|Pid|Started|OwnerPid|OwnerStarted|Recovery)"/);
 
     // Tear out and adopt the entire page through the real DOM drop route.
     const restoredWindow=(await evalInHost<any[]>(launched.app,'papersHost.app.windows()'))[0]!.windowId;
@@ -337,6 +366,6 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
     await evalInHostWindow(launched.app,recipient.windowId,`papersHost.app.closePage(${JSON.stringify(pageKey)})`);
     await waitFor(()=>evalInHostWindow<boolean>(launched.app,recipient.windowId,`papersHost.app.pages().then(rows=>!rows.some(p=>p.key===${JSON.stringify(pageKey)}))`),10000,'explicit page close removes restore record');
   }
- }catch(error){console.error(await evaluate('JSON.stringify({calls:window.calls?.filter(c=>String(c.args[0]).startsWith("pane-")).map(c=>({args:c.args,ok:c.reply.ok,revision:c.reply.snapshot?.stateRevision,error:c.reply.error||c.reply.message})),errors:window.errors,panes:typeof window.panes,size:[innerWidth,innerHeight]})').catch(String));console.error(await launched.app.evaluate(async({webContents},id)=>{const v=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'));return v?{url:v.getURL(),frames:v.mainFrame.frames.map(f=>f.url),body:await v.executeJavaScript('({html:document.body.innerHTML,errors:window.shellErrors,origin:location.origin})')}:null;},topId));console.error(fixtures.map(f=>({pid:f.pid,exit:f.exitCode})));throw error;}
+ }catch(error){console.error(await launched.app.evaluate(async({webContents},id)=>{const w=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'));return w?.executeJavaScript('({latest:window.latest,ready:!!window.ready,size:[innerWidth,innerHeight]})');},childId));console.error(await evaluate('JSON.stringify({calls:window.calls?.filter(c=>String(c.args[0]).startsWith("pane-")).map(c=>({args:c.args,ok:c.reply.ok,revision:c.reply.snapshot?.stateRevision,error:c.reply.error||c.reply.message})),errors:window.errors,panes:typeof window.panes,size:[innerWidth,innerHeight]})').catch(String));console.error(await launched.app.evaluate(async({webContents},id)=>{const v=webContents.getAllWebContents().find(w=>w.getURL().startsWith('papers-backpack://'+id+'/'));return v?{url:v.getURL(),frames:v.mainFrame.frames.map(f=>f.url),body:await v.executeJavaScript('({html:document.body.innerHTML,errors:window.shellErrors,origin:location.origin})')}:null;},topId));console.error(fixtures.map(f=>({pid:f.pid,exit:f.exitCode})));throw error;}
  finally{await launched.close();for(const fixture of fixtures)if(fixture.exitCode===null)fixture.kill();}
 });

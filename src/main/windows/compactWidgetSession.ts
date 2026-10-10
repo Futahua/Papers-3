@@ -26,9 +26,8 @@ interface WidgetEntry {
   projectId: string;
   layoutKey: string;
   entryUrl: string;
-  /** The Papers window this widget belongs to. Part of its identity, so two
-   * windows showing one layout get their own widget rather than sharing one
-   * that neither can be said to own. */
+  /** The owning Papers window authenticates the single live widget. Opening
+   * a widget explicitly from another window replaces this instance. */
   owningWindowId: number;
   window: CompactWidgetWindow;
   closing: boolean;
@@ -62,6 +61,7 @@ export interface CompactWidgetWindow {
   isDestroyed(): boolean;
   destroy(): void;
   on(event: 'closed' | 'focus', callback: () => void): void;
+  on(event: 'close', callback: (event: { preventDefault(): void }) => void): void;
   loadURL(url: string): Promise<void>;
 }
 
@@ -158,15 +158,8 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
   let altQGesture: { kind: 'inside'; entry: WidgetEntry } | { kind: 'outside' } | null = null;
   let activeDrag: { senderId: number; token: string; offsetX: number; offsetY: number } | null = null;
   let registered = false;
-  /**
-   * Widget identity includes the owning Papers window.
-   *
-   * Keyed by (projectId, layoutKey) alone, two windows showing the same layout
-   * would share one native widget, and nothing could say whose it was or which
-   * window's close should destroy it. Separate instances keep teardown
-   * coherent and avoid inventing an ownership-transfer protocol nobody asked
-   * for.
-   */
+  // Authentication and teardown retain the widget's owner even though only
+  // one instance can be live across Papers windows.
   const keyOf = (projectId: string, layoutKey: string, owningWindowId: number) =>
     `${owningWindowId}\0${projectId}\0${layoutKey}`;
 
@@ -287,6 +280,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
   function destroy(entry: WidgetEntry): void {
     const key = keyOf(entry.projectId, entry.layoutKey, entry.owningWindowId);
     if (entries.get(key) !== entry) return;
+    entry.closing = true;
     entries.delete(key);
     if (followedEntry === entry) { stopFollowing(); altQGesture = null; }
     if (altQGesture?.kind === 'inside' && altQGesture.entry === entry) altQGesture = null;
@@ -370,10 +364,13 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
         }
         return { ok: true, reused: true };
       }
+      // Background reconciliation must not replace the creator's single widget.
+      if (request.activate === false && [...entries.values()].some(isLiveEntry)) return { ok: true, reused: true };
       const entryUrl = deps.resolveEntryUrl(request.projectId, request.owningWindowId, request.workspaceSenderId);
       if (!entryUrl) return { ok: false, error: 'no live workspace entry for this project' };
       let url: string;
       try { url = widgetUrl(entryUrl, request.layoutKey, request.projectId); } catch { return { ok: false, error: 'widget entry is not a bound project surface' }; }
+      for (const previous of [...entries.values()]) destroy(previous);
       const window = deps.createWindow({ bounds: clamp(request.bounds ?? null), preloadPath: deps.preloadPath, projectId: request.projectId, layoutKey: request.layoutKey, owningWindowId: request.owningWindowId });
       let token: string;
       try { token = deps.registry.register(window.webContents.id, request.projectId, COMPACT_WIDGET_SURFACE_KIND, request.layoutKey); }
@@ -390,6 +387,11 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       });
       // A late notification from a deleted widget must not unregister its
       // replacement, which can have the same layout key and a fresh sender.
+      window.on('close', event => {
+        if (entry.closing) return;
+        event.preventDefault();
+        hideEntry(entry);
+      });
       window.on('closed', () => destroy(entry));
       window.webContents.on('render-process-gone', () => destroy(entry));
       try { await window.loadURL(url); }
@@ -473,7 +475,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
     stopFollowing,
     async close(projectId, layoutKey, owningWindowId) {
       const entry = entries.get(keyOf(projectId, layoutKey, owningWindowId));
-      if (entry) destroy(entry);
+      if (entry) hideEntry(entry);
     },
 
     async closeOwnedByWindow(owningWindowId) {
@@ -491,7 +493,7 @@ export function createCompactWidgetSession(deps: CompactWidgetSessionDependencie
       const surface = deps.registry.surface(senderId);
       if (!surface || surface.kind !== COMPACT_WIDGET_SURFACE_KIND || surface.token !== token) throw new Error('denied: sender is not the registered compact widget');
       const found = [...entries.values()].find((entry) => entry.window.webContents.id === senderId);
-      if (found) destroy(found);
+      if (found) hideEntry(found);
     },
     resizeFromSender(senderId, token, width, height) {
       const surface = deps.registry.surface(senderId);

@@ -155,7 +155,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     const token = scope.token, owner = scope.context.ownerKey;
     const task = scope.host.queue.then(async () => {
       if (disposing && !transaction && op !== 'release') return unavailable();
-      if (scope.token !== token || owners.get(owner) !== scope || (!transaction && (locked.has(scope) || visibility.get(owner) === false && !['present', 'release', 'document-remove'].includes(op)))) return unavailable();
+      if (scope.token !== token || owners.get(owner) !== scope || (!transaction && (locked.has(scope) || visibility.get(owner) === false && !['snapshot', 'present', 'release', 'document-remove'].includes(op)))) return unavailable();
       const presentationParams = (op === 'present' || op === 'mount') && params.visible === true && hostOverlayActive(owner) ? { ...params, visible: false } : params;
       const result = await send(scope.host, { ...presentationParams, op, scope: scope.key, binding: token, revision: revision ?? scope.snapshot?.stateRevision ?? 0 });
       accept(scope, result.snapshot); return result.snapshot ? { ...result, snapshot: localSnapshot(scope, result.snapshot) } : result;

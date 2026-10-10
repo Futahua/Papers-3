@@ -13,17 +13,30 @@ export function usePageWindowDrag(surfaceIds: string[], onError: (message: strin
     const own = new Set(identity ? identity.split('\0') : []);
     let dragged: string | null = null;
     let cancelled = false;
+    let groupTarget = false;
     let indicator: Element | null = null;
     const clear = (): void => { indicator?.classList.remove('papers-page-drop'); indicator = null; };
     const target = (event: DragEvent): Element | null => event.target instanceof Element
       ? event.target.closest('.dv-tabs-and-actions-container, .titlebar') : null;
+    const shiftStart = (event: DragEvent): void => {
+      if(!event.shiftKey||!(event.target instanceof Element)||!event.dataTransfer)return;
+      const tab=event.target.closest<HTMLElement>('.dv-tab[data-tab-panel-id]');
+      const id=tab?.dataset.tabPanelId;if(!id||!own.has(id))return;
+      // Preserve Chromium's real drag, but bypass Dockview's outer-split
+      // backend and its disabling of embedded destination pointer events.
+      event.dataTransfer.setData(MIME,id);event.dataTransfer.effectAllowed='move';
+      event.dataTransfer.setDragImage(tab!,12,12);event.stopPropagation();
+      dragged=id;groupTarget=true;cancelled=false;document.documentElement.dataset.workspaceDrag='false';
+      void host().app.pageDrag(true,id,true).catch(onError);
+    };
     const start = (event: DragEvent): void => {
       const id = event.dataTransfer?.getData(MIME);
       dragged = id && own.has(id) ? id : null;
-      cancelled = false;if(dragged)void host().app.pageDrag(true,dragged).catch(onError);
+      cancelled = false;groupTarget=event.shiftKey;if(dragged)void host().app.pageDrag(true,dragged,groupTarget).catch(onError);
     };
     const over = (event: DragEvent): void => {
-      if (!event.dataTransfer?.types.includes(MIME) || dragged) return;
+      if(dragged&&groupTarget!==event.shiftKey){groupTarget=event.shiftKey;void host().app.pageDrag(true,dragged,groupTarget).catch(onError);}
+      if (event.shiftKey || !event.dataTransfer?.types.includes(MIME) || dragged) return;
       clear(); indicator = target(event);
       if (!indicator) return;
       event.preventDefault(); event.stopImmediatePropagation();
@@ -32,7 +45,7 @@ export function usePageWindowDrag(surfaceIds: string[], onError: (message: strin
     };
     const drop = (event: DragEvent): void => {
       const id = event.dataTransfer?.getData(MIME);
-      if (!id || own.has(id) || !target(event)) return;
+      if (event.shiftKey || !id || own.has(id) || !target(event)) return;
       event.preventDefault(); event.stopImmediatePropagation();
       event.dataTransfer!.dropEffect = 'move'; clear();
       void host().app.adoptPage(id).catch(error => onError(String(error)));
@@ -46,6 +59,7 @@ export function usePageWindowDrag(surfaceIds: string[], onError: (message: strin
       void host().app.detachPage(id).catch(error => onError(String(error)));
     };
     const key = (event: KeyboardEvent): void => { if (event.key === 'Escape') {cancelled = true;if(dragged)void host().app.pageDrag(false).catch(onError);} };
+    window.addEventListener('dragstart', shiftStart,true);
     window.addEventListener('dragstart', start);
     window.addEventListener('dragover', over, true);
     window.addEventListener('drop', drop, true);
@@ -54,7 +68,7 @@ export function usePageWindowDrag(surfaceIds: string[], onError: (message: strin
     window.addEventListener('dragleave', clear);
     return () => {
       if(dragged)void host().app.pageDrag(false).catch(onError);
-      unsubscribe();clear(); window.removeEventListener('dragstart', start); window.removeEventListener('dragover', over, true);
+      unsubscribe();clear(); window.removeEventListener('dragstart', shiftStart,true);window.removeEventListener('dragstart', start); window.removeEventListener('dragover', over, true);
       window.removeEventListener('drop', drop, true); window.removeEventListener('dragend', end);
       window.removeEventListener('keydown', key, true); window.removeEventListener('dragleave', clear);
     };
