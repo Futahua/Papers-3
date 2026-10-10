@@ -1,4 +1,4 @@
-import {consumeReloadWindows,createPapersReload} from './windows/papersReload';
+import {consumeReloadWindows,createPapersReload,shouldFlushReloadSurface} from './windows/papersReload';
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
@@ -2855,6 +2855,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       for(const id of papersWindows.windowIds)await facade.waitForWorkspaceMutation(id);
       const frames=webContents.getAllWebContents().filter(w=>!w.isDestroyed()&&w.getURL().startsWith('papers-backpack://')).flatMap(w=>[w.mainFrame,...w.mainFrame.frames]);
       for(const frame of frames){
+        if(!shouldFlushReloadSurface(frame.url))continue;
         let timer:ReturnType<typeof setTimeout>|undefined;
         try{const result=await Promise.race([frame.executeJavaScript('globalThis.__papersFlushBeforeClose?.()'),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('A page did not finish saving. Papers remains open.')),8000);})]);
           if(result&&typeof result==='object'&&(result as {ok?:boolean}).ok===false)throw Error('A page could not save. Papers remains open.');

@@ -3,6 +3,10 @@ import {readFileSync,writeFileSync,renameSync,unlinkSync} from 'node:fs';
 import type {SelectedWorkspaceSnapshot} from '../persistence/workspaceTopologyStore';
 
 const prefix='--papers-reload-token=';
+/** Auxiliary launchers do not own documents, including cached old renderers. */
+export function shouldFlushReloadSurface(url:string):boolean {
+ try {const parsed=new URL(url);return parsed.protocol==='papers-backpack:'&&parsed.searchParams.get('papers-surface')!=='command-surface';}catch{return false;}
+}
 /** One-use restart intent. Ordinary launches/reboots still consolidate pages. */
 export function consumeReloadWindows(file:string,args:string[],saved:SelectedWorkspaceSnapshot[],now=Date.now()):SelectedWorkspaceSnapshot[]|null {
  const token=args.find(a=>a.startsWith(prefix))?.slice(prefix.length);if(!token)return null;

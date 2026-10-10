@@ -1,6 +1,12 @@
 import {it,expect,vi} from 'vitest';
 import {mkdtempSync,readFileSync,existsSync,rmSync} from 'node:fs';import {tmpdir} from 'node:os';import {join} from 'node:path';
-import {createPapersReload,consumeReloadWindows} from '../../src/main/windows/papersReload';
+import {createPapersReload,consumeReloadWindows,shouldFlushReloadSurface} from '../../src/main/windows/papersReload';
+it('reload excludes cached auxiliary launchers but retains document and embedded page saves',()=>{
+ expect(shouldFlushReloadSurface('papers-backpack://project/_papers-open/old/public/workspace.html?papers-surface=command-surface')).toBe(false);
+ expect(shouldFlushReloadSurface('papers-backpack://project/public/workspace.html?papers-surface-key=page')).toBe(true);
+ expect(shouldFlushReloadSurface('papers-backpack://project/public/embedded.html')).toBe(true);
+ expect(shouldFlushReloadSurface('about:blank')).toBe(false);
+});
 it('reload aborts before restart when saving fails and permits retry',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'papers-reload-')),file=join(dir,'once.json');
  try{const flush=vi.fn().mockRejectedValueOnce(Error('save failed')).mockResolvedValue(undefined),save=vi.fn(async()=>['workspace']),restart=vi.fn();const reload=createPapersReload({file,args:['--old'],flush,save,restart});await expect(reload()).rejects.toThrow('save failed');expect(save).not.toHaveBeenCalled();expect(restart).not.toHaveBeenCalled();expect(existsSync(file)).toBe(false);await reload();expect(restart).toHaveBeenCalledOnce();}finally{rmSync(dir,{recursive:true,force:true});}
