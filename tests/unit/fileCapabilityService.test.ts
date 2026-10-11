@@ -177,7 +177,7 @@ describe('file capability service', () => {
       'utf8',
     );
     const sameUrlGuard = source.indexOf('if (existing.sourceUrl === url)');
-    const loadUrl = source.indexOf('await existing.view.webContents.loadURL(url)', sameUrlGuard);
+    const loadUrl = source.indexOf('await loadPreviewDocument(existing.view.webContents, url)', sameUrlGuard);
     expect(sameUrlGuard).toBeGreaterThan(-1);
     expect(loadUrl).toBeGreaterThan(sameUrlGuard);
   });
