@@ -29,11 +29,16 @@ public sealed class PaneSplit {
     public string Axis;
     public double Ratio=0.5;
     public PaneSplit First,Second;
+    // Edge insertions can span a T junction without duplicating any group.
+    public string SpanEdge;
+    public string[] SpanGroups;
+    internal int SpanExtent;
+    public bool Span { get { return SpanEdge!=null; } }
     // Transient projection link. Never copied or persisted with authored topology.
     internal PaneSplit Source;
     public Rectangle Frame;
     public bool Leaf { get { return GroupId!=null; } }
-    public PaneSplit Copy(){return new PaneSplit{GroupId=GroupId,Axis=Axis,Ratio=Ratio,Frame=Frame,
+    public PaneSplit Copy(){return new PaneSplit{GroupId=GroupId,Axis=Axis,Ratio=Ratio,Frame=Frame,SpanEdge=SpanEdge,SpanGroups=SpanGroups==null?null:(string[])SpanGroups.Clone(),SpanExtent=SpanExtent,
         First=First==null?null:First.Copy(),Second=Second==null?null:Second.Copy()};}
 }
 

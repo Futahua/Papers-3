@@ -115,7 +115,7 @@ public sealed class PaneCoordinatorHost:Form {
     object Local(Rectangle rect){var origin=new Native.Point();ClientToScreen(owner,ref origin);double scale=DpiScale;
         return new{x=(rect.X-origin.X)/scale,y=(rect.Y-origin.Y)/scale,width=rect.Width/scale,height=rect.Height/scale};}
     object Tree(PaneSplit node){if(node==null)return null;if(node.Leaf)return new{id=node.GroupId};
-        return new{axis=node.Axis.ToLowerInvariant(),ratio=node.Ratio,first=Tree(node.First),second=Tree(node.Second)};}
+        return new{axis=node.Axis.ToLowerInvariant(),ratio=node.Ratio,spanEdge=node.SpanEdge,spanGroups=node.SpanGroups,first=Tree(node.First),second=Tree(node.Second)};}
     string PeerIcon(uint pid){string icon;if(icons.TryGetValue(pid,out icon))return icon;
         icon=null;try{using(var process=Process.GetProcessById((int)pid))using(var image=Icon.ExtractAssociatedIcon(process.MainModule.FileName))using(var bitmap=image.ToBitmap())using(var stream=new MemoryStream()){bitmap.Save(stream,System.Drawing.Imaging.ImageFormat.Png);icon="data:image/png;base64,"+Convert.ToBase64String(stream.ToArray());}}catch{}icons[pid]=icon;return icon;}
     object Snapshot(Binding binding){var pane=binding.Pane;var scope=pane.Scope;
@@ -181,7 +181,7 @@ public sealed class PaneCoordinatorHost:Form {
         if(op=="group-minimum"){var minimum=pane.GroupMinimum(ReadText(r,"groupId"));return new{ok=true,width=minimum.Width,height=minimum.Height};}
         if(op=="can-replace-group")return new{ok=pane.CanReplaceGroup(ReadText(r,"groupId"),(int)Number(r,"width"),(int)Number(r,"height"))};
         if(op=="can-insert-group")return new{ok=pane.CanInsertGroup(ReadText(r,"groupId"),ReadText(r,"side"),(int)Number(r,"width"),(int)Number(r,"height"))};
-        if(op=="can-relocate-group")return new{ok=pane.CanRelocateGroup(ReadText(r,"source"),ReadText(r,"groupId"),ReadText(r,"side"))};
+        if(op=="can-relocate-group"){var preview=pane.PreviewRelocateGroup(ReadText(r,"source"),ReadText(r,"groupId"),ReadText(r,"side"));return new{ok=preview.HasValue,preview=preview.HasValue?Local(preview.Value):null};}
         if(op=="raise"){pane.Raise();return new{ok=true,snapshot=Snapshot(binding)};}
         if(op=="viewport"){
             var nextRect=(Dictionary<string,object>)r["rect"];pane.SetViewport(ScreenRect(nextRect),++binding.ViewportRevision);binding.Rect=nextRect;

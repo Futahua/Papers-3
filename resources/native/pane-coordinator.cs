@@ -194,7 +194,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         return PaneLayout.Resolve(candidate,g=>g.Id==groupId?new Size(width,height):MinimumSize(g));
     }
     public bool CanInsertGroup(string groupId,string side,int width,int height){
-        if(!new[]{"left","right","top","bottom","column-l","column-r"}.Contains(side)||Scope.Groups.Values.Any(g=>g.Gesture!=null))return false;
+        if(!PaneLayout.SplitSide(side)||Scope.Groups.Values.Any(g=>g.Gesture!=null))return false;
         var candidate=new PaneScope(Scope.ScopeId,Scope.HeaderHeight){Viewport=Scope.Viewport,Root=Scope.Root.Copy(),Ratio=Scope.Ratio};
         foreach(var id in Scope.Order){var current=Scope.Groups[id];var group=candidate.Add(id);group.SelectedTab=current.SelectedTab;group.Presentation=current.Presentation;}
         string added="preflight-incoming";while(candidate.Groups.ContainsKey(added))added+="-";
@@ -203,14 +203,17 @@ public sealed partial class PaneCoordinator : IDisposable {
         return PaneLayout.Resolve(candidate,g=>g.Id==added?new Size(width,height):MinimumSize(g));
     }
     public bool CanRelocateGroup(string id,string target,string side){
-        Group(id);Group(target);if(id==target)return false;
-        if(Scope.Groups.Values.Any(g=>g.Gesture!=null))return false;
+        return PreviewRelocateGroup(id,target,side).HasValue;
+    }
+    public Rectangle? PreviewRelocateGroup(string id,string target,string side){
+        Group(id);Group(target);if(id==target)return null;
+        if((side!="center"&&!PaneLayout.SplitSide(side))||Scope.Groups.Values.Any(g=>g.Gesture!=null))return null;
         var candidate=new PaneScope(Scope.ScopeId,Scope.HeaderHeight){Viewport=Scope.Viewport,Root=Scope.Root.Copy(),Ratio=Scope.Ratio};
         foreach(var key in Scope.Order){var current=Scope.Groups[key];var group=candidate.Add(key);group.SelectedTab=current.SelectedTab;group.Presentation=current.Presentation;}
         if(side=="center")SwapGroupLeaves(candidate.Root,id,target);
-        else{candidate.Root=PaneLayout.Remove(candidate.Root,id);if(!PaneLayout.Split(candidate.Root,target,id,side))return false;}
+        else{candidate.Root=PaneLayout.Remove(candidate.Root,id);if(!PaneLayout.Split(candidate.Root,target,id,side))return null;}
         candidate.Order.Clear();candidate.Order.AddRange(PaneLayout.Leaves(candidate.Root));
-        return PaneLayout.Resolve(candidate,MinimumSize);
+        return PaneLayout.Resolve(candidate,MinimumSize)?(Rectangle?)PaneLayout.Slot(candidate,candidate.Groups[id]):null;
     }
     bool WidenForSelection(){
         var minimum=PaneLayout.PresentationMinimum(Scope,MinimumSize);
@@ -384,7 +387,7 @@ public sealed partial class PaneCoordinator : IDisposable {
     public void SplitAndMove(string tabId,string target,string added,string side,long binding,long state){
         Check(binding,state);var from=Group(TabGroup(tabId));Group(target);
         if(string.IsNullOrWhiteSpace(added)||Scope.Groups.ContainsKey(added))throw new Exception("New group id required.");
-        if(!new[]{"left","right","top","bottom","column-l","column-r"}.Contains(side))throw new Exception("Invalid split side.");
+        if(!PaneLayout.SplitSide(side))throw new Exception("Invalid split side.");
         Change("splitAndMove",()=>{
             var to=Scope.Add(added);
             if(!PaneLayout.Split(Scope.Root,target,added,side))throw new Exception("Missing split target.");
@@ -393,14 +396,14 @@ public sealed partial class PaneCoordinator : IDisposable {
     }
     public void CreateGroup(string target,string added,string side,long binding,long state){
         Check(binding,state);Group(target);
-        if(string.IsNullOrWhiteSpace(added)||Scope.Groups.ContainsKey(added)||!new[]{"left","right","top","bottom","column-l","column-r"}.Contains(side))throw new Exception("Invalid new group.");
+        if(string.IsNullOrWhiteSpace(added)||Scope.Groups.ContainsKey(added)||!PaneLayout.SplitSide(side))throw new Exception("Invalid new group.");
         Change("createGroup",()=>{Scope.Add(added);if(!PaneLayout.Split(Scope.Root,target,added,side))throw new Exception("Missing split target.");
             Scope.Order.Clear();Scope.Order.AddRange(PaneLayout.Leaves(Scope.Root));});
     }
     public void RelocateGroup(string id,string target,string side,long binding,long state){
         Check(binding,state);Group(id);Group(target);
         if(id==target)return;
-        if(!new[]{"center","left","right","top","bottom","column-l","column-r"}.Contains(side))throw new Exception("Invalid group destination.");
+        if(side!="center"&&!PaneLayout.SplitSide(side))throw new Exception("Invalid group destination.");
         Change("relocateGroup",()=>{
             if(side=="center")SwapGroupLeaves(Scope.Root,id,target);
             else{Scope.Root=PaneLayout.Remove(Scope.Root,id);if(!PaneLayout.Split(Scope.Root,target,id,side))throw new Exception("Missing group destination.");}
@@ -408,6 +411,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         });
     }
     static void SwapGroupLeaves(PaneSplit node,string a,string b){
+        if(node.Span)node.SpanGroups=node.SpanGroups.Select(id=>id==a?b:id==b?a:id).ToArray();
         if(node.Leaf){if(node.GroupId==a)node.GroupId=b;else if(node.GroupId==b)node.GroupId=a;return;}
         SwapGroupLeaves(node.First,a,b);SwapGroupLeaves(node.Second,a,b);
     }

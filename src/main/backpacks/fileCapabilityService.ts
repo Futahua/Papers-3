@@ -1069,7 +1069,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             const args: Record<string, unknown> = {};
             for (const key of ['groupId', 'tabId', 'beforeId', 'side', 'newGroupId', 'destination', 'mode', 'edge']) {
               if (params[key] === '') args[key] = '';
-              else if (params[key] !== undefined) args[key] = boundedString(params[key], key, 64);
+              else if (params[key] !== undefined) args[key] = boundedString(params[key], key, key==='side'?16384:64);
             }
             if (op === 'document-add' && params.preview !== undefined) {
               if (!isRecord(params.preview)) throw new Error('Invalid preview reference.');
@@ -1096,7 +1096,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'pane-transfer-check': {
             const bridge=deps.chromePane?.coordinator,owner=context.nativePreviewHost?.ownerKey;
             if(!bridge||!owner)return {ok:false,error:'Window layout is unavailable.'};
-            return bridge.transferCheck(owner,boundedString(params.groupId,'groupId',64),boundedString(params.side,'side',8));
+            return bridge.transferCheck(owner,boundedString(params.groupId,'groupId',64),boundedString(params.side,'side',16384));
           }
           case 'pane-window-transfer': {
             const bridge=deps.chromePane?.coordinator, owner=context.nativePreviewHost?.ownerKey;

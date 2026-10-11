@@ -194,6 +194,19 @@ describe('Backpack project protocol alignment', () => {
     }));
   });
 
+  it('translates pane suspension snapshots and checked drop previews into the same embedded coordinates', async () => {
+    const child={postMessage:vi.fn()},previous=globalThis.document;
+    globalThis.document={querySelectorAll:()=>[{contentWindow:child,src:'papers-backpack://ayg-child/preview.html',getBoundingClientRect:()=>({x:120,y:45,width:900,height:700})}]} as unknown as Document;
+    try {
+      await loadPreloadForTest();
+      const snapshot={viewport:{x:420,y:125,width:420,height:460},groups:[{slot:{x:420,y:125,width:420,height:460},content:{x:420,y:157,width:420,height:428}}]};
+      mocks.invoke.mockResolvedValue({ok:true,snapshot,preview:{x:420,y:125,width:210,height:460}});
+      for(const operation of ['pane-transfer-overlay','pane-transfer-check'])messageHandlers.forEach(handler=>handler({source:child,origin:'papers-backpack://ayg-child',data:{type:'papers:project:file-capability',requestId:operation,operation,params:{}}}));
+      await new Promise(resolve=>setImmediate(resolve));
+      for(const operation of ['pane-transfer-overlay','pane-transfer-check'])expect(posts).toContainEqual(expect.objectContaining({requestId:operation,fileCapability:expect.objectContaining({preview:{x:300,y:80,width:210,height:460},snapshot:expect.objectContaining({viewport:expect.objectContaining({x:300,y:80}),groups:[{slot:{x:300,y:80,width:420,height:460},content:{x:300,y:112,width:420,height:428}}]})})}));
+    } finally {globalThis.document=previous;}
+  });
+
   it('translates every positioned embedded AYG preview rect through its exact iframe before IPC', async () => {
     await loadPreloadForTest();
     const child = {};

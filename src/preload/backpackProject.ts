@@ -254,6 +254,13 @@ function paneSnapshotForSource(snapshot: NativePaneSnapshot, source: Window): Na
   return { ...snapshot, viewport: { ...local(snapshot.viewport), parentX: snapshot.viewport.x, parentY: snapshot.viewport.y }, groups: snapshot.groups.map(g => ({ ...g, slot: local(g.slot), content: local(g.content) })) } as NativePaneSnapshot;
 }
 
+function panePreviewForSource(rect: NativePaneSnapshot['viewport'], source: Window): NativePaneSnapshot['viewport'] {
+  if (source === window) return rect;
+  const frame=Array.from(document.querySelectorAll('iframe')).find(node=>node.contentWindow===source);
+  if(!frame)throw new Error('Window layout source frame is unavailable.');
+  const box=frame.getBoundingClientRect();return {...rect,x:rect.x-box.x,y:rect.y-box.y};
+}
+
 function nativePreviewParams(event: MessageEvent, operation: string, params: Record<string, unknown>): Record<string, unknown> {
   if (!POSITIONED_PREVIEW_OPERATIONS.has(operation)) return params;
   if (event.source === window) return params;
@@ -406,8 +413,10 @@ window.addEventListener('message', (event) => {
       operation: request.operation,
       params,
     }, ...workspaceOriginArgs).then((result) => {
-        if ((request.operation?.toString().startsWith('pane-layout-') || request.operation === 'pane-window-attach') && isPlainObject(result) && result['snapshot'] && event.source) {
-        return { fileCapability: { ...result, snapshot: paneSnapshotForSource(result['snapshot'] as NativePaneSnapshot, event.source as Window) } };
+        if (request.operation?.toString().startsWith('pane-') && isPlainObject(result) && event.source) {
+        return { fileCapability: { ...result,
+          ...(result['snapshot']?{snapshot:paneSnapshotForSource(result['snapshot'] as NativePaneSnapshot,event.source as Window)}:{}),
+          ...(result['preview']?{preview:panePreviewForSource(result['preview'] as NativePaneSnapshot['viewport'],event.source as Window)}:{}) } };
       }
       return { fileCapability: result };
     });

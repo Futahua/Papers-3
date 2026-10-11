@@ -27,13 +27,21 @@ beforeEach(()=>{
     viewport:r.rect??previous?.viewport,tree:{id:'main'},presented:true,groups:[{id:'main',selected:h.selected,presentation:'normal',slot:r.rect??previous?.viewport,content:r.rect??previous?.viewport,tabs:[{id:'peer',kind:'native',handle:789,pid:123,active:true,title:'Fixture'}]}]};
     if(r.op==='mount'&&h.failMount){child.stdout.write(JSON.stringify({id:r.id,result:{ok:false,error:'mount rejected'}})+'\n');return;}
     if(r.op==='viewport'&&h.failViewport){child.stdout.write(JSON.stringify({id:r.id,result:{ok:false,error:'minimum size rejected'}})+'\n');return;}
-    if(r.scope)child.states.set(r.scope,snapshot);child.stdout.write(JSON.stringify({id:r.id,result:{ok:true,snapshot:r.scope?snapshot:undefined}})+'\n');
+    if(r.scope)child.states.set(r.scope,snapshot);child.stdout.write(JSON.stringify({id:r.id,result:{ok:true,snapshot:r.scope?snapshot:undefined,...(r.op==='can-relocate-group'?{preview:{x:110,y:230,width:300,height:400}}:{})}})+'\n');
    });
   });h.children.push(child);return child;
  });
 });
 afterEach(()=>Object.defineProperty(process,'platform',{value:platform}));
 const make=(onSnapshot=vi.fn())=>createNativePaneBridge({cacheDirectory:'X:/cache',nativeDirectory:'X:/native',onSnapshot,windowInstanceId:()=> 'opaque-instance'})!;
+it('a native span preview is translated into the embedded surface coordinates',async()=>{
+ const bridge=make(),owner='1:source';const mounted=await bridge.mount(context(owner),rect,32);
+ await bridge.dragOverlay(owner,true,(mounted.snapshot!.groups[0] as any).transferId);
+ const reply=await bridge.transferCheck(owner,'destination','span-right:band-a,band-b');
+ expect(reply).toMatchObject({ok:true,preview:{x:100,y:200,width:300,height:400}});
+ expect(h.children[0].commands.findLast((c:any)=>c.op==='can-relocate-group').side).toBe('span-right:band-a,band-b');
+ await bridge.dispose();
+});
 it('a foreign destination completes the source overlay by ticket without dragend',async()=>{
  const bridge=make();const source=await bridge.mount(context('1:source'),rect,32);
  await bridge.mount(context('2:destination','ayg','999'),rect,32);

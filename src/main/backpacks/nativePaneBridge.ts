@@ -173,6 +173,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       if (scope.token !== token || owners.get(owner) !== scope || (!transaction && (locked.has(scope) || visibility.get(owner) === false && !['snapshot', 'present', 'release', 'document-remove'].includes(op)))) return unavailable();
       const presentationParams = (op === 'present' || op === 'mount') && params.visible === true && hostOverlayActive(owner) ? { ...params, visible: false } : params;
       const result = await send(scope.host, { ...presentationParams, op, scope: scope.key, binding: token, revision: revision ?? scope.snapshot?.stateRevision ?? 0 });
+      if (result.preview) { const rect=result.preview as PaneRect; result.preview={...rect,x:rect.x-scope.context.surfaceBounds.x,y:rect.y-scope.context.surfaceBounds.y}; }
       accept(scope, result.snapshot); return result.snapshot ? { ...result, snapshot: localSnapshot(scope, result.snapshot) } : result;
     });
     scope.host.queue = task.catch(() => undefined); return task;
