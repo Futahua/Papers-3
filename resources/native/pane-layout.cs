@@ -140,6 +140,14 @@ public static class PaneLayout {
         return AcceptEdge(scope,scope.Order[1],"left",proposed,g=>new Size(width(g),DefaultMinHeight));
     }
     public static bool Split(PaneSplit node,string target,string added,string side){
+        if(side=="column-l"||side=="column-r"){
+            if(!Leaves(node).Contains(target))return false;
+            if(!node.Leaf&&node.Axis!="Y")return Split(Leaves(node.First).Contains(target)?node.First:node.Second,target,added,side);
+            var previous=node.Copy();var fresh=Leaf(added);
+            node.GroupId=null;node.Axis="X";node.Ratio=.5;
+            node.First=side=="column-l"?fresh:previous;node.Second=side=="column-l"?previous:fresh;
+            return true;
+        }
         if(node.Leaf){
             if(node.GroupId!=target)return false;
             var old=Leaf(target);var fresh=Leaf(added);bool before=side=="left"||side=="top";

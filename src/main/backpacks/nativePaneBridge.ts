@@ -306,7 +306,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       if(side==='center')return checkSwap(source.scope,source.groupId,target,groupId);
       if(protectedGroup(source.scope,source.groupId))return {ok:false,error:'Files and Preview stay with their page.'};
       const moves = pageMoves(source.scope,source.groupId,target,groupId,false);
-      for (const move of moves) { if (['left','right'].includes(side)) move.width /= 2; else move.height = move.height / 2 - target.headerHeight; }
+      for (const move of moves) { if (['left','right','column-l','column-r'].includes(side)) move.width /= 2; else move.height = move.height / 2 - target.headerHeight; }
       const pageCheck = await checkPages(moves); if (!pageCheck.ok) return pageCheck;
       const minimum=await queued(source.scope,'group-minimum',{groupId:source.groupId});
       if(!minimum.ok)return minimum;
@@ -329,7 +329,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
           const selected = await queued(target, 'select', { tabId: source.tabId, groupId: destination });
           return { ...selected, tabId: source.tabId };
         }
-        if (!['center','left', 'right', 'top', 'bottom'].includes(side)) return { ok: false, error: 'Choose an edge for the incoming group.' };
+        if (!['center','left', 'right', 'top', 'bottom','column-l','column-r'].includes(side)) return { ok: false, error: 'Choose an edge for the incoming group.' };
         const from = source.scope;
         const movedGroup = from.snapshot?.groups.find(group=>group.id===source.groupId);
         if(movedGroup?.tabs.some(tab=>(!source.tabId||source.tabId===tab.id)&&['preview:workspace-files','preview:workspace-preview'].includes(tab.id)))
@@ -338,7 +338,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
         if(swap){const check=await checkSwap(from,source.groupId,target,groupId);if(!check.ok)return check;}
         const movingPages = pageMoves(from,source.groupId,target,groupId,swap,source.tabId);
         for (const move of movingPages) {
-          if (move.to === target.context.ownerKey && ['left','right'].includes(side)) move.width /= 2;
+          if (move.to === target.context.ownerKey && ['left','right','column-l','column-r'].includes(side)) move.width /= 2;
           if (move.to === target.context.ownerKey && ['top','bottom'].includes(side)) move.height = move.height / 2 - target.headerHeight;
         }
         const pageCheck = await checkPages(movingPages); if (!pageCheck.ok) return pageCheck;

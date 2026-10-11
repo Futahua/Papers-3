@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -194,7 +194,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         return PaneLayout.Resolve(candidate,g=>g.Id==groupId?new Size(width,height):MinimumSize(g));
     }
     public bool CanInsertGroup(string groupId,string side,int width,int height){
-        if(!new[]{"left","right","top","bottom"}.Contains(side)||Scope.Groups.Values.Any(g=>g.Gesture!=null))return false;
+        if(!new[]{"left","right","top","bottom","column-l","column-r"}.Contains(side)||Scope.Groups.Values.Any(g=>g.Gesture!=null))return false;
         var candidate=new PaneScope(Scope.ScopeId,Scope.HeaderHeight){Viewport=Scope.Viewport,Root=Scope.Root.Copy(),Ratio=Scope.Ratio};
         foreach(var id in Scope.Order){var current=Scope.Groups[id];var group=candidate.Add(id);group.SelectedTab=current.SelectedTab;group.Presentation=current.Presentation;}
         string added="preflight-incoming";while(candidate.Groups.ContainsKey(added))added+="-";
@@ -384,7 +384,7 @@ public sealed partial class PaneCoordinator : IDisposable {
     public void SplitAndMove(string tabId,string target,string added,string side,long binding,long state){
         Check(binding,state);var from=Group(TabGroup(tabId));Group(target);
         if(string.IsNullOrWhiteSpace(added)||Scope.Groups.ContainsKey(added))throw new Exception("New group id required.");
-        if(!new[]{"left","right","top","bottom"}.Contains(side))throw new Exception("Invalid split side.");
+        if(!new[]{"left","right","top","bottom","column-l","column-r"}.Contains(side))throw new Exception("Invalid split side.");
         Change("splitAndMove",()=>{
             var to=Scope.Add(added);
             if(!PaneLayout.Split(Scope.Root,target,added,side))throw new Exception("Missing split target.");
@@ -393,14 +393,14 @@ public sealed partial class PaneCoordinator : IDisposable {
     }
     public void CreateGroup(string target,string added,string side,long binding,long state){
         Check(binding,state);Group(target);
-        if(string.IsNullOrWhiteSpace(added)||Scope.Groups.ContainsKey(added)||!new[]{"left","right","top","bottom"}.Contains(side))throw new Exception("Invalid new group.");
+        if(string.IsNullOrWhiteSpace(added)||Scope.Groups.ContainsKey(added)||!new[]{"left","right","top","bottom","column-l","column-r"}.Contains(side))throw new Exception("Invalid new group.");
         Change("createGroup",()=>{Scope.Add(added);if(!PaneLayout.Split(Scope.Root,target,added,side))throw new Exception("Missing split target.");
             Scope.Order.Clear();Scope.Order.AddRange(PaneLayout.Leaves(Scope.Root));});
     }
     public void RelocateGroup(string id,string target,string side,long binding,long state){
         Check(binding,state);Group(id);Group(target);
         if(id==target)return;
-        if(!new[]{"center","left","right","top","bottom"}.Contains(side))throw new Exception("Invalid group destination.");
+        if(!new[]{"center","left","right","top","bottom","column-l","column-r"}.Contains(side))throw new Exception("Invalid group destination.");
         Change("relocateGroup",()=>{
             if(side=="center")SwapGroupLeaves(Scope.Root,id,target);
             else{Scope.Root=PaneLayout.Remove(Scope.Root,id);if(!PaneLayout.Split(Scope.Root,target,id,side))throw new Exception("Missing group destination.");}
