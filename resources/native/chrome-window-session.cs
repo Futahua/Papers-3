@@ -14,6 +14,7 @@ public static class Native {
  [DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int n);
  [DllImport("user32.dll")]public static extern bool IsWindowVisible(IntPtr h);
  [DllImport("user32.dll")]public static extern bool IsIconic(IntPtr h);
+ [DllImport("user32.dll")]public static extern bool IsZoomed(IntPtr h);
  [DllImport("dwmapi.dll")]public static extern int DwmGetWindowAttribute(IntPtr h,int a,out Rect r,int n);
  [DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")]public static extern IntPtr GetWindow(IntPtr h,uint relation);
@@ -32,7 +33,11 @@ public sealed class WindowSession:IDisposable{
  public WindowSession(long hwnd,uint pid){uint actual;Native.GetWindowThreadProcessId(new IntPtr(hwnd),out actual);if(actual!=pid)throw new Exception("Window identity changed: "+hwnd);var p=new Native.Placement{Length=Marshal.SizeOf(typeof(Native.Placement))};if(!Native.GetWindowPlacement(new IntPtr(hwnd),ref p))throw new Exception("Cannot save placement: "+hwnd);var mark=Native.GetProp(new IntPtr(hwnd),"Papers.WindowInstance").ToInt64();if(mark==0){mark=(Guid.NewGuid().GetHashCode()&0x7fffffff)|1;if(!Native.SetProp(new IntPtr(hwnd),"Papers.WindowInstance",new IntPtr(mark)))throw new Exception("Cannot stamp native window identity.");}Saved=new SavedWindow{Handle=hwnd,InstanceMark=mark,Pid=pid,ExStyle=Native.GetWindowLong(new IntPtr(hwnd),-20),Placement=p,Visible=Native.IsWindowVisible(new IntPtr(hwnd))};}
  public static bool SameInstance(SavedWindow saved){return saved.InstanceMark==0||Native.GetProp(new IntPtr(saved.Handle),"Papers.WindowInstance").ToInt64()==saved.InstanceMark;}
  public bool Valid(){uint pid;Native.GetWindowThreadProcessId(Handle,out pid);return pid==Saved.Pid&&SameInstance(Saved);}
- public void Show(bool show){Visible=show;if(!Valid())return;if(show&&Native.IsWindowVisible(Handle)&&!Native.IsIconic(Handle))return;if(!show&&Native.IsIconic(Handle))return;Native.ShowWindow(Handle,show?4:7);}
+ // Presentation inside Papers uses normal windows. A minimized maximized app
+ // retains WPF_RESTORETOMAXIMIZED; clear that only on the live placement, never
+ // on Saved, which still owns exact restoration when the app is released.
+ public void NormalizeManaged(){if(!Valid())return;var p=new Native.Placement{Length=Marshal.SizeOf(typeof(Native.Placement))};if(!Native.GetWindowPlacement(Handle,ref p))throw new Exception("Cannot read managed placement.");if(!Native.IsZoomed(Handle)&&(p.Flags&2)==0&&p.Show!=3)return;p.Flags&=~2;p.Show=4;if(!Native.SetWindowPlacement(Handle,ref p))throw new Exception("Cannot normalize managed placement.");}
+ public void Show(bool show){Visible=show;if(!Valid())return;if(show)NormalizeManaged();if(show&&Native.IsWindowVisible(Handle)&&!Native.IsIconic(Handle))return;if(!show&&Native.IsIconic(Handle))return;Native.ShowWindow(Handle,show?4:7);}
  public void Fit(Rectangle box,bool top){Requested=box;if(!Valid()||Fullscreen)return;Native.Rect current;Native.GetWindowRect(Handle,out current);if(current.Box!=box)Native.SetWindowPos(Handle,top?new IntPtr(-1):IntPtr.Zero,box.X,box.Y,box.Width,box.Height,top?0x10u:0x14u);}
  public Rectangle Frame(){Native.Rect r;if(Native.DwmGetWindowAttribute(Handle,9,out r,16)!=0)Native.GetWindowRect(Handle,out r);return r.Box;}
  public void Top(bool top){if(Valid())Native.SetWindowPos(Handle,new IntPtr(top||(Saved.ExStyle&8)!=0?-1:-2),0,0,0,0,0x13);}

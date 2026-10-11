@@ -76,7 +76,15 @@ public sealed class PipeHarness:Form {
         Check(!Convert.ToBoolean(Call("can-insert-group",Args("groupId","right","side","right","width",5000,"height",5000),false)["ok"]),"insertion preflight rejects impossible extra split");
         Call("snapshot");Check(json.Serialize(State)==beforeFit&&Frame(0).Box==a.Box&&Frame(2).Box==b.Box,"preflight never changes live topology, revisions, selection or native placement");
         var originalMainTabs=Tabs("main");var selectedMain=(string)Group("main")["selected"];
+        Native.ShowWindow(fixtures[0].Handle,3);
+        Thread.Sleep(250);
+        Call("present",Args("visible",false));Call("present",Args("visible",true));
+        Check(!Native.IsZoomed(fixtures[0].Handle)&&!Native.IsIconic(fixtures[0].Handle)&&Frame(0).Box==a.Box,"drag presentation restores a maximized peer to its managed pane");
+        Native.ShowWindow(fixtures[0].Handle,3);
+        Thread.Sleep(250);
         Call("relocate-group",Args("groupId","main","destination","right","side","center"));
+        Check(!Native.IsZoomed(fixtures[0].Handle),"group swap normalizes native maximize state before fitting");
+        Wait();
         Check(Frame(0).Box==b.Box&&Frame(2).Box==a.Box&&Tabs("main").SequenceEqual(originalMainTabs)&&(string)Group("main")["selected"]==selectedMain,"group swap exchanges slots without changing membership or selection");
         Call("relocate-group",Args("groupId","main","destination","right","side","center"));
         Call("relocate-group",Args("groupId","main","destination","right","side","right"));
@@ -143,9 +151,13 @@ public sealed class PipeHarness:Form {
         Call("presentation",Args("groupId","main","mode","maximized"));Call("select",Args("groupId","right","tabId",ids[2]));
         Check(Native.IsIconic(fixtures[2].Handle)&&!Native.IsIconic(fixtures[0].Handle),"selection in another group honors maximized visibility");
         Call("presentation",Args("groupId","main","mode","normal"));
+        // Independent pages can now be presented together. The outer page
+        // owner explicitly suspends the departing scope when switching pages.
+        Call("present",Args("visible",false));
         scope=new string('b',64);token="proxima";Call("mount",Args("rect",Rect(),"headerHeight",32));
         Check(Native.IsIconic(fixtures[0].Handle)&&Native.IsIconic(fixtures[2].Handle),"mounting another Backpack suspends previous membership");
         scope=new string('a',64);token="remounted";Call("mount",Args("rect",Rect(),"headerHeight",32));
+        Call("present",Args("visible",true));
         Check(Groups.Length==2&&Tabs("main").Contains("preview:fixture")&&!Native.IsIconic(fixtures[0].Handle),"same-host remount retains topology and mixed membership");
         token="first";var rejected=Call("select",Args("groupId","main","tabId",ids[1]),false);Check(!Convert.ToBoolean(rejected["ok"]),"old surface binding cannot select retained windows");token="remounted";
         Call("release-host");endpoint.WaitForExit(5000);Check(endpoint.HasExited,"production endpoint exits after release acknowledgement");

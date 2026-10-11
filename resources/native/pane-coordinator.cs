@@ -298,7 +298,6 @@ public sealed partial class PaneCoordinator : IDisposable {
     public void Raise(){if(!stopped&&Scope.Presented){Paint();Stack(false,null);}}
     void ShowPeer(PanePeer p,bool show){
         if(p==null||!p.Session.Valid())return;
-        if(show&&Native.IsIconic(p.Session.Handle))Native.ShowWindow(p.Session.Handle,4);
         p.Session.Show(show);
     }
     void RefreshGroupVisibility(){
@@ -448,6 +447,7 @@ public sealed partial class PaneCoordinator : IDisposable {
     }
     void Place(PanePeer p,Rectangle target,string cause) {
         if(!p.Session.Valid()||Native.IsIconic(p.Session.Handle))return;
+        p.Session.NormalizeManaged();
         p.Session.Fullscreen=Fullscreen(p);
         if(p.Session.Fullscreen)return;
         Native.Rect before;if(!Native.GetWindowRect(p.Session.Handle,out before)||before.Box==target)return;
