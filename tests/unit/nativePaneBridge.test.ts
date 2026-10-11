@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-const h=vi.hoisted(()=>({children:[] as any[],spawn:vi.fn(),failMount:false,failViewport:false,journal:null as unknown,writes:new Map<string,string>()}));
+const h=vi.hoisted(()=>({children:[] as any[],spawn:vi.fn(),failMount:false,failViewport:false,selected:'peer',journal:null as unknown,writes:new Map<string,string>()}));
 vi.mock('node:child_process',()=>({spawn:h.spawn,execFileSync:vi.fn()}));
 vi.mock('node:fs',()=>({existsSync:(file:string)=>file.endsWith('pane-transfer-journal.json')?h.journal!==null:true,
  readFileSync:(file:string)=>file.endsWith('pane-transfer-journal.json')?JSON.stringify(h.journal):Buffer.from('source'),mkdirSync:vi.fn(),
@@ -19,12 +19,12 @@ const platform=process.platform;
 const rect={x:400,y:20,width:500,height:600};
 const context=(ownerKey:string,paneGroup='ayg',parentHwnd='456')=>({ownerKey,paneGroup,parentHwnd,surfaceBounds:{x:10,y:30,width:1000,height:800}});
 beforeEach(()=>{
- Object.defineProperty(process,'platform',{value:'win32'});h.children.length=0;h.failMount=false;h.failViewport=false;h.spawn.mockReset();h.journal=null;h.writes.clear();
+ Object.defineProperty(process,'platform',{value:'win32'});h.children.length=0;h.failMount=false;h.failViewport=false;h.selected='peer';h.spawn.mockReset();h.journal=null;h.writes.clear();
  h.spawn.mockImplementation(()=>{
   const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),commands:[] as any[],states:new Map()});
   child.stdin.on('data',data=>{const r=JSON.parse(data.toString());child.commands.push(r);
    queueMicrotask(()=>{const previous=child.states.get(r.scope),snapshot={binding:r.binding,bindingGeneration:(previous?.bindingGeneration??0)+(r.op==='mount'?1:0),stateRevision:(previous?.stateRevision??1)+1,geometryRevision:(previous?.geometryRevision??1)+1,
-    viewport:r.rect??previous?.viewport,tree:{id:'main'},presented:true,groups:[{id:'main',selected:'peer',presentation:'normal',slot:r.rect??previous?.viewport,content:r.rect??previous?.viewport,tabs:[{id:'peer',kind:'native',handle:789,pid:123,active:true,title:'Fixture'}]}]};
+    viewport:r.rect??previous?.viewport,tree:{id:'main'},presented:true,groups:[{id:'main',selected:h.selected,presentation:'normal',slot:r.rect??previous?.viewport,content:r.rect??previous?.viewport,tabs:[{id:'peer',kind:'native',handle:789,pid:123,active:true,title:'Fixture'}]}]};
     if(r.op==='mount'&&h.failMount){child.stdout.write(JSON.stringify({id:r.id,result:{ok:false,error:'mount rejected'}})+'\n');return;}
     if(r.op==='viewport'&&h.failViewport){child.stdout.write(JSON.stringify({id:r.id,result:{ok:false,error:'minimum size rejected'}})+'\n');return;}
     if(r.scope)child.states.set(r.scope,snapshot);child.stdout.write(JSON.stringify({id:r.id,result:{ok:true,snapshot:r.scope?snapshot:undefined}})+'\n');
@@ -150,4 +150,22 @@ it('concealed pages can inspect their scope but cannot mutate hidden layouts',as
  const count=h.children[0].commands.length;
  expect((await bridge.command('1:child','select',{groupId:'main',tabId:'peer'})).ok).toBe(false);
  expect(h.children[0].commands).toHaveLength(count);await bridge.dispose();
+});
+
+it('group swap fit ignores presentation-only revisions from concurrent source dragend',async()=>{
+ const bridge=make();const source=await bridge.mount(context('1:source'),rect,32);
+ await bridge.mount(context('2:destination','ayg','999'),rect,32);
+ await bridge.dragOverlay('1:source',true,source.snapshot!.groups[0]!.transferId);
+ const check=bridge.transferCheck('2:destination','main','center');
+ await bridge.dragOverlay('1:source',false);
+ expect((await check).ok).toBe(true);
+ await bridge.dispose();
+});
+it('group swap fit still refuses an actual selected-tab change during validation',async()=>{
+ const bridge=make();const source=await bridge.mount(context('1:source'),rect,32);
+ await bridge.mount(context('2:destination','ayg','999'),rect,32);
+ await bridge.dragOverlay('1:source',true,source.snapshot!.groups[0]!.transferId);
+ h.children[0].stdin.prependListener('data',(data:Buffer)=>{if(JSON.parse(data.toString()).op==='group-minimum')h.selected='changed';});
+ expect(await bridge.transferCheck('2:destination','main','center')).toMatchObject({ok:false,error:'The groups changed during the drag.'});
+ await bridge.dispose();
 });

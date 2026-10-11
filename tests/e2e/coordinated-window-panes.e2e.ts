@@ -338,6 +338,9 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
     await evaluate(`(()=>{window.incomingSwap=new DataTransfer();for(const [type,value] of ${JSON.stringify(swapPayload)})incomingSwap.setData(type,value);const g=document.querySelector('[data-slice-id="${destinationGroup.id}"]'),r=latest.groups.find(g=>g.id==='${destinationGroup.id}').slot;g.dispatchEvent(new DragEvent('dragover',{dataTransfer:incomingSwap,clientX:r.x+r.width/2,clientY:r.y+r.height/2,bubbles:true,cancelable:true}));})()`);
     await waitFor(()=>evaluate<boolean>(`[...document.querySelectorAll('.window-slice-drop')].some(c=>!c.hidden&&c.textContent==='Swap this group'&&!c.classList.contains('is-rejected'))`),5000,'foreign group center shows swap cue');
     await evaluate(`(()=>{const g=document.querySelector('[data-slice-id="${destinationGroup.id}"]'),r=latest.groups.find(g=>g.id==='${destinationGroup.id}').slot;g.dispatchEvent(new DragEvent('drop',{dataTransfer:incomingSwap,clientX:r.x+r.width/2,clientY:r.y+r.height/2,bubbles:true,cancelable:true}));})()`);
+    // Physical cross-window drops dispatch source dragend immediately.
+    // Presentation can settle concurrently with destination fit validation.
+    await evaluateSecond(`document.dispatchEvent(new DragEvent('dragend',{dataTransfer:swapDrag,bubbles:true}));`);
     await waitFor(()=>evaluate<boolean>(`latest.groups.find(g=>g.id==='${destinationGroup.id}').tabs.some(t=>t.id===${JSON.stringify(attached[0])})`),12000,'group moved into existing destination slot');
     await waitFor(()=>evaluateSecond<boolean>(`latest.groups.find(g=>g.id==='${incoming.id}').tabs.some(t=>t.id===${JSON.stringify(destinationGroup.tabs[0].id)})`),12000,'other group moved into existing source slot');
     await waitFor(async()=>await evaluateSecond<boolean>('latest.presented===true')&&await evaluate<boolean>('latest.presented===true'),2000,'foreign swap restores both windows without source dragend');

@@ -202,7 +202,12 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     ? input.pageTransfers?.check(moves) ?? Promise.resolve({ok:false,error:'Backpack page transfers are unavailable.'})
     : Promise.resolve({ok:true});
   async function checkSwap(from:Scope,sourceGroup:string,target:Scope,targetGroup:string):Promise<PaneReply>{
-    const before=[from,target].map(s=>[s.token,s.snapshot?.stateRevision,s.snapshot?.geometryRevision]);
+    // Real cross-window dragend can restore presentation while the drop's
+    // fit requests are in flight. Presentation revisions are not layout edits.
+    const layoutIdentity = (s: Scope) => JSON.stringify({binding:s.token,viewport:s.snapshot?.viewport,tree:s.snapshot?.tree,
+      groups:s.snapshot?.groups.map(g=>({id:g.id,selected:g.selected,presentation:g.presentation,slot:g.slot,content:g.content,
+        tabs:g.tabs.map(t=>({id:t.id,kind:t.kind,handle:t.handle,pid:t.pid,pageKey:t.preview?.PageKey}))}))});
+    const before=[from,target].map(layoutIdentity);
     if(protectedGroup(from,sourceGroup)||protectedGroup(target,targetGroup))return {ok:false,error:'Files and Preview stay with their page.'};
     const pages = await checkPages(pageMoves(from,sourceGroup,target,targetGroup,true));
     if (!pages.ok) return pages;
@@ -211,7 +216,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     if(!a.ok||!b.ok)return {ok:false,error:'The group changed during the drag.'};
     const left=await queued(from,'can-replace-group',{groupId:sourceGroup,width:b.width,height:b.height},undefined,true);
     const right=await queued(target,'can-replace-group',{groupId:targetGroup,width:a.width,height:a.height},undefined,true);
-    if([from,target].some((s,i)=>JSON.stringify([s.token,s.snapshot?.stateRevision,s.snapshot?.geometryRevision])!==JSON.stringify(before[i])))return {ok:false,error:'The groups changed during the drag.'};
+    if([from,target].some((s,i)=>layoutIdentity(s)!==before[i]))return {ok:false,error:'The groups changed during the drag.'};
     return left.ok&&right.ok?{ok:true}:{ok:false,error:'The exchanged groups cannot fit both layouts.'};
   }
   const api: NativePaneBridge = {
