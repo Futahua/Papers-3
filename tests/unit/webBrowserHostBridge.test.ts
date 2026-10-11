@@ -137,6 +137,20 @@ beforeEach(() => {
 });
 
 describe('web browser preview session leases', () => {
+  it('keeps the loading surface exposed until DOM readiness and returns before slow trailing resources', async () => {
+    const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow() });
+    const opening = bridge.open(context, url, rect);
+    const contents = harness.views[0]!.webContents;
+    // Replace the initial resolved load with an unresolved load on a reused view.
+    await opening;
+    contents.loadURL.mockImplementation(() => new Promise(() => {}));
+    const next = bridge.open(context, 'https://example.com/next', rect);
+    expect(harness.window.removeChildView).toHaveBeenCalled();
+    const ready = contents.once.mock.calls.filter(([event]) => event === 'dom-ready').at(-1)![1] as () => void;
+    ready();
+    expect((await next).ok).toBe(true);
+    expect(harness.window.addChildView).toHaveBeenCalledTimes(2);
+  });
   it('reuses the live Chromium view but rotates the logical lease so a stale close cannot kill it', async () => {
     const window = new BaseWindow();
     const bridge = createWebBrowserHostBridge({ resolveWindow: () => window });

@@ -570,6 +570,18 @@ async function submitLensCrop(contents: WebContents, crop: LensCrop): Promise<st
   }
 }
 
+async function loadPreviewDocument(contents: WebContents, url: string): Promise<void> {
+  let ready!: () => void;
+  const documentReady = new Promise<void>(resolve => { ready = resolve; });
+  contents.once('dom-ready', ready);
+  try {
+    // A usable document need not wait for every image, tracker or long-running request.
+    await Promise.race([documentReady, contents.loadURL(url)]);
+  } finally {
+    contents.removeListener?.('dom-ready', ready);
+  }
+}
+
 export function createWebBrowserHostBridge(input: {
   resolveWindow(ownerKey: string): BaseWindow | null;
   nativeDrag?: (window: BaseWindow | null, start: () => void) => Promise<void>;
@@ -1200,7 +1212,12 @@ export function createWebBrowserHostBridge(input: {
           return { ok: true, sessionId: existing.id, url };
         }
         try {
-          await existing.view.webContents.loadURL(url);
+          existing.window.contentView.removeChildView(existing.view);
+          existing.presented = false;
+          await loadPreviewDocument(existing.view.webContents, url);
+          if (existing.window.isDestroyed() || existing.view.webContents.isDestroyed()) return { ok: false, error: 'Link preview was closed.' };
+          existing.window.contentView.addChildView(existing.view);
+          existing.presented = true;
           existing.sourceUrl = url;
           return { ok: true, sessionId: existing.id, url };
         } catch (error) {
@@ -1225,6 +1242,7 @@ export function createWebBrowserHostBridge(input: {
         },
       });
       const contents = view.webContents;
+      view.setBackgroundColor('#00000000');
       hardenBrowserSession(contents.session);
       enableBrowserDownloads(contents.session);
       void syncAdblockSession(contents.session);
@@ -1261,10 +1279,11 @@ export function createWebBrowserHostBridge(input: {
       });
 
       try {
+        place(session);
+        await loadPreviewDocument(contents, url);
+        if (window.isDestroyed() || contents.isDestroyed()) return { ok: false, error: 'Link preview was closed.' };
         window.contentView.addChildView(view);
         session.presented = true;
-        place(session);
-        await contents.loadURL(url);
         return { ok: true, sessionId: session.id, url };
       } catch (error) {
         cleanupSession(session);
