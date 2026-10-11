@@ -196,7 +196,8 @@ public sealed class PaneCoordinatorHost:Form {
         long generation=scope.BindingGeneration,state=scope.StateRevision;string tab=ReadText(r,"tabId"),group=ReadText(r,"groupId","main");
         if(op=="attach"){
             var hwnd=new IntPtr(Number(r,"handle"));uint pid=(uint)Number(r,"pid");
-            tab=pane.Attach(hwnd,pid,group,generation,state,ReadText(r,"retainedId",null));pane.Find(tab).RestoreUrl=ReadText(r,"restoreUrl",null);pane.SelectTab(group,tab,generation,scope.StateRevision);
+            tab=pane.Attach(hwnd,pid,group,generation,state,ReadText(r,"retainedId",null));pane.Find(tab).RestoreUrl=ReadText(r,"restoreUrl",null);
+            if(!r.ContainsKey("select")||Convert.ToBoolean(r["select"]))pane.SelectTab(group,tab,generation,scope.StateRevision);
         }else if(op=="reconnect")tab=pane.Reconnect(ReadText(r,"retainedId"),new IntPtr(Number(r,"handle")),(uint)Number(r,"pid"),generation,state);
         else if(op=="dormant-add")pane.AddDormant(json.Deserialize<PaneMountPeer>(json.Serialize(r["peer"])),group);
         else if(op=="document-add"){pane.AddDocument(tab,group,generation,state);if(r.ContainsKey("preview"))pane.SetDocumentReference(json.Deserialize<PaneDocumentRef>(json.Serialize(r["preview"])));}

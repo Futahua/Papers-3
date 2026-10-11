@@ -1,9 +1,10 @@
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { expect, it } from 'vitest';
 import { evalInHost, evalInHostWindow, launchPapers, waitFor } from './helpers';
+import { resolveWindowsCscPath } from '../../src/main/windows/foregroundBridge';
 import { splitWorkspaceGroup, type WorkspaceTopologyV1 } from '../../src/shared/workspaceTopology';
 
 function previewPdf(): Buffer {
@@ -77,6 +78,14 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
  const childBackpack={...backpack,id:childId,name:'Proxima page fixture'};await fs.mkdir(path.join(data,'backpacks',childId),{recursive:true});await fs.writeFile(path.join(data,'backpacks',childId,'backpack.json'),JSON.stringify({schemaVersion:1,...childBackpack}));
  const registry=JSON.parse(await fs.readFile(path.join(data,'registry.json'),'utf8'));registry.backpacks.push(childBackpack);await fs.writeFile(path.join(data,'registry.json'),JSON.stringify(registry));
  const roots=JSON.parse(await fs.readFile(path.join(data,'backpack-projects.json'),'utf8'));roots.projects[childId]={root:childRoot};await fs.writeFile(path.join(data,'backpack-projects.json'),JSON.stringify(roots));
+ const plainId='bp-60606060-6060-4060-8060-606060606060',plainRoot=path.join(profile,'plain-page');
+ await fs.mkdir(path.join(plainRoot,'public'),{recursive:true});
+ await fs.writeFile(path.join(plainRoot,'public','index.html'),'<html><body><h1>Proxima task board fixture</h1></body></html>');
+ await fs.writeFile(path.join(plainRoot,'project.json'),JSON.stringify({schemaVersion:1,backpackId:plainId,entry:'public/index.html'}));
+ const plainBackpack={...backpack,id:plainId,name:'Proxima task board fixture'};
+ await fs.mkdir(path.join(data,'backpacks',plainId),{recursive:true});await fs.writeFile(path.join(data,'backpacks',plainId,'backpack.json'),JSON.stringify({schemaVersion:1,...plainBackpack}));
+ registry.backpacks.push(plainBackpack);await fs.writeFile(path.join(data,'registry.json'),JSON.stringify(registry));
+ roots.projects[plainId]={root:plainRoot};await fs.writeFile(path.join(data,'backpack-projects.json'),JSON.stringify(roots));
  let launched=await launchPapers(profile,{fixtures:false});
  let primaryContentsId=0;
  const evaluate=<T>(js:string)=>launched.app.evaluate(async({webContents},args)=>{
@@ -286,8 +295,22 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
     },{js,first:firstContents,id}) as Promise<T>;
     await waitFor(()=>evaluateSecond<boolean>('Boolean(window.ready)'),10000,'second pane module');await evaluateSecond('ready');
     expect(await evaluateSecond<number>('latest.groups.flatMap(g=>g.tabs).length')).toBe(0);
+    // An inactive wider native app fits its original group, but not the
+    // exchanged narrow slot. It must stay inactive throughout acquisition.
+    const wideSource=path.join(profile,'WideFixture.cs'),wideExe=path.join(profile,'WideFixture.exe');
+    await fs.writeFile(wideSource,'using System;using System.Drawing;using System.Windows.Forms;class WideFixture{[STAThread]static void Main(string[] a){var f=new Form{Text=a[0],Size=new Size(820,400),MinimumSize=new Size(780,230)};Application.Run(f);}}');
+    execFileSync(resolveWindowsCscPath(process.env.WINDIR??'C:/Windows')!,['/nologo','/target:winexe','/r:System.Windows.Forms.dll','/r:System.Drawing.dll',`/out:${wideExe}`,wideSource],{windowsHide:true});
+    fixtures.push(spawn(wideExe,[marker+'Wide'],{stdio:'ignore'}));
+    await waitFor(()=>evaluate<boolean>(`host.windowCandidates({includeNativeIcons:false}).then(r=>r.candidates.some(c=>c.title==='${marker}Wide'))`),10000,'wide inactive fixture');
+    const wideAttached=await evaluate<any>(`(async()=>{const c=(await host.windowCandidates({includeNativeIcons:false})).candidates.find(c=>c.title==='${marker}Wide');const bound=await host.bindWindowCandidate(c.id);return host.fileCapability('pane-window-attach',{bindingId:bound.capability.bindingId,groupId:latest.groups.find(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])})).id,rect:latest.groups.find(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])})).content});})()`);
+    expect(wideAttached.ok).toBe(true);
+    const plainPage=await evalInHost<any>(launched.app,`papersHost.backpackProject.open('${plainId}')`);
+    await evalInHost(launched.app,`papersHost.app.showPage(${JSON.stringify(parentSurface)})`);
+    const plainAttached=await evaluate<any>(`host.fileCapability('pane-page-attach',{pageId:${JSON.stringify(plainPage.surfaceId)},groupId:latest.groups.find(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])})).id,side:'center'})`);
+    expect(plainAttached.ok).toBe(true);
+    await evaluate(`host.fileCapability('pane-layout-command',{command:'select',groupId:latest.groups.find(g=>g.tabs.some(t=>t.id==='preview:doc-image')).id,tabId:'preview:doc-image',revision:latest.stateRevision})`);
     const claims=await evaluateSecond<any>(`host.windowCandidates({includeNativeIcons:false}).then(r=>r.candidates.filter(c=>c.title.includes(${JSON.stringify(marker)})))`);
-    expect(claims).toHaveLength(2);expect(claims.every((c:any)=>c.inUse&&!c.inUse.samePage&&c.inUse.label.includes('window'))).toBe(true);
+    expect(claims).toHaveLength(3);expect(claims.every((c:any)=>c.inUse&&!c.inUse.samePage&&c.inUse.label.includes('window'))).toBe(true);
     expect((await evaluateSecond<any>(`host.fileCapability('pane-window-transfer',{transferId:'00000000000000000000000000000000',groupId:'main'})`)).ok).toBe(false);
     const before=await evaluate<any>('latest.groups.map(g=>({id:g.id,selected:g.selected,tabs:g.tabs.map(t=>t.id)}))');
     const source=await evaluate<any>(`latest.groups.find(g=>g.tabs.some(t=>t.id===${JSON.stringify(attached[0])}))`);
@@ -328,6 +351,16 @@ it.each([false,true])('Papers moves native/preview tabs through real group comma
     const reversed=await evaluateSecond<any>(`host.fileCapability('pane-window-transfer',{transferId:${JSON.stringify(back)},groupId:'${incoming.id}',side:'center'})`);
     expect(reversed.ok).toBe(true);
     await waitFor(()=>evaluateSecond<boolean>(`latest.groups.find(g=>g.id==='${incoming.id}').tabs.some(t=>t.id===${JSON.stringify(attached[0])})`),10000,'exchange round trip');
+    // The hosted page's topology follows the group in both directions.
+    expect(await evalInHostWindow<boolean>(launched.app,secondWindow,`papersHost.app.pages().then(rows=>rows.some(p=>p.title==='Proxima task board fixture'&&p.windowId===${secondWindow}))`)).toBe(true);
+    const plainBack=await evaluateSecond<string>(`latest.groups.find(g=>g.id==='${incoming.id}').transferId`);
+    const withPage=await evaluate<any>(`host.fileCapability('pane-window-transfer',{transferId:${JSON.stringify(plainBack)},groupId:'${destinationGroup.id}',side:'center'})`);
+    expect(withPage.ok).toBe(true);
+    expect(await evalInHost<boolean>(launched.app,`papersHost.app.pages().then(rows=>rows.some(p=>p.title==='Proxima task board fixture'&&p.windowId===${firstWindow}))`)).toBe(true);
+    const roundTripPage=await evaluate<string>(`latest.groups.find(g=>g.id==='${destinationGroup.id}').transferId`);
+    expect((await evaluateSecond<any>(`host.fileCapability('pane-window-transfer',{transferId:${JSON.stringify(roundTripPage)},groupId:'${incoming.id}',side:'center'})`)).ok).toBe(true);
+    await evalInHostWindow(launched.app,secondWindow,`papersHost.backpackProject.close(${JSON.stringify(plainPage.surfaceId)})`);
+    await waitFor(()=>evaluateSecond<boolean>(`!latest.groups.some(g=>g.tabs.some(t=>t.preview?.PageKey))`),5000,'closing hosted page removes transferred reference');
     // Lost applications keep compact recoverable membership; replacing one preserves tab identity.
     for(const fixture of fixtures)if(fixture.exitCode===null)fixture.kill();
     await waitFor(()=>evaluateSecond<boolean>(`latest.groups.flatMap(g=>g.tabs).some(t=>t.id===${JSON.stringify(attached[0])}&&t.kind==='dormant')`),12000,'closed native window becomes dormant');

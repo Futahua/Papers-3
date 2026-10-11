@@ -16,6 +16,11 @@ export interface NativePaneSnapshot {
     tabs: Array<{ id: string; kind: 'native' | 'document' | 'dormant'; active: boolean; title?: string; handle?: number; pid?: number; windowInstanceId?: string; preview?: {Id?:string;Path?:string;Name?:string;PageKey?:string;TabStyle?:string} }> }>;
 }
 export interface PaneReply extends Record<string, unknown> { ok: boolean; error?: string; code?: string; snapshot?: NativePaneSnapshot; tabId?: string }
+export interface PanePageMove { key: string; from: string; to: string; width: number; height: number }
+export interface PanePageTransfers {
+  check(moves: PanePageMove[]): Promise<PaneReply>;
+  apply(moves: PanePageMove[]): Promise<() => Promise<void>>;
+}
 export interface PaneWindowOwnership { transferId: string; label: string; samePage: boolean }
 interface Scope { key: string; token: string; context: PaneContext; rect: PaneRect; headerHeight: number; host: Host; snapshot?: NativePaneSnapshot; removedDocuments?: string[] }
 interface Host { child: ChildProcessWithoutNullStreams; queue: Promise<unknown>; stopped: boolean;
@@ -54,7 +59,7 @@ export function parseNativeCheckpoint(text: string): any {
   });
 }
 export function createNativePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined;
-  ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void> }): NativePaneBridge | null {
+  ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void>; pageTransfers?: PanePageTransfers }): NativePaneBridge | null {
   if (process.platform !== 'win32') return null;
   const compiler = resolveWindowsCscPath(process.env['WINDIR'] ?? 'C:\\Windows');
   if (!compiler) return null;
@@ -181,10 +186,26 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     }
     return undefined;
   }
-  const protectedGroup=(scope:Scope,groupId:string):boolean=>Boolean(scope.snapshot?.groups.find(g=>g.id===groupId)?.tabs.some(t=>['preview:workspace-files','preview:workspace-preview'].includes(t.id)||Boolean(t.preview?.PageKey)));
+  const protectedGroup=(scope:Scope,groupId:string):boolean=>Boolean(scope.snapshot?.groups.find(g=>g.id===groupId)?.tabs.some(t=>['preview:workspace-files','preview:workspace-preview'].includes(t.id)));
+  const pageMoves = (from: Scope, sourceGroup: string, target: Scope, targetGroup: string, swap: boolean, tabId?: string): PanePageMove[] => {
+    const moves: PanePageMove[] = [];
+    const collect = (a: Scope, group: string, b: Scope, destination: string, only?: string) => {
+      const slot = b.snapshot?.groups.find(g => g.id === destination)?.content;
+      for (const tab of a.snapshot?.groups.find(g => g.id === group)?.tabs ?? [])
+        if (tab.preview?.PageKey && (!only || tab.id === only)) moves.push({key: tab.preview.PageKey, from: a.context.ownerKey, to: b.context.ownerKey, width: slot?.width ?? 0, height: slot?.height ?? 0});
+    };
+    collect(from, sourceGroup, target, targetGroup, tabId);
+    if (swap) collect(target, targetGroup, from, sourceGroup);
+    return moves;
+  };
+  const checkPages = (moves: PanePageMove[]) => moves.length
+    ? input.pageTransfers?.check(moves) ?? Promise.resolve({ok:false,error:'Backpack page transfers are unavailable.'})
+    : Promise.resolve({ok:true});
   async function checkSwap(from:Scope,sourceGroup:string,target:Scope,targetGroup:string):Promise<PaneReply>{
     const before=[from,target].map(s=>[s.token,s.snapshot?.stateRevision,s.snapshot?.geometryRevision]);
     if(protectedGroup(from,sourceGroup)||protectedGroup(target,targetGroup))return {ok:false,error:'Files and Preview stay with their page.'};
+    const pages = await checkPages(pageMoves(from,sourceGroup,target,targetGroup,true));
+    if (!pages.ok) return pages;
     const a=await queued(from,'group-minimum',{groupId:sourceGroup},undefined,true);
     const b=await queued(target,'group-minimum',{groupId:targetGroup},undefined,true);
     if(!a.ok||!b.ok)return {ok:false,error:'The group changed during the drag.'};
@@ -279,6 +300,9 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       if(target===source.scope){const result=await queued(target,'can-relocate-group',{source:source.groupId,groupId,side});return result.ok?result:{ok:false,error:'The group cannot fit in that position.'};}
       if(side==='center')return checkSwap(source.scope,source.groupId,target,groupId);
       if(protectedGroup(source.scope,source.groupId))return {ok:false,error:'Files and Preview stay with their page.'};
+      const moves = pageMoves(source.scope,source.groupId,target,groupId,false);
+      for (const move of moves) { if (['left','right'].includes(side)) move.width /= 2; else move.height = move.height / 2 - target.headerHeight; }
+      const pageCheck = await checkPages(moves); if (!pageCheck.ok) return pageCheck;
       const minimum=await queued(source.scope,'group-minimum',{groupId:source.groupId});
       if(!minimum.ok)return minimum;
       const result=await queued(target,'can-insert-group',{groupId,side,width:minimum.width,height:minimum.height});
@@ -303,12 +327,19 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
         if (!['center','left', 'right', 'top', 'bottom'].includes(side)) return { ok: false, error: 'Choose an edge for the incoming group.' };
         const from = source.scope;
         const movedGroup = from.snapshot?.groups.find(group=>group.id===source.groupId);
-        if(movedGroup?.tabs.some(tab=>(!source.tabId||source.tabId===tab.id)&&(['preview:workspace-files','preview:workspace-preview'].includes(tab.id)||Boolean(tab.preview?.PageKey))))
+        if(movedGroup?.tabs.some(tab=>(!source.tabId||source.tabId===tab.id)&&['preview:workspace-files','preview:workspace-preview'].includes(tab.id)))
           return {ok:false,error:'Files and Preview stay with their page. Move the page to another Papers window instead.'};
         const swap=!source.tabId&&side==='center';
         if(swap){const check=await checkSwap(from,source.groupId,target,groupId);if(!check.ok)return check;}
+        const movingPages = pageMoves(from,source.groupId,target,groupId,swap,source.tabId);
+        for (const move of movingPages) {
+          if (move.to === target.context.ownerKey && ['left','right'].includes(side)) move.width /= 2;
+          if (move.to === target.context.ownerKey && ['top','bottom'].includes(side)) move.height = move.height / 2 - target.headerHeight;
+        }
+        const pageCheck = await checkPages(movingPages); if (!pageCheck.ok) return pageCheck;
         locked.add(from); locked.add(target);
         const records: Array<{ key: string; mount: Record<string, any> }> = [];
+        let undoPages: (() => Promise<void>) | undefined;
         const run = async (scope: Scope, op: string, params: Record<string, unknown> = {}): Promise<PaneReply> => {
           const result = await queued(scope, op, params, undefined, true);
           if (!result.ok) throw new Error(result.error ?? 'Window transfer was refused.'); return result;
@@ -317,6 +348,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
           await run(from, 'checkpoint'); await run(target, 'checkpoint');
           for (const scope of [from, target]) records.push({ key: scope.key, mount: parseNativeCheckpoint(fs.readFileSync(mountFile(scope.key), 'utf8')) });
           durableWrite(journalFile, { status: 'prepared', records });
+          if (movingPages.length) undoPages = await input.pageTransfers!.apply(movingPages);
           const group = from.snapshot!.groups.find(group => group.id === source.groupId)!;
           const tabs = group.tabs.filter(tab => !source.tabId || tab.id === source.tabId);
           const other=swap?target.snapshot!.groups.find(g=>g.id===groupId):undefined;
@@ -330,10 +362,10 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
             // Release every outgoing HWND before acquiring either incoming set.
             // The prepared journal compensates the whole exchange on failure.
             for(const [scope,outgoing] of [[from,tabs],[target,other!.tabs]] as const)
-              for(const tab of outgoing)await run(scope,tab.kind==='document'?'document-remove':'detach',{tabId:tab.id});
+              for(const tab of [...outgoing].sort((a,b)=>Number(a.active)-Number(b.active)))await run(scope,tab.kind==='document'?'document-remove':'detach',{tabId:tab.id});
           }
           const add=async(scope:Scope,tab:NativePaneSnapshot['groups'][number]['tabs'][number],destination:string,mount:Record<string,any>):Promise<void>=>{
-            if(tab.kind==='native')await run(scope,'attach',{handle:tab.handle,pid:tab.pid,groupId:destination,retainedId:tab.id,restoreUrl:mount.Peers.find((p:any)=>p.TabId===tab.id)?.Url});
+            if(tab.kind==='native')await run(scope,'attach',{handle:tab.handle,pid:tab.pid,groupId:destination,retainedId:tab.id,select:false,restoreUrl:mount.Peers.find((p:any)=>p.TabId===tab.id)?.Url});
             else if(tab.kind==='document')await run(scope,'document-add',{tabId:tab.id,groupId:destination,preview:mount.DocumentReferences?.find((p:any)=>p.Id===tab.id)});
             else await run(scope,'dormant-add',{peer:mount.Peers.find((p:any)=>p.TabId===tab.id),groupId:destination});
           };
@@ -365,6 +397,11 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
           if(swap)target.removedDocuments=other!.tabs.filter(tab=>tab.kind==='document').map(tab=>tab.id);
           return { ok: true, tabId: source.tabId, snapshot: localSnapshot(target, target.snapshot!) };
         } catch (error) {
+          let pageRecoveryError: unknown;
+          if (undoPages) {
+            try { await undoPages(); }
+            catch (rollback) { pageRecoveryError = rollback; }
+          }
           // Release both leases, then remount the exact before-records. A
           // process death at any point leaves the prepared journal for boot.
           if (records.length === 2) {
@@ -384,7 +421,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
             }
             durableWrite(journalFile, { status: 'rolled-back', records });
           }
-          return { ok: false, error: String(error) };
+          return { ok: false, error: pageRecoveryError ? String(error) + '; page recovery: ' + String(pageRecoveryError) : String(error) };
         } finally {
           locked.delete(from); locked.delete(target);
           for (const scope of [from,target]) if(owners.get(scope.context.ownerKey)===scope&&scope.snapshot) await queued(scope,'present',{visible:visibility.get(scope.context.ownerKey)!==false&&dragOwners.size===0});

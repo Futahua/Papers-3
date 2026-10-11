@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { NativePaneBridge, NativePaneSnapshot, PaneReply, PaneRect } from './nativePaneBridge';
+import type { NativePaneBridge, NativePaneSnapshot, PaneReply, PaneRect, PanePageMove } from './nativePaneBridge';
 export interface PanePage {
     windowId: number;
     surfaceId: string;
@@ -91,6 +91,24 @@ export function createPaneBackpackPages(input: {
             }
         refresh();
         void syncTitles();
+        // A native checkpoint and logical topology use independent durable
+        // stores. After interrupted adoption, recover ownership from the
+        // settled native membership without creating a replacement page.
+        const parent = locate(owner.slice(owner.indexOf(':') + 1));
+        if (parent) for (const tab of snapshot.groups.flatMap(g => g.tabs)) {
+            const page = tab.preview?.PageKey ? locate(tab.preview.PageKey) : null;
+            const identity = 'adopt:' + owner + ':' + tab.id;
+            if (!page || page.windowId === parent.windowId || checking.has(identity)) continue;
+            checking.add(identity);
+            const task = tail.then(async () => {
+                const live = locate(page.key), destination = locate(parent.key);
+                if (!live || !destination || live.windowId === destination.windowId ||
+                    !input.bridge()?.snapshot(owner)?.groups.some(g => g.tabs.some(t => t.preview?.PageKey === page.key))) return;
+                await input.adopt(live,destination);
+                refresh();
+            }).catch(() => {}).finally(() => checking.delete(identity));
+            tail = task;
+        }
         // A parked parent's checkpoint may outlive a page explicitly destroyed
         // elsewhere. The authoritative page set decides whether that ref survives.
         for (const group of snapshot.groups)
@@ -193,5 +211,37 @@ export function createPaneBackpackPages(input: {
                             accept(owner, reply.snapshot);
                     }
     }
-    return { accept, refresh, syncTitles, check, attach, removePage, controls: (id: string) => { const p = locate(id); return Boolean(p && placement(p) && input.outer(placement(p)!.parent).visible); } };
+    async function checkTransfers(moves: PanePageMove[]): Promise<PaneReply> {
+        for (const move of moves) {
+            const page = locate(move.key), parent = locate(move.to.slice(move.to.indexOf(':') + 1));
+            if (!page || !parent) return {ok:false,error:'That Backpack page or destination closed.'};
+            if (page.key === parent.key || page.projectId === parent.projectId || placement(parent))
+                return {ok:false,error:'Nested page layouts cannot contain each other.'};
+            if (input.bridge()?.has(`${page.windowId}:${page.surfaceId}`))
+                return {ok:false,error:'A page with its own native layout must move through its page tab.'};
+            if (!await input.bridge()?.canFitPageGroup(page.windowId,[page.surfaceId],move.width,move.height,true))
+                return {ok:false,error:'This page’s applications cannot fit in that group.'};
+        }
+        return {ok:true};
+    }
+    async function applyTransfers(moves: PanePageMove[]): Promise<() => Promise<void>> {
+        const applied: PanePageMove[] = [];
+        const undo = async () => {
+            for (const move of [...applied].reverse()) {
+                const page = locate(move.key), parent = locate(move.from.slice(move.from.indexOf(':') + 1));
+                if (!page || !parent) throw Error('The original Backpack page closed during recovery.');
+                await input.adopt(page,parent);
+            }
+        };
+        try {
+            for (const move of moves) {
+                const page = locate(move.key), parent = locate(move.to.slice(move.to.indexOf(':') + 1));
+                if (!page || !parent) throw Error('That Backpack page or destination closed.');
+                await input.adopt(page,parent);
+                applied.push(move);
+            }
+            return undo;
+        } catch (error) { await undo(); throw error; }
+    }
+    return { accept, refresh, syncTitles, check, attach, removePage, checkTransfers, applyTransfers, controls: (id: string) => { const p = locate(id); return Boolean(p && placement(p) && input.outer(placement(p)!.parent).visible); } };
 }

@@ -692,6 +692,10 @@ async function bootstrap(): Promise<void> {
   let panePages:ReturnType<typeof createPaneBackpackPages>|undefined;
   const outerPagePresentation=new Map<string,{bounds:import('./backpacks/nativePaneBridge').PaneRect|null;visible:boolean}>();
   const chromePane = createChromePaneBridge({
+    pageTransfers: {
+      check: moves => panePages ? panePages.checkTransfers(moves) : Promise.resolve({ok:false,error:'Backpack pages are unavailable.'}),
+      apply: moves => { if (!panePages) throw Error('Backpack pages are unavailable.'); return panePages.applyTransfers(moves); },
+    },
     cacheDirectory: path.join(paths.root, 'native-helpers'),
     nativeDirectory: app.isPackaged ? path.join(process.resourcesPath, 'native') : path.join(app.getAppPath(), 'resources', 'native'),
     windowInstanceId: (handle, pid) => windowCapabilityService.windowInstanceIdForHandle?.(handle, pid),

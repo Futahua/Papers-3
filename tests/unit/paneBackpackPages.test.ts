@@ -31,3 +31,17 @@ it('refreshes retained page titles without selecting, moving or recreating their
  expect(snapshot.groups[0]!.tabs[0]!.preview?.Name).toBe('22:10');
  expect(snapshot.groups[0]!.selected).toBe('other');
 });
+it('moves both hosted page owners through the topology owner and compensates a partial exchange',async()=>{
+ const pages:PanePage[]=[{windowId:1,surfaceId:'a',key:'a',projectId:'ayg',title:'A'},{windowId:2,surfaceId:'b',key:'b',projectId:'ayg',title:'B'},
+  {windowId:1,surfaceId:'p',key:'p',projectId:'proxima',title:'Clock'},{windowId:2,surfaceId:'q',key:'q',projectId:'pencilcase',title:'Tools'}];
+ const adopt=vi.fn(async(page:PanePage,parent:PanePage)=>{if(page.key==='q'&&parent.key==='a')throw Error('destination closed');page.windowId=parent.windowId;});
+ const bridge={has:()=>false,canFitPageGroup:vi.fn(async()=>true)} as unknown as NativePaneBridge;
+ const owner=createPaneBackpackPages({bridge:()=>bridge,pages:()=>pages,outer:()=>({bounds:null,visible:false}),present:vi.fn(),adopt,exists:async()=>true});
+ const moves=[{key:'p',from:'1:a',to:'2:b',width:800,height:600},{key:'q',from:'2:b',to:'1:a',width:800,height:600}];
+ expect((await owner.checkTransfers(moves)).ok).toBe(true);
+ await expect(owner.applyTransfers(moves)).rejects.toThrow('destination closed');
+ expect(pages[2]!.windowId).toBe(1);expect(pages[3]!.windowId).toBe(2);
+ adopt.mockImplementation(async(page,parent)=>{page.windowId=parent.windowId;});
+ const undo=await owner.applyTransfers(moves);expect(pages[2]!.windowId).toBe(2);expect(pages[3]!.windowId).toBe(1);
+ await undo();expect(pages[2]!.windowId).toBe(1);expect(pages[3]!.windowId).toBe(2);
+});
