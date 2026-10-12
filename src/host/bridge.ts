@@ -176,7 +176,7 @@ interface HostBridge {
   devices: {
     status(): Promise<{ owner: { id: string; name: string } | null; address: string | null; error: string | null; clientError: string | null; incoming: Array<{ id: string; name: string; address: string }>; devices: Array<{ id: string; name: string; pairedAt: number; folders: string[] }> }>;
     pair(address: string, code: string): Promise<unknown>;
-    invite(canWrite?: boolean): Promise<{ code: string; expiresAt: number; address: string | null; owner: { id: string; name: string } } | null>;
+    invite(canWrite?: boolean,shareProxima?:boolean,shareFiles?:boolean): Promise<{ code: string; expiresAt: number; address: string | null; owner: { id: string; name: string } } | null>;
     revoke(id: string): Promise<unknown>;
   };
   permissions: {

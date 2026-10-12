@@ -58,20 +58,42 @@ the code update. Existing icon assets and other Backpack projects were retained.
 The actual running packaged app reports `214c158`, supplies a live snapshot and
 opens the existing AYG workspace as a visible project surface.
 
-The installation/lifecycle gate remains open. The first native close request did
-not produce a new shutdown trace or retire the main process. Which native window
-received it is not yet verified; do not infer a save/shutdown defect from that
-request. Intermittent laptop-connector failures interrupted the next inspection.
-The diagnostic app remains open. Temporary desktop transfer/fixture listeners
-are retired, the phone test APK is removed and phone Wi-Fi is restored.
+The updated installed lifecycle passes a real laptop check. The test-created AYG
+page closed through its owner and saved. A Windows provider close then retired
+the actual app: PID 72256's trace ends `complete`, `remaining-windows:[]`, with
+process absence and diagnostic endpoint removal. This does not establish why
+the earlier process-level close request failed to initiate the path or explain
+the original older-build lingering incident. Normal launch PID 80376 is responsive,
+titled Papers, with no diagnostic endpoint. Temporary fixture listeners are
+retired and phone Wi-Fi is restored.
 
 Proxima source work has started in its independent `codex/cross-device` worktree.
 Its existing Store now supplies an approved read projection behind its own queue
 and persistence owner. Selection resolves project/activity/queue dependencies;
 private/layout/runtime/history fields are excluded. Independent candidates
 qualify identities and freeze owner-calculated live intervals. The 24 source
-checks pass, including the existing timeline suite. This is not yet a remote
-view, committed import or follow implementation, and is not deployed.
+checks passed at that checkpoint, including the existing timeline suite.
+
+Follow-up: Proxima now stages approved copies and atomically imports through
+Store.command. Receipts survive pruning/restart, failures roll back, original
+local records remain, and copied runs archive independently. Thirty-one source
+checks pass. Host sharing requires a distinct declared Backpack permission,
+supports data-only pairing and routes to the live renderer's actual data owner.
+Revocation terminates pending snapshots. Windows and Android cache catalog/data;
+the phone's shared device UI is read-only. Closed owners remain unavailable.
+The ordinary and diagnostic host preloads both expose device operations inline;
+a shared generated chunk was refused by Electron's sandbox during the real
+fixture, so sandboxing remains enabled and entries stay self-contained.
+
+Two actual isolated Papers/Electron profiles pass pairing, owner read, device UI,
+selected dependency preview, atomic IndexedDB import and reload retention of one
+graph. This is not a two-PC Proxima acceptance result. The signed development
+phone update passes real data-only pairing, owner facts and read-only UI; after
+source listener retirement it passes cached catalog/facts/read-only UI. Full
+Papers suite: 1,481 passed / four skipped; type checking and production build pass.
+The laptop still has the earlier file-controls checkpoint. Follow/conflicts,
+full remote calendar/timeline presentation, checked file-edit sessions,
+background transfer recovery and creator-location/release acceptance remain.
 
 Full suites: Papers 1,478 passed / four skipped; AYG 2,028 passed plus eight
 visual preflight checks. Type checking and production build pass. The previous

@@ -38,6 +38,8 @@ final class MobileFiles {
       case "browse": return browse(owner, request.optString("resourceId"), request.optInt("offset", 0));
       case "download": return download(owner, request.getJSONObject("entry"));
       case "offline": return offline(owner);
+      case "backpacks": return backpacks(owner);
+      case "backpack-snapshot": return backpackSnapshot(owner,request.getString("resourceId"));
       case "change": { JSONObject device=connection(owner);return outbox.send(owner,device.optString("deviceId"),request.getJSONObject("command"),command->dispatchChange(device,command)); }
       case "change-retry": { JSONObject device=connection(owner);return outbox.retry(owner,device.optString("deviceId"),request.getString("commandId"),command->dispatchChange(device,command)); }
       case "changes": { JSONArray changes=json(request(owner,"/v1/files/changes",null,null)).getJSONArray("jobs");outbox.reconcile(owner,changes);return changes; }
@@ -74,6 +76,14 @@ final class MobileFiles {
     return new JSONObject().put("devices", devices).put("jobs", transfers).put("commandJobs",outbox.snapshot());
   }
   private JSONObject dispatchChange(JSONObject device,JSONObject command) throws Exception { return json(http(address(device.getString("address"))+"/v1/files/changes",open(device.getString("secret")),null,command)).getJSONObject("job"); }
+  private JSONObject backpacks(String owner) throws Exception {
+    File cache=new File(root,"backpacks-"+sha(owner.getBytes(StandardCharsets.UTF_8))+".json");
+    try{JSONObject result=json(request(owner,"/v1/backpacks",null,null));if(!owner.equals(result.getJSONObject("owner").getString("id")))throw new IOException("Owner identity changed.");JSONArray entries=result.getJSONArray("entries");for(int i=0;i<entries.length();i++){JSONObject item=entries.getJSONObject(i);if(!item.getString("id").matches("[a-f0-9-]{36}")||!"proxima".equals(item.getString("kind")))throw new IOException("Invalid shared Backpack listing.");}write(cache,result);return result.put("online",true);}catch(Exception error){if(!cache.exists())throw error;return read(cache).put("online",false).put("error",error.getMessage());}
+  }
+  private JSONObject backpackSnapshot(String owner,String id) throws Exception {
+    if(!id.matches("[a-f0-9-]{36}"))throw new IOException("Invalid shared Backpack identity.");File cache=new File(root,"backpack-"+sha((owner+":"+id).getBytes(StandardCharsets.UTF_8))+".json");
+    try{JSONObject result=json(request(owner,"/v1/backpacks/"+id+"/snapshot",null,null));if(!owner.equals(result.getJSONObject("owner").getString("id"))||!id.equals(result.getString("resourceId"))||!"proxima".equals(result.getString("kind")))throw new IOException("Shared Backpack identity changed.");write(cache,result);return result.put("online",true);}catch(Exception error){if(!cache.exists())throw error;return read(cache).put("online",false).put("error",error.getMessage());}
+  }
   private JSONObject browse(String owner, String id, int offset) throws Exception {
     if (!id.isEmpty() && !id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid file identity.");
     if (offset < 0) throw new IOException("Invalid listing page.");

@@ -74,7 +74,7 @@ export class RemoteFileClient {
   private async request(ownerId: string, route: string, headers: Record<string, string> = {}, signal?: AbortSignal, body?: unknown): Promise<Response> {
     const connection = this.connection(ownerId);
     const response = await fetch(`${connection.address}${route}`, { redirect: 'error', method:body===undefined?'GET':'POST', ...(body===undefined?{}:{body:JSON.stringify(body)}),headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`,...(body===undefined?{}:{'Content-Type':'application/json'}), ...headers }, signal: signal ?? AbortSignal.timeout(30_000) });
-    if (!response.ok) throw new Error(response.status === 412 ? 'Source changed. Refresh before downloading.' : response.status === 401 ? 'Access was revoked. Pair this device again.' : `Remote operation failed (${response.status}).`);
+    if (!response.ok) throw new Error(response.status===503&&route.startsWith('/v1/backpacks/')?'Open Proxima on that computer, then refresh.':response.status === 412 ? 'Source changed. Refresh before downloading.' : response.status === 401 ? 'Access was revoked. Pair this device again.' : `Remote operation failed (${response.status}).`);
     return response;
   }
   async browse(ownerId: string, resourceId?: string, offset = 0) {
@@ -114,6 +114,14 @@ export class RemoteFileClient {
   async change(ownerId:string,command:unknown){return this.outbox.send(ownerId,this.connection(ownerId).deviceId,command,value=>this.dispatchChange(ownerId,value));}
   async retryChange(ownerId:string,commandId:string){return this.outbox.retry(ownerId,this.connection(ownerId).deviceId,commandId,value=>this.dispatchChange(ownerId,value));}
   async changes(ownerId:string){const jobs=(await (await this.request(ownerId,'/v1/files/changes')).json()).jobs;if(!Array.isArray(jobs))throw new Error('Invalid file request history.');await this.outbox.reconcile(ownerId,jobs);return jobs;}
+  async backpacks(ownerId:string){
+    const key=createHash('sha256').update(ownerId).digest('hex'),cache=new AtomicJsonStore(path.join(this.directory,'backpacks',key+'-catalog.json'),{recoveryDir:path.join(this.directory,'recovery')});
+    try{const response=await (await this.request(ownerId,'/v1/backpacks')).json();if(response.owner?.id!==ownerId||!Array.isArray(response.entries)||response.entries.some((item:{id?:string;name?:string;kind?:string})=>!/^[a-f0-9-]{36}$/.test(item.id??'')||typeof item.name!=='string'||item.kind!=='proxima'))throw Error('Invalid shared Backpack listing.');await cache.save(response);return {...response,online:true};}catch(error){const saved=await cache.load<Record<string,unknown>>();if(!saved.value)throw error;return {...saved.value,online:false,error:error instanceof Error?error.message:'Owner unavailable.'};}
+  }
+  async backpackSnapshot(ownerId:string,resourceId:string){
+    if(!/^[a-f0-9-]{36}$/.test(resourceId))throw Error('Invalid shared Backpack identity.');const key=createHash('sha256').update(JSON.stringify([ownerId,resourceId])).digest('hex'),cache=new AtomicJsonStore(path.join(this.directory,'backpacks',key+'.json'),{recoveryDir:path.join(this.directory,'recovery')});
+    try{const response=await(await this.request(ownerId,'/v1/backpacks/'+resourceId+'/snapshot')).json();if(response.owner?.id!==ownerId||response.resourceId!==resourceId||response.kind!=='proxima')throw Error('Shared Backpack identity changed.');await cache.save(response);return {...response,online:true};}catch(error){const saved=await cache.load<Record<string,unknown>>();if(!saved.value)throw error;return {...saved.value,online:false,error:error instanceof Error?error.message:'Owner unavailable.'};}
+  }
   private async transfer(job: RemoteDownloadJob, signal: AbortSignal): Promise<void> {
     const headers = { 'If-Match': `"${job.entry.version}"` };
     const digest = await (await this.request(job.ownerId, `/v1/files/${job.entry.id}/digest`, headers, signal)).json();

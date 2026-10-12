@@ -268,6 +268,13 @@ export class BackpackProjectRuntime {
       if (outcome === 'timeout') throw new Error('project close flush timed out before renderer close');
     } finally { if (timer) clearTimeout(timer); }
   }
+  async readSharedData(source:{ownerId:string;backpackId:string}):Promise<unknown>{
+    const view=this.view;
+    if(!view||view.webContents.isDestroyed()||this.projectId!==source.backpackId)throw Error('Open this Backpack on its owning computer first.');
+    const contents=view.webContents,url=contents.getURL();let timer:ReturnType<typeof setTimeout>|undefined;
+    try{const snapshot=await Promise.race([contents.executeJavaScript(`(async()=>{if(typeof globalThis.__papersSharedData!=='function')throw Error('Data owner is not ready');return globalThis.__papersSharedData(${JSON.stringify(source)});})()`),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Data owner did not respond.')),8000);})]);if(this.view!==view||contents.isDestroyed()||contents.getURL()!==url)throw Error('Data owner changed during the read.');return snapshot;}
+    finally{if(timer)clearTimeout(timer);}
+  }
 
   async hide(options: { restoreOnFlushFailure?: boolean } = {}): Promise<void> {
     if (this.hidePromise) return this.hidePromise;

@@ -2,18 +2,20 @@ import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { AtomicJsonStore } from '../persistence/atomicStore';
-import { remoteTokenHash, type RemoteFileGrant } from './remoteFileGateway';
+import { remoteTokenHash, type RemoteFileGrant, type RemoteBackpackShare } from './remoteFileGateway';
 import { RemoteFileResources, type RemoteFileShare } from './remoteFileResources';
 
 interface Device extends RemoteFileGrant { name: string; pairedAt: number }
 interface State { version: 1; owner: { id: string; name: string }; devices: Device[] }
-interface Invitation { codeHash: string; expiresAt: number; attempts: number; shares: RemoteFileShare[]; canWrite:boolean }
+interface Invitation { codeHash: string; expiresAt: number; attempts: number; shares: RemoteFileShare[]; canWrite:boolean; backpacks:RemoteBackpackShare[] }
+function validBackpacks(value:unknown):value is RemoteBackpackShare[]{return Array.isArray(value)&&value.every(item=>item&&/^[a-f0-9-]{36}$/.test(item.id)&&/^bp-[a-f0-9-]{36}$/.test(item.projectId)&&typeof item.name==='string'&&item.name.length>0&&item.name.length<=256&&item.kind==='proxima')&&new Set(value.map(item=>item.id)).size===value.length;}
 function validate(value: unknown): string | null {
   const state = value as State | null;
   if (!state || state.version !== 1 || typeof state.owner?.id !== 'string' || typeof state.owner.name !== 'string' || !Array.isArray(state.devices)) return 'Invalid device store';
   const ids = new Set<string>();
   const hashes = new Set<string>();
   for (const device of state.devices) {
+    if(device?.backpacks!==undefined&&!validBackpacks(device.backpacks))return 'Invalid Backpack grant';
     if (device.canWrite !== undefined && typeof device.canWrite !== 'boolean') return 'Invalid file-change permission';
     if (!device || typeof device.deviceId !== 'string' || ids.has(device.deviceId) || typeof device.name !== 'string' || !Number.isFinite(device.pairedAt) || !/^[a-f0-9]{64}$/.test(device.tokenHash) || hashes.has(device.tokenHash) || !Array.isArray(device.shares)) return 'Invalid device grant';
     for (const share of device.shares) if (!share || typeof share.id !== 'string' || typeof share.name !== 'string' || typeof share.directory !== 'string' || !path.isAbsolute(share.directory)) return 'Invalid shared directory';
@@ -56,13 +58,14 @@ export class RemoteDeviceStore {
   }
 
   /** Called only by the local owner UI after choosing the folders to share. */
-  invite(shares: RemoteFileShare[], canWrite = false): Promise<{ code: string; expiresAt: number }> {
+  invite(shares: RemoteFileShare[], canWrite = false, backpacks:RemoteBackpackShare[]=[]): Promise<{ code: string; expiresAt: number }> {
     return this.serialize(async () => {
-      if (!shares.length) throw new Error('Choose at least one folder.');
+      if (!shares.length&&!backpacks.length) throw new Error('Choose at least one folder or Backpack.');
+      if(!validBackpacks(backpacks))throw new Error('Invalid Backpack selection.');
       await RemoteFileResources.create(shares);
       const code = randomInt(0, 1_000_000).toString().padStart(6, '0');
       const expiresAt = this.now() + 5 * 60_000;
-      this.invitation = { codeHash: remoteTokenHash(code), expiresAt, attempts: 0, shares: structuredClone(shares), canWrite };
+      this.invitation = { codeHash: remoteTokenHash(code), expiresAt, attempts: 0, shares: structuredClone(shares), canWrite,backpacks:structuredClone(backpacks) };
       return { code, expiresAt };
     });
   }
@@ -75,7 +78,7 @@ export class RemoteDeviceStore {
       if (!/^\d{6}$/.test(code) || remoteTokenHash(code) !== invitation.codeHash) throw new Error('Pairing code is incorrect.');
       if (!name.trim() || name.length > 120) throw new Error('Device name is invalid.');
       const token = randomBytes(32).toString('base64url');
-      const device: Device = { deviceId: randomUUID(), name: name.trim(), pairedAt: this.now(), tokenHash: remoteTokenHash(token), shares: invitation.shares, canWrite:invitation.canWrite };
+      const device: Device = { deviceId: randomUUID(), name: name.trim(), pairedAt: this.now(), tokenHash: remoteTokenHash(token), shares: invitation.shares, canWrite:invitation.canWrite,backpacks:invitation.backpacks };
       const candidate = { ...this.state, devices: [...this.state.devices, device] };
       await this.store.save(candidate);
       this.state = candidate;

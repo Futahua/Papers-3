@@ -6,6 +6,7 @@ const root=path.dirname(fileURLToPath(import.meta.url));
 const sdk=process.env.PAPERS_ANDROID_SDK || 'D:/Programs/AndroidSDK';
 const jdk=process.env.PAPERS_ANDROID_JDK || 'D:/Programs/Android Studio/jbr';
 const ayg=process.env.PAPERS_AYG_SOURCE || 'D:/Programs/CodexTemp/AYGCrossDeviceSource';
+const proxima=process.env.PAPERS_PROXIMA_SOURCE || 'D:/Programs/CodexTemp/ProximaCrossDeviceSource';
 const output=path.join(root,'build');
 const tools=path.join(sdk,'build-tools','36.0.0');
 const library=path.join(sdk,'platforms','android-36','android.jar');
@@ -13,6 +14,7 @@ const classes=path.join(output,'classes'),assets=path.join(output,'assets'),dex=
 await Promise.all([classes,assets,dex,path.join(assets,'app')].map(directory=>mkdir(directory,{recursive:true})));
 for(const name of await readdir(path.join(root,'assets')))await copyFile(path.join(root,'assets',name),path.join(assets,name));
 await copyFile(path.join(ayg,'public/app/remote-file-view.js'),path.join(assets,'app/remote-file-view.js'));
+for(const name of ['remote-domain.js','remote-devices-view.js'])await copyFile(path.join(proxima,'public',name),path.join(assets,'app',name));
 function run(executable,args){const result=spawnSync(executable,args,{stdio:'inherit',windowsHide:true});if(result.error)throw result.error;if(result.status!==0)throw new Error(`${path.basename(executable)} failed (${result.status})`);}
 const sources=(await readdir(path.join(root,'src/com/futahua/papers/mobile'))).filter(name=>name.endsWith('.java')).map(name=>path.join(root,'src/com/futahua/papers/mobile',name));
 run(path.join(jdk,'bin/javac.exe'),['-source','8','-target','8','-classpath',library,'-d',classes,...sources]);

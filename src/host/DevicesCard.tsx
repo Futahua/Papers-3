@@ -9,11 +9,13 @@ export function DevicesCard(): React.JSX.Element {
   const [address, setAddress] = React.useState('');
   const [code, setCode] = React.useState('');
   const [canWrite,setCanWrite] = React.useState(false);
+  const [shareFiles,setShareFiles]=React.useState(true);
+  const [shareProxima,setShareProxima]=React.useState(false);
   const refresh = React.useCallback(() => { void host().devices.status().then(setStatus).catch(error => setError(String(error))); }, []);
   React.useEffect(() => { refresh(); const interval = setInterval(refresh, 3000); return () => clearInterval(interval); }, [refresh]);
   const invite = async (): Promise<void> => {
     setBusy(true); setError('');
-    try { setInvitation(await host().devices.invite(canWrite)); refresh(); }
+    try { setInvitation(await host().devices.invite(canWrite,shareProxima,shareFiles)); refresh(); }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   };
@@ -32,9 +34,11 @@ export function DevicesCard(): React.JSX.Element {
   return <div className="settings-card">
     <span className="label">Devices</span>
     <strong>{status?.owner?.name ?? 'This computer'}</strong>
-    <small>Connect another computer or phone to selected folders. Both devices need Tailscale connected.</small>
-    <button type="button" className="quiet-button" disabled={busy || Boolean(status?.error)} onClick={() => void invite()}>Connect a device</button>
-    <label><input type="checkbox" checked={canWrite} onChange={event=>setCanWrite(event.target.checked)} />Allow file changes in the selected folders</label>
+    <small>Connect another computer or phone to selected folders and data. Both devices need Tailscale connected.</small>
+    <label><input type="checkbox" checked={shareFiles} onChange={event=>setShareFiles(event.target.checked)} />Share selected folders</label>
+    <label><input type="checkbox" checked={canWrite} disabled={!shareFiles} onChange={event=>setCanWrite(event.target.checked)} />Allow file changes in the selected folders</label>
+    <label><input type="checkbox" checked={shareProxima} onChange={event=>setShareProxima(event.target.checked)} />Share Proxima for viewing and copying</label>
+    <button type="button" className="quiet-button" disabled={busy || Boolean(status?.error)||(!shareFiles&&!shareProxima)} onClick={() => void invite()}>Connect a device</button>
     {invitation && <div role="status"><strong>{invitation.code}</strong><p>{invitation.address}</p><small>Enter this address and code on the other device within five minutes.</small></div>}
     {status?.devices.map(device => <div key={device.id}><strong>{device.name}</strong><small>{device.folders.join(', ')}</small><button type="button" className="quiet-button" disabled={busy} onClick={() => void revoke(device.id)}>Disconnect device</button></div>)}
     <strong>Access another computer</strong>

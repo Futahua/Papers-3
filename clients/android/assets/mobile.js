@@ -1,4 +1,5 @@
 import { createRemoteFileView } from './app/remote-file-view.js';
+import { createRemoteBackpackView } from './app/remote-devices-view.js';
 let sequence = 0;
 const requests = new Map();
 window.papersReply = (id, result) => { const pending = requests.get(id); if (!pending) return; requests.delete(id); clearTimeout(pending.timer); pending.resolve(result); };
@@ -9,6 +10,8 @@ const call = params => new Promise((resolve, reject) => {
   window.PapersNative.request(String(id), JSON.stringify(params));
 });
 const panel = createRemoteFileView({ document, container: document.querySelector('#files'), call, localLabel: 'Devices', close: () => { void panel.home(); } });
+const data=createRemoteBackpackView({document,container:document.body,call});
+document.querySelector('#data').addEventListener('click',()=>{void data.show();});
 document.querySelector('#connection').addEventListener('click', () => { const form = document.querySelector('#pair'); form.hidden = !form.hidden; });
 document.querySelector('#pair').addEventListener('submit', async event => {
   event.preventDefault(); const status = document.querySelector('#status'); status.textContent = 'Connecting…';

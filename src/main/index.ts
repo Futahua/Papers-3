@@ -548,7 +548,7 @@ async function bootstrap(): Promise<void> {
 
   const baseDir = app.getPath('userData');
   const paths = papersPaths(baseDir);
-  const remoteDevices = new RemoteDeviceService(path.join(paths.root, 'devices'));
+  const remoteDevices = new RemoteDeviceService(path.join(paths.root, 'devices'),process.env['PAPERS_TEST_USER_DATA']?0:48240);
   await remoteDevices.initialize();
   const remoteFiles = new RemoteFileClient(path.join(paths.root, 'remote-files'), {
     seal: value => {
@@ -811,6 +811,8 @@ async function bootstrap(): Promise<void> {
         case 'change': return remoteFiles.change(ownerId,params.command);
         case 'change-retry': return remoteFiles.retryChange(ownerId,String(params.commandId??''));
         case 'changes': return remoteFiles.changes(ownerId);
+        case 'backpacks': return remoteFiles.backpacks(ownerId);
+        case 'backpack-snapshot': return remoteFiles.backpackSnapshot(ownerId,String(params.resourceId??''));
         case 'cancel': if (typeof params.jobId === 'string') remoteFiles.cancel(params.jobId); return { canceled: true };
         case 'open-cache': {
           if (typeof params.key !== 'string') throw new Error('Choose an offline file.');
@@ -1836,11 +1838,21 @@ async function bootstrap(): Promise<void> {
         await remoteDevices.revoke(deviceId);
         return remoteDevices.snapshot();
       }
-      const chosen = await dialog.showOpenDialog({ title: 'Choose folders this device may access', properties: ['openDirectory', 'multiSelections'] });
-      if (chosen.canceled || !chosen.filePaths.length) return null;
-      return remoteDevices.invite(chosen.filePaths,deviceId===true);
+      const choices=typeof deviceId==='object'&&deviceId!==null?deviceId as Record<string,unknown>:{canWrite:deviceId===true,shareFiles:true,shareProxima:false};
+      let folders:string[]=[];
+      if(choices.shareFiles!==false){const chosen=await dialog.showOpenDialog({title:'Choose folders this device may access',properties:['openDirectory','multiSelections']});if(chosen.canceled||!chosen.filePaths.length)return null;folders=chosen.filePaths;}
+      const backpacks=[];
+      if(choices.shareProxima===true)for(const backpack of registry.list())if(await backpackProjects.sharedDataKind(backpack.id)==='proxima')backpacks.push({id:randomUUID(),projectId:backpack.id,name:backpack.name,kind:'proxima' as const});
+      return remoteDevices.invite(folders,choices.canWrite===true,backpacks);
     });
   }
+  remoteDevices.readBackpack=async share=>{
+    const owner=remoteDevices.snapshot().owner;
+    if(!owner||await backpackProjects.sharedDataKind(share.projectId)!==share.kind)throw Error('This Backpack is not sharing data.');
+    const runtime=papersWindows.all().flatMap(context=>context.owned.projectSurfaces.all()).find(surface=>surface.liveProjectId===share.projectId&&surface.webContents&&!surface.webContents.isDestroyed());
+    if(!runtime)throw Error('Open this Backpack on its owning computer first.');
+    return runtime.readSharedData({ownerId:owner.id,backpackId:share.projectId});
+  };
   const windowCapabilityService = createWindowCapabilityService({
     // Papers itself is a useful saved layout member. Admit only the real main
     // shell by its fixed native title; same-process picker, widget, preview and

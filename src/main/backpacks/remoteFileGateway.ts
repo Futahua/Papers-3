@@ -8,7 +8,9 @@ export interface RemoteFileGrant {
   tokenHash: string;
   shares: RemoteFileShare[];
   canWrite?: boolean;
+  backpacks?: RemoteBackpackShare[];
 }
+export interface RemoteBackpackShare { id:string; projectId:string; name:string; kind:'proxima' }
 export function remoteTokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
@@ -29,6 +31,7 @@ export async function createRemoteFileGateway(options: {
   mutate?: (deviceId: string, catalog: RemoteFileResources, request: unknown) => Promise<unknown>;
   changes?: (deviceId: string) => unknown;
   revokeChanges?: (deviceId: string) => void;
+  backpackSnapshot?: (share:RemoteBackpackShare) => Promise<unknown>;
 }): Promise<{ server: Server; revoke: (deviceId: string) => void; close: () => Promise<void> }> {
   const devices = new Map<string, { grant: RemoteFileGrant; catalog: RemoteFileResources; responses: Set<ServerResponse> }>();
   const tokenHashes = new Set<string>();
@@ -78,6 +81,17 @@ export async function createRemoteFileGateway(options: {
     response.once('close', () => device.responses.delete(response));
     try {
       const url = new URL(request.url ?? '/', 'http://gateway.invalid');
+      if(url.pathname==='/v1/backpacks'){
+        json(response,200,{ok:true,owner:options.owner,entries:(device.grant.backpacks??[]).map(({id,name,kind})=>({id,name,kind}))});return;
+      }
+      const backpackMatch=/^\/v1\/backpacks\/([a-f0-9-]{36})\/snapshot$/.exec(url.pathname);
+      if(backpackMatch){
+        const share=device.grant.backpacks?.find(item=>item.id===backpackMatch[1]);
+        if(!share){json(response,403,{ok:false,code:'BACKPACK_NOT_GRANTED'});return;}
+        if(!options.backpackSnapshot){json(response,503,{ok:false,code:'BACKPACK_OWNER_UNAVAILABLE'});return;}
+        try{const snapshot=await options.backpackSnapshot(share);if(devices.get(device.grant.deviceId)!==device||response.destroyed)return;json(response,200,{ok:true,owner:options.owner,resourceId:share.id,kind:share.kind,snapshot});}
+        catch{if(!response.destroyed)json(response,503,{ok:false,code:'BACKPACK_OWNER_UNAVAILABLE'});}return;
+      }
       if (url.pathname === '/v1/files/shares') {
         json(response, 200, { ok: true, protocol: 1, owner: options.owner, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate)}, entries: await device.catalog.shares() });
         return;
