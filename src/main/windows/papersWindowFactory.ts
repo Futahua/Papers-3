@@ -37,6 +37,7 @@ export interface PapersWindowInstance {
 /** Build one complete Papers window and its genuinely window-owned surfaces. */
 export function createPapersWindow(options: PapersWindowFactoryOptions): PapersWindowInstance {
   const window = new BaseWindow({
+    ...(process.env['PAPERS_TEST_USER_DATA'] && process.env['PAPERS_TEST_HIDDEN_WINDOWS'] === '1' ? { show: false } : {}),
     ...(options.bounds ?? { width: 1360, height: 860 }),
     minWidth: 900,
     minHeight: 600,

@@ -109,3 +109,55 @@ projection/import/follow at its existing command owner. Verify real phone
 connectivity, build the Android client and use the supported Papers installer
 on the laptop with state-preservation checks. Complete the plan's device,
 transfer, recovery, ownership and installation gates before calling it done.
+
+## Laptop installation checkpoint
+
+The actual laptop now runs the supported NSIS installation of packaged commit
+`91dfc30` (Papers 1.3.11). The delivered installer passed its complete SHA-256
+check, and the installed `app.asar` exactly matched the tested package. A live
+semantic inspection confirmed the packaged build, restored authoritative window
+and retained project surfaces. Normal launch subsequently produced a responsive
+Papers window with the developer endpoint absent.
+
+The old laptop build used a portable profile. Its own profile was migrated on
+the same laptop after a graceful close, with recovery copies and byte-for-byte
+SHA-256 verification of 3,183 files. No desktop profile, browser credentials or
+live database was copied to the laptop. The old build and original profile stay
+available for recovery. The first NSIS attempt misread forward-slash destination
+separators; verification refused success. Native Windows separators corrected
+the destination, and the actual uninstall record now points to the intended app.
+
+AYG public code from `7b34f1d` was delivered separately. The laptop's real document
+passed model compatibility checks retaining both groups and all six shortcut
+identities. Its state hash remained unchanged during code delivery; project
+configuration, actions and existing icon assets were retained. Original project
+copies are preserved in the local recovery directory. Other Backpacks have not
+yet received their upcoming cross-device domain features.
+
+An actual shutdown regression remains open: the diagnostic run completed every
+window save/finalization and service shutdown stage, removed its endpoint and
+retired all renderers, yet left its idle main/GPU/network processes alive. The
+quiesced main was retired only after those conditions were verified, and normal
+Papers was reopened. This must be reproduced and repaired before calling the
+installation/upgrade lifecycle complete. Temporary transfer listeners are closed.
+
+Follow-up source evidence: a minimal Electron fixture and a full isolated Papers
+fixture with a synthetic AYG workspace both exit normally. The latter opens the
+workspace through the semantic control contract, closes the main window, observes
+process exit and records an empty remaining-window list. This does not reproduce
+or explain the laptop incident. New shutdown diagnostics record remaining owned
+window IDs/visibility after service retirement to make the next incident decisive.
+
+Close-time save failures previously reached terminal teardown even after a
+refused flush. Source now preflights every live project writer before retirement,
+persists the window's pages, and requires strict successful teardown. A rejected
+save keeps the window open and permits retry, with a visible error. Focused tests
+cover retained authenticated views, failure across multiple surfaces and retry.
+These source changes are not yet installed on the laptop.
+The focused save/lifecycle checks pass (43 tests), type checking passes and the
+production build passes. The subsequent full suite reports 1,466 passed, four
+skipped and one failure: the unchanged native pane-discard geometry fixture
+throws `Native peer refused requested geometry`. An isolated rerun fails too;
+do not attribute it to parallel load or claim a green release gate. Its cause
+still needs decisive native geometry evidence. No native production code or
+geometry fixture was changed by the save-safety work.

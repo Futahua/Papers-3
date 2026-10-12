@@ -256,6 +256,19 @@ export class BackpackProjectRuntime {
     this.fit();
   }
 
+  async flushBeforeClose(): Promise<void> {
+    const view = this.view;
+    if (!view || view.webContents.isDestroyed()) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        view.webContents.executeJavaScript('globalThis.__papersFlushBeforeClose?.()', true).then(() => 'flushed' as const),
+        new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), 2500); }),
+      ]);
+      if (outcome === 'timeout') throw new Error('project close flush timed out before renderer close');
+    } finally { if (timer) clearTimeout(timer); }
+  }
+
   async hide(options: { restoreOnFlushFailure?: boolean } = {}): Promise<void> {
     if (this.hidePromise) return this.hidePromise;
     const view = this.view;
@@ -277,20 +290,7 @@ export class BackpackProjectRuntime {
       // Keep the live sender identity until the page has completed its own
       // checked save. Project IPC authorization is sender-based, so retiring
       // this.view before the hook would make the close flush fail closed.
-      if (!view.webContents.isDestroyed()) {
-        try {
-          const outcome = await Promise.race([
-            view.webContents.executeJavaScript(
-              'globalThis.__papersFlushBeforeClose?.()',
-              true,
-            ).then(() => 'flushed' as const),
-            new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2500)),
-          ]);
-          if (outcome === 'timeout') throw new Error('project close flush timed out before renderer close');
-        } catch (caught) {
-          throw caught instanceof Error ? caught : new Error(String(caught));
-        }
-      }
+      await this.flushBeforeClose();
       if (this.view === view) {
         this.view = null;
         this.projectId = null;

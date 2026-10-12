@@ -28,6 +28,22 @@ function instance(loadHostRenderer: () => Promise<void>, id = 42): PapersWindowI
 }
 
 describe('prepared Papers window lifecycle', () => {
+  it('keeps unsaved work open when preparation fails and allows a successful retry', async () => {
+    const current = instance(async () => undefined);
+    const onClose = vi.fn().mockRejectedValueOnce(new Error('Disk unavailable')).mockResolvedValue(undefined);
+    const onCloseRejected = vi.fn();
+    const finalize = vi.fn();
+    preparePapersWindow(current, { register: vi.fn(), onClose, onCloseRejected, finalize });
+    const events = current.window as never as EventEmitter;
+    events.emit('close', { preventDefault: vi.fn() });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(onCloseRejected).toHaveBeenCalledWith(current, expect.any(Error));
+    expect(current.window.destroy).not.toHaveBeenCalled();
+    expect(finalize).not.toHaveBeenCalled();
+    events.emit('close', { preventDefault: vi.fn() });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(current.window.destroy).toHaveBeenCalledTimes(1);
+  });
   it('registers before renderer activation and returns the registered instance', async () => {
     const order: string[] = [];
     const current = instance(async () => { order.push('load'); });

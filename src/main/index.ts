@@ -1115,9 +1115,24 @@ async function bootstrap(): Promise<void> {
       if (timer) clearTimeout(timer);
       saveTimers.delete(instance.window.id);
       await facade.waitForWorkspaceMutation(instance.window.id);
-      await instance.projectSurfaces.hideAll();
+      await instance.projectSurfaces.flushBeforeClose();
       await saveSessionWindow(instance, !preservingShutdown);
+      await instance.projectSurfaces.hideAll({ strict: true });
       traceQuit('window:' + instance.window.id + ':flush:done');
+    },
+    onCloseRejected: (instance: Parameters<typeof preparePapersWindow>[0], error: unknown) => {
+      closingPapersWindows.delete(instance.window.id);
+      traceQuit('window:' + instance.window.id + ':flush:failed');
+      console.error('[papers] window close save failed:', error);
+      if (!instance.hostView.webContents.isDestroyed()) instance.hostView.webContents.send('host:event:host-error', {
+        component: 'Saving work',
+        what: 'Papers could not finish saving this window.',
+        known: 'The close operation was stopped.',
+        intact: 'The window and its work remain open.',
+        retryUseful: true,
+        inspect: 'Check that the project files and data folder are available.',
+        recover: 'Try closing the window again after resolving the save problem.',
+      });
     },
     finalize: async (windowId: number) => {
       traceQuit('window:' + windowId + ':finalize:start');
@@ -3477,6 +3492,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         ]))
         .then(() => {
         traceQuit('complete');
+        traceQuit('remaining-windows:' + JSON.stringify(BaseWindow.getAllWindows().map(window => ({ id: window.id, visible: window.isVisible(), browser: window instanceof BrowserWindow }))));
         capabilityQuitComplete = true;
       });
     }

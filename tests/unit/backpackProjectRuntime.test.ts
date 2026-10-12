@@ -349,6 +349,16 @@ describe('BackpackProjectRuntime.hide', () => {
     expect(view.webContents.close).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps the live authenticated view attached when save preflight fails', async () => {
+    const runtime = await shownRuntime();
+    const view = soleView();
+    view.webContents.executeJavaScript.mockRejectedValueOnce(new Error('Disk unavailable'));
+    await expect(runtime.flushBeforeClose()).rejects.toThrow('Disk unavailable');
+    expect(harness.window.removeChildView).not.toHaveBeenCalled();
+    expect(view.webContents.close).not.toHaveBeenCalled();
+    expect(runtime.isSender(view.webContents as unknown as import('electron').WebContents)).toBe(true);
+  });
+
   it('with nothing shown is a safe no-op', async () => {
     const runtime = new BackpackProjectRuntime(new BaseWindow(), '/tmp/preload.cjs', false);
 

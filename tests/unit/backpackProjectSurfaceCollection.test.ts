@@ -4,6 +4,7 @@ import { BackpackProjectSurfaceCollection } from '../../src/main/backpacks/backp
 import { createLogicalSurfaceRegistry } from '../../src/main/windows/logicalSurfaceRegistry';
 
 type FakeRuntime = {
+  flushBeforeClose: ReturnType<typeof vi.fn>;
   hide: ReturnType<typeof vi.fn>;
   present: ReturnType<typeof vi.fn>;
   conceal: ReturnType<typeof vi.fn>;
@@ -23,6 +24,7 @@ function collectionWithFakes() {
     undefined,
     (surfaceId) => {
       const runtime: FakeRuntime = {
+        flushBeforeClose: vi.fn().mockResolvedValue(undefined),
         hide: vi.fn(),
         present: vi.fn(),
         conceal: vi.fn(),
@@ -40,6 +42,22 @@ function collectionWithFakes() {
 }
 
 describe('BackpackProjectSurfaceCollection', () => {
+  it('checks every writer without retiring surfaces when one save fails', async () => {
+    const { collection, runtimes } = collectionWithFakes();
+    collection.ensure('surface-p'); collection.ensure('surface-q');
+    runtimes.get('surface-q')!.flushBeforeClose.mockRejectedValue(new Error('Save refused'));
+    await expect(collection.flushBeforeClose()).rejects.toThrow('Save refused');
+    for (const runtime of runtimes.values()) expect(runtime.hide).not.toHaveBeenCalled();
+    expect(collection.all()).toHaveLength(2);
+  });
+
+  it('propagates strict close failures instead of reporting a successful terminal teardown', async () => {
+    const { collection, runtimes } = collectionWithFakes();
+    collection.ensure('surface-p');
+    runtimes.get('surface-p')!.hide.mockRejectedValue(new Error('Save refused'));
+    await expect(collection.hideAll({ strict: true })).rejects.toThrow('Save refused');
+    expect(runtimes.get('surface-p')!.hide).toHaveBeenCalledWith({ restoreOnFlushFailure: true });
+  });
   it('keeps two surfaces independent and closes only the named one', async () => {
     const { collection, runtimes } = collectionWithFakes();
     const p = collection.ensure('surface-p');
