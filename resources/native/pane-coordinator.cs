@@ -463,7 +463,8 @@ public sealed partial class PaneCoordinator : IDisposable {
             var minimum=NativeMinimum(p.Session.Handle);
             p.MinTrackWidth=minimum.Width;p.MinTrackHeight=minimum.Height;
             Log("native-constraint",p,target,after.Box,"rejected placement; no geometry commit");
-            throw new Exception("Native peer refused requested geometry.");
+            throw new Exception("Native peer refused requested geometry: cause="+cause+
+                "; requested="+target+"; observed="+after.Box+"; minimum="+minimum+".");
         }
         p.Programmatic.Add(new PanePlacement{Generation=++moveGeneration,Actual=after.Box,At=DateTime.UtcNow,Cause=cause});
         if(p.Programmatic.Count>12)p.Programmatic.RemoveAt(0);

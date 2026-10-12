@@ -14,7 +14,9 @@ public class DiscardRegression {
  var json=new JavaScriptSerializer();var tree=json.Serialize(pane.Scope.Root);var frame=pane.Group("empty").ResolvedFrame;
  pane.AddDormant(new PaneMountPeer{TabId="replace",Title="Old peer"},"empty");
  pane.SelectTab("empty","replace",pane.Scope.BindingGeneration,pane.Scope.StateRevision);
- using(var incoming=new Form()){incoming.ShowInTaskbar=false;incoming.StartPosition=FormStartPosition.Manual;incoming.Bounds=new Rectangle(50,50,400,400);incoming.CreateControl();uint pid;Native.GetWindowThreadProcessId(incoming.Handle,out pid);
+ // This controlled peer must allow the fixture's off-screen viewport, independently
+ // of the current monitor's default maximum tracking height.
+ using(var incoming=new Form()){incoming.MaximumSize=new Size(1200,800);incoming.ShowInTaskbar=false;incoming.StartPosition=FormStartPosition.Manual;incoming.Bounds=new Rectangle(50,50,400,400);incoming.CreateControl();uint pid;Native.GetWindowThreadProcessId(incoming.Handle,out pid);
  string attached=pane.AttachShiftDrop(incoming.Handle,pid,"empty",pane.Scope.BindingGeneration,pane.Scope.StateRevision);
  Check(attached=="replace"&&pane.Dormant("replace")==null,"Shift drop retains dead slot identity");
  Check(pane.Group("empty").OrderedTabs.Count==2&&pane.Group("empty").SelectedTab=="replace","Shift drop replaces instead of appending");
