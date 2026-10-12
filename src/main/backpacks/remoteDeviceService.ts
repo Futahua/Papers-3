@@ -4,12 +4,14 @@ import { AtomicJsonStore } from '../persistence/atomicStore';
 import { RemoteDeviceStore } from './remoteDeviceStore';
 import { createRemoteFileGateway } from './remoteFileGateway';
 import { randomUUID } from 'node:crypto';
+import type { RemoteFileMutations } from './remoteFileMutations';
 
 export class RemoteDeviceService {
   private devices: RemoteDeviceStore | null = null;
   private gateway: Awaited<ReturnType<typeof createRemoteFileGateway>> | null = null;
   private address: string | null = null;
   private failure: string | null = null;
+  mutations: RemoteFileMutations | null = null;
   private readonly configuration: AtomicJsonStore;
   constructor(private readonly directory: string) {
     this.configuration = new AtomicJsonStore(path.join(directory, 'connection.json'), { recoveryDir: path.join(directory, 'recovery') });
@@ -32,7 +34,10 @@ export class RemoteDeviceService {
     if (!address) throw new Error('Connect Tailscale on this computer first.');
     const devices = this.devices;
     const snapshot = devices.snapshot();
-    const gateway = await createRemoteFileGateway({ owner: snapshot.owner, grants: snapshot.devices, pair: async (code, name) => {
+    const gateway = await createRemoteFileGateway({ owner: snapshot.owner, grants: snapshot.devices,
+      mutate:async(deviceId,catalog,request)=>{if(!this.mutations)throw new Error('File changes are unavailable.');return this.mutations.submit(deviceId,catalog,request);},
+      changes:deviceId=>this.mutations?.list(deviceId)??[],revokeChanges:deviceId=>this.mutations?.revoke(deviceId),
+      pair: async (code, name) => {
       const paired = await devices.redeem(code, name);
       return { ...paired, grant: devices.snapshot().devices.find(device => device.deviceId === paired.deviceId)! };
     } });
@@ -46,10 +51,10 @@ export class RemoteDeviceService {
       this.failure = null;
     } catch (error) { await gateway.close().catch(() => {}); throw error; }
   }
-  async invite(directories: string[]) {
+  async invite(directories: string[], canWrite = false) {
     if (!this.devices) throw new Error(this.failure ?? 'Device identity is unavailable.');
     await this.start();
-    const invitation = await this.devices.invite(directories.map(directory => ({ id: randomUUID(), name: path.basename(directory) || directory, directory })));
+    const invitation = await this.devices.invite(directories.map(directory => ({ id: randomUUID(), name: path.basename(directory) || directory, directory })),canWrite);
     await this.configuration.save({ enabled: true });
     return { ...invitation, address: this.address, owner: this.devices.snapshot().owner };
   }

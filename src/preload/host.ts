@@ -124,7 +124,7 @@ const api = {
   devices: {
     pair: (address: string, code: string) => ipcRenderer.invoke('host:devices:pair', { address, code }),
     status: () => ipcRenderer.invoke('host:devices:status'),
-    invite: () => ipcRenderer.invoke('host:devices:invite'),
+    invite: (canWrite = false) => ipcRenderer.invoke('host:devices:invite', canWrite),
     revoke: (id: string) => ipcRenderer.invoke('host:devices:revoke', id),
   },
 

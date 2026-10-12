@@ -8,11 +8,12 @@ export function DevicesCard(): React.JSX.Element {
   const [busy, setBusy] = React.useState(false);
   const [address, setAddress] = React.useState('');
   const [code, setCode] = React.useState('');
+  const [canWrite,setCanWrite] = React.useState(false);
   const refresh = React.useCallback(() => { void host().devices.status().then(setStatus).catch(error => setError(String(error))); }, []);
   React.useEffect(() => { refresh(); const interval = setInterval(refresh, 3000); return () => clearInterval(interval); }, [refresh]);
   const invite = async (): Promise<void> => {
     setBusy(true); setError('');
-    try { setInvitation(await host().devices.invite()); refresh(); }
+    try { setInvitation(await host().devices.invite(canWrite)); refresh(); }
     catch (error) { setError(error instanceof Error ? error.message : String(error)); }
     finally { setBusy(false); }
   };
@@ -33,6 +34,7 @@ export function DevicesCard(): React.JSX.Element {
     <strong>{status?.owner?.name ?? 'This computer'}</strong>
     <small>Connect another computer or phone to selected folders. Both devices need Tailscale connected.</small>
     <button type="button" className="quiet-button" disabled={busy || Boolean(status?.error)} onClick={() => void invite()}>Connect a device</button>
+    <label><input type="checkbox" checked={canWrite} onChange={event=>setCanWrite(event.target.checked)} />Allow file changes in the selected folders</label>
     {invitation && <div role="status"><strong>{invitation.code}</strong><p>{invitation.address}</p><small>Enter this address and code on the other device within five minutes.</small></div>}
     {status?.devices.map(device => <div key={device.id}><strong>{device.name}</strong><small>{device.folders.join(', ')}</small><button type="button" className="quiet-button" disabled={busy} onClick={() => void revoke(device.id)}>Disconnect device</button></div>)}
     <strong>Access another computer</strong>

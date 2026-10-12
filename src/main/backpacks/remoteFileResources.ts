@@ -102,6 +102,15 @@ export class RemoteFileResources {
     return { ...await this.describe(resource.shareId, resource.target), id };
   }
 
+  async checkedPath(id: string, expectedVersion: string, allowRoot = false): Promise<{ path: string; entry: RemoteFileEntry }> {
+    const resource = await this.resolve(id);
+    if ((await fs.lstat(this.resources.get(id)!.target)).isSymbolicLink()) throw new RemoteFileError('LINK_MUTATION_UNSUPPORTED', 'Changing symbolic links or junctions requires an explicit link policy.');
+    const entry = await this.stat(id);
+    if (entry.version !== expectedVersion) throw new RemoteFileError('VERSION_CHANGED', 'Resource changed; refresh before changing it.');
+    if (!allowRoot && resource.target === this.roots.get(resource.shareId)!.directory) throw new RemoteFileError('SHARE_ROOT_PROTECTED', 'The shared root cannot be moved, renamed or deleted.');
+    return { path: resource.target, entry };
+  }
+
   async digest(id: string, expectedVersion: string): Promise<{ version: string; sha256: string; size: number }> {
     const lease = await this.open(id, expectedVersion);
     try {

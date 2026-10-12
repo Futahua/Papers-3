@@ -23,10 +23,11 @@ final class MobileFiles {
   static synchronized MobileFiles get(Context context) { if (instance == null) instance = new MobileFiles(context.getApplicationContext()); return instance; }
   private final Context context;
   private final File root;
+  private final MobileCommandOutbox outbox;
   private final Map<String, JSONObject> jobs = new ConcurrentHashMap<>();
   private final Map<String, Future<?>> workers = new ConcurrentHashMap<>();
   private final ExecutorService downloads = Executors.newFixedThreadPool(2);
-  MobileFiles(Context context) { this.context = context; root = new File(context.getFilesDir(), "remote-files"); root.mkdirs(); }
+  MobileFiles(Context context) { this.context = context; root = new File(context.getFilesDir(), "remote-files"); root.mkdirs(); outbox=new MobileCommandOutbox(root); }
 
   Object call(JSONObject request) throws Exception {
     String operation = request.getString("operation");
@@ -37,6 +38,9 @@ final class MobileFiles {
       case "browse": return browse(owner, request.optString("resourceId"), request.optInt("offset", 0));
       case "download": return download(owner, request.getJSONObject("entry"));
       case "offline": return offline(owner);
+      case "change": { JSONObject device=connection(owner);return outbox.send(owner,device.optString("deviceId"),request.getJSONObject("command"),command->dispatchChange(device,command)); }
+      case "change-retry": { JSONObject device=connection(owner);return outbox.retry(owner,device.optString("deviceId"),request.getString("commandId"),command->dispatchChange(device,command)); }
+      case "changes": { JSONArray changes=json(request(owner,"/v1/files/changes",null,null)).getJSONArray("jobs");outbox.reconcile(owner,changes);return changes; }
       case "cancel": { String id = request.getString("jobId"); Future<?> worker = workers.get(id); if (worker != null) worker.cancel(true); JSONObject job = jobs.get(id); if (job != null) synchronized (job) { if (!"completed".equals(job.getString("phase"))) job.put("phase", "failed").put("error", "Transfer paused. Retry to resume."); } return new JSONObject().put("canceled", true); }
       case "open-cache": { File file = checkedFile(owner, request.getString("key")); CachedFilesProvider.open(context, file, metadata(request.getString("key")).getJSONObject("entry").getString("name")); return new JSONObject().put("opened", true); }
       default: throw new IOException("Unknown file operation.");
@@ -56,7 +60,8 @@ final class MobileFiles {
     JSONObject response = json(http(base + "/v1/devices/pair", null, null, new JSONObject().put("code", code).put("name", Build.MODEL)));
     JSONObject owner = response.getJSONObject("owner");
     if (!owner.getString("id").matches("[a-f0-9-]{36}") || !response.getString("token").matches("[A-Za-z0-9_-]{43}")) throw new IOException("Invalid pairing response.");
-    JSONObject device = new JSONObject().put("id", owner.getString("id")).put("name", owner.getString("name")).put("address", base).put("secret", seal(response.getString("token")));
+    if(!response.getString("deviceId").matches("[a-f0-9-]{36}"))throw new IOException("Invalid pairing identity.");
+    JSONObject device = new JSONObject().put("id", owner.getString("id")).put("deviceId",response.getString("deviceId")).put("name", owner.getString("name")).put("address", base).put("secret", seal(response.getString("token")));
     JSONArray previous = connections(), next = new JSONArray();
     for (int i = 0; i < previous.length(); i++) if (!previous.getJSONObject(i).getString("id").equals(owner.getString("id"))) next.put(previous.getJSONObject(i));
     next.put(device); write(new File(root, "connections.json"), new JSONObject().put("connections", next));
@@ -66,8 +71,9 @@ final class MobileFiles {
     JSONArray devices = new JSONArray(), transfers = new JSONArray(), connections = connections();
     for (int i = 0; i < connections.length(); i++) { JSONObject c = connections.getJSONObject(i); devices.put(new JSONObject().put("id", c.getString("id")).put("name", c.getString("name")).put("address", c.getString("address"))); }
     for (JSONObject job : jobs.values()) synchronized (job) { transfers.put(new JSONObject(job.toString())); }
-    return new JSONObject().put("devices", devices).put("jobs", transfers);
+    return new JSONObject().put("devices", devices).put("jobs", transfers).put("commandJobs",outbox.snapshot());
   }
+  private JSONObject dispatchChange(JSONObject device,JSONObject command) throws Exception { return json(http(address(device.getString("address"))+"/v1/files/changes",open(device.getString("secret")),null,command)).getJSONObject("job"); }
   private JSONObject browse(String owner, String id, int offset) throws Exception {
     if (!id.isEmpty() && !id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid file identity.");
     if (offset < 0) throw new IOException("Invalid listing page.");

@@ -12,6 +12,7 @@ import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
 import { RemoteDeviceService } from './backpacks/remoteDeviceService';
 import { RemoteFileClient } from './backpacks/remoteFileClient';
+import { RemoteFileMutations } from './backpacks/remoteFileMutations';
 import { safeStorage } from 'electron';
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
@@ -807,6 +808,9 @@ async function bootstrap(): Promise<void> {
         case 'browse': return remoteFiles.browse(ownerId, typeof params.resourceId === 'string' ? params.resourceId : undefined, typeof params.offset === 'number' ? params.offset : 0);
         case 'download': return remoteFiles.download(ownerId, params.entry);
         case 'offline': return remoteFiles.offline(ownerId);
+        case 'change': return remoteFiles.change(ownerId,params.command);
+        case 'change-retry': return remoteFiles.retryChange(ownerId,String(params.commandId??''));
+        case 'changes': return remoteFiles.changes(ownerId);
         case 'cancel': if (typeof params.jobId === 'string') remoteFiles.cancel(params.jobId); return { canceled: true };
         case 'open-cache': {
           if (typeof params.key !== 'string') throw new Error('Choose an offline file.');
@@ -857,6 +861,8 @@ async function bootstrap(): Promise<void> {
   });
 
   const permissionStore = new PermissionStore(paths);
+  const remoteMutations = new RemoteFileMutations(path.join(paths.root,'file-commands'),(operation,params,deviceId)=>fileCapability.call({operation,params},{backpackId:'remote:'+deviceId}));
+  await remoteMutations.initialize().then(()=>{remoteDevices.mutations=remoteMutations;}).catch(error=>console.error('[remote-files] command recovery needed:',error));
   await permissionStore.initialize();
 
   const programsRoot = defaultProgramsRoot(app.getAppPath(), app.isPackaged, process.resourcesPath);
@@ -1832,7 +1838,7 @@ async function bootstrap(): Promise<void> {
       }
       const chosen = await dialog.showOpenDialog({ title: 'Choose folders this device may access', properties: ['openDirectory', 'multiSelections'] });
       if (chosen.canceled || !chosen.filePaths.length) return null;
-      return remoteDevices.invite(chosen.filePaths);
+      return remoteDevices.invite(chosen.filePaths,deviceId===true);
     });
   }
   const windowCapabilityService = createWindowCapabilityService({
@@ -3479,6 +3485,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // begins.
       capabilityQuitPromise = quitStage('control', () => papersControlServer?.close())
         .then(() => quitStage('remote-devices', () => remoteDevices.close()))
+        .then(() => quitStage('remote-file-commands', () => remoteMutations.close()))
         .then(() => quitStage('remote-files', () => remoteFiles.close()))
         .then(() => quitStage('native-panes', () => chromePane?.coordinator?.dispose()))
         .then(async () => { await commandSurfaceOverlay?.destroy().catch(() => undefined); commandSurfaceOverlay = null; })

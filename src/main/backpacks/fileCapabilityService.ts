@@ -762,7 +762,7 @@ async function operationViaOpus(
     if (!deps.dopusrtPath) return { ok: false, code: 'DOPUS_UNAVAILABLE', message: 'Directory Opus is unavailable.' };
     const command = ['Copy', ...sources];
     if (operation === 'move') command.push('MOVE');
-    command.push('TO', destination, 'WHENEXISTS=ask');
+    command.push('TO', destination, params.neverOverwrite === true ? 'WHENEXISTS=skip' : 'WHENEXISTS=ask');
     await runOpus(deps.dopusrtPath, command);
     return { ok: true, provider: 'directory-opus', operation };
   }
@@ -771,7 +771,7 @@ async function operationViaOpus(
     const target = absolutePath(params.path);
     const newName = safeName(params.newName);
     if (!deps.dopusrtPath) return { ok: false, code: 'DOPUS_UNAVAILABLE', message: 'Directory Opus is unavailable.' };
-    await runOpus(deps.dopusrtPath, ['Rename', target, 'TO', newName, 'WHENEXISTS=ask']);
+    await runOpus(deps.dopusrtPath, ['Rename', target, 'TO', newName, params.neverOverwrite === true ? 'WHENEXISTS=skip' : 'WHENEXISTS=ask']);
     return {
       ok: true,
       provider: 'directory-opus',

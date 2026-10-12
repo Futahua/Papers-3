@@ -5,6 +5,8 @@ import * as path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { createRemoteFileGateway, remoteTokenHash } from '../src/main/backpacks/remoteFileGateway';
 import { RemoteDeviceStore } from '../src/main/backpacks/remoteDeviceStore';
+import { RemoteFileMutations } from '../src/main/backpacks/remoteFileMutations';
+import { randomUUID } from 'node:crypto';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -79,4 +81,18 @@ it('pairs once through the host store and grants only the invited folders', asyn
   await store.revoke(paired.deviceId);
   gateway.revoke(paired.deviceId);
   expect((await fetch(`${base}/v1/files/shares`, { headers })).status).toBe(401);
+});
+
+it('refuses changes for a read-only grant and confirms an authorized owner rename',async()=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'papers-change-http-'));cleanups.push(()=>fs.rm(directory,{recursive:true,force:true}));const shared=path.join(directory,'shared');await fs.mkdir(shared);await fs.writeFile(path.join(shared,'before.txt'),'content');
+ const writable=randomBytes(32).toString('base64url'),readonly=randomBytes(32).toString('base64url');
+ const mutations=new RemoteFileMutations(path.join(directory,'journal'),async(operation,params)=>{expect(operation).toBe('rename');await fs.rename(params.path as string,path.join(path.dirname(params.path as string),params.newName as string));return {ok:true};});await mutations.initialize();
+ const share={id:'files',name:'Files',directory:shared};const gateway=await createRemoteFileGateway({owner:{id:randomUUID(),name:'Owner'},grants:[{deviceId:'writer',tokenHash:remoteTokenHash(writable),shares:[share],canWrite:true},{deviceId:'reader',tokenHash:remoteTokenHash(readonly),shares:[share]}],mutate:(device,catalog,request)=>mutations.submit(device,catalog,request),changes:device=>mutations.list(device),revokeChanges:device=>mutations.revoke(device)});
+ await new Promise<void>(resolve=>gateway.server.listen(0,'127.0.0.1',resolve));cleanups.push(async()=>{await gateway.close();await mutations.close();});const address=gateway.server.address();if(!address||typeof address==='string')throw Error('Listener missing');const base=`http://127.0.0.1:${address.port}`;
+ expect((await fetch(base+'/v1/files/changes',{method:'POST',headers:{Authorization:'Bearer '+readonly,'Content-Type':'application/json'},body:'{}'})).status).toBe(403);
+ const headers={Authorization:'Bearer '+writable};const roots=await(await fetch(base+'/v1/files/shares',{headers})).json();expect(roots.capabilities.changes).toBe(true);const files=await(await fetch(base+`/v1/files/${roots.entries[0].id}/list`,{headers})).json();
+ const command={commandId:randomUUID(),operation:'rename',resourceId:files.entries[0].id,expectedVersion:files.entries[0].version,newName:'after.txt'};
+ expect((await fetch(base+'/v1/files/changes',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify(command)})).status).toBe(202);
+ await mutations.close();const result=await(await fetch(base+'/v1/files/changes',{headers})).json();expect(result.jobs[0].phase).toBe('completed');expect(await fs.readFile(path.join(shared,'after.txt'),'utf8')).toBe('content');
+ const other=await(await fetch(base+'/v1/files/changes',{headers:{Authorization:'Bearer '+readonly}})).json();expect(other.jobs).toEqual([]);
 });

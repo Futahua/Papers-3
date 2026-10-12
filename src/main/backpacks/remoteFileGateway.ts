@@ -7,6 +7,7 @@ export interface RemoteFileGrant {
   deviceId: string;
   tokenHash: string;
   shares: RemoteFileShare[];
+  canWrite?: boolean;
 }
 export function remoteTokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -25,6 +26,9 @@ export async function createRemoteFileGateway(options: {
   owner: { id: string; name: string };
   grants: RemoteFileGrant[];
   pair?: (code: string, name: string) => Promise<{ owner: { id: string; name: string }; deviceId: string; token: string; grant: RemoteFileGrant }>;
+  mutate?: (deviceId: string, catalog: RemoteFileResources, request: unknown) => Promise<unknown>;
+  changes?: (deviceId: string) => unknown;
+  revokeChanges?: (deviceId: string) => void;
 }): Promise<{ server: Server; revoke: (deviceId: string) => void; close: () => Promise<void> }> {
   const devices = new Map<string, { grant: RemoteFileGrant; catalog: RemoteFileResources; responses: Set<ServerResponse> }>();
   const tokenHashes = new Set<string>();
@@ -60,20 +64,29 @@ export async function createRemoteFileGateway(options: {
     const token = /^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(authorization)?.[1];
     const device = token && [...devices.values()].find(item => matches(token, item.grant.tokenHash));
     if (!device) { json(response, 401, { ok: false, code: 'DEVICE_UNAUTHORIZED' }); return; }
+    if(request.url==='/v1/files/changes'&&request.method==='GET') { json(response,200,{ok:true,jobs:options.changes?.(device.grant.deviceId)??[]});return; }
+    if(request.url==='/v1/files/changes'&&request.method==='POST') {
+      if(device.grant.canWrite!==true||!options.mutate){json(response,403,{ok:false,code:'FILE_CHANGES_NOT_GRANTED'});return;}
+      try{
+        let body='';for await(const chunk of request){body+=chunk.toString('utf8');if(Buffer.byteLength(body)>4096)throw new Error('File command is too large.');}
+        json(response,202,{ok:true,job:await options.mutate(device.grant.deviceId,device.catalog,JSON.parse(body))});
+      }catch(error){json(response,400,{ok:false,code:'FILE_COMMAND_REFUSED',message:error instanceof Error?error.message:'Invalid file command.'});}
+      return;
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') { json(response, 405, { ok: false, code: 'OPERATION_UNSUPPORTED' }); return; }
     device.responses.add(response);
     response.once('close', () => device.responses.delete(response));
     try {
       const url = new URL(request.url ?? '/', 'http://gateway.invalid');
       if (url.pathname === '/v1/files/shares') {
-        json(response, 200, { ok: true, protocol: 1, owner: options.owner, entries: await device.catalog.shares() });
+        json(response, 200, { ok: true, protocol: 1, owner: options.owner, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate)}, entries: await device.catalog.shares() });
         return;
       }
       const match = /^\/v1\/files\/([a-f0-9-]{36})\/(list|stat|content|digest)$/.exec(url.pathname);
       if (!match) { json(response, 404, { ok: false, code: 'OPERATION_UNKNOWN' }); return; }
       const id = match[1]!;
       if (match[2] === 'list') {
-        json(response, 200, { ok: true, ...await device.catalog.list(id, Number(url.searchParams.get('offset') ?? 0), Number(url.searchParams.get('limit') ?? 200)) });
+        json(response, 200, { ok: true, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate)},folder:await device.catalog.stat(id), ...await device.catalog.list(id, Number(url.searchParams.get('offset') ?? 0), Number(url.searchParams.get('limit') ?? 200)) });
         return;
       }
       if (match[2] === 'stat') { json(response, 200, { ok: true, entry: await device.catalog.stat(id) }); return; }
@@ -126,6 +139,7 @@ export async function createRemoteFileGateway(options: {
   const revoke = (deviceId: string): void => {
       const device = devices.get(deviceId);
       devices.delete(deviceId);
+      options.revokeChanges?.(deviceId);
       for (const response of device?.responses ?? []) response.destroy();
   };
   return {

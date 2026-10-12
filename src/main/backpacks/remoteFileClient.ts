@@ -5,6 +5,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { AtomicJsonStore } from '../persistence/atomicStore';
 import type { RemoteFileEntry } from './remoteFileResources';
+import { RemoteFileOutbox } from './remoteFileOutbox';
 
 interface Connection { id: string; name: string; address: string; secret: string; deviceId: string }
 interface SecretBox { seal: (value: string) => string; open: (value: string) => string }
@@ -32,10 +33,13 @@ export class RemoteFileClient {
   private readonly transfers = new Map<string, Promise<void>>();
   private readonly store: AtomicJsonStore;
   private saveQueue: Promise<unknown> = Promise.resolve();
+  private readonly outbox: RemoteFileOutbox;
   constructor(private readonly directory: string, private readonly secrets: SecretBox, private readonly allowLoopback = false) {
     this.store = new AtomicJsonStore(path.join(directory, 'connections.json'), { recoveryDir: path.join(directory, 'recovery') });
+    this.outbox = new RemoteFileOutbox(directory);
   }
   async initialize(): Promise<void> {
+    await this.outbox.initialize();
     const report = await this.store.load<{ version: 1; connections: Connection[] }>();
     if (report.value) {
       if (report.value.version !== 1 || !Array.isArray(report.value.connections)) throw new Error('Remote connection store needs recovery.');
@@ -46,7 +50,7 @@ export class RemoteFileClient {
       this.connections = report.value.connections;
     }
   }
-  snapshot() { return { devices: this.connections.map(({ id, name, address }) => ({ id, name, address })), jobs: structuredClone([...this.jobs.values()]) }; }
+  snapshot() { return { devices: this.connections.map(({ id, name, address }) => ({ id, name, address })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
   async pair(ownerAddress: string, code: string, name: string): Promise<void> {
     const base = address(ownerAddress, this.allowLoopback);
     const response = await fetch(`${base}/v1/devices/pair`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }) });
@@ -67,9 +71,9 @@ export class RemoteFileClient {
     if (!connection) throw new Error('Device is not connected.');
     return connection;
   }
-  private async request(ownerId: string, route: string, headers: Record<string, string> = {}, signal?: AbortSignal): Promise<Response> {
+  private async request(ownerId: string, route: string, headers: Record<string, string> = {}, signal?: AbortSignal, body?: unknown): Promise<Response> {
     const connection = this.connection(ownerId);
-    const response = await fetch(`${connection.address}${route}`, { redirect: 'error', headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`, ...headers }, signal: signal ?? AbortSignal.timeout(30_000) });
+    const response = await fetch(`${connection.address}${route}`, { redirect: 'error', method:body===undefined?'GET':'POST', ...(body===undefined?{}:{body:JSON.stringify(body)}),headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`,...(body===undefined?{}:{'Content-Type':'application/json'}), ...headers }, signal: signal ?? AbortSignal.timeout(30_000) });
     if (!response.ok) throw new Error(response.status === 412 ? 'Source changed. Refresh before downloading.' : response.status === 401 ? 'Access was revoked. Pair this device again.' : `Remote operation failed (${response.status}).`);
     return response;
   }
@@ -83,7 +87,7 @@ export class RemoteFileClient {
       const response = await (await this.request(ownerId, route)).json();
       if (response.owner && response.owner.id !== ownerId) throw new Error('Owner identity changed; pair again.');
       if (!Array.isArray(response.entries)) throw new Error('Invalid listing.');
-      const result = { entries: response.entries.map(entry), nextOffset: response.nextOffset ?? null };
+      const result = { entries: response.entries.map(entry), nextOffset: response.nextOffset ?? null,capabilities:response.capabilities??{},folder:response.folder?entry(response.folder):null };
       await listing.save(result);
       return { ...result, online: true };
     } catch (error) {
@@ -106,6 +110,10 @@ export class RemoteFileClient {
     this.transfers.set(job.id, transfer);
     return structuredClone(job);
   }
+  private async dispatchChange(ownerId:string,command:unknown){return (await (await this.request(ownerId,'/v1/files/changes',{},undefined,command)).json()).job;}
+  async change(ownerId:string,command:unknown){return this.outbox.send(ownerId,this.connection(ownerId).deviceId,command,value=>this.dispatchChange(ownerId,value));}
+  async retryChange(ownerId:string,commandId:string){return this.outbox.retry(ownerId,this.connection(ownerId).deviceId,commandId,value=>this.dispatchChange(ownerId,value));}
+  async changes(ownerId:string){const jobs=(await (await this.request(ownerId,'/v1/files/changes')).json()).jobs;if(!Array.isArray(jobs))throw new Error('Invalid file request history.');await this.outbox.reconcile(ownerId,jobs);return jobs;}
   private async transfer(job: RemoteDownloadJob, signal: AbortSignal): Promise<void> {
     const headers = { 'If-Match': `"${job.entry.version}"` };
     const digest = await (await this.request(job.ownerId, `/v1/files/${job.entry.id}/digest`, headers, signal)).json();
@@ -162,5 +170,6 @@ export class RemoteFileClient {
     for (const controller of this.controllers.values()) controller.abort();
     await Promise.allSettled([...this.transfers.values()]);
     await this.saveQueue;
+    await this.outbox.close();
   }
 }

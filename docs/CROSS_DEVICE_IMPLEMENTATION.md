@@ -1,10 +1,72 @@
 # Cross-device implementation checkpoint
 
-2026-10-12. The complete requested experience remains defined by
+2026-10-13. The complete requested experience remains defined by
 [CROSS_DEVICE_PLAN.md](CROSS_DEVICE_PLAN.md). This checkpoint records implemented
-source and evidence; it does not claim deployment or completion.
+source and evidence; it distinguishes development installs from completion.
 
-## Current source
+## Current checkpoint: checked file changes
+
+Remote folders can now be explicitly granted file changes in the owner's Devices
+settings. Existing grants and new invitations remain read-only by default.
+Create, rename, copy, move and recycle use the existing local file-capability
+owner. Copy/move/rename retain Directory Opus; there is no silent filesystem
+fallback. Remote names/opaque IDs are checked against the approved share and
+source/destination versions before dispatch. Existing destinations are refused;
+Opus receives its supported `WHENEXISTS=skip` protection as well.
+
+`remoteFileMutations.ts` persists command identity before acknowledging queued
+work. An acknowledgement does not claim native completion. Completion waits for
+the actual filesystem result and full content/tree verification for copied or
+moved content. Queued acknowledgement stays responsive while an earlier native
+operation is pending. Revocation refuses subsequent dispatch. Ambiguous owner
+restart never redispatches an operation automatically.
+
+Windows `remoteFileOutbox.ts` and Android `MobileCommandOutbox.java` save each
+request before network dispatch. A lost acknowledgement retains the same request
+for explicit retry, including after process death. Fresh changes to that same
+item are refused until the saved request is resolved. Retry under a different
+pairing or with different intent is refused. Owner history reconciles pending
+requests without dispatch. This is request recovery, not background download
+process-death recovery or an online edit-session implementation.
+
+AYG's shared remote view adds inline create/rename forms, move/copy/paste,
+explicit recycle confirmation, visible jobs and saved-request retry. Completed
+operations refresh the listing automatically. Offline listings disable changes;
+share roots cannot be renamed, moved or recycled. Stale polling results are
+discarded when navigation changes. None of this adds owner application control.
+
+The signed Android development update is installed on the actual phone and
+preserves existing local data. Generated-folder acceptance passed both on Wi-Fi
+and with Wi-Fi disabled, LTE active and a connected mobile-data network:
+
+- Real native create, rename, copy, move and recycle through the desktop owner.
+- Intentionally suppressed acknowledgement after durable acceptance, refusal of
+  a second fresh request, phone process termination and retry after restart.
+- Exactly one owner operation for the original saved command identity.
+- Refreshed listings and a complete SHA-256 verified 1 MiB copied file download.
+- Actual WebView create/rename/recycle controls, native bridge and automatic
+  listing refresh. Wi-Fi was restored after the mobile-data checks.
+
+These are isolated fixtures. They prove an Internet/mobile-data route, not an
+Internet throughput ceiling or availability of the creator's actual locations.
+The laptop is still on the earlier read-only development build pending this
+checkpoint's packaged update and lifecycle verification.
+
+Full suites: Papers 1,478 passed / four skipped; AYG 2,028 passed plus eight
+visual preflight checks. Type checking and production build pass. The previous
+native discard failure is explained: the test requested a 768px off-screen peer
+while the monitor's default Windows maximum tracking height clamped it to 620px.
+The controlled fixture peer now explicitly allows its fixed viewport; all of its
+original topology/replacement/cleanup assertions remain. Production placement
+still refuses mismatched geometry, with requested/observed/minimum diagnostics.
+
+Remaining gates include actual creator locations, search/preview/export,
+checked online edit staging/save-back and external-editor conflicts, persistent
+background download recovery, provider comparisons, Proxima projection/import/
+explicit follow, and full installation/shutdown acceptance. The goal remains
+incomplete. Sections below retain the dated implementation and device evidence.
+
+## Initial source checkpoint (2026-10-12)
 
 - `src/main/backpacks/remoteFileResources.ts`: approved directories, opaque
   session resource identities, paginated listings, containment checks including
@@ -66,7 +128,7 @@ fallback, an independent full hash of the retained file bytes, pairing retention
 through APK updates and the shared UI. The separate test APK was then removed;
 the signed development client remains installed. The fixture listener is retired.
 
-Current full suites: Papers 1,463 passed / four skipped; AYG 2,028 passed, plus
+At that checkpoint: Papers 1,463 passed / four skipped; AYG 2,028 passed, plus
 eight visual preflight checks. Fifteen focused host checks cover pairing,
 authorization, versions, digest/ranges, receiver resume, offline bytes and
 identity stability across gateway restarts. Phone process-death/background
