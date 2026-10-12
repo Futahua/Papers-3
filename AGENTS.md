@@ -120,6 +120,7 @@ Run checks appropriate to the changed owner. Documentation-only edits need link,
 consistency and diff checks, not an application rebuild or desktop interaction.
 
 - [New-machine dependency and recovery checklist](docs/NEW_MACHINE_SETUP.md).
+- [Cross-device experience, research and delivery plan](docs/CROSS_DEVICE_PLAN.md): creator-requested planning for PC/Android live access, AYG owner-based files, Proxima selective copies/following, native remote control and installation. Provider choices are provisional; distinguish preliminary device evidence from implemented features.
 
 Pencilcase also owns the ChatGPT local coder view, opened from its dedicated tool
 entry as a separate page. The Delegate Wave Backpack is retired and archived. Its

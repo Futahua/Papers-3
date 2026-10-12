@@ -16,6 +16,7 @@ Papers is a personal layer across Windows. Its governing document is
 
 - [Product reference](docs/PRODUCT.md)
 - [Chronological creator-accepted decisions](docs/DECISIONS.md)
+- [Cross-device experience, research and delivery plan](docs/CROSS_DEVICE_PLAN.md) (planning, with preliminary two-PC evidence)
 
 ### Current use, work and acceptance
 
