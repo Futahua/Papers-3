@@ -804,7 +804,7 @@ async function bootstrap(): Promise<void> {
       if (remoteFilesError) throw new Error(remoteFilesError);
       const ownerId = typeof params.ownerId === 'string' ? params.ownerId : '';
       switch (params.operation) {
-        case 'status': return remoteFiles.snapshot();
+        case 'status': return { ...remoteFiles.snapshot(), owner: remoteDevices.snapshot().owner };
         case 'browse': return remoteFiles.browse(ownerId, typeof params.resourceId === 'string' ? params.resourceId : undefined, typeof params.offset === 'number' ? params.offset : 0);
         case 'download': return remoteFiles.download(ownerId, params.entry);
         case 'offline': return remoteFiles.offline(ownerId);
