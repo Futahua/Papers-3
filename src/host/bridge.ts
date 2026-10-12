@@ -173,6 +173,12 @@ interface HostBridge {
     saveWindowBounds(): Promise<{ x: number; y: number; width: number; height: number } | null>;
     clearWindowBounds(): Promise<void>;
   };
+  devices: {
+    status(): Promise<{ owner: { id: string; name: string } | null; address: string | null; error: string | null; clientError: string | null; incoming: Array<{ id: string; name: string; address: string }>; devices: Array<{ id: string; name: string; pairedAt: number; folders: string[] }> }>;
+    pair(address: string, code: string): Promise<unknown>;
+    invite(): Promise<{ code: string; expiresAt: number; address: string | null; owner: { id: string; name: string } } | null>;
+    revoke(id: string): Promise<unknown>;
+  };
   permissions: {
     list(): Promise<
       { backpackId: string; programId: string; capability: string; grantedAt: string }[]

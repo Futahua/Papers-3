@@ -53,6 +53,7 @@ export interface FileCapabilityEntry {
   size: number | null; createdAt: number | null; modifiedAt: number | null; identity: string | null;
 }
 export interface FileCapabilityDeps {
+  remoteFiles?: (request: Record<string, unknown>) => Promise<unknown>;
   panePageDrag?:()=>string|null;
   panePages?:{check:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>;attach:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>};
   trashPath?: (target: string) => Promise<void>;
@@ -835,6 +836,8 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
       const params = isRecord(raw.params) ? raw.params : {};
       try {
         switch (operation) {
+          case 'remote-files':
+            return deps.remoteFiles ? { ok: true, result: await deps.remoteFiles(params) } : { ok: false, code: 'REMOTE_FILES_UNAVAILABLE' };
           case 'runtime-snapshot':
             return { ok: true, ...deps.runtimeControl?.snapshot(), providers: (await service.call({ operation: 'providers' }, context)).providers };
           case 'runtime-configure':

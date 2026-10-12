@@ -10,6 +10,9 @@ import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
 import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from './backpacks/everythingSearchBridge';
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
+import { RemoteDeviceService } from './backpacks/remoteDeviceService';
+import { RemoteFileClient } from './backpacks/remoteFileClient';
+import { safeStorage } from 'electron';
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
 import { createHtmlPreviewHostBridge } from './backpacks/htmlPreviewHostBridge';
@@ -544,6 +547,17 @@ async function bootstrap(): Promise<void> {
 
   const baseDir = app.getPath('userData');
   const paths = papersPaths(baseDir);
+  const remoteDevices = new RemoteDeviceService(path.join(paths.root, 'devices'));
+  await remoteDevices.initialize();
+  const remoteFiles = new RemoteFileClient(path.join(paths.root, 'remote-files'), {
+    seal: value => {
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows credential protection is unavailable.');
+      return safeStorage.encryptString(value).toString('base64');
+    },
+    open: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
+  });
+  let remoteFilesError: string | null = null;
+  await remoteFiles.initialize().catch(error => { remoteFilesError = error instanceof Error ? error.message : 'Remote files are unavailable.'; });
   const workspaceTopologyStore = new WorkspaceTopologyStore(paths);
   await workspaceTopologyStore.initialize();
   const oldSessionPages = await workspaceTopologyStore.sessionSnapshots();
@@ -785,6 +799,25 @@ async function bootstrap(): Promise<void> {
       facade.activateBackpackProjectSurface(hostId,parent.surfaceId);
     }});
   const fileCapability = createFileCapabilityService({
+    remoteFiles: async params => {
+      if (remoteFilesError) throw new Error(remoteFilesError);
+      const ownerId = typeof params.ownerId === 'string' ? params.ownerId : '';
+      switch (params.operation) {
+        case 'status': return remoteFiles.snapshot();
+        case 'browse': return remoteFiles.browse(ownerId, typeof params.resourceId === 'string' ? params.resourceId : undefined, typeof params.offset === 'number' ? params.offset : 0);
+        case 'download': return remoteFiles.download(ownerId, params.entry);
+        case 'offline': return remoteFiles.offline(ownerId);
+        case 'cancel': if (typeof params.jobId === 'string') remoteFiles.cancel(params.jobId); return { canceled: true };
+        case 'open-cache': {
+          if (typeof params.key !== 'string') throw new Error('Choose an offline file.');
+          const target = await remoteFiles.cachedPath(ownerId, params.key);
+          const failure = await shell.openPath(target);
+          if (failure) throw new Error(failure);
+          return { opened: true };
+        }
+        default: throw new Error('Unknown remote file operation.');
+      }
+    },
     panePageDrag:()=>pageDragId,
     panePages:{check:(...args)=>panePages!.check(...args),attach:async(...args)=>{
       const source=papersWindows.windowIds.map(id=>({id,page:currentWorkspaceTopology(id)?.surfaces.find(p=>p.surfaceId===args[1]||(p.surfaceKey??p.surfaceId)===args[1])})).find(p=>p.page);
@@ -1765,6 +1798,28 @@ async function bootstrap(): Promise<void> {
     const id = papersWindows.windowForSender(sender.id);
     return nativeFileDrag(id === null ? BrowserWindow.fromWebContents(sender) : papersWindows.get(id)?.owned.window ?? null, start);
   });
+  for (const operation of ['status', 'invite', 'revoke', 'pair'] as const) {
+    ipcMain.handle(`host:devices:${operation}`, async (event, deviceId: unknown) => {
+      if (!facade.isHostSender(event.sender)) throw new Error('Device management requires the trusted Papers frame.');
+      if (operation === 'status') return { ...remoteDevices.snapshot(), incoming: remoteFiles.snapshot().devices, clientError: remoteFilesError };
+      if (operation === 'pair') {
+        if (!deviceId || typeof deviceId !== 'object') throw new Error('Enter an address and pairing code.');
+        const fields = deviceId as Record<string, unknown>;
+        if (typeof fields.address !== 'string' || typeof fields.code !== 'string') throw new Error('Enter an address and pairing code.');
+        if (remoteFilesError) throw new Error(remoteFilesError);
+        await remoteFiles.pair(fields.address, fields.code, remoteDevices.snapshot().owner?.name ?? 'Computer');
+        return { ...remoteDevices.snapshot(), incoming: remoteFiles.snapshot().devices, clientError: remoteFilesError };
+      }
+      if (operation === 'revoke') {
+        if (typeof deviceId !== 'string' || !/^[a-f0-9-]{36}$/.test(deviceId)) throw new Error('Invalid device identity.');
+        await remoteDevices.revoke(deviceId);
+        return remoteDevices.snapshot();
+      }
+      const chosen = await dialog.showOpenDialog({ title: 'Choose folders this device may access', properties: ['openDirectory', 'multiSelections'] });
+      if (chosen.canceled || !chosen.filePaths.length) return null;
+      return remoteDevices.invite(chosen.filePaths);
+    });
+  }
   const windowCapabilityService = createWindowCapabilityService({
     // Papers itself is a useful saved layout member. Admit only the real main
     // shell by its fixed native title; same-process picker, widget, preview and
@@ -3408,6 +3463,8 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // the developer command plane is fully quiet before global shutdown
       // begins.
       capabilityQuitPromise = quitStage('control', () => papersControlServer?.close())
+        .then(() => quitStage('remote-devices', () => remoteDevices.close()))
+        .then(() => quitStage('remote-files', () => remoteFiles.close()))
         .then(() => quitStage('native-panes', () => chromePane?.coordinator?.dispose()))
         .then(async () => { await commandSurfaceOverlay?.destroy().catch(() => undefined); commandSurfaceOverlay = null; })
         .then(() => Promise.all([
