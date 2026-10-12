@@ -12,14 +12,14 @@ The current desktop, the laptop and the phone are the first acceptance devices. 
 
 1. Install Papers and the desired independent Backpacks on another PC. Pair it with an existing trusted machine using a short code or QR flow. Give each device a recognizable name.
 2. Open a device from Papers and see the Backpacks, files and operations made available by that owner. Device access, shared resources and remote desktop control remain distinguishable, even if onboarding offers them together.
-3. Open the same live experience from the laptop or phone. Desktop controls preserve keyboard/mouse behavior; Android gets deliberate touch navigation, legible controls and a suitable layout. Window streaming is available where the actual native application is needed.
+3. Open the same live experience from the laptop or phone. Desktop controls preserve keyboard/mouse behavior; Android gets deliberate touch navigation, legible controls and a suitable layout. Remote AYG provides filesystem access. Any separately implemented Windows application control has its own entry and session.
 4. Reconnect without repeated setup. Show Online, Reconnecting or Offline accurately. An unavailable machine must not look like an empty workspace or erased files. The creator can revoke a paired device without rebuilding projects.
 
 Public internet exposure is not required for this experience. Pairing does not imply publishing every disk, credential or local service. A newly installed PC receives working software and its own identity, rather than another machine's live profile.
 
 ### As you Go: another machine's real files
 
-The creator explicitly wants remote access, not wholesale folder mirroring. Each AYG remains owned by its machine.
+The creator explicitly wants remote access, not wholesale folder mirroring. Each AYG remains owned by its machine. Creator clarification, 2026-10-12: remote AYG is strictly a filesystem experience. It does not launch/control the owner's Windows applications, stream their windows, or embed a remote desktop. File content operations and transfers belong here; native application control is a separate Papers capability, not an AYG requirement or dependency.
 
 | User action or situation | Required result |
 | --- | --- |
@@ -27,7 +27,7 @@ The creator explicitly wants remote access, not wholesale folder mirroring. Each
 | Browse, search or preview | Fetch the needed metadata and content on demand. Prefer owner-generated thumbnails or derived previews when they avoid transferring a large original just to inspect it. |
 | Create, rename, move or edit while online | The owning PC performs and confirms the actual operation. Local references to that file continue to be governed by their AYG/Papers owners. |
 | A move or save takes time | Show activity immediately, then measured progress when available. Distinguish Queued, Waiting for application, Transferring, Verifying and Completed. A request being accepted is not completion. |
-| Open a file in a native Windows application | Open/control it on its owner when that is the suitable editor. Existing installed applications remain content owners; do not rebuild their interfaces just to satisfy remote access. |
+| Open downloaded content in an application | Use an application on the receiving device against its downloaded/local working copy. This does not launch or control a program on the owning PC. |
 | Edit using a local working copy while online | Treat this as an explicit edit session. Save back only after checking the owner's current revision; preserve both versions when it has changed. An ordinary download is not implicit writeback. |
 | Download / Keep available offline | Retain the complete verified selected file version and needed listing metadata. Keep it in the same remote workspace with its source identity. Expose the destination and actual cache/download state. |
 | The owner goes offline | Previously retained content remains readable; unavailable content is clearly marked. Disable live remote mutations. Preserve unsaved work from a disconnected edit session locally without pretending it was saved to the owner. |
@@ -58,7 +58,7 @@ Follow is a proposed UX choice to expose alongside independent copy. The pasted 
 
 ### Remote control and live data
 
-The creator wants control and data access from other PCs as well as the phone. Provide recognizable access to the existing owner's Windows session, native applications and supported operations. Clipboard, keyboard shortcuts, touch input, multi-monitor selection and session disconnect behavior need actual device acceptance.
+Earlier discussion included control and data access from other PCs as well as the phone. Windows session/application control remains a separate possible Papers track outside remote AYG. It is not required to deliver the filesystem experience and must not appear in AYG's controls. If pursued separately, clipboard, keyboard shortcuts, touch input, multi-monitor selection and session disconnect behavior need actual device acceptance.
 
 Remote desktop control intentionally operates the owning PC; a remote Proxima data view remains read-only. These paths must not be confused. Native control should not implicitly open a separate Windows session, discard attached windows, or steal a local user's input through an invisible background action. Show the active controlled machine and retain explicit local/remote session boundaries.
 
@@ -119,7 +119,7 @@ The research supports a hybrid design with interchangeable providers behind conc
 | --- | --- | --- |
 | Device connectivity | Existing Tailscale; NetBird if self-hosted coordination is needed | Start on the working route; measure direct and relayed paths separately. Change providers for a demonstrated UX, throughput or operating benefit. |
 | File serving and transfer | Copyparty + rclone versus a standard resumable HTTPS baseline; Syncthing/Sushitrain for incremental reuse | Prefer an existing maintained worker/provider if it meets ownership, versioning, progress, verification and throughput requirements. No global folder mirroring by inference. |
-| Native desktop control | RustDesk and MeshCentral; Sunshine/Moonlight for graphics-heavy work | Test actual applications, input latency, desktop-session behavior, clipboard and displays. Guacamole is the browser RDP/VNC gateway alternative. |
+| Separate native desktop control, outside AYG | RustDesk and MeshCentral; Sunshine/Moonlight for graphics-heavy work | Evaluate only for the separate Papers control track. It is not a provider or prerequisite for remote AYG file access. Guacamole is the browser RDP/VNC gateway alternative. |
 | Browser-only/direct or deeply integrated networking | WebRTC/libp2p, native iroh, commercial Nabto/RPC components as appropriate | Add when a concrete accepted experience requires it. Browser and native limitations differ; a protocol name or headline benchmark is not a selection result. |
 | Proxima copy/follow | Proxima's command owner plus a domain projection | Respect independent per-machine authorities and explicit conflict decisions. Automatic collaborative CRDT merging is not required by the specified behavior. |
 
@@ -140,10 +140,10 @@ Stages describe work that can be independently reviewed. Keep existing local beh
 | 4. Remote file mutations and edit sessions | Checked owner-side create/rename/move/save operations and staging | Native asynchronous operations show immediate progress and actual completion; stale saves preserve original/work; disconnection and external edits recover correctly. |
 | 5. Proxima remote views and imports | Domain projection, selected/complete import preview and one atomic command path | Remote view remains read-only; approved values/dependencies are preserved; layout/runtime/undo do not travel; retries and interrupted imports remain atomic. |
 | 6. Explicit following and conflicts | Per-selection follow choice, lineage and retained incoming changes | Untouched copies follow; local edits remain; Keep mine/Use source/Save both and source deletion have deterministic outcomes; no replication loops. |
-| 7. Native remote control | Integrated existing provider and visible control session | Test actual owner Windows applications on Laptop and Android; keyboard/clipboard/touch/display, disconnect and unsaved-work behavior pass. |
+| 7. Separate native remote control track | If pursued: integrated existing provider and visible control session outside AYG | Not an AYG delivery gate. Test actual owner Windows applications on Laptop and Android; keyboard/clipboard/touch/display, disconnect and unsaved-work behavior pass. |
 | 8. Fresh-machine installation and upgrades | Supported Papers installer, separately versioned Backpack delivery, capability readiness | Fresh laptop setup and upgrade preserve local work/pairing, report dependencies clearly, and recover from interrupted install. Do not transfer live profiles/secrets as substitutes for installation. |
 
-Stage 7 can be evaluated independently while the data path is built; it cannot stand in for file/projection acceptance. Stage 8 starts with a fresh-machine fixture early enough to expose packaging requirements, rather than waiting until the final feature demonstration.
+Stage 7 is an independent possible track, outside remote AYG; it neither blocks nor substitutes for file/projection acceptance. Stage 8 starts with a fresh-machine fixture early enough to expose packaging requirements, rather than waiting until the final feature demonstration.
 
 The initial production slice is deliberately concrete: open one remote AYG location from Laptop, see an owner change, preview/download one file, interrupt/resume it, and read its pinned version offline. Follow with one selected Proxima import through its actual command owner. Broader access expands after those owners and recovery paths are proven.
 
