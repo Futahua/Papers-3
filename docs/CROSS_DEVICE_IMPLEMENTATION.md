@@ -49,8 +49,29 @@ and with Wi-Fi disabled, LTE active and a connected mobile-data network:
 
 These are isolated fixtures. They prove an Internet/mobile-data route, not an
 Internet throughput ceiling or availability of the creator's actual locations.
-The laptop is still on the earlier read-only development build pending this
-checkpoint's packaged update and lifecycle verification.
+The laptop was upgraded through the supported NSIS installer to Papers `214c158`
+and AYG `657768c`. Both delivered artifacts and the installed archive were checked
+against independent SHA-256 values. All 3,190 quiesced laptop-local profile files
+were backed up and verified byte-for-byte; the installer left them unchanged.
+AYG's state, project configuration and actions hashes remained unchanged during
+the code update. Existing icon assets and other Backpack projects were retained.
+The actual running packaged app reports `214c158`, supplies a live snapshot and
+opens the existing AYG workspace as a visible project surface.
+
+The installation/lifecycle gate remains open. The first native close request did
+not produce a new shutdown trace or retire the main process. Which native window
+received it is not yet verified; do not infer a save/shutdown defect from that
+request. Intermittent laptop-connector failures interrupted the next inspection.
+The diagnostic app remains open. Temporary desktop transfer/fixture listeners
+are retired, the phone test APK is removed and phone Wi-Fi is restored.
+
+Proxima source work has started in its independent `codex/cross-device` worktree.
+Its existing Store now supplies an approved read projection behind its own queue
+and persistence owner. Selection resolves project/activity/queue dependencies;
+private/layout/runtime/history fields are excluded. Independent candidates
+qualify identities and freeze owner-calculated live intervals. The 24 source
+checks pass, including the existing timeline suite. This is not yet a remote
+view, committed import or follow implementation, and is not deployed.
 
 Full suites: Papers 1,478 passed / four skipped; AYG 2,028 passed plus eight
 visual preflight checks. Type checking and production build pass. The previous
