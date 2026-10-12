@@ -1,5 +1,6 @@
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron';
 export interface PapersWindowIpcDependencies {
+  discardDeadWindows?:()=>Promise<number>;
   reload?:()=>Promise<void>;
   ipcMain: Pick<IpcMain,'handle'>;
   isHostSender:(sender:WebContents)=>boolean;
@@ -31,6 +32,7 @@ export function registerPapersWindowIpc(deps:PapersWindowIpcDependencies):void {
   };
   const attempt=async(sender:WebContents,item:{sourceId?:number;key?:string;surfaceId?:string},action:()=>Promise<unknown>|undefined)=>{try{previewRevision++;deps.dragOutcome?.(true);const reply=await action();if((reply as {ok?:boolean})?.ok===false)deps.moveFailed?.(sender,item);return reply;}catch(error){deps.moveFailed?.(sender,item);throw error;}};
   handle('host:app:reload',async()=>{if(!deps.reload)throw Error('Reload is unavailable');await deps.reload();});
+  handle('host:app:discard-dead-windows',async()=>{if(!deps.discardDeadWindows)throw Error('Cleanup is unavailable');return deps.discardDeadWindows();});
   handle('host:window:new',()=>deps.createAdditionalWindow());
   handle('host:window:list',async event=>deps.listWindows?.(event.sender)??[]);
   handle('host:pages:list',async event=>deps.listPages?.(event.sender)??[]);

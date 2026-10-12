@@ -2889,6 +2889,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
   });
   registerPapersWindowIpc({
     reload:reloadPapers,
+    discardDeadWindows:async()=>await chromePane?.coordinator?.discardDeadWindows()??0,
     ipcMain,
     isHostSender: (sender) => facade.isHostSender(sender),
     createAdditionalWindow: async () => { await createAdditionalPapersWindow(); },

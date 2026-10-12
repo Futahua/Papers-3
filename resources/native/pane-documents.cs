@@ -20,6 +20,11 @@ public sealed partial class PaneCoordinator {
         var group=Group(groupId);peer.GroupId=groupId;dormantPeers.Add(peer.TabId,peer);documentGroups.Add(peer.TabId,groupId);
         group.OrderedTabs.Add(peer.TabId);if(group.SelectedTab==null)group.SelectedTab=peer.TabId;Scope.StateRevision++;
     }
+    // Native title-bar Shift drops use the same retained-slot replacement as the picker.
+    public string AttachShiftDrop(IntPtr handle,uint pid,string groupId,long binding,long state){
+        Check(binding,state);var selected=Group(groupId).SelectedTab;
+        return selected!=null&&Dormant(selected)!=null?Reconnect(selected,handle,pid,binding,state):Attach(handle,pid,groupId,binding,state);
+    }
     public string Reconnect(string id,IntPtr handle,uint pid,long binding,long state){
         Check(binding,state);var saved=Dormant(id);if(saved==null)throw new Exception("That tab is already connected.");
         var group=Group(TabGroup(id));string oldPresentation=group.Presentation;if(group.Presentation=="minimized")SetGroupPresentation(group.Id,"normal",binding,Scope.StateRevision);int index=group.OrderedTabs.IndexOf(id);bool selected=group.SelectedTab==id;
@@ -113,6 +118,17 @@ public sealed partial class PaneCoordinator {
         if(documentGroups.ContainsKey(id))return;
         if(tabIndex.ContainsKey(id))throw new Exception("Duplicate tab identity.");
         Change("addDocument",()=>{documentGroups.Add(id,groupId);group.OrderedTabs.Add(id);if(group.SelectedTab==null)group.SelectedTab=id;});
+    }
+    public int DiscardDeadWindows(long binding,long state){
+        Check(binding,state);
+        var dead=dormantPeers.Keys.ToArray();
+        if(dead.Length==0)return 0;
+        Change("discardDeadWindows",()=>{foreach(var id in dead){
+            var group=Group(documentGroups[id]);group.OrderedTabs.Remove(id);
+            documentGroups.Remove(id);dormantPeers.Remove(id);
+            if(group.SelectedTab==id)group.SelectedTab=group.OrderedTabs.FirstOrDefault();
+        }});
+        return dead.Length;
     }
     public void RemoveDocument(string id,long binding,long state){
         if(id=="preview:workspace-files"||id=="preview:workspace-preview")throw new Exception("Files and Preview belong to this page and cannot be deleted.");

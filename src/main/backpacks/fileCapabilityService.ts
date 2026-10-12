@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs, statSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -1293,6 +1293,29 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'reveal':
             deps.revealPath(absolutePath(params.path));
             return { ok: true };
+          case 'verify-image-asset': {
+            const directory=absolutePath(params.directory), filename=boundedString(params.filename,'filename',80);
+            if(!/^[a-f0-9]{64}\.(png|jpg|webp|gif|svg|ico)$/.test(filename))throw new Error('Invalid image asset reference.');
+            const bytes=await fs.readFile(path.join(directory,filename));
+            if(createHash('sha256').update(bytes).digest('hex')!==filename.split('.')[0])throw new Error('Image asset verification failed.');
+            return {ok:true};
+          }
+          case 'store-image-asset': {
+            const directory=absolutePath(params.directory);
+            const data=boundedString(params.dataUrl,'dataUrl',32*1024*1024);
+            const match=/^data:(image\/(?:png|jpeg|webp|gif|svg\+xml|x-icon|vnd\.microsoft\.icon));base64,([A-Za-z0-9+/=\r\n]+)$/i.exec(data);
+            if(!match)throw new Error('Asset must be a base64 image.');
+            const bytes=Buffer.from(match[2]!, 'base64');
+            if(!bytes.length)throw new Error('Image asset is empty.');
+            const extensions:Record<string,string>={'image/png':'png','image/jpeg':'jpg','image/webp':'webp','image/gif':'gif','image/svg+xml':'svg','image/x-icon':'ico','image/vnd.microsoft.icon':'ico'};
+            const filename=createHash('sha256').update(bytes).digest('hex')+'.'+extensions[match[1]!.toLowerCase()];
+            await fs.mkdir(directory,{recursive:true});
+            const target=path.join(directory,filename);
+            try{await fs.writeFile(target,bytes,{flag:'wx'});}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+            const stored=await fs.readFile(target);
+            if(!stored.equals(bytes))throw new Error('Image asset verification failed.');
+            return {ok:true,filename,path:target};
+          }
           case 'create-folder': {
             const parent = absolutePath(params.path);
             const target = path.join(parent, safeName(params.newName));

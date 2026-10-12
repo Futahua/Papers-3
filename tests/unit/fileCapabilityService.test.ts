@@ -858,3 +858,16 @@ describe('file capability service', () => {
     expect(mutation.code).toBe('FILE_OPERATION_FAILED');
   });
 });
+
+ it('stores and verifies immutable deduplicated image assets before returning references', async()=>{
+   const caller=service();const dataUrl='data:image/png;base64,'+Buffer.from('fixture-image').toString('base64');
+   const directory=path.join(root,'icons');
+   const first=await caller.call({operation:'store-image-asset',params:{directory,dataUrl}});
+   const again=await caller.call({operation:'store-image-asset',params:{directory,dataUrl}});
+   expect(first.ok).toBe(true);expect(again.filename).toBe(first.filename);
+   expect(await fs.readdir(directory)).toHaveLength(1);
+   expect((await caller.call({operation:'verify-image-asset',params:{directory,filename:first.filename}})).ok).toBe(true);
+   await fs.writeFile(path.join(directory,first.filename as string),'damaged');
+   expect((await caller.call({operation:'store-image-asset',params:{directory,dataUrl}})).ok).toBe(false);
+   expect((await caller.call({operation:'verify-image-asset',params:{directory,filename:'../escape.png'}})).ok).toBe(false);
+ });

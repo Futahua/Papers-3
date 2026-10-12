@@ -43,6 +43,8 @@ export function App(): React.JSX.Element {
   const [basicOpen, setBasicOpen] = useState(false);
   const [reloading,setReloading]=useState(false);
   const [reloadError,setReloadError]=useState('');
+  const [cleaning,setCleaning]=useState(false);
+  const discardDeadWindows=()=>{if(cleaning)return;setCleaning(true);setReloadError('');void host().app.discardDeadWindows().catch(error=>setReloadError(String(error))).finally(()=>setCleaning(false));};
   const reloadPapers=()=>{setReloading(true);setReloadError('');void host().app.reload().catch(error=>{setReloading(false);setReloadError(String(error));});};
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspaceOverlayActive, setWorkspaceOverlayActive] = useState(false);
@@ -492,7 +494,7 @@ export function App(): React.JSX.Element {
             {VIEW_LABEL[view]}
           </button>
           {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack}
-            onMouseEnter={cancelSidebarClose} onMouseLeave={scheduleSidebarClose} onReload={reloadPapers} reloading={reloading} reloadError={reloadError} />}
+            onMouseEnter={cancelSidebarClose} onMouseLeave={scheduleSidebarClose} onReload={reloadPapers} reloading={reloading} reloadError={reloadError} onDiscardDeadWindows={discardDeadWindows} cleaning={cleaning} />}
           {basicOpen && (
             <div id="basic-menu" className="basic-menu" role="menu">
               <p className="eyebrow">Basic</p>
@@ -520,6 +522,7 @@ export function App(): React.JSX.Element {
                 </span>
               </button>
               <button className="basic-row" role="menuitem" disabled={reloading} onClick={reloadPapers}><span className="glyph">↻</span><span className="copy"><strong>{reloading?'Saving and reloading…':'Reload Papers'}</strong><small>Keep your pages and layouts.</small></span></button>
+              <button className="basic-row" role="menuitem" disabled={cleaning||reloading} onClick={discardDeadWindows}><span className="glyph">×</span><span className="copy"><strong>{cleaning?'Cleaning…':'Discard dead windows'}</strong><small>Remove unavailable tabs. Keep panes and their sizes.</small></span></button>
               {reloadError&&<p role="alert">{reloadError}</p>}
             </div>
           )}

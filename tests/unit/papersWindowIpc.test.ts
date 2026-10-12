@@ -11,7 +11,7 @@ function harness() {
 }
 
 describe('Papers window IPC', () => {
-  it.each(['host:app:reload','host:window:drag','host:window:drag-state','host:window:swap','host:pages:drop'])('refuses %s from project senders',async channel=>{
+  it.each(['host:app:reload','host:app:discard-dead-windows','host:window:drag','host:window:drag-state','host:window:swap','host:pages:drop'])('refuses %s from project senders',async channel=>{
     const h=harness(),callback=vi.fn(async()=>{});
     registerPapersWindowIpc({ipcMain:h.ipcMain as PapersWindowIpcDependencies['ipcMain'],isHostSender:()=>false,createAdditionalWindow:callback,drag:callback,swapWindow:callback,dropSavedPage:callback});
     await expect(h.handlers.get(channel)!({sender:{}},{})).rejects.toThrow('non-host sender');expect(callback).not.toHaveBeenCalled();
@@ -101,4 +101,11 @@ it('page group drags retain identity without requesting the outer overlay',async
  expect(pageDrag).toHaveBeenCalledWith(sender,true,'page',true);
  await expect(h.handlers.get('host:pages:drag')!({sender},{active:true,pageId:'page',groupTarget:'yes'})).rejects.toThrow('Invalid page drag');
  expect(pageDrag).toHaveBeenCalledTimes(1);
+});
+
+it('cleanup invokes only its owner and never reloads Papers',async()=>{
+ const h=harness(),reload=vi.fn(async()=>{}),discardDeadWindows=vi.fn(async()=>3);
+ registerPapersWindowIpc({ipcMain:h.ipcMain as PapersWindowIpcDependencies['ipcMain'],isHostSender:()=>true,createAdditionalWindow:async()=>{},reload,discardDeadWindows});
+ expect(await h.handlers.get('host:app:discard-dead-windows')!({sender:{}},undefined)).toBe(3);
+ expect(reload).not.toHaveBeenCalled();
 });

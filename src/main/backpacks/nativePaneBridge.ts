@@ -26,6 +26,7 @@ interface Scope { key: string; token: string; context: PaneContext; rect: PaneRe
 interface Host { child: ChildProcessWithoutNullStreams; queue: Promise<unknown>; stopped: boolean;
   pending: Map<string, { resolve: (reply: PaneReply) => void; timer: ReturnType<typeof setTimeout> }> }
 export interface NativePaneBridge {
+  discardDeadWindows():Promise<number>;
   canFitWindow(windowId:number,deltaWidth:number,deltaHeight:number):Promise<boolean>;
   canFitPageGroup(windowId:number,surfaceIds:string[],width:number,height:number,includeHidden?:boolean):Promise<boolean>;
   has(owner: string): boolean;
@@ -170,7 +171,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     const token = scope.token, owner = scope.context.ownerKey;
     const task = scope.host.queue.then(async () => {
       if (disposing && !transaction && op !== 'release') return unavailable();
-      if (scope.token !== token || owners.get(owner) !== scope || (!transaction && (locked.has(scope) || visibility.get(owner) === false && !['snapshot', 'present', 'release', 'document-remove'].includes(op)))) return unavailable();
+      if (scope.token !== token || owners.get(owner) !== scope || (!transaction && (locked.has(scope) || visibility.get(owner) === false && !['snapshot', 'present', 'release', 'document-remove', 'discard-dead-windows'].includes(op)))) return unavailable();
       const presentationParams = (op === 'present' || op === 'mount') && params.visible === true && hostOverlayActive(owner) ? { ...params, visible: false } : params;
       const result = await send(scope.host, { ...presentationParams, op, scope: scope.key, binding: token, revision: revision ?? scope.snapshot?.stateRevision ?? 0 });
       if (result.preview) { const rect=result.preview as PaneRect; result.preview={...rect,x:rect.x-scope.context.surfaceBounds.x,y:rect.y-scope.context.surfaceBounds.y}; }
@@ -260,6 +261,16 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       } catch (error) { return { ok: false, error: String(error) }; }
     },
     command(owner, op, params = {}, revision) {if(['move','split','relocate-group'].includes(op))refusedDrag=undefined; if(op==='present'&&params.visible===true&&dragOwners.size)params={...params,visible:false}; const scope = owners.get(owner); return scope && commandNames.has(op) ? queued(scope, op, params, revision) : Promise.resolve(unavailable()); },
+    async discardDeadWindows() {
+      await transferTail;
+      let removed=0;
+      for(const scope of new Set(owners.values())) {
+        const reply=await queued(scope,'discard-dead-windows');
+        if(!reply.ok)throw Error(reply.error??'Dead window cleanup failed');
+        removed+=Number(reply.removed??0);
+      }
+      return removed;
+    },
     attach(owner, handle, pid, groupId = 'main', retainedId) { const scope = owners.get(owner); return scope ? queued(scope, 'attach', { handle, pid, groupId, ...(retainedId ? { retainedId } : {}) }) : Promise.resolve(unavailable()); },
     open(owner, source, url, groupId) { const scope = owners.get(owner); return scope ? queued(scope, 'open', { source, url, ...(groupId ? { groupId } : {}) }) : Promise.resolve(unavailable()); },
     async move(owner, rect) { const scope = owners.get(owner); if (!scope) return unavailable();

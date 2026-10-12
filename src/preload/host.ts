@@ -21,6 +21,7 @@ const api = {
 
   app: {
     reload:()=>ipcRenderer.invoke('host:app:reload'),
+    discardDeadWindows:()=>ipcRenderer.invoke('host:app:discard-dead-windows'),
     // Which build this is and where it runs from, so two machines running
     // Papers can be told apart and compared.
     buildIdentity: () => ipcRenderer.invoke('host:app:build-identity'),

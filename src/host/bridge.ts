@@ -84,6 +84,7 @@ interface HostBridge {
     installUpdate(): Promise<void>;
     /** Create one fresh secondary Papers window. */
     reload(): Promise<void>;
+    discardDeadWindows(): Promise<number>;
     newWindow(): Promise<void>;
     windows(): Promise<Array<{windowId:number;title:string;groupId:string;current:boolean}>>;
     pages(): Promise<Array<{key:string;title:string;windowId:number|null;current:boolean;workspaceId?:string}>>;

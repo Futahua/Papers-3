@@ -177,3 +177,11 @@ it('group swap fit still refuses an actual selected-tab change during validation
  expect(await bridge.transferCheck('2:destination','main','center')).toMatchObject({ok:false,error:'The groups changed during the drag.'});
  await bridge.dispose();
 });
+
+it('dead window cleanup reaches visible and hidden scopes without presentation changes',async()=>{
+ const bridge=make();await bridge.mount(context('1:visible'),rect,32);await bridge.mount(context('2:hidden','ayg','999'),rect,32);
+ bridge.setOwnerVisible('2:hidden',false);
+ await bridge.discardDeadWindows();
+ expect(h.children.flatMap(c=>c.commands).filter(c=>c.op==='discard-dead-windows')).toHaveLength(2);
+ expect(h.children.flatMap(c=>c.commands).filter(c=>c.op==='close-group'||c.op==='release')).toHaveLength(0);
+});

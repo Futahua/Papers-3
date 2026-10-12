@@ -61,7 +61,7 @@ public sealed class PaneCoordinatorHost:Form {
             if(!destination.HasValue){if(source!=null)source.Pane.DetachTab(tab,source.Pane.Scope.BindingGeneration,source.Pane.Scope.StateRevision);return;}
             var target=destination.Value.Key;var group=destination.Value.Value;
             if(source!=null&&source!=target)throw new Exception("Release this window from its other Backpack before attaching it here.");
-            if(source==null){uint pid;Native.GetWindowThreadProcessId(hwnd,out pid);tab=target.Pane.Attach(hwnd,pid,group,target.Pane.Scope.BindingGeneration,target.Pane.Scope.StateRevision);}
+            if(source==null){uint pid;Native.GetWindowThreadProcessId(hwnd,out pid);tab=target.Pane.AttachShiftDrop(hwnd,pid,group,target.Pane.Scope.BindingGeneration,target.Pane.Scope.StateRevision);}
             else if(target.Pane.TabGroup(tab)!=group)target.Pane.MoveTab(tab,group,target.Pane.Scope.BindingGeneration,target.Pane.Scope.StateRevision);
             target.Pane.SelectTab(group,tab,target.Pane.Scope.BindingGeneration,target.Pane.Scope.StateRevision);
         }catch(Exception error){Console.Error.WriteLine("Native drop rejected: "+error.Message);}
@@ -201,6 +201,7 @@ public sealed class PaneCoordinatorHost:Form {
         }else if(op=="reconnect")tab=pane.Reconnect(ReadText(r,"retainedId"),new IntPtr(Number(r,"handle")),(uint)Number(r,"pid"),generation,state);
         else if(op=="dormant-add")pane.AddDormant(json.Deserialize<PaneMountPeer>(json.Serialize(r["peer"])),group);
         else if(op=="document-add"){pane.AddDocument(tab,group,generation,state);if(r.ContainsKey("preview"))pane.SetDocumentReference(json.Deserialize<PaneDocumentRef>(json.Serialize(r["preview"])));}
+        else if(op=="discard-dead-windows"){var removed=pane.DiscardDeadWindows(generation,state);pane.SaveMount(binding.Mount);Publish(key,binding);return new{ok=true,removed,snapshot=Snapshot(binding)};}
         else if(op=="document-remove")pane.RemoveDocument(tab,generation,state);
         else if(op=="ensure-panels")pane.EnsureWorkspacePanels(ScreenRect(binding.Rect),generation,state);
         else if(op=="select")pane.SelectTab(group,tab,generation,state);
