@@ -2,6 +2,8 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { pipeline } from 'node:stream/promises';
 import { RemoteFileError, RemoteFileResources, type RemoteFileShare } from './remoteFileResources';
+import type { RemoteFileEditOwner } from './remoteFileEditOwner';
+import { handleRemoteFileEditRoute } from './remoteFileEditRoutes';
 
 export interface RemoteFileGrant {
   deviceId: string;
@@ -31,6 +33,7 @@ export async function createRemoteFileGateway(options: {
   mutate?: (deviceId: string, catalog: RemoteFileResources, request: unknown) => Promise<unknown>;
   changes?: (deviceId: string) => unknown;
   revokeChanges?: (deviceId: string) => void;
+  edits?: RemoteFileEditOwner;
   backpackSnapshot?: (share:RemoteBackpackShare) => Promise<unknown>;
 }): Promise<{ server: Server; revoke: (deviceId: string) => void; close: () => Promise<void> }> {
   const devices = new Map<string, { grant: RemoteFileGrant; catalog: RemoteFileResources; responses: Set<ServerResponse> }>();
@@ -67,6 +70,13 @@ export async function createRemoteFileGateway(options: {
     const token = /^Bearer ([A-Za-z0-9_-]{32,256})$/.exec(authorization)?.[1];
     const device = token && [...devices.values()].find(item => matches(token, item.grant.tokenHash));
     if (!device) { json(response, 401, { ok: false, code: 'DEVICE_UNAUTHORIZED' }); return; }
+    device.responses.add(response);
+    response.once('close', () => device.responses.delete(response));
+    if (await handleRemoteFileEditRoute(request, response, {
+      deviceId: device.grant.deviceId, canWrite: device.grant.canWrite === true,
+      catalog: device.catalog, owner: options.edits, json,
+      authorize: () => { if (devices.get(device.grant.deviceId) !== device || response.destroyed) throw new Error('Device access was revoked.'); },
+    })) return;
     if(request.url==='/v1/files/changes'&&request.method==='GET') { json(response,200,{ok:true,jobs:options.changes?.(device.grant.deviceId)??[]});return; }
     if(request.url==='/v1/files/changes'&&request.method==='POST') {
       if(device.grant.canWrite!==true||!options.mutate){json(response,403,{ok:false,code:'FILE_CHANGES_NOT_GRANTED'});return;}
@@ -77,8 +87,6 @@ export async function createRemoteFileGateway(options: {
       return;
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') { json(response, 405, { ok: false, code: 'OPERATION_UNSUPPORTED' }); return; }
-    device.responses.add(response);
-    response.once('close', () => device.responses.delete(response));
     try {
       const url = new URL(request.url ?? '/', 'http://gateway.invalid');
       if(url.pathname==='/v1/backpacks'){
@@ -154,6 +162,7 @@ export async function createRemoteFileGateway(options: {
       const device = devices.get(deviceId);
       devices.delete(deviceId);
       options.revokeChanges?.(deviceId);
+      options.edits?.revoke(deviceId);
       for (const response of device?.responses ?? []) response.destroy();
   };
   return {

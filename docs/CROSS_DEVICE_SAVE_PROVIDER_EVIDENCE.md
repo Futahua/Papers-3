@@ -113,3 +113,20 @@ external-edit refusal before dispatch, retained originals/uploads, successful re
 recovery without a second write, cross-session refusal, and revocation. They do not
 prove native concurrency: the native provider adapter, remote gateway routes, client
 working-copy UX, and actual device end-to-end path remain to be implemented.
+
+## Authenticated HTTP routes
+
+The gateway accepts an optional edit owner. Without it, or without the peer's
+existing write grant, edit routes refuse access. Routes cover session creation/list,
+upload creation/status, bounded streamed append, verified sealing, and save receipts.
+Request bodies are bounded, client paths are ignored, and errors do not return owner
+OS paths. Edit responses participate in the gateway's revoke cancellation; revocation
+also reaches the session and upload owners. This remains filesystem-only machinery.
+
+An actual loopback HTTP fixture with generated files and an injected provider passed
+the full session/upload/seal/save path, digest status, duplicate receipt without a
+second write, unauthenticated and read-only refusal, and post-revoke refusal. Together
+with existing gateway and focused edit tests, 17 checks pass; typecheck passes.
+This is HTTP contract evidence, not the native save or phone implementation. The
+production gateway does not supply an edit owner yet, so this feature is unavailable
+in the installed applications until that integration and client work are verified.
