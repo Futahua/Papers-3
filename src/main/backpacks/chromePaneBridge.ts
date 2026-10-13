@@ -34,7 +34,7 @@ export interface ChromePaneBridge {
   raiseWindow(windowId: number): void;
   dispose(): void;
 }
-export function createChromePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; onLayout?: (owner: string, rect: LayoutRect) => void; onTabs?: (owner: string, tabs: PaneWindowTab[]) => void; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined; ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void>; pageTransfers?: PanePageTransfers }): ChromePaneBridge | null {
+export function createChromePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; coordinateScale?: (owner: string) => number; onLayout?: (owner: string, rect: LayoutRect) => void; onTabs?: (owner: string, tabs: PaneWindowTab[]) => void; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined; ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void>; pageTransfers?: PanePageTransfers }): ChromePaneBridge | null {
   if (process.platform !== 'win32') return null;
   const chrome = [process.env['PROGRAMFILES'], process.env['PROGRAMFILES(X86)'], process.env['LOCALAPPDATA']]
     .filter((v): v is string => Boolean(v)).map(v => path.join(v, 'Google', 'Chrome', 'Application', 'chrome.exe')).find(v => fs.existsSync(v));
@@ -52,7 +52,7 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
     execFileSync(compiler, ['/nologo', '/target:exe', `/out:${executable}`, '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Web.Extensions.dll', ...['UIAutomationClient.dll', 'UIAutomationTypes.dll', 'WindowsBase.dll'].map(f => `/r:${path.join(wpf, f)}`), ...sources], { windowsHide: true, timeout: 15000, stdio: 'pipe' });
     fs.writeFileSync(stamp, digest);
   };
-  const coordinator = createNativePaneBridge({ cacheDirectory: input.cacheDirectory, nativeDirectory: input.nativeDirectory, onSnapshot: input.onSnapshot, windowInstanceId: input.windowInstanceId, ownerLabel:input.ownerLabel,revealOwner:input.revealOwner,pageTransfers:input.pageTransfers });
+  const coordinator = createNativePaneBridge({ cacheDirectory: input.cacheDirectory, nativeDirectory: input.nativeDirectory, coordinateScale: input.coordinateScale, onSnapshot: input.onSnapshot, windowInstanceId: input.windowInstanceId, ownerLabel:input.ownerLabel,revealOwner:input.revealOwner,pageTransfers:input.pageTransfers });
   const nativeGroup = (owner: string, tab: string): string => coordinator?.snapshot(owner)?.groups.find(g => g.tabs.some(t => t.id === tab))?.id ?? 'main';
   const owners = new Map<string, Live>();
   const viewLayouts = new Map<string, { context: LayoutHostContext; rect: LayoutRect }>();

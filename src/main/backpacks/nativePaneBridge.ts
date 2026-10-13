@@ -59,7 +59,7 @@ export function parseNativeCheckpoint(text: string): any {
     return (JSON as unknown as {rawJSON(source: string): unknown}).rawJSON(source);
   });
 }
-export function createNativePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined;
+export function createNativePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; coordinateScale?: (owner: string) => number; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined;
   ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void>; pageTransfers?: PanePageTransfers }): NativePaneBridge | null {
   if (process.platform !== 'win32') return null;
   const compiler = resolveWindowsCscPath(process.env['WINDIR'] ?? 'C:\\Windows');
@@ -173,7 +173,9 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       if (disposing && !transaction && op !== 'release') return unavailable();
       if (scope.token !== token || owners.get(owner) !== scope || (!transaction && (locked.has(scope) || visibility.get(owner) === false && !['snapshot', 'present', 'release', 'document-remove', 'discard-dead-windows'].includes(op)))) return unavailable();
       const presentationParams = (op === 'present' || op === 'mount') && params.visible === true && hostOverlayActive(owner) ? { ...params, visible: false } : params;
-      const result = await send(scope.host, { ...presentationParams, op, scope: scope.key, binding: token, revision: revision ?? scope.snapshot?.stateRevision ?? 0 });
+      const coordinateScale = input.coordinateScale?.(owner);
+      if (coordinateScale !== undefined && (!Number.isFinite(coordinateScale) || coordinateScale <= 0)) return { ok: false, error: 'Host coordinate scale is unavailable.' };
+      const result = await send(scope.host, { ...presentationParams, ...(coordinateScale !== undefined ? { coordinateScale } : {}), op, scope: scope.key, binding: token, revision: revision ?? scope.snapshot?.stateRevision ?? 0 });
       if (result.preview) { const rect=result.preview as PaneRect; result.preview={...rect,x:rect.x-scope.context.surfaceBounds.x,y:rect.y-scope.context.surfaceBounds.y}; }
       accept(scope, result.snapshot); return result.snapshot ? { ...result, snapshot: localSnapshot(scope, result.snapshot) } : result;
     });

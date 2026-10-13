@@ -717,6 +717,12 @@ async function bootstrap(): Promise<void> {
   let panePages:ReturnType<typeof createPaneBackpackPages>|undefined;
   const outerPagePresentation=new Map<string,{bounds:import('./backpacks/nativePaneBridge').PaneRect|null;visible:boolean}>();
   const chromePane = createChromePaneBridge({
+    // Chromium includes Windows accessibility text scaling in its DIP scale.
+    // GetDpiForWindow alone does not describe these renderer coordinates.
+    coordinateScale: owner => {
+      const window = papersWindows.get(Number(owner.split(':')[0]))?.owned.window;
+      return window && !window.isDestroyed() ? screen.getDisplayMatching(window.getBounds()).scaleFactor : NaN;
+    },
     pageTransfers: {
       check: moves => panePages ? panePages.checkTransfers(moves) : Promise.resolve({ok:false,error:'Backpack pages are unavailable.'}),
       apply: moves => { if (!panePages) throw Error('Backpack pages are unavailable.'); return panePages.applyTransfers(moves); },

@@ -34,6 +34,20 @@ beforeEach(()=>{
 });
 afterEach(()=>Object.defineProperty(process,'platform',{value:platform}));
 const make=(onSnapshot=vi.fn())=>createNativePaneBridge({cacheDirectory:'X:/cache',nativeDirectory:'X:/native',onSnapshot,windowInstanceId:()=> 'opaque-instance'})!;
+it('passes the live Chromium coordinate scale rather than assuming Win32 DPI',async()=>{
+ let scale=1.4;
+ const coordinateScale=vi.fn(()=>scale);
+ const bridge=createNativePaneBridge({cacheDirectory:'X:/cache',nativeDirectory:'X:/native',coordinateScale})!;
+ await bridge.mount(context('1:scaled'),rect,32);
+ expect(coordinateScale).toHaveBeenCalledWith('1:scaled');
+ expect(h.children[0].commands.at(-1)).toMatchObject({op:'mount',coordinateScale:1.4,headerHeight:32,rect:{x:410,y:50}});
+ scale=1.6;await bridge.move('1:scaled',rect);
+ expect(h.children[0].commands.at(-1)).toMatchObject({op:'viewport',coordinateScale:1.6});
+ const count=h.children[0].commands.length;scale=NaN;
+ expect((await bridge.move('1:scaled',rect)).ok).toBe(false);
+ expect(h.children[0].commands).toHaveLength(count);
+ scale=1.6;await bridge.dispose();
+});
 it('a native span preview is translated into the embedded surface coordinates',async()=>{
  const bridge=make(),owner='1:source';const mounted=await bridge.mount(context(owner),rect,32);
  await bridge.dragOverlay(owner,true,(mounted.snapshot!.groups[0] as any).transferId);
