@@ -78,3 +78,20 @@ There is no remote route for staging yet, and no claim of an Android upload test
 
 These checks advance the full [cross-device plan](CROSS_DEVICE_PLAN.md). They do
 not establish that remote editing or the complete cross-device objective is ready.
+
+## Native revision follow-up
+
+The checked entry point now requires a native revision token, captured by `Inspect`
+under a read handle that excludes writers and renames. The token covers volume/file
+identity, size, creation and write times, attributes, and link count. `SaveChecked`
+compares it inside the same transacted source handle used for the digest and write.
+Generated unchanged, timestamp-only change, and identical-content replacement cases
+passed on desktop D: and laptop C:. The latter two retained the original and upload.
+Node's source version must still be bound to this native token when sessions begin;
+this native evidence does not yet establish that binding or a remote save route.
+
+Correction: the initial concurrent `File.Replace` fixture passed a null backup
+argument which this PowerShell/.NET combination rejected before attempting replacement.
+That initial case did not prove replacement fencing. The fixture now supplies a valid
+backup path, and passed on both machines. The separate identical-content replacement
+probe confirms the same replacement call succeeds outside the helper's protected save.

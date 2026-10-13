@@ -20,6 +20,20 @@ public static class PapersConditionalFileSave {
   [StructLayout(LayoutKind.Sequential)] struct FileTime { public uint Low,High; }
   [StructLayout(LayoutKind.Sequential)] struct FileInformation { public uint Attributes; public FileTime Creation,Access,Write; public uint Volume,SizeHigh,SizeLow,Links,IndexHigh,IndexLow; }
   public sealed class Result { public string OriginalSha256,SavedSha256,FileIdentity; public long Bytes; }
+  public sealed class Revision { public string Token,Sha256; public long Bytes; }
+  static string RevisionToken(FileInformation info){string text=String.Join(":",new[]{info.Volume.ToString(),info.IndexHigh.ToString(),info.IndexLow.ToString(),info.SizeHigh.ToString(),info.SizeLow.ToString(),info.Creation.High.ToString(),info.Creation.Low.ToString(),info.Write.High.ToString(),info.Write.Low.ToString(),info.Attributes.ToString(),info.Links.ToString()});using(var hash=SHA256.Create()){return BitConverter.ToString(hash.ComputeHash(System.Text.Encoding.UTF8.GetBytes(text))).Replace("-","").ToLowerInvariant();}}
+  public static Revision Inspect(string original,string approvedRoot){
+    original=Path.GetFullPath(original);approvedRoot=Normal(approvedRoot);
+    if(!Within(approvedRoot,original))throw new IOException("Source is outside its approved folder.");
+    var parents=PinParents(original);
+    try{var handle=CreateFile(original,0x80000000,1,IntPtr.Zero,3,0x00200080,IntPtr.Zero);if(handle.IsInvalid){handle.Dispose();throw new Win32Exception(Marshal.GetLastWin32Error());}
+      using(var source=new FileStream(handle,FileAccess.Read)){
+        FileInformation info;Check(GetFileInformationByHandle(handle,out info));
+        if((info.Attributes&(0x400|0x10))!=0||info.Links!=1||!String.Equals(FinalPath(handle),Normal(original),StringComparison.OrdinalIgnoreCase))throw new IOException("Source identity, link policy or location changed.");
+        return new Revision{Token=RevisionToken(info),Sha256=Digest(source),Bytes=source.Length};
+      }
+    }finally{foreach(var handle in parents)handle.Dispose();}
+  }
   static void Check(bool success){if(!success)throw new Win32Exception(Marshal.GetLastWin32Error());}
   static string Digest(Stream stream){stream.Position=0;using(var hash=SHA256.Create()){return BitConverter.ToString(hash.ComputeHash(stream)).Replace("-","").ToLowerInvariant();}}
   static string Normal(string path){return Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);}
@@ -31,6 +45,13 @@ public static class PapersConditionalFileSave {
   }
   // The pre-commit hook also allows a real process-death probe after bytes were flushed.
   public static Result Save(string original,string replacement,string approvedRoot,string expectedSourceSha256,string expectedReplacementSha256,Action prepared,Action beforeCommit){
+    return SaveCore(original,replacement,approvedRoot,expectedSourceSha256,expectedReplacementSha256,null,prepared,beforeCommit);
+  }
+  public static Result SaveChecked(string original,string replacement,string approvedRoot,string expectedSourceSha256,string expectedReplacementSha256,string expectedRevision,Action prepared,Action beforeCommit){
+    if(!System.Text.RegularExpressions.Regex.IsMatch(expectedRevision??"","^[a-f0-9]{64}$"))throw new IOException("A complete source revision is required.");
+    return SaveCore(original,replacement,approvedRoot,expectedSourceSha256,expectedReplacementSha256,expectedRevision,prepared,beforeCommit);
+  }
+  static Result SaveCore(string original,string replacement,string approvedRoot,string expectedSourceSha256,string expectedReplacementSha256,string expectedRevision,Action prepared,Action beforeCommit){
     original=Path.GetFullPath(original);replacement=Path.GetFullPath(replacement);approvedRoot=Normal(approvedRoot);
     if(!Within(approvedRoot,original)||String.Equals(original,replacement,StringComparison.OrdinalIgnoreCase))throw new IOException("Source is outside its approved folder or is the working copy itself.");
     if(!System.Text.RegularExpressions.Regex.IsMatch(expectedSourceSha256??"","^[a-f0-9]{64}$")||!System.Text.RegularExpressions.Regex.IsMatch(expectedReplacementSha256??"","^[a-f0-9]{64}$"))throw new IOException("A complete source and working-copy digest is required.");
@@ -41,6 +62,7 @@ public static class PapersConditionalFileSave {
       var handle=CreateFileTransacted(original,0xC0000000,1,IntPtr.Zero,3,0x00200080,IntPtr.Zero,transaction,IntPtr.Zero,IntPtr.Zero);if(handle.IsInvalid){handle.Dispose();throw new Win32Exception(Marshal.GetLastWin32Error());}
       FileInformation information;using(var source=new FileStream(handle,FileAccess.ReadWrite)){
         Check(GetFileInformationByHandle(handle,out information));if((information.Attributes&(0x400|0x10))!=0||information.Links!=1||!String.Equals(FinalPath(handle),Normal(original),StringComparison.OrdinalIgnoreCase))throw new IOException("Source identity, link policy or location changed.");
+        if(expectedRevision!=null&&RevisionToken(information)!=expectedRevision)throw new IOException("The source revision changed; both versions are retained.");
         if(Digest(source)!=expectedSourceSha256)throw new IOException("The source changed; both versions are retained.");
         if(prepared!=null)prepared();
         upload.Position=0;source.Position=0;upload.CopyTo(source);source.SetLength(upload.Length);source.Flush(true);

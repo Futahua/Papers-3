@@ -34,7 +34,7 @@ foreach ($operation in @('commit','source-conflict','upload-conflict','cancel','
         'write' { [IO.File]::WriteAllText($source,'external') }
         'delete-recreate' { [IO.File]::Delete($source); [IO.File]::WriteAllText($source,'external') }
         'rename' { [IO.File]::Move($source,$source+'.moved') }
-        'replace' { [IO.File]::Replace($upload,$source,$null) }
+        'replace' { [IO.File]::Replace($upload,$source,($source+'.backup')) }
         'parent-rename' { [IO.Directory]::Move($directory,$directory+'.moved') }
       }
     } catch { $script:blocked = $true }
