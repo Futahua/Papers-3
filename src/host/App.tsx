@@ -560,7 +560,7 @@ export function App(): React.JSX.Element {
       {view === 'backpacks' && entered === null && (
         <BackpacksPane list={backpacks} onChanged={refreshBackpacks} onEnter={enterBackpack} />
       )}
-      {view === 'settings' && <SettingsPane />}
+      {view === 'settings' && <section className="settings-overlay" aria-label="Papers Settings"><button type="button" className="secondary settings-return" onClick={() => goto('backpacks')}>Back to workspace</button><SettingsPane /></section>}
 
       {openProjects.length > 0 && entered !== null && projectUrl !== null && (
         <WorkspaceDock

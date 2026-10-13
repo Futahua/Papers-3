@@ -1186,3 +1186,8 @@ input:focus-visible {
 @keyframes move-refusal { 0%{transform:translateX(0);opacity:1} 8%{transform:translateX(-5px)} 16%{transform:translateX(5px)} 25%{transform:translateX(-4px)} 36%{transform:translateX(3px);opacity:.9} 50%{transform:translateX(-2px)} 68%{transform:translateX(1px);opacity:.5} 100%{transform:translateX(0);opacity:0} }
 @media(prefers-reduced-motion:reduce){.move-refusal-feedback{animation-name:move-refusal-fade}}
 @keyframes move-refusal-fade { from{opacity:1}to{opacity:0} }
+
+/* Settings covers the retained workspace without unmounting its pages. */
+.settings-overlay { position: absolute; inset: var(--titlebar-height) 0 0; z-index: 40; background: var(--paper); overflow: auto; }
+.settings-overlay .pane { overflow: visible; }
+.settings-return { margin: 16px 24px 0; }
