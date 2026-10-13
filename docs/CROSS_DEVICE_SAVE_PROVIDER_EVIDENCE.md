@@ -53,6 +53,17 @@ rejection of a provider receipt whose saved hash differs from the edited copy.
 The class is not yet wired to a gateway or uploaded working-copy owner. Its provider
 is injected; tests of receipts do not prove native provider integration.
 
+`remoteFileEditUploads.ts` provides owner-private, session-bound streamed staging.
+Working copies remain separate from original files and immutable read caches.
+Chunks have a fixed upper bound; confirmed prefixes have SHA-256 status and survive
+restart. Stale offsets cannot truncate an earlier confirmed prefix. A failed chunk
+rolls back only its own append; abrupt process death instead leaves an actual prefix
+that the receiver must verify before resuming. Sealing requires the exact declared
+length and complete SHA-256; sealed copies reject further appends. Peer access,
+session matching, revocation, interrupted chunks, corrupt/incomplete retention,
+bounded chunk rollback, restart/resume, and empty files have focused tests.
+There is no remote route for staging yet, and no claim of an Android upload test.
+
 ## Remaining gates before remote use
 
 - Additional interruption points, unsupported-volume behavior, and explicit
