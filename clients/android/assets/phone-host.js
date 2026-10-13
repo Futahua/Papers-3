@@ -170,11 +170,14 @@ async function handle(type, request) {
 // The phone's own As you Go stays loaded; Proxima and a device's As you Go open in a layer over it
 // that appears only once painted in its theme, and back just removes the layer (no reload, no flash).
 let layer = null;
+// The open layer is remembered, so the app comes back where it was left.
+const LAST_LAYER = 'papers-phone-last-layer';
 function openLayer(src) {
   const previous = layer;
   const next = document.createElement('iframe');
   next.className = 'papers-layer'; next.title = 'Papers'; next.style.visibility = 'hidden';
   next.src = src; document.body.append(next); layer = next;
+  try { localStorage.setItem(LAST_LAYER, src); } catch {}
   const started = Date.now();
   const reveal = () => {
     if (layer !== next) return;
@@ -191,7 +194,7 @@ function openLayer(src) {
     next.contentDocument.head.append(script);
   });
 }
-function closeLayer() { if (!layer) return false; for (const node of document.querySelectorAll('.papers-layer')) node.remove(); layer = null; return true; }
+function closeLayer() { if (!layer) return false; for (const node of document.querySelectorAll('.papers-layer')) node.remove(); layer = null; try { localStorage.removeItem(LAST_LAYER); } catch {} return true; }
 // Proxima on the phone shows another machine's Proxima: the last one viewed, else the first with one.
 const PROXIMA_DEVICE = 'papers-phone-proxima-device';
 async function proximaShare(ownerId) {
@@ -245,4 +248,15 @@ window.papersBack = () => {
   if (page?.papersPhoneBack?.()) return true;
   return closeLayer();
 };
+// The phone's As you Go shows only once painted in its theme (no white page at launch), and the
+// screen that was open when the app was left opens again over it.
 frame.src = 'ayg/workspace-20260730b.html?papers-phone=1';
+{
+  const started = Date.now();
+  const reveal = () => {
+    if (frame.contentDocument?.documentElement?.dataset.theme || Date.now() - started > 6000) frame.style.visibility = 'visible'; else setTimeout(reveal, 50);
+  };
+  reveal();
+  let last = null; try { last = localStorage.getItem(LAST_LAYER); } catch {}
+  if (last && /^(proxima|ayg)\//.test(last)) openLayer(last);
+}
