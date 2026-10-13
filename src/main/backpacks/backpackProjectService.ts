@@ -616,6 +616,14 @@ export class BackpackProjectService {
     const manifest = await this.manifest(backpackId);
     return manifest?.root ?? null;
   }
+  /** An As you Go icon file (public/icons/<sha256>.<ext>) for a paired device's view of this workspace. */
+  async sharedIcon(backpackId:string,name:string):Promise<{bytes:Buffer;type:string}>{
+    const match=/^[a-f0-9]{64}\.(png|webp|jpe?g|gif|svg|ico)$/.exec(name);
+    if(!match)throw new Error('Invalid icon name.');
+    const manifest=await this.manifest(backpackId);if(!manifest)throw new Error('Backpack project is not bound on this machine.');
+    const types:Record<string,string>={png:'image/png',webp:'image/webp',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',svg:'image/svg+xml',ico:'image/x-icon'};
+    return {bytes:await fs.readFile(path.join(manifest.root,'public','icons',name)),type:types[match[1]!]!};
+  }
   async sharedDataKind(backpackId:string):Promise<'proxima'|'as-you-go'|null>{const manifest=await this.manifest(backpackId),declaration=manifest?.['remoteData'];return isRecord(declaration)&&declaration['version']===1&&(declaration['kind']==='proxima'||declaration['kind']==='as-you-go')?declaration['kind']:null;}
 
   async isProtectedRoot(backpackId: string): Promise<boolean> {

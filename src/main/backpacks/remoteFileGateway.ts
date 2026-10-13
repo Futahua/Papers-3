@@ -47,6 +47,7 @@ export async function createRemoteFileGateway(options: {
     list: () => Promise<{ projectId: string; name: string }[]>;
     load: (projectId: string) => Promise<{ state: unknown; revision: string }>;
     save: (projectId: string, rawState: string, revision: string) => Promise<{ ok: boolean; revision: string; code?: string }>;
+    icon: (projectId: string, name: string) => Promise<{ bytes: Buffer; type: string }>;
   };
   search?: (query: string, limit: number) => Promise<{ results: { path: string; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[] }>;
   backpackSnapshot?: (share:RemoteBackpackShare) => Promise<unknown>;
@@ -120,7 +121,7 @@ export async function createRemoteFileGateway(options: {
       }catch(error){json(response,400,{ok:false,code:'FILE_COMMAND_REFUSED',message:error instanceof Error?error.message:'Invalid file command.'});}
       return;
     }
-    const workspaceRoute = /^\/v1\/workspaces(?:\/([a-f0-9-]{36})\/state)?$/.exec(request.url ?? '');
+    const workspaceRoute = /^\/v1\/workspaces(?:\/([a-f0-9-]{36})\/(state|icons\/([a-f0-9]{64}\.[a-z]{2,4})))?$/.exec(request.url ?? '');
     if (workspaceRoute) {
       if (device.grant.canWrite !== true || !options.workspaces) { json(response, 403, { ok: false, code: 'WORKSPACES_NOT_GRANTED' }); return; }
       try {
@@ -130,6 +131,11 @@ export async function createRemoteFileGateway(options: {
         if (!workspaceRoute[1]) { json(response, 200, { ok: true, owner: options.owner, entries: all.map(item => ({ id: idFor(item.projectId), name: item.name, kind: 'as-you-go' })) }); return; }
         const target = all.find(item => idFor(item.projectId) === workspaceRoute[1]);
         if (!target) { json(response, 404, { ok: false, code: 'WORKSPACE_UNKNOWN' }); return; }
+        if (workspaceRoute[3]) {
+          const icon = await options.workspaces.icon(target.projectId, workspaceRoute[3]);
+          response.writeHead(200, { 'Content-Type': icon.type, 'Content-Length': icon.bytes.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+          response.end(icon.bytes); return;
+        }
         if (request.method === 'GET') { json(response, 200, { ok: true, ...await options.workspaces.load(target.projectId) }); return; }
         if (request.method !== 'POST') { json(response, 405, { ok: false, code: 'OPERATION_UNSUPPORTED' }); return; }
         const chunks: Buffer[] = []; let bytes = 0;

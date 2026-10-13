@@ -27,7 +27,7 @@ await fs.writeFile(path.join(documents, 'backpack-projects.json'), JSON.stringif
 await fs.writeFile(path.join(documents, 'registry.json'), JSON.stringify({ schemaVersion: 1, backpacks: [{ id: projectId, name: 'As you Go', type: 'environment', createdAt: new Date().toISOString(), lastEnteredAt: null, archived: false, workspacePath: null }], lastActiveBackpackId: projectId }));
 const descriptor = path.join(data, 'control.json');
 const app = await _electron.launch({ args: [process.cwd()], env: { ...process.env, PAPERS_TEST_USER_DATA: data, PAPERS_TEST_JOIN_NAME: 'Remote workspace check', PAPERS_ENABLE_FIXTURES: '0', PAPERS_DEV_CONTROL: '1', PAPERS_DEV_CONTROL_DESCRIPTOR: descriptor } });
-let original = null, ownerId = null, workspaceId = null, local = null;
+let original = null, ownerId = null, workspaceId = null, local = null, seededIcon = false;
 const cap = (page, operation, params) => page.evaluate(async ([o, p]) => (await import('./app/host/host-bridge.js')).createHostBridge(window).fileCapability(o, p), [operation, params]);
 const remote = async (operation, params = {}) => { const r = await cap(local, 'remote-files', { operation, ownerId, workspaceId, ...params }); if (!r.ok) throw Error(r.message); return r.result; };
 try {
@@ -50,6 +50,13 @@ try {
     workspaceId = list[0]?.id;
     if (!workspaceId) throw Error('no shared workspace');
     original = await remote('workspace-load');
+    // Give one folder an icon stored as a file on the device (the file must exist in its public/icons).
+    if (process.env.SEED_ICON && original.state.groups?.[0]) {
+      const seeded = { ...original.state, groups: original.state.groups.map((g, i) => i === 0 ? { ...g, icon: './icons/' + process.env.SEED_ICON } : g) };
+      const saved = await remote('workspace-save', { state: JSON.stringify(seeded), revision: original.revision });
+      if (!saved.ok) throw Error('could not seed an icon: ' + JSON.stringify(saved));
+      seededIcon = true;
+    }
     return { workspaces: list.map(w => w.name), revision: original.revision.slice(0, 12), groups: original.state.groups?.length };
   });
 
@@ -75,7 +82,7 @@ try {
     const diff = (a, b, at = '') => { if (JSON.stringify(a) === JSON.stringify(b)) return []; if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a)) return [at || '(root)']; return [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap(k => diff(a[k], b[k], at + '.' + k)); };
     globalThis.openDiff = diff(original.state, now).slice(0, 20);
     const logDelta = JSON.stringify((now.windowLayoutMembershipLog || []).slice((original.state.windowLayoutMembershipLog || []).length)).slice(0, 600);
-    const forbidden = globalThis.openDiff.filter(key => !/^\.view\.(surfaceLocations|preferences\.paneLayouts)\./.test(key) && !(key === '.windowLayoutMembershipLog' && logDelta === '[]'));
+    const forbidden = globalThis.openDiff.filter(key => !(seededIcon && /^\.groups/.test(key)) && !/^\.view\.(surfaceLocations|preferences\.paneLayouts)\./.test(key) && !(key === '.windowLayoutMembershipLog' && logDelta === '[]'));
     const idleSaves = saves.length - settled;
     if (forbidden.length || idleSaves > 0) throw Error('changed ' + JSON.stringify(forbidden) + ' log+ ' + logDelta + ' idle saves ' + idleSaves + ' ' + `device revision changed ${revisions.size - 1} times in 20 s idle; this tab saved ${saves.length - before} times: ${JSON.stringify(saves.slice(-10))}`);
     return { savesAtOpen: saves.length, viewEntriesForThisTab: globalThis.openDiff.length };
@@ -113,6 +120,15 @@ try {
     if (!afterEdit.state.groups?.some(g => g.name === name)) throw Error('the device never saved it; status ' + JSON.stringify(status) + ' errors ' + JSON.stringify(pageErrors) + ' trace ' + JSON.stringify(await page.evaluate(() => (globalThis.__papersRemoteTrace || []).filter(t => t.operation !== 'workspace-load').map(t => t.at.slice(17, 23) + ' ' + t.operation.slice(10) + ' ' + t.ok + ' ' + (t.code || '') + (t.error || '')).slice(-12))) + ' loads ' + await page.evaluate(() => (globalThis.__papersRemoteTrace || []).filter(t => t.operation === 'workspace-load').length));
     await page.waitForFunction(n => document.body.innerText.includes(n), name, { timeout: 10000 });
     return { revision: afterEdit.revision.slice(0, 12) };
+  });
+  await check('icons stored as files on the device show here and stay references there', async () => {
+    const refs = JSON.stringify((await remote('workspace-load')).state).match(/\.\/icons\/[a-f0-9]{64}\.[a-z]{2,4}/g) ?? [];
+    const images = await page.evaluate(() => [...document.querySelectorAll('.workspace-navigator img')].map(img => ({ src: img.getAttribute('src')?.slice(0, 20), ok: img.complete && img.naturalWidth > 0 })));
+    const broken = images.filter(img => !img.ok);
+    if (refs.length && (!images.some(img => img.src?.startsWith('data:image/')) || broken.length)) throw Error('icons ' + JSON.stringify(images.slice(0, 6)));
+    const stored = JSON.stringify((await remote('workspace-load')).state);
+    if (stored.includes('data:image/') && !JSON.stringify(original.state).includes('data:image/')) throw Error('inline icons leaked into the device document');
+    return { iconRefs: refs.length, shown: images.length };
   });
   await check('a save built on an older revision is refused by the device', async () => {
     const stale = await remote('workspace-save', { state: JSON.stringify(original.state), revision: original.revision });

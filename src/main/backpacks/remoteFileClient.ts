@@ -310,6 +310,16 @@ export class RemoteFileClient {
     if (typeof response.revision !== 'string') throw new Error('Invalid workspace document.');
     return { state: response.state, revision: response.revision };
   }
+  /** One of the owner's As you Go icon files, as a data URL for display. */
+  async workspaceIcon(ownerId: string, id: string, name: string): Promise<string> {
+    if (!/^[a-f0-9-]{36}$/.test(id) || !/^[a-f0-9]{64}\.[a-z]{2,4}$/.test(name)) throw new Error('Invalid icon.');
+    const response = await this.request(ownerId, `/v1/workspaces/${id}/icons/${name}`);
+    const type = response.headers.get('content-type') ?? '';
+    if (!/^image\/[a-z+.-]+$/.test(type)) throw new Error('Invalid icon.');
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > 4 * 1024 * 1024) throw new Error('Icon is too large.');
+    return `data:${type};base64,${bytes.toString('base64')}`;
+  }
   /** Offers a document built on `revision`; the owner refuses it if its copy moved on. */
   async workspaceSave(ownerId: string, id: string, state: string, revision: string): Promise<{ ok: boolean; revision: string; code?: string }> {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid workspace identity.');

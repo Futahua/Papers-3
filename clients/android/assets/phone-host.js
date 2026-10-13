@@ -103,6 +103,7 @@ async function remoteFiles(params) {
     case 'status': { const result = await status(); return result; }
     case 'workspaces': return native({ operation: 'workspaces', ownerId });
     case 'workspace-load': return native({ operation: 'workspace-load', ownerId, workspaceId: params.workspaceId });
+    case 'workspace-icon': return native({ operation: 'workspace-icon', ownerId, workspaceId: params.workspaceId, name: params.name });
     case 'workspace-save': return native({ operation: 'workspace-save', ownerId, workspaceId: params.workspaceId, state: params.state, revision: params.revision });
     case 'inbox': {
       let chosen = null; try { chosen = JSON.parse(localStorage.getItem(inboxKey(ownerId)) || 'null'); } catch {}

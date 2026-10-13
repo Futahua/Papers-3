@@ -837,6 +837,7 @@ async function bootstrap(): Promise<void> {
         case 'backpack-snapshot': return remoteFiles.backpackSnapshot(ownerId,String(params.resourceId??''));
         case 'edit-begin': return remoteFiles.beginEdit(ownerId, params.entry);
         case 'workspaces': return remoteFiles.workspaces(ownerId);
+        case 'workspace-icon': return remoteFiles.workspaceIcon(ownerId, String(params.workspaceId ?? ''), String(params.name ?? ''));
         case 'workspace-load': return remoteFiles.workspaceLoad(ownerId, String(params.workspaceId ?? ''));
         case 'workspace-save': if (typeof params.state !== 'string' || typeof params.revision !== 'string') throw new Error('A document and its revision are required.'); return remoteFiles.workspaceSave(ownerId, String(params.workspaceId ?? ''), params.state, params.revision);
         case 'inbox': return remotePaths.inbox(ownerId);
@@ -1919,6 +1920,7 @@ async function bootstrap(): Promise<void> {
     list:async()=>{const found=[];for(const backpack of registry.list())if(await backpackProjects.sharedDataKind(backpack.id)==='as-you-go')found.push({projectId:backpack.id,name:backpack.name});return found;},
     load:async projectId=>{const loaded=await backpackProjects.loadStateVersioned(projectId);return {state:loaded.state,revision:loaded.revision};},
     save:(projectId,raw,revision)=>backpackProjects.saveState(projectId,raw,revision as never),
+    icon:(projectId,name)=>backpackProjects.sharedIcon(projectId,name),
   };
   remoteDevices.preview=target=>fileCapability.call({operation:'preview',params:{path:target}},{backpackId:'remote:preview'} as never);
   remoteDevices.search=async(query,limit)=>{if(!everythingSearch)throw Error('Everything search is unavailable on this computer.');const result=await everythingSearch.search(query,limit);if(!result.ok)throw Error(result.error??'Search failed.');return result;};

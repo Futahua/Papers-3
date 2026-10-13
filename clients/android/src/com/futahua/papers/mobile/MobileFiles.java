@@ -49,6 +49,17 @@ final class MobileFiles {
       case "workspaces": { JSONObject result = json(request(owner, "/v1/workspaces", null, null)); if (!owner.equals(result.getJSONObject("owner").getString("id"))) throw new IOException("Owner identity changed."); return result.getJSONArray("entries"); }
       case "workspace-load": { String id = request.getString("workspaceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid workspace identity."); return largeJson(request(owner, "/v1/workspaces/" + id + "/state", null, null)); }
       case "workspace-save": { String id = request.getString("workspaceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid workspace identity."); JSONObject device = connection(owner); return largeJson(http(address(device.getString("address")) + "/v1/workspaces/" + id + "/state", open(device.getString("secret")), null, new JSONObject().put("state", request.getString("state")).put("revision", request.getString("revision")))).getJSONObject("save"); }
+      case "workspace-icon": {
+        String id = request.getString("workspaceId"), name = request.getString("name");
+        if (!id.matches("[a-f0-9-]{36}") || !name.matches("[a-f0-9]{64}\\.[a-z]{2,4}")) throw new IOException("Invalid icon.");
+        HttpURLConnection icon = request(owner, "/v1/workspaces/" + id + "/icons/" + name, null, null);
+        try (InputStream input = icon.getInputStream()) {
+          String type = String.valueOf(icon.getContentType()); if (!type.matches("image/[a-z+.-]+")) throw new IOException("Invalid icon.");
+          ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[16384]; int count;
+          while ((count = input.read(buffer)) >= 0) { bytes.write(buffer, 0, count); if (bytes.size() > 4 * 1024 * 1024) throw new IOException("Icon is too large."); }
+          return "data:" + type + ";base64," + Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP);
+        } finally { icon.disconnect(); }
+      }
       case "inbox": return json(request(owner, "/v1/files/inbox", null, null));
       case "search": return json(request(owner, "/v1/files/search?q=" + URLEncoder.encode(request.getString("query"), "UTF-8") + "&limit=" + Math.max(1, Math.min(1000, request.optInt("limit", 200))), null, null)).getJSONArray("results");
       case "preview": { String id = request.getString("resourceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid file identity."); return largeJson(request(owner, "/v1/files/" + id + "/preview", null, null)).getJSONObject("preview"); }
