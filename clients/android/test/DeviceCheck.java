@@ -74,6 +74,13 @@ public final class DeviceCheck extends Instrumentation {
     try(OutputStream output=getTargetContext().getContentResolver().openOutputStream(uri,"wt")){if(output==null)throw new IOException("Missing editable URI stream");output.write(bytes);}
     File original=new File(new File(new File(getTargetContext().getFilesDir(),"remote-edits"),id),"original.bin");
     if(!MobileEditCopies.digest(original).equals(edit.getJSONObject("session").getString("sourceSha256")))throw new IOException("Editable URI changed the original");
+    if("import".equals(arguments.getString("editStage"))){
+      MobileEditCopies copies=new MobileEditCopies(getTargetContext());String before=MobileEditCopies.digest(copies.working(id));
+      JSONObject imported=copies.importCopy(id,new ByteArrayInputStream("Generated imported editor file".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+      if(id.equals(imported.getString("id"))||!before.equals(MobileEditCopies.digest(copies.working(id))))throw new IOException("Import replaced previous local work");
+      boolean retired=false;try{copies.prepare(id);}catch(IOException expected){retired=expected.getMessage().contains("imported edited copy");}if(!retired)throw new IOException("Previous imported-from copy remained saveable");
+      id=imported.getString("id");
+    }
     if("loss".equals(arguments.getString("editStage"))){
       boolean refused=false;try{files.call(new JSONObject().put("operation","edit-save").put("editId",id));}catch(Exception expected){refused=true;}
       JSONObject retained=new MobileEditCopies(getTargetContext()).read(id);if(!refused||!"uncertain".equals(retained.getString("phase")))throw new IOException("Lost acknowledgement was not retained");
@@ -102,7 +109,7 @@ public final class DeviceCheck extends Instrumentation {
       JSONObject nextSaved=(JSONObject)files.call(new JSONObject().put("operation","edit-save").put("editId",nextId));if(!"saved".equals(nextSaved.getString("phase")))throw new IOException("Continued phone save not confirmed");
       result.putString("result","PASS: phone saved, carried newer local bytes into a checked new session, saved again and retained both copies");return;
     }
-    result.putString("result","PASS: phone native session, editable URI, retained original, checked HTTP save, duplicate receipt, verified owner bytes, reopened local journal");
+    result.putString("result","import".equals(arguments.getString("editStage"))?"PASS: imported phone editor bytes saved through checked owner; previous local work retained and duplicate save refused":"PASS: phone native session, editable URI, retained original, checked HTTP save, duplicate receipt, verified owner bytes, reopened local journal");
   }
   private void editGrantCheck(Bundle result) throws Exception {
     File source=new File(getTargetContext().getCacheDir(),"generated-grant-source.txt");try(FileOutputStream output=new FileOutputStream(source)){output.write("Generated original".getBytes(java.nio.charset.StandardCharsets.UTF_8));}

@@ -18,6 +18,8 @@ public final class MainActivity extends Activity {
   private WebView view;
   private final ExecutorService requests = Executors.newFixedThreadPool(3);
   private MobileFiles files;
+  private String importRequest, importEdit;
+  private static final int IMPORT_EDIT = 201;
 
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
@@ -55,12 +57,46 @@ public final class MainActivity extends Activity {
       if (!id.matches("[0-9]{1,12}") || text.length() > 65536) return;
       requests.execute(() -> {
         JSONObject reply = new JSONObject();
-        try { reply.put("ok", true); reply.put("result", files.call(new JSONObject(text))); }
+        try {
+          JSONObject request = new JSONObject(text);
+          if ("edit-import".equals(request.optString("operation"))) {
+            String editId = request.getString("editId");
+            MobileEditCopies copies=new MobileEditCopies(getApplicationContext());copies.working(editId);
+            JSONObject copy=copies.read(editId);if(!"editing".equals(copy.getString("phase"))||copy.has("saveId")||copy.has("importedCopyId"))throw new java.io.IOException("Choose the current editable working copy.");
+            runOnUiThread(() -> {
+              if(isFinishing()||isDestroyed())return;
+              if (importRequest != null) { sendReply(id,false,"A file choice is already open."); return; }
+              importRequest=id; importEdit=editId;
+              try { startActivityForResult(new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).addCategory(android.content.Intent.CATEGORY_OPENABLE).setType("*/*"), IMPORT_EDIT); }
+              catch(Exception error){importRequest=null;importEdit=null;sendReply(id,false,"The file chooser is unavailable.");}
+            }); return;
+          }
+          reply.put("ok", true); reply.put("result", files.call(request));
+        }
         catch (Exception error) { try { reply.put("ok", false); reply.put("message", error.getMessage() == null ? "Operation failed" : error.getMessage()); } catch (Exception ignored) {} }
         String json = reply.toString();
         runOnUiThread(() -> { if (view != null) view.evaluateJavascript("window.papersReply(" + id + "," + json + ")", null); });
       });
     }
+  }
+  private void sendReply(String id,boolean success,Object value) {
+    try { JSONObject reply=new JSONObject().put("ok",success).put(success?"result":"message",value);
+      if(view!=null)view.evaluateJavascript("window.papersReply("+id+","+reply.toString()+")",null);
+    } catch(Exception ignored){}
+  }
+  @Override protected void onActivityResult(int requestCode,int resultCode,android.content.Intent data) {
+    super.onActivityResult(requestCode,resultCode,data);
+    if(requestCode!=IMPORT_EDIT||importRequest==null)return;
+    String replyId=importRequest,editId=importEdit;importRequest=null;importEdit=null;
+    if(resultCode!=RESULT_OK||data==null||data.getData()==null){sendReply(replyId,true,new JSONObject());return;}
+    android.net.Uri uri=data.getData();
+    requests.execute(()->{
+      try(java.io.InputStream input=getContentResolver().openInputStream(uri)){
+        if(input==null)throw new java.io.IOException("Chosen file could not be read.");
+        JSONObject copy=new MobileEditCopies(getApplicationContext()).importCopy(editId,input);
+        runOnUiThread(()->sendReply(replyId,true,copy));
+      }catch(Exception error){runOnUiThread(()->sendReply(replyId,false,"Import was not completed. Previous working files were retained."));}
+    });
   }
   @Override public void onDestroy() {
     requests.shutdownNow();

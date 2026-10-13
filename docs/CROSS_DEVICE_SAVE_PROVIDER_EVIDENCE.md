@@ -405,3 +405,32 @@ import/save workflow. Laptop installation predates continuation source changes.
 The rendered AYG fixture passed the newer-edits label and continuation/open request,
 alongside recovery/conflict and unsupported-client checks. Typecheck passes. This does
 not complete external-editor reintegration, actual installed peer UX, or the full plan.
+
+## Imported editor copies
+
+Android has an explicit ACTION_OPEN_DOCUMENT route for an editor that exported or
+imported another file. The chosen stream is bounded and written to a new private
+working-copy record, with a verified copy of the original source. It does not replace
+an existing editable URI: previous working bytes remain available, and that previous
+record is marked with the new imported-copy identity so it cannot submit another save.
+The imported copy retains the captured source revision, so ordinary checked save-back
+still refuses a changed owner. Incomplete imports retain files in preparing state.
+Cancellation leaves prior work unchanged. The chooser refuses prepared/superseded
+copies and does not open after the Activity has been destroyed.
+
+Actual phone instrumentation imported generated editor bytes through the native copy
+owner, verified previous working bytes remained unchanged and became non-saveable,
+saved the imported copy through the Windows owner, re-downloaded verified owner bytes,
+and reopened its journal. The desktop generated file independently contained the
+expected imported text. Signed main APK installed during this check:
+`8ca694c4d2d0875b015fe9e2e79289b091be203380ea56bb65f76e888f91421d`.
+The listener and test package were retired after completion; main Papers reopened.
+
+AYG has capability-gated Import edited copy and Edit again actions. The rendered view
+fixture passed import identity routing, previous-copy status and exactly one saveable
+imported record, together with continuation/recovery checks. Android build passes.
+The native instrumentation supplies the chosen stream directly; it does not prove
+the real system chooser/bridge return or an installed editor's export flow. The last
+Activity request guard change is compiled source, not signed installed evidence.
+Phone editing remains hidden until that full UI path is verified; this checkpoint is
+not the full cross-device objective.

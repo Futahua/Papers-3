@@ -54,8 +54,20 @@ final class MobileEditCopies {
     try { stream=file.startWrite(); stream.write(record.toString().getBytes(StandardCharsets.UTF_8));file.finishWrite(stream); }
     catch(Exception error){if(stream!=null)file.failWrite(stream);throw error;}
   }
+  JSONObject importCopy(String previousId,InputStream input) throws Exception {
+    JSONObject previous=read(previousId);
+    if(!"editing".equals(previous.getString("phase"))||previous.has("saveId")||previous.has("importedCopyId"))throw new IOException("Choose the current editable copy before importing another file");
+    String id=UUID.randomUUID().toString();File folder=directory(id);if(!folder.mkdir())throw new IOException("Import folder could not be created");
+    JSONObject record=new JSONObject().put("id",id).put("ownerId",previous.getString("ownerId")).put("session",new JSONObject(previous.getJSONObject("session").toString())).put("name",previous.getString("name")).put("phase","preparing").put("importedFrom",previousId);retain(record);
+    File original=new File(directory(previousId),"original.bin");
+    if(!digest(original).equals(record.getJSONObject("session").getString("sourceSha256")))throw new IOException("Retained original requires recovery");
+    copy(original,new File(folder,"original.bin"));
+    try(FileOutputStream output=new FileOutputStream(new File(folder,"working.bin"))){byte[] buffer=new byte[65536];long bytes=0;int count;while((count=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new IOException("Import paused; retained copies are available");bytes+=count;if(bytes>64L*1024*1024*1024)throw new IOException("Edited copy exceeds supported size");output.write(buffer,0,count);}output.getFD().sync();}
+    record.put("phase","editing");retain(record);previous.put("importedCopyId",id);retain(previous);return record;
+  }
   synchronized JSONObject prepare(String id) throws Exception {
     JSONObject record=read(id);if(record.has("saveId"))return record;
+    if(record.has("importedCopyId"))throw new IOException("Use the imported edited copy. This previous working file is retained for recovery.");
     File working=working(id);String hash=digest(working);
     if(hash.equals(record.getJSONObject("session").getString("sourceSha256")))throw new IOException("No changes were found in this working copy. Your editor may have saved a separate copy; retain that file before saving back.");
     String saveId=UUID.randomUUID().toString();File snapshot=new File(directory(id),saveId+".save");copy(working,snapshot);
