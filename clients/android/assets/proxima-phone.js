@@ -132,7 +132,10 @@
 .proxima-phone-pager{position:fixed;z-index:3980;width:64px;height:72px;touch-action:none;border-radius:50%;background:radial-gradient(closest-side,color-mix(in srgb,var(--accent,#8ddcff) 55%,transparent),transparent);opacity:0}
 .proxima-phone-pager[hidden]{display:none}
 .proxima-phone-pager.is-lit{animation:proxima-phone-pager-lit 420ms ease-out}
-@keyframes proxima-phone-pager-lit{0%{opacity:.9}100%{opacity:0}}`;
+@keyframes proxima-phone-pager-lit{0%{opacity:.9}100%{opacity:0}}
+html body button.proxima-phone-history{position:fixed;bottom:16px;z-index:2147483600;width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb,currentColor 25%,transparent);background:var(--panel,#1f252b);color:var(--ink,#e6e9ef);box-shadow:0 6px 18px #0006;touch-action:none;display:grid;place-items:center;padding:0;opacity:.85}
+html body button.proxima-phone-history svg{width:22px;height:22px;pointer-events:none}
+html body button.proxima-phone-history.is-pressed{opacity:1;background:color-mix(in srgb,var(--panel,#1f252b) 60%,var(--accent,#8ddcff))}`;
 
   // Each PC keeps its own palette wherever it is viewed (SlopTop blue, LapDog green); the phone shows
   // the viewed PC's, chosen by Proxima's own device-theme.js from that PC's durable owner identity.
@@ -145,8 +148,26 @@
     new MutationObserver(apply).observe(document.documentElement, { attributes: true, attributeFilter: ['data-device'] });
   }).catch(() => {});
 
+  // Undo / redo at the bottom right: the same Z / Y the PC's keyboard sends (the owner applies them).
+  function historyButtons() {
+    const icon = (redo) => `<svg viewBox="0 0 24 24" aria-hidden="true"${redo ? ' style="transform:scaleX(-1)"' : ''}><path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    for (const [key, label, right] of [['z', 'Undo', 78], ['y', 'Redo', 16]]) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'proxima-phone-history'; button.title = label; button.setAttribute('aria-label', label);
+      button.innerHTML = icon(key === 'y'); button.style.right = right + 'px';
+      button.addEventListener('touchstart', (event) => { event.preventDefault(); event.stopPropagation(); button.classList.add('is-pressed'); }, { passive: false });
+      button.addEventListener('touchend', (event) => {
+        event.preventDefault(); event.stopPropagation(); button.classList.remove('is-pressed');
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { key, code: 'Key' + key.toUpperCase(), bubbles: true, cancelable: true }));
+      }, { passive: false });
+      button.addEventListener('touchcancel', () => button.classList.remove('is-pressed'));
+      document.body.append(button);
+    }
+  }
+
   const install = () => {
     document.head.append(style);
+    historyButtons();
     for (const edge of ['back', 'next']) {
       const pager = document.createElement('div');
       pager.className = 'proxima-phone-pager'; pager.dataset.edge = edge; pager.hidden = true;

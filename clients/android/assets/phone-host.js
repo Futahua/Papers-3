@@ -268,6 +268,8 @@ async function proximaRequest(request) {
     const result = request.operation === 'command'
       ? await native({ operation: 'backpack-command', ownerId: request.ownerId, resourceId: share.id, command: request.command })
       : await native({ operation: 'backpack-view', ownerId: request.ownerId, resourceId: share.id });
+    // Restored at launch, Proxima can ask before the device list is loaded: load it for the name.
+    if (!devices.some((d) => d.id === request.ownerId)) await status();
     return { ...result, name: deviceName(request.ownerId) };
   }
   throw new Error('Not available on the phone.');
