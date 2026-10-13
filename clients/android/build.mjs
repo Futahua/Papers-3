@@ -14,7 +14,7 @@ const classes=path.join(output,'classes'),assets=path.join(output,'assets'),dex=
 await Promise.all([classes,assets,dex,path.join(assets,'app')].map(directory=>mkdir(directory,{recursive:true})));
 for(const name of await readdir(path.join(root,'assets')))await copyFile(path.join(root,'assets',name),path.join(assets,name));
 await copyFile(path.join(ayg,'public/app/remote-file-view.js'),path.join(assets,'app/remote-file-view.js'));
-for(const name of ['remote-domain.js','remote-devices-view.js'])await copyFile(path.join(proxima,'public',name),path.join(assets,'app',name));
+for(const name of ['remote-domain.js','remote-devices-view.js','remote-overview.html','remote-overview.css','remote-overview.js','schedule-projection.js','date-strip.js','marquee-controller.js','exact-timeline.js','app.css'])await copyFile(path.join(proxima,'public',name),path.join(assets,'app',name));
 function run(executable,args){const result=spawnSync(executable,args,{stdio:'inherit',windowsHide:true});if(result.error)throw result.error;if(result.status!==0)throw new Error(`${path.basename(executable)} failed (${result.status})`);}
 const sources=(await readdir(path.join(root,'src/com/futahua/papers/mobile'))).filter(name=>name.endsWith('.java')).map(name=>path.join(root,'src/com/futahua/papers/mobile',name));
 run(path.join(jdk,'bin/javac.exe'),['-source','8','-target','8','-classpath',library,'-d',classes,...sources]);

@@ -53,10 +53,12 @@ export function registerBackpackProjectSchemePrivileges(): void {
 }
 
 /**
- * `connect-src` is the ONE relaxation, and it is deliberately narrow.
+ * Local content composition and loopback connections are deliberately narrow.
  *
  * Remote scripts/styles/forms/base remain denied. Project pages may connect
- * only to loopback services. Rich local previews may use in-memory `blob:` URLs;
+ * only to loopback services. Local frames may load the same bound project's
+ * authored assets, without granting another project or network origin access.
+ * Rich local previews may use in-memory `blob:` URLs;
  * `data:` frames and remote frame origins remain denied
  * unless an embedded Backpack origin was explicitly registered.
  *
@@ -79,7 +81,7 @@ export function registerBackpackProjectSchemePrivileges(): void {
  * the request itself travel through `localServiceBridge` in the main process.
  */
 export function contentSecurityPolicy(origin: string, frameOrigins: readonly string[] = []): string {
-  const allowedFrames = frameOrigins.length > 0 ? frameOrigins.join(' ') : "'none'";
+  const allowedFrames = [origin, ...frameOrigins].join(' ');
   const previewOrigin = `${FILE_PREVIEW_SCHEME}://${new URL(origin).hostname}`;
   return [
     `default-src 'none'`,
@@ -92,7 +94,7 @@ export function contentSecurityPolicy(origin: string, frameOrigins: readonly str
     `object-src 'none'`,
     `base-uri 'none'`,
     `form-action 'none'`,
-    `frame-src ${allowedFrames === "'none'" ? `${previewOrigin} blob:` : `${allowedFrames} ${previewOrigin} blob:`}`,
+    `frame-src ${allowedFrames} ${previewOrigin} blob:`,
   ].join('; ');
 }
 

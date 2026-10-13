@@ -33,7 +33,9 @@ public final class MainActivity extends Activity {
       @Override public boolean onConsoleMessage(ConsoleMessage message) { android.util.Log.w("PapersWeb", message.message()); return true; }
     });
     view.setWebViewClient(new WebViewClient() {
-      @Override public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) { return true; }
+      @Override public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {
+        return request.isForMainFrame() || !"https".equals(request.getUrl().getScheme()) || !"papers.local".equals(request.getUrl().getHost()) || !"/app/remote-overview.html".equals(request.getUrl().getPath());
+      }
       @Override public WebResourceResponse shouldInterceptRequest(WebView webView, WebResourceRequest request) {
         String name = request.getUrl().getPath();
         if (!"https".equals(request.getUrl().getScheme()) || !"papers.local".equals(request.getUrl().getHost()) || name == null || name.contains("..") || !name.matches("/[a-zA-Z0-9/_-]+\\.(html|js|css)")) return empty();

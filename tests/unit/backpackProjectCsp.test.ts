@@ -61,7 +61,7 @@ describe('backpack project content security policy', () => {
     expect(directive(policy, 'form-action')).toBe("form-action 'none'");
     expect(directive(policy, 'img-src')).toBe(`img-src ${ORIGIN} ${PREVIEW_ORIGIN} data: blob:`);
     expect(directive(policy, 'media-src')).toBe(`media-src ${PREVIEW_ORIGIN} blob:`);
-    expect(directive(policy, 'frame-src')).toBe(`frame-src ${PREVIEW_ORIGIN} blob:`);
+    expect(directive(policy, 'frame-src')).toBe(`frame-src ${ORIGIN} ${PREVIEW_ORIGIN} blob:`);
     expect(directive(policy, 'frame-src')).not.toContain('data:');
     expect(directive(policy, 'media-src')).not.toContain('data:');
     // style-src keeps unsafe-inline, as it always had, and nothing more.
@@ -74,7 +74,7 @@ describe('backpack project content security policy', () => {
   it('keeps an explicitly embedded Backpack origin plus local blob previews, and nothing wider', () => {
     const child = 'papers-backpack://bp-22222222-3333-4444-8555-666666666666';
     const policy = contentSecurityPolicy(ORIGIN, [child]);
-    expect(directive(policy, 'frame-src')).toBe(`frame-src ${child} ${PREVIEW_ORIGIN} blob:`);
+    expect(directive(policy, 'frame-src')).toBe(`frame-src ${ORIGIN} ${child} ${PREVIEW_ORIGIN} blob:`);
     expect(directive(policy, 'frame-src')).not.toMatch(/\bhttps?:/);
     expect(directive(policy, 'frame-src')).not.toContain('data:');
   });
