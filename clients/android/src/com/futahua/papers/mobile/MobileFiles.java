@@ -27,6 +27,7 @@ final class MobileFiles {
   private final MobileEditCopies editCopies;
   private final Map<String, JSONObject> jobs = new ConcurrentHashMap<>();
   private final Map<String, Future<?>> workers = new ConcurrentHashMap<>();
+  private final Map<String, Object> editLocks = new ConcurrentHashMap<>();
   private final ExecutorService downloads = Executors.newFixedThreadPool(2);
   MobileFiles(Context context) { this.context = context; root = new File(context.getFilesDir(), "remote-files"); root.mkdirs(); outbox=new MobileCommandOutbox(root); editCopies=new MobileEditCopies(context); }
 
@@ -42,6 +43,7 @@ final class MobileFiles {
       case "edit-list": return editCopies.list(owner);
       case "edit-begin": return beginEdit(owner,request.getJSONObject("entry"));
       case "edit-open": {String id=request.getString("editId");editCopies.working(id);CachedFilesProvider.edit(context,id,editCopies.read(id).getString("name"));return new JSONObject().put("opened",true);}
+      case "edit-save": return saveEdit(request.getString("editId"));
       case "backpacks": return backpacks(owner);
       case "backpack-snapshot": return backpackSnapshot(owner,request.getString("resourceId"));
       case "change": { JSONObject device=connection(owner);return outbox.send(owner,device.optString("deviceId"),request.getJSONObject("command"),command->dispatchChange(device,command)); }
@@ -89,6 +91,43 @@ final class MobileFiles {
     JSONObject job=jobs.get(jobId);synchronized(job){if(!"completed".equals(job.getString("phase")))throw new IOException(job.optString("error","Source download is incomplete"));}
     String key=sha(new JSONArray().put(owner).put(entry.getString("id")).put(entry.getString("version")).toString().getBytes(StandardCharsets.UTF_8));
     return editCopies.create(owner,session,entry.getString("name"),checkedFile(owner,key));
+  }
+  private JSONObject saveEdit(String id) throws Exception {
+    if(!id.matches("[a-f0-9-]{36}"))throw new IOException("Invalid local edit identity");
+    Object lock=editLocks.computeIfAbsent(id,key->new Object());synchronized(lock){return saveEditLocked(id);}
+  }
+  private JSONObject saveEditLocked(String id) throws Exception {
+    JSONObject record=editCopies.prepare(id);String phase=record.getString("phase");if("saved".equals(phase)||"conflict".equals(phase))return record;
+    String owner=record.getString("ownerId"),sessionId=record.getJSONObject("session").getString("id"),hash=record.getString("editedSha256");long size=record.getLong("editedBytes");
+    File snapshot=editCopies.snapshot(id);JSONObject device=connection(owner);String base=address(device.getString("address")),token=open(device.getString("secret"));
+    try {
+      if(!record.has("uploadId")){
+        String uploadId=json(http(base+"/v1/files/edits/"+sessionId+"/uploads",token,null,new JSONObject().put("bytes",size).put("sha256",hash))).getString("uploadId");
+        if(!uploadId.matches("[a-f0-9-]{36}"))throw new IOException("Invalid upload receipt");record.put("uploadId",uploadId);editCopies.retain(record);
+      }
+      String uploadRoute=base+"/v1/files/edits/uploads/"+record.getString("uploadId");
+      JSONObject status=json(http(uploadRoute,token,null,null)).getJSONObject("upload");long offset=status.getLong("receivedBytes");
+      if(!sessionId.equals(status.getString("sessionId"))||size!=status.getLong("bytes")||!hash.equals(status.getString("sha256"))||offset<0||offset>size)throw new IOException("Upload resume receipt differs from this save");
+      MessageDigest prefix=MessageDigest.getInstance("SHA-256");
+      try(RandomAccessFile file=new RandomAccessFile(snapshot,"r")){
+        byte[] buffer=new byte[65536];long remaining=offset;while(remaining>0){int count=file.read(buffer,0,(int)Math.min(buffer.length,remaining));if(count<0)throw new IOException("Retained prefix is incomplete");prefix.update(buffer,0,count);remaining-=count;}
+        StringBuilder prefixText=new StringBuilder();for(byte value:prefix.digest())prefixText.append(String.format(java.util.Locale.ROOT,"%02x",value&255));
+        if(!prefixText.toString().equals(status.getString("prefixSha256")))throw new IOException("Owner prefix differs; retain both copies for recovery");
+        while(offset<size){
+          if(Thread.currentThread().isInterrupted())throw new IOException("Save paused; retained snapshot can be resumed");
+          long count=Math.min(4L*1024*1024,size-offset);HttpURLConnection upload=(HttpURLConnection)new URL(uploadRoute+"?offset="+offset).openConnection();
+          upload.setInstanceFollowRedirects(false);upload.setConnectTimeout(15000);upload.setReadTimeout(60000);upload.setRequestMethod("PUT");upload.setRequestProperty("Authorization","Bearer "+token);upload.setDoOutput(true);upload.setFixedLengthStreamingMode(count);
+          try {
+            try(OutputStream output=upload.getOutputStream()){long chunkRemaining=count;while(chunkRemaining>0){int read=file.read(buffer,0,(int)Math.min(buffer.length,chunkRemaining));if(read<0)throw new IOException("Retained snapshot changed");output.write(buffer,0,read);chunkRemaining-=read;}}
+            if(upload.getResponseCode()!=200||json(upload).getLong("receivedBytes")!=offset+count)throw new IOException("Upload was not confirmed; retained snapshot can be resumed");offset+=count;
+          } finally {upload.disconnect();}
+        }
+      }
+      json(http(uploadRoute+"/seal",token,null,new JSONObject()));
+      JSONObject result=json(http(base+"/v1/files/edits/"+sessionId+"/save",token,null,new JSONObject().put("saveId",record.getString("saveId")).put("uploadId",record.getString("uploadId")).put("sha256",hash))).getJSONObject("session");
+      if(!sessionId.equals(result.getString("id"))||!record.getString("saveId").equals(result.getString("saveId"))||!hash.equals(result.getString("editedSha256"))||!Arrays.asList("saved","conflict","uncertain").contains(result.getString("phase")))throw new IOException("Invalid save receipt; retain local copies");
+      record.put("phase",result.getString("phase")).put("session",result);editCopies.retain(record);return record;
+    } catch(Exception error){record.put("phase","uncertain");editCopies.retain(record);throw error;}
   }
   private JSONObject backpacks(String owner) throws Exception {
     File cache=new File(root,"backpacks-"+sha(owner.getBytes(StandardCharsets.UTF_8))+".json");

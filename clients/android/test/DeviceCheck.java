@@ -18,6 +18,7 @@ public final class DeviceCheck extends Instrumentation {
     Bundle result=new Bundle();
     try {
       MobileFiles files=MobileFiles.get(getTargetContext());
+      if(!arguments.getString("editStage","").isEmpty()){editCheck(files,result);finish(Activity.RESULT_OK,result);return;}
       if(!arguments.getString("backpackStage","").isEmpty()){backpackCheck(files,result);finish(Activity.RESULT_OK,result);return;}
       if(!arguments.getString("mutationStage","").isEmpty()){mutationCheck(files,result);finish(Activity.RESULT_OK,result);return;}
       boolean offlineOnly="true".equals(arguments.getString("offlineOnly", "false"));
@@ -51,6 +52,28 @@ public final class DeviceCheck extends Instrumentation {
       if(!ready.await(10,TimeUnit.SECONDS)||!result.getString("uiText","").contains("Papers device check"))throw new IOException("Client UI did not display paired owner");
       result.putString("result",offlineOnly?"PASS: disconnected owner, saved listings, complete verified offline bytes, retained pairing after update, shared AYG UI":"PASS: native pairing, direct file listing, verified 1 MiB transfer, offline manifest, shared AYG UI");finish(Activity.RESULT_OK,result);
     }catch(Exception error){result.putString("failure",error.toString());finish(Activity.RESULT_CANCELED,result);}
+  }
+  private void editCheck(MobileFiles files,Bundle result) throws Exception {
+    files.call(new JSONObject().put("operation","pair").put("address",arguments.getString("address")).put("code",arguments.getString("code")));
+    org.json.JSONArray devices=((JSONObject)files.call(new JSONObject().put("operation","status"))).getJSONArray("devices");String owner=devices.getJSONObject(devices.length()-1).getString("id");
+    JSONObject shares=(JSONObject)files.call(new JSONObject().put("operation","browse").put("ownerId",owner));String folder=shares.getJSONArray("entries").getJSONObject(0).getString("id");
+    JSONObject source=browse(files,owner,folder).getJSONArray("entries").getJSONObject(0);
+    JSONObject edit=(JSONObject)files.call(new JSONObject().put("operation","edit-begin").put("ownerId",owner).put("entry",source));String id=edit.getString("id");
+    byte[] bytes="Generated phone edit, retained locally".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    android.net.Uri uri=new android.net.Uri.Builder().scheme("content").authority("com.futahua.papers.mobile.files").appendPath("edit").appendPath(id).build();
+    try(OutputStream output=getTargetContext().getContentResolver().openOutputStream(uri,"wt")){if(output==null)throw new IOException("Missing editable URI stream");output.write(bytes);}
+    File original=new File(new File(new File(getTargetContext().getFilesDir(),"remote-edits"),id),"original.bin");
+    if(!MobileEditCopies.digest(original).equals(edit.getJSONObject("session").getString("sourceSha256")))throw new IOException("Editable URI changed the original");
+    JSONObject saved=(JSONObject)files.call(new JSONObject().put("operation","edit-save").put("editId",id));
+    if(!"saved".equals(saved.getString("phase")))throw new IOException("Phone save not confirmed: "+saved.getString("phase"));
+    JSONObject repeated=(JSONObject)files.call(new JSONObject().put("operation","edit-save").put("editId",id));if(!saved.getString("saveId").equals(repeated.getString("saveId")))throw new IOException("Retry changed save identity");
+    JSONObject updated=browse(files,owner,folder).getJSONArray("entries").getJSONObject(0);JSONObject download=(JSONObject)files.call(new JSONObject().put("operation","download").put("ownerId",owner).put("entry",updated));
+    boolean done=false;for(int attempt=0;attempt<300;attempt++){org.json.JSONArray jobs=((JSONObject)files.call(new JSONObject().put("operation","status"))).getJSONArray("jobs");for(int i=0;i<jobs.length();i++){JSONObject job=jobs.getJSONObject(i);if(download.getString("id").equals(job.getString("id"))){if("failed".equals(job.getString("phase")))throw new IOException(job.optString("error"));done="completed".equals(job.getString("phase"));}}if(done)break;Thread.sleep(100);}if(!done)throw new IOException("Saved file verification download timed out");
+    String expected=MobileEditCopies.digest(new MobileEditCopies(getTargetContext()).working(id));org.json.JSONArray copies=(org.json.JSONArray)files.call(new JSONObject().put("operation","offline").put("ownerId",owner));boolean verified=false;
+    for(int i=0;i<copies.length();i++)if(updated.getString("version").equals(copies.getJSONObject(i).getJSONObject("entry").getString("version")))verified=expected.equals(copies.getJSONObject(i).getString("sha256"));
+    if(!verified)throw new IOException("Owner saved bytes do not match phone working copy");
+    JSONObject reopened=new MobileEditCopies(getTargetContext()).read(id);if(!"saved".equals(reopened.getString("phase")))throw new IOException("Save receipt did not survive local owner recreation");
+    result.putString("result","PASS: phone native session, editable URI, retained original, checked HTTP save, duplicate receipt, verified owner bytes, reopened local journal");
   }
   private JSONObject browse(MobileFiles files,String owner,String folder) throws Exception {return (JSONObject)files.call(new JSONObject().put("operation","browse").put("ownerId",owner).put("resourceId",folder));}
   private void backpackCheck(MobileFiles files,Bundle result) throws Exception {

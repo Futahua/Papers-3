@@ -237,3 +237,27 @@ The unsigned Android build compiles successfully. No real phone editor/URI permi
 or save-back acceptance has been established yet. Client editing capability remains
 absent, so AYG hides these controls until Android save orchestration and device evidence
 are complete. The installed signed package remains the earlier verified build.
+
+## Android checked save and actual device evidence
+
+Android now retains a flushed save snapshot and durable save/upload identities,
+verifies the owner's retained prefix, streams bounded chunks, seals the whole digest,
+and requests checked save-back with the same identity on retry. Per-edit locking
+does not hold the unrelated pairing/download lock during an upload. Unconfirmed and
+conflicting results retain originals, working copies, and save snapshots.
+
+The signed package was updated in place on the USB-connected phone without a data
+wipe (APK SHA-256 `b29fffc422a42e6a414ced5c9c87212e7e7f16dbc89d46a0c5e6bf9b1e2e698b`).
+A generated-only gateway on the desktop's private device interface used the actual
+Windows native provider. Instrumentation passed native pairing/session, working-copy
+URI write, unchanged retained original, checked HTTP save, duplicate receipt,
+re-download of the owner's changed bytes matching the local working digest, and
+reopening the local receipt journal. This is actual Android-to-PC save evidence,
+not a browser stub. The test runs under target instrumentation permissions; it does
+not prove an external editor's URI grant or its own save behavior.
+
+Client editing capability remains hidden pending external-editor and complete UX
+acceptance. The generated listener was stopped and the separate test package removed;
+the signed main package and creator app data remain. No laptop edit install occurred.
+Remaining checks include external-editor grants, interrupted/restarted phone upload,
+external source conflict, rendered phone UX, laptop end-to-end path, and the full plan.

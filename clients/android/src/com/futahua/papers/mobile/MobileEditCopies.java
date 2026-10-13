@@ -54,6 +54,18 @@ final class MobileEditCopies {
     try { stream=file.startWrite(); stream.write(record.toString().getBytes(StandardCharsets.UTF_8));file.finishWrite(stream); }
     catch(Exception error){if(stream!=null)file.failWrite(stream);throw error;}
   }
+  synchronized JSONObject prepare(String id) throws Exception {
+    JSONObject record=read(id);if(record.has("saveId"))return record;
+    File working=working(id);String hash=digest(working);String saveId=UUID.randomUUID().toString();File snapshot=new File(directory(id),saveId+".save");copy(working,snapshot);
+    if(!hash.equals(digest(snapshot))||!hash.equals(digest(working)))throw new IOException("Working copy changed while preparing; retained copies are available for recovery");
+    record.put("saveId",saveId).put("editedSha256",hash).put("editedBytes",snapshot.length()).put("phase","saving");retain(record);return record;
+  }
+  File snapshot(String id) throws Exception {
+    JSONObject record=read(id);String saveId=record.getString("saveId");
+    if(!saveId.matches("[a-f0-9-]{36}"))throw new IOException("Invalid save identity");
+    File file=new File(directory(id),saveId+".save");
+    if(file.length()!=record.getLong("editedBytes")||!digest(file).equals(record.getString("editedSha256")))throw new IOException("Retained save snapshot requires recovery");return file;
+  }
   static void copy(File source,File destination) throws Exception {
     if(destination.exists())throw new IOException("Working-copy destination already exists");
     try(InputStream input=new FileInputStream(source);FileOutputStream output=new FileOutputStream(destination)) {
