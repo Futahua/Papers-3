@@ -485,3 +485,11 @@ ASAR SHA-256: `9c268106288d6fe6b3984021814916d7fa69bd8f9286ef3f4e6aa8de5f71ea25`
 It contains runtime source at `34ce0da`. Production desktop backup/install, approved
 real resources, pairing, live Backpack source acceptance and the full plan gates remain.
 The desktop app remains running; its profile and bound code were not replaced here.
+
+### Installed desktop owner and bound Backpacks, 2026-10-13
+
+The supported desktop installer completed and the installed ASAR matches the checked build (`9c268106288d6fe6b3984021814916d7fa69bd8f9286ef3f4e6aa8de5f71ea25`). Recovery copies were independently hashed: 8,935 profile files, 1,517 bound AYG files and 596 bound Proxima files. The installer left those bytes unchanged. The previous full app and supported installer remain in the recovery directory.
+
+The actual bound AYG then received its two cross-device code files, and Proxima its seventeen changed/added files. Before copying, every modified file matched its Git ancestor after newline normalization and matched its byte-exact recovery copy; every added file was absent. Installed files subsequently matched source SHA-256. Source commits: AYG `5f7983e`, Proxima `fc08ce4`. No creator document or machine-local state was included in this code overlay.
+
+The app reopened through its ordinary launcher. Real production pairing remains unverified. The creator prohibited mouse interaction; no pointer or keyboard input was sent. An attempted local debugging launch was rejected by automatic approval review; it was not retried or bypassed, and Papers was reopened normally. Fixture acceptance must not be relabeled as production pairing.
