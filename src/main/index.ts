@@ -820,6 +820,15 @@ async function bootstrap(): Promise<void> {
         case 'changes': return remoteFiles.changes(ownerId);
         case 'backpacks': return remoteFiles.backpacks(ownerId);
         case 'backpack-snapshot': return remoteFiles.backpackSnapshot(ownerId,String(params.resourceId??''));
+        case 'edit-begin': return remoteFiles.beginEdit(ownerId, params.entry);
+        case 'edit-list': return remoteFiles.localEdits(ownerId || undefined);
+        case 'edit-save': return remoteFiles.saveEdit(String(params.editId ?? ''));
+        case 'edit-open': {
+          const target = await remoteFiles.editPath(String(params.editId ?? ''));
+          const failure = await shell.openPath(target);
+          if (failure) throw new Error(failure);
+          return { opened: true };
+        }
         case 'cancel': if (typeof params.jobId === 'string') remoteFiles.cancel(params.jobId); return { canceled: true };
         case 'open-cache': {
           if (typeof params.key !== 'string') throw new Error('Choose an offline file.');

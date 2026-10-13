@@ -183,3 +183,23 @@ and download cache, survive recreation of the working-copy owner, remain isolate
 by owner identity, and reject traversal/damaged originals/mismatched source content.
 Existing client checks and typecheck pass. Save/upload orchestration and the actual
 AYG editing controls are still absent; no new edit feature is installed on PC or phone.
+
+## Receiving save-back checkpoint
+
+The receiving PC now retains a verified, flushed save snapshot distinct from its
+still-editable working file. Its save identity and upload identity are journaled.
+Save-back uses bounded four-MiB chunks, verifies the owner's actual retained prefix
+before resuming, seals the uploaded digest, and submits the same save identity on
+retry. Conflict and uncertain receipts retain local original/working/save files.
+Shutdown waits for tracked saves, while a closing client stops before another chunk
+or commit is dispatched. The trusted local file capability exposes begin/list/open
+working copy/save operations; opening uses the receiving machine's installed editor,
+not a remote owner application.
+
+The actual receiving client test paired with the HTTP owner and Windows native
+provider, downloaded a generated source, saved a five-MiB changed working copy across
+multiple upload chunks, verified owner bytes, retained local working bytes and the
+unchanged download cache, then recreated the client and checked its retained saved
+receipt without another save. Six client/working-copy checks passed; typecheck passes.
+This loopback test is not two-machine or Android evidence. AYG controls, phone native
+editing/export machinery, disconnected upload acceptance, and installation remain.

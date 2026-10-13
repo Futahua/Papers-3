@@ -9,6 +9,7 @@ export interface LocalEditCopy {
   id: string; ownerId: string; session: EditSession; name: string; extension: string;
   phase: 'editing' | 'saving' | 'saved' | 'conflict' | 'uncertain';
   uploadId?: string; saveId?: string; editedSha256?: string;
+  editedBytes?: number;
 }
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 async function digest(file: string) {
@@ -56,6 +57,26 @@ export class RemoteFileEditWorkingCopies {
   async originalPath(id: string) {
     const record = await this.read(id); const file = path.join(this.folder(id), 'original.bin');
     if (await digest(file) !== record.session.sourceSha256) throw new Error('Retained original requires recovery.');
+    return file;
+  }
+  async retain(record: LocalEditCopy) { await this.store(record.id).save(record); }
+  async prepare(id: string) {
+    const record = await this.read(id);
+    if (record.saveId) return record;
+    const working = await this.workingPath(id);
+    const expected = await digest(working);
+    const saveId = randomUUID(); const snapshot = path.join(this.folder(id), saveId + '.save');
+    await fs.copyFile(working, snapshot, fs.constants.COPYFILE_EXCL);
+    if (await digest(snapshot) !== expected || await digest(working) !== expected) throw new Error('Working copy changed while preparing. Retained copies are available; save again after editing settles.');
+    const file = await fs.open(snapshot, 'r+'); try { await file.sync(); } finally { await file.close(); }
+    record.saveId = saveId; record.editedSha256 = expected; record.editedBytes = (await fs.stat(snapshot)).size;
+    record.phase = 'saving'; await this.retain(record); return record;
+  }
+  async saveSnapshot(id: string) {
+    const record = await this.read(id);
+    if (!uuid.test(record.saveId ?? '') || !/^[a-f0-9]{64}$/.test(record.editedSha256 ?? '') || !Number.isSafeInteger(record.editedBytes)) throw new Error('Retained save snapshot is unavailable.');
+    const file = path.join(this.folder(id), record.saveId + '.save');
+    if ((await fs.stat(file)).size !== record.editedBytes || await digest(file) !== record.editedSha256) throw new Error('Retained save snapshot requires recovery.');
     return file;
   }
 }

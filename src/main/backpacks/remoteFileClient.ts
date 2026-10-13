@@ -38,6 +38,7 @@ export class RemoteFileClient {
   private readonly editCopies: RemoteFileEditWorkingCopies;
   private readonly editOpenings = new Set<Promise<unknown>>();
   private closing = false;
+  private readonly editSaves = new Map<string, Promise<unknown>>();
   constructor(private readonly directory: string, private readonly secrets: SecretBox, private readonly allowLoopback = false) {
     this.store = new AtomicJsonStore(path.join(directory, 'connections.json'), { recoveryDir: path.join(directory, 'recovery') });
     this.outbox = new RemoteFileOutbox(directory);
@@ -140,6 +141,56 @@ export class RemoteFileClient {
   }
   localEdits(ownerId?: string) { return this.editCopies.list(ownerId); }
   editPath(id: string) { return this.editCopies.workingPath(id); }
+  saveEdit(id: string) {
+    const existing = this.editSaves.get(id); if (existing) return existing;
+    const pending = this.saveWorkingCopy(id);
+    this.editSaves.set(id, pending);
+    void pending.finally(() => this.editSaves.delete(id)).catch(() => {});
+    return pending;
+  }
+  private async saveWorkingCopy(id: string) {
+    if (this.closing) throw new Error('Remote file client is closing.');
+    const record = await this.editCopies.prepare(id);
+    if (record.phase === 'saved' || record.phase === 'conflict') return record;
+    const ownerId = record.ownerId;
+    const snapshot = await this.editCopies.saveSnapshot(id);
+    const json = async (route: string, body?: unknown) => (await this.request(ownerId, route, {}, undefined, body)).json();
+    try {
+      if (!record.uploadId) {
+        const begun = await json(`/v1/files/edits/${record.session.id}/uploads`, { bytes: record.editedBytes, sha256: record.editedSha256 });
+        if (!/^[a-f0-9-]{36}$/.test(begun.uploadId ?? '')) throw new Error('Invalid upload receipt.');
+        record.uploadId = begun.uploadId; await this.editCopies.retain(record);
+      }
+      const uploadRoute = `/v1/files/edits/uploads/${record.uploadId}`;
+      const status = (await json(uploadRoute)).upload;
+      if (status?.sessionId !== record.session.id || status?.bytes !== record.editedBytes || status?.sha256 !== record.editedSha256 || !Number.isSafeInteger(status.receivedBytes) || status.receivedBytes < 0 || status.receivedBytes > record.editedBytes!) throw new Error('Upload resume receipt does not match this save.');
+      const file = await fs.open(snapshot, 'r');
+      try {
+        const prefix = createHash('sha256');
+        if (status.receivedBytes) for await (const chunk of file.createReadStream({ start: 0, end: status.receivedBytes - 1, autoClose: false })) prefix.update(chunk);
+        if (prefix.digest('hex') !== status.prefixSha256) throw new Error('Retained owner prefix differs; keep both copies for recovery.');
+        let offset = status.receivedBytes;
+        const connection = this.connection(ownerId);
+        while (offset < record.editedBytes!) {
+          if (this.closing) throw new Error('Remote file client is closing.');
+          const buffer = Buffer.alloc(Math.min(4 * 1024 ** 2, record.editedBytes! - offset));
+          const read = await file.read(buffer, 0, buffer.length, offset);
+          if (read.bytesRead !== buffer.length) throw new Error('Retained save snapshot changed.');
+          const response = await fetch(`${connection.address}${uploadRoute}?offset=${offset}`, { method: 'PUT', redirect: 'error', headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}` }, body: buffer, signal: AbortSignal.timeout(60_000) });
+          if (!response.ok || (await response.json()).receivedBytes !== offset + buffer.length) throw new Error('Upload was not confirmed. The retained snapshot can be resumed.');
+          offset += buffer.length;
+        }
+      } finally { await file.close(); }
+      if (this.closing) throw new Error('Remote file client is closing.');
+      await json(uploadRoute + '/seal', {});
+      const result = (await json(`/v1/files/edits/${record.session.id}/save`, { saveId: record.saveId, uploadId: record.uploadId, sha256: record.editedSha256 })).session;
+      if (result?.id !== record.session.id || result.saveId !== record.saveId || result.editedSha256 !== record.editedSha256 || !['saved','conflict','uncertain'].includes(result.phase)) throw new Error('Invalid save receipt. Keep the retained snapshot.');
+      record.phase = result.phase; record.session = result;
+      await this.editCopies.retain(record); return record;
+    } catch (error) {
+      record.phase = 'uncertain'; await this.editCopies.retain(record); throw error;
+    }
+  }
   async change(ownerId:string,command:unknown){return this.outbox.send(ownerId,this.connection(ownerId).deviceId,command,value=>this.dispatchChange(ownerId,value));}
   async retryChange(ownerId:string,commandId:string){return this.outbox.retry(ownerId,this.connection(ownerId).deviceId,commandId,value=>this.dispatchChange(ownerId,value));}
   async changes(ownerId:string){const jobs=(await (await this.request(ownerId,'/v1/files/changes')).json()).jobs;if(!Array.isArray(jobs))throw new Error('Invalid file request history.');await this.outbox.reconcile(ownerId,jobs);return jobs;}
@@ -208,6 +259,7 @@ export class RemoteFileClient {
     for (const controller of this.controllers.values()) controller.abort();
     await Promise.allSettled([...this.transfers.values()]);
     await Promise.allSettled([...this.editOpenings]);
+    await Promise.allSettled([...this.editSaves.values()]);
     await this.saveQueue;
     await this.outbox.close();
   }
