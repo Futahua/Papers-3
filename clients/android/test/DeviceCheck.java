@@ -54,17 +54,37 @@ public final class DeviceCheck extends Instrumentation {
     }catch(Exception error){result.putString("failure",error.toString());finish(Activity.RESULT_CANCELED,result);}
   }
   private void editCheck(MobileFiles files,Bundle result) throws Exception {
+    if("resume".equals(arguments.getString("editStage"))){
+      File checkpoint=new File(getTargetContext().getFilesDir(),"generated-edit-recovery.json");JSONObject retained;
+      try(InputStream input=new FileInputStream(checkpoint)){ByteArrayOutputStream bytes=new ByteArrayOutputStream();byte[] buffer=new byte[1024];int count;while((count=input.read(buffer))!=-1)bytes.write(buffer,0,count);retained=new JSONObject(bytes.toString("UTF-8"));}
+      JSONObject before=new MobileEditCopies(getTargetContext()).read(retained.getString("editId"));if(!"uncertain".equals(before.getString("phase")))throw new IOException("Interrupted save state not retained");
+      JSONObject saved=(JSONObject)files.call(new JSONObject().put("operation","edit-save").put("editId",retained.getString("editId")));
+      if(!"saved".equals(saved.getString("phase"))||!before.getString("saveId").equals(saved.getString("saveId"))||!before.getString("uploadId").equals(saved.getString("uploadId")))throw new IOException("Resume did not keep saved identities");
+      result.putString("result","PASS: restarted phone resumed retained owner prefix and same save/upload identities");return;
+    }
     files.call(new JSONObject().put("operation","pair").put("address",arguments.getString("address")).put("code",arguments.getString("code")));
     org.json.JSONArray devices=((JSONObject)files.call(new JSONObject().put("operation","status"))).getJSONArray("devices");String owner=devices.getJSONObject(devices.length()-1).getString("id");
     JSONObject shares=(JSONObject)files.call(new JSONObject().put("operation","browse").put("ownerId",owner));String folder=shares.getJSONArray("entries").getJSONObject(0).getString("id");
     JSONObject source=browse(files,owner,folder).getJSONArray("entries").getJSONObject(0);
     JSONObject edit=(JSONObject)files.call(new JSONObject().put("operation","edit-begin").put("ownerId",owner).put("entry",source));String id=edit.getString("id");
     byte[] bytes="Generated phone edit, retained locally".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    if("loss".equals(arguments.getString("editStage"))){bytes=new byte[5*1024*1024];new java.security.SecureRandom().nextBytes(bytes);}
     android.net.Uri uri=new android.net.Uri.Builder().scheme("content").authority("com.futahua.papers.mobile.files").appendPath("edit").appendPath(id).build();
     try(OutputStream output=getTargetContext().getContentResolver().openOutputStream(uri,"wt")){if(output==null)throw new IOException("Missing editable URI stream");output.write(bytes);}
     File original=new File(new File(new File(getTargetContext().getFilesDir(),"remote-edits"),id),"original.bin");
     if(!MobileEditCopies.digest(original).equals(edit.getJSONObject("session").getString("sourceSha256")))throw new IOException("Editable URI changed the original");
+    if("loss".equals(arguments.getString("editStage"))){
+      boolean refused=false;try{files.call(new JSONObject().put("operation","edit-save").put("editId",id));}catch(Exception expected){refused=true;}
+      JSONObject retained=new MobileEditCopies(getTargetContext()).read(id);if(!refused||!"uncertain".equals(retained.getString("phase")))throw new IOException("Lost acknowledgement was not retained");
+      try(FileOutputStream output=new FileOutputStream(new File(getTargetContext().getFilesDir(),"generated-edit-recovery.json"))){output.write(new JSONObject().put("editId",id).put("ownerId",owner).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));output.getFD().sync();}
+      result.putString("result","PASS: lost phone upload acknowledgement retained local snapshot and save/upload identities");return;
+    }
     JSONObject saved=(JSONObject)files.call(new JSONObject().put("operation","edit-save").put("editId",id));
+    if("conflict".equals(arguments.getString("editStage"))){
+      if(!"conflict".equals(saved.getString("phase")))throw new IOException("Changed source was overwritten");
+      if(!MobileEditCopies.digest(original).equals(edit.getJSONObject("session").getString("sourceSha256")))throw new IOException("Conflict lost original");
+      result.putString("result","PASS: external owner edit returned conflict; phone original, working copy and save snapshot retained");return;
+    }
     if(!"saved".equals(saved.getString("phase")))throw new IOException("Phone save not confirmed: "+saved.getString("phase"));
     JSONObject repeated=(JSONObject)files.call(new JSONObject().put("operation","edit-save").put("editId",id));if(!saved.getString("saveId").equals(repeated.getString("saveId")))throw new IOException("Retry changed save identity");
     JSONObject updated=browse(files,owner,folder).getJSONArray("entries").getJSONObject(0);JSONObject download=(JSONObject)files.call(new JSONObject().put("operation","download").put("ownerId",owner).put("entry",updated));

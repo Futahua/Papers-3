@@ -261,3 +261,23 @@ acceptance. The generated listener was stopped and the separate test package rem
 the signed main package and creator app data remain. No laptop edit install occurred.
 Remaining checks include external-editor grants, interrupted/restarted phone upload,
 external source conflict, rendered phone UX, laptop end-to-end path, and the full plan.
+
+## Actual phone interruption and conflict checks
+
+The generated fixture can now drop the connection after durably accepting the first
+upload chunk, or modify only its generated source after an upload. On the actual phone,
+a five-MiB working copy hit the dropped acknowledgement and retained an uncertain save,
+snapshot, upload identity, and save identity. After the completed instrumentation run,
+the target app was explicitly stopped. A fresh instrumentation/app process resumed the
+retained prefix with the same identities and received a saved receipt. The desktop
+owner's actual file SHA-256 matched the retained edited digest, independently inspected.
+
+A separate generated source-change fixture passed: the phone received a conflict,
+retained its local original/working/save records, and the desktop file still contained
+the external fixture edit. No overwrite fallback was used. Both owned listeners were
+stopped, the port was checked absent, and the test package was removed after terminal
+instrumentation results. The main app's data was not wiped.
+
+These checks establish interrupted-upload/app-process recovery and source conflict
+for this native phone path. They do not establish a production external editor's grant,
+background-transfer lifetime, every crash point, laptop editing, or full goal completion.
