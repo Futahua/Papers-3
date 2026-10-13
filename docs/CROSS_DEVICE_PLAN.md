@@ -4,6 +4,8 @@ Planning document, 2026-10-12. Reference under [AGENTS.md](../AGENTS.md), the so
 
 Implementation checkpoint, 2026-10-13: [Proxima follow evidence](CROSS_DEVICE_FOLLOW_EVIDENCE.md) records the verified command, conflict and running-time projection stage and its explicit delivery limits. It does not replace the requirements or acceptance gates below.
 
+Later checkpoint: [remote overview and installation evidence](CROSS_DEVICE_OVERVIEW_EVIDENCE.md) records the read-only calendar/timeline views, actual Android checks and supported laptop upgrade. Its remaining gates keep the original scope intact.
+
 ## The experience to deliver
 
 Papers should put the creator's actual computers under their fingers from another PC or Android, with immediate-feeling controls and transfers that make good use of the available connection. Each machine retains its real files, installed applications, credentials and working state. Agents handle architecture, setup, compatibility and recovery; the creator should not need to manage internal services, database copies or protocol choices.

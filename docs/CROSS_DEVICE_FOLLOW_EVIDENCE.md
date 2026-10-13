@@ -17,3 +17,5 @@ Evidence:
 - Local Lapdog reconnected; the laptop's installed Papers main process 80376 remains at the supported App path. This is reachability/liveness evidence, not installation of this new follow code.
 
 Delivery limits remain explicit. This stage is source-verified; the laptop still has the earlier Papers/AYG installation and its existing Proxima. The phone still has the earlier read-only data client. Neither has received this follow stage. Actual two-machine following, full read-only remote calendar/timeline presentation, checked edit-session save-back, persistent background transfer lifecycle, creator resource onboarding and remaining performance/provider gates are still open under the full plan. A read-only fact list or a passing isolated fixture does not close those requirements.
+
+This paragraph describes the checkpoint at the time of this follow test. The later [overview/install evidence](CROSS_DEVICE_OVERVIEW_EVIDENCE.md) supersedes its installation and source-view status while preserving the unfinished production acceptance gates.
