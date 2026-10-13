@@ -94,6 +94,14 @@ public final class DeviceCheck extends Instrumentation {
     for(int i=0;i<copies.length();i++)if(updated.getString("version").equals(copies.getJSONObject(i).getJSONObject("entry").getString("version")))verified=expected.equals(copies.getJSONObject(i).getString("sha256"));
     if(!verified)throw new IOException("Owner saved bytes do not match phone working copy");
     JSONObject reopened=new MobileEditCopies(getTargetContext()).read(id);if(!"saved".equals(reopened.getString("phase")))throw new IOException("Save receipt did not survive local owner recreation");
+    if("continue".equals(arguments.getString("editStage"))){
+      try(OutputStream output=getTargetContext().getContentResolver().openOutputStream(uri,"wt")){output.write("Generated continued phone edit".getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+      JSONObject continued=(JSONObject)files.call(new JSONObject().put("operation","edit-continue").put("editId",id));String nextId=continued.getString("id");
+      if(id.equals(nextId)||!"editing".equals(continued.getString("phase")))throw new IOException("Continuation did not create independent session");
+      MobileEditCopies copiesOwner=new MobileEditCopies(getTargetContext());if(!MobileEditCopies.digest(copiesOwner.working(id)).equals(MobileEditCopies.digest(copiesOwner.working(nextId))))throw new IOException("Continuation lost newer local bytes");
+      JSONObject nextSaved=(JSONObject)files.call(new JSONObject().put("operation","edit-save").put("editId",nextId));if(!"saved".equals(nextSaved.getString("phase")))throw new IOException("Continued phone save not confirmed");
+      result.putString("result","PASS: phone saved, carried newer local bytes into a checked new session, saved again and retained both copies");return;
+    }
     result.putString("result","PASS: phone native session, editable URI, retained original, checked HTTP save, duplicate receipt, verified owner bytes, reopened local journal");
   }
   private void editGrantCheck(Bundle result) throws Exception {

@@ -82,6 +82,20 @@ export class RemoteFileEditWorkingCopies {
     return folder;
   }
   async retain(record: LocalEditCopy) { await this.store(record.id).save(record); }
+  async carryWorkingCopy(previousId: string, nextId: string) {
+    const previous = await this.read(previousId), next = await this.read(nextId);
+    if (previous.phase !== 'saved' || next.phase !== 'editing' || previous.ownerId !== next.ownerId || previous.session.resourceId !== next.session.resourceId || previous.session.savedVersion !== next.session.sourceVersion) throw new Error('The new edit session does not match the confirmed saved source.');
+    const source = await this.workingPath(previousId), target = await this.workingPath(nextId);
+    next.phase = 'preparing'; await this.retain(next);
+    const expected = await digest(source), retained = path.join(this.folder(nextId), 'continued-' + randomUUID() + '.bin');
+    await fs.copyFile(source, retained, fs.constants.COPYFILE_EXCL);
+    if (await digest(retained) !== expected || await digest(source) !== expected) throw new Error('Local edits changed while continuing. Both working copies are retained.');
+    const handle = await fs.open(retained, 'r+'); try { await handle.sync(); } finally { await handle.close(); }
+    await fs.copyFile(retained, target);
+    if (await digest(target) !== expected) throw new Error('Continued working copy needs recovery. Retained files are available.');
+    const workingHandle = await fs.open(target, 'r+'); try { await workingHandle.sync(); } finally { await workingHandle.close(); }
+    next.phase = 'editing'; await this.retain(next);
+  }
   async prepare(id: string) {
     const record = await this.read(id);
     if (record.saveId) return record;

@@ -56,7 +56,7 @@ export class RemoteFileClient {
       this.connections = report.value.connections;
     }
   }
-  snapshot() { return { capabilities: { edits: true, editRecovery: true }, devices: this.connections.map(({ id, name, address }) => ({ id, name, address })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
+  snapshot() { return { capabilities: { edits: true, editRecovery: true, editContinue: true }, devices: this.connections.map(({ id, name, address }) => ({ id, name, address })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
   async pair(ownerAddress: string, code: string, name: string): Promise<void> {
     const base = address(ownerAddress, this.allowLoopback);
     const response = await fetch(`${base}/v1/devices/pair`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }) });
@@ -143,6 +143,23 @@ export class RemoteFileClient {
   editRecovery(ownerId?: string) { return this.editCopies.inventory(ownerId).then(value => value.recovery); }
   editRecoveryPath(id: string) { return this.editCopies.recoveryPath(id); }
   editPath(id: string) { return this.editCopies.workingPath(id); }
+  continueEdit(id: string) {
+    const pending = this.continueWorkingCopy(id);
+    this.editOpenings.add(pending);
+    void pending.finally(() => this.editOpenings.delete(pending)).catch(() => {});
+    return pending;
+  }
+  private async continueWorkingCopy(id: string) {
+    if (this.closing) throw new Error('Remote file client is closing.');
+    const previous = await this.editCopies.read(id);
+    if (previous.phase !== 'saved' || !previous.session.savedVersion) throw new Error('Resolve the previous save before continuing.');
+    const source = (await (await this.request(previous.ownerId, `/v1/files/${previous.session.resourceId}/stat`)).json()).entry;
+    if (source?.version !== previous.session.savedVersion) throw new Error('The owner changed this file after your save. Keep your local edits and compare the owner’s current file before starting another session.');
+    const next = await this.beginEdit(previous.ownerId, source);
+    if (this.closing) throw new Error('Remote file client is closing.');
+    await this.editCopies.carryWorkingCopy(previous.id, next.id);
+    return next;
+  }
   saveEdit(id: string) {
     const existing = this.editSaves.get(id); if (existing) return existing;
     const pending = this.saveWorkingCopy(id);

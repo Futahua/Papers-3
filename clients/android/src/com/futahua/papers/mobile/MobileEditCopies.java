@@ -44,7 +44,7 @@ final class MobileEditCopies {
     return records;
   }
   File working(String id) throws Exception {
-    read(id); File file=new File(directory(id),"working.bin");
+    if("preparing".equals(read(id).getString("phase")))throw new IOException("Working-copy preparation requires recovery"); File file=new File(directory(id),"working.bin");
     File expected = new File(new File(root.getCanonicalFile(),id),"working.bin");
     if(!file.isFile() || !file.getCanonicalFile().equals(expected))throw new IOException("Working copy is unavailable");
     return file;
@@ -61,6 +61,17 @@ final class MobileEditCopies {
     String saveId=UUID.randomUUID().toString();File snapshot=new File(directory(id),saveId+".save");copy(working,snapshot);
     if(!hash.equals(digest(snapshot))||!hash.equals(digest(working)))throw new IOException("Working copy changed while preparing; retained copies are available for recovery");
     record.put("saveId",saveId).put("editedSha256",hash).put("editedBytes",snapshot.length()).put("phase","saving");retain(record);return record;
+  }
+  void carry(String previousId,String nextId) throws Exception {
+    JSONObject previous=read(previousId),next=read(nextId);
+    if(!"saved".equals(previous.getString("phase"))||!"editing".equals(next.getString("phase"))||!previous.getString("ownerId").equals(next.getString("ownerId"))||!previous.getJSONObject("session").getString("resourceId").equals(next.getJSONObject("session").getString("resourceId"))||!previous.getJSONObject("session").getString("savedVersion").equals(next.getJSONObject("session").getString("sourceVersion")))throw new IOException("Continued session does not match the saved source");
+    File source=working(previousId),target=working(nextId);next.put("phase","preparing");retain(next);
+    String expected=digest(source);File retained=new File(directory(nextId),"continued-"+UUID.randomUUID()+".bin");copy(source,retained);
+    if(!expected.equals(digest(retained))||!expected.equals(digest(source)))throw new IOException("Local edits changed while continuing; both copies retained");
+    AtomicFile file=new AtomicFile(target);FileOutputStream output=null;
+    try{output=file.startWrite();try(InputStream input=new FileInputStream(retained)){byte[] buffer=new byte[65536];int count;while((count=input.read(buffer))!=-1)output.write(buffer,0,count);}file.finishWrite(output);}
+    catch(Exception error){if(output!=null)file.failWrite(output);throw error;}
+    if(!expected.equals(digest(target)))throw new IOException("Continued working copy requires recovery");next.put("phase","editing");retain(next);
   }
   File snapshot(String id) throws Exception {
     JSONObject record=read(id);String saveId=record.getString("saveId");

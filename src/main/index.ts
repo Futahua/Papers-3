@@ -830,6 +830,7 @@ async function bootstrap(): Promise<void> {
           return { opened: true };
         }
         case 'edit-save': return remoteFiles.saveEdit(String(params.editId ?? ''));
+        case 'edit-continue': return remoteFiles.continueEdit(String(params.editId ?? ''));
         case 'edit-open': {
           const target = await remoteFiles.editPath(String(params.editId ?? ''));
           const failure = await shell.openPath(target);

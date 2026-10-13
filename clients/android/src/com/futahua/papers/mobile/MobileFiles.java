@@ -44,6 +44,7 @@ final class MobileFiles {
       case "edit-begin": return beginEdit(owner,request.getJSONObject("entry"));
       case "edit-open": {String id=request.getString("editId");editCopies.working(id);CachedFilesProvider.edit(context,id,editCopies.read(id).getString("name"));return new JSONObject().put("opened",true);}
       case "edit-save": return saveEdit(request.getString("editId"));
+      case "edit-continue": return continueEdit(request.getString("editId"));
       case "backpacks": return backpacks(owner);
       case "backpack-snapshot": return backpackSnapshot(owner,request.getString("resourceId"));
       case "change": { JSONObject device=connection(owner);return outbox.send(owner,device.optString("deviceId"),request.getJSONObject("command"),command->dispatchChange(device,command)); }
@@ -95,6 +96,15 @@ final class MobileFiles {
   private JSONObject saveEdit(String id) throws Exception {
     if(!id.matches("[a-f0-9-]{36}"))throw new IOException("Invalid local edit identity");
     Object lock=editLocks.computeIfAbsent(id,key->new Object());synchronized(lock){return saveEditLocked(id);}
+  }
+  private JSONObject continueEdit(String id) throws Exception {
+    if(!id.matches("[a-f0-9-]{36}"))throw new IOException("Invalid local edit identity");
+    Object lock=editLocks.computeIfAbsent(id,key->new Object());synchronized(lock){
+      JSONObject previous=editCopies.read(id);if(!"saved".equals(previous.getString("phase")))throw new IOException("Resolve the previous save before continuing");
+      String owner=previous.getString("ownerId");JSONObject session=previous.getJSONObject("session");JSONObject source=json(request(owner,"/v1/files/"+session.getString("resourceId")+"/stat",null,null)).getJSONObject("entry");
+      if(!source.getString("version").equals(session.getString("savedVersion")))throw new IOException("The owner changed this file after your save. Keep your local edits and compare the current owner file.");
+      JSONObject next=beginEdit(owner,source);editCopies.carry(id,next.getString("id"));return editCopies.read(next.getString("id"));
+    }
   }
   private JSONObject saveEditLocked(String id) throws Exception {
     JSONObject record=editCopies.prepare(id);String phase=record.getString("phase");if("saved".equals(phase)||"conflict".equals(phase))return record;

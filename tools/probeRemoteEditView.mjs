@@ -12,13 +12,14 @@ import {createRemoteFileView} from '/view.js';
 window.calls=[];window.writeAllowed=true;window.clientEditing=true;window.copies=[];window.recovery=[];
 const owner={id:'fixture-owner',name:'Generated owner'};
 const call=async p=>{window.calls.push(p);switch(p.operation){
-case 'status':return {capabilities:{edits:window.clientEditing,editRecovery:true},devices:[owner],jobs:[],commandJobs:[]};
+case 'status':return {capabilities:{edits:window.clientEditing,editRecovery:true,editContinue:true},devices:[owner],jobs:[],commandJobs:[]};
 case 'browse':return {online:true,entries:[{id:'fixture-file',name:'Generated document.txt',kind:'file',version:'fixture-version'}],capabilities:{edits:window.writeAllowed},nextOffset:null};
 case 'edit-begin':{const copy={id:'fixture-edit',name:p.entry.name,phase:'editing'};window.copies=[copy];return copy;}
 case 'edit-open':return {opened:true};
 case 'edit-list':return window.copies;
 case 'edit-recovery':return window.recovery;
 case 'edit-recovery-open':return {opened:true};
+case 'edit-continue':{const copy={id:'fixture-next-edit',name:'Generated document.txt',phase:'editing'};window.copies.push(copy);return copy;}
 case 'edit-save':window.copies[0].phase='conflict';return window.copies[0];
 case 'offline':return [];default:throw Error('Unexpected fixture operation '+p.operation);}};
 window.view=createRemoteFileView({document,container:document.querySelector('main'),call});
@@ -39,6 +40,13 @@ try {
   assert.equal(await page.getByRole('button',{name:'Save back',exact:true}).count(),0);
   await page.getByRole('button',{name:'Open local editor',exact:true}).click();
   await page.waitForFunction(()=>window.calls.filter(p=>p.operation==='edit-open').length===2);
+  await page.evaluate(()=>{window.copies[0].phase='saved';window.copies[0].newerLocalEdits=true;});
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.getByText('Earlier snapshot saved; newer local edits are not saved to owner',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Continue newer edits',exact:true}).click();
+  await page.getByText('Local edits — not saved to owner',{exact:true}).waitFor();
+  assert.ok(await page.evaluate(()=>window.calls.some(p=>p.operation==='edit-open'&&p.editId==='fixture-next-edit')));
+  await page.evaluate(()=>{window.copies=[{id:'fixture-edit',name:'Generated document.txt',phase:'conflict'}];});
   await page.evaluate(()=>{window.recovery=[{id:'fixture-recovery',name:'Interrupted edit.txt',message:'Preparation was interrupted. Retained files are available for recovery.'}];});
   await page.getByRole('button',{name:'Refresh',exact:true}).click();
   await page.getByText('Interrupted edit.txt',{exact:true}).waitFor();

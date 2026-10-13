@@ -56,6 +56,18 @@ it.skipIf(process.platform !== 'win32')('saves a retained receiving-PC working c
   expect((await restarted.localEdits(f.ownerId))[0]).toMatchObject({ id: edit.id, phase: 'saved' });
   expect(await restarted.saveEdit(edit.id)).toMatchObject({ phase: 'saved' });
   expect(await fs.readFile(await restarted.editPath(edit.id))).toEqual(bytes);
+  await fs.writeFile(await restarted.editPath(edit.id), 'newer local edit');
+  const continued = await restarted.continueEdit(edit.id);
+  expect(continued.id).not.toBe(edit.id);
+  expect(await fs.readFile(await restarted.editPath(continued.id), 'utf8')).toBe('newer local edit');
+  expect(await fs.readFile(await restarted.editPath(edit.id), 'utf8')).toBe('newer local edit');
+  expect(await restarted.saveEdit(continued.id)).toMatchObject({ phase: 'saved' });
+  expect(await fs.readFile(path.join(f.shared, 'original.bin'), 'utf8')).toBe('newer local edit');
+  await fs.writeFile(await restarted.editPath(continued.id), 'another local edit');
+  await fs.writeFile(path.join(f.shared, 'original.bin'), 'external owner edit');
+  await expect(restarted.continueEdit(continued.id)).rejects.toThrow('owner changed');
+  expect(await fs.readFile(await restarted.editPath(continued.id), 'utf8')).toBe('another local edit');
+  expect(await fs.readFile(path.join(f.shared, 'original.bin'), 'utf8')).toBe('external owner edit');
 }, 30_000);
 async function finished(client: RemoteFileClient, id: string) {
   for (let attempt = 0; attempt < 100; attempt++) {

@@ -380,3 +380,28 @@ those later edits were saved. The current laptop install predates these follow-u
 Android source for the newer-edit status compiles but predates a new signed acceptance
 run; its no-change safeguard is installed. External-editor import/reintegration and
 continuing a saved edit session remain implementation/acceptance work, not completion.
+
+## Continuing saved local edits
+
+PC and Android can now continue a saved working copy through a new edit session.
+The owner stat must still match the previous confirmed saved version; otherwise
+continuation refuses and retains local edits for comparison. The new session captures
+the current saved source independently, then carries newer local bytes through a
+verified retained copy. The old working/original/save files remain. Copy preparation
+is hidden from ready editing until the carried bytes verify and flush. PC shutdown
+tracks the complete continuation operation. AYG's Continue newer edits action is
+gated by receiving-client support and opens the new local copy before explicit save.
+
+The actual PC client/Windows HTTP test passed second save and subsequent external-owner
+change refusal with both local and external bytes retained. The real phone passed
+session/save, writing newer local bytes, continuation into a distinct checked session,
+second save, and preservation of both copies; the desktop fixture file independently
+contained the expected continued edit. The phone was updated in place with signed APK
+SHA-256 `820df4241c7c7616a3dd669309b4c61e95cd5c6506c7b1e87c10222783179d48`.
+The listener and separate test package were retired after terminal results, and the
+main app reopened. Its edit UI remains hidden pending the production external-editor
+import/save workflow. Laptop installation predates continuation source changes.
+
+The rendered AYG fixture passed the newer-edits label and continuation/open request,
+alongside recovery/conflict and unsupported-client checks. Typecheck passes. This does
+not complete external-editor reintegration, actual installed peer UX, or the full plan.
