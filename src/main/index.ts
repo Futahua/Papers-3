@@ -822,6 +822,13 @@ async function bootstrap(): Promise<void> {
         case 'backpack-snapshot': return remoteFiles.backpackSnapshot(ownerId,String(params.resourceId??''));
         case 'edit-begin': return remoteFiles.beginEdit(ownerId, params.entry);
         case 'edit-list': return remoteFiles.localEdits(ownerId || undefined);
+        case 'edit-recovery': return remoteFiles.editRecovery(ownerId || undefined);
+        case 'edit-recovery-open': {
+          const target = await remoteFiles.editRecoveryPath(String(params.editId ?? ''));
+          const failure = await shell.openPath(target);
+          if (failure) throw new Error(failure);
+          return { opened: true };
+        }
         case 'edit-save': return remoteFiles.saveEdit(String(params.editId ?? ''));
         case 'edit-open': {
           const target = await remoteFiles.editPath(String(params.editId ?? ''));

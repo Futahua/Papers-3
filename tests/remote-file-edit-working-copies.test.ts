@@ -34,4 +34,24 @@ it('refuses mismatched downloaded bytes and detects damaged retained originals',
   await fs.writeFile(download, 'changed');
   await expect(copies.create(randomUUID(), session, 'document.txt', download)).rejects.toThrow('changed');
   expect(await fs.readFile(download, 'utf8')).toBe('changed');
+  const inventory = await copies.inventory();
+  expect(inventory.copies.map(copy => copy.id)).toContain(record.id);
+  expect(inventory.recovery).toHaveLength(1);
+  expect(inventory.recovery[0]?.message).toContain('interrupted');
+  expect(await fs.readFile(path.join(await copies.recoveryPath(inventory.recovery[0]!.id), 'original.bin'), 'utf8')).toBe('changed');
+});
+
+it('keeps healthy edits visible beside an invalid journal without trusting loose working files', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-working-invalid-'));
+  const download = path.join(root, 'cached.txt'); await fs.writeFile(download, 'original');
+  const session: EditSession = { id: randomUUID(), deviceId: randomUUID(), resourceId: randomUUID(), sourceVersion: 'a'.repeat(64), sourceSha256: createHash('sha256').update('original').digest('hex'), phase: 'editing' };
+  const directory = path.join(root, 'edits'), copies = new RemoteFileEditWorkingCopies(directory);
+  const healthy = await copies.create(randomUUID(), session, 'healthy.txt', download);
+  const invalid = randomUUID(); await fs.mkdir(path.join(directory, invalid)); await fs.writeFile(path.join(directory, invalid, 'edit.json'), '{broken');
+  await fs.writeFile(path.join(directory, invalid, 'working.txt'), 'retained unsaved bytes');
+  const inventory = await copies.inventory();
+  expect(inventory.copies.map(copy => copy.id)).toEqual([healthy.id]);
+  expect(inventory.recovery[0]?.id).toBe(invalid);
+  await expect(copies.workingPath(invalid)).rejects.toThrow();
+  expect(await fs.readFile(path.join(await copies.recoveryPath(invalid), 'working.txt'), 'utf8')).toBe('retained unsaved bytes');
 });

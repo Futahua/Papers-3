@@ -9,14 +9,16 @@ if (!aygRoot) throw Error('Supply the actual AYG source checkout.');
 const source = await fs.readFile(path.join(aygRoot, 'public/app/remote-file-view.js'));
 const html = `<!doctype html><html><body style="margin:0;background:#2b302f;color:#ddd;font:14px sans-serif"><main style="position:relative;width:700px;height:500px"></main><script type="module">
 import {createRemoteFileView} from '/view.js';
-window.calls=[];window.writeAllowed=true;window.clientEditing=true;window.copies=[];
+window.calls=[];window.writeAllowed=true;window.clientEditing=true;window.copies=[];window.recovery=[];
 const owner={id:'fixture-owner',name:'Generated owner'};
 const call=async p=>{window.calls.push(p);switch(p.operation){
-case 'status':return {capabilities:{edits:window.clientEditing},devices:[owner],jobs:[],commandJobs:[]};
+case 'status':return {capabilities:{edits:window.clientEditing,editRecovery:true},devices:[owner],jobs:[],commandJobs:[]};
 case 'browse':return {online:true,entries:[{id:'fixture-file',name:'Generated document.txt',kind:'file',version:'fixture-version'}],capabilities:{edits:window.writeAllowed},nextOffset:null};
 case 'edit-begin':{const copy={id:'fixture-edit',name:p.entry.name,phase:'editing'};window.copies=[copy];return copy;}
 case 'edit-open':return {opened:true};
 case 'edit-list':return window.copies;
+case 'edit-recovery':return window.recovery;
+case 'edit-recovery-open':return {opened:true};
 case 'edit-save':window.copies[0].phase='conflict';return window.copies[0];
 case 'offline':return [];default:throw Error('Unexpected fixture operation '+p.operation);}};
 window.view=createRemoteFileView({document,container:document.querySelector('main'),call});
@@ -37,6 +39,12 @@ try {
   assert.equal(await page.getByRole('button',{name:'Save back',exact:true}).count(),0);
   await page.getByRole('button',{name:'Open local editor',exact:true}).click();
   await page.waitForFunction(()=>window.calls.filter(p=>p.operation==='edit-open').length===2);
+  await page.evaluate(()=>{window.recovery=[{id:'fixture-recovery',name:'Interrupted edit.txt',message:'Preparation was interrupted. Retained files are available for recovery.'}];});
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.getByText('Interrupted edit.txt',{exact:true}).waitFor();
+  await page.getByText('Owner changed — both versions retained',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Open retained files',exact:true}).click();
+  await page.waitForFunction(()=>window.calls.some(p=>p.operation==='edit-recovery-open'&&p.editId==='fixture-recovery'));
   const output=await fs.mkdtemp(path.join(os.tmpdir(),'papers-remote-edit-view-'));
   const screenshot=path.join(output,'retained-conflict.png');await page.screenshot({path:screenshot});
   await page.getByRole('button',{name:'Offline copies',exact:true}).click();

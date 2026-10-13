@@ -56,7 +56,7 @@ export class RemoteFileClient {
       this.connections = report.value.connections;
     }
   }
-  snapshot() { return { capabilities: { edits: true }, devices: this.connections.map(({ id, name, address }) => ({ id, name, address })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
+  snapshot() { return { capabilities: { edits: true, editRecovery: true }, devices: this.connections.map(({ id, name, address }) => ({ id, name, address })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
   async pair(ownerAddress: string, code: string, name: string): Promise<void> {
     const base = address(ownerAddress, this.allowLoopback);
     const response = await fetch(`${base}/v1/devices/pair`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }) });
@@ -140,6 +140,8 @@ export class RemoteFileClient {
     return this.editCopies.create(ownerId, session, file.name, await this.cachedPath(ownerId, key));
   }
   localEdits(ownerId?: string) { return this.editCopies.list(ownerId); }
+  editRecovery(ownerId?: string) { return this.editCopies.inventory(ownerId).then(value => value.recovery); }
+  editRecoveryPath(id: string) { return this.editCopies.recoveryPath(id); }
   editPath(id: string) { return this.editCopies.workingPath(id); }
   saveEdit(id: string) {
     const existing = this.editSaves.get(id); if (existing) return existing;

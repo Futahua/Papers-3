@@ -301,3 +301,21 @@ test Java sources without adding that activity to the main package.
 This proves a separate editor app can access only its granted working bytes through
 the tested contract. The installed production editors' import/save behavior and
 complete user flow are still unverified; phone editing controls remain hidden.
+
+## Local recovery isolation repair
+
+Inspection found that an incomplete preparation folder or one malformed edit journal
+could stop the whole PC working-copy list. Preparation now durably records its phase
+before copying bytes. Inventory isolates incomplete/invalid records from healthy
+copies, retains their files, and reports a bounded recovery entry instead of guessing
+their save state. AYG displays these entries alongside healthy copies with Open
+retained files through the receiving PC's file owner. Incomplete working files cannot
+be opened as ready edit copies. Older/phone clients do not receive unsupported controls.
+
+Generated tests prove healthy copies remain visible beside a failed source-copy check
+and malformed journal, loose unsaved bytes remain retained, traversal is rejected,
+and recovery folders can be accessed without trusting a damaged journal. The actual
+rendered AYG fixture proves a recovery entry and healthy conflict entry coexist and
+the correct recovery identity reaches the local owner. Typecheck and focused tests
+pass. This source repair is not yet installed on the laptop; Android recovery inventory
+and production editor behavior remain acceptance work.
