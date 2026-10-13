@@ -92,9 +92,16 @@ export class RemoteFileResources {
         if (!contains(root.directory, await fs.realpath(target))) continue;
         entries.push(await this.describe(resource.shareId, target, name));
       } catch (error) {
-        // One unreadable entry never erases a listing: concurrent removals, unsupported objects, and
-        // protected or locked system entries at drive roots (Config.Msi, DumpStack.log.tmp, pagefile.sys).
-        if (!(error instanceof RemoteFileError) && !SKIPPABLE_ENTRY_ERRORS.has((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        if (error instanceof RemoteFileError) continue;
+        const code = (error as NodeJS.ErrnoException).code ?? '';
+        if (code === 'ENOENT') continue;
+        if (!SKIPPABLE_ENTRY_ERRORS.has(code)) throw error;
+        // A real entry must not vanish because it was briefly locked (antivirus scans) or is
+        // protected (DumpStack.log.tmp). An ordinary file or folder needs no link resolution to
+        // stay inside the share, so list it from its own metadata. Unverifiable links stay out.
+        const stats = await fs.lstat(target).catch(() => null);
+        if (!stats || stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory())) continue;
+        entries.push({ id: this.identify(resource.shareId, target), name, kind: stats.isDirectory() ? 'folder' : 'file', size: stats.size, modifiedAt: stats.mtimeMs, version: version(stats) });
       }
     }
     return { entries, nextOffset: offset + limit < names.length ? offset + limit : null };

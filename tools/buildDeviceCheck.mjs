@@ -22,7 +22,8 @@ import os from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
 import { RemoteFileClient } from ${JSON.stringify(path.join(repository, 'src/main/backpacks/remoteFileClient.ts'))};
 
-const config = JSON.parse(process.argv[2]);
+// Config is inline JSON or a path to a JSON file (Windows PowerShell 5 strips quotes from native arguments).
+const config = JSON.parse(process.argv[2].trim().startsWith('{') ? process.argv[2] : await fs.readFile(process.argv[2], 'utf8'));
 const results = [];
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -76,7 +77,7 @@ try {
   await check('list every shared drive root', async () => {
     const shares = await listAll();
     const counts = {};
-    for (const share of shares) counts[share.name] = (await listAll(share.id)).length;
+    for (const share of shares) { const names = (await listAll(share.id)).map(item => item.name); counts[share.name] = names.length; counts[share.name + ' names'] = names.join(' | '); }
     return counts;
   });
   await check('navigate to the fixture folder', async () => {
@@ -95,7 +96,7 @@ try {
   });
   await check('interrupt a download, resume it, verify', async () => {
     const small = await find('resume.bin');
-    const first = await waitJob(client.download(owner, small).id, Math.floor(small.size / 3));
+    const first = await waitJob(client.download(owner, small).id, 1);
     if (first.phase === 'completed') return { note: 'finished before it could be interrupted' };
     const second = await waitJob(client.download(owner, small).id);
     if (second.phase !== 'completed') throw Error(second.error);
@@ -168,13 +169,13 @@ try {
     return { secondOutcome: b.phase, message: b.error };
   });
   await check('read the owner\\'s Proxima', async () => {
-    const backpacks = await client.backpacks(owner);
-    const proxima = (backpacks.backpacks ?? backpacks).find?.(item => item.kind === 'proxima') ?? (backpacks.backpacks ?? backpacks)[0];
+    const proxima = (await client.backpacks(owner)).entries.find(item => item.kind === 'proxima');
     if (!proxima) throw Error('no shared Proxima');
     const snapshot = await client.backpackSnapshot(owner, proxima.id);
     const summary = {};
-    for (const [key, value] of Object.entries(snapshot.data ?? snapshot)) if (Array.isArray(value)) summary[key] = value.length;
-    return { backpack: proxima.name, collections: summary };
+    const walk = (value, prefix, depth) => { for (const [key, item] of Object.entries(value ?? {})) { if (Array.isArray(item)) summary[prefix + key] = item.length; else if (item && typeof item === 'object' && depth < 2) walk(item, prefix + key + '.', depth + 1); } };
+    walk(snapshot, '', 0);
+    return { backpack: proxima.name, online: snapshot.online, collections: summary };
   });
 } finally {
   await client.close().catch(() => {});

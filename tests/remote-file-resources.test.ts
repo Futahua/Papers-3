@@ -16,7 +16,18 @@ async function fixture() {
   return { directory, catalog, root };
 }
 describe('remote file resource boundary', () => {
-  it('skips protected drive-root entries instead of failing the whole listing', async () => {
+  it('skips an entry that disappears while listing', async () => {
+    const { directory, catalog, root } = await fixture();
+    await fs.writeFile(path.join(directory, 'shared', 'gone.txt'), 'x');
+    const realpath = fs.realpath.bind(fs);
+    const spy = vi.spyOn(fs, 'realpath').mockImplementation(async (target, ...rest) => {
+      if (String(target).endsWith('gone.txt')) { await fs.rm(String(target)); throw Object.assign(new Error('missing'), { code: 'ENOENT' }); }
+      return realpath(target as string, ...(rest as []));
+    });
+    try { expect((await catalog.list(root.id)).entries.map(entry => entry.name)).toEqual(['hello.txt']); }
+    finally { spy.mockRestore(); }
+  });
+  it('keeps protected or briefly locked entries listed instead of failing or hiding them', async () => {
     const { directory, catalog, root } = await fixture();
     await fs.writeFile(path.join(directory, 'shared', 'DumpStack.log.tmp'), 'locked');
     const realpath = fs.realpath.bind(fs);
@@ -24,7 +35,7 @@ describe('remote file resource boundary', () => {
       if (String(target).endsWith('DumpStack.log.tmp')) throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
       return realpath(target as string, ...(rest as []));
     });
-    try { expect((await catalog.list(root.id)).entries.map(entry => entry.name)).toEqual(['hello.txt']); }
+    try { expect((await catalog.list(root.id)).entries.map(entry => entry.name)).toEqual(['DumpStack.log.tmp', 'hello.txt']); }
     finally { spy.mockRestore(); }
   });
   it('retains opaque identities across restarts of the same grant', async () => {
