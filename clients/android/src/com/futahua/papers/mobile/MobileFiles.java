@@ -67,6 +67,8 @@ final class MobileFiles {
       case "local-state-save": return saveLocalState(request.getString("state"), request.getString("revision"));
       case "backpacks": return backpacks(owner);
       case "backpack-snapshot": return backpackSnapshot(owner,request.getString("resourceId"));
+      case "backpack-view": return backpackControl(owner,request.getString("resourceId"),null);
+      case "backpack-command": return backpackControl(owner,request.getString("resourceId"),request.getJSONObject("command"));
       case "change": { JSONObject device=connection(owner);return outbox.send(owner,device.optString("deviceId"),request.getJSONObject("command"),command->dispatchChange(device,command)); }
       case "change-retry": { JSONObject device=connection(owner);return outbox.retry(owner,device.optString("deviceId"),request.getString("commandId"),command->dispatchChange(device,command)); }
       case "changes": { JSONArray changes=json(request(owner,"/v1/files/changes",null,null)).getJSONArray("jobs");outbox.reconcile(owner,changes);return changes; }
@@ -191,6 +193,16 @@ final class MobileFiles {
   private JSONObject backpackSnapshot(String owner,String id) throws Exception {
     if(!id.matches("[a-f0-9-]{36}"))throw new IOException("Invalid shared Backpack identity.");File cache=new File(root,"backpack-"+sha((owner+":"+id).getBytes(StandardCharsets.UTF_8))+".json");
     try{JSONObject result=json(request(owner,"/v1/backpacks/"+id+"/snapshot",null,null));if(!owner.equals(result.getJSONObject("owner").getString("id"))||!id.equals(result.getString("resourceId"))||!"proxima".equals(result.getString("kind")))throw new IOException("Shared Backpack identity changed.");write(cache,result);return result.put("online",true);}catch(Exception error){if(!cache.exists())throw error;return read(cache).put("online",false).put("error",error.getMessage());}
+  }
+  /** Proxima control, as a computer's remote view does it: the live owner's view, or one command the owner
+   * applies and confirms (with its new snapshot). Nothing is cached or queued here; offline simply fails. */
+  private JSONObject backpackControl(String owner,String id,JSONObject command) throws Exception {
+    if(!id.matches("[a-f0-9-]{36}"))throw new IOException("Invalid shared Backpack identity.");
+    JSONObject device=connection(owner);String base=address(device.getString("address"));
+    JSONObject result=largeJson(command==null?http(base+"/v1/backpacks/"+id+"/snapshot?control=1",open(device.getString("secret")),null,null):http(base+"/v1/backpacks/"+id+"/commands",open(device.getString("secret")),null,command));
+    if(!owner.equals(result.getJSONObject("owner").getString("id"))||!id.equals(result.getString("resourceId"))||!"proxima".equals(result.getString("kind"))||!result.has("snapshot"))throw new IOException("Owner confirmation is invalid.");
+    if(command!=null&&!result.has("command"))throw new IOException("Owner did not confirm the command.");
+    return result.put("online",true);
   }
   private JSONObject browse(String owner, String id, int offset) throws Exception {
     if (!id.isEmpty() && !id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid file identity.");

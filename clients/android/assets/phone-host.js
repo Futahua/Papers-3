@@ -196,6 +196,10 @@ async function handle(type, request) {
 }
 // The phone's own As you Go stays loaded; Proxima and a device's As you Go open in a layer over it
 // that appears only once painted in its theme, and back just removes the layer (no reload, no flash).
+function injectScript(frame, name) {
+  const doc = frame.contentDocument; if (!doc?.head) return;
+  const script = doc.createElement('script'); script.src = new URL(name, location.href).href; doc.head.append(script);
+}
 let layer = null;
 // The open layer is remembered, so the app comes back where it was left.
 const LAST_LAYER = 'papers-phone-last-layer';
@@ -222,11 +226,10 @@ function openLayer(src) {
     } else setTimeout(reveal, 50);
   };
   next.addEventListener('load', reveal);
-  // Proxima gets the phone's own gestures (swipe inertia, cursor mode) on top of its touch layer.
-  if (src.startsWith('proxima/')) next.addEventListener('load', () => {
-    const script = next.contentDocument.createElement('script');
-    script.src = new URL('proxima-phone.js', location.href).href;
-    next.contentDocument.head.append(script);
+  // Every layer gets the phone mouse; Proxima also gets its own gestures (inertia, strips, calendar zoom).
+  next.addEventListener('load', () => {
+    injectScript(next, 'phone-mouse.js');
+    if (src.startsWith('proxima/')) injectScript(next, 'proxima-phone.js');
   });
 }
 function closeLayer() {
@@ -254,14 +257,18 @@ async function openProxima(ownerId) {
   }
   if (!ownerId) throw new Error('No computer is connected.');
   try { localStorage.setItem(PROXIMA_DEVICE, ownerId); } catch {}
-  openLayer('proxima/index.html?papers-phone=1&papers-device=' + ownerId);
+  openLayer('proxima/index.html?papers-phone=1&papers-control=1&papers-device=' + ownerId);
 }
 async function proximaRequest(request) {
   if (request.operation === 'devices') return (await status()).devices || [];
-  if (request.operation === 'snapshot') {
+  // The phone controls Proxima the way a computer's remote view does: the live owner's view, and
+  // commands the owner applies and confirms. Nothing is saved or queued on the phone.
+  if (request.operation === 'snapshot' || request.operation === 'command') {
     const share = await proximaShare(request.ownerId);
-    const result = await native({ operation: 'backpack-snapshot', ownerId: request.ownerId, resourceId: share.id });
-    return { snapshot: result.snapshot, online: result.online, name: deviceName(request.ownerId) };
+    const result = request.operation === 'command'
+      ? await native({ operation: 'backpack-command', ownerId: request.ownerId, resourceId: share.id, command: request.command })
+      : await native({ operation: 'backpack-view', ownerId: request.ownerId, resourceId: share.id });
+    return { ...result, name: deviceName(request.ownerId) };
   }
   throw new Error('Not available on the phone.');
 }
@@ -296,6 +303,7 @@ window.papersBack = () => {
 };
 // The phone's As you Go shows only once painted in its theme (no white page at launch), and the
 // screen that was open when the app was left opens again over it.
+frame.addEventListener('load', () => injectScript(frame, 'phone-mouse.js'));
 frame.src = 'ayg/workspace-20260730b.html?papers-phone=1';
 {
   const started = Date.now();
@@ -304,5 +312,7 @@ frame.src = 'ayg/workspace-20260730b.html?papers-phone=1';
   };
   reveal();
   let last = null; try { last = localStorage.getItem(LAST_LAYER); } catch {}
+  // Proxima opened before phone control existed is reopened with control.
+  if (last?.startsWith('proxima/') && !last.includes('papers-control=')) last = last.replace('papers-phone=1', 'papers-phone=1&papers-control=1');
   if (last && /^(proxima|ayg)\//.test(last)) openLayer(last);
 }
