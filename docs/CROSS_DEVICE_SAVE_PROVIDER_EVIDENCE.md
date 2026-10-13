@@ -463,3 +463,25 @@ and Papers reopened normally. The raw shell-generated test file and UI dump were
 This enables actual phone controls, but does not finish production peer/resource
 onboarding, installed-editor-specific export behavior, background transfer lifetime,
 mobile recovery inventory, later laptop source upgrades or the complete plan audit.
+
+## Production owner readiness audit
+
+The current desktop's installed ASAR was inspected directly: its main module lacks
+the device-management and edit-lifecycle routes. Its actual bound AYG also lacks the
+remote file view; its Proxima manifest does not declare remote domain sharing. Thus
+passed generated-owner tests and receiving-device installation do not establish a
+usable production desktop owner. Production onboarding is still incomplete.
+
+The original desktop source is at `74229e9`, the ancestor used by this isolated
+cross-device branch. It has no tracked local edits; unrelated untracked inline-office
+evidence remains untouched. Actual active AYG/Proxima project bindings were read and
+their manifest identities match the independently developed Backpacks. No creator
+files, grants, or model records were changed by this inspection.
+
+The complete current source suite passed 1,500 tests with four skips, typecheck passed,
+and the supported unpublished owner installer finished successfully. Installer SHA-256:
+`36e5f6219447c8df0732757ff6108bdc199875e4b04ee768511cf033baaf7816`.
+ASAR SHA-256: `9c268106288d6fe6b3984021814916d7fa69bd8f9286ef3f4e6aa8de5f71ea25`.
+It contains runtime source at `34ce0da`. Production desktop backup/install, approved
+real resources, pairing, live Backpack source acceptance and the full plan gates remain.
+The desktop app remains running; its profile and bound code were not replaced here.
