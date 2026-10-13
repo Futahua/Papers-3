@@ -209,9 +209,17 @@ function openLayer(src) {
   const reveal = () => {
     if (layer !== next) return;
     const root = next.contentDocument?.documentElement;
-    // As you Go marks its theme once its document is installed; Proxima is themed by its stylesheet.
-    const ready = root && next.contentDocument.readyState === 'complete' && (src.startsWith('proxima/') || root.dataset.theme);
-    if (ready || Date.now() - started > 6000) { next.style.visibility = 'visible'; previous?.remove(); } else setTimeout(reveal, 50);
+    // As you Go marks its theme once its document is installed; Proxima says when it has drawn the
+    // device's own data (never its default layout first), and slides in.
+    const proxima = src.startsWith('proxima/');
+    const ready = root && next.contentDocument.readyState === 'complete' && (proxima ? next.dataset.ready === 'true' : root.dataset.theme);
+    if (next.style.visibility === 'visible') return;
+    if (ready || Date.now() - started > (proxima ? 16000 : 6000)) {
+      if (proxima) next.classList.add('is-entering');
+      next.style.visibility = 'visible';
+      // The previous layer stays under the incoming one until its slide-in has finished.
+      if (previous) setTimeout(() => previous.remove(), proxima ? 260 : 0);
+    } else setTimeout(reveal, 50);
   };
   next.addEventListener('load', reveal);
   // Proxima gets the phone's own gestures (swipe inertia, cursor mode) on top of its touch layer.
@@ -221,7 +229,15 @@ function openLayer(src) {
     next.contentDocument.head.append(script);
   });
 }
-function closeLayer() { if (!layer) return false; for (const node of document.querySelectorAll('.papers-layer')) node.remove(); layer = null; try { localStorage.removeItem(LAST_LAYER); } catch {} return true; }
+function closeLayer() {
+  if (!layer) return false;
+  // Proxima fades out over As you Go; other layers just go.
+  for (const node of document.querySelectorAll('.papers-layer')) {
+    if (node.getAttribute('src')?.startsWith('proxima/') && node.style.visibility === 'visible') { node.classList.add('is-leaving'); setTimeout(() => node.remove(), 200); }
+    else node.remove();
+  }
+  layer = null; try { localStorage.removeItem(LAST_LAYER); } catch {} return true;
+}
 // Proxima on the phone shows another machine's Proxima: the last one viewed, else the first with one.
 const PROXIMA_DEVICE = 'papers-phone-proxima-device';
 async function proximaShare(ownerId) {
@@ -256,6 +272,7 @@ window.addEventListener('message', (event) => {
   if (event.data?.type === 'papers:phone:proxima' || event.data?.type === 'papers:proxima-device:open') { void openProxima(event.data.ownerId).catch((error) => console.error(error)); return; }
   // "This device" in a device's As you Go returns to the phone's own.
   if (event.data?.type === 'papers:phone:this-device') { closeLayer(); return; }
+  if (event.data?.type === 'proxima:device-view-ready') { if (layer && event.source === layer.contentWindow) layer.dataset.ready = 'true'; return; }
   if (event.data?.type === 'papers:proxima-device:request') {
     const { requestId } = event.data;
     proximaRequest(event.data).then(
