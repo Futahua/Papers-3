@@ -55,3 +55,10 @@ it('admits a same-account device without a code and replaces its earlier grant',
   expect(devices[0]!.canWrite).toBe(true);
   await expect(store.admit('bad node!', 'x', shares, false, [])).rejects.toThrow('node');
 });
+it('keeps a second client on the same machine from revoking the first', async () => {
+  const { store, shares } = await fixture();
+  const papers = await store.admit('7338249508159368', 'LapDog', shares, true, []);
+  const check = await store.admit('7338249508159368', 'LapDog device check', shares, true, []);
+  expect(check.replaced).toEqual([]);
+  expect(store.snapshot().devices.map(device => device.deviceId).sort()).toEqual([papers.deviceId, check.deviceId].sort());
+});

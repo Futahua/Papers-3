@@ -232,7 +232,18 @@ final class MobileFiles {
   }
   private JSONObject metadata(String key) throws Exception { if (!key.matches("[a-f0-9]{64}")) throw new IOException("Invalid cache identity."); return read(new File(root, key + ".json")); }
   private File checkedFile(String owner, String key) throws Exception { JSONObject metadata = metadata(key); File file = new File(root, key + ".bin"); if (!owner.equals(metadata.getString("ownerId")) || !hashFile(file).equals(metadata.getString("sha256"))) throw new IOException("Offline file is damaged or unavailable."); return file; }
-  private HttpURLConnection request(String owner, String route, String version, String range) throws Exception { JSONObject device = connection(owner); return http(address(device.getString("address")) + route, open(device.getString("secret")), version, null, range); }
+  private HttpURLConnection request(String owner, String route, String version, String range) throws Exception {
+    JSONObject device = connection(owner);
+    try { return http(address(device.getString("address")) + route, open(device.getString("secret")), version, null, range); }
+    catch (IOException error) { if (String.valueOf(error.getMessage()).startsWith("Access revoked")) forget(owner); throw error; }
+  }
+  /** A revoked grant is dropped so owner discovery joins again on the next status call. */
+  private synchronized void forget(String owner) throws Exception {
+    JSONArray previous = connections(), next = new JSONArray();
+    for (int i = 0; i < previous.length(); i++) if (!previous.getJSONObject(i).getString("id").equals(owner)) next.put(previous.getJSONObject(i));
+    write(new File(root, "connections.json"), new JSONObject().put("connections", next)); lastJoin = 0;
+    Log.i(TAG, "grant revoked by " + owner + "; will rejoin");
+  }
   private HttpURLConnection http(String url, String token, String version, JSONObject body) throws Exception { return http(url, token, version, body, null); }
   private HttpURLConnection http(String url, String token, String version, JSONObject body, String range) throws Exception {
     HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(); c.setInstanceFollowRedirects(false); c.setConnectTimeout(15000); c.setReadTimeout(30000);

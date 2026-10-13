@@ -70,8 +70,11 @@ export class RemoteFileClient {
     if (!response.ok) throw new Error('That computer refused to connect.');
     await this.remember(base, await response.json());
   }
-  connectedAddresses(): string[] { return this.connections.map(connection => connection.address); }
+  /** Owners this client holds a working grant for. A revoked grant is left out so discovery joins again. */
+  connectedAddresses(): string[] { return this.connections.map(connection => connection.address).filter(address => !this.revoked.has(address)); }
+  private readonly revoked = new Set<string>();
   private async remember(base: string, paired: { owner?: { id?: string; name?: string }; token?: string; deviceId?: string }): Promise<void> {
+    this.revoked.delete(base);
     if (!/^[a-f0-9-]{36}$/.test(paired.owner?.id ?? '') || typeof paired.owner?.name !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(paired.token ?? '') || !/^[a-f0-9-]{36}$/.test(paired.deviceId ?? '')) throw new Error('Invalid pairing response.');
     const owner = { id: paired.owner.id!, name: paired.owner.name }, deviceId = paired.deviceId!;
     const secret = this.secrets.seal(paired.token!);
@@ -91,6 +94,7 @@ export class RemoteFileClient {
   private async request(ownerId: string, route: string, headers: Record<string, string> = {}, signal?: AbortSignal, body?: unknown): Promise<Response> {
     const connection = this.connection(ownerId);
     const response = await fetch(`${connection.address}${route}`, { redirect: 'error', method:body===undefined?'GET':'POST', ...(body===undefined?{}:{body:JSON.stringify(body)}),headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`,...(body===undefined?{}:{'Content-Type':'application/json'}), ...headers }, signal: signal ?? AbortSignal.timeout(30_000) });
+    if (response.status === 401) this.revoked.add(connection.address);
     if (!response.ok) throw new Error(response.status===503&&route.startsWith('/v1/backpacks/')?'Open Proxima on that computer, then refresh.':response.status === 412 ? 'Source changed. Refresh before downloading.' : response.status === 401 ? 'Access was revoked. Pair this device again.' : `Remote operation failed (${response.status}).`);
     return response;
   }
@@ -207,6 +211,7 @@ export class RemoteFileClient {
           const read = await file.read(buffer, 0, buffer.length, offset);
           if (read.bytesRead !== buffer.length) throw new Error('Retained save snapshot changed.');
           const response = await fetch(`${connection.address}${uploadRoute}?offset=${offset}`, { method: 'PUT', redirect: 'error', headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}` }, body: buffer, signal: AbortSignal.timeout(60_000) });
+          if (response.status === 401) this.revoked.add(connection.address);
           if (!response.ok || (await response.json()).receivedBytes !== offset + buffer.length) throw new Error('Upload was not confirmed. The retained snapshot can be resumed.');
           offset += buffer.length;
         }

@@ -87,7 +87,7 @@ export class RemoteDeviceStore {
     });
   }
 
-  /** Admits a device whose identity the caller already verified (same Tailscale account). Replaces that node's earlier grant. */
+  /** Admits a device whose identity the caller already verified (same Tailscale account). Replaces the earlier grant of that same client (node + name) only, so a second client on one machine never revokes the first. */
   admit(node: string, name: string, shares: RemoteFileShare[], canWrite: boolean, backpacks: RemoteBackpackShare[]): Promise<{ owner: State['owner']; deviceId: string; token: string; replaced: string[] }> {
     return this.serialize(async () => {
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(node)) throw new Error('Invalid device node.');
@@ -96,8 +96,9 @@ export class RemoteDeviceStore {
       await RemoteFileResources.create(shares);
       const token = randomBytes(32).toString('base64url');
       const device: Device = { deviceId: randomUUID(), name: name.trim(), pairedAt: this.now(), node, tokenHash: remoteTokenHash(token), shares: structuredClone(shares), canWrite, backpacks: structuredClone(backpacks) };
-      const replaced = this.state.devices.filter(item => item.node === node).map(item => item.deviceId);
-      const candidate = { ...this.state, devices: [...this.state.devices.filter(item => item.node !== node), device] };
+      const sameClient = (item: Device) => item.node === node && item.name === name.trim();
+      const replaced = this.state.devices.filter(sameClient).map(item => item.deviceId);
+      const candidate = { ...this.state, devices: [...this.state.devices.filter(item => !sameClient(item)), device] };
       await this.store.save(candidate);
       this.state = candidate;
       return { owner: { ...this.state.owner }, deviceId: device.deviceId, token, replaced };

@@ -14,13 +14,13 @@ function tailscale(args: string[]): Promise<unknown> {
   });
 }
 
-export interface TailnetPeer { node: string; name: string; address: string; online: boolean }
+export interface TailnetPeer { node: string; name: string; address: string; online: boolean; os: string }
 
 export async function tailnetAccount(): Promise<{ user: string; peers: TailnetPeer[] }> {
-  const status = await tailscale(['status', '--json']) as { Self?: { UserID?: number }; Peer?: Record<string, { ID?: string; HostName?: string; UserID?: number; TailscaleIPs?: string[]; Online?: boolean }> };
+  const status = await tailscale(['status', '--json']) as { Self?: { UserID?: number }; Peer?: Record<string, { ID?: string; HostName?: string; UserID?: number; TailscaleIPs?: string[]; Online?: boolean; OS?: string }> };
   if (typeof status.Self?.UserID !== 'number') throw new Error('Tailscale is not signed in.');
   const user = String(status.Self.UserID);
-  const peers = Object.values(status.Peer ?? {}).filter(peer => String(peer.UserID) === user).map(peer => ({ node: String(peer.ID ?? ''), name: peer.HostName ?? 'Device', address: peer.TailscaleIPs?.find(ip => /^100\./.test(ip)) ?? '', online: peer.Online === true })).filter(peer => peer.node && peer.address);
+  const peers = Object.values(status.Peer ?? {}).filter(peer => String(peer.UserID) === user).map(peer => ({ node: String(peer.ID ?? ''), name: peer.HostName ?? 'Device', address: peer.TailscaleIPs?.find(ip => /^100\./.test(ip)) ?? '', online: peer.Online === true, os: peer.OS ?? '' })).filter(peer => peer.node && peer.address);
   return { user, peers };
 }
 

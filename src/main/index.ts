@@ -1886,7 +1886,8 @@ async function bootstrap(): Promise<void> {
     if(remoteFilesError||process.env['PAPERS_TEST_USER_DATA'])return;
     const {peers}=await tailnetAccount();
     const known=new Set(remoteFiles.connectedAddresses());
-    for(const peer of peers.filter(item=>item.online)){
+    // Phones and tablets only browse; they never run an owner gateway.
+    for(const peer of peers.filter(item=>item.online&&/^(windows|macOS|linux)$/.test(item.os))){
       const base=`http://${peer.address}:48240`;
       if(known.has(base))continue;
       await remoteFiles.join(base,remoteDevices.snapshot().owner?.name??os.hostname()).then(()=>logDevice('client-joined',{peer:peer.name,base}),error=>{const reason=error instanceof Error?error.message:String(error);if(lastJoinFailure.get(base)!==reason){lastJoinFailure.set(base,reason);logDevice('client-join-failed',{peer:peer.name,base,reason});}});
