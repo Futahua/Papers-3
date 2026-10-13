@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -16,6 +16,17 @@ async function fixture() {
   return { directory, catalog, root };
 }
 describe('remote file resource boundary', () => {
+  it('skips protected drive-root entries instead of failing the whole listing', async () => {
+    const { directory, catalog, root } = await fixture();
+    await fs.writeFile(path.join(directory, 'shared', 'DumpStack.log.tmp'), 'locked');
+    const realpath = fs.realpath.bind(fs);
+    const spy = vi.spyOn(fs, 'realpath').mockImplementation(async (target, ...rest) => {
+      if (String(target).endsWith('DumpStack.log.tmp')) throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      return realpath(target as string, ...(rest as []));
+    });
+    try { expect((await catalog.list(root.id)).entries.map(entry => entry.name)).toEqual(['hello.txt']); }
+    finally { spy.mockRestore(); }
+  });
   it('retains opaque identities across restarts of the same grant', async () => {
     const { directory } = await fixture();
     const shares = [{ id: 'stable-share', name: 'Documents', directory: path.join(directory, 'shared') }];

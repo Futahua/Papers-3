@@ -25,6 +25,8 @@ function version(stats: Awaited<ReturnType<FileHandle['stat']>>): string {
   return createHash('sha256').update([stats.dev, stats.ino, stats.size, stats.mtimeMs, stats.ctimeMs].join(':')).digest('hex');
 }
 
+const SKIPPABLE_ENTRY_ERRORS = new Set(['ENOENT', 'EPERM', 'EACCES', 'EBUSY', 'ELOOP', 'EINVAL', 'UNKNOWN']);
+
 /** Session resources expose opaque identities, never accept a client-authored OS path. */
 export class RemoteFileResources {
   private readonly resources = new Map<string, Resource>();
@@ -90,8 +92,9 @@ export class RemoteFileResources {
         if (!contains(root.directory, await fs.realpath(target))) continue;
         entries.push(await this.describe(resource.shareId, target, name));
       } catch (error) {
-        // Concurrent removals and unsupported filesystem objects do not erase a listing.
-        if (!(error instanceof RemoteFileError) && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        // One unreadable entry never erases a listing: concurrent removals, unsupported objects, and
+        // protected or locked system entries at drive roots (Config.Msi, DumpStack.log.tmp, pagefile.sys).
+        if (!(error instanceof RemoteFileError) && !SKIPPABLE_ENTRY_ERRORS.has((error as NodeJS.ErrnoException).code ?? '')) throw error;
       }
     }
     return { entries, nextOffset: offset + limit < names.length ? offset + limit : null };
