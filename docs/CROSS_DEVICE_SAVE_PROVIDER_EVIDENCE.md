@@ -336,3 +336,30 @@ The full source suite now passes 1,499 tests with four skips; typecheck and prod
 build pass. An unpublished supported NSIS package is being prepared for the authorized
 laptop update. Backup, actual installed host/AYG checks and production editor UX remain;
 the fixture alone does not establish installed behavior or full goal completion.
+
+## Supported laptop installation, 2026-10-13
+
+After real two-PC acceptance, the unpublished Papers 1.3.11 installer and AYG editing
+view were transferred to the laptop and verified by complete SHA-256 before closing
+Papers. Its one app window closed through normal WindowPattern.Close; no Papers
+process remained. A laptop-local backup of the quiesced profile and complete AYG tree
+was copied and independently hashed before installation. The previous supported
+installer and ASAR were retained for recovery.
+
+Recovery: `C:\Users\admin\Documents\Papers-Recovery\20261013-file-edits`.
+The installer ran against the existing sibling App/Data layout, not a raw copied app.
+The checked update job exited zero. All 3,205 profile files retained their bytes before
+startup; the 160-file AYG tree changed only `public/app/remote-file-view.js`. Its
+binding and unrelated files, including creator state, were preserved. Proxima was not
+overlaid by this update. Normal Papers reopened from its installed path and responded.
+
+Installed ASAR: `294cb37017d3c987d5471256b19a7fed6d135b47170891aed0f049b8f91fd1f6`.
+Installer: `fecbde0649f5b71c4ae8fe588928678411ad74e67de689b68a78268ad0464550`.
+Installed AYG view: `85fb953d85cc816f51285cf81bae356cbd48838173ecfaf00975f9697dd03519`.
+The artifact contains runtime source at `3d35de6`; later checkpoint commits add tools
+and evidence. The host version was not bumped and no GitHub release was published.
+
+This establishes supported installation, matching code and quiesced-data preservation.
+Actual installed AYG interaction with a production peer and production phone editor
+behavior remain acceptance checks. Full cross-device onboarding, persistent background
+transfers, remaining file UX/performance gates and complete plan audit remain open.
