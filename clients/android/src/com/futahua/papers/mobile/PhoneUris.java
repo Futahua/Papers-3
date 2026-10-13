@@ -66,29 +66,22 @@ final class PhoneUris {
     return new JSONObject().put("name", name == null ? "File" : name).put("size", size).put("mime", mime(uri));
   }
 
-  private JSONObject preview(Uri uri) throws Exception {
-    String type = mime(uri), name = stat(uri).getString("name").toLowerCase();
-    if (type.startsWith("image/")) {
-      BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true;
-      try (InputStream input = context.getContentResolver().openInputStream(uri)) { BitmapFactory.decodeStream(input, null, bounds); }
-      BitmapFactory.Options options = new BitmapFactory.Options();
-      options.inSampleSize = 1; while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > IMAGE_EDGE * 2) options.inSampleSize *= 2;
-      Bitmap bitmap; try (InputStream input = context.getContentResolver().openInputStream(uri)) { bitmap = BitmapFactory.decodeStream(input, null, options); }
-      if (bitmap == null) return new JSONObject().put("kind", "none");
-      float scale = Math.min(1f, (float) IMAGE_EDGE / Math.max(bitmap.getWidth(), bitmap.getHeight()));
-      if (scale < 1f) bitmap = Bitmap.createScaledBitmap(bitmap, Math.round(bitmap.getWidth() * scale), Math.round(bitmap.getHeight() * scale), true);
-      ByteArrayOutputStream bytes = new ByteArrayOutputStream(); bitmap.compress(Bitmap.CompressFormat.JPEG, 85, bytes);
-      return new JSONObject().put("kind", "image").put("mime", "image/jpeg").put("width", bitmap.getWidth()).put("height", bitmap.getHeight())
-        .put("dataUrl", "data:image/jpeg;base64," + Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP));
-    }
-    if (type.startsWith("text/") || name.matches(".*\\.(txt|md|json|csv|log|js|ts|py|html|css|xml|ini|yaml|yml)$")) {
-      ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[16384]; boolean eof = true;
-      try (InputStream input = context.getContentResolver().openInputStream(uri)) {
-        int count; while ((count = input.read(buffer)) >= 0) { bytes.write(buffer, 0, count); if (bytes.size() >= TEXT_PREVIEW_BYTES) { eof = input.read() < 0; break; } }
+  /** A phone document as a preview source (PDFs and media included; see PhonePreview). */
+  PhonePreview.Source source(Uri uri) throws Exception {
+    JSONObject entry = stat(uri);
+    String name = entry.getString("name"), type = mime(uri); long size = entry.optLong("size", -1);
+    return new PhonePreview.Source() {
+      public String name() { return name; }
+      public String mime() { return type; }
+      public long size() { return size; }
+      public PhonePreview.Stream open(long offset) throws Exception {
+        InputStream input = context.getContentResolver().openInputStream(uri);
+        if (input == null) throw new IOException("The file could not be read.");
+        long skipped = 0; while (skipped < offset) { long n = input.skip(offset - skipped); if (n <= 0) break; skipped += n; }
+        return new PhonePreview.Stream(input, skipped, size, () -> { try { input.close(); } catch (IOException ignored) {} });
       }
-      byte[] data = bytes.toByteArray(); int length = Math.min(data.length, TEXT_PREVIEW_BYTES);
-      return new JSONObject().put("kind", "text").put("text", new String(data, 0, length, StandardCharsets.UTF_8)).put("byteOffset", 0).put("nextOffset", length).put("eof", eof && length == data.length);
-    }
-    return new JSONObject().put("kind", "none");
+      public android.os.ParcelFileDescriptor descriptor() throws Exception { return context.getContentResolver().openFileDescriptor(uri, "r"); }
+    };
   }
+  private JSONObject preview(Uri uri) throws Exception { return PhonePreview.preview(source(uri)); }
 }

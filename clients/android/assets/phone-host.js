@@ -82,10 +82,13 @@ async function fileCapability(operation, params) {
     }
     case 'icon': return { ok: true, icon: null };
     case 'preview': {
-      // The computer that holds the file renders the preview with its own tools.
+      // The computer that holds the file renders text and images with its own tools; a PDF, audio or
+      // video is fetched (verified) and previewed on the phone.
       const { ownerId, parts, entry } = await resolve(params.path);
-      if (!entry || entry.kind !== 'file') return { ok: true, entry: describe(ownerId, parts, entry), preview: { kind: 'none' } };
-      return { ok: true, entry: describe(ownerId, parts, entry), preview: await native({ operation: 'preview', ownerId, resourceId: entry.id }) };
+      const described = describe(ownerId, parts, entry);
+      if (!entry || entry.kind !== 'file') return { ok: true, entry: described, preview: { kind: 'none' } };
+      if (/^\.(pdf|mp4|m4v|webm|mkv|mov|3gp|mp3|m4a|aac|wav|ogg|oga|opus|flac)$/.test(described.extension)) return { ok: true, entry: described, preview: await native({ operation: 'cache-preview', ownerId, entry }) };
+      return { ok: true, entry: described, preview: await native({ operation: 'preview', ownerId, resourceId: entry.id }) };
     }
     case 'create-folder': { const { ownerId, entry } = await resolve(params.path); await command(ownerId, { operation: 'create-folder', resourceId: entry.id, expectedVersion: entry.version, newName: String(params.newName) }); return fileCapability('stat', { path: `${params.path}\\${params.newName}` }); }
     case 'rename': { const { ownerId, parts, entry } = await resolve(params.path); await command(ownerId, { operation: 'rename', resourceId: entry.id, expectedVersion: entry.version, newName: String(params.newName) }); return { ok: true, operation, path: remotePath(ownerId, [...parts.slice(0, -1), String(params.newName)]) }; }

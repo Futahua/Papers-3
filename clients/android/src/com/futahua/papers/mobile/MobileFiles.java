@@ -67,6 +67,7 @@ final class MobileFiles {
       case "local-state-save": return saveLocalState(request.getString("state"), request.getString("revision"));
       case "backpacks": return backpacks(owner);
       case "backpack-snapshot": return backpackSnapshot(owner,request.getString("resourceId"));
+      case "cache-preview": return cachePreview(owner, request.getJSONObject("entry"));
       case "backpack-view": return backpackControl(owner,request.getString("resourceId"),null);
       case "backpack-command": return backpackControl(owner,request.getString("resourceId"),request.getJSONObject("command"));
       case "change": { JSONObject device=connection(owner);return outbox.send(owner,device.optString("deviceId"),request.getJSONObject("command"),command->dispatchChange(device,command)); }
@@ -193,6 +194,25 @@ final class MobileFiles {
   private JSONObject backpackSnapshot(String owner,String id) throws Exception {
     if(!id.matches("[a-f0-9-]{36}"))throw new IOException("Invalid shared Backpack identity.");File cache=new File(root,"backpack-"+sha((owner+":"+id).getBytes(StandardCharsets.UTF_8))+".json");
     try{JSONObject result=json(request(owner,"/v1/backpacks/"+id+"/snapshot",null,null));if(!owner.equals(result.getJSONObject("owner").getString("id"))||!id.equals(result.getString("resourceId"))||!"proxima".equals(result.getString("kind")))throw new IOException("Shared Backpack identity changed.");write(cache,result);return result.put("online",true);}catch(Exception error){if(!cache.exists())throw error;return read(cache).put("online",false).put("error",error.getMessage());}
+  }
+  /** Preview of a computer's file that the computer cannot render as text or an image (a PDF, audio,
+   * video): the verified local copy (downloaded now if needed, within the preview's time) rendered on the phone. */
+  private JSONObject cachePreview(String owner, JSONObject entry) throws Exception {
+    validate(entry); if (!"file".equals(entry.getString("kind"))) throw new IOException("Choose a file to preview.");
+    long size = entry.getLong("size"); if (size > 60L * 1024 * 1024) throw new IOException("This file is too large to preview on the phone.");
+    String key = sha(new JSONArray().put(owner).put(entry.getString("id")).put(entry.getString("version")).toString().getBytes(StandardCharsets.UTF_8));
+    File complete = new File(root, key + ".bin");
+    if (!(complete.exists() && complete.length() == size)) {
+      String id = download(owner, entry).getString("id"); long deadline = System.currentTimeMillis() + 40000;
+      while (true) {
+        JSONObject job = jobs.get(id); String phase; synchronized (job) { phase = job.getString("phase"); }
+        if ("completed".equals(phase)) break;
+        if ("failed".equals(phase)) { synchronized (job) { throw new IOException(job.optString("error", "The file could not be fetched for preview.")); } }
+        if (System.currentTimeMillis() > deadline) throw new IOException("Still fetching this file for preview; try again in a moment.");
+        Thread.sleep(250);
+      }
+    }
+    return PhonePreview.preview(PhonePreview.file(complete, entry.getString("name")));
   }
   /** Proxima control, as a computer's remote view does it: the live owner's view, or one command the owner
    * applies and confirms (with its new snapshot). Nothing is cached or queued here; offline simply fails. */
