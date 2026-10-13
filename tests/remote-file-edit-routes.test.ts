@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createRemoteFileGateway, remoteTokenHash } from '../src/main/backpacks/remoteFileGateway';
 import { RemoteFileEditOwner } from '../src/main/backpacks/remoteFileEditOwner';
+import { RemoteFileEditNativeProvider } from '../src/main/backpacks/remoteFileEditNativeProvider';
 
 it('checks grants and streams session-bound working copies through actual HTTP routes', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-edit-http-'));
@@ -12,10 +13,12 @@ it('checks grants and streams session-bound working copies through actual HTTP r
   const file = path.join(share, 'source.txt'); await fs.writeFile(file, 'original');
   const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
   let writes = 0;
+  const native = process.platform === 'win32' ? new RemoteFileEditNativeProvider(path.resolve('resources/native/conditional-file-save.ps1'), path.resolve('resources/native/conditional-file-save.cs')) : null;
   const owner = new RemoteFileEditOwner(path.join(root, 'edits'), {
-    async inspect(source) { return { token: 'a'.repeat(64), sha256: hash(await fs.readFile(source.path)) }; },
+    async inspect(source) { return native ? native.inspect(source) : { token: 'a'.repeat(64), sha256: hash(await fs.readFile(source.path)) }; },
     async save(source, upload, expected, authorize) {
       authorize(); const bytes = await fs.readFile(upload); expect(hash(bytes)).toBe(expected.editedSha256);
+      if (native) { const result = await native.save(source, upload, expected, authorize); writes++; return result; }
       writes++; await fs.writeFile(source.path, bytes); return { savedSha256: hash(bytes) };
     },
   }); await owner.initialize();
@@ -49,4 +52,4 @@ it('checks grants and streams session-bound working copies through actual HTTP r
     expect(writes).toBe(1); expect(await fs.readFile(file, 'utf8')).toBe('edited remotely');
     gateway.revoke('writer'); expect((await fetch(base + '/v1/files/edits', { headers })).status).toBe(401);
   } finally { await gateway.close(); await owner.close(); }
-});
+}, 30_000);

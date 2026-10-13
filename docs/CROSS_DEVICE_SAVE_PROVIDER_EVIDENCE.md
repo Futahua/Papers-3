@@ -130,3 +130,24 @@ with existing gateway and focused edit tests, 17 checks pass; typecheck passes.
 This is HTTP contract evidence, not the native save or phone implementation. The
 production gateway does not supply an edit owner yet, so this feature is unavailable
 in the installed applications until that integration and client work are verified.
+
+## Actual native adapter and HTTP save
+
+`remoteFileEditNativeProvider.ts` invokes a fixed local PowerShell script with
+paths and captured revisions carried as JSON on stdin rather than shell text.
+The helper requests owner authorization after locking/checking the source and
+again after flushing the transaction, immediately before commit. A denied handshake
+terminates the owned child and rolls back its uncommitted transaction. Structured
+native errors distinguish a changed source without exposing OS paths.
+
+An actual Windows adapter test passed: withdrawn precommit permission retained the
+original/upload, an authorized save committed, and the old source revision refused
+another save. The HTTP fixture now uses this actual native adapter on Windows
+(injected portable provider elsewhere). Its full authenticated session/upload/seal/save
+and duplicate receipt path passed through the real native transaction on desktop D:.
+Six focused suites total 18 passed tests; typecheck passes. Native tests are explicitly
+skipped off Windows, so a cross-platform green run alone cannot prove this provider.
+
+The installed runtime still does not supply this owner. Runtime lifecycle wiring,
+capability negotiation, laptop adapter/HTTP verification, client editing and actual
+PC/phone acceptance remain. Existing file-read and mutation installations are intact.
