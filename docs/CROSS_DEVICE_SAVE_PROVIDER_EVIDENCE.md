@@ -95,3 +95,21 @@ argument which this PowerShell/.NET combination rejected before attempting repla
 That initial case did not prove replacement fencing. The fixture now supplies a valid
 backup path, and passed on both machines. The separate identical-content replacement
 probe confirms the same replacement call succeeds outside the helper's protected save.
+
+## Edit owner binding checkpoint
+
+`remoteFileEditOwner.ts` now combines the catalog, durable session receipts, and
+private uploads. Beginning a session captures the provider revision, rechecks the
+catalog version, and compares its checked digest before retaining the session.
+Saving resolves the original again through the current approved catalog, requires
+a sealed upload for that same session, supplies only captured native/source revisions
+to the provider, and verifies the resulting catalog version and complete digest.
+Revocation closes access to sessions and uploads. Restarts require reattaching the
+current approved grant; a retained session alone does not authorize its old path.
+
+Focused owner tests use real generated files and the real catalog/upload/receipt
+owners with an injected file-writing provider. They prove routing, session binding,
+external-edit refusal before dispatch, retained originals/uploads, successful receipt
+recovery without a second write, cross-session refusal, and revocation. They do not
+prove native concurrency: the native provider adapter, remote gateway routes, client
+working-copy UX, and actual device end-to-end path remain to be implemented.

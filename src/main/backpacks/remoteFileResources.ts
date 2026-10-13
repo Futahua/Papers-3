@@ -121,6 +121,14 @@ export class RemoteFileResources {
     } finally { await lease.handle.close(); }
   }
 
+  /** Owner-only scope for checked edit providers. Never serialize OS paths to peers. */
+  async checkedEditSource(id: string, expectedVersion: string): Promise<{ path: string; approvedRoot: string; entry: RemoteFileEntry }> {
+    const source = await this.checkedPath(id, expectedVersion);
+    if (source.entry.kind !== 'file') throw new RemoteFileError('RESOURCE_NOT_FILE', 'Choose a regular file to edit.');
+    const resource = await this.resolve(id);
+    return { ...source, approvedRoot: this.roots.get(resource.shareId)!.directory };
+  }
+
   async open(id: string, expectedVersion: string): Promise<{ handle: FileHandle; entry: RemoteFileEntry; verify: () => Promise<void> }> {
     const resource = await this.resolve(id);
     const handle = await fs.open(resource.target, 'r');

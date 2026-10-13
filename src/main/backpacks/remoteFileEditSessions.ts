@@ -9,6 +9,8 @@ export interface EditSession {
   resourceId: string;
   sourceVersion: string;
   sourceSha256: string;
+  nativeRevision?: string;
+  uploadId?: string;
   phase: 'editing' | 'saving' | 'saved' | 'conflict' | 'uncertain';
   saveId?: string;
   editedSha256?: string;
@@ -45,6 +47,7 @@ export class RemoteFileEditSessions {
       if (!identity.test(session.id) || !session.deviceId || !identity.test(session.resourceId) || !hash.test(session.sourceVersion) || !hash.test(session.sourceSha256) || !['editing','saving','saved','conflict','uncertain'].includes(session.phase) || this.sessions.has(session.id)) throw new Error('Invalid edit session journal.');
       if (session.phase !== 'editing' && (!identity.test(session.saveId ?? '') || !hash.test(session.editedSha256 ?? ''))) throw new Error('Invalid save receipt.');
       if (session.phase === 'saved' && !hash.test(session.savedVersion ?? '')) throw new Error('Invalid saved revision.');
+      if ((session.nativeRevision !== undefined && !hash.test(session.nativeRevision)) || (session.uploadId !== undefined && !identity.test(session.uploadId))) throw new Error('Invalid edit provider binding.');
       if (session.phase === 'saving') {
         session.phase = 'uncertain';
         session.message = 'Saving was interrupted. Both copies are retained; inspect the owner before starting another save.';
@@ -65,28 +68,34 @@ export class RemoteFileEditSessions {
   list(deviceId: string): EditSession[] {
     return structuredClone([...this.sessions.values()].filter(session => session.deviceId === deviceId));
   }
-  begin(deviceId: string, source: Pick<EditSession, 'resourceId' | 'sourceVersion' | 'sourceSha256'>): Promise<EditSession> {
+  begin(deviceId: string, source: Pick<EditSession, 'resourceId' | 'sourceVersion' | 'sourceSha256' | 'nativeRevision'>): Promise<EditSession> {
     return this.serial(async () => {
       this.available(deviceId);
       if (!deviceId || !identity.test(source.resourceId) || !hash.test(source.sourceVersion) || !hash.test(source.sourceSha256)) throw new Error('A checked source revision is required.');
       const session: EditSession = { resourceId: source.resourceId, sourceVersion: source.sourceVersion, sourceSha256: source.sourceSha256, id: randomUUID(), deviceId, phase: 'editing' };
+      if (source.nativeRevision !== undefined) {
+        if (!hash.test(source.nativeRevision)) throw new Error('Invalid native source revision.');
+        session.nativeRevision = source.nativeRevision;
+      }
       this.sessions.set(session.id, session);
       try { await this.persist(); } catch (error) { this.sessions.delete(session.id); throw error; }
       return structuredClone(session);
     });
   }
-  commit(deviceId: string, id: string, saveId: string, editedSha256: string): Promise<EditSession> {
+  commit(deviceId: string, id: string, saveId: string, editedSha256: string, uploadId?: string): Promise<EditSession> {
     return this.serial(async () => {
       this.available(deviceId);
       const session = this.sessions.get(id);
       if (!session || session.deviceId !== deviceId) throw new Error('Edit session is unavailable.');
       if (!identity.test(saveId) || !hash.test(editedSha256)) throw new Error('A save identity and verified working copy are required.');
+      if (uploadId !== undefined && !identity.test(uploadId)) throw new Error('Invalid working-copy identity.');
       if (session.saveId) {
-        if (session.saveId !== saveId || session.editedSha256 !== editedSha256) throw new Error('This session already has a save receipt. Retain the working copy and inspect its result.');
+        if (session.saveId !== saveId || session.editedSha256 !== editedSha256 || session.uploadId !== uploadId) throw new Error('This session already has a save receipt. Retain the working copy and inspect its result.');
         return structuredClone(session);
       }
       const original = structuredClone(session);
       Object.assign(session, { saveId, editedSha256, phase: 'saving' });
+      if (uploadId !== undefined) session.uploadId = uploadId;
       try { await this.persist(); } catch (error) { this.sessions.set(id, original); throw error; }
       try {
         // The injected owner must check authorization again immediately before commit.
