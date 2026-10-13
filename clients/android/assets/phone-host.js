@@ -125,9 +125,29 @@ async function remoteFiles(params) {
 }
 
 // The phone's own As you Go document.
+// A phone document without a theme of its own takes the theme of the computers' As you Go.
+const THEME_KEY = 'papers-phone-computer-theme';
+async function computerTheme() {
+  let theme = null; try { theme = localStorage.getItem(THEME_KEY); } catch {}
+  if (theme) return theme;
+  try {
+    for (const device of (await status()).devices || []) {
+      const [workspace] = await native({ operation: 'workspaces', ownerId: device.id });
+      if (!workspace) continue;
+      const loaded = await native({ operation: 'workspace-load', ownerId: device.id, workspaceId: workspace.id });
+      theme = loaded.state?.view?.preferences?.theme;
+      if (theme) break;
+    }
+  } catch {}
+  theme ||= 'dark';
+  try { localStorage.setItem(THEME_KEY, theme); } catch {}
+  return theme;
+}
 async function loadOwn() {
   const loaded = await native({ operation: 'local-state-load' });
-  return { state: loaded.state ?? JSON.stringify(EMPTY_STATE), revision: loaded.revision };
+  const state = loaded.state ? JSON.parse(loaded.state) : structuredClone(EMPTY_STATE);
+  if (!state.view?.preferences?.theme) state.view = { ...(state.view || {}), preferences: { ...(state.view?.preferences || {}), theme: await computerTheme() } };
+  return { state: JSON.stringify(state), revision: loaded.revision };
 }
 async function handle(type, request) {
   switch (type) {
