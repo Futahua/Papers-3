@@ -147,8 +147,45 @@ async function handle(type, request) {
     default: throw new Error('Not available on the phone.');
   }
 }
+// Proxima on the phone shows another machine's Proxima: the last one viewed, else the first with one.
+const PROXIMA_DEVICE = 'papers-phone-proxima-device';
+async function proximaShare(ownerId) {
+  const list = await native({ operation: 'backpacks', ownerId });
+  const share = (list.entries || []).find((item) => item.kind === 'proxima');
+  if (!share) throw new Error('That computer has no Proxima to show.');
+  return share;
+}
+async function openProxima(ownerId) {
+  if (!ownerId) {
+    let remembered = null; try { remembered = localStorage.getItem(PROXIMA_DEVICE); } catch {}
+    const known = (await status()).devices || [];
+    ownerId = known.some((d) => d.id === remembered) ? remembered : known[0]?.id;
+  }
+  if (!ownerId) throw new Error('No computer is connected.');
+  try { localStorage.setItem(PROXIMA_DEVICE, ownerId); } catch {}
+  frame.src = 'proxima/index.html?papers-phone=1&papers-device=' + ownerId;
+}
+async function proximaRequest(request) {
+  if (request.operation === 'devices') return (await status()).devices || [];
+  if (request.operation === 'snapshot') {
+    const share = await proximaShare(request.ownerId);
+    const result = await native({ operation: 'backpack-snapshot', ownerId: request.ownerId, resourceId: share.id });
+    return { snapshot: result.snapshot, online: result.online, name: deviceName(request.ownerId) };
+  }
+  throw new Error('Not available on the phone.');
+}
 window.addEventListener('message', (event) => {
-  if (event.source !== frame.contentWindow || typeof event.data?.type !== 'string' || !event.data.requestId) return;
+  if (event.source !== frame.contentWindow) return;
+  if (event.data?.type === 'papers:phone:proxima' || event.data?.type === 'papers:proxima-device:open') { void openProxima(event.data.ownerId).catch((error) => console.error(error)); return; }
+  if (event.data?.type === 'papers:proxima-device:request') {
+    const { requestId } = event.data;
+    proximaRequest(event.data).then(
+      (result) => frame.contentWindow.postMessage({ type: 'papers:proxima-device:result', requestId, ok: true, result }, location.origin),
+      (error) => frame.contentWindow.postMessage({ type: 'papers:proxima-device:result', requestId, ok: false, error: String(error?.message || error) }, location.origin),
+    );
+    return;
+  }
+  if (typeof event.data?.type !== 'string' || !event.data.requestId) return;
   const { type, requestId } = event.data;
   handle(type, event.data).then(
     (payload) => frame.contentWindow.postMessage({ type: 'papers:host:result', requestId, ok: true, ...(payload || {}) }, location.origin),
@@ -159,7 +196,7 @@ window.addEventListener('message', (event) => {
 window.papersBack = () => {
   const page = frame.contentWindow;
   if (page?.papersPhoneBack?.()) return true;
-  if (frame.src.includes('papers-device=')) { frame.src = 'ayg/workspace-20260730b.html?papers-phone=1'; return true; }
+  if (frame.src.includes('papers-device=') || frame.src.includes('/proxima/')) { frame.src = 'ayg/workspace-20260730b.html?papers-phone=1'; return true; }
   return false;
 };
 frame.src = 'ayg/workspace-20260730b.html?papers-phone=1';

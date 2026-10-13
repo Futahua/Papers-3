@@ -29,6 +29,8 @@ public final class MainActivity extends Activity {
     view = new WebView(this);
     view.setBackgroundColor(0xff2b302f);
     view.getSettings().setJavaScriptEnabled(true);
+    // As you Go and Proxima keep view settings (and the phone its inbox choices) in localStorage.
+    view.getSettings().setDomStorageEnabled(true);
     view.getSettings().setAllowFileAccess(false);
     view.getSettings().setAllowContentAccess(false);
     view.getSettings().setBlockNetworkLoads(true);
@@ -38,7 +40,7 @@ public final class MainActivity extends Activity {
     });
     view.setWebViewClient(new WebViewClient() {
       @Override public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {
-        String route = request.getUrl().getPath(); return request.isForMainFrame() || !"https".equals(request.getUrl().getScheme()) || !"papers.local".equals(request.getUrl().getHost()) || route == null || !(route.equals("/app/remote-overview.html") || route.startsWith("/ayg/"));
+        String route = request.getUrl().getPath(); return request.isForMainFrame() || !"https".equals(request.getUrl().getScheme()) || !"papers.local".equals(request.getUrl().getHost()) || route == null || !(route.equals("/app/remote-overview.html") || route.startsWith("/ayg/") || route.startsWith("/proxima/"));
       }
       @Override public WebResourceResponse shouldInterceptRequest(WebView webView, WebResourceRequest request) {
         String name = request.getUrl().getPath();
