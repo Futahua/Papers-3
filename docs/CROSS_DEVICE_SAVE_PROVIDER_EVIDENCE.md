@@ -38,10 +38,25 @@ Get-FileHash. The harness now uses .NET SHA-256 directly; subsequent checks pass
 The installed laptop Papers process 44076 remained responsive and was not restarted
 for these probes. The provider is not installed into that running build.
 
+Follow-up: `tools/probeConditionalSaveCrash.ps1` kills its own generated child
+process after the replacement bytes have been flushed and verified, immediately
+before transaction commit. On both actual machines, the original hash and working
+copy hash remained unchanged after process death, and the next checked save succeeded.
+This proves rollback and released locks at that checkpoint, not every interruption
+point or the durable acknowledgement path.
+
+`remoteFileEditSessions.ts` adds owner-side durable receipts, with serialized
+dispatch and peer isolation. Focused tests prove journal-before-dispatch,
+successful receipt reuse after restart, no replay of conflicts or uncertain saves,
+interrupted `saving` recovery to `uncertain`, revoked/other-peer refusal, and
+rejection of a provider receipt whose saved hash differs from the edited copy.
+The class is not yet wired to a gateway or uploaded working-copy owner. Its provider
+is injected; tests of receipts do not prove native provider integration.
+
 ## Remaining gates before remote use
 
-- Process termination during an uncommitted write, unsupported-volume behavior,
-  and explicit reparse/namespace race fixtures.
+- Additional interruption points, unsupported-volume behavior, and explicit
+  reparse/namespace race fixtures.
 - Full file identity/stat revision comparison under the same protected operation;
   content hash alone does not prove the previously observed revision is unchanged.
 - Authenticated, owner-resolved sessions; immutable original receipt plus separate

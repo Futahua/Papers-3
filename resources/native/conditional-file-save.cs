@@ -27,6 +27,10 @@ public static class PapersConditionalFileSave {
   static bool Within(string root,string file){return file.StartsWith(root+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);}
   static List<SafeFileHandle> PinParents(string file){var handles=new List<SafeFileHandle>();try{string current=Path.GetPathRoot(file);string relative=Path.GetDirectoryName(file).Substring(current.Length);var paths=new List<string>();paths.Add(current);foreach(string name in relative.Split(new[]{Path.DirectorySeparatorChar},StringSplitOptions.RemoveEmptyEntries)){current=Path.Combine(current,name);paths.Add(current);}foreach(string directory in paths){var handle=CreateFile(directory,0x80,3,IntPtr.Zero,3,0x02200000,IntPtr.Zero);if(handle.IsInvalid){handle.Dispose();throw new Win32Exception(Marshal.GetLastWin32Error());}handles.Add(handle);FileInformation information;Check(GetFileInformationByHandle(handle,out information));if((information.Attributes&0x400)!=0||!String.Equals(FinalPath(handle),Normal(directory),StringComparison.OrdinalIgnoreCase))throw new IOException("A source directory changed or is a reparse point.");}return handles;}catch{foreach(var handle in handles)handle.Dispose();throw;}}
   public static Result Save(string original,string replacement,string approvedRoot,string expectedSourceSha256,string expectedReplacementSha256,Action prepared){
+    return Save(original,replacement,approvedRoot,expectedSourceSha256,expectedReplacementSha256,prepared,null);
+  }
+  // The pre-commit hook also allows a real process-death probe after bytes were flushed.
+  public static Result Save(string original,string replacement,string approvedRoot,string expectedSourceSha256,string expectedReplacementSha256,Action prepared,Action beforeCommit){
     original=Path.GetFullPath(original);replacement=Path.GetFullPath(replacement);approvedRoot=Normal(approvedRoot);
     if(!Within(approvedRoot,original)||String.Equals(original,replacement,StringComparison.OrdinalIgnoreCase))throw new IOException("Source is outside its approved folder or is the working copy itself.");
     if(!System.Text.RegularExpressions.Regex.IsMatch(expectedSourceSha256??"","^[a-f0-9]{64}$")||!System.Text.RegularExpressions.Regex.IsMatch(expectedReplacementSha256??"","^[a-f0-9]{64}$"))throw new IOException("A complete source and working-copy digest is required.");
@@ -42,6 +46,7 @@ public static class PapersConditionalFileSave {
         upload.Position=0;source.Position=0;upload.CopyTo(source);source.SetLength(upload.Length);source.Flush(true);
         if(Digest(source)!=expectedReplacementSha256)throw new IOException("Saved bytes did not match the working copy.");
       }
+      if(beforeCommit!=null)beforeCommit();
       Check(CommitTransaction(transaction));committed=true;
       return new Result{OriginalSha256=expectedSourceSha256,SavedSha256=expectedReplacementSha256,Bytes=upload.Length,FileIdentity=information.Volume.ToString()+":"+(((ulong)information.IndexHigh<<32)|information.IndexLow).ToString()};
     }}finally{if(transaction!=IntPtr.Zero&&transaction!=new IntPtr(-1)){if(!committed)RollbackTransaction(transaction);CloseHandle(transaction);}foreach(var handle in parents)handle.Dispose();}
