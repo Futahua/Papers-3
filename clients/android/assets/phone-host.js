@@ -184,6 +184,12 @@ function openLayer(src) {
     if (ready || Date.now() - started > 6000) { next.style.visibility = 'visible'; previous?.remove(); } else setTimeout(reveal, 50);
   };
   next.addEventListener('load', reveal);
+  // Proxima gets the phone's own gestures (swipe inertia, cursor mode) on top of its touch layer.
+  if (src.startsWith('proxima/')) next.addEventListener('load', () => {
+    const script = next.contentDocument.createElement('script');
+    script.src = new URL('proxima-phone.js', location.href).href;
+    next.contentDocument.head.append(script);
+  });
 }
 function closeLayer() { if (!layer) return false; for (const node of document.querySelectorAll('.papers-layer')) node.remove(); layer = null; return true; }
 // Proxima on the phone shows another machine's Proxima: the last one viewed, else the first with one.
