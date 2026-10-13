@@ -13,6 +13,8 @@ import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOf
 import { RemoteDeviceService } from './backpacks/remoteDeviceService';
 import { RemoteFileClient } from './backpacks/remoteFileClient';
 import { RemoteFileMutations } from './backpacks/remoteFileMutations';
+import { RemoteFileEditOwner } from './backpacks/remoteFileEditOwner';
+import { RemoteFileEditNativeProvider } from './backpacks/remoteFileEditNativeProvider';
 import { safeStorage } from 'electron';
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
@@ -549,6 +551,11 @@ async function bootstrap(): Promise<void> {
   const baseDir = app.getPath('userData');
   const paths = papersPaths(baseDir);
   const remoteDevices = new RemoteDeviceService(path.join(paths.root, 'devices'),process.env['PAPERS_TEST_USER_DATA']?0:48240);
+  const editNativeRoot = app.isPackaged ? path.join(process.resourcesPath, 'native') : path.join(app.getAppPath(), 'resources', 'native');
+  const remoteEdits = new RemoteFileEditOwner(path.join(paths.root, 'file-edits'), new RemoteFileEditNativeProvider(path.join(editNativeRoot, 'conditional-file-save.ps1'), path.join(editNativeRoot, 'conditional-file-save.cs')));
+  if (process.platform === 'win32') {
+    await remoteEdits.initialize().then(() => { remoteDevices.edits = remoteEdits; }).catch(error => console.error('[remote-files] edit recovery needed:', error));
+  }
   await remoteDevices.initialize();
   const remoteFiles = new RemoteFileClient(path.join(paths.root, 'remote-files'), {
     seal: value => {
@@ -3498,6 +3505,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       capabilityQuitPromise = quitStage('control', () => papersControlServer?.close())
         .then(() => quitStage('remote-devices', () => remoteDevices.close()))
         .then(() => quitStage('remote-file-commands', () => remoteMutations.close()))
+        .then(() => quitStage('remote-file-edits', () => remoteEdits.close()))
         .then(() => quitStage('remote-files', () => remoteFiles.close()))
         .then(() => quitStage('native-panes', () => chromePane?.coordinator?.dispose()))
         .then(async () => { await commandSurfaceOverlay?.destroy().catch(() => undefined); commandSurfaceOverlay = null; })

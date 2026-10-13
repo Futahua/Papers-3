@@ -36,7 +36,11 @@ it('checks grants and streams session-bound working copies through actual HTTP r
   try {
     expect((await fetch(base + '/v1/files/edits')).status).toBe(401);
     expect((await fetch(base + '/v1/files/edits', { headers: { Authorization: `Bearer ${readonly}` } })).status).toBe(403);
-    const folder = (await (await fetch(base + '/v1/files/shares', { headers })).json()).entries[0];
+    const catalog = await (await fetch(base + '/v1/files/shares', { headers })).json();
+    expect(catalog.capabilities.edits).toBe(true);
+    const readerCatalog = await (await fetch(base + '/v1/files/shares', { headers: { Authorization: `Bearer ${readonly}` } })).json();
+    expect(readerCatalog.capabilities.edits).toBe(false);
+    const folder = catalog.entries[0];
     const entry = (await (await fetch(`${base}/v1/files/${folder.id}/list`, { headers })).json()).entries[0];
     const begun = await post('/v1/files/edits', { resourceId: entry.id, sourceVersion: entry.version, path: 'ignored-client-path' });
     expect(begun.status).toBe(201); const session = (await begun.json()).session;

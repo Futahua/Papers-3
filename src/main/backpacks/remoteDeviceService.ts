@@ -5,6 +5,7 @@ import { RemoteDeviceStore } from './remoteDeviceStore';
 import { createRemoteFileGateway, type RemoteBackpackShare } from './remoteFileGateway';
 import { randomUUID } from 'node:crypto';
 import type { RemoteFileMutations } from './remoteFileMutations';
+import type { RemoteFileEditOwner } from './remoteFileEditOwner';
 
 export class RemoteDeviceService {
   private devices: RemoteDeviceStore | null = null;
@@ -12,6 +13,7 @@ export class RemoteDeviceService {
   private address: string | null = null;
   private failure: string | null = null;
   mutations: RemoteFileMutations | null = null;
+  edits: RemoteFileEditOwner | null = null;
   readBackpack: ((share:RemoteBackpackShare)=>Promise<unknown>) | null = null;
   private readonly configuration: AtomicJsonStore;
   constructor(private readonly directory: string,private readonly port=48240) {
@@ -36,6 +38,7 @@ export class RemoteDeviceService {
     const devices = this.devices;
     const snapshot = devices.snapshot();
     const gateway = await createRemoteFileGateway({ owner: snapshot.owner, grants: snapshot.devices,
+      edits: this.edits ?? undefined,
       backpackSnapshot:share=>{if(!this.readBackpack)throw Error('Backpack execution owner is unavailable.');return this.readBackpack(share);},
       mutate:async(deviceId,catalog,request)=>{if(!this.mutations)throw new Error('File changes are unavailable.');return this.mutations.submit(deviceId,catalog,request);},
       changes:deviceId=>this.mutations?.list(deviceId)??[],revokeChanges:deviceId=>this.mutations?.revoke(deviceId),

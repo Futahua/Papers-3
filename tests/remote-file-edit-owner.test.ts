@@ -29,6 +29,21 @@ async function fixture() {
   return { root, catalog, entry, original, owner, provider, writes: () => writes };
 }
 describe('approved remote edit owner binding', () => {
+  it('waits for an in-flight source inspection on shutdown and refuses its late session', async () => {
+    const f = await fixture();
+    const inspect = f.provider.inspect;
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    f.provider.inspect = async source => { entered(); await gate; return inspect(source); };
+    const opening = f.owner.begin('peer', f.catalog, f.entry.id, f.entry.version);
+    const refusal = expect(opening).rejects.toThrow('unavailable');
+    await ready; let closed = false;
+    const close = f.owner.close().then(() => { closed = true; });
+    await new Promise(resolve => setImmediate(resolve)); expect(closed).toBe(false);
+    release(); await close; await refusal;
+    expect(f.owner.sessions.list('peer')).toEqual([]);
+  });
   it('saves only a sealed copy bound to the captured session and retains the receipt after restart', async () => {
     const f = await fixture(); const edited = Buffer.from('edited');
     const session = await f.owner.begin('peer', f.catalog, f.entry.id, f.entry.version);

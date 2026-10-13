@@ -101,14 +101,14 @@ export async function createRemoteFileGateway(options: {
         catch{if(!response.destroyed)json(response,503,{ok:false,code:'BACKPACK_OWNER_UNAVAILABLE'});}return;
       }
       if (url.pathname === '/v1/files/shares') {
-        json(response, 200, { ok: true, protocol: 1, owner: options.owner, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate)}, entries: await device.catalog.shares() });
+        json(response, 200, { ok: true, protocol: 1, owner: options.owner, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate),edits:Boolean(device.grant.canWrite===true&&options.edits)}, entries: await device.catalog.shares() });
         return;
       }
       const match = /^\/v1\/files\/([a-f0-9-]{36})\/(list|stat|content|digest)$/.exec(url.pathname);
       if (!match) { json(response, 404, { ok: false, code: 'OPERATION_UNKNOWN' }); return; }
       const id = match[1]!;
       if (match[2] === 'list') {
-        json(response, 200, { ok: true, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate)},folder:await device.catalog.stat(id), ...await device.catalog.list(id, Number(url.searchParams.get('offset') ?? 0), Number(url.searchParams.get('limit') ?? 200)) });
+        json(response, 200, { ok: true, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate),edits:Boolean(device.grant.canWrite===true&&options.edits)},folder:await device.catalog.stat(id), ...await device.catalog.list(id, Number(url.searchParams.get('offset') ?? 0), Number(url.searchParams.get('limit') ?? 200)) });
         return;
       }
       if (match[2] === 'stat') { json(response, 200, { ok: true, entry: await device.catalog.stat(id) }); return; }

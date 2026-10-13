@@ -151,3 +151,19 @@ skipped off Windows, so a cross-platform green run alone cannot prove this provi
 The installed runtime still does not supply this owner. Runtime lifecycle wiring,
 capability negotiation, laptop adapter/HTTP verification, client editing and actual
 PC/phone acceptance remain. Existing file-read and mutation installations are intact.
+
+## Runtime wiring checkpoint
+
+Papers now initializes the edit journal before the device gateway starts on Windows,
+supplies the native-backed owner, and closes it through the existing shutdown stages.
+Pending source inspections are awaited; a session finishing after shutdown begins
+is refused. A focused shutdown fixture proves this behavior. A journal requiring
+recovery leaves editing unavailable while preserving ordinary device/file services.
+The gateway advertises `capabilities.edits` only with an edit owner and the peer's
+write grant. The approved installer already includes the native resources directory,
+so the fixed script and C# source use its existing packaging contract.
+
+The full source test run passed 1,494 tests with four skips before the additional
+shutdown fixture; typecheck and production build passed. These are source/build
+checks. The current installed build is still the earlier overview checkpoint;
+new client controls and device verification are required before installing this slice.

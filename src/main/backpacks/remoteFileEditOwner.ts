@@ -16,6 +16,7 @@ export class RemoteFileEditOwner {
   private readonly catalogs = new Map<string, RemoteFileResources>();
   private readonly revoked = new Set<string>();
   private accepting = true;
+  private readonly opening = new Set<Promise<unknown>>();
   constructor(directory: string, private readonly provider: CheckedFileEditProvider) {
     this.uploads = new RemoteFileEditUploads(path.join(directory, 'uploads'));
     this.sessions = new RemoteFileEditSessions(directory, session => this.save(session));
@@ -24,7 +25,13 @@ export class RemoteFileEditOwner {
   private authorize(deviceId: string) {
     if (!this.accepting || this.revoked.has(deviceId) || !this.catalogs.has(deviceId)) throw new Error('Device edit access is unavailable.');
   }
-  async begin(deviceId: string, catalog: RemoteFileResources, resourceId: string, sourceVersion: string) {
+  begin(deviceId: string, catalog: RemoteFileResources, resourceId: string, sourceVersion: string) {
+    const pending = this.openSession(deviceId, catalog, resourceId, sourceVersion);
+    this.opening.add(pending);
+    void pending.finally(() => this.opening.delete(pending)).catch(() => {});
+    return pending;
+  }
+  private async openSession(deviceId: string, catalog: RemoteFileResources, resourceId: string, sourceVersion: string) {
     if (!this.accepting || this.revoked.has(deviceId)) throw new Error('Device edit access is unavailable.');
     this.catalogs.set(deviceId, catalog);
     const source = await catalog.checkedEditSource(resourceId, sourceVersion);
@@ -67,5 +74,9 @@ export class RemoteFileEditOwner {
     this.revoked.add(deviceId); this.catalogs.delete(deviceId);
     this.sessions.revoke(deviceId); this.uploads.revoke(deviceId);
   }
-  async close() { this.accepting = false; await Promise.all([this.sessions.close(), this.uploads.close()]); }
+  async close() {
+    this.accepting = false;
+    await Promise.allSettled([...this.opening]);
+    await Promise.all([this.sessions.close(), this.uploads.close()]);
+  }
 }
