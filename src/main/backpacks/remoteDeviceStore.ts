@@ -5,7 +5,7 @@ import { AtomicJsonStore } from '../persistence/atomicStore';
 import { remoteTokenHash, type RemoteFileGrant, type RemoteBackpackShare } from './remoteFileGateway';
 import { RemoteFileResources, type RemoteFileShare } from './remoteFileResources';
 
-interface Device extends RemoteFileGrant { name: string; pairedAt: number }
+interface Device extends RemoteFileGrant { name: string; pairedAt: number; node?: string }
 interface State { version: 1; owner: { id: string; name: string }; devices: Device[] }
 interface Invitation { codeHash: string; expiresAt: number; attempts: number; shares: RemoteFileShare[]; canWrite:boolean; backpacks:RemoteBackpackShare[] }
 function validBackpacks(value:unknown):value is RemoteBackpackShare[]{return Array.isArray(value)&&value.every(item=>item&&/^[a-f0-9-]{36}$/.test(item.id)&&/^bp-[a-f0-9-]{36}$/.test(item.projectId)&&typeof item.name==='string'&&item.name.length>0&&item.name.length<=256&&item.kind==='proxima')&&new Set(value.map(item=>item.id)).size===value.length;}
@@ -84,6 +84,23 @@ export class RemoteDeviceStore {
       this.state = candidate;
       this.invitation = null;
       return { owner: { ...this.state.owner }, deviceId: device.deviceId, token };
+    });
+  }
+
+  /** Admits a device whose identity the caller already verified (same Tailscale account). Replaces that node's earlier grant. */
+  admit(node: string, name: string, shares: RemoteFileShare[], canWrite: boolean, backpacks: RemoteBackpackShare[]): Promise<{ owner: State['owner']; deviceId: string; token: string; replaced: string[] }> {
+    return this.serialize(async () => {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(node)) throw new Error('Invalid device node.');
+      if (!name.trim() || name.length > 120) throw new Error('Device name is invalid.');
+      if (!validBackpacks(backpacks)) throw new Error('Invalid Backpack selection.');
+      await RemoteFileResources.create(shares);
+      const token = randomBytes(32).toString('base64url');
+      const device: Device = { deviceId: randomUUID(), name: name.trim(), pairedAt: this.now(), node, tokenHash: remoteTokenHash(token), shares: structuredClone(shares), canWrite, backpacks: structuredClone(backpacks) };
+      const replaced = this.state.devices.filter(item => item.node === node).map(item => item.deviceId);
+      const candidate = { ...this.state, devices: [...this.state.devices.filter(item => item.node !== node), device] };
+      await this.store.save(candidate);
+      this.state = candidate;
+      return { owner: { ...this.state.owner }, deviceId: device.deviceId, token, replaced };
     });
   }
 

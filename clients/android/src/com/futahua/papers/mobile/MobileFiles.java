@@ -36,7 +36,7 @@ final class MobileFiles {
     String owner = request.optString("ownerId");
     switch (operation) {
       case "pair": return pair(request.getString("address"), request.getString("code"));
-      case "status": return snapshot();
+      case "status": joinOwners(); return snapshot();
       case "browse": return browse(owner, request.optString("resourceId"), request.optInt("offset", 0));
       case "download": return download(owner, request.getJSONObject("entry"));
       case "offline": return offline(owner);
@@ -66,7 +66,10 @@ final class MobileFiles {
   }
   private synchronized JSONObject pair(String address, String code) throws Exception {
     String base = address(address);
-    JSONObject response = json(http(base + "/v1/devices/pair", null, null, new JSONObject().put("code", code).put("name", Build.MODEL)));
+    remember(base, json(http(base + "/v1/devices/pair", null, null, new JSONObject().put("code", code).put("name", Build.MODEL))));
+    return new JSONObject().put("connected", true);
+  }
+  private synchronized void remember(String base, JSONObject response) throws Exception {
     JSONObject owner = response.getJSONObject("owner");
     if (!owner.getString("id").matches("[a-f0-9-]{36}") || !response.getString("token").matches("[A-Za-z0-9_-]{43}")) throw new IOException("Invalid pairing response.");
     if(!response.getString("deviceId").matches("[a-f0-9-]{36}"))throw new IOException("Invalid pairing identity.");
@@ -74,7 +77,20 @@ final class MobileFiles {
     JSONArray previous = connections(), next = new JSONArray();
     for (int i = 0; i < previous.length(); i++) if (!previous.getJSONObject(i).getString("id").equals(owner.getString("id"))) next.put(previous.getJSONObject(i));
     next.put(device); write(new File(root, "connections.json"), new JSONObject().put("connections", next));
-    return new JSONObject().put("connected", true);
+  }
+  /** Joins the creator's own computers (same Tailscale account, listed at build time). No codes. */
+  private long lastJoin;
+  private synchronized void joinOwners() {
+    if (System.currentTimeMillis() - lastJoin < 30000) return; lastJoin = System.currentTimeMillis();
+    try (InputStream input = context.getAssets().open("owners.json")) {
+      ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[4096]; int count; while ((count = input.read(buffer)) >= 0) bytes.write(buffer, 0, count);
+      JSONArray owners = new JSONArray(bytes.toString("UTF-8")), known = connections();
+      outer: for (int i = 0; i < owners.length(); i++) {
+        String base = address(owners.getString(i));
+        for (int j = 0; j < known.length(); j++) if (base.equals(known.getJSONObject(j).optString("address"))) continue outer;
+        try { URI target = new URI(base); try (java.net.Socket probe = new java.net.Socket()) { probe.connect(new java.net.InetSocketAddress(target.getHost(), target.getPort()), 3000); } remember(base, json(http(base + "/v1/devices/join", null, null, new JSONObject().put("name", Build.MODEL)))); } catch (Exception ignored) {}
+      }
+    } catch (Exception ignored) {}
   }
   private JSONObject snapshot() throws Exception {
     JSONArray devices = new JSONArray(), transfers = new JSONArray(), connections = connections();

@@ -13,6 +13,10 @@ const library=path.join(sdk,'platforms','android-36','android.jar');
 const classes=path.join(output,'classes'),assets=path.join(output,'assets'),dex=path.join(output,'dex');
 await Promise.all([classes,assets,dex,path.join(assets,'app')].map(directory=>mkdir(directory,{recursive:true})));
 for(const name of await readdir(path.join(root,'assets')))await copyFile(path.join(root,'assets',name),path.join(assets,name));
+// The phone cannot list Tailscale peers, so bake in the creator's own computers (same account) at build time.
+{const status=JSON.parse(spawnSync(process.platform==='win32'?'C:/Program Files/Tailscale/tailscale.exe':'tailscale',['status','--json'],{encoding:'utf8',windowsHide:true}).stdout||'{}');
+const user=status.Self?.UserID,computers=[status.Self,...Object.values(status.Peer??{})].filter(node=>node&&node.UserID===user&&/^(windows|macOS|linux)$/.test(node.OS));
+await writeFile(path.join(assets,'owners.json'),JSON.stringify(computers.map(node=>`http://${node.TailscaleIPs.find(ip=>ip.startsWith('100.'))}:48240`)));}
 await copyFile(path.join(ayg,'public/app/remote-file-view.js'),path.join(assets,'app/remote-file-view.js'));
 for(const name of ['remote-domain.js','remote-devices-view.js','remote-overview.html','remote-overview.css','remote-overview.js','schedule-projection.js','date-strip.js','marquee-controller.js','exact-timeline.js','app.css'])await copyFile(path.join(proxima,'public',name),path.join(assets,'app',name));
 function run(executable,args){const result=spawnSync(executable,args,{stdio:'inherit',windowsHide:true});if(result.error)throw result.error;if(result.status!==0)throw new Error(`${path.basename(executable)} failed (${result.status})`);}

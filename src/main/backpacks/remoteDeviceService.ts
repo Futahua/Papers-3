@@ -6,6 +6,8 @@ import { createRemoteFileGateway, type RemoteBackpackShare } from './remoteFileG
 import { randomUUID } from 'node:crypto';
 import type { RemoteFileMutations } from './remoteFileMutations';
 import type { RemoteFileEditOwner } from './remoteFileEditOwner';
+import { sameAccountNode } from './tailnetIdentity';
+import type { RemoteFileShare } from './remoteFileResources';
 
 export class RemoteDeviceService {
   private devices: RemoteDeviceStore | null = null;
@@ -15,6 +17,8 @@ export class RemoteDeviceService {
   mutations: RemoteFileMutations | null = null;
   edits: RemoteFileEditOwner | null = null;
   readBackpack: ((share:RemoteBackpackShare)=>Promise<unknown>) | null = null;
+  /** What a device on the creator's own Tailscale account receives when it joins. */
+  defaultGrant: (() => Promise<{ shares: RemoteFileShare[]; canWrite: boolean; backpacks: RemoteBackpackShare[] }>) | null = null;
   private readonly configuration: AtomicJsonStore;
   constructor(private readonly directory: string,private readonly port=48240) {
     this.configuration = new AtomicJsonStore(path.join(directory, 'connection.json'), { recoveryDir: path.join(directory, 'recovery') });
@@ -22,8 +26,8 @@ export class RemoteDeviceService {
   async initialize(): Promise<void> {
     try {
       this.devices = await RemoteDeviceStore.open(this.directory, os.hostname());
-      const config = await this.configuration.load<{ enabled: boolean }>();
-      if (config.value?.enabled === true) await this.start();
+      // Always listen when Tailscale is up; access is still limited to the creator's own account.
+      await this.start().catch(error => console.warn('[remote-files] owner not listening:', error instanceof Error ? error.message : error));
     } catch (error) { this.failure = error instanceof Error ? error.message : 'Device connection is unavailable.'; }
   }
   snapshot() {
@@ -42,6 +46,13 @@ export class RemoteDeviceService {
       backpackSnapshot:share=>{if(!this.readBackpack)throw Error('Backpack execution owner is unavailable.');return this.readBackpack(share);},
       mutate:async(deviceId,catalog,request)=>{if(!this.mutations)throw new Error('File changes are unavailable.');return this.mutations.submit(deviceId,catalog,request);},
       changes:deviceId=>this.mutations?.list(deviceId)??[],revokeChanges:deviceId=>this.mutations?.revoke(deviceId),
+      join: async (peer, name) => {
+      if (!this.defaultGrant) throw new Error('Device sharing is not ready.');
+      const node = await sameAccountNode(peer);
+      const grant = await this.defaultGrant();
+      const joined = await devices.admit(node, name, grant.shares, grant.canWrite, grant.backpacks);
+      return { ...joined, grant: devices.snapshot().devices.find(device => device.deviceId === joined.deviceId)! };
+    },
       pair: async (code, name) => {
       const paired = await devices.redeem(code, name);
       return { ...paired, grant: devices.snapshot().devices.find(device => device.deviceId === paired.deviceId)! };

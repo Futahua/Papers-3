@@ -61,11 +61,22 @@ export class RemoteFileClient {
     const base = address(ownerAddress, this.allowLoopback);
     const response = await fetch(`${base}/v1/devices/pair`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }) });
     if (!response.ok) throw new Error('Pairing was refused. Generate a new code on the owner.');
-    const paired = await response.json();
-    if (!/^[a-f0-9-]{36}$/.test(paired.owner?.id) || typeof paired.owner?.name !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(paired.token) || !/^[a-f0-9-]{36}$/.test(paired.deviceId)) throw new Error('Invalid pairing response.');
-    const secret = this.secrets.seal(paired.token);
+    await this.remember(base, await response.json());
+  }
+  /** Joins an owner on the creator's own Tailscale account; no code involved. */
+  async join(ownerAddress: string, name: string): Promise<void> {
+    const base = address(ownerAddress, this.allowLoopback);
+    const response = await fetch(`${base}/v1/devices/join`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    if (!response.ok) throw new Error('That computer refused to connect.');
+    await this.remember(base, await response.json());
+  }
+  connectedAddresses(): string[] { return this.connections.map(connection => connection.address); }
+  private async remember(base: string, paired: { owner?: { id?: string; name?: string }; token?: string; deviceId?: string }): Promise<void> {
+    if (!/^[a-f0-9-]{36}$/.test(paired.owner?.id ?? '') || typeof paired.owner?.name !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(paired.token ?? '') || !/^[a-f0-9-]{36}$/.test(paired.deviceId ?? '')) throw new Error('Invalid pairing response.');
+    const owner = { id: paired.owner.id!, name: paired.owner.name }, deviceId = paired.deviceId!;
+    const secret = this.secrets.seal(paired.token!);
     const next = this.saveQueue.then(async () => {
-      const connections = [...this.connections.filter(item => item.id !== paired.owner.id), { id: paired.owner.id, name: paired.owner.name, address: base, secret, deviceId: paired.deviceId }];
+      const connections = [...this.connections.filter(item => item.id !== owner.id), { id: owner.id, name: owner.name, address: base, secret, deviceId }];
       await this.store.save({ version: 1, connections });
       this.connections = connections;
     });

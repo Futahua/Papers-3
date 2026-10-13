@@ -12,7 +12,6 @@ const call = params => new Promise((resolve, reject) => {
 const panel = createRemoteFileView({ document, container: document.querySelector('#files'), call, localLabel: 'Devices', close: () => { void panel.home(); } });
 const data=createRemoteBackpackView({document,container:document.body,call});
 document.querySelector('#data').addEventListener('click',()=>{void data.show();});
-document.querySelector('#connection').addEventListener('click', () => { const form = document.querySelector('#pair'); form.hidden = !form.hidden; });
 document.querySelector('#pair').addEventListener('submit', async event => {
   event.preventDefault(); const status = document.querySelector('#status'); status.textContent = 'Connecting…';
   const result = await call({ operation: 'pair', address: document.querySelector('#address').value, code: document.querySelector('#code').value });

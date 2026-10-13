@@ -3,6 +3,7 @@ import {consumeReloadWindows,createPapersReload,shouldFlushReloadSurface} from '
  * Papers — Electron main process bootstrap and composition root.
  */
 import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, dialog, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell, webContents, type WebContents } from 'electron';
+import * as os from 'node:os';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -12,6 +13,7 @@ import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
 import { RemoteDeviceService } from './backpacks/remoteDeviceService';
 import { RemoteFileClient } from './backpacks/remoteFileClient';
+import { tailnetAccount } from './backpacks/tailnetIdentity';
 import { RemoteFileMutations } from './backpacks/remoteFileMutations';
 import { RemoteFileEditOwner } from './backpacks/remoteFileEditOwner';
 import { RemoteFileEditNativeProvider } from './backpacks/remoteFileEditNativeProvider';
@@ -1870,6 +1872,26 @@ async function bootstrap(): Promise<void> {
       return remoteDevices.invite(folders,choices.canWrite===true,backpacks);
     });
   }
+  const proximaShares=async()=>{const backpacks=[];for(const backpack of registry.list())if(await backpackProjects.sharedDataKind(backpack.id)==='proxima')backpacks.push({id:randomUUID(),projectId:backpack.id,name:backpack.name,kind:'proxima' as const});return backpacks;};
+  // Devices on the creator's own Tailscale account get every local drive, with changes, plus Proxima.
+  remoteDevices.defaultGrant=async()=>{
+    const drives=process.platform==='win32'?'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letter=>`${letter}:\\`).filter(drive=>existsSync(drive)):[os.homedir()];
+    return {shares:drives.map(directory=>({id:randomUUID(),name:directory.replace(/\\$/,'')||directory,directory})),canWrite:true,backpacks:await proximaShares()};
+  };
+  // Join every other computer on the same Tailscale account that is running Papers. No codes, no clicks.
+  const joinTailnetOwners=async()=>{
+    if(remoteFilesError||process.env['PAPERS_TEST_USER_DATA'])return;
+    const {peers}=await tailnetAccount();
+    const known=new Set(remoteFiles.connectedAddresses());
+    for(const peer of peers.filter(item=>item.online)){
+      const base=`http://${peer.address}:48240`;
+      if(known.has(base))continue;
+      await remoteFiles.join(base,remoteDevices.snapshot().owner?.name??os.hostname()).catch(()=>{});
+    }
+  };
+  void joinTailnetOwners().catch(()=>{});
+  const tailnetJoinTimer=setInterval(()=>{void joinTailnetOwners().catch(()=>{});},60_000);
+  tailnetJoinTimer.unref();
   remoteDevices.readBackpack=async share=>{
     const owner=remoteDevices.snapshot().owner;
     if(!owner||await backpackProjects.sharedDataKind(share.projectId)!==share.kind)throw Error('This Backpack is not sharing data.');

@@ -45,3 +45,13 @@ it('does not restore revoked access from backup after main-file corruption', asy
   await expect(RemoteDeviceStore.open(directory, 'Desktop')).rejects.toThrow();
   expect(await fs.readFile(path.join(directory, 'devices.json'), 'utf8')).toBe('{broken');
 });
+it('admits a same-account device without a code and replaces its earlier grant', async () => {
+  const { directory, store, shares } = await fixture();
+  const first = await store.admit('7338249508159368', 'lapdog', shares, true, []);
+  const second = await store.admit('7338249508159368', 'lapdog', shares, true, []);
+  expect(second.replaced).toEqual([first.deviceId]);
+  const devices = (await RemoteDeviceStore.open(directory, 'Desktop')).snapshot().devices;
+  expect(devices.map(device => device.deviceId)).toEqual([second.deviceId]);
+  expect(devices[0]!.canWrite).toBe(true);
+  await expect(store.admit('bad node!', 'x', shares, false, [])).rejects.toThrow('node');
+});

@@ -30,6 +30,7 @@ export async function createRemoteFileGateway(options: {
   owner: { id: string; name: string };
   grants: RemoteFileGrant[];
   pair?: (code: string, name: string) => Promise<{ owner: { id: string; name: string }; deviceId: string; token: string; grant: RemoteFileGrant }>;
+  join?: (peerAddress: string, name: string) => Promise<{ owner: { id: string; name: string }; deviceId: string; token: string; grant: RemoteFileGrant; replaced: string[] }>;
   mutate?: (deviceId: string, catalog: RemoteFileResources, request: unknown) => Promise<unknown>;
   changes?: (deviceId: string) => unknown;
   revokeChanges?: (deviceId: string) => void;
@@ -64,6 +65,24 @@ export async function createRemoteFileGateway(options: {
         devices.set(paired.deviceId, { grant: paired.grant, catalog: await RemoteFileResources.create(paired.grant.shares, paired.grant.tokenHash), responses: new Set() });
         json(response, 200, { ok: true, protocol: 1, owner: paired.owner, deviceId: paired.deviceId, token: paired.token });
       } catch { json(response, 403, { ok: false, code: 'PAIRING_REFUSED' }); }
+      return;
+    }
+    if (request.url === '/v1/devices/join' && request.method === 'POST' && options.join) {
+      try {
+        let body = '';
+        for await (const chunk of request) {
+          body += chunk.toString('utf8');
+          if (Buffer.byteLength(body) > 1024) throw new Error('Join request too large.');
+        }
+        const value: unknown = JSON.parse(body);
+        const name = value && typeof value === 'object' ? (value as Record<string, unknown>).name : undefined;
+        const peer = (request.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
+        if (typeof name !== 'string' || !peer) throw new Error('Invalid join request.');
+        const joined = await options.join(peer, name);
+        for (const id of joined.replaced) revoke(id);
+        devices.set(joined.deviceId, { grant: joined.grant, catalog: await RemoteFileResources.create(joined.grant.shares, joined.grant.tokenHash), responses: new Set() });
+        json(response, 200, { ok: true, protocol: 1, owner: joined.owner, deviceId: joined.deviceId, token: joined.token });
+      } catch (error) { console.warn('[remote-files] join refused:', error instanceof Error ? error.message : error); json(response, 403, { ok: false, code: 'JOIN_REFUSED' }); }
       return;
     }
     const authorization = request.headers.authorization ?? '';
