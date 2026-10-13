@@ -68,6 +68,9 @@ async function fileCapability(operation, params) {
     return { ok: true, provider: 'everything', version: null, total: results.length, results };
   }
   if (operation === 'providers') return { ok: true, providers: { everything: true } };
+  // The phone's own files (chosen with the paperclip) live at \\papers~phone\<content address>.
+  const own = phoneUri(params.path);
+  if (own) return phoneFile(operation, own, params.path);
   if (![params.path, params.destination, ...paths].some(parse)) return { ok: false, code: 'UNAVAILABLE_ON_PHONE', message: 'Not available on the phone.' };
   switch (operation) {
     case 'stat': { const { ownerId, parts, entry } = await resolve(params.path); return { ok: true, entry: describe(ownerId, parts, entry) }; }
@@ -97,10 +100,33 @@ async function fileCapability(operation, params) {
     default: return { ok: false, code: 'UNAVAILABLE_ON_PHONE', message: 'Not available on the phone.' };
   }
 }
+// A path shaped like any other (so As you Go previews it), holding the phone file's content:// address.
+const PHONE_ROOT = '\\\\papers~phone\\';
+const phoneUri = (path) => {
+  const text = String(path || '');
+  if (!text.toLowerCase().startsWith(PHONE_ROOT)) return null;
+  try { const uri = decodeURIComponent(text.slice(PHONE_ROOT.length)); return uri.startsWith('content://') ? uri : null; } catch { return null; }
+};
+async function phoneFile(operation, uri, path) {
+  const entry = async () => {
+    const info = await native({ operation: 'uri-stat', uri });
+    const dot = info.name.lastIndexOf('.');
+    return { path, name: info.name, parent: null, kind: 'file', extension: dot > 0 ? info.name.slice(dot).toLowerCase() : '', size: info.size ?? null, createdAt: null, modifiedAt: null, identity: null };
+  };
+  switch (operation) {
+    case 'stat': return { ok: true, entry: await entry() };
+    case 'preview': return { ok: true, entry: await entry(), preview: await native({ operation: 'uri-preview', uri }) };
+    case 'open': return { ok: true, ...(await native({ operation: 'uri-open', uri })) };
+    case 'icon': return { ok: true, icon: null };
+    default: return { ok: false, code: 'UNAVAILABLE_ON_PHONE', message: 'Not available for a phone file.' };
+  }
+}
+let selfName = null;
+async function phoneName() { if (!selfName) selfName = (await native({ operation: 'self' })).name; return selfName; }
 async function remoteFiles(params) {
   const ownerId = params.ownerId;
   switch (params.operation) {
-    case 'status': { const result = await status(); return result; }
+    case 'status': { const result = await status(); return { ...result, owner: { name: await phoneName() } }; }
     case 'workspaces': return native({ operation: 'workspaces', ownerId });
     case 'workspace-load': return native({ operation: 'workspace-load', ownerId, workspaceId: params.workspaceId });
     case 'workspace-icon': return native({ operation: 'workspace-icon', ownerId, workspaceId: params.workspaceId, name: params.name });
@@ -157,6 +183,7 @@ async function handle(type, request) {
     case 'papers:project:as-you-go-save': { const current = await loadOwn(); await native({ operation: 'local-state-save', state: request.state, revision: current.revision }); return {}; }
     case 'papers:project:workspace-writer-lease-acquire': return { writerLease: null };
     case 'papers:project:workspace-writer-lease-release': return {};
+    case 'papers:phone:pick-files': return { picked: (await native({ operation: 'pick-files' })).map((file) => ({ ...file, target: PHONE_ROOT + encodeURIComponent(file.target) })) };
     case 'papers:project:file-capability': return { fileCapability: await fileCapability(request.operation, request.params || {}).catch((error) => ({ ok: false, code: 'FILE_OPERATION_FAILED', message: error.message })) };
     case 'papers:project:open-new-surface': {
       // A device's As you Go opens over the phone's own; Android back returns to it.
@@ -227,6 +254,8 @@ window.addEventListener('message', (event) => {
   if (!fromPage(event.source)) return;
   const reply = (message) => event.source.postMessage(message, location.origin);
   if (event.data?.type === 'papers:phone:proxima' || event.data?.type === 'papers:proxima-device:open') { void openProxima(event.data.ownerId).catch((error) => console.error(error)); return; }
+  // "This device" in a device's As you Go returns to the phone's own.
+  if (event.data?.type === 'papers:phone:this-device') { closeLayer(); return; }
   if (event.data?.type === 'papers:proxima-device:request') {
     const { requestId } = event.data;
     proximaRequest(event.data).then(

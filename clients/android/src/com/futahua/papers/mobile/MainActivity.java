@@ -19,11 +19,14 @@ public final class MainActivity extends Activity {
   private final ExecutorService requests = Executors.newFixedThreadPool(3);
   private MobileFiles files;
   private String importRequest, importEdit;
-  private static final int IMPORT_EDIT = 201;
+  private static final int IMPORT_EDIT = 201, PICK_FILES = 202;
+  private String pickRequest;
+  private PhoneUris uris;
 
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
     files = MobileFiles.get(getApplicationContext());
+    uris = new PhoneUris(getApplicationContext());
     // Personal app: always inspectable (chrome://inspect) and console mirrored to logcat tag PapersWeb.
     WebView.setWebContentsDebuggingEnabled(true);
     view = new WebView(this);
@@ -79,7 +82,23 @@ public final class MainActivity extends Activity {
               catch(Exception error){importRequest=null;importEdit=null;sendReply(id,false,"The file chooser is unavailable.");}
             }); return;
           }
-          reply.put("ok", true); reply.put("result", files.call(request));
+          String operation = request.optString("operation");
+          // Files chosen from the phone become items in its As you Go (by content address, not copied).
+          if ("pick-files".equals(operation)) {
+            runOnUiThread(() -> {
+              if (isFinishing() || isDestroyed()) return;
+              if (pickRequest != null || importRequest != null) { sendReply(id, false, "A file choice is already open."); return; }
+              pickRequest = id;
+              try { startActivityForResult(new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).addCategory(android.content.Intent.CATEGORY_OPENABLE).setType("*/*").putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE, true).addFlags(android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION), PICK_FILES); }
+              catch (Exception error) { pickRequest = null; sendReply(id, false, "The file chooser is unavailable."); }
+            }); return;
+          }
+          if ("self".equals(operation)) {
+            String name = android.provider.Settings.Global.getString(getContentResolver(), "device_name");
+            reply.put("ok", true); reply.put("result", new JSONObject().put("name", name == null || name.isEmpty() ? android.os.Build.MODEL : name));
+          }
+          else if (PhoneUris.handles(operation)) { reply.put("ok", true); reply.put("result", uris.call(request)); }
+          else { reply.put("ok", true); reply.put("result", files.call(request)); }
         }
         catch (Exception error) { try { reply.put("ok", false); reply.put("message", error.getMessage() == null ? "Operation failed" : error.getMessage()); } catch (Exception ignored) {} }
         String json = reply.toString();
@@ -94,6 +113,19 @@ public final class MainActivity extends Activity {
   }
   @Override protected void onActivityResult(int requestCode,int resultCode,android.content.Intent data) {
     super.onActivityResult(requestCode,resultCode,data);
+    if(requestCode==PICK_FILES&&pickRequest!=null){
+      String replyId=pickRequest;pickRequest=null;
+      java.util.List<android.net.Uri> chosen=new java.util.ArrayList<>();
+      if(resultCode==RESULT_OK&&data!=null){
+        if(data.getClipData()!=null)for(int i=0;i<data.getClipData().getItemCount();i++)chosen.add(data.getClipData().getItemAt(i).getUri());
+        else if(data.getData()!=null)chosen.add(data.getData());
+      }
+      requests.execute(()->{
+        try{org.json.JSONArray picked=new org.json.JSONArray();for(android.net.Uri uri:chosen)picked.put(uris.keep(uri));runOnUiThread(()->sendReply(replyId,true,picked));}
+        catch(Exception error){runOnUiThread(()->sendReply(replyId,false,"Those files could not be added."));}
+      });
+      return;
+    }
     if(requestCode!=IMPORT_EDIT||importRequest==null)return;
     String replyId=importRequest,editId=importEdit;importRequest=null;importEdit=null;
     if(resultCode!=RESULT_OK||data==null||data.getData()==null){sendReply(replyId,true,new JSONObject());return;}
