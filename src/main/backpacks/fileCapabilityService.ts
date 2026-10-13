@@ -20,6 +20,7 @@ import type { LibreOfficeEditorBridge } from './libreOfficeEditorBridge';
 import type { ChromePaneBridge } from './chromePaneBridge';
 import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 import { capabilityForOperation, type createCapabilityRuntimeService } from './capabilityRuntimeService';
+import type { RemotePaths } from './remoteFilePaths';
 
 const MAX_PATH_BYTES = 32_768;
 const MAX_SEARCH_BYTES = 2_048;
@@ -54,6 +55,7 @@ export interface FileCapabilityEntry {
 }
 export interface FileCapabilityDeps {
   remoteFiles?: (request: Record<string, unknown>) => Promise<unknown>;
+  remotePaths?: RemotePaths;
   panePageDrag?:()=>string|null;
   panePages?:{check:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>;attach:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>};
   trashPath?: (target: string) => Promise<void>;
@@ -835,6 +837,8 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
       const operation = typeof raw.operation === 'string' ? raw.operation : '';
       const params = isRecord(raw.params) ? raw.params : {};
       try {
+        const remote = await deps.remotePaths?.handle(operation, params, (next, nextParams) => service.call({ operation: next, params: nextParams }, context));
+        if (remote) return remote;
         switch (operation) {
           case 'remote-files':
             return deps.remoteFiles ? { ok: true, result: await deps.remoteFiles(params) } : { ok: false, code: 'REMOTE_FILES_UNAVAILABLE' };

@@ -278,6 +278,18 @@ export class RemoteFileClient {
     }
     return files;
   }
+  /** Downloads (or reuses) a verified local copy of one exact remote version and returns its path. */
+  async materialize(ownerId: string, raw: unknown): Promise<string> {
+    const file = entry(raw);
+    const key = createHash('sha256').update(JSON.stringify([ownerId, file.id, file.version])).digest('hex');
+    const cached = await this.cachedPath(ownerId, key).catch(() => null);
+    if (cached) return cached;
+    const job = this.download(ownerId, file);
+    await this.transfers.get(job.id);
+    const completed = this.jobs.get(job.id);
+    if (completed?.phase !== 'completed') throw new Error(completed?.error ?? 'The download did not complete.');
+    return this.cachedPath(ownerId, key);
+  }
   cancel(id: string): void { this.controllers.get(id)?.abort(); }
   async cachedPath(ownerId: string, key: string): Promise<string> {
     if (!/^[a-f0-9]{64}$/.test(key)) throw new Error('Invalid cached file identity.');

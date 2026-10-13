@@ -13,6 +13,7 @@ import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
 import { RemoteDeviceService } from './backpacks/remoteDeviceService';
 import { RemoteFileClient } from './backpacks/remoteFileClient';
+import { createRemotePaths } from './backpacks/remoteFilePaths';
 import { logDevice, setDeviceLog, tailnetAccount } from './backpacks/tailnetIdentity';
 import { RemoteFileMutations } from './backpacks/remoteFileMutations';
 import { RemoteFileEditOwner } from './backpacks/remoteFileEditOwner';
@@ -815,6 +816,10 @@ async function bootstrap(): Promise<void> {
       await facade.adoptWorkspaceSurfaceFromHost(hostId,page.surfaceId,group.groupId,2147483647);
       facade.activateBackpackProjectSurface(hostId,parent.surfaceId);
     }});
+  const fileIcon = async (target: string) => {
+    const icon = await app.getFileIcon(target, { size: 'small' });
+    return icon.isEmpty() ? null : icon.toDataURL();
+  };
   const fileCapability = createFileCapabilityService({
     remoteFiles: async params => {
       if (remoteFilesError) throw new Error(remoteFilesError);
@@ -889,10 +894,8 @@ async function bootstrap(): Promise<void> {
     libreOfficePath: resolveLibreOfficePath(),
     openPath: (target) => shell.openPath(target),
     revealPath: (target) => shell.showItemInFolder(target),
-    fileIcon: async (target) => {
-      const icon = await app.getFileIcon(target, { size: 'small' });
-      return icon.isEmpty() ? null : icon.toDataURL();
-    },
+    fileIcon,
+    remotePaths: createRemotePaths(remoteFiles, { iconDirectory: path.join(paths.root, 'remote-files', 'icon-stand-ins'), fileIcon }),
   });
 
   const permissionStore = new PermissionStore(paths);
@@ -1889,14 +1892,16 @@ async function bootstrap(): Promise<void> {
   // Join every other computer on the same Tailscale account that is running Papers. No codes, no clicks.
   const lastJoinFailure=new Map<string,string>();
   const joinTailnetOwners=async()=>{
-    if(remoteFilesError||process.env['PAPERS_TEST_USER_DATA'])return;
+    // Isolated test instances join only under their own name, so they never replace this computer's grant.
+    const testJoinName=process.env['PAPERS_TEST_JOIN_NAME'];
+    if(remoteFilesError||(process.env['PAPERS_TEST_USER_DATA']&&!testJoinName))return;
     const {peers}=await tailnetAccount();
     const known=new Set(remoteFiles.connectedAddresses());
     // Phones and tablets only browse; they never run an owner gateway.
     for(const peer of peers.filter(item=>item.online&&/^(windows|macOS|linux)$/.test(item.os))){
       const base=`http://${peer.address}:48240`;
       if(known.has(base))continue;
-      await remoteFiles.join(base,remoteDevices.snapshot().owner?.name??os.hostname()).then(()=>logDevice('client-joined',{peer:peer.name,base}),error=>{const reason=error instanceof Error?error.message:String(error);if(lastJoinFailure.get(base)!==reason){lastJoinFailure.set(base,reason);logDevice('client-join-failed',{peer:peer.name,base,reason});}});
+      await remoteFiles.join(base,testJoinName??remoteDevices.snapshot().owner?.name??os.hostname()).then(()=>logDevice('client-joined',{peer:peer.name,base}),error=>{const reason=error instanceof Error?error.message:String(error);if(lastJoinFailure.get(base)!==reason){lastJoinFailure.set(base,reason);logDevice('client-join-failed',{peer:peer.name,base,reason});}});
     }
   };
   const joinQuietly=()=>{void joinTailnetOwners().catch(error=>logDevice('client-discovery-failed',{reason:error instanceof Error?error.message:String(error)}));};
