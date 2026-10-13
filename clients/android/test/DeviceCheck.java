@@ -19,6 +19,8 @@ public final class DeviceCheck extends Instrumentation {
     try {
       MobileFiles files=MobileFiles.get(getTargetContext());
       if("grant".equals(arguments.getString("editStage"))){editGrantCheck(result);finish(Activity.RESULT_OK,result);return;}
+      if("chooser".equals(arguments.getString("editStage"))){editChooserCheck(result);finish(Activity.RESULT_OK,result);return;}
+      if("ui".equals(arguments.getString("editStage"))){editUiCheck(files,result);finish(Activity.RESULT_OK,result);return;}
       if(!arguments.getString("editStage","").isEmpty()){editCheck(files,result);finish(Activity.RESULT_OK,result);return;}
       if(!arguments.getString("backpackStage","").isEmpty()){backpackCheck(files,result);finish(Activity.RESULT_OK,result);return;}
       if(!arguments.getString("mutationStage","").isEmpty()){mutationCheck(files,result);finish(Activity.RESULT_OK,result);return;}
@@ -132,6 +134,70 @@ public final class DeviceCheck extends Instrumentation {
       byte[] bytes=java.nio.file.Files.readAllBytes(copies.working(copy.getString("id")).toPath());if(!new String(bytes,java.nio.charset.StandardCharsets.UTF_8).equals("Generated separate-UID edit"))throw new IOException("Separate editor did not write working bytes");
       result.putString("result","PASS: separate app UID edited granted working URI; read-cache write refused and original retained");
     } finally {getTargetContext().revokeUriPermission(cacheUri,Intent.FLAG_GRANT_READ_URI_PERMISSION);getTargetContext().revokeUriPermission(working,Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);cached.delete();source.delete();}
+  }
+  private android.view.accessibility.AccessibilityNodeInfo namedNode(android.view.accessibility.AccessibilityNodeInfo node,String name) {
+    if(node==null)return null;if(name.contentEquals(node.getText()==null?"":node.getText())&&!"android.widget.AutoCompleteTextView".contentEquals(node.getClassName()==null?"":node.getClassName()))return node;
+    for(int i=0;i<node.getChildCount();i++){android.view.accessibility.AccessibilityNodeInfo child=namedNode(node.getChild(i),name);if(child!=null)return child;}return null;
+  }
+  private String evaluate(WebView web,String script) throws Exception {
+    CountDownLatch done=new CountDownLatch(1);final String[] result={null};runOnMainSync(()->web.evaluateJavascript(script,value->{result[0]=value;done.countDown();}));
+    if(!done.await(3,TimeUnit.SECONDS))throw new IOException("Web evaluation timed out");return result[0];
+  }
+  private void editChooserCheck(Bundle result) throws Exception {
+    android.accessibilityservice.AccessibilityServiceInfo service=getUiAutomation().getServiceInfo();service.flags|=android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;getUiAutomation().setServiceInfo(service);
+    String name=arguments.getString("chosenName","");if(!name.matches("Papers-edit-picker-[a-f0-9-]+\\.txt"))throw new IOException("Generated filename required");
+    if(android.os.Build.VERSION.SDK_INT<29)throw new IOException("Downloads fixture requires Android 10 or later");
+    android.content.ContentValues values=new android.content.ContentValues();values.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME,name);values.put(android.provider.MediaStore.MediaColumns.MIME_TYPE,"text/plain");values.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,android.os.Environment.DIRECTORY_DOWNLOADS);
+    android.net.Uri fixtureUri=getTargetContext().getContentResolver().insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,values);if(fixtureUri==null)throw new IOException("Generated download could not be created");
+    try(OutputStream output=getTargetContext().getContentResolver().openOutputStream(fixtureUri)){output.write("Generated real file chooser edited bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+    File source=new File(getTargetContext().getCacheDir(),"generated-chooser-source.txt");try(FileOutputStream output=new FileOutputStream(source)){output.write("Generated original chooser source".getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+    MobileEditCopies copies=new MobileEditCopies(getTargetContext());JSONObject session=new JSONObject().put("id",java.util.UUID.randomUUID().toString()).put("phase","editing").put("sourceSha256",MobileEditCopies.digest(source));JSONObject previous=copies.create(java.util.UUID.randomUUID().toString(),session,"generated.txt",source);
+    Intent launch=new Intent(getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK);Activity activity=startActivitySync(launch);final WebView[] web={null};runOnMainSync(()->web[0]=(WebView)((ViewGroup)activity.findViewById(android.R.id.content)).getChildAt(0));
+    boolean ready=false;for(int i=0;i<100;i++){if("true".equals(evaluate(web[0],"typeof window.papersReply==='function'"))){ready=true;break;}Thread.sleep(100);}if(!ready)throw new IOException("Native page not ready");
+    String request=new JSONObject().put("operation","edit-import").put("editId",previous.getString("id")).toString();
+    evaluate(web[0],"window.fixtureImportReply=null;const priorReply=window.papersReply;window.papersReply=(id,value)=>{if(String(id)==='800000')window.fixtureImportReply=value;else priorReply(id,value);};PapersNative.request('800000',"+JSONObject.quote(request)+");");
+    boolean searched=false,chosen=false;for(int i=0;i<200;i++){
+      android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();android.view.accessibility.AccessibilityNodeInfo target=namedNode(root,name);
+      if(target!=null){while(target!=null&&!target.isClickable())target=target.getParent();if(target!=null){chosen=target.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);if(chosen)break;}}
+      if(root!=null&&!searched&&i>10){
+        java.util.List<android.view.accessibility.AccessibilityNodeInfo> search=root.findAccessibilityNodeInfosByViewId("com.google.android.documentsui:id/option_menu_search");
+        if(!search.isEmpty())search.get(0).performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);
+        root=getUiAutomation().getRootInActiveWindow();if(root!=null){java.util.List<android.view.accessibility.AccessibilityNodeInfo> inputs=root.findAccessibilityNodeInfosByViewId("com.google.android.documentsui:id/search_src_text");if(!inputs.isEmpty()){
+          Bundle query=new Bundle();query.putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,name);inputs.get(0).performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,query);
+          getUiAutomation().injectInputEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN,android.view.KeyEvent.KEYCODE_ENTER),true);getUiAutomation().injectInputEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_UP,android.view.KeyEvent.KEYCODE_ENTER),true);searched=true;
+        }}
+      }
+      Thread.sleep(100);
+    }
+    if(!chosen){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();throw new IOException("Generated file not found in real system chooser; search entered="+searched+", foreground="+(root==null?"unavailable":root.getPackageName()));}
+    JSONObject reply=null;for(int i=0;i<100;i++){String value=evaluate(web[0],"JSON.stringify(window.fixtureImportReply)");if(value!=null&&!"null".equals(value)&&!"\"null\"".equals(value)){String decoded=new org.json.JSONArray("["+value+"]").getString(0);reply=new JSONObject(decoded);break;}Thread.sleep(100);}
+    if(reply==null||!reply.optBoolean("ok"))throw new IOException("Real chooser import reply failed");JSONObject imported=reply.getJSONObject("result");
+    String bytes=new String(java.nio.file.Files.readAllBytes(copies.working(imported.getString("id")).toPath()),java.nio.charset.StandardCharsets.UTF_8);
+    if(!bytes.equals("Generated real file chooser edited bytes"))throw new IOException("Chosen URI bytes differ");
+    if(!MobileEditCopies.digest(copies.working(previous.getString("id"))).equals(session.getString("sourceSha256")))throw new IOException("Chooser changed previous work");
+    result.putString("result","PASS: real Android document chooser selected generated file, granted URI read, returned native bridge reply and retained both copies");source.delete();getTargetContext().getContentResolver().delete(fixtureUri,null,null);
+  }
+  private void waitScript(WebView web,String script) throws Exception {
+    for(int i=0;i<300;i++){if("true".equals(evaluate(web,script)))return;Thread.sleep(100);}throw new IOException("Generated UI state not reached");
+  }
+  private void editUiCheck(MobileFiles files,Bundle result) throws Exception {
+    files.call(new JSONObject().put("operation","pair").put("address",arguments.getString("address")).put("code",arguments.getString("code")));
+    org.json.JSONArray devices=((JSONObject)files.call(new JSONObject().put("operation","status"))).getJSONArray("devices");String owner=devices.getJSONObject(devices.length()-1).getString("id");
+    android.content.IntentFilter filter=new android.content.IntentFilter(Intent.ACTION_EDIT);filter.addDataType("*/*");Instrumentation.ActivityMonitor editor=addMonitor(filter,new Instrumentation.ActivityResult(Activity.RESULT_CANCELED,null),true);
+    try{
+      Activity activity=startActivitySync(new Intent(getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TASK));final WebView[] web={null};runOnMainSync(()->web[0]=(WebView)((ViewGroup)activity.findViewById(android.R.id.content)).getChildAt(0));
+      waitScript(web[0],"Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Browse')");
+      evaluate(web[0],"Array.from(document.querySelectorAll('.navigator-row')).filter(r=>r.textContent.includes('Generated edit owner')).at(-1).querySelector('button').click();");
+      waitScript(web[0],"Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Open folder')");evaluate(web[0],"Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Open folder').click();");
+      waitScript(web[0],"Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Edit local copy')");evaluate(web[0],"Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Edit local copy').click();");
+      waitScript(web[0],"document.body.innerText.includes('Local edits — not saved to owner')");
+      if(editor.getHits()<1)throw new IOException("Local editor action was not requested");
+      org.json.JSONArray copies=(org.json.JSONArray)files.call(new JSONObject().put("operation","edit-list").put("ownerId",owner));JSONObject copy=copies.getJSONObject(copies.length()-1);
+      try(FileOutputStream output=new FileOutputStream(new MobileEditCopies(getTargetContext()).working(copy.getString("id")))){output.write("Generated real phone UI saved bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+      evaluate(web[0],"Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Save back').click();");waitScript(web[0],"document.body.innerText.includes('Saved to owner; local copy retained')");
+      if(!"saved".equals(new MobileEditCopies(getTargetContext()).read(copy.getString("id")).getString("phase")))throw new IOException("Rendered save did not retain receipt");
+      result.putString("result","PASS: installed phone AYG browse/edit controls, real native working copy, editor intent request, visible Save back and owner receipt");
+    }finally{removeMonitor(editor);}
   }
   private JSONObject browse(MobileFiles files,String owner,String folder) throws Exception {return (JSONObject)files.call(new JSONObject().put("operation","browse").put("ownerId",owner).put("resourceId",folder));}
   private void backpackCheck(MobileFiles files,Bundle result) throws Exception {

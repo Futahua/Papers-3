@@ -5,7 +5,7 @@ const requests = new Map();
 window.papersReply = (id, result) => { const pending = requests.get(id); if (!pending) return; requests.delete(id); clearTimeout(pending.timer); pending.resolve(result); };
 const call = params => new Promise((resolve, reject) => {
   const id = ++sequence;
-  const timer = setTimeout(() => { requests.delete(id); reject(new Error('Operation is taking too long. Refresh to check its state.')); }, 45000);
+  const timer = params.operation === 'edit-import' ? null : setTimeout(() => { requests.delete(id); reject(new Error('Operation is taking too long. Refresh to check its state.')); }, 45000);
   requests.set(id, { resolve, timer });
   window.PapersNative.request(String(id), JSON.stringify(params));
 });

@@ -80,7 +80,7 @@ final class MobileFiles {
     JSONArray devices = new JSONArray(), transfers = new JSONArray(), connections = connections();
     for (int i = 0; i < connections.length(); i++) { JSONObject c = connections.getJSONObject(i); devices.put(new JSONObject().put("id", c.getString("id")).put("name", c.getString("name")).put("address", c.getString("address"))); }
     for (JSONObject job : jobs.values()) synchronized (job) { transfers.put(new JSONObject(job.toString())); }
-    return new JSONObject().put("devices", devices).put("jobs", transfers).put("commandJobs",outbox.snapshot());
+    return new JSONObject().put("capabilities",new JSONObject().put("edits",true).put("editImport",true).put("editContinue",true)).put("devices", devices).put("jobs", transfers).put("commandJobs",outbox.snapshot());
   }
   private JSONObject dispatchChange(JSONObject device,JSONObject command) throws Exception { return json(http(address(device.getString("address"))+"/v1/files/changes",open(device.getString("secret")),null,command)).getJSONObject("job"); }
   private JSONObject beginEdit(String owner,JSONObject entry) throws Exception {

@@ -434,3 +434,32 @@ the real system chooser/bridge return or an installed editor's export flow. The 
 Activity request guard change is compiled source, not signed installed evidence.
 Phone editing remains hidden until that full UI path is verified; this checkpoint is
 not the full cross-device objective.
+
+## Real chooser and enabled installed phone controls
+
+The real system-picker acceptance initially failed to find a shell-pushed file in
+its starting provider. A later run reused the preceding picker task and was explicitly
+stopped; its process-crash result is not counted as a pass. The harness now creates a
+generated document through Android's Downloads MediaStore API, launches a fresh owned
+activity, reports view IDs, and searches only for the unique generated filename.
+That actual-phone run passed: the system chooser selected the file, supplied its
+document URI, MainActivity's bridge returned the imported-copy record, exact chosen
+bytes were retained, and the previous working copy remained unchanged. This tests
+the real chooser/return path rather than directly supplying an InputStream.
+
+Phone editing capabilities are now enabled for the tested native edit/import/continue
+operations. Interactive file choice is not subject to the ordinary 45-second RPC timer.
+An unavailable editor returns a plain instruction to import a separately edited copy.
+The signed main package was updated in place without wiping data.
+
+A further installed WebView/AYG test paired with a generated live owner and exercised
+visible Browse, Open folder, Edit local copy and Save back buttons through the real
+native bridge. It retained the working copy and saved receipt; independent inspection
+of the owner's actual file found the expected UI-edited bytes. Only external ACTION_EDIT
+launch was intercepted in that test; separate-UID URI editing and real picker behavior
+have their own passed device checks. All generated listeners/test packages were retired,
+and Papers reopened normally. The raw shell-generated test file and UI dump were removed.
+
+This enables actual phone controls, but does not finish production peer/resource
+onboarding, installed-editor-specific export behavior, background transfer lifetime,
+mobile recovery inventory, later laptop source upgrades or the complete plan audit.

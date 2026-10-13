@@ -67,7 +67,11 @@ public final class MainActivity extends Activity {
               if(isFinishing()||isDestroyed())return;
               if (importRequest != null) { sendReply(id,false,"A file choice is already open."); return; }
               importRequest=id; importEdit=editId;
-              try { startActivityForResult(new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).addCategory(android.content.Intent.CATEGORY_OPENABLE).setType("*/*"), IMPORT_EDIT); }
+              try {
+                android.content.Intent choose=new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).addCategory(android.content.Intent.CATEGORY_OPENABLE).setType("*/*");
+                choose.putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI,android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents","primary:Download"));
+                startActivityForResult(choose, IMPORT_EDIT);
+              }
               catch(Exception error){importRequest=null;importEdit=null;sendReply(id,false,"The file chooser is unavailable.");}
             }); return;
           }

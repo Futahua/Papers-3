@@ -23,7 +23,8 @@ public final class CachedFilesProvider extends ContentProvider {
   static void edit(Context context, String id, String name) {
     Uri uri = new Uri.Builder().scheme("content").authority("com.futahua.papers.mobile.files").appendPath("edit").appendPath(id).appendQueryParameter("name", name).build();
     Intent intent = new Intent(Intent.ACTION_EDIT).setDataAndType(uri, type(name)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-    context.startActivity(intent);
+    try { context.startActivity(intent); }
+    catch(android.content.ActivityNotFoundException error){throw new IllegalStateException("No installed app can edit this file. You can import a separately edited copy instead.");}
   }
   private boolean editable(Uri uri) { return uri.getPathSegments().size()==2 && "edit".equals(uri.getPathSegments().get(0)); }
   private static String type(String name) { int index = name.lastIndexOf('.'); String mime = index < 0 ? null : MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substring(index + 1).toLowerCase(java.util.Locale.ROOT)); return mime == null ? "application/octet-stream" : mime; }
