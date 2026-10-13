@@ -139,6 +139,65 @@ export class RemoteFileResources {
     return { ...source, approvedRoot: this.roots.get(resource.shareId)!.directory };
   }
 
+  /**
+   * Writes a new file into a shared folder. The bytes land in a hidden partial file, are
+   * checked against the sender's size and SHA-256, then take a free name: an existing
+   * file is never replaced ("note.txt" becomes "note (2).txt").
+   */
+  async receive(folderId: string, name: string, size: number, sha256: string, body: AsyncIterable<Buffer>): Promise<RemoteFileEntry> {
+    if (!name || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || name === '.' || name === '..' || Buffer.byteLength(name) > 255) throw new RemoteFileError('NAME_INVALID', 'Choose a valid file name.');
+    if (!Number.isSafeInteger(size) || size < 0 || !/^[a-f0-9]{64}$/.test(sha256)) throw new RemoteFileError('UPLOAD_INVALID', 'Upload size and SHA-256 are required.');
+    const folder = await this.resolve(folderId);
+    if (!(await fs.stat(folder.target)).isDirectory()) throw new RemoteFileError('RESOURCE_NOT_FOLDER', 'Choose a folder to receive files.');
+    const partial = path.join(folder.target, `.${randomUUID()}.papers-partial`);
+    const hash = createHash('sha256');
+    let received = 0;
+    try {
+      const handle = await fs.open(partial, 'wx');
+      try {
+        for await (const chunk of body) {
+          received += chunk.length;
+          if (received > size) throw new RemoteFileError('UPLOAD_TOO_LARGE', 'More bytes arrived than announced.');
+          hash.update(chunk);
+          await handle.write(chunk);
+        }
+      } finally { await handle.close(); }
+      if (received !== size || hash.digest('hex') !== sha256) throw new RemoteFileError('UPLOAD_CORRUPT', 'The received file did not match what was sent.');
+      const extension = path.extname(name), stem = name.slice(0, name.length - extension.length);
+      for (let attempt = 1; attempt < 1000; attempt++) {
+        const target = path.join(folder.target, attempt === 1 ? name : `${stem} (${attempt})${extension}`);
+        // A hard link fails when the name is taken, so an existing file is never replaced.
+        const placed = await fs.link(partial, target).then(() => true, async (error: NodeJS.ErrnoException) => {
+          if (error.code === 'EEXIST') return false;
+          if (await fs.lstat(target).then(() => true, () => false)) return false;
+          await fs.rename(partial, target); return true; // Volumes without hard links.
+        });
+        if (placed) return this.describe(folder.shareId, target);
+      }
+      throw new RemoteFileError('NAME_TAKEN', 'No free name for the received file.');
+    } finally { await fs.rm(partial, { force: true }); }
+  }
+
+  /** Share name plus the path inside it, when an owner path lies in this grant. */
+  shareParts(target: string): string[] | null {
+    for (const root of this.roots.values()) {
+      if (!contains(root.directory, target)) continue;
+      return [root.name, ...path.relative(root.directory, target).split(path.sep).filter(Boolean)];
+    }
+    return null;
+  }
+
+  /** The owner's default inbox for received files, created on first use inside a share. */
+  async inbox(directory: string): Promise<{ entry: RemoteFileEntry; parts: string[] }> {
+    for (const [shareId, root] of this.roots) {
+      if (!contains(root.directory, directory)) continue;
+      await fs.mkdir(directory, { recursive: true });
+      const target = await fs.realpath(directory);
+      return { entry: await this.describe(shareId, target), parts: this.shareParts(target)! };
+    }
+    throw new RemoteFileError('INBOX_OUTSIDE_SHARE', 'The inbox is outside the shared drives.');
+  }
+
   async open(id: string, expectedVersion: string): Promise<{ handle: FileHandle; entry: RemoteFileEntry; verify: () => Promise<void> }> {
     const resource = await this.resolve(id);
     const handle = await fs.open(resource.target, 'r');

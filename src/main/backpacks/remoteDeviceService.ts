@@ -17,6 +17,7 @@ export class RemoteDeviceService {
   mutations: RemoteFileMutations | null = null;
   edits: RemoteFileEditOwner | null = null;
   readBackpack: ((share:RemoteBackpackShare)=>Promise<unknown>) | null = null;
+  search: ((query:string,limit:number)=>Promise<{results:{path:string;name:string;kind:'file'|'folder';size:number|null;modifiedAt:number|null}[]}>) | null = null;
   /** What a device on the creator's own Tailscale account receives when it joins. */
   defaultGrant: (() => Promise<{ shares: RemoteFileShare[]; canWrite: boolean; backpacks: RemoteBackpackShare[] }>) | null = null;
   private readonly configuration: AtomicJsonStore;
@@ -43,6 +44,7 @@ export class RemoteDeviceService {
     const snapshot = devices.snapshot();
     const gateway = await createRemoteFileGateway({ owner: snapshot.owner, grants: snapshot.devices,
       edits: this.edits ?? undefined,
+      search:(query,limit)=>{if(!this.search)throw Error('Search is unavailable on this computer.');return this.search(query,limit);},
       backpackSnapshot:share=>{if(!this.readBackpack)throw Error('Backpack execution owner is unavailable.');return this.readBackpack(share);},
       mutate:async(deviceId,catalog,request)=>{if(!this.mutations)throw new Error('File changes are unavailable.');return this.mutations.submit(deviceId,catalog,request);},
       changes:deviceId=>this.mutations?.list(deviceId)??[],revokeChanges:deviceId=>this.mutations?.revoke(deviceId),

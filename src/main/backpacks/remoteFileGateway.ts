@@ -2,6 +2,8 @@ import { logDevice } from './tailnetIdentity';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { pipeline } from 'node:stream/promises';
+import os from 'node:os';
+import * as path from 'node:path';
 import { RemoteFileError, RemoteFileResources, type RemoteFileShare } from './remoteFileResources';
 import type { RemoteFileEditOwner } from './remoteFileEditOwner';
 import { handleRemoteFileEditRoute } from './remoteFileEditRoutes';
@@ -36,6 +38,9 @@ export async function createRemoteFileGateway(options: {
   changes?: (deviceId: string) => unknown;
   revokeChanges?: (deviceId: string) => void;
   edits?: RemoteFileEditOwner;
+  /** Where files dropped on this computer from another device land by default. */
+  inboxDirectory?: string;
+  search?: (query: string, limit: number) => Promise<{ results: { path: string; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[] }>;
   backpackSnapshot?: (share:RemoteBackpackShare) => Promise<unknown>;
 }): Promise<{ server: Server; revoke: (deviceId: string) => void; close: () => Promise<void> }> {
   const devices = new Map<string, { grant: RemoteFileGrant; catalog: RemoteFileResources; responses: Set<ServerResponse> }>();
@@ -107,6 +112,28 @@ export async function createRemoteFileGateway(options: {
       }catch(error){json(response,400,{ok:false,code:'FILE_COMMAND_REFUSED',message:error instanceof Error?error.message:'Invalid file command.'});}
       return;
     }
+    const upload = /^\/v1\/files\/(inbox|[a-f0-9-]{36}\/upload)(?:\?.*)?$/.exec(request.url ?? '');
+    if (upload) {
+      if (device.grant.canWrite !== true) { json(response, 403, { ok: false, code: 'FILE_CHANGES_NOT_GRANTED' }); return; }
+      try {
+        if (upload[1] === 'inbox' && request.method === 'GET') {
+          json(response, 200, { ok: true, ...await device.catalog.inbox(options.inboxDirectory ?? path.join(os.homedir(), 'Downloads', 'Papers Inbox')) });
+          return;
+        }
+        if (upload[1] !== 'inbox' && request.method === 'PUT') {
+          const query = new URL(request.url ?? '/', 'http://gateway.invalid').searchParams;
+          const entry = await device.catalog.receive(upload[1]!.slice(0, 36), query.get('name') ?? '', Number(query.get('size')), query.get('sha256') ?? '', request);
+          logDevice('owner-received', { deviceId: device.grant.deviceId, name: entry.name, bytes: entry.size });
+          json(response, 201, { ok: true, entry });
+          return;
+        }
+        json(response, 405, { ok: false, code: 'OPERATION_UNSUPPORTED' });
+      } catch (error) {
+        const code = error instanceof RemoteFileError ? error.code : 'UPLOAD_FAILED';
+        if (!response.headersSent) json(response, code === 'RESOURCE_UNKNOWN' ? 404 : 400, { ok: false, code, message: error instanceof Error ? error.message : 'Upload failed.' });
+      }
+      return;
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') { json(response, 405, { ok: false, code: 'OPERATION_UNSUPPORTED' }); return; }
     try {
       const url = new URL(request.url ?? '/', 'http://gateway.invalid');
@@ -120,6 +147,17 @@ export async function createRemoteFileGateway(options: {
         if(!options.backpackSnapshot){json(response,503,{ok:false,code:'BACKPACK_OWNER_UNAVAILABLE'});return;}
         try{const snapshot=await options.backpackSnapshot(share);if(devices.get(device.grant.deviceId)!==device||response.destroyed)return;json(response,200,{ok:true,owner:options.owner,resourceId:share.id,kind:share.kind,snapshot});}
         catch{if(!response.destroyed)json(response,503,{ok:false,code:'BACKPACK_OWNER_UNAVAILABLE'});}return;
+      }
+      if (url.pathname === '/v1/files/search') {
+        if (!options.search) { json(response, 503, { ok: false, code: 'SEARCH_UNAVAILABLE' }); return; }
+        const query = (url.searchParams.get('q') ?? '').slice(0, 1024), limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') ?? 200) || 200));
+        // Only results inside this device's grant are returned, as share-relative parts; no OS path leaves the owner.
+        const results = query.trim() ? (await options.search(query, limit)).results.flatMap(result => {
+          const parts = device.catalog.shareParts(result.path);
+          return parts ? [{ parts, name: result.name, kind: result.kind, size: result.size, modifiedAt: result.modifiedAt }] : [];
+        }) : [];
+        json(response, 200, { ok: true, results });
+        return;
       }
       if (url.pathname === '/v1/files/shares') {
         json(response, 200, { ok: true, protocol: 1, owner: options.owner, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate),edits:Boolean(device.grant.canWrite===true&&options.edits)}, entries: await device.catalog.shares() });

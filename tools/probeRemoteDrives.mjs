@@ -117,6 +117,74 @@ try {
     return result;
   });
   await page.screenshot({ path: path.join(root, 'remote-drives.png') });
+  const fixtureRemote = await page.evaluate(() => [...document.querySelectorAll('.workspace-navigator .machine-row')].find(r => r.textContent.includes('note.txt'))?.dataset.id.replace(/\\[^\\]+$/, ''));
+  const cap = (operation, params) => page.evaluate(async ([o, p]) => (await import('./app/host/host-bridge.js')).createHostBridge(window).fileCapability(o, p), [operation, params]);
+  const ownerId = fixtureRemote?.slice(9, 45);
+  const local = path.join(root, 'local'); await fs.mkdir(path.join(local, 'folder'), { recursive: true });
+  await fs.writeFile(path.join(local, 'sent.txt'), 'sent from this PC ' + Date.now());
+  await fs.writeFile(path.join(local, 'folder', 'a.txt'), 'a'); await fs.writeFile(path.join(local, 'folder', 'b.bin'), Buffer.alloc(300000, 7));
+  const created = [];
+  await check('copy a file and a folder from this PC onto the device (a drag between devices copies)', async () => {
+    const result = await cap('move', { paths: [path.join(local, 'sent.txt'), path.join(local, 'folder')], destination: fixtureRemote });
+    if (!result.ok || result.operation !== 'copy') throw Error(JSON.stringify(result));
+    created.push(...result.paths);
+    const listing = await cap('list', { path: result.paths[1] });
+    const names = listing.items.map(i => i.name).sort();
+    if (names.join() !== 'a.txt,b.bin') throw Error('folder copy has ' + names);
+    if (!(await fs.stat(path.join(local, 'sent.txt')).catch(() => null))) throw Error('the local source was moved instead of copied');
+    return { created: result.paths.map(p => p.slice(46)) };
+  });
+  await check('copy them back from the device to this PC, byte for byte', async () => {
+    const back = path.join(local, 'back'); await fs.mkdir(back);
+    const result = await cap('copy', { paths: created, destination: back });
+    if (!result.ok) throw Error(JSON.stringify(result));
+    const same = async (a, b) => Buffer.compare(await fs.readFile(a), await fs.readFile(b)) === 0;
+    if (!(await same(path.join(local, 'sent.txt'), path.join(back, path.basename(result.paths[0]))))) throw Error('file differs');
+    if (!(await same(path.join(local, 'folder', 'b.bin'), path.join(result.paths[1], 'b.bin')))) throw Error('folder file differs');
+    return { back: result.paths.map(p => path.relative(local, p)) };
+  });
+  await check('a second copy takes a free name instead of overwriting', async () => {
+    const result = await cap('copy', { paths: [path.join(local, 'sent.txt')], destination: fixtureRemote });
+    if (!result.ok || !/sent \(\d+\)\.txt$/.test(result.paths[0])) throw Error(JSON.stringify(result));
+    created.push(result.paths[0]);
+    return { name: result.paths[0].split('\\').pop() };
+  });
+  await check('device settings gear shows each device inbox', async () => {
+    await devicesButton.click();
+    await page.getByRole('button', { name: 'Device settings', exact: true }).click();
+    const input = page.getByRole('textbox', { name: deviceName + ' inbox folder' });
+    await page.waitForFunction(() => [...document.querySelectorAll('.navigator-device-inbox input')].some(i => i.value), null, { timeout: 20000 });
+    const value = await input.inputValue();
+    await page.screenshot({ path: path.join(root, 'device-settings.png') });
+    await page.keyboard.press('Escape');
+    if (!/Papers Inbox$/.test(value)) throw Error('default inbox is ' + value);
+    return { defaultInbox: value };
+  });
+  await check('choose an inbox, send files to it, then restore the default', async () => {
+    const chosen = fixtureRemote.replace(/^\\\\papers~[^\\]+\\/, '') + '\\inbox-check';
+    const set = await cap('remote-files', { operation: 'inbox-set', ownerId, path: chosen });
+    if (!set.ok || !set.result.chosen) throw Error(JSON.stringify(set));
+    const sent = await cap('remote-files', { operation: 'send-to-inbox', ownerId, paths: [path.join(local, 'sent.txt')] });
+    if (!sent.ok || !sent.result[0].includes('\\inbox-check\\sent')) throw Error(JSON.stringify(sent));
+    const reset = await cap('remote-files', { operation: 'inbox-set', ownerId, path: null });
+    if (!reset.ok || reset.result.chosen) throw Error(JSON.stringify(reset));
+    created.push(fixtureRemote + '\\inbox-check');
+    return { chosen, landed: sent.result[0].split('\\').slice(-2).join('\\') };
+  });
+  await check('search inside the device runs on the device', async () => {
+    const result = await cap('search', { query: 'resume.bin', limit: 50, path: fixtureRemote.split('\\').slice(0, 3).join('\\') });
+    if (!result.ok) throw Error(JSON.stringify(result).slice(0, 300));
+    const hit = result.results.find(r => r.path === fixtureRemote + '\\resume.bin');
+    if (!hit) throw Error('fixture not found among ' + result.results.length + ' results: ' + JSON.stringify(result.results.slice(0, 3).map(r => r.path)));
+    return { results: result.results.length, size: hit.size };
+  });
+  await check('clean up everything this check created on the device', async () => {
+    const result = await cap('delete', { paths: created });
+    if (!result.ok) throw Error(JSON.stringify(result));
+    const left = (await cap('list', { path: fixtureRemote })).items.map(i => i.name).sort();
+    if (left.join() !== 'big.bin,note.txt,resume.bin') throw Error('left behind: ' + left);
+    return { left };
+  });
   globalThis.pageErrorsOut = pageErrors.slice(0, 20);
 } finally {
   await app.close().catch(() => {});

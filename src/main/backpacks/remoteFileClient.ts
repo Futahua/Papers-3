@@ -278,6 +278,37 @@ export class RemoteFileClient {
     }
     return files;
   }
+  /** Sends one local file into a folder on the owner; the owner verifies size and SHA-256 and never overwrites. */
+  async upload(ownerId: string, folderId: string, localFile: string, name: string): Promise<RemoteFileEntry> {
+    if (!/^[a-f0-9-]{36}$/.test(folderId)) throw new Error('Invalid folder identity.');
+    const stats = await fs.stat(localFile);
+    if (!stats.isFile()) throw new Error('Only files can be uploaded.');
+    const hash = createHash('sha256');
+    await pipeline(createReadStream(localFile), hash);
+    const query = new URLSearchParams({ name, size: String(stats.size), sha256: hash.digest('hex') });
+    const connection = this.connection(ownerId);
+    const response = await fetch(`${connection.address}/v1/files/${folderId}/upload?${query}`, {
+      method: 'PUT', redirect: 'error', duplex: 'half',
+      headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`, 'Content-Type': 'application/octet-stream', 'Content-Length': String(stats.size) },
+      body: Readable.toWeb(createReadStream(localFile)) as unknown as BodyInit,
+    } as RequestInit & { duplex: 'half' });
+    if (response.status === 401) this.revoked.add(connection.address);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.message ?? `Upload failed (${response.status}).`);
+    return entry(result.entry);
+  }
+  /** Runs a search on the owner (its own Everything); results come back as share-relative parts. */
+  async search(ownerId: string, query: string, limit: number): Promise<{ parts: string[]; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[]> {
+    const response = await (await this.request(ownerId, `/v1/files/search?${new URLSearchParams({ q: query, limit: String(limit) })}`)).json();
+    if (!Array.isArray(response.results)) throw new Error('Invalid search results.');
+    return response.results.filter((item: { parts?: unknown; name?: unknown }) => Array.isArray(item.parts) && item.parts.every(part => typeof part === 'string' && part && !/[\\/]/.test(part) && part !== '..') && typeof item.name === 'string');
+  }
+  /** The owner's default inbox folder for dropped files. */
+  async inbox(ownerId: string): Promise<{ entry: RemoteFileEntry; parts: string[] }> {
+    const response = await (await this.request(ownerId, '/v1/files/inbox')).json();
+    if (!Array.isArray(response.parts) || !response.parts.every((part: unknown) => typeof part === 'string' && part && !/[\\/]/.test(part as string))) throw new Error('Invalid inbox.');
+    return { entry: entry(response.entry), parts: response.parts };
+  }
   /** Downloads (or reuses) a verified local copy of one exact remote version and returns its path. */
   async materialize(ownerId: string, raw: unknown): Promise<string> {
     const file = entry(raw);

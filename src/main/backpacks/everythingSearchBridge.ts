@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -171,8 +171,19 @@ export function createEverythingSearchBridge(input: {
     }
   }
 
-  return {
-    search(query, limit) {
+  // An installed Everything that is not running is started in the background, once per search attempt.
+  const installed = [process.env['ProgramFiles'], process.env['ProgramFiles(x86)'], process.env['LOCALAPPDATA'] && path.join(process.env['LOCALAPPDATA'], 'Programs')]
+    .filter((root): root is string => Boolean(root)).map(root => path.join(root, 'Everything', 'Everything.exe')).find(candidate => fs.existsSync(candidate));
+  // Launch at most once a minute; later attempts only wait for the running copy to answer.
+  let launchedAt = 0;
+  const startEverything = (): Promise<void> => {
+    if (installed && Date.now() - launchedAt > 60_000) {
+      launchedAt = Date.now();
+      try { spawn(installed, ['-startup'], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); } catch { /* reported by the retry */ }
+    }
+    return new Promise(resolve => setTimeout(resolve, 1500));
+  };
+  const run = (query: string, limit: number): Promise<EverythingSearchResponse> => {
       const boundedLimit = Math.max(1, Math.min(1000, Math.trunc(limit)));
       return new Promise<EverythingSearchResponse>((resolve) => {
         execFile(executable, [String(boundedLimit), query], {
@@ -202,6 +213,15 @@ export function createEverythingSearchBridge(input: {
           });
         });
       });
+  };
+  return {
+    async search(query, limit) {
+      let result = await run(query, limit);
+      for (let attempt = 0; !result.ok && installed && /IPC/i.test(String(result.error ?? '')) && attempt < 6; attempt++) {
+        await startEverything();
+        result = await run(query, limit);
+      }
+      return result;
     },
   };
 }

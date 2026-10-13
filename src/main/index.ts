@@ -820,6 +820,7 @@ async function bootstrap(): Promise<void> {
     const icon = await app.getFileIcon(target, { size: 'small' });
     return icon.isEmpty() ? null : icon.toDataURL();
   };
+  const remotePaths = createRemotePaths(remoteFiles, { iconDirectory: path.join(paths.root, 'remote-files', 'icon-stand-ins'), fileIcon, settingsFile: path.join(paths.root, 'remote-files', 'inboxes.json') });
   const fileCapability = createFileCapabilityService({
     remoteFiles: async params => {
       if (remoteFilesError) throw new Error(remoteFilesError);
@@ -835,6 +836,9 @@ async function bootstrap(): Promise<void> {
         case 'backpacks': return remoteFiles.backpacks(ownerId);
         case 'backpack-snapshot': return remoteFiles.backpackSnapshot(ownerId,String(params.resourceId??''));
         case 'edit-begin': return remoteFiles.beginEdit(ownerId, params.entry);
+        case 'inbox': return remotePaths.inbox(ownerId);
+        case 'inbox-set': return remotePaths.setInbox(ownerId, typeof params.path === 'string' ? params.path : null);
+        case 'send-to-inbox': return remotePaths.sendToInbox(ownerId, Array.isArray(params.paths) ? params.paths.filter((item): item is string => typeof item === 'string' && path.isAbsolute(item)) : []);
         case 'edit-list': return remoteFiles.localEdits(ownerId || undefined);
         case 'edit-recovery': return remoteFiles.editRecovery(ownerId || undefined);
         case 'edit-recovery-open': {
@@ -895,7 +899,7 @@ async function bootstrap(): Promise<void> {
     openPath: (target) => shell.openPath(target),
     revealPath: (target) => shell.showItemInFolder(target),
     fileIcon,
-    remotePaths: createRemotePaths(remoteFiles, { iconDirectory: path.join(paths.root, 'remote-files', 'icon-stand-ins'), fileIcon }),
+    remotePaths,
   });
 
   const permissionStore = new PermissionStore(paths);
@@ -1908,6 +1912,7 @@ async function bootstrap(): Promise<void> {
   joinQuietly();
   const tailnetJoinTimer=setInterval(joinQuietly,60_000);
   tailnetJoinTimer.unref();
+  remoteDevices.search=async(query,limit)=>{if(!everythingSearch)throw Error('Everything search is unavailable on this computer.');const result=await everythingSearch.search(query,limit);if(!result.ok)throw Error(result.error??'Search failed.');return result;};
   remoteDevices.readBackpack=async share=>{
     const owner=remoteDevices.snapshot().owner;
     if(!owner||await backpackProjects.sharedDataKind(share.projectId)!==share.kind)throw Error('This Backpack is not sharing data.');

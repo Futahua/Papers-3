@@ -21,6 +21,10 @@ function client() {
     change: async (_owner: string, command: unknown) => { sent.push(command); },
     changes: async () => sent.map(command => ({ commandId: (command as { commandId: string }).commandId, phase: 'completed' })),
     materialize: async () => path.join(os.tmpdir(), 'cached-note.txt'),
+    uploads: [] as { folderId: string; localFile: string; name: string }[],
+    async upload(_owner: string, folderId: string, localFile: string, name: string) { this.uploads.push({ folderId, localFile, name }); return { ...tree['00000000-0000-4000-8000-000000000001']![1]!, id: '00000000-0000-4000-8000-000000000009', name }; },
+    inbox: async () => ({ entry: tree['00000000-0000-4000-8000-000000000001']![0]!, parts: ['C:', 'Users'] }),
+    search: async () => [{ parts: ['C:', 'Users', 'found.txt'], name: 'found.txt', kind: 'file' as const, size: 3, modifiedAt: 4 }],
   };
 }
 const unused = async () => { throw new Error('not expected'); };
@@ -54,9 +58,18 @@ describe('remote file paths', () => {
       .handle('preview', { path: remote }, async (_operation, params) => ({ ok: true, preview: { path: params.path, kind: 'text' } }));
     expect(result).toEqual({ ok: true, preview: { path: remote, kind: 'text' } });
   });
-  it('refuses copying between devices instead of guessing', async () => {
-    const result = createRemotePaths(client(), { iconDirectory: os.tmpdir(), fileIcon: unused })
-      .handle('copy', { paths: ['C:\\local.txt'], destination: remotePath(owner, ['C:']) }, unused);
-    await expect(result).rejects.toThrow(/between devices/);
+  it('searches the device when the search is scoped to it', async () => {
+    const result = await createRemotePaths(client(), { iconDirectory: os.tmpdir(), fileIcon: unused })
+      .handle('search', { query: 'found', path: remotePath(owner, ['C:']) }, unused) as { results: { path: string }[] };
+    expect(result.results.map(item => item.path)).toEqual([remotePath(owner, ['C:', 'Users', 'found.txt'])]);
+  });
+  it('copies a local file onto a device under a free name, even when asked to move', async () => {
+    const fake = client();
+    const local = path.join(os.tmpdir(), 'note.txt');
+    await import('node:fs/promises').then(fs => fs.writeFile(local, 'x'));
+    const result = await createRemotePaths(fake, { iconDirectory: os.tmpdir(), fileIcon: unused })
+      .handle('move', { paths: [local], destination: remotePath(owner, ['C:']) }, unused);
+    expect(result).toEqual({ ok: true, operation: 'copy', paths: [remotePath(owner, ['C:', 'note (2).txt'])] });
+    expect(fake.uploads).toEqual([{ folderId: '00000000-0000-4000-8000-000000000001', localFile: local, name: 'note (2).txt' }]);
   });
 });
