@@ -363,3 +363,20 @@ This establishes supported installation, matching code and quiesced-data preserv
 Actual installed AYG interaction with a production peer and production phone editor
 behavior remain acceptance checks. Full cross-device onboarding, persistent background
 transfers, remaining file UX/performance gates and complete plan audit remain open.
+
+## Unchanged-copy and later-edit safeguard
+
+Save preparation now refuses a working copy whose digest still equals its retained
+original, before allocating a save identity or uploading bytes. This prevents an
+editor that imported/saved another file from presenting an unchanged source as a
+successful save-back. The error tells the user to retain that separate edited file.
+The signed phone app was updated in place and the actual separate-UID grant check
+also proved unchanged preparation refuses without acquiring a save identity.
+
+PC tests additionally prove that later edits do not replace an already prepared save
+snapshot. Source now compares saved snapshots with current working bytes and reports
+newer local edits separately; AYG labels an earlier saved snapshot without implying
+those later edits were saved. The current laptop install predates these follow-ups.
+Android source for the newer-edit status compiles but predates a new signed acceptance
+run; its no-change safeguard is installed. External-editor import/reintegration and
+continuing a saved edit session remain implementation/acceptance work, not completion.

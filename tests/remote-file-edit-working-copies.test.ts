@@ -55,3 +55,23 @@ it('keeps healthy edits visible beside an invalid journal without trusting loose
   await expect(copies.workingPath(invalid)).rejects.toThrow();
   expect(await fs.readFile(path.join(await copies.recoveryPath(invalid), 'working.txt'), 'utf8')).toBe('retained unsaved bytes');
 });
+
+it('refuses an unchanged copy and retains the exact prepared edit when later local editing continues', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-working-save-'));
+  const download = path.join(root, 'cached.txt'); await fs.writeFile(download, 'original');
+  const session: EditSession = { id: randomUUID(), deviceId: randomUUID(), resourceId: randomUUID(), sourceVersion: 'a'.repeat(64), sourceSha256: createHash('sha256').update('original').digest('hex'), phase: 'editing' };
+  const copies = new RemoteFileEditWorkingCopies(path.join(root, 'edits'));
+  const record = await copies.create(randomUUID(), session, 'document.txt', download);
+  await expect(copies.prepare(record.id)).rejects.toThrow('No changes');
+  expect((await copies.read(record.id)).saveId).toBeUndefined();
+  await fs.writeFile(await copies.workingPath(record.id), 'first edit');
+  const prepared = await copies.prepare(record.id);
+  await fs.writeFile(await copies.workingPath(record.id), 'later unsaved edit');
+  expect((await copies.prepare(record.id)).saveId).toBe(prepared.saveId);
+  expect(await fs.readFile(await copies.saveSnapshot(record.id), 'utf8')).toBe('first edit');
+  expect(await fs.readFile(await copies.workingPath(record.id), 'utf8')).toBe('later unsaved edit');
+  prepared.phase = 'saved'; await copies.retain(prepared);
+  expect((await copies.list())[0]?.newerLocalEdits).toBe(true);
+  await fs.writeFile(await copies.workingPath(record.id), 'first edit');
+  expect((await copies.list())[0]?.newerLocalEdits).toBe(false);
+});

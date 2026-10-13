@@ -39,7 +39,7 @@ final class MobileEditCopies {
   JSONArray list(String owner) throws Exception {
     JSONArray records = new JSONArray(); File[] folders=root.listFiles(); if(folders==null)return records;
     for(File folder:folders)if(folder.isDirectory() && new File(folder,"edit.json").isFile()) {
-      JSONObject record=read(folder.getName()); if(owner.isEmpty()||owner.equals(record.getString("ownerId")))records.put(record);
+      JSONObject record=read(folder.getName()); if(owner.isEmpty()||owner.equals(record.getString("ownerId"))){if("saved".equals(record.getString("phase")))record.put("newerLocalEdits",!digest(working(record.getString("id"))).equals(record.optString("editedSha256")));records.put(record);}
     }
     return records;
   }
@@ -56,7 +56,9 @@ final class MobileEditCopies {
   }
   synchronized JSONObject prepare(String id) throws Exception {
     JSONObject record=read(id);if(record.has("saveId"))return record;
-    File working=working(id);String hash=digest(working);String saveId=UUID.randomUUID().toString();File snapshot=new File(directory(id),saveId+".save");copy(working,snapshot);
+    File working=working(id);String hash=digest(working);
+    if(hash.equals(record.getJSONObject("session").getString("sourceSha256")))throw new IOException("No changes were found in this working copy. Your editor may have saved a separate copy; retain that file before saving back.");
+    String saveId=UUID.randomUUID().toString();File snapshot=new File(directory(id),saveId+".save");copy(working,snapshot);
     if(!hash.equals(digest(snapshot))||!hash.equals(digest(working)))throw new IOException("Working copy changed while preparing; retained copies are available for recovery");
     record.put("saveId",saveId).put("editedSha256",hash).put("editedBytes",snapshot.length()).put("phase","saving");retain(record);return record;
   }

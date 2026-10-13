@@ -100,6 +100,8 @@ public final class DeviceCheck extends Instrumentation {
     File source=new File(getTargetContext().getCacheDir(),"generated-grant-source.txt");try(FileOutputStream output=new FileOutputStream(source)){output.write("Generated original".getBytes(java.nio.charset.StandardCharsets.UTF_8));}
     JSONObject session=new JSONObject().put("id",java.util.UUID.randomUUID().toString()).put("phase","editing").put("sourceSha256",MobileEditCopies.digest(source));
     MobileEditCopies copies=new MobileEditCopies(getTargetContext());JSONObject copy=copies.create(java.util.UUID.randomUUID().toString(),session,"generated.txt",source);
+    boolean unchangedRefused=false;try{copies.prepare(copy.getString("id"));}catch(IOException expected){unchangedRefused=expected.getMessage().contains("No changes");}
+    if(!unchangedRefused||copies.read(copy.getString("id")).has("saveId"))throw new IOException("Unchanged copy acquired a save identity");
     android.net.Uri working=new android.net.Uri.Builder().scheme("content").authority("com.futahua.papers.mobile.files").appendPath("edit").appendPath(copy.getString("id")).build();
     StringBuilder keyText=new StringBuilder();for(int i=0;i<64;i++)keyText.append('e');String key=keyText.toString();File cached=new File(new File(getTargetContext().getFilesDir(),"remote-files"),key+".bin");
     if(cached.exists())throw new IOException("Generated grant fixture cache identity already exists");

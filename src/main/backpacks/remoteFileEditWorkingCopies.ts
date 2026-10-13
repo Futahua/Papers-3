@@ -10,6 +10,7 @@ export interface LocalEditCopy {
   phase: 'preparing' | 'editing' | 'saving' | 'saved' | 'conflict' | 'uncertain';
   uploadId?: string; saveId?: string; editedSha256?: string;
   editedBytes?: number;
+  newerLocalEdits?: boolean;
 }
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 async function digest(file: string) {
@@ -53,7 +54,10 @@ export class RemoteFileEditWorkingCopies {
         const record = await this.read(id);
         if (ownerId && record.ownerId !== ownerId) continue;
         if (record.phase === 'preparing') recovery.push({ id, name: record.name, message: 'Preparation was interrupted. Retained files are available for recovery.' });
-        else records.push(record);
+        else {
+          if (record.phase === 'saved') record.newerLocalEdits = await digest(path.join(this.folder(id), 'working' + record.extension)) !== record.editedSha256;
+          records.push(record);
+        }
       } catch {
         recovery.push({ id, message: 'This local edit journal needs recovery. Retained files were kept.' });
       }
@@ -83,6 +87,7 @@ export class RemoteFileEditWorkingCopies {
     if (record.saveId) return record;
     const working = await this.workingPath(id);
     const expected = await digest(working);
+    if (expected === record.session.sourceSha256) throw new Error('No changes were found in this working copy. Your editor may have saved a separate copy; retain that file before saving back.');
     const saveId = randomUUID(); const snapshot = path.join(this.folder(id), saveId + '.save');
     await fs.copyFile(working, snapshot, fs.constants.COPYFILE_EXCL);
     if (await digest(snapshot) !== expected || await digest(working) !== expected) throw new Error('Working copy changed while preparing. Retained copies are available; save again after editing settles.');
