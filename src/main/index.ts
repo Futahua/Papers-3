@@ -1157,7 +1157,8 @@ async function bootstrap(): Promise<void> {
     },
     onCloseRejected: (instance: Parameters<typeof preparePapersWindow>[0], error: unknown) => {
       closingPapersWindows.delete(instance.window.id);
-      traceQuit('window:' + instance.window.id + ':flush:failed');
+      // Record why: a refused close is otherwise invisible in a packaged build.
+      traceQuit('window:' + instance.window.id + ':flush:failed:' + (error instanceof Error ? error.message : String(error)).slice(0, 300));
       console.error('[papers] window close save failed:', error);
       if (!instance.hostView.webContents.isDestroyed()) instance.hostView.webContents.send('host:event:host-error', {
         component: 'Saving work',
