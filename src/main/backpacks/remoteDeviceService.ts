@@ -47,6 +47,8 @@ export class RemoteDeviceService {
       mutate:async(deviceId,catalog,request)=>{if(!this.mutations)throw new Error('File changes are unavailable.');return this.mutations.submit(deviceId,catalog,request);},
       changes:deviceId=>this.mutations?.list(deviceId)??[],revokeChanges:deviceId=>this.mutations?.revoke(deviceId),
       join: async (peer, name) => {
+      // Papers wires the grant a moment after the listener opens at startup; wait briefly rather than refuse.
+      for (let attempt = 0; !this.defaultGrant && attempt < 40; attempt++) await new Promise(resolve => setTimeout(resolve, 250));
       if (!this.defaultGrant) throw new Error('Device sharing is not ready.');
       const node = await sameAccountNode(peer);
       const grant = await this.defaultGrant();
