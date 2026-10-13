@@ -56,7 +56,7 @@ export class RemoteFileClient {
       this.connections = report.value.connections;
     }
   }
-  snapshot() { return { devices: this.connections.map(({ id, name, address }) => ({ id, name, address })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
+  snapshot() { return { capabilities: { edits: true }, devices: this.connections.map(({ id, name, address }) => ({ id, name, address })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
   async pair(ownerAddress: string, code: string, name: string): Promise<void> {
     const base = address(ownerAddress, this.allowLoopback);
     const response = await fetch(`${base}/v1/devices/pair`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }) });

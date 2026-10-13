@@ -203,3 +203,22 @@ unchanged download cache, then recreated the client and checked its retained sav
 receipt without another save. Six client/working-copy checks passed; typecheck passes.
 This loopback test is not two-machine or Android evidence. AYG controls, phone native
 editing/export machinery, disconnected upload acceptance, and installation remain.
+
+## AYG editing controls
+
+AYG now offers Edit local copy, Open local editor, explicit Save back, and a
+Working copies view with retained editing/saved/conflict/unconfirmed states.
+Conflicts keep the local copy accessible and direct the user to the owner's current
+file for a new session. Controls require both owner editing permission and receiving
+client editing support, so older clients and the currently unsupported phone native
+client do not advertise an operation they cannot execute. Preparing a copy after
+navigation does not reopen an editor or replace the new location's presentation.
+
+The existing AYG suite passed 2,028 tests plus eight preflight checks. A separate
+real headless Chrome fixture exercised the actual view module with generated RPC
+facts: prepare/open, explicit save, retained conflict recovery, offline view switching,
+read-only control suppression, and unsupported receiving-client suppression all
+passed. Its screenshot was visually inspected. This rendered fixture uses RPC stubs;
+it is not installed AYG/native-editor/device evidence. `probeRemoteEditView.mjs`
+accepts the actual AYG checkout path and reproduces the checks without creator data.
+AYG source commit: `59a5603`; installed copies remain unchanged pending acceptance.
