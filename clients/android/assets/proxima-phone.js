@@ -128,8 +128,8 @@
   let cursor = null;
   const style = document.createElement('style');
   style.textContent = `
-.proxima-phone-cursor-button{position:fixed;left:16px;bottom:16px;z-index:4000;width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb,currentColor 25%,transparent);background:var(--panel,#1f252b);color:inherit;box-shadow:0 6px 18px #0006;touch-action:none;display:grid;place-items:center;padding:0;opacity:.85}
-.proxima-phone-cursor-button.is-held{opacity:1;outline:2px solid color-mix(in srgb,currentColor 60%,transparent)}
+html body button.proxima-phone-cursor-button{position:fixed;left:16px;bottom:16px;z-index:4000;width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb,currentColor 25%,transparent);background:var(--panel,#1f252b);color:inherit;box-shadow:0 6px 18px #0006;touch-action:none;display:grid;place-items:center;padding:0;opacity:.85}
+html body button.proxima-phone-cursor-button.is-held{opacity:1;outline:2px solid color-mix(in srgb,currentColor 60%,transparent)}
 .proxima-phone-cursor-button svg{width:22px;height:22px;pointer-events:none}
 #scheduleBody{touch-action:pan-x pan-y}
 #scheduleBody>*{zoom:var(--proxima-phone-zoom,1)}
@@ -235,6 +235,17 @@
   addEventListener('touchend', lifted, { capture: true, passive: true });
   addEventListener('touchcancel', lifted, { capture: true, passive: true });
   addEventListener('blur', end);
+
+  // Each PC keeps its own palette wherever it is viewed (SlopTop blue, LapDog green); the phone shows
+  // the viewed PC's, chosen by Proxima's own device-theme.js from that PC's durable owner identity.
+  const ownerId = new URL(location.href).searchParams.get('papers-device');
+  // The phone may know a PC by another id than Proxima's table, so the PC's name (set once its
+  // snapshot loads) is passed too; the palette is applied again whenever that name changes.
+  if (ownerId) import(new URL('device-theme.js', location.href).href).then(({ applyDeviceTheme }) => {
+    const apply = () => applyDeviceTheme(document, { id: ownerId, name: document.documentElement.dataset.device || '' });
+    apply();
+    new MutationObserver(apply).observe(document.documentElement, { attributes: true, attributeFilter: ['data-device'] });
+  }).catch(() => {});
 
   const install = () => {
     document.head.append(style);
