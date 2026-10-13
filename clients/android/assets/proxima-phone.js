@@ -55,6 +55,40 @@
     }
   }
 
+  // Pinch zooms the calendar physically: its contents scale (CSS zoom, so the scroll area follows)
+  // about the point between the fingers. The zoom is remembered on this phone.
+  const ZOOM_KEY = 'proxima-phone-calendar-zoom';
+  let calendarZoom = 1, calendarPinch = null;
+  try { calendarZoom = Math.min(3, Math.max(0.35, Number(localStorage.getItem(ZOOM_KEY)) || 1)); } catch {}
+  const calendarBody = () => [...document.querySelectorAll('#scheduleBody')].find((node) => node.getClientRects().length);
+  const applyZoom = (body) => body?.style.setProperty('--proxima-phone-zoom', String(calendarZoom));
+  addEventListener('touchstart', (event) => {
+    const body = event.touches.length === 2 && event.target.closest?.('#scheduleBody');
+    if (!body) { if (event.touches.length !== 2) calendarPinch = null; return; }
+    const [a, b] = event.touches;
+    calendarPinch = { body, distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) };
+  }, { capture: true, passive: true });
+  addEventListener('touchmove', (event) => {
+    if (!calendarPinch || event.touches.length !== 2) return;
+    event.preventDefault();
+    const [a, b] = event.touches, distance = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    if (!(distance > 0 && calendarPinch.distance > 0)) return;
+    const body = calendarPinch.body, box = body.getBoundingClientRect();
+    const x = (a.clientX + b.clientX) / 2 - box.left, y = (a.clientY + b.clientY) / 2 - box.top;
+    const next = Math.min(3, Math.max(0.35, calendarZoom * distance / calendarPinch.distance));
+    const contentX = (body.scrollLeft + x) / calendarZoom, contentY = (body.scrollTop + y) / calendarZoom;
+    calendarZoom = next; applyZoom(body);
+    body.scrollLeft = contentX * next - x; body.scrollTop = contentY * next - y;
+    calendarPinch.distance = distance;
+  }, { capture: true, passive: false });
+  addEventListener('touchend', (event) => {
+    if (!calendarPinch || event.touches.length >= 2) return;
+    calendarPinch = null;
+    try { localStorage.setItem(ZOOM_KEY, String(calendarZoom)); } catch {}
+  }, { capture: true, passive: true });
+  // The calendar re-renders its contents; the zoom lives on the body, so it survives that.
+  setInterval(() => applyZoom(calendarBody()), 500);
+
   // Inertia: the swipe's last ~100 ms of movement carries on after lift-off and decays.
   let samples = [], pinched = false, glide = 0, gliding = false;
   const stopGlide = () => { cancelAnimationFrame(glide); glide = 0; };
@@ -97,6 +131,8 @@
 .proxima-phone-cursor-button{position:fixed;left:16px;bottom:16px;z-index:4000;width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb,currentColor 25%,transparent);background:var(--panel,#1f252b);color:inherit;box-shadow:0 6px 18px #0006;touch-action:none;display:grid;place-items:center;padding:0;opacity:.85}
 .proxima-phone-cursor-button.is-held{opacity:1;outline:2px solid color-mix(in srgb,currentColor 60%,transparent)}
 .proxima-phone-cursor-button svg{width:22px;height:22px;pointer-events:none}
+#scheduleBody{touch-action:pan-x pan-y}
+#scheduleBody>*{zoom:var(--proxima-phone-zoom,1)}
 .proxima-phone-pager{position:fixed;z-index:3980;width:64px;height:72px;touch-action:none;border-radius:50%;background:radial-gradient(closest-side,color-mix(in srgb,var(--accent,#8ddcff) 55%,transparent),transparent);opacity:0}
 .proxima-phone-pager[hidden]{display:none}
 .proxima-phone-pager.is-lit{animation:proxima-phone-pager-lit 420ms ease-out}
