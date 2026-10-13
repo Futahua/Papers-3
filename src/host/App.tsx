@@ -493,7 +493,7 @@ export function App(): React.JSX.Element {
           >
             {VIEW_LABEL[view]}
           </button>
-          {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack}
+          {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack} onSettings={() => goto('settings')}
             onMouseEnter={cancelSidebarClose} onMouseLeave={scheduleSidebarClose} onReload={reloadPapers} reloading={reloading} reloadError={reloadError} onDiscardDeadWindows={discardDeadWindows} cleaning={cleaning} />}
           {basicOpen && (
             <div id="basic-menu" className="basic-menu" role="menu">

@@ -1,7 +1,8 @@
 import React from 'react';
 import type { BackpacksList } from './bridge';
 
-export function BackpackSidebar({ list, activeId, onEnter, onMouseEnter, onMouseLeave, onReload, reloading, reloadError, onDiscardDeadWindows, cleaning }: {
+export function BackpackSidebar({ list, activeId, onEnter, onMouseEnter, onMouseLeave, onReload, reloading, reloadError, onDiscardDeadWindows, cleaning, onSettings }: {
+  onSettings?:()=>void;
   onDiscardDeadWindows?:()=>void;
   cleaning?:boolean;
   onReload?:()=>void;
@@ -34,6 +35,7 @@ export function BackpackSidebar({ list, activeId, onEnter, onMouseEnter, onMouse
       >{backpack.name}</button>)}
       {backpacks.length === 0 && <p className="backpack-sidebar-empty">No Backpacks yet.</p>}
     </div>
+    {onSettings&&<button type="button" className="secondary" onClick={onSettings}>Settings</button>}
     {onReload&&<button type="button" className="secondary" onClick={onReload} disabled={reloading}>{reloading?'Saving and reloading…':'↻ Reload Papers'}</button>}
     {onDiscardDeadWindows&&<button type="button" className="secondary" onClick={onDiscardDeadWindows} disabled={cleaning||reloading}>{cleaning?'Cleaning…':'Discard dead windows'}</button>}
     {reloadError&&<p role="alert">{reloadError}</p>}
