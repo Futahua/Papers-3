@@ -16,10 +16,10 @@
 
   const style = document.createElement('style');
   style.textContent = `
-html body button.phone-mouse-button{position:fixed;z-index:2147483600;width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb,currentColor 25%,transparent);background:var(--panel,#1f252b);color:var(--ink,#e6e9ef);box-shadow:0 6px 18px #0006;touch-action:none;display:grid;place-items:center;padding:0;font:600 17px/1 system-ui,sans-serif;opacity:.85;-webkit-user-select:none;user-select:none}
+html body button.phone-mouse-button{position:fixed;z-index:2147483600;width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb,currentColor 25%,transparent);background:var(--panel,#1f252b);color:var(--ink,#e6e9ef);box-shadow:0 6px 18px #0006;touch-action:none;display:grid;place-items:center;padding:0;font:600 17px/1 system-ui,sans-serif;opacity:.5;-webkit-user-select:none;user-select:none}
 html body button.phone-mouse-button svg{width:22px;height:22px;pointer-events:none}
-html body button.phone-mouse-button.is-on{opacity:1;outline:2px solid color-mix(in srgb,currentColor 60%,transparent)}
-html body button.phone-mouse-button.is-pressed{background:color-mix(in srgb,var(--panel,#1f252b) 60%,var(--accent,#8ddcff));opacity:1}
+html body button.phone-mouse-button.is-on{opacity:.8;outline:2px solid color-mix(in srgb,currentColor 60%,transparent)}
+html body button.phone-mouse-button.is-pressed{background:color-mix(in srgb,var(--panel,#1f252b) 60%,var(--accent,#8ddcff));opacity:.95}
 html body button.phone-mouse-button[hidden]{display:none}
 .phone-mouse-shield{position:fixed;inset:0;z-index:2147483500;touch-action:none;background:transparent}
 .phone-mouse-cursor{position:fixed;left:0;top:0;z-index:2147483550;width:20px;height:20px;pointer-events:none;will-change:transform}`;
@@ -90,6 +90,7 @@ html body button.phone-mouse-button[hidden]{display:none}
     hover(cursor.x, cursor.y);
     const target = hovered; if (!target) return;
     buttonsDown |= BIT[button]; pressTarget[button] = target;
+    if (button === 0) { const source = target.closest('[draggable="true"]'); drag = source ? { source, x: cursor.x, y: cursor.y, started: false, over: null, accepted: false } : null; }
     pointer('pointerdown', target, cursor.x, cursor.y, { button });
     const proceed = mouse('mousedown', target, cursor.x, cursor.y, { button });
     if (button === 0 && proceed) {
@@ -101,6 +102,7 @@ html body button.phone-mouse-button[hidden]{display:none}
   function release(button) {
     if (!cursor || !(buttonsDown & BIT[button])) return;
     buttonsDown &= ~BIT[button];
+    if (button === 0 && dragEnd()) { pressTarget[0] = null; hover(cursor.x, cursor.y); return; }
     hover(cursor.x, cursor.y);
     const target = hovered || pressTarget[button]; if (!target) { loseCapture(); return; }
     pointer('pointerup', captured || target, cursor.x, cursor.y, { button });
@@ -117,6 +119,38 @@ html body button.phone-mouse-button[hidden]{display:none}
     else lastClick = { at: now, x: cursor.x, y: cursor.y };
   }
   const clickAt = () => { press(0); release(0); };
+
+  // HTML5 drag and drop, which the browser only starts for a real mouse or finger: pressing L on
+  // something draggable and moving plays the drag the way the browser would (dragstart with a data
+  // transfer, enter/over/leave as the cursor moves, drop where the page accepts it, dragend).
+  let drag = null;
+  const dragEvent = (type, target, transfer, cancelable = true) => { const event = new DragEvent(type, { ...init(cursor.x, cursor.y), cancelable, dataTransfer: transfer }); target.dispatchEvent(event); return event; };
+  function dragMove() {
+    if (!drag || !(buttonsDown & 1)) return false;
+    if (!drag.started) {
+      if (Math.hypot(cursor.x - drag.x, cursor.y - drag.y) < 6) return false;
+      drag.transfer = new DataTransfer();
+      if (dragEvent('dragstart', drag.source, drag.transfer).defaultPrevented) { drag = null; return false; }
+      drag.started = true;
+      pointer('pointercancel', captured || drag.source, cursor.x, cursor.y); loseCapture(); leave();
+    }
+    const target = at(cursor.x, cursor.y);
+    dragEvent('drag', drag.source, drag.transfer);
+    if (target !== drag.over) {
+      if (drag.over) dragEvent('dragleave', drag.over, drag.transfer, false);
+      if (target) dragEvent('dragenter', target, drag.transfer);
+      drag.over = target;
+    }
+    drag.accepted = target ? dragEvent('dragover', target, drag.transfer).defaultPrevented : false;
+    return true;
+  }
+  function dragEnd() {
+    if (!drag?.started) { drag = null; return false; }
+    const { source, over, accepted, transfer } = drag; drag = null;
+    if (over && accepted) dragEvent('drop', over, transfer); else if (over) dragEvent('dragleave', over, transfer, false);
+    dragEvent('dragend', source, transfer, false);
+    return true;
+  }
   function wheel(dx, dy) {
     const target = cursor && at(cursor.x, cursor.y); if (!target) return;
     target.dispatchEvent(new WheelEvent('wheel', { ...init(cursor.x, cursor.y), deltaX: dx, deltaY: dy, deltaMode: 0 }));
@@ -124,7 +158,7 @@ html body button.phone-mouse-button[hidden]{display:none}
 
   // Cursor, shield and the L/M/R buttons.
   let main = null; const extras = [];
-  function place() { cursor.node.style.transform = `translate(${cursor.x - 2}px,${cursor.y - 1.5}px)`; hover(cursor.x, cursor.y); }
+  function place() { cursor.node.style.transform = `translate(${cursor.x - 2}px,${cursor.y - 1.5}px)`; if (!dragMove()) hover(cursor.x, cursor.y); }
   function show(next) {
     if (!cursor) {
       const shield = document.createElement('div'); shield.className = 'phone-mouse-shield';
@@ -139,7 +173,7 @@ html body button.phone-mouse-button[hidden]{display:none}
   function hide() {
     if (!cursor) return;
     for (let button = 0; button < 3; button++) release(button);
-    loseCapture(); leave(); cursor.shield.remove(); cursor.node.remove(); cursor = null;
+    if (drag?.started) dragEnd(); drag = null; loseCapture(); leave(); cursor.shield.remove(); cursor.node.remove(); cursor = null;
     mode = 'off'; main.classList.remove('is-on'); for (const button of extras) { button.hidden = true; button.classList.remove('is-pressed'); }
   }
 
@@ -148,7 +182,7 @@ html body button.phone-mouse-button[hidden]{display:none}
   function installButtons() {
     main = document.createElement('button');
     main.type = 'button'; main.className = 'phone-mouse-button'; main.setAttribute('aria-label', 'Mouse'); main.innerHTML = arrow;
-    main.style.left = '72px'; main.style.bottom = '16px';
+    main.style.left = '14px'; main.style.bottom = '16px';
     main.addEventListener('touchstart', (event) => {
       event.preventDefault(); event.stopPropagation();
       const touch = event.changedTouches[0];
@@ -165,8 +199,8 @@ html body button.phone-mouse-button[hidden]{display:none}
     main.addEventListener('touchend', mainLift, { passive: false });
     main.addEventListener('touchcancel', mainLift, { passive: false });
     main.addEventListener('contextmenu', (event) => event.preventDefault());
-    // M above the arrow, L and R either side between them (the creator's sketch).
-    for (const [label, button, left, bottom] of [['L', 0, 10, 78], ['M', 1, 72, 140], ['R', 2, 134, 78]]) {
+    // The creator's cluster: arrow in the corner, L above it at the edge, R beside L, M above L.
+    for (const [label, button, left, bottom] of [['L', 0, 4, 88], ['M', 1, 20, 154], ['R', 2, 70, 88]]) {
       const key = document.createElement('button');
       key.type = 'button'; key.className = 'phone-mouse-button'; key.textContent = label; key.hidden = true;
       key.setAttribute('aria-label', ['Left', 'Middle', 'Right'][button] + ' mouse button');

@@ -133,7 +133,7 @@
 .proxima-phone-pager[hidden]{display:none}
 .proxima-phone-pager.is-lit{animation:proxima-phone-pager-lit 420ms ease-out}
 @keyframes proxima-phone-pager-lit{0%{opacity:.9}100%{opacity:0}}
-html body button.proxima-phone-history{position:fixed;bottom:16px;z-index:2147483600;width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb,currentColor 25%,transparent);background:var(--panel,#1f252b);color:var(--ink,#e6e9ef);box-shadow:0 6px 18px #0006;touch-action:none;display:grid;place-items:center;padding:0;opacity:.85}
+html body button.proxima-phone-history{position:fixed;bottom:16px;z-index:2147483600;width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb,currentColor 25%,transparent);background:var(--panel,#1f252b);color:var(--ink,#e6e9ef);box-shadow:0 6px 18px #0006;touch-action:none;display:grid;place-items:center;padding:0;opacity:.5}
 html body button.proxima-phone-history svg{width:22px;height:22px;pointer-events:none}
 html body button.proxima-phone-history.is-pressed{opacity:1;background:color-mix(in srgb,var(--panel,#1f252b) 60%,var(--accent,#8ddcff))}`;
 
