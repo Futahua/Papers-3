@@ -6,6 +6,7 @@ import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.AtomicFile;
 import android.util.Base64;
+import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.*;
@@ -75,22 +76,31 @@ final class MobileFiles {
     if(!response.getString("deviceId").matches("[a-f0-9-]{36}"))throw new IOException("Invalid pairing identity.");
     JSONObject device = new JSONObject().put("id", owner.getString("id")).put("deviceId",response.getString("deviceId")).put("name", owner.getString("name")).put("address", base).put("secret", seal(response.getString("token")));
     JSONArray previous = connections(), next = new JSONArray();
-    for (int i = 0; i < previous.length(); i++) if (!previous.getJSONObject(i).getString("id").equals(owner.getString("id"))) next.put(previous.getJSONObject(i));
+    for (int i = 0; i < previous.length(); i++) { JSONObject item = previous.getJSONObject(i); if (!item.getString("id").equals(owner.getString("id")) && !base.equals(item.optString("address"))) next.put(item); }
     next.put(device); write(new File(root, "connections.json"), new JSONObject().put("connections", next));
   }
   /** Joins the creator's own computers (same Tailscale account, listed at build time). No codes. */
+  private static final String TAG = "PapersDevices";
   private long lastJoin;
   private synchronized void joinOwners() {
     if (System.currentTimeMillis() - lastJoin < 30000) return; lastJoin = System.currentTimeMillis();
     try (InputStream input = context.getAssets().open("owners.json")) {
       ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[4096]; int count; while ((count = input.read(buffer)) >= 0) bytes.write(buffer, 0, count);
       JSONArray owners = new JSONArray(bytes.toString("UTF-8")), known = connections();
+      // Drop connections that are not one of the creator's computers (stale test owners).
+      Set<String> allowed = new HashSet<>(); for (int i = 0; i < owners.length(); i++) allowed.add(address(owners.getString(i)));
+      // One connection per computer: the newest entry for an address wins.
+      Set<String> seen = new HashSet<>(); List<JSONObject> newest = new ArrayList<>();
+      for (int i = known.length() - 1; i >= 0; i--) { String at = known.getJSONObject(i).optString("address"); if (allowed.contains(at) && seen.add(at)) newest.add(0, known.getJSONObject(i)); }
+      JSONArray kept = new JSONArray(); for (JSONObject item : newest) kept.put(item);
+      Log.i(TAG, "owners=" + allowed + " stored=" + known.length() + " kept=" + kept.length());
+      if (kept.length() != known.length()) { write(new File(root, "connections.json"), new JSONObject().put("connections", kept)); known = kept; }
       outer: for (int i = 0; i < owners.length(); i++) {
         String base = address(owners.getString(i));
-        for (int j = 0; j < known.length(); j++) if (base.equals(known.getJSONObject(j).optString("address"))) continue outer;
-        try { URI target = new URI(base); try (java.net.Socket probe = new java.net.Socket()) { probe.connect(new java.net.InetSocketAddress(target.getHost(), target.getPort()), 3000); } remember(base, json(http(base + "/v1/devices/join", null, null, new JSONObject().put("name", Build.MODEL)))); } catch (Exception ignored) {}
+        for (int j = 0; j < known.length(); j++) if (base.equals(known.getJSONObject(j).optString("address"))) { Log.i(TAG, "already connected " + base); continue outer; }
+        try { URI target = new URI(base); try (java.net.Socket probe = new java.net.Socket()) { probe.connect(new java.net.InetSocketAddress(target.getHost(), target.getPort()), 3000); } remember(base, json(http(base + "/v1/devices/join", null, null, new JSONObject().put("name", Build.MODEL)))); Log.i(TAG, "joined " + base); } catch (Exception error) { Log.w(TAG, "join " + base + " failed: " + error); }
       }
-    } catch (Exception ignored) {}
+    } catch (Exception error) { Log.w(TAG, "owner discovery failed: " + error); }
   }
   private JSONObject snapshot() throws Exception {
     JSONArray devices = new JSONArray(), transfers = new JSONArray(), connections = connections();

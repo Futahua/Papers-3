@@ -6,7 +6,7 @@ import { createRemoteFileGateway, type RemoteBackpackShare } from './remoteFileG
 import { randomUUID } from 'node:crypto';
 import type { RemoteFileMutations } from './remoteFileMutations';
 import type { RemoteFileEditOwner } from './remoteFileEditOwner';
-import { sameAccountNode } from './tailnetIdentity';
+import { logDevice, sameAccountNode } from './tailnetIdentity';
 import type { RemoteFileShare } from './remoteFileResources';
 
 export class RemoteDeviceService {
@@ -27,7 +27,7 @@ export class RemoteDeviceService {
     try {
       this.devices = await RemoteDeviceStore.open(this.directory, os.hostname());
       // Always listen when Tailscale is up; access is still limited to the creator's own account.
-      await this.start().catch(error => console.warn('[remote-files] owner not listening:', error instanceof Error ? error.message : error));
+      await this.start().then(() => logDevice('owner-listening', { address: this.address }), error => logDevice('owner-not-listening', { reason: error instanceof Error ? error.message : String(error) }));
     } catch (error) { this.failure = error instanceof Error ? error.message : 'Device connection is unavailable.'; }
   }
   snapshot() {

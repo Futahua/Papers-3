@@ -1,3 +1,4 @@
+import { logDevice } from './tailnetIdentity';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { pipeline } from 'node:stream/promises';
@@ -82,7 +83,8 @@ export async function createRemoteFileGateway(options: {
         for (const id of joined.replaced) revoke(id);
         devices.set(joined.deviceId, { grant: joined.grant, catalog: await RemoteFileResources.create(joined.grant.shares, joined.grant.tokenHash), responses: new Set() });
         json(response, 200, { ok: true, protocol: 1, owner: joined.owner, deviceId: joined.deviceId, token: joined.token });
-      } catch (error) { console.warn('[remote-files] join refused:', error instanceof Error ? error.message : error); json(response, 403, { ok: false, code: 'JOIN_REFUSED' }); }
+        logDevice('owner-admitted', { peer, name, deviceId: joined.deviceId, replaced: joined.replaced.length, shares: joined.grant.shares.map(share => share.name) });
+      } catch (error) { logDevice('owner-refused', { peer: request.socket.remoteAddress, reason: error instanceof Error ? error.message : String(error) }); json(response, 403, { ok: false, code: 'JOIN_REFUSED' }); }
       return;
     }
     const authorization = request.headers.authorization ?? '';

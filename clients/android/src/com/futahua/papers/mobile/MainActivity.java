@@ -24,6 +24,8 @@ public final class MainActivity extends Activity {
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
     files = MobileFiles.get(getApplicationContext());
+    // Personal app: always inspectable (chrome://inspect) and console mirrored to logcat tag PapersWeb.
+    WebView.setWebContentsDebuggingEnabled(true);
     view = new WebView(this);
     view.setBackgroundColor(0xff2b302f);
     view.getSettings().setJavaScriptEnabled(true);
@@ -32,7 +34,7 @@ public final class MainActivity extends Activity {
     view.getSettings().setBlockNetworkLoads(true);
     view.addJavascriptInterface(new Bridge(), "PapersNative");
     view.setWebChromeClient(new WebChromeClient() {
-      @Override public boolean onConsoleMessage(ConsoleMessage message) { android.util.Log.w("PapersWeb", message.message()); return true; }
+      @Override public boolean onConsoleMessage(ConsoleMessage message) { android.util.Log.i("PapersWeb", message.messageLevel() + " " + message.sourceId() + ":" + message.lineNumber() + " " + message.message()); return true; }
     });
     view.setWebViewClient(new WebViewClient() {
       @Override public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {

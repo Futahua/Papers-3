@@ -13,7 +13,7 @@ import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
 import { RemoteDeviceService } from './backpacks/remoteDeviceService';
 import { RemoteFileClient } from './backpacks/remoteFileClient';
-import { tailnetAccount } from './backpacks/tailnetIdentity';
+import { logDevice, setDeviceLog, tailnetAccount } from './backpacks/tailnetIdentity';
 import { RemoteFileMutations } from './backpacks/remoteFileMutations';
 import { RemoteFileEditOwner } from './backpacks/remoteFileEditOwner';
 import { RemoteFileEditNativeProvider } from './backpacks/remoteFileEditNativeProvider';
@@ -558,6 +558,7 @@ async function bootstrap(): Promise<void> {
   if (process.platform === 'win32') {
     await remoteEdits.initialize().then(() => { remoteDevices.edits = remoteEdits; }).catch(error => console.error('[remote-files] edit recovery needed:', error));
   }
+  setDeviceLog(path.join(paths.root, 'diagnostics', 'devices.ndjson'));
   await remoteDevices.initialize();
   const remoteFiles = new RemoteFileClient(path.join(paths.root, 'remote-files'), {
     seal: value => {
@@ -1879,6 +1880,7 @@ async function bootstrap(): Promise<void> {
     return {shares:drives.map(directory=>({id:randomUUID(),name:directory.replace(/\\$/,'')||directory,directory})),canWrite:true,backpacks:await proximaShares()};
   };
   // Join every other computer on the same Tailscale account that is running Papers. No codes, no clicks.
+  const lastJoinFailure=new Map<string,string>();
   const joinTailnetOwners=async()=>{
     if(remoteFilesError||process.env['PAPERS_TEST_USER_DATA'])return;
     const {peers}=await tailnetAccount();
@@ -1886,11 +1888,12 @@ async function bootstrap(): Promise<void> {
     for(const peer of peers.filter(item=>item.online)){
       const base=`http://${peer.address}:48240`;
       if(known.has(base))continue;
-      await remoteFiles.join(base,remoteDevices.snapshot().owner?.name??os.hostname()).catch(()=>{});
+      await remoteFiles.join(base,remoteDevices.snapshot().owner?.name??os.hostname()).then(()=>logDevice('client-joined',{peer:peer.name,base}),error=>{const reason=error instanceof Error?error.message:String(error);if(lastJoinFailure.get(base)!==reason){lastJoinFailure.set(base,reason);logDevice('client-join-failed',{peer:peer.name,base,reason});}});
     }
   };
-  void joinTailnetOwners().catch(()=>{});
-  const tailnetJoinTimer=setInterval(()=>{void joinTailnetOwners().catch(()=>{});},60_000);
+  const joinQuietly=()=>{void joinTailnetOwners().catch(error=>logDevice('client-discovery-failed',{reason:error instanceof Error?error.message:String(error)}));};
+  joinQuietly();
+  const tailnetJoinTimer=setInterval(joinQuietly,60_000);
   tailnetJoinTimer.unref();
   remoteDevices.readBackpack=async share=>{
     const owner=remoteDevices.snapshot().owner;
@@ -2619,7 +2622,8 @@ async function bootstrap(): Promise<void> {
       previewWindow.on('closed', () => {
         if (widgetPreviewWindows.get(sender.id) === previewWindow) widgetPreviewWindows.delete(sender.id);
       });
-      sender.once('destroyed', () => hideWidgetPreview(sender.id));
+      const previewSenderId = sender.id;
+      sender.once('destroyed', () => hideWidgetPreview(previewSenderId));
       lastPreviewSignature.set(sender.id, previewSignature);
       void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(async () => {
         if (previewWindow.isDestroyed() || widgetPreviewWindows.get(sender.id) !== previewWindow) return;
@@ -3838,9 +3842,12 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // It has its own kind because a reader of a kind is entitled to a
       // different answer for a launcher.
       bindOwnedProjectSurface(overlayWindow, projectId, 'launcher', papersWindows.windowIds[0] ?? 0);
-      commandSurfaceSenderId = overlayWindow.webContents.id;
+      const overlaySenderId = overlayWindow.webContents.id;
+      commandSurfaceSenderId = overlaySenderId;
+      // The window is already destroyed here; reading overlayWindow.webContents throws and
+      // blocks shutdown behind an error dialog.
       overlayWindow.webContents.once('destroyed', () => {
-        if (commandSurfaceSenderId === overlayWindow.webContents.id) commandSurfaceSenderId = null;
+        if (commandSurfaceSenderId === overlaySenderId) commandSurfaceSenderId = null;
       });
       return overlayWindow;
     },

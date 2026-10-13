@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import * as path from 'node:path';
 
 /** The creator's own Tailscale account is the trust root: devices signed into it pair without codes. */
 const executable = process.platform === 'win32' && existsSync('C:\Program Files\Tailscale\tailscale.exe') ? 'C:\Program Files\Tailscale\tailscale.exe' : 'tailscale';
@@ -31,4 +32,14 @@ export async function sameAccountNode(address: string): Promise<string> {
   const node = String(who.Node?.ID ?? '');
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(node)) throw new Error('Peer node is unknown.');
   return node;
+}
+
+let deviceLogFile: string | null = null;
+/** Device pairing is invisible by design, so every decision lands in diagnostics/devices.ndjson. */
+export function setDeviceLog(file: string): void { deviceLogFile = file; }
+export function logDevice(event: string, detail: Record<string, unknown> = {}): void {
+  const line = JSON.stringify({ at: new Date().toISOString(), event, ...detail });
+  console.info('[devices]', line);
+  if (!deviceLogFile) return;
+  try { mkdirSync(path.dirname(deviceLogFile), { recursive: true }); appendFileSync(deviceLogFile, line + '\n'); } catch { /* diagnostics never block pairing */ }
 }
