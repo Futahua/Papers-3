@@ -40,6 +40,8 @@ export async function createRemoteFileGateway(options: {
   edits?: RemoteFileEditOwner;
   /** Where files dropped on this computer from another device land by default. */
   inboxDirectory?: string;
+  /** Runs this computer's own preview of a file; only self-contained results (text, image data) are returned. */
+  preview?: (target: string) => Promise<Record<string, unknown>>;
   /** As you Go workspaces on this computer that same-account devices may open and edit. */
   workspaces?: {
     list: () => Promise<{ projectId: string; name: string }[]>;
@@ -190,6 +192,15 @@ export async function createRemoteFileGateway(options: {
       }
       if (url.pathname === '/v1/files/shares') {
         json(response, 200, { ok: true, protocol: 1, owner: options.owner, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate),edits:Boolean(device.grant.canWrite===true&&options.edits)}, entries: await device.catalog.shares() });
+        return;
+      }
+      const previewMatch = /^\/v1\/files\/([a-f0-9-]{36})\/preview$/.exec(url.pathname);
+      if (previewMatch) {
+        if (!options.preview) { json(response, 503, { ok: false, code: 'PREVIEW_UNAVAILABLE' }); return; }
+        const result = await options.preview(await device.catalog.ownerPath(previewMatch[1]!));
+        const preview = result['preview'] as Record<string, unknown> | undefined;
+        const portable = preview && (preview['kind'] === 'text' ? typeof preview['text'] === 'string' : (preview['kind'] === 'image' && typeof preview['dataUrl'] === 'string'));
+        json(response, 200, { ok: true, preview: portable ? { kind: preview!['kind'], text: preview!['text'], nextOffset: preview!['nextOffset'], eof: preview!['eof'], mime: preview!['mime'], dataUrl: preview!['dataUrl'], width: preview!['width'], height: preview!['height'] } : { kind: 'none' } });
         return;
       }
       const match = /^\/v1\/files\/([a-f0-9-]{36})\/(list|stat|content|digest)$/.exec(url.pathname);

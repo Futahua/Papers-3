@@ -178,6 +178,9 @@ export class RemoteFileResources {
     } finally { await fs.rm(partial, { force: true }); }
   }
 
+  /** Owner-only: the real path of a resource, for previews run on this computer. Never sent to peers. */
+  async ownerPath(id: string): Promise<string> { return (await this.resolve(id)).target; }
+
   /** Share name plus the path inside it, when an owner path lies in this grant. */
   shareParts(target: string): string[] | null {
     for (const root of this.roots.values()) {

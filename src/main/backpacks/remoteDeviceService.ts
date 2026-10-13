@@ -18,6 +18,7 @@ export class RemoteDeviceService {
   edits: RemoteFileEditOwner | null = null;
   readBackpack: ((share:RemoteBackpackShare)=>Promise<unknown>) | null = null;
   workspaces: Parameters<typeof createRemoteFileGateway>[0]['workspaces'] | null = null;
+  preview: ((target:string)=>Promise<Record<string,unknown>>) | null = null;
   search: ((query:string,limit:number)=>Promise<{results:{path:string;name:string;kind:'file'|'folder';size:number|null;modifiedAt:number|null}[]}>) | null = null;
   /** What a device on the creator's own Tailscale account receives when it joins. */
   defaultGrant: (() => Promise<{ shares: RemoteFileShare[]; canWrite: boolean; backpacks: RemoteBackpackShare[] }>) | null = null;
@@ -46,6 +47,7 @@ export class RemoteDeviceService {
     const gateway = await createRemoteFileGateway({ owner: snapshot.owner, grants: snapshot.devices,
       edits: this.edits ?? undefined,
       workspaces:{list:()=>this.workspaces?.list()??Promise.resolve([]),load:projectId=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.load(projectId);},save:(projectId,raw,revision)=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.save(projectId,raw,revision);}},
+      preview:target=>{if(!this.preview)throw Error('Previews are unavailable.');return this.preview(target);},
       search:(query,limit)=>{if(!this.search)throw Error('Search is unavailable on this computer.');return this.search(query,limit);},
       backpackSnapshot:share=>{if(!this.readBackpack)throw Error('Backpack execution owner is unavailable.');return this.readBackpack(share);},
       mutate:async(deviceId,catalog,request)=>{if(!this.mutations)throw new Error('File changes are unavailable.');return this.mutations.submit(deviceId,catalog,request);},

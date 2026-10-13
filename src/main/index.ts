@@ -1920,6 +1920,7 @@ async function bootstrap(): Promise<void> {
     load:async projectId=>{const loaded=await backpackProjects.loadStateVersioned(projectId);return {state:loaded.state,revision:loaded.revision};},
     save:(projectId,raw,revision)=>backpackProjects.saveState(projectId,raw,revision as never),
   };
+  remoteDevices.preview=target=>fileCapability.call({operation:'preview',params:{path:target}},{backpackId:'remote:preview'} as never);
   remoteDevices.search=async(query,limit)=>{if(!everythingSearch)throw Error('Everything search is unavailable on this computer.');const result=await everythingSearch.search(query,limit);if(!result.ok)throw Error(result.error??'Search failed.');return result;};
   remoteDevices.readBackpack=async share=>{
     const owner=remoteDevices.snapshot().owner;

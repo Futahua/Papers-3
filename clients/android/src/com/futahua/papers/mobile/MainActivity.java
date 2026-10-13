@@ -38,7 +38,7 @@ public final class MainActivity extends Activity {
     });
     view.setWebViewClient(new WebViewClient() {
       @Override public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {
-        return request.isForMainFrame() || !"https".equals(request.getUrl().getScheme()) || !"papers.local".equals(request.getUrl().getHost()) || !"/app/remote-overview.html".equals(request.getUrl().getPath());
+        String route = request.getUrl().getPath(); return request.isForMainFrame() || !"https".equals(request.getUrl().getScheme()) || !"papers.local".equals(request.getUrl().getHost()) || route == null || !(route.equals("/app/remote-overview.html") || route.startsWith("/ayg/"));
       }
       @Override public WebResourceResponse shouldInterceptRequest(WebView webView, WebResourceRequest request) {
         String name = request.getUrl().getPath();
@@ -56,7 +56,7 @@ public final class MainActivity extends Activity {
 
   public final class Bridge {
     @JavascriptInterface public void request(String id, String text) {
-      if (!id.matches("[0-9]{1,12}") || text.length() > 65536) return;
+      if (!id.matches("[0-9]{1,12}") || text.length() > 64 * 1024 * 1024) return;
       requests.execute(() -> {
         JSONObject reply = new JSONObject();
         try {
@@ -103,6 +103,11 @@ public final class MainActivity extends Activity {
         runOnUiThread(()->sendReply(replyId,true,copy));
       }catch(Exception error){runOnUiThread(()->sendReply(replyId,false,"Import was not completed. Previous working files were retained."));}
     });
+  }
+  // Back closes an open preview, then leaves a device's As you Go, then leaves the app.
+  @Override public void onBackPressed() {
+    if (view == null) { super.onBackPressed(); return; }
+    view.evaluateJavascript("Boolean(window.papersBack && window.papersBack())", handled -> { if (!"true".equals(handled)) finish(); });
   }
   @Override public void onDestroy() {
     requests.shutdownNow();

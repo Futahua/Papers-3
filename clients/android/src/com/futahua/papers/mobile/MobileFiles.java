@@ -46,6 +46,14 @@ final class MobileFiles {
       case "edit-open": {String id=request.getString("editId");editCopies.working(id);CachedFilesProvider.edit(context,id,editCopies.read(id).getString("name"));return new JSONObject().put("opened",true);}
       case "edit-save": return saveEdit(request.getString("editId"));
       case "edit-continue": return continueEdit(request.getString("editId"));
+      case "workspaces": { JSONObject result = json(request(owner, "/v1/workspaces", null, null)); if (!owner.equals(result.getJSONObject("owner").getString("id"))) throw new IOException("Owner identity changed."); return result.getJSONArray("entries"); }
+      case "workspace-load": { String id = request.getString("workspaceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid workspace identity."); return largeJson(request(owner, "/v1/workspaces/" + id + "/state", null, null)); }
+      case "workspace-save": { String id = request.getString("workspaceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid workspace identity."); JSONObject device = connection(owner); return largeJson(http(address(device.getString("address")) + "/v1/workspaces/" + id + "/state", open(device.getString("secret")), null, new JSONObject().put("state", request.getString("state")).put("revision", request.getString("revision")))).getJSONObject("save"); }
+      case "inbox": return json(request(owner, "/v1/files/inbox", null, null));
+      case "search": return json(request(owner, "/v1/files/search?q=" + URLEncoder.encode(request.getString("query"), "UTF-8") + "&limit=" + Math.max(1, Math.min(1000, request.optInt("limit", 200))), null, null)).getJSONArray("results");
+      case "preview": { String id = request.getString("resourceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid file identity."); return largeJson(request(owner, "/v1/files/" + id + "/preview", null, null)).getJSONObject("preview"); }
+      case "local-state-load": return localState();
+      case "local-state-save": return saveLocalState(request.getString("state"), request.getString("revision"));
       case "backpacks": return backpacks(owner);
       case "backpack-snapshot": return backpackSnapshot(owner,request.getString("resourceId"));
       case "change": { JSONObject device=connection(owner);return outbox.send(owner,device.optString("deviceId"),request.getJSONObject("command"),command->dispatchChange(device,command)); }
@@ -253,6 +261,25 @@ final class MobileFiles {
     if (body != null) { c.setRequestMethod("POST"); c.setDoOutput(true); c.setRequestProperty("Content-Type", "application/json"); try (OutputStream out = c.getOutputStream()) { out.write(body.toString().getBytes(StandardCharsets.UTF_8)); } }
     int status = c.getResponseCode(); if (status < 200 || status >= 300) { c.disconnect(); throw new IOException(status == 412 ? "Source changed. Refresh before downloading." : status == 401 ? "Access revoked. Pair again." : "Remote operation failed (" + status + ")."); }
     return c;
+  }
+  /** Workspace documents and previews may carry embedded images, so they get a larger bound than metadata. */
+  private JSONObject largeJson(HttpURLConnection connection) throws Exception { try (InputStream input = connection.getInputStream()) { ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[65536]; int count; while ((count = input.read(buffer)) >= 0) { bytes.write(buffer, 0, count); if (bytes.size() > 64 * 1024 * 1024) throw new IOException("Response is too large."); } return new JSONObject(bytes.toString("UTF-8")); } finally { connection.disconnect(); } }
+  // The phone's own As you Go document. The revision is the SHA-256 of the saved bytes; a save built on an older one is refused.
+  private File localStateFile() { File directory = new File(context.getFilesDir(), "as-you-go"); directory.mkdirs(); return new File(directory, "state.json"); }
+  private synchronized JSONObject localState() throws Exception {
+    File file = localStateFile();
+    if (!file.exists()) return new JSONObject().put("state", JSONObject.NULL).put("revision", "empty");
+    byte[] bytes; try (InputStream input = new AtomicFile(file).openRead()) { ByteArrayOutputStream out = new ByteArrayOutputStream(); byte[] buffer = new byte[65536]; int count; while ((count = input.read(buffer)) >= 0) out.write(buffer, 0, count); bytes = out.toByteArray(); }
+    return new JSONObject().put("state", new String(bytes, StandardCharsets.UTF_8)).put("revision", sha(bytes));
+  }
+  private synchronized JSONObject saveLocalState(String state, String revision) throws Exception {
+    new JSONObject(state);
+    String current = localState().getString("revision");
+    if (!current.equals(revision)) return new JSONObject().put("ok", false).put("code", "STALE_REVISION").put("revision", current);
+    byte[] bytes = state.getBytes(StandardCharsets.UTF_8);
+    AtomicFile atomic = new AtomicFile(localStateFile()); FileOutputStream out = atomic.startWrite();
+    try { out.write(bytes); atomic.finishWrite(out); } catch (Exception error) { atomic.failWrite(out); throw error; }
+    return new JSONObject().put("ok", true).put("revision", sha(bytes));
   }
   private JSONObject json(HttpURLConnection connection) throws Exception { try (InputStream input = connection.getInputStream()) { ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int count; while ((count = input.read(buffer)) >= 0) { bytes.write(buffer, 0, count); if (bytes.size() > 8 * 1024 * 1024) throw new IOException("Metadata response is too large."); } return new JSONObject(bytes.toString("UTF-8")); } finally { connection.disconnect(); } }
   private String address(String input) throws Exception { URI uri = new URI(input); String host = uri.getHost(); if (!"http".equals(uri.getScheme()) || host == null || !host.matches("100\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}") || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null || !(uri.getPath().isEmpty() || uri.getPath().equals("/"))) throw new IOException("Use the private Tailscale address shown by Papers."); String[] octets = host.split("\\."); int second = Integer.parseInt(octets[1]); if (second < 64 || second > 127 || Integer.parseInt(octets[2]) > 255 || Integer.parseInt(octets[3]) > 255) throw new IOException("Invalid private address."); return "http://" + host + (uri.getPort() == -1 ? "" : ":" + uri.getPort()); }
