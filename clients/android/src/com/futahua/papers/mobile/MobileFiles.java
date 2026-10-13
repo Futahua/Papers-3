@@ -24,10 +24,11 @@ final class MobileFiles {
   private final Context context;
   private final File root;
   private final MobileCommandOutbox outbox;
+  private final MobileEditCopies editCopies;
   private final Map<String, JSONObject> jobs = new ConcurrentHashMap<>();
   private final Map<String, Future<?>> workers = new ConcurrentHashMap<>();
   private final ExecutorService downloads = Executors.newFixedThreadPool(2);
-  MobileFiles(Context context) { this.context = context; root = new File(context.getFilesDir(), "remote-files"); root.mkdirs(); outbox=new MobileCommandOutbox(root); }
+  MobileFiles(Context context) { this.context = context; root = new File(context.getFilesDir(), "remote-files"); root.mkdirs(); outbox=new MobileCommandOutbox(root); editCopies=new MobileEditCopies(context); }
 
   Object call(JSONObject request) throws Exception {
     String operation = request.getString("operation");
@@ -38,6 +39,9 @@ final class MobileFiles {
       case "browse": return browse(owner, request.optString("resourceId"), request.optInt("offset", 0));
       case "download": return download(owner, request.getJSONObject("entry"));
       case "offline": return offline(owner);
+      case "edit-list": return editCopies.list(owner);
+      case "edit-begin": return beginEdit(owner,request.getJSONObject("entry"));
+      case "edit-open": {String id=request.getString("editId");editCopies.working(id);CachedFilesProvider.edit(context,id,editCopies.read(id).getString("name"));return new JSONObject().put("opened",true);}
       case "backpacks": return backpacks(owner);
       case "backpack-snapshot": return backpackSnapshot(owner,request.getString("resourceId"));
       case "change": { JSONObject device=connection(owner);return outbox.send(owner,device.optString("deviceId"),request.getJSONObject("command"),command->dispatchChange(device,command)); }
@@ -76,6 +80,16 @@ final class MobileFiles {
     return new JSONObject().put("devices", devices).put("jobs", transfers).put("commandJobs",outbox.snapshot());
   }
   private JSONObject dispatchChange(JSONObject device,JSONObject command) throws Exception { return json(http(address(device.getString("address"))+"/v1/files/changes",open(device.getString("secret")),null,command)).getJSONObject("job"); }
+  private JSONObject beginEdit(String owner,JSONObject entry) throws Exception {
+    validate(entry);if(!"file".equals(entry.getString("kind")))throw new IOException("Choose a file to edit");
+    JSONObject device=connection(owner);
+    JSONObject session=json(http(address(device.getString("address"))+"/v1/files/edits",open(device.getString("secret")),null,new JSONObject().put("resourceId",entry.getString("id")).put("sourceVersion",entry.getString("version")))).getJSONObject("session");
+    if(!entry.getString("id").equals(session.getString("resourceId"))||!entry.getString("version").equals(session.getString("sourceVersion")))throw new IOException("Invalid edit source receipt");
+    JSONObject started=download(owner,entry);String jobId=started.getString("id");Future<?> worker=workers.get(jobId);if(worker!=null)worker.get();
+    JSONObject job=jobs.get(jobId);synchronized(job){if(!"completed".equals(job.getString("phase")))throw new IOException(job.optString("error","Source download is incomplete"));}
+    String key=sha(new JSONArray().put(owner).put(entry.getString("id")).put(entry.getString("version")).toString().getBytes(StandardCharsets.UTF_8));
+    return editCopies.create(owner,session,entry.getString("name"),checkedFile(owner,key));
+  }
   private JSONObject backpacks(String owner) throws Exception {
     File cache=new File(root,"backpacks-"+sha(owner.getBytes(StandardCharsets.UTF_8))+".json");
     try{JSONObject result=json(request(owner,"/v1/backpacks",null,null));if(!owner.equals(result.getJSONObject("owner").getString("id")))throw new IOException("Owner identity changed.");JSONArray entries=result.getJSONArray("entries");for(int i=0;i<entries.length();i++){JSONObject item=entries.getJSONObject(i);if(!item.getString("id").matches("[a-f0-9-]{36}")||!"proxima".equals(item.getString("kind")))throw new IOException("Invalid shared Backpack listing.");}write(cache,result);return result.put("online",true);}catch(Exception error){if(!cache.exists())throw error;return read(cache).put("online",false).put("error",error.getMessage());}

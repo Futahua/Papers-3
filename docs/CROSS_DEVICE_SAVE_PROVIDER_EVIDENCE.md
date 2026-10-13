@@ -222,3 +222,18 @@ passed. Its screenshot was visually inspected. This rendered fixture uses RPC st
 it is not installed AYG/native-editor/device evidence. `probeRemoteEditView.mjs`
 accepts the actual AYG checkout path and reproduces the checks without creator data.
 AYG source commit: `59a5603`; installed copies remain unchanged pending acceptance.
+
+## Android local editing foundation
+
+The Android source now has private edit journals, verified retained originals, and
+separate working bytes. Native session creation reuses the checked download owner,
+awaits its actual worker/completion, and verifies cached content before making copies.
+The existing content provider keeps cached downloads read-only. An explicit edit URI
+grants read/write access only to a journaled working copy and launches a receiving
+phone editor through ACTION_EDIT; it exposes neither original bytes nor arbitrary paths.
+Journal writes use Android AtomicFile, and copied content is flushed before ready state.
+
+The unsigned Android build compiles successfully. No real phone editor/URI permission
+or save-back acceptance has been established yet. Client editing capability remains
+absent, so AYG hides these controls until Android save orchestration and device evidence
+are complete. The installed signed package remains the earlier verified build.

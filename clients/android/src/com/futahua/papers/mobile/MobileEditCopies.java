@@ -1,0 +1,67 @@
+package com.futahua.papers.mobile;
+
+import android.content.Context;
+import android.util.AtomicFile;
+import org.json.JSONObject;
+import org.json.JSONArray;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.UUID;
+
+/** Phone-owned originals and editable copies, never the verified read cache. */
+final class MobileEditCopies {
+  private final File root;
+  MobileEditCopies(Context context) { root = new File(context.getFilesDir(), "remote-edits"); root.mkdirs(); }
+  private File directory(String id) throws IOException {
+    if (!id.matches("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}")) throw new IOException("Invalid local edit identity");
+    return new File(root, id);
+  }
+  JSONObject create(String owner, JSONObject session, String name, File download) throws Exception {
+    if (!owner.matches("[a-f0-9-]{36}") || !session.getString("id").matches("[a-f0-9-]{36}") || !"editing".equals(session.getString("phase")) || !session.getString("sourceSha256").matches("[a-f0-9]{64}")) throw new IOException("A checked edit session is required");
+    String id = UUID.randomUUID().toString(); File folder = directory(id);
+    if (!folder.mkdir()) throw new IOException("Working-copy folder could not be created");
+    File original = new File(folder,"original.bin"); copy(download,original);
+    if (!digest(original).equals(session.getString("sourceSha256"))) throw new IOException("Downloaded source changed; retained copy needs recovery");
+    copy(original,new File(folder,"working.bin"));
+    JSONObject record = new JSONObject().put("id",id).put("ownerId",owner).put("session",session).put("name",name).put("phase","editing");
+    retain(record); return record;
+  }
+  JSONObject read(String id) throws Exception {
+    try(InputStream input = new AtomicFile(new File(directory(id),"edit.json")).openRead()) {
+      ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int count;
+      while((count=input.read(buffer))!=-1) { if(bytes.size()+count>65536)throw new IOException("Edit journal is too large"); bytes.write(buffer,0,count); }
+      JSONObject record = new JSONObject(bytes.toString("UTF-8"));
+      if(!id.equals(record.getString("id")) || !record.getString("ownerId").matches("[a-f0-9-]{36}"))throw new IOException("Edit journal requires recovery");
+      return record;
+    }
+  }
+  JSONArray list(String owner) throws Exception {
+    JSONArray records = new JSONArray(); File[] folders=root.listFiles(); if(folders==null)return records;
+    for(File folder:folders)if(folder.isDirectory() && new File(folder,"edit.json").isFile()) {
+      JSONObject record=read(folder.getName()); if(owner.isEmpty()||owner.equals(record.getString("ownerId")))records.put(record);
+    }
+    return records;
+  }
+  File working(String id) throws Exception {
+    read(id); File file=new File(directory(id),"working.bin");
+    File expected = new File(new File(root.getCanonicalFile(),id),"working.bin");
+    if(!file.isFile() || !file.getCanonicalFile().equals(expected))throw new IOException("Working copy is unavailable");
+    return file;
+  }
+  void retain(JSONObject record) throws Exception {
+    AtomicFile file=new AtomicFile(new File(directory(record.getString("id")),"edit.json")); FileOutputStream stream=null;
+    try { stream=file.startWrite(); stream.write(record.toString().getBytes(StandardCharsets.UTF_8));file.finishWrite(stream); }
+    catch(Exception error){if(stream!=null)file.failWrite(stream);throw error;}
+  }
+  static void copy(File source,File destination) throws Exception {
+    if(destination.exists())throw new IOException("Working-copy destination already exists");
+    try(InputStream input=new FileInputStream(source);FileOutputStream output=new FileOutputStream(destination)) {
+      byte[] buffer=new byte[65536];int count;while((count=input.read(buffer))!=-1)output.write(buffer,0,count);output.getFD().sync();
+    }
+  }
+  static String digest(File file) throws Exception {
+    MessageDigest hash=MessageDigest.getInstance("SHA-256");try(InputStream input=new FileInputStream(file)){byte[] buffer=new byte[65536];int count;while((count=input.read(buffer))!=-1)hash.update(buffer,0,count);}
+    StringBuilder text=new StringBuilder();for(byte value:hash.digest())text.append(String.format(java.util.Locale.ROOT,"%02x",value&255));return text.toString();
+  }
+}
