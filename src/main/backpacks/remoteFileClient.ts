@@ -297,6 +297,26 @@ export class RemoteFileClient {
     if (!response.ok) throw new Error(result.message ?? `Upload failed (${response.status}).`);
     return entry(result.entry);
   }
+  /** As you Go workspaces this owner lets the device open and edit. */
+  async workspaces(ownerId: string): Promise<{ id: string; name: string; kind: 'as-you-go' }[]> {
+    const response = await (await this.request(ownerId, '/v1/workspaces')).json();
+    if (response.owner?.id !== ownerId || !Array.isArray(response.entries)) throw new Error('Invalid workspace listing.');
+    return response.entries.filter((item: { id?: string; name?: unknown }) => /^[a-f0-9-]{36}$/.test(item.id ?? '') && typeof item.name === 'string');
+  }
+  /** The owner's current document and the revision it is at. */
+  async workspaceLoad(ownerId: string, id: string): Promise<{ state: unknown; revision: string }> {
+    if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid workspace identity.');
+    const response = await (await this.request(ownerId, `/v1/workspaces/${id}/state`)).json();
+    if (typeof response.revision !== 'string') throw new Error('Invalid workspace document.');
+    return { state: response.state, revision: response.revision };
+  }
+  /** Offers a document built on `revision`; the owner refuses it if its copy moved on. */
+  async workspaceSave(ownerId: string, id: string, state: string, revision: string): Promise<{ ok: boolean; revision: string; code?: string }> {
+    if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid workspace identity.');
+    const response = await (await this.request(ownerId, `/v1/workspaces/${id}/state`, {}, AbortSignal.timeout(120_000), { state, revision })).json();
+    if (typeof response.save?.ok !== 'boolean' || typeof response.save.revision !== 'string') throw new Error('Invalid save receipt.');
+    return response.save;
+  }
   /** Runs a search on the owner (its own Everything); results come back as share-relative parts. */
   async search(ownerId: string, query: string, limit: number): Promise<{ parts: string[]; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[]> {
     const response = await (await this.request(ownerId, `/v1/files/search?${new URLSearchParams({ q: query, limit: String(limit) })}`)).json();

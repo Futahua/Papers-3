@@ -40,6 +40,12 @@ export async function createRemoteFileGateway(options: {
   edits?: RemoteFileEditOwner;
   /** Where files dropped on this computer from another device land by default. */
   inboxDirectory?: string;
+  /** As you Go workspaces on this computer that same-account devices may open and edit. */
+  workspaces?: {
+    list: () => Promise<{ projectId: string; name: string }[]>;
+    load: (projectId: string) => Promise<{ state: unknown; revision: string }>;
+    save: (projectId: string, rawState: string, revision: string) => Promise<{ ok: boolean; revision: string; code?: string }>;
+  };
   search?: (query: string, limit: number) => Promise<{ results: { path: string; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[] }>;
   backpackSnapshot?: (share:RemoteBackpackShare) => Promise<unknown>;
 }): Promise<{ server: Server; revoke: (deviceId: string) => void; close: () => Promise<void> }> {
@@ -110,6 +116,29 @@ export async function createRemoteFileGateway(options: {
         let body='';for await(const chunk of request){body+=chunk.toString('utf8');if(Buffer.byteLength(body)>4096)throw new Error('File command is too large.');}
         json(response,202,{ok:true,job:await options.mutate(device.grant.deviceId,device.catalog,JSON.parse(body))});
       }catch(error){json(response,400,{ok:false,code:'FILE_COMMAND_REFUSED',message:error instanceof Error?error.message:'Invalid file command.'});}
+      return;
+    }
+    const workspaceRoute = /^\/v1\/workspaces(?:\/([a-f0-9-]{36})\/state)?$/.exec(request.url ?? '');
+    if (workspaceRoute) {
+      if (device.grant.canWrite !== true || !options.workspaces) { json(response, 403, { ok: false, code: 'WORKSPACES_NOT_GRANTED' }); return; }
+      try {
+        // Stable per device and workspace, so a client can keep using an id across restarts.
+        const idFor = (projectId: string) => { const h = createHash('sha256').update(device.grant.deviceId + '|' + projectId).digest('hex'); return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`; };
+        const all = await options.workspaces.list();
+        if (!workspaceRoute[1]) { json(response, 200, { ok: true, owner: options.owner, entries: all.map(item => ({ id: idFor(item.projectId), name: item.name, kind: 'as-you-go' })) }); return; }
+        const target = all.find(item => idFor(item.projectId) === workspaceRoute[1]);
+        if (!target) { json(response, 404, { ok: false, code: 'WORKSPACE_UNKNOWN' }); return; }
+        if (request.method === 'GET') { json(response, 200, { ok: true, ...await options.workspaces.load(target.projectId) }); return; }
+        if (request.method !== 'POST') { json(response, 405, { ok: false, code: 'OPERATION_UNSUPPORTED' }); return; }
+        const chunks: Buffer[] = []; let bytes = 0;
+        for await (const chunk of request) { bytes += chunk.length; if (bytes > 64 * 1024 * 1024) throw new Error('Workspace document is too large.'); chunks.push(chunk); }
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (typeof body.state !== 'string' || typeof body.revision !== 'string') throw new Error('A document and the revision it was built on are required.');
+        // The owner decides: a save built on an older revision is refused, never merged here.
+        const result = await options.workspaces.save(target.projectId, body.state, body.revision);
+        logDevice('owner-workspace-save', { deviceId: device.grant.deviceId, project: target.projectId, ok: result.ok, code: result.code });
+        json(response, 200, { ok: true, save: result });
+      } catch (error) { if (!response.headersSent) json(response, 400, { ok: false, code: 'WORKSPACE_REFUSED', message: error instanceof Error ? error.message : 'Workspace request refused.' }); }
       return;
     }
     const upload = /^\/v1\/files\/(inbox|[a-f0-9-]{36}\/upload)(?:\?.*)?$/.exec(request.url ?? '');

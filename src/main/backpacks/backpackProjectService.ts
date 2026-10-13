@@ -616,7 +616,7 @@ export class BackpackProjectService {
     const manifest = await this.manifest(backpackId);
     return manifest?.root ?? null;
   }
-  async sharedDataKind(backpackId:string):Promise<'proxima'|null>{const manifest=await this.manifest(backpackId),declaration=manifest?.['remoteData'];return isRecord(declaration)&&declaration['version']===1&&declaration['kind']==='proxima'?'proxima':null;}
+  async sharedDataKind(backpackId:string):Promise<'proxima'|'as-you-go'|null>{const manifest=await this.manifest(backpackId),declaration=manifest?.['remoteData'];return isRecord(declaration)&&declaration['version']===1&&(declaration['kind']==='proxima'||declaration['kind']==='as-you-go')?declaration['kind']:null;}
 
   async isProtectedRoot(backpackId: string): Promise<boolean> {
     const manifest = await this.manifest(backpackId);
