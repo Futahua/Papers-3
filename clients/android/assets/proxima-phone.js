@@ -26,6 +26,35 @@
     stripPan.x = touch.clientX; stripPan.y = touch.clientY;
   }, { capture: true, passive: false });
 
+  // The calendar does not page on a swipe (a swipe there is a pan); device-view.js turns one into a
+  // synthetic wheel on the weekday header, which is dropped here. Paging is the edge hitboxes below.
+  let paging = false;
+  addEventListener('wheel', (event) => {
+    if (!event.isTrusted && !paging && event.target.closest?.('.schedule-weekday,.schedule-timed-header')) event.stopImmediatePropagation();
+  }, true);
+  function page(next) {
+    const header = document.querySelector('.schedule-weekday,.schedule-timed-header');
+    if (!header) return;
+    const box = header.getBoundingClientRect();
+    paging = true;
+    header.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaMode: 0, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, deltaY: next ? 100 : -100 }));
+    paging = false;
+  }
+  // Invisible back / next hitboxes at the two ends of the gap between the calendar and the timeline;
+  // they glow when tapped.
+  const pagers = [];
+  function placePagers() {
+    const calendar = document.querySelector('#scheduleBody,.schedule-body')?.getBoundingClientRect(), timeline = document.querySelector('.exact-timeline')?.getBoundingClientRect();
+    const shown = !!(calendar && timeline && calendar.height && document.querySelector('.schedule-weekday,.schedule-timed-header'));
+    for (const pager of pagers) {
+      pager.hidden = !shown;
+      if (!shown) continue;
+      const middle = (calendar.bottom + timeline.top) / 2;
+      pager.style.top = `${middle - 36}px`;
+      pager.style.left = pager.dataset.edge === 'back' ? '0px' : `${innerWidth - 64}px`;
+    }
+  }
+
   // Inertia: the swipe's last ~100 ms of movement carries on after lift-off and decays.
   let samples = [], pinched = false, glide = 0, gliding = false;
   const stopGlide = () => { cancelAnimationFrame(glide); glide = 0; };
@@ -68,6 +97,10 @@
 .proxima-phone-cursor-button{position:fixed;left:16px;bottom:16px;z-index:4000;width:52px;height:52px;border-radius:50%;border:1px solid color-mix(in srgb,currentColor 25%,transparent);background:var(--panel,#1f252b);color:inherit;box-shadow:0 6px 18px #0006;touch-action:none;display:grid;place-items:center;padding:0;opacity:.85}
 .proxima-phone-cursor-button.is-held{opacity:1;outline:2px solid color-mix(in srgb,currentColor 60%,transparent)}
 .proxima-phone-cursor-button svg{width:22px;height:22px;pointer-events:none}
+.proxima-phone-pager{position:fixed;z-index:3980;width:64px;height:72px;touch-action:none;border-radius:50%;background:radial-gradient(closest-side,color-mix(in srgb,var(--accent,#8ddcff) 55%,transparent),transparent);opacity:0}
+.proxima-phone-pager[hidden]{display:none}
+.proxima-phone-pager.is-lit{animation:proxima-phone-pager-lit 420ms ease-out}
+@keyframes proxima-phone-pager-lit{0%{opacity:.9}100%{opacity:0}}
 .proxima-phone-shield{position:fixed;inset:0;z-index:3990;touch-action:none;background:transparent}
 .proxima-phone-cursor{position:fixed;left:0;top:0;z-index:3995;width:20px;height:20px;pointer-events:none;will-change:transform}`;
   const arrow = '<svg viewBox="0 0 20 20"><path d="M2 1.5v15.2l4.1-3.9 2.7 6 2.6-1.1-2.7-5.9h5.7z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></svg>';
@@ -175,6 +208,22 @@
     button.addEventListener('touchstart', (event) => { event.preventDefault(); if (!cursor) begin(event.changedTouches[0], button); }, { passive: false });
     button.addEventListener('contextmenu', (event) => event.preventDefault());
     document.body.append(button);
+    for (const edge of ['back', 'next']) {
+      const pager = document.createElement('div');
+      pager.className = 'proxima-phone-pager'; pager.dataset.edge = edge; pager.hidden = true;
+      pager.addEventListener('touchstart', (event) => { event.preventDefault(); event.stopPropagation(); }, { passive: false });
+      pager.addEventListener('touchend', (event) => {
+        event.preventDefault(); event.stopPropagation();
+        page(edge === 'next');
+        pager.classList.remove('is-lit'); void pager.offsetWidth; pager.classList.add('is-lit');
+      }, { passive: false });
+      pager.addEventListener('click', () => page(edge === 'next'));
+      pagers.push(pager); document.body.append(pager);
+    }
+    placePagers();
+    new ResizeObserver(placePagers).observe(document.documentElement);
+    addEventListener('scroll', placePagers, { capture: true, passive: true });
+    setInterval(placePagers, 500);
   };
   if (document.body) install(); else addEventListener('DOMContentLoaded', install, { once: true });
 })();
