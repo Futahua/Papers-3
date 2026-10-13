@@ -319,3 +319,20 @@ rendered AYG fixture proves a recovery entry and healthy conflict entry coexist 
 the correct recovery identity reaches the local owner. Typecheck and focused tests
 pass. This source repair is not yet installed on the laptop; Android recovery inventory
 and production editor behavior remain acceptance work.
+
+## Actual laptop receiving-client and native provider evidence
+
+`buildRemoteEditLaptopProbe.mjs` bundles the actual current receiving client and
+native adapter into an isolated laptop fixture. The tracked laptop job exited zero:
+it paired with a generated desktop owner over the private device network, created an
+edit session, saved five MiB across bounded chunks, re-downloaded and verified owner
+bytes, preserved the earlier source cache and local working bytes, then recreated
+the receiving client and retained its completed receipt. Its independent laptop C:
+native adapter also rolled back withdrawn precommit permission, committed an authorized
+save, and refused the old source revision. The installed Papers app stayed responsive
+and was not restarted for the fixture. This is real two-PC filesystem evidence.
+
+The full source suite now passes 1,499 tests with four skips; typecheck and production
+build pass. An unpublished supported NSIS package is being prepared for the authorized
+laptop update. Backup, actual installed host/AYG checks and production editor UX remain;
+the fixture alone does not establish installed behavior or full goal completion.
