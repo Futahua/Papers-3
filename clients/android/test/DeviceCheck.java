@@ -18,6 +18,7 @@ public final class DeviceCheck extends Instrumentation {
     Bundle result=new Bundle();
     try {
       MobileFiles files=MobileFiles.get(getTargetContext());
+      if("grant".equals(arguments.getString("editStage"))){editGrantCheck(result);finish(Activity.RESULT_OK,result);return;}
       if(!arguments.getString("editStage","").isEmpty()){editCheck(files,result);finish(Activity.RESULT_OK,result);return;}
       if(!arguments.getString("backpackStage","").isEmpty()){backpackCheck(files,result);finish(Activity.RESULT_OK,result);return;}
       if(!arguments.getString("mutationStage","").isEmpty()){mutationCheck(files,result);finish(Activity.RESULT_OK,result);return;}
@@ -94,6 +95,26 @@ public final class DeviceCheck extends Instrumentation {
     if(!verified)throw new IOException("Owner saved bytes do not match phone working copy");
     JSONObject reopened=new MobileEditCopies(getTargetContext()).read(id);if(!"saved".equals(reopened.getString("phase")))throw new IOException("Save receipt did not survive local owner recreation");
     result.putString("result","PASS: phone native session, editable URI, retained original, checked HTTP save, duplicate receipt, verified owner bytes, reopened local journal");
+  }
+  private void editGrantCheck(Bundle result) throws Exception {
+    File source=new File(getTargetContext().getCacheDir(),"generated-grant-source.txt");try(FileOutputStream output=new FileOutputStream(source)){output.write("Generated original".getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+    JSONObject session=new JSONObject().put("id",java.util.UUID.randomUUID().toString()).put("phase","editing").put("sourceSha256",MobileEditCopies.digest(source));
+    MobileEditCopies copies=new MobileEditCopies(getTargetContext());JSONObject copy=copies.create(java.util.UUID.randomUUID().toString(),session,"generated.txt",source);
+    android.net.Uri working=new android.net.Uri.Builder().scheme("content").authority("com.futahua.papers.mobile.files").appendPath("edit").appendPath(copy.getString("id")).build();
+    StringBuilder keyText=new StringBuilder();for(int i=0;i<64;i++)keyText.append('e');String key=keyText.toString();File cached=new File(new File(getTargetContext().getFilesDir(),"remote-files"),key+".bin");
+    if(cached.exists())throw new IOException("Generated grant fixture cache identity already exists");
+    MobileEditCopies.copy(source,cached);android.net.Uri cacheUri=new android.net.Uri.Builder().scheme("content").authority("com.futahua.papers.mobile.files").appendPath(key).build();
+    CountDownLatch completed=new CountDownLatch(1);final Bundle[] report={null};int ownerUid=getTargetContext().getApplicationInfo().uid;
+    android.os.ResultReceiver receiver=new android.os.ResultReceiver(new android.os.Handler(android.os.Looper.getMainLooper())){protected void onReceiveResult(int code,Bundle data){report[0]=data;completed.countDown();}};
+    getTargetContext().grantUriPermission("com.futahua.papers.mobile.test",cacheUri,Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    Intent intent=new Intent(Intent.ACTION_EDIT).setComponent(new android.content.ComponentName("com.futahua.papers.mobile.test","com.futahua.papers.mobile.ExternalEditorCheckActivity")).setDataAndType(working,"text/plain").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION).putExtra("ownerUid",ownerUid).putExtra("cacheUri",cacheUri.toString()).putExtra("receiver",receiver);
+    try{
+      getTargetContext().startActivity(intent);if(!completed.await(20,TimeUnit.SECONDS))throw new IOException("Separate editor check timed out");
+      if(report[0]==null||!report[0].getBoolean("passed")||report[0].getInt("uid")==ownerUid)throw new IOException(report[0]==null?"Missing editor report":report[0].getString("failure","Invalid editor report"));
+      if(!MobileEditCopies.digest(cached).equals(session.getString("sourceSha256")))throw new IOException("Editor changed read cache");
+      byte[] bytes=java.nio.file.Files.readAllBytes(copies.working(copy.getString("id")).toPath());if(!new String(bytes,java.nio.charset.StandardCharsets.UTF_8).equals("Generated separate-UID edit"))throw new IOException("Separate editor did not write working bytes");
+      result.putString("result","PASS: separate app UID edited granted working URI; read-cache write refused and original retained");
+    } finally {getTargetContext().revokeUriPermission(cacheUri,Intent.FLAG_GRANT_READ_URI_PERMISSION);getTargetContext().revokeUriPermission(working,Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);cached.delete();source.delete();}
   }
   private JSONObject browse(MobileFiles files,String owner,String folder) throws Exception {return (JSONObject)files.call(new JSONObject().put("operation","browse").put("ownerId",owner).put("resourceId",folder));}
   private void backpackCheck(MobileFiles files,Bundle result) throws Exception {

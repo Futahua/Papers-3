@@ -281,3 +281,23 @@ instrumentation results. The main app's data was not wiped.
 These checks establish interrupted-upload/app-process recovery and source conflict
 for this native phone path. They do not establish a production external editor's grant,
 background-transfer lifetime, every crash point, laptop editing, or full goal completion.
+
+## Separate-UID editor grant evidence
+
+The phone's package manager reports two text EDIT handlers (iA Writer and Noteshelf).
+Intent registration alone does not establish in-place URI save behavior. A separate
+test-package Activity now checks the actual permission boundary: it asserts its UID
+differs from Papers, receives an exact read/write grant to the generated working URI,
+and edits it through ContentResolver. A separately read-granted cache URI refuses
+writing, and its original hash remains unchanged. The target instrumentation then
+verifies exact generated edited bytes and receives the separate app's UID result.
+
+This actual-phone check passed. Test grants were revoked, exact generated scratch
+cache/source files were removed, the test package was removed, and Papers reopened.
+The production provider remains non-exported with explicit URI grants; the test
+Activity exists only in the separate device-check APK. Android build includes all
+test Java sources without adding that activity to the main package.
+
+This proves a separate editor app can access only its granted working bytes through
+the tested contract. The installed production editors' import/save behavior and
+complete user flow are still unverified; phone editing controls remain hidden.

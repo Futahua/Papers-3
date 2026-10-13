@@ -34,7 +34,8 @@ run(path.join(jdk,'bin/java.exe'),['-jar',path.join(tools,'lib/apksigner.jar'),'
 if(process.argv.includes('--device-checks')){
   const testClasses=path.join(output,'test-classes'),testDex=path.join(output,'test-dex');
   await Promise.all([testClasses,testDex].map(directory=>mkdir(directory,{recursive:true})));
-  run(path.join(jdk,'bin/javac.exe'),['-source','8','-target','8','-classpath',library+path.delimiter+classes,'-d',testClasses,path.join(root,'test/DeviceCheck.java')]);
+  const testSources=(await readdir(path.join(root,'test'))).filter(name=>name.endsWith('.java')).map(name=>path.join(root,'test',name));
+  run(path.join(jdk,'bin/javac.exe'),['-source','8','-target','8','-classpath',library+path.delimiter+classes,'-d',testClasses,...testSources]);
   const jar=path.join(output,'test-classes.jar');run(path.join(jdk,'bin/jar.exe'),['cf',jar,'-C',testClasses,'.']);
   run(path.join(jdk,'bin/java.exe'),['-cp',path.join(tools,'lib/d8.jar'),'com.android.tools.r8.D8','--min-api','26','--lib',library,'--classpath',path.join(output,'classes.jar'),'--output',testDex,jar]);
   const unsigned=path.join(output,'test-unsigned.apk'),aligned=path.join(output,'test-aligned.apk');
