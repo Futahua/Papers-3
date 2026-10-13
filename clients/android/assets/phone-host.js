@@ -159,14 +159,33 @@ async function handle(type, request) {
     case 'papers:project:workspace-writer-lease-release': return {};
     case 'papers:project:file-capability': return { fileCapability: await fileCapability(request.operation, request.params || {}).catch((error) => ({ ok: false, code: 'FILE_OPERATION_FAILED', message: error.message })) };
     case 'papers:project:open-new-surface': {
-      // A device's As you Go replaces the frame; Android back returns to the phone's own.
+      // A device's As you Go opens over the phone's own; Android back returns to it.
       const next = new URL(request.url);
-      frame.src = next.pathname.replace(/^\//, '') + next.search;
+      openLayer(next.pathname.replace(/^\//, '') + next.search);
       return {};
     }
     default: throw new Error('Not available on the phone.');
   }
 }
+// The phone's own As you Go stays loaded; Proxima and a device's As you Go open in a layer over it
+// that appears only once painted in its theme, and back just removes the layer (no reload, no flash).
+let layer = null;
+function openLayer(src) {
+  const previous = layer;
+  const next = document.createElement('iframe');
+  next.className = 'papers-layer'; next.title = 'Papers'; next.style.visibility = 'hidden';
+  next.src = src; document.body.append(next); layer = next;
+  const started = Date.now();
+  const reveal = () => {
+    if (layer !== next) return;
+    const root = next.contentDocument?.documentElement;
+    // As you Go marks its theme once its document is installed; Proxima is themed by its stylesheet.
+    const ready = root && next.contentDocument.readyState === 'complete' && (src.startsWith('proxima/') || root.dataset.theme);
+    if (ready || Date.now() - started > 6000) { next.style.visibility = 'visible'; previous?.remove(); } else setTimeout(reveal, 50);
+  };
+  next.addEventListener('load', reveal);
+}
+function closeLayer() { if (!layer) return false; for (const node of document.querySelectorAll('.papers-layer')) node.remove(); layer = null; return true; }
 // Proxima on the phone shows another machine's Proxima: the last one viewed, else the first with one.
 const PROXIMA_DEVICE = 'papers-phone-proxima-device';
 async function proximaShare(ownerId) {
@@ -183,7 +202,7 @@ async function openProxima(ownerId) {
   }
   if (!ownerId) throw new Error('No computer is connected.');
   try { localStorage.setItem(PROXIMA_DEVICE, ownerId); } catch {}
-  frame.src = 'proxima/index.html?papers-phone=1&papers-device=' + ownerId;
+  openLayer('proxima/index.html?papers-phone=1&papers-device=' + ownerId);
 }
 async function proximaRequest(request) {
   if (request.operation === 'devices') return (await status()).devices || [];
@@ -194,29 +213,30 @@ async function proximaRequest(request) {
   }
   throw new Error('Not available on the phone.');
 }
+const fromPage = (source) => source === frame.contentWindow || (layer && source === layer.contentWindow);
 window.addEventListener('message', (event) => {
-  if (event.source !== frame.contentWindow) return;
+  if (!fromPage(event.source)) return;
+  const reply = (message) => event.source.postMessage(message, location.origin);
   if (event.data?.type === 'papers:phone:proxima' || event.data?.type === 'papers:proxima-device:open') { void openProxima(event.data.ownerId).catch((error) => console.error(error)); return; }
   if (event.data?.type === 'papers:proxima-device:request') {
     const { requestId } = event.data;
     proximaRequest(event.data).then(
-      (result) => frame.contentWindow.postMessage({ type: 'papers:proxima-device:result', requestId, ok: true, result }, location.origin),
-      (error) => frame.contentWindow.postMessage({ type: 'papers:proxima-device:result', requestId, ok: false, error: String(error?.message || error) }, location.origin),
+      (result) => reply({ type: 'papers:proxima-device:result', requestId, ok: true, result }),
+      (error) => reply({ type: 'papers:proxima-device:result', requestId, ok: false, error: String(error?.message || error) }),
     );
     return;
   }
   if (typeof event.data?.type !== 'string' || !event.data.requestId) return;
   const { type, requestId } = event.data;
   handle(type, event.data).then(
-    (payload) => frame.contentWindow.postMessage({ type: 'papers:host:result', requestId, ok: true, ...(payload || {}) }, location.origin),
-    (error) => frame.contentWindow.postMessage({ type: 'papers:host:result', requestId, ok: false, error: String(error?.message || error) }, location.origin),
+    (payload) => reply({ type: 'papers:host:result', requestId, ok: true, ...(payload || {}) }),
+    (error) => reply({ type: 'papers:host:result', requestId, ok: false, error: String(error?.message || error) }),
   );
 });
-// Android back: close an open preview first, then leave a device's As you Go.
+// Android back: close an open preview first, then the layer (Proxima or a device), then leave.
 window.papersBack = () => {
-  const page = frame.contentWindow;
+  const page = (layer || frame).contentWindow;
   if (page?.papersPhoneBack?.()) return true;
-  if (frame.src.includes('papers-device=') || frame.src.includes('/proxima/')) { frame.src = 'ayg/workspace-20260730b.html?papers-phone=1'; return true; }
-  return false;
+  return closeLayer();
 };
 frame.src = 'ayg/workspace-20260730b.html?papers-phone=1';
