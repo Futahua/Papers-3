@@ -167,3 +167,19 @@ The full source test run passed 1,494 tests with four skips before the additiona
 shutdown fixture; typecheck and production build passed. These are source/build
 checks. The current installed build is still the earlier overview checkpoint;
 new client controls and device verification are required before installing this slice.
+
+## Receiving PC working-copy checkpoint
+
+The desktop client can begin an owner edit session, await its verified download,
+and retain a local edit journal with separate original and working files. It reuses
+the existing checked/resumable transfer owner; it does not mutate the read cache or
+original remote file. Local files preserve a safe extension for installed editors.
+Source-copy digest checks precede retaining a ready journal, and retained originals
+are verified before recovery access. Shutdown tracks in-flight edit openings and
+prevents late downloads from starting after the client begins closing.
+
+Generated-file tests prove edited working bytes remain separate from the original
+and download cache, survive recreation of the working-copy owner, remain isolated
+by owner identity, and reject traversal/damaged originals/mismatched source content.
+Existing client checks and typecheck pass. Save/upload orchestration and the actual
+AYG editing controls are still absent; no new edit feature is installed on PC or phone.

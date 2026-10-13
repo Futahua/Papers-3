@@ -6,6 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import { AtomicJsonStore } from '../persistence/atomicStore';
 import type { RemoteFileEntry } from './remoteFileResources';
 import { RemoteFileOutbox } from './remoteFileOutbox';
+import { RemoteFileEditWorkingCopies } from './remoteFileEditWorkingCopies';
 
 interface Connection { id: string; name: string; address: string; secret: string; deviceId: string }
 interface SecretBox { seal: (value: string) => string; open: (value: string) => string }
@@ -34,9 +35,13 @@ export class RemoteFileClient {
   private readonly store: AtomicJsonStore;
   private saveQueue: Promise<unknown> = Promise.resolve();
   private readonly outbox: RemoteFileOutbox;
+  private readonly editCopies: RemoteFileEditWorkingCopies;
+  private readonly editOpenings = new Set<Promise<unknown>>();
+  private closing = false;
   constructor(private readonly directory: string, private readonly secrets: SecretBox, private readonly allowLoopback = false) {
     this.store = new AtomicJsonStore(path.join(directory, 'connections.json'), { recoveryDir: path.join(directory, 'recovery') });
     this.outbox = new RemoteFileOutbox(directory);
+    this.editCopies = new RemoteFileEditWorkingCopies(path.join(directory, 'edits'));
   }
   async initialize(): Promise<void> {
     await this.outbox.initialize();
@@ -111,6 +116,30 @@ export class RemoteFileClient {
     return structuredClone(job);
   }
   private async dispatchChange(ownerId:string,command:unknown){return (await (await this.request(ownerId,'/v1/files/changes',{},undefined,command)).json()).job;}
+  beginEdit(ownerId: string, raw: unknown) {
+    const pending = this.openEdit(ownerId, raw);
+    this.editOpenings.add(pending);
+    void pending.finally(() => this.editOpenings.delete(pending)).catch(() => {});
+    return pending;
+  }
+  private async openEdit(ownerId: string, raw: unknown) {
+    if (this.closing) throw new Error('Remote file client is closing.');
+    const file = entry(raw);
+    if (file.kind !== 'file') throw new Error('Choose a file to edit.');
+    const response = await (await this.request(ownerId, '/v1/files/edits', {}, undefined, { resourceId: file.id, sourceVersion: file.version })).json();
+    const session = response.session;
+    if (this.closing) throw new Error('Remote file client is closing.');
+    if (session?.resourceId !== file.id || session?.sourceVersion !== file.version || session?.phase !== 'editing') throw new Error('Invalid remote edit session.');
+    const job = this.download(ownerId, file);
+    await this.transfers.get(job.id);
+    const completed = this.jobs.get(job.id);
+    if (completed?.phase !== 'completed') throw new Error(completed?.error ?? 'The source download is not complete.');
+    if (this.closing) throw new Error('Remote file client is closing.');
+    const key = createHash('sha256').update(JSON.stringify([ownerId, file.id, file.version])).digest('hex');
+    return this.editCopies.create(ownerId, session, file.name, await this.cachedPath(ownerId, key));
+  }
+  localEdits(ownerId?: string) { return this.editCopies.list(ownerId); }
+  editPath(id: string) { return this.editCopies.workingPath(id); }
   async change(ownerId:string,command:unknown){return this.outbox.send(ownerId,this.connection(ownerId).deviceId,command,value=>this.dispatchChange(ownerId,value));}
   async retryChange(ownerId:string,commandId:string){return this.outbox.retry(ownerId,this.connection(ownerId).deviceId,commandId,value=>this.dispatchChange(ownerId,value));}
   async changes(ownerId:string){const jobs=(await (await this.request(ownerId,'/v1/files/changes')).json()).jobs;if(!Array.isArray(jobs))throw new Error('Invalid file request history.');await this.outbox.reconcile(ownerId,jobs);return jobs;}
@@ -175,8 +204,10 @@ export class RemoteFileClient {
     return target;
   }
   async close(): Promise<void> {
+    this.closing = true;
     for (const controller of this.controllers.values()) controller.abort();
     await Promise.allSettled([...this.transfers.values()]);
+    await Promise.allSettled([...this.editOpenings]);
     await this.saveQueue;
     await this.outbox.close();
   }
