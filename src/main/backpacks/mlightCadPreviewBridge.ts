@@ -53,6 +53,9 @@ function findInstallationRoot(explicit?: string): string | null {
     explicit,
     process.env['PAPERS_MLIGHTCAD_PREVIEW_ROOT'],
     DEFAULT_ROOT,
+    // Beside the Papers installation (<root>\App\Papers.exe -> <root>\Tools\MLightCADPreview), so a
+    // computer without that drive (LapDog) finds its copy too.
+    path.resolve(path.dirname(process.execPath), '..', 'Tools', 'MLightCADPreview'),
   ].filter((item): item is string => Boolean(item));
   for (const candidate of candidates) {
     const cli = path.join(candidate, 'node_modules', '@mlightcad', 'cad-simple-viewer-cli', 'dist', 'cli.js');
@@ -113,8 +116,10 @@ export function createMlightCadPreviewBridge(input: {
   const node = findNode();
   if (!installationRoot || !node) return null;
   const playwrightRoot = findPlaywrightRoot(installationRoot, input.playwrightRoot);
-  // Never allow Playwright to silently fall back to a C: user cache on this machine.
-  if (!playwrightRoot || path.parse(playwrightRoot).root.toUpperCase() !== 'D:\\') return null;
+  // Never let Playwright silently fall back to its default per-user cache; an explicit folder (the
+  // environment's, or ms-playwright beside the installation) is required, on any drive (LapDog has only C:).
+  const defaultCache = path.join(process.env['LOCALAPPDATA'] ?? '', 'ms-playwright').toLowerCase();
+  if (!playwrightRoot || path.resolve(playwrightRoot).toLowerCase() === path.resolve(defaultCache)) return null;
 
   const packageRoot = path.join(installationRoot, 'node_modules', '@mlightcad', 'cad-simple-viewer-cli');
   const cli = path.join(packageRoot, 'dist', 'cli.js');
