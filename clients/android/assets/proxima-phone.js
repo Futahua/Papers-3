@@ -142,13 +142,13 @@ html body button.proxima-phone-history.is-pressed{opacity:1;background:color-mix
   const ownerId = new URL(location.href).searchParams.get('papers-device');
   // The phone may know a PC by another id than Proxima's table, so the PC's name (set once its
   // snapshot loads) is passed too; the palette is applied again whenever that name changes.
-  if (ownerId) import(new URL('device-theme.js', location.href).href).then(({ applyDeviceTheme }) => {
+  if (ownerId) import(new URL('device-theme.js?v=one-palette', location.href).href).then(({ applyDeviceTheme }) => {
     const apply = () => applyDeviceTheme(document, { id: ownerId, name: document.documentElement.dataset.device || '' });
     apply();
     new MutationObserver(apply).observe(document.documentElement, { attributes: true, attributeFilter: ['data-device'] });
   }).catch(() => {});
-  // The phone's own Proxima is the phone's palette: grey.
-  else import(new URL('device-theme.js', location.href).href).then(({ applyDeviceTheme }) => applyDeviceTheme(document, { id: 'local', kind: 'phone' })).catch(() => {});
+  // The phone's own Proxima: device-theme.js gives every device the same palette.
+  else import(new URL('device-theme.js?v=one-palette', location.href).href).then(({ applyDeviceTheme }) => applyDeviceTheme(document, { id: 'local', kind: 'phone' })).catch(() => {});
 
   // Undo / redo at the bottom right: the same Z / Y the PC's keyboard sends (the owner applies them).
   function historyButtons() {
