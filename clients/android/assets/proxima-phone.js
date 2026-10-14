@@ -147,6 +147,8 @@ html body button.proxima-phone-history.is-pressed{opacity:1;background:color-mix
     apply();
     new MutationObserver(apply).observe(document.documentElement, { attributes: true, attributeFilter: ['data-device'] });
   }).catch(() => {});
+  // The phone's own Proxima is the phone's palette: grey.
+  else import(new URL('device-theme.js', location.href).href).then(({ applyDeviceTheme }) => applyDeviceTheme(document, { id: 'local', kind: 'phone' })).catch(() => {});
 
   // Undo / redo at the bottom right: the same Z / Y the PC's keyboard sends (the owner applies them).
   function historyButtons() {
