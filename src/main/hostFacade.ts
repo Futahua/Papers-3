@@ -1,3 +1,4 @@
+import { zoomedRect } from './zoomedRect';
 import {restoredDeviceUrl} from '../shared/inlineDeviceTopology';
 
 import { randomUUID } from 'node:crypto';
@@ -1284,7 +1285,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const baseHost = this.deps.filePreviewHostForSender?.(senderId);
     const nativePreviewHost = baseHost && scope ? { ...baseHost,
       layoutKey: `${baseHost.layoutKey ?? baseHost.ownerKey}:embedded:${scope.backpackId}:${scope.rootGroupId}` } : baseHost ?? undefined;
-    return this.deps.fileCapability.call(request, { backpackId, ...(nativePreviewHost ? { nativePreviewHost } : {}) });
+    return this.deps.fileCapability.call(zoomedRect(request, webContents.fromId(senderId)?.getZoomFactor?.() ?? 1), { backpackId, ...(nativePreviewHost ? { nativePreviewHost } : {}) });
   }
 
   async openBackpackProjectWebLink(senderId: number, url: string, workspaceOrigin?: string): Promise<void> {
