@@ -40,6 +40,7 @@ export async function createRemoteFileGateway(options: {
   edits?: RemoteFileEditOwner;
   /** Where files dropped on this computer from another device land by default. */
   inboxDirectory?: string;
+  inbox?:{get:()=>Promise<{path:string;chosen:boolean}>;set:(parts:string[]|null)=>Promise<{path:string;chosen:boolean}>};
   /** Runs this computer's own preview of a file; only self-contained results (text, image data) are returned. */
   preview?: (target: string) => Promise<Record<string, unknown>>;
   /** As you Go workspaces on this computer that same-account devices may open and edit. */
@@ -50,7 +51,15 @@ export async function createRemoteFileGateway(options: {
     icon: (projectId: string, name: string) => Promise<{ bytes: Buffer; type: string }>;
   };
   search?: (query: string, limit: number) => Promise<{ results: { path: string; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[] }>;
-  backpackSnapshot?: (share:RemoteBackpackShare) => Promise<unknown>;
+  backpackSnapshot?: (share:RemoteBackpackShare,control?:boolean) => Promise<unknown>;
+  backpackCommand?: (share:RemoteBackpackShare,command:Record<string,unknown>) => Promise<unknown>;
+  /** A paired device that owns no gateway (the phone) publishes its own Proxima here for this computer to view. */
+  peerProxima?: (deviceId: string, snapshot: Record<string, unknown>) => Promise<void>;
+  peerConnect?: (peerAddress: string, grantDeviceId: string, invitation: unknown) => Promise<void>;
+  /** Replaces this computer's shared Proxima with another device's (after a backup), by its owner. */
+  backpackReplace?: (share: RemoteBackpackShare, projection: Record<string, unknown>) => Promise<unknown>;
+  /** A replacement another computer left for a gateway-less device (the phone) to collect. */
+  peerReplacement?: { take: (deviceId: string) => Promise<unknown>; clear: (deviceId: string) => Promise<void> };
 }): Promise<{ server: Server; revoke: (deviceId: string) => void; close: () => Promise<void> }> {
   const devices = new Map<string, { grant: RemoteFileGrant; catalog: RemoteFileResources; responses: Set<ServerResponse> }>();
   const tokenHashes = new Set<string>();
@@ -107,11 +116,54 @@ export async function createRemoteFileGateway(options: {
     if (!device) { json(response, 401, { ok: false, code: 'DEVICE_UNAUTHORIZED' }); return; }
     device.responses.add(response);
     response.once('close', () => device.responses.delete(response));
+    if (request.url === '/v1/peer/connect' && request.method === 'PUT') {
+      try {
+        if (!options.peerConnect) throw new Error('Phone sharing is not ready.');
+        let body = ''; for await (const chunk of request) { body += chunk.toString('utf8'); if (Buffer.byteLength(body) > 4096) throw new Error('Peer invitation is too large.'); }
+        const peer = (request.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
+        await options.peerConnect(peer, device.grant.deviceId, JSON.parse(body));
+        json(response, 200, { ok: true });
+      } catch (error) { json(response, 403, { ok: false, code: 'PEER_CONNECT_REFUSED', message: error instanceof Error ? error.message : 'Phone sharing was refused.' }); }
+      return;
+    }
     if (await handleRemoteFileEditRoute(request, response, {
       deviceId: device.grant.deviceId, canWrite: device.grant.canWrite === true,
       catalog: device.catalog, owner: options.edits, json,
       authorize: () => { if (devices.get(device.grant.deviceId) !== device || response.destroyed) throw new Error('Device access was revoked.'); },
     })) return;
+    if(request.url==='/v1/peer/proxima'&&request.method==='PUT'){
+      if(!options.peerProxima){json(response,503,{ok:false,code:'PEER_PROXIMA_UNAVAILABLE'});return;}
+      try{
+        const chunks:Buffer[]=[];let size=0;for await(const chunk of request){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>16*1024*1024)throw Error('Proxima snapshot is too large.');chunks.push(bytes);}
+        const snapshot=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(!snapshot||typeof snapshot!=='object'||Array.isArray(snapshot)||!snapshot.records||typeof snapshot.records!=='object'||!snapshot.source||typeof snapshot.source!=='object')throw Error('Invalid Proxima snapshot.');
+        if(devices.get(device.grant.deviceId)!==device)return;
+        await options.peerProxima(device.grant.deviceId,snapshot);
+        json(response,200,{ok:true});
+      }catch(error){if(!response.destroyed)json(response,400,{ok:false,code:'PEER_PROXIMA_INVALID',message:error instanceof Error?error.message:'Invalid Proxima snapshot.'});}
+      return;
+    }
+    if(request.url==='/v1/peer/proxima/replacement'&&(request.method==='GET'||request.method==='DELETE')){
+      if(!options.peerReplacement){json(response,503,{ok:false,code:'PEER_PROXIMA_UNAVAILABLE'});return;}
+      if(request.method==='DELETE'){await options.peerReplacement.clear(device.grant.deviceId);json(response,200,{ok:true});return;}
+      json(response,200,{ok:true,replacement:await options.peerReplacement.take(device.grant.deviceId)});return;
+    }
+    const replaceMatch=/^\/v1\/backpacks\/([a-f0-9-]{36})\/replace$/.exec(request.url??'');
+    if(replaceMatch&&request.method==='POST'){
+      const share=device.grant.backpacks?.find(item=>item.id===replaceMatch[1]);
+      if(!share){json(response,403,{ok:false,code:'BACKPACK_NOT_GRANTED'});return;}
+      if(!device.grant.canWrite){json(response,403,{ok:false,code:'BACKPACK_READ_ONLY'});return;}
+      if(!options.backpackReplace){json(response,503,{ok:false,code:'BACKPACK_OWNER_UNAVAILABLE'});return;}
+      try{
+        const chunks:Buffer[]=[];let size=0;for await(const chunk of request){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>16*1024*1024)throw Error('Proxima data is too large.');chunks.push(bytes);}
+        const projection=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(!projection||typeof projection!=='object'||Array.isArray(projection)||!projection.records||!projection.source)throw Error('Invalid Proxima data.');
+        if(devices.get(device.grant.deviceId)!==device)return;
+        const result=await options.backpackReplace(share,projection);
+        if(!response.destroyed)json(response,200,{ok:true,owner:options.owner,resourceId:share.id,kind:share.kind,result});
+      }catch(error){if(!response.destroyed)json(response,503,{ok:false,code:'BACKPACK_REPLACE_UNCONFIRMED',message:error instanceof Error?error.message:'The owner did not replace its Proxima.'});}
+      return;
+    }
     if(request.url==='/v1/files/changes'&&request.method==='GET') { json(response,200,{ok:true,jobs:options.changes?.(device.grant.deviceId)??[]});return; }
     if(request.url==='/v1/files/changes'&&request.method==='POST') {
       if(device.grant.canWrite!==true||!options.mutate){json(response,403,{ok:false,code:'FILE_CHANGES_NOT_GRANTED'});return;}
@@ -154,7 +206,16 @@ export async function createRemoteFileGateway(options: {
       if (device.grant.canWrite !== true) { json(response, 403, { ok: false, code: 'FILE_CHANGES_NOT_GRANTED' }); return; }
       try {
         if (upload[1] === 'inbox' && request.method === 'GET') {
-          json(response, 200, { ok: true, ...await device.catalog.inbox(options.inboxDirectory ?? path.join(os.homedir(), 'Downloads', 'Papers Inbox')) });
+          const selected=options.inbox?await options.inbox.get():{path:options.inboxDirectory??path.join(os.homedir(),'Downloads','Papers Inbox'),chosen:false};
+          json(response, 200, { ok: true, ...await device.catalog.inbox(selected.path),chosen:selected.chosen });
+          return;
+        }
+        if(upload[1]==='inbox'&&request.method==='POST'){
+          if(!options.inbox)throw Error('Inbox settings are unavailable on this owner.');
+          let raw='';for await(const chunk of request){raw+=chunk.toString();if(Buffer.byteLength(raw)>32768)throw Error('Inbox settings are too large.');}
+          const body=JSON.parse(raw);if(body.parts!==null&&(!Array.isArray(body.parts)||body.parts.length>128||body.parts.some((part:unknown)=>typeof part!=='string'||!part||/[\\/\x00]/.test(part as string)||part==='.'||part==='..')))throw Error('Invalid inbox folder.');
+          const selected=await options.inbox.set(body.parts);
+          json(response,200,{ok:true,...await device.catalog.inbox(selected.path),chosen:selected.chosen});
           return;
         }
         if (upload[1] !== 'inbox' && request.method === 'PUT') {
@@ -171,6 +232,21 @@ export async function createRemoteFileGateway(options: {
       }
       return;
     }
+    const commandMatch=/^\/v1\/backpacks\/([a-f0-9-]{36})\/commands$/.exec(request.url??'');
+    if(commandMatch&&request.method==='POST'){
+      const share=device.grant.backpacks?.find(item=>item.id===commandMatch[1]);
+      if(!share){json(response,403,{ok:false,code:'BACKPACK_NOT_GRANTED'});return;}
+      if(!device.grant.canWrite){json(response,403,{ok:false,code:'BACKPACK_READ_ONLY'});return;}
+      if(!options.backpackCommand){json(response,503,{ok:false,code:'BACKPACK_OWNER_UNAVAILABLE'});return;}
+      try{
+        const chunks:Buffer[]=[];let size=0;for await(const chunk of request){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>256*1024)throw Error('Backpack command is too large.');chunks.push(bytes);}
+        const command=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if(!command||typeof command!=='object'||Array.isArray(command)||typeof command.commandId!=='string'||!command.commandId||command.commandId.length>256||!Number.isSafeInteger(command.expectedSeq)||command.expectedSeq<0||typeof command.type!=='string'||! /^(?:task|project|run|schedule-event|timeline-interval|timeline-queue)\.[a-z.-]+$|^timeline\.(?:undo|redo)$/.test(command.type))throw Error('Invalid Proxima command.');
+        if(devices.get(device.grant.deviceId)!==device)return;
+        const result=await options.backpackCommand(share,command);
+        if(devices.get(device.grant.deviceId)===device&&!response.destroyed)json(response,200,{ok:true,owner:options.owner,resourceId:share.id,kind:share.kind,...result as Record<string,unknown>});
+      }catch(error){if(!response.destroyed)json(response,503,{ok:false,code:'BACKPACK_COMMAND_UNCONFIRMED',message:error instanceof Error?error.message:'Owner did not confirm the command.'});}return;
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') { json(response, 405, { ok: false, code: 'OPERATION_UNSUPPORTED' }); return; }
     try {
       const url = new URL(request.url ?? '/', 'http://gateway.invalid');
@@ -182,7 +258,7 @@ export async function createRemoteFileGateway(options: {
         const share=device.grant.backpacks?.find(item=>item.id===backpackMatch[1]);
         if(!share){json(response,403,{ok:false,code:'BACKPACK_NOT_GRANTED'});return;}
         if(!options.backpackSnapshot){json(response,503,{ok:false,code:'BACKPACK_OWNER_UNAVAILABLE'});return;}
-        try{const snapshot=await options.backpackSnapshot(share);if(devices.get(device.grant.deviceId)!==device||response.destroyed)return;json(response,200,{ok:true,owner:options.owner,resourceId:share.id,kind:share.kind,snapshot});}
+        try{const control=url.searchParams.get('control')==='1';if(control&&!device.grant.canWrite){json(response,403,{ok:false,code:'BACKPACK_READ_ONLY'});return;}const snapshot=await (control?options.backpackSnapshot(share,true):options.backpackSnapshot(share));if(devices.get(device.grant.deviceId)!==device||response.destroyed)return;json(response,200,{ok:true,owner:options.owner,resourceId:share.id,kind:share.kind,snapshot});}
         catch{if(!response.destroyed)json(response,503,{ok:false,code:'BACKPACK_OWNER_UNAVAILABLE'});}return;
       }
       if (url.pathname === '/v1/files/search') {

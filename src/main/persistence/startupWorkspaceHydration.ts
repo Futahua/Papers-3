@@ -4,6 +4,7 @@ import {
   type WorkspaceSurface,
 } from '@shared/workspaceTopology';
 import type { SelectedWorkspaceSnapshot } from './workspaceTopologyStore';
+import {restoredDeviceUrl} from '@shared/inlineDeviceTopology';
 
 export interface HydratedWorkspaceProject {
   surfaceId: string;
@@ -57,7 +58,7 @@ async function hydrateStartupWorkspaceUngated(
       if (!backpack) throw new Error(`Backpack ${oldSurface.projectId} is not available.`);
       const project = await deps.openProject(oldSurface.projectId);
       if (!project) throw new Error(`Backpack ${oldSurface.projectId} has no usable project surface.`);
-      opened.push({ old: oldSurface, fresh: { ...oldSurface, url: project.url } });
+      opened.push({ old: oldSurface, fresh: { ...oldSurface, url: restoredDeviceUrl(project.url,oldSurface) } });
     }
     // Availability may change while the asynchronous project lookups above
     // are in flight. Recheck the complete set before any allocation.

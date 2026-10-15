@@ -62,3 +62,12 @@ it('keeps a second client on the same machine from revoking the first', async ()
   expect(check.replaced).toEqual([]);
   expect(store.snapshot().devices.map(device => device.deviceId).sort()).toEqual([papers.deviceId, check.deviceId].sort());
 });
+it('renews authentication while retaining the same granted Proxima identity',async()=>{
+ const {store,shares}=await fixture(),projectId='bp-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+ const firstShare={id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',projectId,name:'Proxima',kind:'proxima' as const};
+ const first=await store.admit('7338249508159368','LapDog',shares,true,[firstShare]);
+ const second=await store.admit('7338249508159368','LapDog',shares,true,[{...firstShare,id:'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'}]);
+ expect(second.token).not.toBe(first.token);expect(second.replaced).toEqual([first.deviceId]);expect(store.snapshot().devices[0]!.backpacks?.[0]?.id).toBe(firstShare.id);
+ const independent=await store.admit('7338249508159368','Separate client',shares,true,[{...firstShare,id:'cccccccc-cccc-cccc-cccc-cccccccccccc'}]);
+ expect(store.snapshot().devices.find(d=>d.deviceId===independent.deviceId)?.backpacks?.[0]?.id).toBe('cccccccc-cccc-cccc-cccc-cccccccccccc');
+});

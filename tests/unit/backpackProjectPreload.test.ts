@@ -188,6 +188,7 @@ describe('Backpack project protocol alignment', () => {
       'host:backpack-project:open-new-surface',
       'papers-backpack://ayg-child/open/one/public/workspace.html?papers-file-preview=abc',
       'papers-backpack://ayg-child',
+      undefined, // no inline native group requested
     );
     expect(posts).toContainEqual(expect.objectContaining({
       type: 'papers:host:result', requestId: 'surface-child-1', ok: true,

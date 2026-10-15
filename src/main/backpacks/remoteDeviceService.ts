@@ -16,10 +16,16 @@ export class RemoteDeviceService {
   private failure: string | null = null;
   mutations: RemoteFileMutations | null = null;
   edits: RemoteFileEditOwner | null = null;
-  readBackpack: ((share:RemoteBackpackShare)=>Promise<unknown>) | null = null;
+  readBackpack: ((share:RemoteBackpackShare,control?:boolean)=>Promise<unknown>) | null = null;
+  commandBackpack: ((share:RemoteBackpackShare,command:Record<string,unknown>)=>Promise<unknown>) | null = null;
+  peerProxima: ((deviceId:string,snapshot:Record<string,unknown>)=>Promise<void>) | null = null;
+  peerConnect: ((peerAddress:string,grantDeviceId:string,invitation:unknown)=>Promise<void>) | null = null;
+  replaceBackpack: ((share:RemoteBackpackShare,projection:Record<string,unknown>)=>Promise<unknown>) | null = null;
+  peerReplacement: { take:(deviceId:string)=>Promise<unknown>; clear:(deviceId:string)=>Promise<void> } | null = null;
   workspaces: Parameters<typeof createRemoteFileGateway>[0]['workspaces'] | null = null;
   preview: ((target:string)=>Promise<Record<string,unknown>>) | null = null;
   search: ((query:string,limit:number)=>Promise<{results:{path:string;name:string;kind:'file'|'folder';size:number|null;modifiedAt:number|null}[]}>) | null = null;
+  inbox:Parameters<typeof createRemoteFileGateway>[0]['inbox']|null=null;
   /** What a device on the creator's own Tailscale account receives when it joins. */
   defaultGrant: (() => Promise<{ shares: RemoteFileShare[]; canWrite: boolean; backpacks: RemoteBackpackShare[] }>) | null = null;
   private readonly configuration: AtomicJsonStore;
@@ -45,11 +51,17 @@ export class RemoteDeviceService {
     const devices = this.devices;
     const snapshot = devices.snapshot();
     const gateway = await createRemoteFileGateway({ owner: snapshot.owner, grants: snapshot.devices,
+      inbox:{get:()=>{if(!this.inbox)throw Error('Inbox settings are unavailable.');return this.inbox.get();},set:parts=>{if(!this.inbox)throw Error('Inbox settings are unavailable.');return this.inbox.set(parts);}},
       edits: this.edits ?? undefined,
       workspaces:{list:()=>this.workspaces?.list()??Promise.resolve([]),load:projectId=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.load(projectId);},save:(projectId,raw,revision)=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.save(projectId,raw,revision);},icon:(projectId,name)=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.icon(projectId,name);}},
       preview:target=>{if(!this.preview)throw Error('Previews are unavailable.');return this.preview(target);},
       search:(query,limit)=>{if(!this.search)throw Error('Search is unavailable on this computer.');return this.search(query,limit);},
-      backpackSnapshot:share=>{if(!this.readBackpack)throw Error('Backpack execution owner is unavailable.');return this.readBackpack(share);},
+      backpackSnapshot:(share,control)=>{if(!this.readBackpack)throw Error('Backpack execution owner is unavailable.');return this.readBackpack(share,control);},
+      backpackCommand:(share,command)=>{if(!this.commandBackpack)throw Error('Backpack execution owner is unavailable.');return this.commandBackpack(share,command);},
+      peerProxima:(deviceId,snapshot)=>{if(!this.peerProxima)throw Error('Peer Proxima storage is unavailable.');return this.peerProxima(deviceId,snapshot);},
+      peerConnect:async(peer,deviceId,invitation)=>{await sameAccountNode(peer);if(!this.peerConnect)throw Error('Phone sharing is not ready.');await this.peerConnect(peer,deviceId,invitation);},
+      backpackReplace:(share,projection)=>{if(!this.replaceBackpack)throw Error('Backpack execution owner is unavailable.');return this.replaceBackpack(share,projection);},
+      peerReplacement:{take:deviceId=>this.peerReplacement?this.peerReplacement.take(deviceId):Promise.resolve(null),clear:deviceId=>this.peerReplacement?this.peerReplacement.clear(deviceId):Promise.resolve()},
       mutate:async(deviceId,catalog,request)=>{if(!this.mutations)throw new Error('File changes are unavailable.');return this.mutations.submit(deviceId,catalog,request);},
       changes:deviceId=>this.mutations?.list(deviceId)??[],revokeChanges:deviceId=>this.mutations?.revoke(deviceId),
       join: async (peer, name) => {

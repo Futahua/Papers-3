@@ -1,7 +1,8 @@
 import type { NativePaneSnapshot } from '../main/backpacks/nativePaneBridge';
-import { ipcRenderer, webUtils } from 'electron';
+import { ipcRenderer, webFrame, webUtils } from 'electron';
 
 interface ProjectMessage {
+  inlineGroupId?: unknown;
   /** The local-service capability adds `method`, `headers` and `body` to the
    * request shape. `url` already exists below, and a page never supplies the
    * credential. */
@@ -472,7 +473,7 @@ window.addEventListener('message', (event) => {
     }).then((payload) => ({ delegateWave: payload }));
   }
   if (request.type === 'papers:project:open-web-link' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-web-link', request.url, ...workspaceOriginArgs);
-  if (request.type === 'papers:project:open-new-surface' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-new-surface', request.url, ...workspaceOriginArgs);
+  if (request.type === 'papers:project:open-new-surface' && typeof request.url === 'string') task = ipcRenderer.invoke('host:backpack-project:open-new-surface', request.url, workspaceOriginArgs[0], request.inlineGroupId);
   if (request.type === 'papers:project:command-surface-dismiss') {
     const keys = request.destination === undefined
       ? ['type', 'requestId']
@@ -1043,6 +1044,12 @@ window.addEventListener('message', (event) => {
   if (event.source !== window || event.origin !== window.location.origin) return;
   const request = event.data as ProjectMessage;
   if (!request || typeof request.type !== 'string') return;
+  // A page scales itself with real page zoom, so layout, viewport units and pointer coordinates stay consistent.
+  if (request.type === 'papers:project:page-zoom') {
+    const factor = (request as Record<string, unknown>).factor;
+    if (exactKeys(request as Record<string, unknown>, ['type', 'factor']) && typeof factor === 'number' && Number.isFinite(factor) && factor >= 0.5 && factor <= 2.5) webFrame.setZoomFactor(factor);
+    return;
+  }
   if (request.type === 'papers:project:detach-flush-ack') {
     if (!detachedToken || !detachedTransferId || request.transferId !== detachedTransferId) {
       immediateHostError(request.requestId, event.origin, 'detached flush acknowledgement is malformed');

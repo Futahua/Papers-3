@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import type {InboxNode} from './inboxTransfers';
 import type { RemoteFileEntry } from './remoteFileResources';
 
 /**
@@ -25,8 +26,11 @@ export interface RemotePathClient {
   change(ownerId: string, command: unknown): Promise<unknown>;
   changes(ownerId: string): Promise<{ commandId: string; phase: string; error?: string }[]>;
   materialize(ownerId: string, entry: unknown): Promise<string>;
+  ownerPreview?(ownerId: string, entry: unknown): Promise<Record<string, unknown> | null>;
+  isCached?(ownerId: string, entry: unknown): Promise<boolean>;
   upload(ownerId: string, folderId: string, localFile: string, name: string): Promise<RemoteFileEntry>;
-  inbox(ownerId: string): Promise<{ entry: RemoteFileEntry; parts: string[] }>;
+  inbox(ownerId: string): Promise<{ entry: RemoteFileEntry; parts: string[];chosen?:boolean }>;
+  setInbox?:(ownerId:string,parts:string[]|null)=>Promise<{entry:RemoteFileEntry;parts:string[];chosen?:boolean}>;
   search(ownerId: string, query: string, limit: number): Promise<{ parts: string[]; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[]>;
 }
 type Resolved = { ownerId: string; parts: string[]; entry: RemoteFileEntry | null };
@@ -176,13 +180,24 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
     if (chosen) return { path: await ensureFolder(ownerId, chosen), parts: chosen, chosen: true };
     const fallback = await client.inbox(ownerId);
     forget(ownerId);
-    return { path: remotePath(ownerId, fallback.parts), parts: fallback.parts, chosen: false };
+    return { path: remotePath(ownerId, fallback.parts), parts: fallback.parts, chosen: fallback.chosen===true };
   }
 
   return {
+    copyToFolder:copyAcross,
+    async planImport(paths:string[]):Promise<InboxNode[]>{
+      let count=0;
+      const fresh=async(ownerId:string,id?:string)=>{const all:RemoteFileEntry[]=[];let offset:number|null=0;while(offset!==null){// A listing that fails is retried, never answered from cache; the device's own error is kept.
+        let page:{entries:RemoteFileEntry[];nextOffset:number|null;online:boolean;error?:string}=await client.browse(ownerId,id,offset).catch(error=>({entries:[],nextOffset:null,online:false,error:error instanceof Error?error.message:String(error)}));
+        for(let attempt=1;!page.online&&attempt<4;attempt++){await new Promise(resolve=>setTimeout(resolve,attempt*700));page=await client.browse(ownerId,id,offset).catch(error=>({entries:[],nextOffset:null,online:false,error:error instanceof Error?error.message:String(error)}));}
+        if(!page.online)throw Error('The source device did not answer: '+((page as {error?:string}).error||'unavailable')+'. Resume to try again.');all.push(...page.entries);offset=page.nextOffset;}return all;};
+      const walk=async(source:string,ownerId:string,entry:RemoteFileEntry,depth:number):Promise<InboxNode>=>{if(++count>100000||depth>128)throw Error('The selected folder is too large or deeply nested.');const children:InboxNode[]=[];if(entry.kind==='folder')for(const child of await fresh(ownerId,entry.id))children.push(await walk(source+'\\'+child.name,ownerId,child,depth+1));return {source,ownerId,entry,children};};
+      const roots:InboxNode[]=[];for(const source of paths){const parsed=parseRemotePath(source);if(!parsed||!parsed.parts.length)throw Error('Select a file or folder on a device.');let current:RemoteFileEntry|undefined;for(const part of parsed.parts){current=(await fresh(parsed.ownerId,current?.id)).find(item=>item.name.toLowerCase()===part.toLowerCase());if(!current)throw Error('The selected source is no longer available.');}roots.push(await walk(source,parsed.ownerId,current!,0));}return roots;
+    },
     inbox,
     /** Sets a device's inbox from a path as typed on that device (C:\Users\me\Inbox); null restores the default. */
     async setInbox(ownerId: string, text: string | null): Promise<{ path: string; parts: string[]; chosen: boolean }> {
+      if(client.setInbox){const parts=text===null?null:text.trim().replace(/\//g,'\\').split('\\').filter(Boolean);if(parts&&(!parts.length||parts.some(part=>part==='.'||part==='..')))throw Error('Choose a valid inbox folder.');const selected=await client.setInbox(ownerId,parts);return {path:remotePath(ownerId,selected.parts),parts:selected.parts,chosen:selected.chosen===true};}
       const all = await readInboxes();
       if (text === null || !text.trim()) delete all[ownerId];
       else {
@@ -221,7 +236,8 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
         }
         case 'stat': {
           const { ownerId, parts, entry } = await resolve(params.path);
-          return { ok: true, entry: describe(ownerId, parts, entry) };
+          const cached = entry?.kind === 'file' && client.isCached ? await client.isCached(ownerId, entry).catch(() => false) : false;
+          return { ok: true, entry: { ...describe(ownerId, parts, entry), cached } };
         }
         case 'list': {
           const { ownerId, parts, entry } = await resolve(params.path);
@@ -283,6 +299,20 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
           }
           return { ok: true, operation };
         }
+        case 'preview': {
+          if (isRemotePath(params.path) && params.skipWindowsPreview !== true) {
+            const { ownerId, parts, entry } = await resolve(params.path);
+            if (entry && entry.kind === 'file') {
+              // The owner renders images and text itself: no download. Only formats that need the file
+              // (PDF, media, Office) download a copy, and above 100 MB only once the creator agrees.
+              const rendered = client.ownerPreview ? await client.ownerPreview(ownerId, entry).catch(() => null) : null;
+              if (rendered) return { ok: true, entry: describe(ownerId, parts, entry), preview: { ...rendered, extractedBy: 'owner-preview' } };
+              if (entry.size > 100 * 1024 * 1024 && params.allowLargeDownload !== true && !(client.isCached && await client.isCached(ownerId, entry).catch(() => false)))
+                return { ok: false, code: 'LARGE_DOWNLOAD_CONFIRM', size: entry.size, entry: describe(ownerId, parts, entry), message: 'This file is larger than 100 MB.' };
+            }
+          }
+        }
+        // falls through: a preview that needs the file itself downloads a verified copy
         default: {
           // Previews and every other read of one file run on a verified local copy of it.
           if (!isRemotePath(params.path)) return { ok: false, code: 'REMOTE_UNSUPPORTED', message: 'Not available for files on another device yet.' };

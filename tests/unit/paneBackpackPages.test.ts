@@ -2,6 +2,16 @@ import { expect, it, vi } from 'vitest';
 import { createPaneBackpackPages, type PanePage } from '../../src/main/backpacks/paneBackpackPages';
 import type { NativePaneBridge, NativePaneSnapshot } from '../../src/main/backpacks/nativePaneBridge';
 
+it('admits a device view from its own parent while still refusing an ordinary recursive AYG page',async()=>{
+ const pages:PanePage[]=[{windowId:1,surfaceId:'parent',key:'parent-key',projectId:'ayg',title:'Files'},{windowId:1,surfaceId:'remote',key:'remote-key',projectId:'ayg',title:'Phone',deviceId:'phone',inlineParentKey:'parent-key'}];
+ const snapshot={binding:'b',stateRevision:1,geometryRevision:1,presented:true,groups:[{id:'main',tabs:[],content:{x:0,y:0,width:800,height:600},slot:{x:0,y:0,width:800,height:600}}]} as unknown as NativePaneSnapshot;
+ const bridge={snapshot:()=>snapshot,has:()=>true,canFitPageGroup:async()=>true} as unknown as NativePaneBridge;
+ const owner=createPaneBackpackPages({bridge:()=>bridge,pages:()=>pages,outer:()=>({bounds:null,visible:false}),present:vi.fn(),adopt:vi.fn(),exists:async()=>true});
+ expect((await owner.check('1:parent','remote','main','center')).ok).toBe(true);
+ pages[1]!.inlineParentKey='wrong';expect((await owner.check('1:parent','remote','main','center')).ok).toBe(false);
+ delete pages[1]!.deviceId;delete pages[1]!.inlineParentKey;expect((await owner.check('1:parent','remote','main','center')).ok).toBe(false);
+});
+
 it('refreshes retained page titles without selecting, moving or recreating their tab, including after hidden-page presentation', async () => {
  const pages: PanePage[] = [{windowId:1,surfaceId:'parent',key:'parent',projectId:'ayg',title:'Files'},
   {windowId:1,surfaceId:'child',key:'child',projectId:'proxima',title:'21:55',tabStyle:'proxima'}];

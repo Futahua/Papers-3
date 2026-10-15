@@ -58,6 +58,7 @@ export interface FileCapabilityDeps {
   remotePaths?: RemotePaths;
   panePageDrag?:()=>string|null;
   panePages?:{check:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>;attach:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>};
+  closeInlineDevice?: (owner:string)=>Promise<void>;
   trashPath?: (target: string) => Promise<void>;
   runtimeControl?: ReturnType<typeof createCapabilityRuntimeService>;
   everythingSearch: EverythingSearchBridge | null;
@@ -837,7 +838,8 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
       const operation = typeof raw.operation === 'string' ? raw.operation : '';
       const params = isRecord(raw.params) ? raw.params : {};
       try {
-        const remote = await deps.remotePaths?.handle(operation, params, (next, nextParams) => service.call({ operation: next, params: nextParams }, context));
+        // remote-files requests name device paths as data (an inbox download), not as files to act on here.
+        const remote = operation === 'remote-files' ? null : await deps.remotePaths?.handle(operation, params, (next, nextParams) => service.call({ operation: next, params: nextParams }, context));
         if (remote) return remote;
         switch (operation) {
           case 'remote-files':
@@ -1061,6 +1063,10 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;
             if (!bridge || !owner || !bridge.has(owner)) return { ok: false, message: 'Window layout is not mounted.' };
             return bridge.open(owner, boundedString(params.source, 'source', 8192), boundedString(params.url, 'url', 8192), boundedString(params.groupId, 'groupId', 64));
+          }
+          case 'pane-inline-device-close': {
+            const owner=context.nativePreviewHost?.ownerKey;if(!owner||!deps.closeInlineDevice)return {ok:false,message:'The inline device view is unavailable.'};
+            await deps.closeInlineDevice(owner);return {ok:true};
           }
           case 'pane-layout-viewport': {
             const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;

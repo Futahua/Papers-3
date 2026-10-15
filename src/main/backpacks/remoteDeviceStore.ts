@@ -95,8 +95,12 @@ export class RemoteDeviceStore {
       if (!validBackpacks(backpacks)) throw new Error('Invalid Backpack selection.');
       await RemoteFileResources.create(shares);
       const token = randomBytes(32).toString('base64url');
-      const device: Device = { deviceId: randomUUID(), name: name.trim(), pairedAt: this.now(), node, tokenHash: remoteTokenHash(token), shares: structuredClone(shares), canWrite, backpacks: structuredClone(backpacks) };
       const sameClient = (item: Device) => item.node === node && item.name === name.trim();
+      const previous=this.state.devices.find(sameClient);
+      // Authentication renews; a retained Proxima view/follow still addresses the
+      // same granted Backpack after the client's periodic same-account rejoin.
+      const retainedBackpacks=backpacks.map(share=>({...share,id:previous?.backpacks?.find(item=>item.projectId===share.projectId&&item.kind===share.kind)?.id??share.id}));
+      const device: Device = { deviceId: randomUUID(), name: name.trim(), pairedAt: this.now(), node, tokenHash: remoteTokenHash(token), shares: structuredClone(shares), canWrite, backpacks: structuredClone(retainedBackpacks) };
       const replaced = this.state.devices.filter(sameClient).map(item => item.deviceId);
       const candidate = { ...this.state, devices: [...this.state.devices.filter(item => !sameClient(item)), device] };
       await this.store.save(candidate);

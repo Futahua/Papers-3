@@ -164,10 +164,13 @@ export function App(): React.JSX.Element {
           candidate.surfaceId === previousSurfaceId ? project : candidate);
         setOpenProjects(openProjectsRef.current);
         setWorkspaceTopology(topology);
-        surfaceIdRef.current = project.surfaceId;
-        setSurfaceId(project.surfaceId);
-        setProjectUrl(project.url);
-        setEntered(project.projectId);
+        const inline=topology.surfaces.find(surface=>surface.surfaceId===project.surfaceId)?.inlineParentKey;
+        const focused=topology.groups.find(group=>group.groupId===topology.focusedGroupId);
+        const active=inline?openProjectsRef.current.find(surface=>surface.surfaceId===focused?.activeSurfaceId)??project:project;
+        surfaceIdRef.current = active.surfaceId;
+        setSurfaceId(active.surfaceId);
+        setProjectUrl(active.url);
+        setEntered(active.projectId);
       }),
       bridge.events.onWorkspaceHydrated(({ projects, topology }) => {
         topologyCommitArmed.current = true;

@@ -8,10 +8,13 @@ import type { RemoteFileEntry } from './remoteFileResources';
 import { RemoteFileOutbox } from './remoteFileOutbox';
 import { RemoteFileEditWorkingCopies } from './remoteFileEditWorkingCopies';
 
-interface Connection { id: string; name: string; address: string; secret: string; deviceId: string }
+interface Connection { id: string; name: string; address: string; secret: string; deviceId: string; kind?: 'phone'; legacyPeerId?: string }
 interface SecretBox { seal: (value: string) => string; open: (value: string) => string }
-export interface RemoteDownloadJob { id: string; ownerId: string; entry: RemoteFileEntry; phase: 'queued' | 'transferring' | 'verifying' | 'completed' | 'failed'; bytes: number; error?: string }
+export interface RemoteDownloadJob { id: string; ownerId: string; entry: RemoteFileEntry; phase: 'queued' | 'transferring' | 'verifying' | 'completed' | 'failed'; bytes: number; error?: string; scope?:string }
 interface CachedFile { ownerId: string; entry: RemoteFileEntry; sha256: string; key: string }
+/** Preview/offline copies of other devices' files: unused for this long, or past this size, they go. */
+export const CONTENT_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+export const CONTENT_CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 function extension(name: string): string { const ext = path.extname(name); return /^\.[A-Za-z0-9]{1,15}$/.test(ext) ? ext : '.bin'; }
 function address(value: string, allowLoopback: boolean): string {
   const url = new URL(value);
@@ -38,11 +41,14 @@ export class RemoteFileClient {
   private readonly editCopies: RemoteFileEditWorkingCopies;
   private readonly editOpenings = new Set<Promise<unknown>>();
   private closing = false;
+  onOwnerChanged: ((ownerId: string) => void) | null = null;
+  private readonly eventStreams = new Map<string, AbortController>();
   private readonly editSaves = new Map<string, Promise<unknown>>();
   constructor(private readonly directory: string, private readonly secrets: SecretBox, private readonly allowLoopback = false) {
     this.store = new AtomicJsonStore(path.join(directory, 'connections.json'), { recoveryDir: path.join(directory, 'recovery') });
     this.outbox = new RemoteFileOutbox(directory);
     this.editCopies = new RemoteFileEditWorkingCopies(path.join(directory, 'edits'));
+    setTimeout(() => { void this.pruneContentCache().catch(() => {}); }, 60_000).unref?.();
   }
   async initialize(): Promise<void> {
     await this.outbox.initialize();
@@ -54,9 +60,17 @@ export class RemoteFileClient {
         if (!/^[a-f0-9-]{36}$/.test(connection.id) || typeof connection.name !== 'string' || typeof connection.secret !== 'string') throw new Error('Remote connection store needs recovery.');
       }
       this.connections = report.value.connections;
+      for (const connection of this.connections) if (connection.kind === 'phone') this.watchPhone(connection);
     }
   }
-  snapshot() { return { capabilities: { edits: true, editRecovery: true, editContinue: true }, devices: this.connections.map(({ id, name, address }) => ({ id, name, address })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
+  snapshot() { return { capabilities: { edits: true, editRecovery: true, editContinue: true }, devices: this.connections.map(({ id, name, address, kind, legacyPeerId }) => ({ id, name, address, kind, legacyPeerId })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
+  /** The gateway has already verified this request's Tailscale account and existing grant. Never trust a supplied address. */
+  async acceptPhone(peerAddress: string, legacyPeerId: string, raw: unknown): Promise<void> {
+    const value = raw as {owner?: {id?: string; name?: string; kind?: string}; token?: string; deviceId?: string};
+    if (value?.owner?.kind !== 'phone' || !/^[a-f0-9-]{36}$/.test(legacyPeerId)) throw new Error('Invalid phone invitation.');
+    await this.remember(address(`http://${peerAddress}:48240`, this.allowLoopback), value, legacyPeerId);
+  }
+  phoneForPeer(id: string) { return this.connections.find(item => item.kind === 'phone' && (item.id === id || item.legacyPeerId === id))?.id ?? null; }
   async pair(ownerAddress: string, code: string, name: string): Promise<void> {
     const base = address(ownerAddress, this.allowLoopback);
     const response = await fetch(`${base}/v1/devices/pair`, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code, name }) });
@@ -72,16 +86,27 @@ export class RemoteFileClient {
   }
   /** Owners this client holds a working grant for. A revoked grant is left out so discovery joins again. */
   connectedAddresses(): string[] { return this.connections.map(connection => connection.address).filter(address => !this.revoked.has(address)); }
+  /** Asks a previously paired phone to send its authenticated reverse invitation to this PC. */
+  async requestPhoneAnnouncement(ownerAddress: string): Promise<void> {
+    const base = address(ownerAddress, this.allowLoopback);
+    const response = await fetch(`${base}/v1/devices/announce`, {redirect: 'error', signal: AbortSignal.timeout(5000)});
+    if (!response.ok) throw new Error('Phone sharing is unavailable.');
+  }
   private readonly revoked = new Set<string>();
-  private async remember(base: string, paired: { owner?: { id?: string; name?: string }; token?: string; deviceId?: string }): Promise<void> {
+  private async remember(base: string, paired: { owner?: { id?: string; name?: string; kind?: string }; token?: string; deviceId?: string }, legacyPeerId?: string): Promise<void> {
     this.revoked.delete(base);
     if (!/^[a-f0-9-]{36}$/.test(paired.owner?.id ?? '') || typeof paired.owner?.name !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(paired.token ?? '') || !/^[a-f0-9-]{36}$/.test(paired.deviceId ?? '')) throw new Error('Invalid pairing response.');
     const owner = { id: paired.owner.id!, name: paired.owner.name }, deviceId = paired.deviceId!;
     const secret = this.secrets.seal(paired.token!);
     const next = this.saveQueue.then(async () => {
-      const connections = [...this.connections.filter(item => item.id !== owner.id), { id: owner.id, name: owner.name, address: base, secret, deviceId }];
+      const phone = paired.owner?.kind === 'phone';
+      const previous = this.connections.find(item => item.id === owner.id);
+      if (previous?.address === base && previous.secret && this.secrets.open(previous.secret) === paired.token && previous.name === owner.name && previous.legacyPeerId === legacyPeerId) return;
+      const connection: Connection = { id: owner.id, name: owner.name, address: base, secret, deviceId, ...(phone ? {kind: 'phone', legacyPeerId} : {}) };
+      const connections = [...this.connections.filter(item => item.id !== owner.id), connection];
       await this.store.save({ version: 1, connections });
       this.connections = connections;
+      if (phone) this.watchPhone(connection);
     });
     this.saveQueue = next.catch(() => {});
     await next;
@@ -90,6 +115,24 @@ export class RemoteFileClient {
     const connection = this.connections.find(item => item.id === ownerId);
     if (!connection) throw new Error('Device is not connected.');
     return connection;
+  }
+  private watchPhone(connection: Connection): void {
+    this.eventStreams.get(connection.id)?.abort();
+    const controller = new AbortController(); this.eventStreams.set(connection.id, controller);
+    void (async () => {
+      let delay = 1000;
+      while (!controller.signal.aborted && !this.closing) {
+        try {
+          const response = await fetch(`${connection.address}/v1/events`, {redirect: 'error', headers: {Authorization: `Bearer ${this.secrets.open(connection.secret)}`}, signal: controller.signal});
+          if (!response.ok || !response.body || !response.headers.get('content-type')?.startsWith('text/event-stream')) throw new Error('Phone event stream is unavailable.');
+          delay = 1000; this.onOwnerChanged?.(connection.id);
+          const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '';
+          try { for (;;) { const {done, value} = await reader.read(); if (done) break; buffer += decoder.decode(value, {stream: true}); if (buffer.length > 65536) throw new Error('Phone event exceeded its limit.'); let end; while ((end = buffer.indexOf('\n\n')) >= 0) { const event = buffer.slice(0, end); buffer = buffer.slice(end + 2); if (event.includes('"proxima-changed"')) this.onOwnerChanged?.(connection.id); } } } finally { reader.releaseLock(); }
+        } catch { /* Reconnect the notification stream; commands are never queued or polled here. */ }
+        if (!controller.signal.aborted) await new Promise<void>(resolve => { const timer = setTimeout(done, delay); function done() { clearTimeout(timer); controller.signal.removeEventListener('abort', done); resolve(); } controller.signal.addEventListener('abort', done, {once: true}); });
+        delay = Math.min(30000, delay * 2);
+      }
+    })();
   }
   private async request(ownerId: string, route: string, headers: Record<string, string> = {}, signal?: AbortSignal, body?: unknown): Promise<Response> {
     const connection = this.connection(ownerId);
@@ -117,13 +160,14 @@ export class RemoteFileClient {
       return { ...cached.value, online: false, error: error instanceof Error ? error.message : 'Owner unavailable.' };
     }
   }
-  download(ownerId: string, raw: unknown): RemoteDownloadJob {
+  download(ownerId: string, raw: unknown, scope?:string): RemoteDownloadJob {
+    if(scope&&!/^[a-f0-9-]{36}$/.test(scope))throw Error('Invalid download scope.');
     const file = entry(raw);
     if (file.kind !== 'file') throw new Error('Choose a file to download.');
     this.connection(ownerId);
-    const existing = [...this.jobs.values()].find(job => job.ownerId === ownerId && job.entry.id === file.id && job.entry.version === file.version && job.phase !== 'failed');
+    const existing = [...this.jobs.values()].find(job => job.ownerId === ownerId && job.entry.id === file.id && job.entry.version === file.version && job.scope===scope && job.phase !== 'failed');
     if (existing) return structuredClone(existing);
-    const job: RemoteDownloadJob = { id: randomUUID(), ownerId, entry: file, phase: 'queued', bytes: 0 };
+    const job: RemoteDownloadJob = { id: randomUUID(), ownerId, entry: file, phase: 'queued', bytes: 0,...(scope?{scope}:{}) };
     this.jobs.set(job.id, job);
     const controller = new AbortController();
     this.controllers.set(job.id, controller);
@@ -237,6 +281,24 @@ export class RemoteFileClient {
     if(!/^[a-f0-9-]{36}$/.test(resourceId))throw Error('Invalid shared Backpack identity.');const key=createHash('sha256').update(JSON.stringify([ownerId,resourceId])).digest('hex'),cache=new AtomicJsonStore(path.join(this.directory,'backpacks',key+'.json'),{recoveryDir:path.join(this.directory,'recovery')});
     try{const response=await(await this.request(ownerId,'/v1/backpacks/'+resourceId+'/snapshot')).json();if(response.owner?.id!==ownerId||response.resourceId!==resourceId||response.kind!=='proxima')throw Error('Shared Backpack identity changed.');await cache.save(response);return {...response,online:true};}catch(error){const saved=await cache.load<Record<string,unknown>>();if(!saved.value)throw error;return {...saved.value,online:false,error:error instanceof Error?error.message:'Owner unavailable.'};}
   }
+  async backpackCommand(ownerId:string,resourceId:string,command:unknown){
+    if(!/^[a-f0-9-]{36}$/.test(resourceId))throw Error('Invalid shared Backpack identity.');
+    const response=await(await this.request(ownerId,'/v1/backpacks/'+resourceId+'/commands',{},undefined,command)).json();
+    if(response.owner?.id!==ownerId||response.resourceId!==resourceId||response.kind!=='proxima'||!response.command||typeof response.command.ok!=='boolean'||!response.snapshot)throw Error('Owner command confirmation is invalid.');
+    return {...response,online:true};
+  }
+  async backpackReplace(ownerId:string,resourceId:string,projection:unknown){
+    if(!/^[a-f0-9-]{36}$/.test(resourceId))throw Error('Invalid shared Backpack identity.');
+    const response=await(await this.request(ownerId,'/v1/backpacks/'+resourceId+'/replace',{},undefined,projection)).json();
+    if(response.owner?.id!==ownerId||response.resourceId!==resourceId||response.kind!=='proxima')throw Error('Owner replacement confirmation is invalid.');
+    return response;
+  }
+  async backpackView(ownerId:string,resourceId:string){
+    if(!/^[a-f0-9-]{36}$/.test(resourceId))throw Error('Invalid shared Backpack identity.');
+    const response=await(await this.request(ownerId,'/v1/backpacks/'+resourceId+'/snapshot?control=1')).json();
+    if(response.owner?.id!==ownerId||response.resourceId!==resourceId||response.kind!=='proxima'||!response.snapshot)throw Error('Source Proxima identity changed.');
+    return {...response,online:true};
+  }
   private async transfer(job: RemoteDownloadJob, signal: AbortSignal): Promise<void> {
     const headers = { 'If-Match': `"${job.entry.version}"` };
     const digest = await (await this.request(job.ownerId, `/v1/files/${job.entry.id}/digest`, headers, signal)).json();
@@ -244,7 +306,7 @@ export class RemoteFileClient {
     const key = createHash('sha256').update(JSON.stringify([job.ownerId, job.entry.id, job.entry.version])).digest('hex');
     const directory = path.join(this.directory, 'content');
     await fs.mkdir(directory, { recursive: true });
-    const partial = path.join(directory, `${key}.partial`);
+    const partial = path.join(directory, `${key}${job.scope?'.'+job.scope:''}.partial`);
     const complete = path.join(directory, `${key}${extension(job.entry.name)}`);
     const metadata = new AtomicJsonStore(path.join(directory, `${key}.json`), { recoveryDir: path.join(this.directory, 'recovery') });
     let offset = await fs.stat(partial).then(stats => stats.size).catch(error => { if (error.code !== 'ENOENT') throw error; return 0; });
@@ -267,6 +329,7 @@ export class RemoteFileClient {
     await fs.rename(partial, complete);
     await metadata.save({ ownerId: job.ownerId, entry: job.entry, sha256: digest.sha256, key } satisfies CachedFile);
     job.bytes = job.entry.size; job.phase = 'completed';
+    void this.pruneContentCache().catch(() => {});
   }
   async offline(ownerId: string): Promise<CachedFile[]> {
     const directory = path.join(this.directory, 'content');
@@ -287,10 +350,21 @@ export class RemoteFileClient {
     await pipeline(createReadStream(localFile), hash);
     const query = new URLSearchParams({ name, size: String(stats.size), sha256: hash.digest('hex') });
     const connection = this.connection(ownerId);
+    let offset = 0;
+    if (connection.kind === 'phone') {
+      const saved = await (await this.request(ownerId, `/v1/files/${folderId}/upload?${query}`)).json();
+      if (saved.entry) return entry(saved.entry);
+      if (!Number.isSafeInteger(saved.receivedBytes) || saved.receivedBytes < 0 || saved.receivedBytes > stats.size || !/^[a-f0-9]{64}$/.test(saved.prefixSha256)) throw new Error('Invalid phone resume receipt.');
+      const prefix = createHash('sha256');
+      if (saved.receivedBytes) await pipeline(createReadStream(localFile, {start: 0, end: saved.receivedBytes - 1}), prefix);
+      if (prefix.digest('hex') === saved.prefixSha256) offset = saved.receivedBytes;
+    }
+    const current = await fs.stat(localFile);
+    if (current.size !== stats.size || current.mtimeMs !== stats.mtimeMs) throw new Error('Local source changed before upload.');
     const response = await fetch(`${connection.address}/v1/files/${folderId}/upload?${query}`, {
       method: 'PUT', redirect: 'error', duplex: 'half',
-      headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`, 'Content-Type': 'application/octet-stream', 'Content-Length': String(stats.size) },
-      body: Readable.toWeb(createReadStream(localFile)) as unknown as BodyInit,
+      headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`, 'Content-Type': 'application/octet-stream', 'Content-Length': String(stats.size - offset), ...(connection.kind === 'phone' ? {'X-Papers-Offset': String(offset)} : {}) },
+      body: offset === stats.size ? new Uint8Array() : Readable.toWeb(createReadStream(localFile, {start: offset})) as unknown as BodyInit,
     } as RequestInit & { duplex: 'half' });
     if (response.status === 401) this.revoked.add(connection.address);
     const result = await response.json().catch(() => ({}));
@@ -304,11 +378,11 @@ export class RemoteFileClient {
     return response.entries.filter((item: { id?: string; name?: unknown }) => /^[a-f0-9-]{36}$/.test(item.id ?? '') && typeof item.name === 'string');
   }
   /** The owner's current document and the revision it is at. */
-  async workspaceLoad(ownerId: string, id: string): Promise<{ state: unknown; revision: string }> {
+  async workspaceLoad(ownerId: string, id: string): Promise<{ state: unknown; revision: string; sharedRoots?: string[] }> {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid workspace identity.');
     const response = await (await this.request(ownerId, `/v1/workspaces/${id}/state`)).json();
     if (typeof response.revision !== 'string') throw new Error('Invalid workspace document.');
-    return { state: response.state, revision: response.revision };
+    return { state: response.state, revision: response.revision, ...(Array.isArray(response.sharedRoots) && response.sharedRoots.every((name: unknown) => typeof name === 'string' && !/[\\/]/.test(name)) ? {sharedRoots: response.sharedRoots} : {}) };
   }
   /** One of the owner's As you Go icon files, as a data URL for display. */
   async workspaceIcon(ownerId: string, id: string, name: string): Promise<string> {
@@ -334,24 +408,40 @@ export class RemoteFileClient {
     return response.results.filter((item: { parts?: unknown; name?: unknown }) => Array.isArray(item.parts) && item.parts.every(part => typeof part === 'string' && part && !/[\\/]/.test(part) && part !== '..') && typeof item.name === 'string');
   }
   /** The owner's default inbox folder for dropped files. */
-  async inbox(ownerId: string): Promise<{ entry: RemoteFileEntry; parts: string[] }> {
+  async inbox(ownerId: string): Promise<{ entry: RemoteFileEntry; parts: string[]; chosen?:boolean }> {
     const response = await (await this.request(ownerId, '/v1/files/inbox')).json();
     if (!Array.isArray(response.parts) || !response.parts.every((part: unknown) => typeof part === 'string' && part && !/[\\/]/.test(part as string))) throw new Error('Invalid inbox.');
-    return { entry: entry(response.entry), parts: response.parts };
+    return { entry: entry(response.entry??response.folder), parts: response.parts,chosen:response.chosen===true };
   }
+  async setInbox(ownerId:string,parts:string[]|null){await this.request(ownerId,'/v1/files/inbox',{},undefined,{parts});return this.inbox(ownerId);}
   /** Downloads (or reuses) a verified local copy of one exact remote version and returns its path. */
-  async materialize(ownerId: string, raw: unknown): Promise<string> {
+  async materialize(ownerId: string, raw: unknown, controls?:{scope:string;onJob:(job:RemoteDownloadJob)=>void}): Promise<string> {
     const file = entry(raw);
     const key = createHash('sha256').update(JSON.stringify([ownerId, file.id, file.version])).digest('hex');
     const cached = await this.cachedPath(ownerId, key).catch(() => null);
     if (cached) return cached;
-    const job = this.download(ownerId, file);
+    const job = this.download(ownerId, file,controls?.scope);controls?.onJob(job);
     await this.transfers.get(job.id);
     const completed = this.jobs.get(job.id);
     if (completed?.phase !== 'completed') throw new Error(completed?.error ?? 'The download did not complete.');
     return this.cachedPath(ownerId, key);
   }
   cancel(id: string): void { this.controllers.get(id)?.abort(); }
+  /** The owner's own rendering of a file when it is an image or text (a Revit or DWG thumbnail, a
+   * picture, text): Preview shows it without downloading the file. Null when it needs the file itself. */
+  async ownerPreview(ownerId: string, raw: unknown): Promise<Record<string, unknown> | null> {
+    const file = entry(raw);
+    const response = await (await this.request(ownerId, `/v1/files/${file.id}/preview`, {}, AbortSignal.timeout(60_000))).json();
+    const preview = response?.ok === true ? response.preview : null;
+    return preview && (preview.kind === 'image' ? typeof preview.dataUrl === 'string' : preview.kind === 'text' && typeof preview.text === 'string') ? preview : null;
+  }
+  /** Whether this exact version is already in the copy cache (Preview asks before large downloads). */
+  async isCached(ownerId: string, raw: unknown): Promise<boolean> {
+    const file = entry(raw);
+    const key = createHash('sha256').update(JSON.stringify([ownerId, file.id, file.version])).digest('hex');
+    const stats = await fs.stat(path.join(this.directory, 'content', `${key}${extension(file.name)}`)).catch(() => null);
+    return stats?.size === file.size;
+  }
   async cachedPath(ownerId: string, key: string): Promise<string> {
     if (!/^[a-f0-9]{64}$/.test(key)) throw new Error('Invalid cached file identity.');
     const cached = (await this.offline(ownerId)).find(file => file.key === key);
@@ -360,10 +450,48 @@ export class RemoteFileClient {
     const hash = createHash('sha256');
     await pipeline(createReadStream(target), hash);
     if (hash.digest('hex') !== cached.sha256) throw new Error('Offline copy is damaged. Download a fresh copy.');
+    const now = new Date();
+    await fs.utimes(target, now, now).catch(() => {}); // last used, for the cache limit
     return target;
+  }
+  /**
+   * Keeps the copy cache bounded: copies unused for 14 days are removed, then the least recently used
+   * until it fits in 2 GB. Copies still downloading are kept, and a copy Windows reports as open
+   * (a video playing in Preview) is skipped. Every copy is a duplicate of a file on its device.
+   */
+  async pruneContentCache(now = Date.now(), maxAge = CONTENT_CACHE_MAX_AGE_MS, maxBytes = CONTENT_CACHE_MAX_BYTES): Promise<{ removed: number; bytes: number }> {
+    const directory = path.join(this.directory, 'content');
+    const names = await fs.readdir(directory).catch(error => { if (error.code !== 'ENOENT') throw error; return [] as string[]; });
+    const active = new Set([...this.jobs.values()].filter(job => !['completed', 'failed'].includes(job.phase))
+      .map(job => createHash('sha256').update(JSON.stringify([job.ownerId, job.entry.id, job.entry.version])).digest('hex')));
+    const copies: { key: string; file: string; size: number; used: number }[] = [];
+    for (const name of names.filter(name => /^[a-f0-9]{64}\.json$/.test(name))) {
+      const key = name.slice(0, 64);
+      if (active.has(key)) continue;
+      const value = await fs.readFile(path.join(directory, name), 'utf8').then(text => JSON.parse(text) as CachedFile).catch(() => null);
+      if (!value?.entry?.name) continue;
+      const file = path.join(directory, `${key}${extension(value.entry.name)}`);
+      const stats = await fs.stat(file).catch(() => null);
+      if (stats) copies.push({ key, file, size: stats.size, used: stats.mtimeMs });
+    }
+    copies.sort((a, b) => a.used - b.used);
+    let total = copies.reduce((sum, copy) => sum + copy.size, 0), removed = 0;
+    for (const copy of copies) {
+      if (now - copy.used <= maxAge && total <= maxBytes) break;
+      try { await fs.unlink(copy.file); } catch { continue; } // open elsewhere: keep it this time
+      await fs.unlink(path.join(directory, `${copy.key}.json`)).catch(() => {});
+      total -= copy.size; removed++;
+    }
+    // Abandoned partial and rejected downloads older than the age limit.
+    for (const name of names.filter(name => /\.(partial|invalid)$/.test(name))) {
+      const stats = await fs.stat(path.join(directory, name)).catch(() => null);
+      if (stats && now - stats.mtimeMs > maxAge && ![...active].some(key => name.startsWith(key))) await fs.unlink(path.join(directory, name)).catch(() => {});
+    }
+    return { removed, bytes: total };
   }
   async close(): Promise<void> {
     this.closing = true;
+    for (const controller of this.eventStreams.values()) controller.abort();
     for (const controller of this.controllers.values()) controller.abort();
     await Promise.allSettled([...this.transfers.values()]);
     await Promise.allSettled([...this.editOpenings]);

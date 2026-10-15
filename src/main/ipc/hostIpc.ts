@@ -3,6 +3,7 @@
  * WebContents may call these channels.
  */
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { app, clipboard, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { z } from 'zod';
 
@@ -47,6 +48,26 @@ function unquoteClipboardPath(text: string): string {
     return trimmed.slice(1, -1).trim();
   }
   return trimmed;
+}
+
+/** Puts files on the Windows clipboard as Explorer does (a file drop list, with Move for a cut). */
+function writeWindowsClipboardFiles(paths: string[], cut: boolean): Promise<void> {
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$request=[Console]::In.ReadToEnd()|ConvertFrom-Json',
+    '$list=New-Object System.Collections.Specialized.StringCollection',
+    'foreach($path in $request.paths){[void]$list.Add([string]$path)}',
+    '$data=New-Object System.Windows.Forms.DataObject',
+    '$data.SetFileDropList($list)',
+    '$effect=if($request.cut){[byte[]](2,0,0,0)}else{[byte[]](5,0,0,0)}',
+    "$data.SetData('Preferred DropEffect',(New-Object System.IO.MemoryStream(,$effect)))",
+    '[System.Windows.Forms.Clipboard]::SetDataObject($data,$true,10,100)',
+  ].join(';');
+  return new Promise((resolve, reject) => {
+    const child = execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-Command', script], { windowsHide: true, timeout: 15_000 }, (error) => error ? reject(error) : resolve());
+    child.stdin?.end(JSON.stringify({ paths, cut }));
+  });
 }
 
 function clipboardFingerprint(formats: string[], paths: string[], text: string): string {
@@ -96,7 +117,7 @@ export interface HostFacade {
 
   openBackpackProject(senderId: number, id: string): Promise<unknown>;
   replaceBackpackProject(senderId: number, surfaceId: string, id: string): Promise<unknown>;
-  openBackpackProjectNewSurface(senderId: number, url: string, workspaceOrigin?: string): Promise<unknown>;
+  openBackpackProjectNewSurface(senderId: number, url: string, workspaceOrigin?: string, inlineGroupId?: string): Promise<unknown>;
   dismissBackpackProjectCommandSurface(senderId: number, destination: 'restore' | 'external' | 'papers'): Promise<void>;
   closeBackpackProject(senderId: number, surfaceId: string): Promise<void>;
   activateBackpackProjectSurface(senderId: number, surfaceId: string): void;
@@ -289,11 +310,12 @@ export function registerHostIpc(facade: HostFacade, nativeDrag?: (sender: WebCon
   handle('host:backpack-project:open', (event, id) =>
     facade.openBackpackProject(event.sender.id, backpackRemovalIdSchema.parse(id)),
   );
-  handle('host:backpack-project:open-new-surface', (event, url, workspaceOrigin) =>
+  handle('host:backpack-project:open-new-surface', (event, url, workspaceOrigin, inlineGroupId) =>
     facade.openBackpackProjectNewSurface(
       event.sender.id,
       z.string().url().max(2_048).parse(url),
       backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin),
+      inlineGroupId===undefined?undefined:z.string().min(1).max(64).parse(inlineGroupId),
     ),
     true,
   );
@@ -442,6 +464,20 @@ export function registerHostIpc(facade: HostFacade, nativeDrag?: (sender: WebCon
   handle('host:backpack-project:file-capability', async (event, request, workspaceOrigin) => {
     const parsedRequest = backpackProjectFileCapabilitySchema.parse(request);
     const parsedWorkspaceOrigin = backpackProjectWorkspaceOriginSchema.parse(workspaceOrigin);
+    if (parsedRequest.operation === 'clipboard-write-files') {
+      // Files copied in Papers go on the Windows clipboard too, so Explorer and other apps can paste
+      // them. Only this computer's existing files; another device's files stay in Papers' clipboard.
+      const params = parsedRequest.params ?? {};
+      const paths = backpackProjectNativeDragPathsSchema.parse(params['paths']);
+      if (paths.some(target => /^\\\\papers~/i.test(target))) return { ok: false, code: 'REMOTE_CLIPBOARD_UNAVAILABLE', message: 'Files on another device cannot go on the Windows clipboard.' };
+      for (const target of paths) {
+        const checked = await facade.callBackpackProjectFileCapability(event.sender.id, { operation: 'stat', params: { path: target } }, parsedWorkspaceOrigin) as { ok?: boolean };
+        if (checked?.ok !== true) return checked;
+      }
+      await writeWindowsClipboardFiles(paths, params['cut'] === true);
+      const formats = clipboard.availableFormats();
+      return { ok: true, count: paths.length, fingerprint: clipboardFingerprint(formats, clipboardPathCandidates(formats), clipboard.readText().trim().slice(0, 32_768)) };
+    }
     if (parsedRequest.operation === 'clipboard-read') {
       const formats = clipboard.availableFormats();
       const paths = clipboardPathCandidates(formats);
@@ -481,6 +517,7 @@ export function registerHostIpc(facade: HostFacade, nativeDrag?: (sender: WebCon
     }
     if (parsedRequest.operation === 'native-drag') {
       const paths = backpackProjectNativeDragPathsSchema.parse(parsedRequest.params?.['paths']);
+      if(paths.some(target=>/^\\\\papers~/i.test(target)))return {ok:false,code:'REMOTE_NATIVE_DRAG_UNAVAILABLE',message:'Drop device files into Papers Files to download them. Windows cannot read a Papers device path.'};
       for (const target of paths) {
         const checked = await facade.callBackpackProjectFileCapability(
           event.sender.id,

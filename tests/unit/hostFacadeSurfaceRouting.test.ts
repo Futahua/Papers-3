@@ -301,6 +301,17 @@ describe('surface routing in the host facade', () => {
       .rejects.toThrow(/own Papers tab/);
   });
 
+  it('opens a device as a retained inline page and waits for native group attachment',async()=>{
+    const f=createFacade();f.workspaceTopologies.set(1,createWorkspaceTopology());const parent=await f.facade.openWorkspaceSurfaceFromControl(1,PROJECT);
+    f.surfaces.bind(FRAME,{surfaceId:parent.surfaceId,projectId:PROJECT,windowId:1,kind:'project'});
+    const deps=(f.facade as unknown as {deps:FacadeDeps}).deps,deviceId='74bc3b85-e64b-43f0-aa9d-c43e8c64c747';deps.inlineDeviceName=()=> 'Poordroid';
+    let confirm!:(value:{ok:boolean})=>void;deps.attachInlineDevicePage=vi.fn(()=>new Promise<{ok:boolean}>(resolve=>confirm=resolve));
+    const pending=f.facade.openBackpackProjectNewSurface(FRAME,`papers-backpack://${PROJECT}/open?papers-device=${deviceId}`,undefined,'main');let settled=false;void pending.then(()=>settled=true);
+    await vi.waitFor(()=>expect(deps.attachInlineDevicePage).toHaveBeenCalled());expect(settled).toBe(false);
+    const current=f.workspaceTopologies.get(1)!;const child=current.surfaces.find(surface=>surface.inlineParentKey)!;expect(child.deviceId).toBe(deviceId);expect(child.inlineParentKey).toBe(parent.topology.surfaces[0]!.surfaceKey);
+    expect(current.groups[0]!.activeSurfaceId).toBe(parent.surfaceId);confirm({ok:true});await pending;
+  });
+
   it('lets an authenticated embedded workspace open a new tab on its scoped project origin only', async () => {
     const { facade, workspaceTopologies, sendToWindow, surfaces } = createFacade();
     workspaceTopologies.set(1, createWorkspaceTopology());

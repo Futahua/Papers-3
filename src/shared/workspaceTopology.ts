@@ -9,6 +9,9 @@ export interface WorkspaceSurface {
   surfaceKey?: string;
   projectId: string;
   title: string;
+  /** Device views retain their owning device and parent page across hydration. */
+  deviceId?: string;
+  inlineParentKey?: string;
 }
 
 export interface WorkspaceTabGroup {
@@ -53,6 +56,8 @@ export const workspaceTopologySchema: z.ZodType<WorkspaceTopologyV1> = z.object(
     surfaceKey: z.string().min(1).max(128).optional(),
     projectId: z.string().min(1),
     title: z.string(),
+    deviceId: z.string().uuid().optional(),
+    inlineParentKey: z.string().min(1).max(128).optional(),
   }).strict()),
   groups: z.array(z.object({
     groupId: z.string().min(1),
