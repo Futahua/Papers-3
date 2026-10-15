@@ -376,7 +376,8 @@ window.addEventListener('message', (event) => {
   const reply = (message) => event.source.postMessage(message, location.origin);
   if (event.data?.type === 'papers:phone:proxima' || event.data?.type === 'papers:proxima-device:open') { void openProxima(event.data.ownerId).catch((error) => console.error(error)); return; }
   // "This device" in a device's As you Go returns to the phone's own.
-  if (event.data?.type === 'papers:phone:this-device') { closeLayer(); return; }
+  // A place chosen in the pill there (AYG device-modes.js) is carried out by the phone's own page.
+  if (event.data?.type === 'papers:phone:this-device') { closeLayer(); const navigate = event.data.navigate; if (navigate && typeof navigate === 'object') frame.contentWindow.postMessage({ type: 'papers:phone:navigate', navigate: { device: String(navigate.device || ''), mode: String(navigate.mode || '') } }, location.origin); return; }
   if (event.data?.type === 'proxima:device-view-ready') { if (layer && event.source === layer.contentWindow) layer.dataset.ready = 'true'; return; }
   if (event.data?.type === 'papers:proxima-device:request') {
     const { requestId } = event.data;
