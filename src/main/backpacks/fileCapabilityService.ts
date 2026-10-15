@@ -1,3 +1,4 @@
+import { hiddenNames } from './hiddenFiles';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs, statSync } from 'node:fs';
@@ -52,10 +53,14 @@ const VIDEO_MIME = new Map([['.mp4','video/mp4'],['.m4v','video/mp4'],['.webm','
 export interface FileCapabilityEntry {
   path: string; name: string; parent: string; kind: 'file' | 'folder'; extension: string;
   size: number | null; createdAt: number | null; modifiedAt: number | null; identity: string | null;
+  /** Hidden in Explorer (Windows' Hidden attribute); the Files view leaves these out unless asked. */
+  hidden?: boolean;
 }
 export interface FileCapabilityDeps {
   remoteFiles?: (request: Record<string, unknown>) => Promise<unknown>;
   remotePaths?: RemotePaths;
+  /** Custom pictures of real files and folders on this device (customIconStore). */
+  customIcons?: import('./customIconStore').CustomIconStore;
   panePageDrag?:()=>string|null;
   panePages?:{check:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>;attach:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>};
   closeInlineDevice?: (owner:string)=>Promise<void>;
@@ -274,8 +279,8 @@ async function listDirectory(target: string, limit: number) {
   const names = await fs.readdir(target);
   names.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   const selected = names.slice(0, limit);
-  const settled = await Promise.allSettled(selected.map((name) => describe(path.join(target, name))));
-  const items = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+  const [settled, hidden] = await Promise.all([Promise.allSettled(selected.map((name) => describe(path.join(target, name)))), hiddenNames(target, selected)]);
+  const items = settled.flatMap((result) => result.status === 'fulfilled' ? [hidden.has(result.value.name) ? { ...result.value, hidden: true } : result.value] : []);
   items.sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
   return { entry, items, truncated: names.length > selected.length };
 }
@@ -938,6 +943,15 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               workspaceTitle: entry.workspaceTitle,
               workspaceIcon: entry.workspaceIcon,
             };
+          }
+          case 'custom-icons':
+            return { ok: true, icons: deps.customIcons ? await deps.customIcons.inFolder(absolutePath(params.path)) : {} };
+          case 'custom-icon-set': {
+            if (!deps.customIcons) return { ok: false, code: 'CUSTOM_ICONS_UNAVAILABLE', message: 'Custom pictures are unavailable.' };
+            const targets = (Array.isArray(params.paths) ? params.paths : []).map(item => absolutePath(item));
+            if (!targets.length) return { ok: false, code: 'REQUEST_INVALID', message: 'Choose files or folders.' };
+            await deps.customIcons.set(targets, (params.icon ?? null) as string | null);
+            return { ok: true };
           }
           case 'preview':
             return await previewFile(absolutePath(params.path), deps, context, params.skipWindowsPreview === true);

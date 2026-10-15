@@ -1,3 +1,4 @@
+import {createCustomIconStore} from './backpacks/customIconStore';
 import {createRemoteThumbnailProvider} from './backpacks/remoteThumbnailProvider';
 import {FileInbox} from './backpacks/fileInbox';
 import {InboxTransfers} from './backpacks/inboxTransfers';
@@ -848,6 +849,7 @@ async function bootstrap(): Promise<void> {
     const known = new Set(remoteDevices.snapshot().devices.map(device => device.id.toLowerCase()));
     return [...known].map(peerProximaRead).filter((saved): saved is NonNullable<typeof saved> => !!saved && !remoteFiles.phoneForPeer(saved.deviceId)).map(saved => ({ id: saved.deviceId, name: saved.name, receivedAt: saved.receivedAt }));
   };
+  const customIcons = createCustomIconStore(path.join(paths.root, 'custom-icons.json'));
   const remotePaths = createRemotePaths(remoteFiles, { iconDirectory: path.join(paths.root, 'remote-files', 'icon-stand-ins'), fileIcon, settingsFile: path.join(paths.root, 'remote-files', 'inboxes.json') });
   const inboxTransfers=new InboxTransfers(path.join(paths.root,'remote-files','inbox-transfers'),localInbox,remoteFiles,files=>remotePaths.planImport(files),{inbox:owner=>remotePaths.inbox(owner),copy:(source,destination)=>remotePaths.copyToFolder(source,destination)});
   await inboxTransfers.initialize();
@@ -943,6 +945,7 @@ async function bootstrap(): Promise<void> {
     revealPath: (target) => shell.showItemInFolder(target),
     fileIcon,
     remotePaths,
+    customIcons,
   });
 
   const permissionStore = new PermissionStore(paths);
@@ -1971,6 +1974,7 @@ async function bootstrap(): Promise<void> {
     save:(projectId,raw,revision)=>backpackProjects.saveState(projectId,raw,revision as never),
     icon:(projectId,name)=>backpackProjects.sharedIcon(projectId,name),
   };
+  remoteDevices.customIcons=customIcons;
   remoteDevices.thumbnail=createRemoteThumbnailProvider({shell:shellThumbnail,encode:png=>{const image=nativeImage.createFromBuffer(png),size=image.getSize(),factor=Math.min(1,256/Math.max(size.width,size.height)),small=image.resize({width:Math.max(1,Math.round(size.width*factor)),height:Math.max(1,Math.round(size.height*factor)),quality:'good'});return {bytes:small.toJPEG(75),...small.getSize()};}});
   remoteDevices.preview=target=>fileCapability.call({operation:'preview',params:{path:target}},{backpackId:'remote:preview'} as never);
   remoteDevices.search=async(query,limit)=>{if(!everythingSearch)throw Error('Everything search is unavailable on this computer.');const result=await everythingSearch.search(query,limit);if(!result.ok)throw Error(result.error??'Search failed.');return result;};

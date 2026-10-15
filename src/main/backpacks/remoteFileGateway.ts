@@ -1,3 +1,4 @@
+import { CUSTOM_ICON_MAX_BYTES } from './customIconStore';
 import { logDevice } from './tailnetIdentity';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -42,6 +43,8 @@ export async function createRemoteFileGateway(options: {
   inboxDirectory?: string;
   inbox?:{get:()=>Promise<{path:string;chosen:boolean}>;set:(parts:string[]|null)=>Promise<{path:string;chosen:boolean}>};
   /** Runs this computer's own preview of a file; only self-contained results (text, image data) are returned. */
+  /** Custom pictures of this computer's files and folders, shared with paired devices. */
+  customIcons?: import('./customIconStore').CustomIconStore;
   thumbnail?: (target:string)=>Promise<Record<string,unknown>>;
   preview?: (target: string) => Promise<Record<string, unknown>>;
   /** As you Go workspaces on this computer that same-account devices may open and edit. */
@@ -248,6 +251,15 @@ export async function createRemoteFileGateway(options: {
         if(devices.get(device.grant.deviceId)===device&&!response.destroyed)json(response,200,{ok:true,owner:options.owner,resourceId:share.id,kind:share.kind,...result as Record<string,unknown>});
       }catch(error){if(!response.destroyed)json(response,503,{ok:false,code:'BACKPACK_COMMAND_UNCONFIRMED',message:error instanceof Error?error.message:'Owner did not confirm the command.'});}return;
     }
+    const customIconPost=/^\/v1\/files\/([a-f0-9-]{36})\/custom-icon$/.exec(request.url??'');
+    if(customIconPost&&request.method==='POST'){
+      if(!options.customIcons){json(response,503,{ok:false,code:'CUSTOM_ICONS_UNAVAILABLE'});return;}
+      if(device.grant.canWrite!==true){json(response,403,{ok:false,code:'FILE_CHANGES_NOT_GRANTED'});return;}
+      try{const target=await device.catalog.ownerPath(customIconPost[1]!);const chunks:Buffer[]=[];let size=0;for await(const chunk of request){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>CUSTOM_ICON_MAX_BYTES+1024)throw new Error('The picture is too large.');chunks.push(bytes);}
+        const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));await options.customIcons.set([target],body.icon??null);json(response,200,{ok:true});}
+      catch(error){if(!response.destroyed)json(response,400,{ok:false,code:'CUSTOM_ICON_REFUSED',message:error instanceof Error?error.message:'The picture was refused.'});}
+      return;
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') { json(response, 405, { ok: false, code: 'OPERATION_UNSUPPORTED' }); return; }
     try {
       const url = new URL(request.url ?? '/', 'http://gateway.invalid');
@@ -276,6 +288,12 @@ export async function createRemoteFileGateway(options: {
       if (url.pathname === '/v1/files/shares') {
         json(response, 200, { ok: true, protocol: 1, owner: options.owner, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate),edits:Boolean(device.grant.canWrite===true&&options.edits)}, entries: await device.catalog.shares() });
         return;
+      }
+      const customIconMatch=/^\/v1\/files\/([a-f0-9-]{36})\/custom-icons$/.exec(url.pathname);
+      if(customIconMatch){
+        if(!options.customIcons){json(response,503,{ok:false,code:'CUSTOM_ICONS_UNAVAILABLE'});return;}
+        const target=await device.catalog.ownerPath(customIconMatch[1]!);
+        json(response,200,{ok:true,icons:await options.customIcons.inFolder(target)});return;
       }
       const thumbnailMatch=/^\/v1\/files\/([a-f0-9-]{36})\/thumbnail$/.exec(url.pathname);
       if(thumbnailMatch){

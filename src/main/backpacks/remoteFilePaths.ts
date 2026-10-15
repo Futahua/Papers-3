@@ -31,6 +31,9 @@ export interface RemotePathClient {
   upload(ownerId: string, folderId: string, localFile: string, name: string): Promise<RemoteFileEntry>;
   inbox(ownerId: string): Promise<{ entry: RemoteFileEntry; parts: string[];chosen?:boolean }>;
   setInbox?:(ownerId:string,parts:string[]|null)=>Promise<{entry:RemoteFileEntry;parts:string[];chosen?:boolean}>;
+  /** Custom pictures of a folder's children, kept on the owning device (customIconStore). */
+  customIcons?(ownerId: string, folderId: string | null): Promise<Record<string, string>>;
+  setCustomIcon?(ownerId: string, entryId: string, icon: string | null): Promise<void>;
   search(ownerId: string, query: string, limit: number): Promise<{ parts: string[]; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[]>;
 }
 type Resolved = { ownerId: string; parts: string[]; entry: RemoteFileEntry | null };
@@ -83,6 +86,7 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
       kind,
       extension: kind === 'file' ? path.extname(entry!.name).toLowerCase() : '',
       size: kind === 'file' ? entry!.size : null,
+      ...(entry?.hidden === true ? { hidden: true } : {}),
       createdAt: null,
       modifiedAt: entry ? Math.round(entry.modifiedAt) : null,
       identity: entry ? `${ownerId}:${entry.id}` : ownerId,
@@ -246,6 +250,20 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
           const items = listing.entries.map(item => describe(ownerId, [...parts, item.name], item))
             .sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
           return { ok: true, entry: describe(ownerId, parts, entry), items, truncated: false, online: listing.online };
+        }
+        case 'custom-icons': {
+          const { ownerId, entry } = await resolve(params.path);
+          if (!client.customIcons || (entry && entry.kind !== 'folder')) return { ok: true, icons: {} };
+          return { ok: true, icons: await client.customIcons(ownerId, entry?.id ?? null).catch(() => ({})) };
+        }
+        case 'custom-icon-set': {
+          if (!client.setCustomIcon) return { ok: false, code: 'REMOTE_UNSUPPORTED', message: 'That device cannot keep custom pictures yet.' };
+          for (const item of paths) {
+            const { ownerId, entry } = await resolve(item);
+            if (!entry) throw new Error('A drive of another device cannot have a custom picture.');
+            await client.setCustomIcon(ownerId, entry.id, (params.icon ?? null) as string | null);
+          }
+          return { ok: true };
         }
         case 'icon': {
           // The icon depends only on the kind and extension, so ask the shell about a local stand-in.

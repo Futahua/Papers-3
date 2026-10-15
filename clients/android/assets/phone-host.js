@@ -43,7 +43,7 @@ const deviceName = (ownerId) => devices.find((d) => d.id === ownerId)?.name ?? '
 function describe(ownerId, parts, entry) {
   const kind = entry?.kind ?? 'folder', name = entry ? entry.name : deviceName(ownerId);
   const dot = kind === 'file' ? name.lastIndexOf('.') : -1;
-  return { path: remotePath(ownerId, parts), name, parent: remotePath(ownerId, parts.slice(0, -1)), kind, extension: dot > 0 ? name.slice(dot).toLowerCase() : '', size: kind === 'file' ? entry.size : null, createdAt: null, modifiedAt: entry ? Math.round(entry.modifiedAt) : null, identity: entry ? `${ownerId}:${entry.id}` : ownerId, remote: { ownerId, device: deviceName(ownerId) } };
+  return { ...(entry?.hidden === true ? { hidden: true } : {}), path: remotePath(ownerId, parts), name, parent: remotePath(ownerId, parts.slice(0, -1)), kind, extension: dot > 0 ? name.slice(dot).toLowerCase() : '', size: kind === 'file' ? entry.size : null, createdAt: null, modifiedAt: entry ? Math.round(entry.modifiedAt) : null, identity: entry ? `${ownerId}:${entry.id}` : ownerId, remote: { ownerId, device: deviceName(ownerId) } };
 }
 async function command(ownerId, body) {
   const commandId = crypto.randomUUID();
@@ -73,6 +73,26 @@ async function fileCapability(operation, params) {
     return { ok: true, provider: 'everything', version: null, total: results.length, results };
   }
   if (operation === 'providers') return { ok: true, providers: { everything: true } };
+  // Custom pictures of real files and folders live on the device that owns them (the phone's own in
+  // PhoneCustomIcons, a computer's behind its gateway), so every device browsing them sees the same.
+  if (operation === 'custom-icons') {
+    const folder = phoneUri(params.path);
+    if (folder) return { ok: true, icons: await native({ operation: 'phone-custom-icons', uri: folder }).catch(() => ({})) };
+    if (!parse(params.path)) return { ok: true, icons: {} };
+    const { ownerId, entry } = await resolve(params.path);
+    return { ok: true, icons: entry?.kind === 'folder' ? await native({ operation: 'custom-icons', ownerId, resourceId: entry.id }).catch(() => ({})) : {} };
+  }
+  if (operation === 'custom-icon-set') {
+    const icon = params.icon ?? null, own = paths.map(phoneUri).filter(Boolean);
+    if (own.length) await native({ operation: 'phone-custom-icon-set', uris: own, icon });
+    for (const path of paths.filter(path => !phoneUri(path))) {
+      if (!parse(path)) return { ok: false, code: 'UNAVAILABLE_ON_PHONE', message: 'Not available on the phone.' };
+      const { ownerId, entry } = await resolve(path);
+      if (!entry) return { ok: false, code: 'REMOTE_UNSUPPORTED', message: 'A drive of another device cannot have a custom picture.' };
+      await native({ operation: 'custom-icon-set', ownerId, resourceId: entry.id, icon });
+    }
+    return { ok: true };
+  }
   // The phone's own files (chosen with the paperclip) live at \\papers~phone\<content address>.
   const own = phoneUri(params.path);
   if (own || paths.some(path=>phoneUri(path))) {
@@ -139,7 +159,7 @@ const phoneUri = path => {
 };
 function phoneDescription(info) {
   const path = phonePath(info.uri), dot = info.name.lastIndexOf('.');
-  return { path, name: info.name, parent: info.parentUri ? phonePath(info.parentUri) : null, kind: info.kind || 'file', extension: info.kind === 'folder' || dot < 1 ? '' : info.name.slice(dot).toLowerCase(), size: info.size ?? null, createdAt: null, modifiedAt: typeof info.modifiedAt === 'number' ? info.modifiedAt : info.modifiedAt ? Date.parse(info.modifiedAt) : null, identity: info.uri, folder: info.folder || '' };
+  return { ...(String(info.name||'').startsWith('.')?{hidden:true}:{}), path, name: info.name, parent: info.parentUri ? phonePath(info.parentUri) : null, kind: info.kind || 'file', extension: info.kind === 'folder' || dot < 1 ? '' : info.name.slice(dot).toLowerCase(), size: info.size ?? null, createdAt: null, modifiedAt: typeof info.modifiedAt === 'number' ? info.modifiedAt : info.modifiedAt ? Date.parse(info.modifiedAt) : null, identity: info.uri, folder: info.folder || '' };
 }
 
 async function phoneFile(operation, uri, path) {

@@ -1,3 +1,4 @@
+import { hiddenNames } from './hiddenFiles';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
@@ -11,6 +12,8 @@ export interface RemoteFileEntry {
   size: number;
   modifiedAt: number;
   version: string;
+  /** Hidden on the owner (Windows' Hidden attribute, or a leading dot on a phone). */
+  hidden?: boolean;
 }
 export interface RemoteFileShare { id: string; name: string; directory: string }
 type Resource = { shareId: string; target: string };
@@ -85,6 +88,7 @@ export class RemoteFileResources {
     const resource = await this.resolve(id);
     const root = this.roots.get(resource.shareId)!;
     const names = (await fs.readdir(resource.target)).sort((a, b) => a.localeCompare(b));
+    const hidden = await hiddenNames(resource.target, names);
     const entries: RemoteFileEntry[] = [];
     for (const name of names.slice(offset, offset + limit)) {
       const target = path.join(resource.target, name);
@@ -104,6 +108,7 @@ export class RemoteFileResources {
         entries.push({ id: this.identify(resource.shareId, target), name, kind: stats.isDirectory() ? 'folder' : 'file', size: stats.size, modifiedAt: stats.mtimeMs, version: version(stats) });
       }
     }
+    for (const item of entries) if (hidden.has(item.name)) item.hidden = true;
     return { entries, nextOffset: offset + limit < names.length ? offset + limit : null };
   }
 

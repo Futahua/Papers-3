@@ -435,6 +435,18 @@ export class RemoteFileClient {
     const preview = response?.ok === true ? response.preview : null;
     return preview && (preview.kind === 'image' ? typeof preview.dataUrl === 'string' : preview.kind === 'text' && typeof preview.text === 'string') ? preview : null;
   }
+  /** Custom pictures of a folder's children, kept on the owner (customIconStore). A drive list has none. */
+  async customIcons(ownerId: string, folderId: string | null): Promise<Record<string, string>> {
+    if (!folderId || !/^[a-f0-9-]{36}$/.test(folderId)) return {};
+    const response = await (await this.request(ownerId, `/v1/files/${folderId}/custom-icons`)).json();
+    const out: Record<string, string> = {};
+    for (const [name, icon] of Object.entries(response?.ok === true && response.icons && typeof response.icons === 'object' ? response.icons : {})) if (typeof icon === 'string' && icon.startsWith('data:image/') && icon.length <= 256 * 1024) out[name] = icon;
+    return out;
+  }
+  async setCustomIcon(ownerId: string, entryId: string, icon: string | null): Promise<void> {
+    if (!/^[a-f0-9-]{36}$/.test(entryId)) throw new Error('Invalid file identity.');
+    await this.request(ownerId, `/v1/files/${entryId}/custom-icon`, {}, undefined, { icon }).catch(error => { throw new Error(/\(403\)/.test(String(error?.message)) ? 'That device does not allow changes from this one.' : /\((404|405|400)\)/.test(String(error?.message)) ? 'That device needs a Papers update to keep custom pictures.' : error.message); });
+  }
   /** Whether this exact version is already in the copy cache (Preview asks before large downloads). */
   async isCached(ownerId: string, raw: unknown): Promise<boolean> {
     const file = entry(raw);
