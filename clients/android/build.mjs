@@ -12,7 +12,7 @@ const tools=path.join(sdk,'build-tools','36.0.0');
 const library=path.join(sdk,'platforms','android-36','android.jar');
 const classes=path.join(output,'classes'),assets=path.join(output,'assets'),dex=path.join(output,'dex');
 await Promise.all([classes,assets,dex,path.join(assets,'app')].map(directory=>mkdir(directory,{recursive:true})));
-for(const name of await readdir(path.join(root,'assets')))await copyFile(path.join(root,'assets',name),path.join(assets,name));
+for(const name of await readdir(path.join(root,'assets')))await cp(path.join(root,'assets',name),path.join(assets,name),{recursive:true});
 // The phone cannot list Tailscale peers, so bake in the creator's own computers (same account) at build time.
 {const status=JSON.parse(spawnSync(process.platform==='win32'?'C:/Program Files/Tailscale/tailscale.exe':'tailscale',['status','--json'],{encoding:'utf8',windowsHide:true}).stdout||'{}');
 const user=status.Self?.UserID,computers=[status.Self,...Object.values(status.Peer??{})].filter(node=>node&&node.UserID===user&&/^(windows|macOS|linux)$/.test(node.OS));
@@ -27,7 +27,9 @@ const sources=(await readdir(path.join(root,'src/com/futahua/papers/mobile'))).f
 run(path.join(jdk,'bin/javac.exe'),['-source','8','-target','8','-classpath',library,'-d',classes,...sources]);
 run(path.join(jdk,'bin/jar.exe'),['cf',path.join(output,'classes.jar'),'-C',classes,'.']);
 run(path.join(jdk,'bin/java.exe'),['-cp',path.join(tools,'lib/d8.jar'),'com.android.tools.r8.D8','--min-api','26','--lib',library,'--output',dex,path.join(output,'classes.jar')]);
-run(path.join(tools,'aapt2.exe'),['link','-I',library,'--manifest',path.join(root,'AndroidManifest.xml'),'-o',path.join(output,'unsigned.apk')]);
+const iconDirectory=path.join(output,'res/drawable');await mkdir(iconDirectory,{recursive:true});await copyFile(path.join(root,'../../assets/icon.png'),path.join(iconDirectory,'papers.png'));
+run(path.join(tools,'aapt2.exe'),['compile',path.join(iconDirectory,'papers.png'),'-o',path.join(output,'icon.zip')]);
+run(path.join(tools,'aapt2.exe'),['link','-I',library,'--manifest',path.join(root,'AndroidManifest.xml'),'-R',path.join(output,'icon.zip'),'-o',path.join(output,'unsigned.apk')]);
 // Windows aapt2 writes backslashes into nested asset entry names. The JDK jar
 // tool emits portable ZIP paths, so package assets with it instead.
 run(path.join(jdk,'bin/jar.exe'),['uf',path.join(output,'unsigned.apk'),'-C',output,'assets']);

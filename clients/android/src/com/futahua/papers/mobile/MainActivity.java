@@ -15,16 +15,24 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
+  private static java.lang.ref.WeakReference<MainActivity> current = new java.lang.ref.WeakReference<>(null);
+  static void notifyPhoneProximaChanged() {
+    MainActivity activity = current.get();
+    if (activity != null) activity.runOnUiThread(() -> { if(activity.view != null) activity.view.evaluateJavascript("window.postMessage({type:'papers:phone:owner-changed'},location.origin)", null); });
+  }
   private WebView view;
   private final ExecutorService requests = Executors.newFixedThreadPool(3);
   private MobileFiles files;
   private String importRequest, importEdit;
-  private static final int IMPORT_EDIT = 201, PICK_FILES = 202;
+  private static final int IMPORT_EDIT = 201, PICK_FILES = 202, PICK_DOWNLOAD_FOLDER = 203;
+  private String downloadFolderRequest;
   private String pickRequest;
   private PhoneUris uris;
 
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
+    current = new java.lang.ref.WeakReference<>(this);
+    PhonePeerService.start(this);
     files = MobileFiles.get(getApplicationContext());
     uris = new PhoneUris(getApplicationContext());
     // Personal app: always inspectable (chrome://inspect) and console mirrored to logcat tag PapersWeb.
@@ -83,6 +91,25 @@ public final class MainActivity extends Activity {
             }); return;
           }
           String operation = request.optString("operation");
+          if ("clipboard-image".equals(operation)) {
+            runOnUiThread(() -> {
+              try {
+                android.content.ClipboardManager clipboard=(android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE);
+                android.content.ClipData clip=clipboard.getPrimaryClip();
+                if(clip==null||clip.getItemCount()==0||clip.getItemAt(0).getUri()==null){sendReply(id,false,"Copy an image to the clipboard first.");return;}
+                android.net.Uri uri=clip.getItemAt(0).getUri();
+                requests.execute(()->{try{String image=PhoneClipboard.image(MainActivity.this,uri);runOnUiThread(()->sendReply(id,true,image));}catch(Exception error){runOnUiThread(()->sendReply(id,false,error.getMessage()));}});
+              }catch(Exception error){sendReply(id,false,"The clipboard image is unavailable.");}
+            });return;
+          }
+          if ("download-folder-pick".equals(operation)) {
+            runOnUiThread(() -> {
+              if(downloadFolderRequest!=null||pickRequest!=null||importRequest!=null){sendReply(id,false,"A folder or file choice is already open.");return;}
+              downloadFolderRequest=id;
+              try{android.content.Intent choose=new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION|android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION|android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION|android.content.Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);startActivityForResult(choose,PICK_DOWNLOAD_FOLDER);}
+              catch(Exception error){downloadFolderRequest=null;sendReply(id,false,"Folder picker is unavailable.");}
+            });return;
+          }
           // Files chosen from the phone become items in its As you Go (by content address, not copied).
           if ("pick-files".equals(operation)) {
             runOnUiThread(() -> {
@@ -113,6 +140,7 @@ public final class MainActivity extends Activity {
   }
   @Override protected void onActivityResult(int requestCode,int resultCode,android.content.Intent data) {
     super.onActivityResult(requestCode,resultCode,data);
+    if(requestCode==PICK_DOWNLOAD_FOLDER&&downloadFolderRequest!=null){String replyId=downloadFolderRequest;downloadFolderRequest=null;if(resultCode!=RESULT_OK||data==null||data.getData()==null){try{sendReply(replyId,true,PhoneDownloads.get(this).folder());}catch(Exception e){sendReply(replyId,false,"Download folder unavailable.");}return;}android.net.Uri tree=data.getData();int flags=data.getFlags();requests.execute(()->{try{JSONObject folder=PhoneDownloads.get(this).keepFolder(tree,flags);runOnUiThread(()->sendReply(replyId,true,folder));}catch(Exception e){runOnUiThread(()->sendReply(replyId,false,e.getMessage()));}});return;}
     if(requestCode==PICK_FILES&&pickRequest!=null){
       String replyId=pickRequest;pickRequest=null;
       java.util.List<android.net.Uri> chosen=new java.util.ArrayList<>();
@@ -144,6 +172,7 @@ public final class MainActivity extends Activity {
     view.evaluateJavascript("Boolean(window.papersBack && window.papersBack())", handled -> { if (!"true".equals(handled)) finish(); });
   }
   @Override public void onDestroy() {
+    if(current.get() == this) current.clear();
     requests.shutdownNow();
     if (view != null) { view.removeJavascriptInterface("PapersNative"); view.destroy(); view = null; }
     super.onDestroy();

@@ -29,6 +29,7 @@ final class PhoneUris {
       case "uri-stat": return stat(uri);
       case "uri-preview": return preview(uri);
       case "uri-open": {
+        java.io.File shared=PhoneStorage.file(uri);if(shared!=null&&shared.isFile()){CachedFilesProvider.openShared(context,shared);return new JSONObject().put("opened",true);}
         Intent view = new Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime(uri)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
         context.startActivity(Intent.createChooser(view, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         return new JSONObject().put("opened", true);
@@ -51,11 +52,12 @@ final class PhoneUris {
   }
 
   private String mime(Uri uri) {
-    String type = context.getContentResolver().getType(uri);
+    String type;try{java.io.File shared=PhoneStorage.file(uri);type=shared==null?context.getContentResolver().getType(uri):android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(android.webkit.MimeTypeMap.getFileExtensionFromUrl(shared.getName()).toLowerCase(java.util.Locale.ROOT));}catch(Exception e){type=null;}
     return type == null ? "*/*" : type;
   }
 
   JSONObject stat(Uri uri) throws Exception {
+    java.io.File shared=PhoneStorage.file(uri);if(shared!=null&&shared.exists())return new JSONObject().put("name",shared.getName()).put("size",shared.isFile()?shared.length():JSONObject.NULL).put("mime",mime(uri));
     String name = uri.getLastPathSegment(); Object size = JSONObject.NULL;
     try (Cursor cursor = context.getContentResolver().query(uri, new String[] { OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE }, null, null, null)) {
       if (cursor != null && cursor.moveToFirst()) {
@@ -68,6 +70,7 @@ final class PhoneUris {
 
   /** A phone document as a preview source (PDFs and media included; see PhonePreview). */
   PhonePreview.Source source(Uri uri) throws Exception {
+    java.io.File shared=PhoneStorage.file(uri);if(shared!=null&&shared.isFile())return PhonePreview.file(shared,shared.getName());
     JSONObject entry = stat(uri);
     String name = entry.getString("name"), type = mime(uri); long size = entry.optLong("size", -1);
     return new PhonePreview.Source() {

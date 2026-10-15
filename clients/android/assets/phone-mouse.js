@@ -10,6 +10,7 @@
 (function () {
   if (window.__phoneMouse) return;
   const HOLD_MS = 200, TAP_TRAVEL = 10, TAP_MS = 300, DOUBLE_MS = 400;
+  let shiftDown=false, shiftLatched=false,resetShift=()=>{};
   let mode = 'off', cursor = null, hovered = null, buttonsDown = 0, lastClick = null;
   const api = { active: () => mode !== 'off' };
   window.__phoneMouse = api;
@@ -42,7 +43,7 @@ html body button.phone-mouse-button[hidden]{display:none}
   const markHover = (node, on) => { for (; node; node = node.parentElement) node.classList.toggle('phone-mouse-hover', on); };
   const chain = (node) => { const list = []; for (; node; node = node.parentElement) list.push(node); return list; };
   const at = (x, y) => document.elementsFromPoint(x, y).find((node) => !node.closest(OURS)) || null;
-  const init = (x, y, extra) => ({ bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, screenX: x, screenY: y, view: window, buttons: buttonsDown, ...extra });
+  const init = (x, y, extra) => ({ bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, screenX: x, screenY: y, view: window, buttons: buttonsDown, shiftKey: shiftDown, ...extra });
   const POINTER_ID = 9001; // never a real finger's id
   const pointer = (type, target, x, y, extra = {}, bubbles = true) => target.dispatchEvent(new PointerEvent(type, { ...init(x, y, extra), bubbles, cancelable: bubbles, pointerId: POINTER_ID, pointerType: 'mouse', isPrimary: true }));
 
@@ -168,12 +169,13 @@ html body button.phone-mouse-button[hidden]{display:none}
       place();
     }
     mode = next; main.classList.toggle('is-on', mode !== 'off');
-    for (const button of extras) button.hidden = mode !== 'mouse';
+    for (const button of extras) button.hidden = button.classList.contains('phone-mouse-shift') ? mode === 'off' : mode !== 'mouse';
   }
   function hide() {
     if (!cursor) return;
     for (let button = 0; button < 3; button++) release(button);
     if (drag?.started) dragEnd(); drag = null; loseCapture(); leave(); cursor.shield.remove(); cursor.node.remove(); cursor = null;
+    resetShift();shiftDown=shiftLatched=false;
     mode = 'off'; main.classList.remove('is-on'); for (const button of extras) { button.hidden = true; button.classList.remove('is-pressed'); }
   }
 
@@ -213,6 +215,14 @@ html body button.phone-mouse-button[hidden]{display:none}
       key.addEventListener('contextmenu', (event) => event.preventDefault());
       extras.push(key);
     }
+    const shift=document.createElement('button');shift.type='button';shift.className='phone-mouse-button phone-mouse-shift';shift.textContent='⇧';shift.hidden=true;shift.setAttribute('aria-label','Shift');shift.setAttribute('aria-pressed','false');shift.style.cssText='right:16px;bottom:88px;width:34px;height:34px;font-size:21px';
+    let shiftPress=null;
+    const paintShift=()=>{shift.classList.toggle('is-pressed',shiftDown);shift.setAttribute('aria-pressed',String(shiftDown));};
+    const setShift=down=>{if(shiftDown!==down){shiftDown=down;(document.activeElement||document.body).dispatchEvent(new KeyboardEvent(down?'keydown':'keyup',{key:'Shift',code:'ShiftLeft',shiftKey:down,bubbles:true}));}paintShift();};
+    resetShift=()=>{shiftLatched=false;shiftPress=null;setShift(false);};
+    shift.addEventListener('touchstart',event=>{event.preventDefault();event.stopPropagation();shiftPress={id:event.changedTouches[0].identifier,at:performance.now(),latched:shiftLatched};setShift(true);},{passive:false});
+    const liftShift=event=>{if(!shiftPress||![...event.changedTouches].some(t=>t.identifier===shiftPress.id))return;event.preventDefault();event.stopPropagation();shiftLatched=event.type==='touchend'&&performance.now()-shiftPress.at<TAP_MS?!shiftPress.latched:shiftPress.latched;shiftPress=null;setShift(shiftLatched);};
+    shift.addEventListener('touchend',liftShift,{passive:false});shift.addEventListener('touchcancel',liftShift,{passive:false});shift.addEventListener('contextmenu',event=>event.preventDefault());extras.push(shift);
     document.body.append(main, ...extras);
   }
 

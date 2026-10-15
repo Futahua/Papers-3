@@ -55,14 +55,19 @@ async function command(ownerId, body) {
   }
   throw new Error('The device did not confirm the change.');
 }
+async function cacheKey(ownerId,entry){const data=new TextEncoder().encode(JSON.stringify([ownerId,entry.id,entry.version]));const digest=await crypto.subtle.digest('SHA-256',data);return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');}
 const inboxKey = (ownerId) => 'papers-phone-inbox:' + ownerId;
 
 async function fileCapability(operation, params) {
+  if(operation==='clipboard-image')return {ok:true,dataUrl:await native({operation:'clipboard-image'})};
   if (operation === 'remote-files') return { ok: true, result: await remoteFiles(params) };
   const paths = Array.isArray(params.paths) ? params.paths : [];
   if (operation === 'search') {
     const scope = parse(params.path);
-    if (!scope) return { ok: false, code: 'EVERYTHING_UNAVAILABLE', message: 'Search runs on a device. Open one from Devices first.', results: [] };
+    if (!scope) {
+      const found = await native({ operation: 'phone-search', query: String(params.query || ''), limit: params.limit || 100 });
+      return { ok: true, provider: 'phone-index', total: found.total, ready: found.ready, results: found.results.map(item => phoneDescription(item)), message: found.ready ? null : 'Indexing phone files…' };
+    }
     const found = await native({ operation: 'search', ownerId: scope.ownerId, query: String(params.query || ''), limit: params.limit || 100 });
     const results = found.map((item) => ({ path: remotePath(scope.ownerId, item.parts), name: item.name, kind: item.kind, size: item.size, modifiedAt: item.modifiedAt, attributes: 0 }));
     return { ok: true, provider: 'everything', version: null, total: results.length, results };
@@ -70,7 +75,10 @@ async function fileCapability(operation, params) {
   if (operation === 'providers') return { ok: true, providers: { everything: true } };
   // The phone's own files (chosen with the paperclip) live at \\papers~phone\<content address>.
   const own = phoneUri(params.path);
-  if (own) return phoneFile(operation, own, params.path);
+  if (own || paths.some(path=>phoneUri(path))) {
+    if(['create-folder','rename','copy','move','delete'].includes(operation))return phoneChange(operation,params);
+    if(own)return phoneFile(operation,own,params.path);
+  }
   if (![params.path, params.destination, ...paths].some(parse)) return { ok: false, code: 'UNAVAILABLE_ON_PHONE', message: 'Not available on the phone.' };
   switch (operation) {
     case 'stat': { const { ownerId, parts, entry } = await resolve(params.path); return { ok: true, entry: describe(ownerId, parts, entry) }; }
@@ -90,6 +98,12 @@ async function fileCapability(operation, params) {
       if (/^\.(pdf|mp4|m4v|webm|mkv|mov|3gp|mp3|m4a|aac|wav|ogg|oga|opus|flac)$/.test(described.extension)) return { ok: true, entry: described, preview: await native({ operation: 'cache-preview', ownerId, entry }) };
       return { ok: true, entry: described, preview: await native({ operation: 'preview', ownerId, resourceId: entry.id }) };
     }
+    case 'open': {
+      const {ownerId,entry}=await resolve(params.path);if(!entry||entry.kind!=='file')throw Error('Choose a file to open.');
+      const job=await native({operation:'download',ownerId,entry});
+      for(;;){const current=await native({operation:'download-job',jobId:job.id});if(current.phase==='completed')break;if(current.phase==='failed')throw Error(current.error||'The file could not be fetched.');await new Promise(r=>setTimeout(r,200));}
+      return {ok:true,...await native({operation:'open-cache',ownerId,key:job.key||await cacheKey(ownerId,entry)})};
+    }
     case 'create-folder': { const { ownerId, entry } = await resolve(params.path); await command(ownerId, { operation: 'create-folder', resourceId: entry.id, expectedVersion: entry.version, newName: String(params.newName) }); return fileCapability('stat', { path: `${params.path}\\${params.newName}` }); }
     case 'rename': { const { ownerId, parts, entry } = await resolve(params.path); await command(ownerId, { operation: 'rename', resourceId: entry.id, expectedVersion: entry.version, newName: String(params.newName) }); return { ok: true, operation, path: remotePath(ownerId, [...parts.slice(0, -1), String(params.newName)]) }; }
     case 'delete': { for (const target of paths) { const { ownerId, entry } = await resolve(target); await command(ownerId, { operation: 'delete', resourceId: entry.id, expectedVersion: entry.version }); } return { ok: true, operation }; }
@@ -105,30 +119,63 @@ async function fileCapability(operation, params) {
 }
 // A path shaped like any other (so As you Go previews it), holding the phone file's content:// address.
 const PHONE_ROOT = '\\\\papers~phone\\';
-const phoneUri = (path) => {
-  const text = String(path || '');
-  if (!text.toLowerCase().startsWith(PHONE_ROOT)) return null;
-  try { const uri = decodeURIComponent(text.slice(PHONE_ROOT.length)); return uri.startsWith('content://') ? uri : null; } catch { return null; }
+const phonePath = uri => {
+  if (uri.startsWith('content://com.android.externalstorage.documents/document/')) {
+    const id = decodeURIComponent(new URL(uri).pathname.slice('/document/'.length)), colon = id.indexOf(':');
+    if(colon>=0)return PHONE_ROOT + [id.slice(0,colon), ...id.slice(colon+1).split('/').filter(Boolean)].map(encodeURIComponent).join('\\');
+  }
+  return PHONE_ROOT + encodeURIComponent(uri);
 };
+const phoneUri = path => {
+  const text=String(path||'');if(!text.toLowerCase().startsWith(PHONE_ROOT))return null;
+  try { const tail=text.slice(PHONE_ROOT.length), old=decodeURIComponent(tail);if(old.startsWith('content://'))return old;
+    const [volume,...parts]=tail.split('\\').map(decodeURIComponent);if(!volume)return null;
+    return 'content://com.android.externalstorage.documents/document/'+encodeURIComponent(volume+':'+parts.join('/'));
+  }catch{return null;}
+};
+function phoneDescription(info) {
+  const path = phonePath(info.uri), dot = info.name.lastIndexOf('.');
+  return { path, name: info.name, parent: info.parentUri ? phonePath(info.parentUri) : null, kind: info.kind || 'file', extension: info.kind === 'folder' || dot < 1 ? '' : info.name.slice(dot).toLowerCase(), size: info.size ?? null, createdAt: null, modifiedAt: typeof info.modifiedAt === 'number' ? info.modifiedAt : info.modifiedAt ? Date.parse(info.modifiedAt) : null, identity: info.uri, folder: info.folder || '' };
+}
+
 async function phoneFile(operation, uri, path) {
-  const entry = async () => {
-    const info = await native({ operation: 'uri-stat', uri });
-    const dot = info.name.lastIndexOf('.');
-    return { path, name: info.name, parent: null, kind: 'file', extension: dot > 0 ? info.name.slice(dot).toLowerCase() : '', size: info.size ?? null, createdAt: null, modifiedAt: null, identity: null };
-  };
+  const info = async () => uri.startsWith('content://com.android.externalstorage.documents/') ? native({operation:'phone-stat',uri}) : { ...(await native({operation:'uri-stat',uri})), uri, kind:'file' };
   switch (operation) {
-    case 'stat': return { ok: true, entry: await entry() };
-    case 'preview': return { ok: true, entry: await entry(), preview: await native({ operation: 'uri-preview', uri }) };
+    case 'stat': try{return { ok: true, entry: phoneDescription(await info()) };}catch(error){if(error.message==='PHONE_FILE_NOT_FOUND')return {ok:false,code:'ENOENT',message:'The phone file no longer exists.'};throw error;}
+    case 'list': { const listing=await native({operation:'phone-list',uri});return {ok:true,entry:phoneDescription(listing.entry),items:listing.items.map(phoneDescription),truncated:false}; }
+    case 'preview': { const entry=phoneDescription(await info());return {ok:true,entry,preview:entry.kind==='folder'?{kind:'none'}:await native({operation:'uri-preview',uri})}; }
     case 'open': return { ok: true, ...(await native({ operation: 'uri-open', uri })) };
     case 'icon': return { ok: true, icon: null };
     default: return { ok: false, code: 'UNAVAILABLE_ON_PHONE', message: 'Not available for a phone file.' };
   }
 }
+
+async function phoneChange(action,params) {
+  const paths=['rename','create-folder'].includes(action)?[params.path]:[...new Set(params.paths||[])];
+  if(!paths.length||paths.some(path=>!phoneUri(path)))throw Error('Select phone files first.');
+  if(['copy','move'].includes(action)&&!phoneUri(params.destination))throw Error('Choose a phone folder destination.');
+  for(const path of paths) {
+    const commandId=crypto.randomUUID();
+    await native({operation:'phone-change',commandId,action,uri:phoneUri(path),...(params.newName?{newName:params.newName}:{}),...(params.destination?{destinationUri:phoneUri(params.destination)}:{})});
+    for(;;){const job=await native({operation:'phone-change-status',commandId});if(job.phase==='completed')break;if(['failed','uncertain'].includes(job.phase))throw Error(job.error||'The phone could not confirm this change.');await new Promise(r=>setTimeout(r,200));}
+  }
+  return {ok:true,operation:action};
+}
+
 let selfName = null;
 async function phoneName() { if (!selfName) selfName = (await native({ operation: 'self' })).name; return selfName; }
 async function remoteFiles(params) {
   const ownerId = params.ownerId;
   switch (params.operation) {
+    case 'download-folder': case 'download-folder-pick': case 'public-download-status': case 'public-download-pause': case 'public-download-resume': return native({operation:params.operation});
+    case 'public-download-start': {
+      const destination=await native({operation:'download-folder'});if(!destination.valid)throw Error('Choose a writable Download folder in the device menu first.');
+      const items=[],seen=new Set();
+      async function collect(ownerId,entry,relative){const key=ownerId+'|'+entry.id;if(seen.has(key))return;seen.add(key);if(entry.kind==='file'){items.push({ownerId,entry,relative});return;}if(entry.kind!=='folder')return;const children=await listAll(ownerId,entry.id);if(!children.length)items.push({ownerId,entry:{...entry,size:0},relative,directory:true});for(const child of children)await collect(ownerId,child,relative+'/'+child.name);}
+      for(const path of params.paths||[]){const target=parse(path)?path:ownerId&&/^[A-Za-z]:[\\/]/.test(path)?remotePath(ownerId,path.replace(/\//g,'\\').split('\\')):path;const resolved=await resolve(target);if(resolved.entry)await collect(resolved.ownerId,resolved.entry,resolved.entry.name);}
+      if(!items.length)throw Error('Selection contains no downloadable files.');
+      return native({operation:'public-download-start',items});
+    }
     case 'status': { const result = await status(); return { ...result, owner: { name: await phoneName() } }; }
     case 'workspaces': return native({ operation: 'workspaces', ownerId });
     case 'workspace-load': return native({ operation: 'workspace-load', ownerId, workspaceId: params.workspaceId });
@@ -183,10 +230,16 @@ async function handle(type, request) {
     case 'papers:project:state-load-versioned': return loadOwn();
     case 'papers:project:as-you-go-load': return { state: (await loadOwn()).state };
     case 'papers:project:state-save-checked': return { stateSave: await native({ operation: 'local-state-save', state: request.state, revision: request.revision }) };
+    case 'papers:project:as-you-go-launch': {
+      const loaded=await loadOwn();const item=JSON.parse(loaded.state).shortcuts?.find(item=>item.id===request.actionId);if(!item)throw Error('The file link is unavailable.');
+      const uri=phoneUri(item.target) || (String(item.target).startsWith('content://')?item.target:null);
+      if(uri)return {opened:await native({operation:'uri-open',uri})};
+      throw Error('This link cannot be opened on the phone.');
+    }
     case 'papers:project:as-you-go-save': { const current = await loadOwn(); await native({ operation: 'local-state-save', state: request.state, revision: current.revision }); return {}; }
     case 'papers:project:workspace-writer-lease-acquire': return { writerLease: null };
     case 'papers:project:workspace-writer-lease-release': return {};
-    case 'papers:phone:pick-files': return { picked: (await native({ operation: 'pick-files' })).map((file) => ({ ...file, target: PHONE_ROOT + encodeURIComponent(file.target) })) };
+    case 'papers:phone:pick-files': return { picked: (await native({ operation: 'pick-files' })).map((file) => ({ ...file, target: phonePath(file.target) })) };
     case 'papers:project:file-capability': return { fileCapability: await fileCapability(request.operation, request.params || {}).catch((error) => ({ ok: false, code: 'FILE_OPERATION_FAILED', message: error.message })) };
     case 'papers:project:open-new-surface': {
       // A device's As you Go opens over the phone's own; Android back returns to it.
@@ -252,18 +305,21 @@ async function proximaShare(ownerId) {
   if (!share) throw new Error('That computer has no Proxima to show.');
   return share;
 }
+const LOCAL_PROXIMA = 'local';
 async function openProxima(ownerId) {
   if (!ownerId) {
     let remembered = null; try { remembered = localStorage.getItem(PROXIMA_DEVICE); } catch {}
     const known = (await status()).devices || [];
-    ownerId = known.some((d) => d.id === remembered) ? remembered : known[0]?.id;
+    ownerId = remembered === LOCAL_PROXIMA || known.some((d) => d.id === remembered) ? remembered : known[0]?.id ?? LOCAL_PROXIMA;
   }
-  if (!ownerId) throw new Error('No computer is connected.');
   try { localStorage.setItem(PROXIMA_DEVICE, ownerId); } catch {}
-  openLayer('proxima/index.html?papers-phone=1&papers-control=1&papers-device=' + ownerId);
+  // The phone's own Proxima keeps its facts on the phone; a computer's opens with control.
+  if (ownerId === LOCAL_PROXIMA) openLayer('proxima/index.html?papers-phone=1');
+  else openLayer('proxima/index.html?papers-phone=1&papers-control=1&papers-device=' + ownerId);
 }
 async function proximaRequest(request) {
-  if (request.operation === 'devices') return (await status()).devices || [];
+  // The device switcher lists this phone (its own Proxima) first, then the computers.
+  if (request.operation === 'devices') return [{ id: LOCAL_PROXIMA, name: await phoneName() }, ...((await status()).devices || [])];
   // The phone controls Proxima the way a computer's remote view does: the live owner's view, and
   // commands the owner applies and confirms. Nothing is saved or queued on the phone.
   if (request.operation === 'snapshot' || request.operation === 'command') {
@@ -275,8 +331,18 @@ async function proximaRequest(request) {
     if (!devices.some((d) => d.id === request.ownerId)) await status();
     return { ...result, name: deviceName(request.ownerId) };
   }
+  // The phone's own Proxima: published to the computers to view, replacing a computer's (confirmed on
+  // the phone), and taking a replacement a computer left for the phone.
+  if (request.operation === 'publish') return native({ operation: 'publish-proxima', snapshot: { ...request.snapshot, deviceName: await phoneName() } });
+  if (request.operation === 'replace') { const share = await proximaShare(request.ownerId); return native({ operation: 'backpack-replace', ownerId: request.ownerId, resourceId: share.id, snapshot: request.snapshot }); }
+  if (request.operation === 'replacement') return native({ operation: 'peer-replacement' });
+  if (request.operation === 'replacement-done') return native({ operation: 'peer-replacement-done', ownerId: request.from });
   throw new Error('Not available on the phone.');
 }
+window.addEventListener('message',event=>{
+  if(event.source!==window||event.origin!==location.origin||event.data?.type!=='papers:phone:owner-changed')return;
+  if(layer)layer.contentWindow.postMessage({type:'papers:phone:owner-changed'},location.origin);
+});
 const fromPage = (source) => source === frame.contentWindow || (layer && source === layer.contentWindow);
 window.addEventListener('message', (event) => {
   if (!fromPage(event.source)) return;
@@ -318,6 +384,6 @@ frame.src = 'ayg/workspace-20260730b.html?papers-phone=1';
   reveal();
   let last = null; try { last = localStorage.getItem(LAST_LAYER); } catch {}
   // Proxima opened before phone control existed is reopened with control.
-  if (last?.startsWith('proxima/') && !last.includes('papers-control=')) last = last.replace('papers-phone=1', 'papers-phone=1&papers-control=1');
+  if (last?.startsWith('proxima/') && last.includes('papers-device=') && !last.includes('papers-control=')) last = last.replace('papers-phone=1', 'papers-phone=1&papers-control=1');
   if (last && /^(proxima|ayg)\//.test(last)) openLayer(last);
 }

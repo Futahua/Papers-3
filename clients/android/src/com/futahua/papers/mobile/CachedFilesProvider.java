@@ -26,10 +26,17 @@ public final class CachedFilesProvider extends ContentProvider {
     try { context.startActivity(intent); }
     catch(android.content.ActivityNotFoundException error){throw new IllegalStateException("No installed app can edit this file. You can import a separately edited copy instead.");}
   }
+  static void openShared(Context context,File file)throws Exception {
+    String path=file.getCanonicalPath(),key=PhonePeerServer.hash(path.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    context.getSharedPreferences("shared-file-views",0).edit().putString(key,path).commit();
+    Uri uri=new Uri.Builder().scheme("content").authority("com.futahua.papers.mobile.files").appendPath("shared").appendPath(key).appendQueryParameter("name",file.getName()).build();
+    Intent open=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,type(file.getName())).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_ACTIVITY_NEW_TASK);try{context.startActivity(open);}catch(android.content.ActivityNotFoundException e){throw new IOException("No installed app can open this file type.");}
+  }
   private boolean editable(Uri uri) { return uri.getPathSegments().size()==2 && "edit".equals(uri.getPathSegments().get(0)); }
   private static String type(String name) { int index = name.lastIndexOf('.'); String mime = index < 0 ? null : MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substring(index + 1).toLowerCase(java.util.Locale.ROOT)); return mime == null ? "application/octet-stream" : mime; }
   private String key(Uri uri) throws FileNotFoundException { String key = uri.getLastPathSegment(); if (key == null || !key.matches("[a-f0-9]{64}")) throw new FileNotFoundException(); return key; }
   private File file(Uri uri) throws FileNotFoundException {
+    if(uri.getPathSegments().size()==2&&"shared".equals(uri.getPathSegments().get(0))){try{String stored=getContext().getSharedPreferences("shared-file-views",0).getString(key(uri),null);if(stored==null)throw new FileNotFoundException();File shared=new File(stored).getCanonicalFile();for(File root:PhoneStorage.roots())if(shared.isFile()&&shared.getPath().startsWith(root.getCanonicalPath()+"/"))return shared;throw new FileNotFoundException();}catch(Exception e){throw new FileNotFoundException("Shared file unavailable");}}
     if(editable(uri)) {try{return new MobileEditCopies(getContext()).working(uri.getLastPathSegment());}catch(Exception error){throw new FileNotFoundException("Local working copy is unavailable");}}
     return new File(new File(getContext().getFilesDir(), "remote-files"), key(uri) + ".bin");
   }

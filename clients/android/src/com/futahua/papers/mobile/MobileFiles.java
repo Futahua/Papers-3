@@ -29,17 +29,22 @@ final class MobileFiles {
   private final Map<String, JSONObject> jobs = new ConcurrentHashMap<>();
   private final Map<String, Future<?>> workers = new ConcurrentHashMap<>();
   private final Map<String, Object> editLocks = new ConcurrentHashMap<>();
+  private final Map<String, Object> transferLocks = new ConcurrentHashMap<>();
   private final ExecutorService downloads = Executors.newFixedThreadPool(2);
-  MobileFiles(Context context) { this.context = context; root = new File(context.getFilesDir(), "remote-files"); root.mkdirs(); outbox=new MobileCommandOutbox(root); editCopies=new MobileEditCopies(context); }
+  MobileFiles(Context context) { this.context = context; root = new File(context.getFilesDir(), "remote-files"); root.mkdirs(); outbox=new MobileCommandOutbox(root); editCopies=new MobileEditCopies(context); PhoneIndex.get(context); }
 
   Object call(JSONObject request) throws Exception {
     String operation = request.getString("operation");
+    if (operation.equals("phone-change") || operation.equals("phone-change-status")) return PhonePeerService.localFiles(request);
+    if (PhoneIndex.handles(operation)) return PhoneIndex.get(context).call(context,request);
     String owner = request.optString("ownerId");
     switch (operation) {
       case "pair": return pair(request.getString("address"), request.getString("code"));
       case "status": joinOwners(); return snapshot();
       case "browse": return browse(owner, request.optString("resourceId"), request.optInt("offset", 0));
       case "download": return download(owner, request.getJSONObject("entry"));
+      case "download-job": {JSONObject job=jobs.get(request.getString("jobId"));if(job==null)throw new IOException("Download is unavailable.");synchronized(job){return new JSONObject(job.toString());}}
+      case "download-folder": case "public-download-start": case "public-download-status": case "public-download-pause": case "public-download-resume": return PhoneDownloads.get(context).call(request);
       case "offline": return offline(owner);
       case "edit-list": return editCopies.list(owner);
       case "edit-begin": return beginEdit(owner,request.getJSONObject("entry"));
@@ -68,6 +73,10 @@ final class MobileFiles {
       case "backpacks": return backpacks(owner);
       case "backpack-snapshot": return backpackSnapshot(owner,request.getString("resourceId"));
       case "cache-preview": return cachePreview(owner, request.getJSONObject("entry"));
+      case "publish-proxima": PhonePeerService.changed(); return new JSONObject().put("published",true);
+      case "backpack-replace": { String id = request.getString("resourceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid shared Backpack identity."); JSONObject device = connection(owner); return exchange("POST", address(device.getString("address")) + "/v1/backpacks/" + id + "/replace", open(device.getString("secret")), request.getJSONObject("snapshot").toString(), 180000); }
+      case "peer-replacement": return peerReplacement();
+      case "peer-replacement-done": { JSONObject device = connection(owner); return exchange("DELETE", address(device.getString("address")) + "/v1/peer/proxima/replacement", open(device.getString("secret")), null, 30000); }
       case "backpack-view": return backpackControl(owner,request.getString("resourceId"),null);
       case "backpack-command": return backpackControl(owner,request.getString("resourceId"),request.getJSONObject("command"));
       case "change": { JSONObject device=connection(owner);return outbox.send(owner,device.optString("deviceId"),request.getJSONObject("command"),command->dispatchChange(device,command)); }
@@ -87,6 +96,11 @@ final class MobileFiles {
     for (int i = 0; i < devices.length(); i++) if (devices.getJSONObject(i).getString("id").equals(owner)) return devices.getJSONObject(i);
     throw new IOException("Device is not connected.");
   }
+  JSONArray peerInvitations(JSONObject phoneOwner)throws Exception {
+    JSONArray result=new JSONArray(),all=connections();
+    for(int i=0;i<all.length();i++){JSONObject pc=all.getJSONObject(i);Mac mac=Mac.getInstance("HmacSHA256");mac.init(new javax.crypto.spec.SecretKeySpec(open(pc.getString("secret")).getBytes(StandardCharsets.UTF_8),"HmacSHA256"));String token=Base64.encodeToString(mac.doFinal(("papers-phone-peer-v1|"+phoneOwner.getString("id")+"|"+pc.getString("id")).getBytes(StandardCharsets.UTF_8)),Base64.URL_SAFE|Base64.NO_WRAP|Base64.NO_PADDING);result.put(new JSONObject().put("pc",pc).put("owner",phoneOwner).put("deviceId",UUID.nameUUIDFromBytes((phoneOwner.getString("id")+"|"+pc.getString("id")).getBytes(StandardCharsets.UTF_8)).toString()).put("token",token));}return result;
+  }
+  void announcePeer(JSONObject phoneOwner)throws Exception {JSONArray invitations=peerInvitations(phoneOwner);for(int i=0;i<invitations.length();i++){JSONObject item=invitations.getJSONObject(i),pc=item.getJSONObject("pc");JSONObject invitation=new JSONObject(item.toString());invitation.remove("pc");try{exchange("PUT",address(pc.getString("address"))+"/v1/peer/connect",open(pc.getString("secret")),invitation.toString(),15000);}catch(Exception error){Log.w(TAG,"phone peer announce failed: "+error.getMessage());}}}
   private synchronized JSONObject pair(String address, String code) throws Exception {
     String base = address(address);
     remember(base, json(http(base + "/v1/devices/pair", null, null, new JSONObject().put("code", code).put("name", Build.MODEL))));
@@ -99,7 +113,7 @@ final class MobileFiles {
     JSONObject device = new JSONObject().put("id", owner.getString("id")).put("deviceId",response.getString("deviceId")).put("name", owner.getString("name")).put("address", base).put("secret", seal(response.getString("token")));
     JSONArray previous = connections(), next = new JSONArray();
     for (int i = 0; i < previous.length(); i++) { JSONObject item = previous.getJSONObject(i); if (!item.getString("id").equals(owner.getString("id")) && !base.equals(item.optString("address"))) next.put(item); }
-    next.put(device); write(new File(root, "connections.json"), new JSONObject().put("connections", next));
+    next.put(device); write(new File(root, "connections.json"), new JSONObject().put("connections", next));PhonePeerService.announce();
   }
   /** Joins the creator's own computers (same Tailscale account, listed at build time). No codes. */
   private static final String TAG = "PapersDevices";
@@ -214,6 +228,38 @@ final class MobileFiles {
     }
     return PhonePreview.preview(PhonePreview.file(complete, entry.getString("name")));
   }
+  /** The phone's own Proxima, published to every computer so they can view it (each keeps the latest). */
+  private JSONObject publishProxima(JSONObject snapshot) throws Exception {
+    JSONArray all = connections(), done = new JSONArray(), failed = new JSONArray(); String body = snapshot.toString();
+    for (int i = 0; i < all.length(); i++) {
+      JSONObject device = all.getJSONObject(i);
+      try { exchange("PUT", address(device.getString("address")) + "/v1/peer/proxima", open(device.getString("secret")), body, 60000); done.put(device.getString("name")); }
+      catch (Exception error) { failed.put(device.getString("name") + ": " + error.getMessage()); }
+    }
+    return new JSONObject().put("published", done).put("failed", failed);
+  }
+  /** A replacement a computer left for this phone's Proxima, if any (the first found). */
+  private Object peerReplacement() throws Exception {
+    JSONArray all = connections();
+    for (int i = 0; i < all.length(); i++) {
+      JSONObject device = all.getJSONObject(i);
+      try {
+        JSONObject answer = exchange("GET", address(device.getString("address")) + "/v1/peer/proxima/replacement", open(device.getString("secret")), null, 30000);
+        if (answer.optJSONObject("replacement") != null) return answer.getJSONObject("replacement").put("ownerId", device.getString("id"));
+      } catch (Exception ignored) { /* offline computers simply have nothing to offer now */ }
+    }
+    return JSONObject.NULL;
+  }
+  /** One JSON request with any method (the shared helper only knows GET and POST). */
+  private JSONObject exchange(String method, String url, String token, String body, int timeout) throws Exception {
+    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(); c.setInstanceFollowRedirects(false); c.setConnectTimeout(15000); c.setReadTimeout(timeout);
+    c.setRequestMethod(method); c.setRequestProperty("Authorization", "Bearer " + token);
+    if (body != null) { c.setDoOutput(true); c.setRequestProperty("Content-Type", "application/json"); try (OutputStream out = c.getOutputStream()) { out.write(body.getBytes(StandardCharsets.UTF_8)); } }
+    int status = c.getResponseCode();
+    if (status < 200 || status >= 300) { String detail = ""; try (InputStream error = c.getErrorStream()) { if (error != null) detail = new JSONObject(new String(readAll(error), StandardCharsets.UTF_8)).optString("message", ""); } catch (Exception ignored) {} c.disconnect(); throw new IOException(detail.isEmpty() ? "Remote operation failed (" + status + ")." : detail); }
+    return largeJson(c);
+  }
+  private static byte[] readAll(InputStream input) throws IOException { ByteArrayOutputStream bytes = new ByteArrayOutputStream(); byte[] buffer = new byte[16384]; int count; while ((count = input.read(buffer)) >= 0) { bytes.write(buffer, 0, count); if (bytes.size() > 1024 * 1024) break; } return bytes.toByteArray(); }
   /** Proxima control, as a computer's remote view does it: the live owner's view, or one command the owner
    * applies and confirms (with its new snapshot). Nothing is cached or queued here; offline simply fails. */
   private JSONObject backpackControl(String owner,String id,JSONObject command) throws Exception {
@@ -247,7 +293,8 @@ final class MobileFiles {
     }
     String id = UUID.randomUUID().toString();
     JSONObject job = new JSONObject().put("id", id).put("ownerId", owner).put("entry", entry).put("phase", "queued").put("bytes", 0); jobs.put(id, job);
-    Future<?> worker = downloads.submit(() -> { try { transfer(owner, entry, job); } catch (Exception error) { try { synchronized (job) { job.put("phase", "failed").put("error", error.getMessage() == null ? "Transfer interrupted. Retry to resume." : error.getMessage()); } } catch (Exception ignored) {} } finally { workers.remove(id); } });
+    String transferKey=owner+"|"+entry.getString("id")+"|"+entry.getString("version");Object transferLock=transferLocks.computeIfAbsent(transferKey,key->new Object());
+    Future<?> worker = downloads.submit(() -> { try { synchronized(transferLock){if(Thread.currentThread().isInterrupted())throw new IOException("Transfer paused. Retry to resume.");transfer(owner, entry, job);} } catch (Exception error) { try { synchronized (job) { job.put("phase", "failed").put("error", error.getMessage() == null ? "Transfer interrupted. Retry to resume." : error.getMessage()); } } catch (Exception ignored) {} } finally { workers.remove(id); } });
     workers.put(id, worker); return new JSONObject(job.toString());
   }
   private void transfer(String owner, JSONObject entry, JSONObject job) throws Exception {
@@ -273,6 +320,7 @@ final class MobileFiles {
     write(new File(root, key + ".json"), new JSONObject().put("ownerId", owner).put("entry", entry).put("key", key).put("sha256", digest.getString("sha256")));
     update(job, "completed", size);
   }
+  void exportDownload(String owner,JSONObject entry,android.net.Uri tree,String relative)throws Exception {String key=sha(new JSONArray().put(owner).put(entry.getString("id")).put(entry.getString("version")).toString().getBytes(StandardCharsets.UTF_8));PhoneDownloads.export(context,checkedFile(owner,key),tree,relative);}
   private void update(JSONObject job, String phase, long bytes) throws Exception { synchronized (job) { job.put("phase", phase).put("bytes", bytes); } }
   private JSONArray offline(String owner) throws Exception {
     JSONArray result = new JSONArray(); File[] files = root.listFiles(); if (files == null) return result;
