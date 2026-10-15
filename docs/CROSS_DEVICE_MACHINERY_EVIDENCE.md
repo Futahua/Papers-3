@@ -52,3 +52,11 @@ Checks cover:
 - Throughput is bounded by the laptop's 2.4 GHz Wi-Fi (65–88 Mbps). Tailscale and the app add no measurable cost; the phone reached 108–159 Mbps.
 - Deciding that an owner is offline takes 15 s, the client connect timeout. Until then a request looks pending.
 - When the owner is offline, the phone serves the last listing, marked `online: false`. The desktop client behaves likewise for listings.
+
+### LapDog completion — 2026-10-15
+
+Continued Claude session a828f405-d982-464f-8885-6ec1213464cf after its laptop connector timeout. Deployed As you Go 1865cd5 and Proxima 2611a5e public files to the existing registered Laptop Backpack roots. Compared CRLF-normalized installed hashes against source and history; inspected seven earlier deployment variants before replacement. No laptop-only functional changes were discarded. Updated 20 files; previous versions retained under C:\Users\admin\AppData\Local\Temp\PapersUpdate-20261015\backup.
+
+Papers accepted WM_CLOSE and exited normally. Restored the same open workspace c20d2dd4-b5fb-4bac-909a-ab88478d61d2 using its one-use reload token. No host App files or creator documents were copied. Reload intent was consumed; CDP confirmed local AYG, Proxima, widget and retained remote Files pages returned.
+
+Acceptance: all 193 public distribution files match source after CRLF normalization, and SlopTop's installed public files match that same manifest. Proxima live sync to SlopTop and Poordroid both reported ok with zero open conflicts, 12 timeline rows, 16 intervals, and 27 schedule events. Conflict script and life-clock control are loaded. AYG's new view picker is present and phone-only action count is zero on PC. Source checks: AYG 2063 passed; Proxima sync/timeline/pointer checks 34 passed. No synthetic data or conflict was inserted into creator Proxima. The older reported thumbnail-add behavior was not exercised against creator files during deployment.

@@ -42,6 +42,7 @@ export async function createRemoteFileGateway(options: {
   inboxDirectory?: string;
   inbox?:{get:()=>Promise<{path:string;chosen:boolean}>;set:(parts:string[]|null)=>Promise<{path:string;chosen:boolean}>};
   /** Runs this computer's own preview of a file; only self-contained results (text, image data) are returned. */
+  thumbnail?: (target:string)=>Promise<Record<string,unknown>>;
   preview?: (target: string) => Promise<Record<string, unknown>>;
   /** As you Go workspaces on this computer that same-account devices may open and edit. */
   workspaces?: {
@@ -275,6 +276,14 @@ export async function createRemoteFileGateway(options: {
       if (url.pathname === '/v1/files/shares') {
         json(response, 200, { ok: true, protocol: 1, owner: options.owner, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate),edits:Boolean(device.grant.canWrite===true&&options.edits)}, entries: await device.catalog.shares() });
         return;
+      }
+      const thumbnailMatch=/^\/v1\/files\/([a-f0-9-]{36})\/thumbnail$/.exec(url.pathname);
+      if(thumbnailMatch){
+        const target=await device.catalog.ownerPath(thumbnailMatch[1]!);
+        const preview=options.thumbnail?await options.thumbnail(target):{kind:'none'};
+        if(devices.get(device.grant.deviceId)!==device||response.destroyed)return;
+        const portable=preview['kind']==='image'&&typeof preview['dataUrl']==='string'&&preview['dataUrl'].startsWith('data:image/jpeg;base64,')&&preview['dataUrl'].length<=180000&&Number(preview['width'])>=1&&Number(preview['width'])<=256&&Number(preview['height'])>=1&&Number(preview['height'])<=256;
+        json(response,200,{ok:true,preview:portable?{kind:'image',mime:'image/jpeg',dataUrl:preview['dataUrl'],width:preview['width'],height:preview['height']}:{kind:'none'}});return;
       }
       const previewMatch = /^\/v1\/files\/([a-f0-9-]{36})\/preview$/.exec(url.pathname);
       if (previewMatch) {

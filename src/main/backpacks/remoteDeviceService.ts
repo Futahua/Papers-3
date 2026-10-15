@@ -23,6 +23,7 @@ export class RemoteDeviceService {
   replaceBackpack: ((share:RemoteBackpackShare,projection:Record<string,unknown>)=>Promise<unknown>) | null = null;
   peerReplacement: { take:(deviceId:string)=>Promise<unknown>; clear:(deviceId:string)=>Promise<void> } | null = null;
   workspaces: Parameters<typeof createRemoteFileGateway>[0]['workspaces'] | null = null;
+  thumbnail: ((target:string)=>Promise<Record<string,unknown>>) | null = null;
   preview: ((target:string)=>Promise<Record<string,unknown>>) | null = null;
   search: ((query:string,limit:number)=>Promise<{results:{path:string;name:string;kind:'file'|'folder';size:number|null;modifiedAt:number|null}[]}>) | null = null;
   inbox:Parameters<typeof createRemoteFileGateway>[0]['inbox']|null=null;
@@ -54,6 +55,7 @@ export class RemoteDeviceService {
       inbox:{get:()=>{if(!this.inbox)throw Error('Inbox settings are unavailable.');return this.inbox.get();},set:parts=>{if(!this.inbox)throw Error('Inbox settings are unavailable.');return this.inbox.set(parts);}},
       edits: this.edits ?? undefined,
       workspaces:{list:()=>this.workspaces?.list()??Promise.resolve([]),load:projectId=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.load(projectId);},save:(projectId,raw,revision)=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.save(projectId,raw,revision);},icon:(projectId,name)=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.icon(projectId,name);}},
+      thumbnail:target=>this.thumbnail?.(target)??Promise.resolve({kind:'none'}),
       preview:target=>{if(!this.preview)throw Error('Previews are unavailable.');return this.preview(target);},
       search:(query,limit)=>{if(!this.search)throw Error('Search is unavailable on this computer.');return this.search(query,limit);},
       backpackSnapshot:(share,control)=>{if(!this.readBackpack)throw Error('Backpack execution owner is unavailable.');return this.readBackpack(share,control);},

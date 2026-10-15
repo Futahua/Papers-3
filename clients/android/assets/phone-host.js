@@ -89,6 +89,10 @@ async function fileCapability(operation, params) {
       return { ok: true, entry: describe(ownerId, parts, entry), items, truncated: false };
     }
     case 'icon': return { ok: true, icon: null };
+    case 'thumbnail': {
+      const {ownerId,entry}=await resolve(params.path);if(!entry||entry.kind!=='file')return {ok:true,preview:{kind:'none'}};
+      return {ok:true,preview:await native({operation:'thumbnail',ownerId,resourceId:entry.id})};
+    }
     case 'preview': {
       // The computer that holds the file renders text and images with its own tools; a PDF, audio or
       // video is fetched (verified) and previewed on the phone.
@@ -143,8 +147,11 @@ async function phoneFile(operation, uri, path) {
   switch (operation) {
     case 'stat': try{return { ok: true, entry: phoneDescription(await info()) };}catch(error){if(error.message==='PHONE_FILE_NOT_FOUND')return {ok:false,code:'ENOENT',message:'The phone file no longer exists.'};throw error;}
     case 'list': { const listing=await native({operation:'phone-list',uri});return {ok:true,entry:phoneDescription(listing.entry),items:listing.items.map(phoneDescription),truncated:false}; }
+    case 'thumbnail': {const entry=phoneDescription(await info());return {ok:true,preview:entry.kind==='folder'||!/^\.(png|jpe?g|gif|webp|bmp|avif|heic|heif)$/i.test(entry.extension)?{kind:'none'}:await native({operation:'uri-preview',uri})};}
     case 'preview': { const entry=phoneDescription(await info());return {ok:true,entry,preview:entry.kind==='folder'?{kind:'none'}:await native({operation:'uri-preview',uri})}; }
     case 'open': return { ok: true, ...(await native({ operation: 'uri-open', uri })) };
+    case 'resolve-storage-path': {const result=await native({operation:'uri-storage-path',uri});return {ok:true,path:phonePath(result.uri)};}
+    case 'reveal': return {ok:true,...await native({operation:'uri-reveal',uri})};
     case 'icon': return { ok: true, icon: null };
     default: return { ok: false, code: 'UNAVAILABLE_ON_PHONE', message: 'Not available for a phone file.' };
   }

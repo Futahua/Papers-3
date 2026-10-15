@@ -10,12 +10,12 @@ import { randomUUID } from 'node:crypto';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
-async function fixture() {
+async function fixture(thumbnail?: (target:string)=>Promise<Record<string,unknown>>) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-gateway-'));
   cleanups.push(() => fs.rm(directory, { recursive: true, force: true }));
   await fs.writeFile(path.join(directory, 'file.txt'), 'abcdefgh');
   const token = randomBytes(32).toString('base64url');
-  const gateway = await createRemoteFileGateway({ owner: { id: 'owner', name: 'Desktop' }, grants: [{ deviceId: 'laptop', tokenHash: remoteTokenHash(token), shares: [{ id: 'docs', name: 'Documents', directory }] }] });
+  const gateway = await createRemoteFileGateway({ thumbnail, owner: { id: 'owner', name: 'Desktop' }, grants: [{ deviceId: 'laptop', tokenHash: remoteTokenHash(token), shares: [{ id: 'docs', name: 'Documents', directory }] }] });
   await new Promise<void>(resolve => gateway.server.listen(0, '127.0.0.1', resolve));
   cleanups.push(() => gateway.close());
   const address = gateway.server.address();
@@ -96,3 +96,5 @@ it('refuses changes for a read-only grant and confirms an authorized owner renam
  await mutations.close();const result=await(await fetch(base+'/v1/files/changes',{headers})).json();expect(result.jobs[0].phase).toBe('completed');expect(await fs.readFile(path.join(shared,'after.txt'),'utf8')).toBe('content');
  const other=await(await fetch(base+'/v1/files/changes',{headers:{Authorization:'Bearer '+readonly}})).json();expect(other.jobs).toEqual([]);
 });
+
+it('thumbnail route keeps grant boundaries and rejects oversized provider output',async()=>{let calls=0;const h=await fixture(async()=>{calls++;return {kind:'image',width:256,height:120,dataUrl:calls===1?'data:image/jpeg;base64,YQ==':'data:image/jpeg;base64,'+'A'.repeat(180001)};});expect((await fetch(`${h.base}/v1/files/${h.file.id}/thumbnail`)).status).toBe(401);expect((await fetch(`${h.base}/v1/files/00000000-0000-4000-8000-000000000000/thumbnail`,{headers:h.headers})).status).toBe(404);expect(calls).toBe(0);const good=await(await fetch(`${h.base}/v1/files/${h.file.id}/thumbnail`,{headers:h.headers})).json();expect(good.preview.kind).toBe('image');const bad=await(await fetch(`${h.base}/v1/files/${h.file.id}/thumbnail`,{headers:h.headers})).json();expect(bad.preview.kind).toBe('none');});

@@ -1,3 +1,4 @@
+import {createRemoteThumbnailProvider} from './backpacks/remoteThumbnailProvider';
 import {FileInbox} from './backpacks/fileInbox';
 import {InboxTransfers} from './backpacks/inboxTransfers';
 import {consumeReloadWindows,createPapersReload,shouldFlushReloadSurface} from './windows/papersReload';
@@ -1970,6 +1971,7 @@ async function bootstrap(): Promise<void> {
     save:(projectId,raw,revision)=>backpackProjects.saveState(projectId,raw,revision as never),
     icon:(projectId,name)=>backpackProjects.sharedIcon(projectId,name),
   };
+  remoteDevices.thumbnail=createRemoteThumbnailProvider({shell:shellThumbnail,encode:png=>{const image=nativeImage.createFromBuffer(png),size=image.getSize(),factor=Math.min(1,256/Math.max(size.width,size.height)),small=image.resize({width:Math.max(1,Math.round(size.width*factor)),height:Math.max(1,Math.round(size.height*factor)),quality:'good'});return {bytes:small.toJPEG(75),...small.getSize()};}});
   remoteDevices.preview=target=>fileCapability.call({operation:'preview',params:{path:target}},{backpackId:'remote:preview'} as never);
   remoteDevices.search=async(query,limit)=>{if(!everythingSearch)throw Error('Everything search is unavailable on this computer.');const result=await everythingSearch.search(query,limit);if(!result.ok)throw Error(result.error??'Search failed.');return result;};
   // A paired device without a gateway (the phone) publishes its own Proxima here; this computer keeps the

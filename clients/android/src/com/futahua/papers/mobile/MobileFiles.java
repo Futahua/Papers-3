@@ -67,6 +67,7 @@ final class MobileFiles {
       }
       case "inbox": return json(request(owner, "/v1/files/inbox", null, null));
       case "search": return json(request(owner, "/v1/files/search?q=" + URLEncoder.encode(request.getString("query"), "UTF-8") + "&limit=" + Math.max(1, Math.min(1000, request.optInt("limit", 200))), null, null)).getJSONArray("results");
+      case "thumbnail": { String id=request.getString("resourceId");if(!id.matches("[a-f0-9-]{36}"))throw new IOException("Invalid file identity.");return json(request(owner,"/v1/files/"+id+"/thumbnail",null,null)).getJSONObject("preview"); }
       case "preview": { String id = request.getString("resourceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid file identity."); return largeJson(request(owner, "/v1/files/" + id + "/preview", null, null)).getJSONObject("preview"); }
       case "local-state-load": return localState();
       case "local-state-save": return saveLocalState(request.getString("state"), request.getString("revision"));
