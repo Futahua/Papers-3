@@ -1,0 +1,264 @@
+{
+  "result": "PASS",
+  "nativeProgressReports": 24,
+  "records": [
+    {
+      "extension": "odt",
+      "runtimeId": "641a2621-79eb-4a91-a20f-3dd4c1ae72f8",
+      "openingMs": 9887,
+      "startupMs": 12271,
+      "initial": {
+        "text": "zReal inline editor saved this text.",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          900,
+          650
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.odt"
+      },
+      "resized": {
+        "text": "zReal inline editor saved this text.",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.odt"
+      },
+      "edited": {
+        "text": "zReal inline editor saved this text.",
+        "modified": true,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.odt"
+      },
+      "saved": {
+        "text": "zReal inline editor saved this text.",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.odt"
+      },
+      "closed": {
+        "ok": true,
+        "detached": false,
+        "reusable": true
+      }
+    },
+    {
+      "extension": "ods",
+      "runtimeId": "641a2621-79eb-4a91-a20f-3dd4c1ae72f8",
+      "openingMs": 551,
+      "startupMs": 2547,
+      "initial": {
+        "text": "Edited inline spreadsheet",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          900,
+          650
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.ods"
+      },
+      "resized": {
+        "text": "Edited inline spreadsheet",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.ods"
+      },
+      "edited": {
+        "text": "Edited inline spreadsheet",
+        "modified": true,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.ods"
+      },
+      "saved": {
+        "text": "Edited inline spreadsheet",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.ods"
+      },
+      "closed": {
+        "ok": true,
+        "detached": false,
+        "reusable": true
+      }
+    },
+    {
+      "extension": "docx",
+      "runtimeId": "641a2621-79eb-4a91-a20f-3dd4c1ae72f8",
+      "openingMs": 433,
+      "startupMs": 3528,
+      "initial": {
+        "text": "zReal inline editor saved this text.",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          900,
+          650
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.docx"
+      },
+      "resized": {
+        "text": "zReal inline editor saved this text.",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.docx"
+      },
+      "edited": {
+        "text": "zReal inline editor saved this text.",
+        "modified": true,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.docx"
+      },
+      "saved": {
+        "text": "zReal inline editor saved this text.",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.docx"
+      },
+      "closed": {
+        "ok": true,
+        "detached": false,
+        "reusable": true
+      }
+    },
+    {
+      "extension": "xlsx",
+      "runtimeId": "641a2621-79eb-4a91-a20f-3dd4c1ae72f8",
+      "openingMs": 183,
+      "startupMs": 1804,
+      "initial": {
+        "text": "Edited inline spreadsheet",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          900,
+          650
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.xlsx"
+      },
+      "resized": {
+        "text": "Edited inline spreadsheet",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.xlsx"
+      },
+      "edited": {
+        "text": "Edited inline spreadsheet",
+        "modified": true,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.xlsx"
+      },
+      "saved": {
+        "text": "Edited inline spreadsheet",
+        "modified": false,
+        "frames": 1,
+        "parent": "2627198",
+        "visible": true,
+        "size": [
+          520,
+          420
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.xlsx"
+      },
+      "closed": {
+        "ok": true,
+        "detached": false,
+        "reusable": true
+      }
+    },
+    {
+      "unsavedClose": {
+        "ok": true,
+        "detached": true,
+        "reusable": false
+      },
+      "kept": {
+        "text": "zReal inline editor saved this text.",
+        "modified": true,
+        "frames": 1,
+        "parent": "0",
+        "visible": true,
+        "size": [
+          1936,
+          1096
+        ],
+        "url": "file:///D:/CodexTemp/libreoffice-inline-proof/warm-run-1791366742210/real-editor.odt"
+      }
+    },
+    {
+      "cancelBeforeReady": true
+    }
+  ]
+}
