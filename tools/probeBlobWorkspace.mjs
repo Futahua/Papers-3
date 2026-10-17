@@ -44,11 +44,23 @@ try{
  await child.evaluate(async()=>{const all=[...document.querySelectorAll('button')].filter(b=>b.title==='Kill · Hold to open Bin');const skull=all.find(b=>b.offsetParent!==null)||all[0];skull.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}));await new Promise(r=>setTimeout(r,700));skull.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,button:0,pointerType:'mouse'}));skull.dispatchEvent(new MouseEvent('click',{bubbles:true,button:0}));});
  const inBin=await wait(async()=>{const c=await crumbs();return c!==beforeHold&&/\bBin\b/.test(c)?c:null;});
  const stillThere=await page.evaluate(ROOT=>ProximaWorkspaces.history(ROOT,'fixture-file').then(h=>!h.deleted),ROOT);assert.equal(stillThere,true,'holding the skull must not also kill');
- // 4. Killing is a recoverable deletion; restoring the entry from the Bin brings the file back.
- const killed=await page.evaluate(async({ROOT,target})=>{const r=await ProximaWorkspaces.frameCall(ROOT,'file',['delete',{paths:[target]}]);const h=await ProximaWorkspaces.history(ROOT,'fixture-file');const doc=(await ProximaWorkspaces.load(ROOT)).state;return {ok:r.ok,deleted:h.deleted,binned:!!doc.shortcuts.find(s=>s.id==='fixture-file').placements[0].bin};},{ROOT,target:copy.target});
- assert.deepEqual(killed,{ok:true,deleted:true,binned:true});assert.equal(await fs.access(copy.target).then(()=>true,()=>false),false);
+ // In the kill bin, the blob view offers emptying it (that is what recycles files).
+ const emptyButton=await child.evaluate(()=>{const b=document.querySelector('#delete-all-bin');return b?{inNavigator:!!b.closest('.workspace-navigator-toolbar'),title:b.title}:null;});
+ assert.ok(emptyButton?.inNavigator,JSON.stringify(emptyButton));
+ // 4. Killing moves the entry to the kill bin and keeps the file; restoring brings the entry back.
+ assert.equal((await saveRetrying(page,`doc=>{for(const p of doc.shortcuts.find(s=>s.id==='fixture-file').placements)p.bin={parentId:${JSON.stringify(folderId)},order:0,binnedAt:new Date().toISOString()};}`)).ok,true);
+ await page.evaluate(()=>ProximaWorkspaces.reconcile());
+ assert.equal(await fs.readFile(copy.target,'utf8'),'saved outside Papers');assert.equal(await page.evaluate(ROOT=>ProximaWorkspaces.history(ROOT,'fixture-file').then(h=>h.deleted),ROOT),false);
  assert.equal((await saveRetrying(page,`doc=>{for(const p of doc.shortcuts.find(s=>s.id==='fixture-file').placements)delete p.bin;}`)).ok,true);
- assert.equal(await page.evaluate(ROOT=>ProximaWorkspaces.history(ROOT,'fixture-file').then(h=>h.deleted),ROOT),false);assert.equal(await fs.readFile(copy.target,'utf8'),'saved outside Papers');
+ // Emptying is refused for an entry that is not in the kill bin...
+ const refused=await saveRetrying(page,`doc=>{doc.shortcuts=doc.shortcuts.filter(s=>s.id!=='fixture-file');}`).catch(error=>({ok:false,error:String(error.message||error)}));
+ assert.equal(refused.ok,false,JSON.stringify(refused));assert.equal(await fs.readFile(copy.target,'utf8'),'saved outside Papers');
+ // ...and emptying the kill bin recycles the file, keeping its bytes in history.
+ assert.equal((await saveRetrying(page,`doc=>{for(const p of doc.shortcuts.find(s=>s.id==='fixture-file').placements)p.bin={parentId:${JSON.stringify(folderId)},order:0,binnedAt:new Date().toISOString()};}`)).ok,true);
+ assert.equal((await saveRetrying(page,`doc=>{doc.shortcuts=doc.shortcuts.filter(s=>s.id!=='fixture-file');}`)).ok,true);
+ await page.evaluate(()=>ProximaWorkspaces.reconcile());
+ const killed=await page.evaluate(ROOT=>ProximaWorkspaces.history(ROOT,'fixture-file').then(h=>({deleted:h.deleted,versions:h.versions.length})),ROOT);
+ assert.equal(killed.deleted,true);assert.equal(await fs.access(copy.target).then(()=>true,()=>false),false);
  // 5. Renaming the blob renames its folder; deleting the folder leaves the blob without a template.
  await page.evaluate(async id=>{const item=Store.timelineIntervals().find(i=>i.id===id);await Store.command({type:'timeline-interval.patch',ifRev:item.rev,payload:{intervalId:id,patch:{name:'Renamed acceptance blob'}}});},seeded.id);
  await wait(()=>page.evaluate(({ROOT,folderId})=>ProximaWorkspaces.folder(ROOT,folderId).then(f=>f.name==='Renamed acceptance blob'),{ROOT,folderId}));
