@@ -15,6 +15,7 @@ import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
 import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from './backpacks/everythingSearchBridge';
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
+import { WorkspaceFiles } from './backpacks/workspaceFiles';
 import { RemoteDeviceService } from './backpacks/remoteDeviceService';
 import {snapPageBounds,pagePresentationSettled} from './backpacks/panePagePresentation';
 import { RemoteFileClient } from './backpacks/remoteFileClient';
@@ -862,6 +863,7 @@ async function bootstrap(): Promise<void> {
   const inboxTransfers=new InboxTransfers(path.join(paths.root,'remote-files','inbox-transfers'),localInbox,remoteFiles,files=>remotePaths.planImport(files),{inbox:owner=>remotePaths.inbox(owner),copy:(source,destination)=>remotePaths.copyToFolder(source,destination)});
   await inboxTransfers.initialize();
   const fileCapability = createFileCapabilityService({
+    workspaceFiles: new WorkspaceFiles(path.join(paths.root, 'Workspace files')),
     fileTargets,
     remoteFiles: async params => {
       if (remoteFilesError) throw new Error(remoteFilesError);
@@ -2002,8 +2004,26 @@ async function bootstrap(): Promise<void> {
     const file=path.join(peerProximaDirectory,deviceId.toLowerCase()+'.json'),temporary=file+'.tmp';
     writeFileSync(temporary,JSON.stringify({deviceId:deviceId.toLowerCase(),name,receivedAt:Date.now(),snapshot}));renameSync(temporary,file);
   };
+  const backgroundOwners = new Map<string, Promise<BrowserWindow | null>>();
+  const backgroundOwner = (projectId: string): Promise<BrowserWindow | null> => {
+    const existing = backgroundOwners.get(projectId); if (existing) return existing;
+    const pending = (async () => {
+      const opened = await backpackProjects.background(projectId); if (!opened) return null;
+      const owner = new BrowserWindow({ show: false, skipTaskbar: true, webPreferences: { preload: path.join(preloadDir, 'backpackProject.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+      surfaceContexts.bind(owner.webContents.id, { projectId, windowId: -1, kind: 'background' });
+      const senderId = owner.webContents.id;
+      owner.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      owner.webContents.on('will-navigate', (event, target) => { if (new URL(target).host !== projectId) event.preventDefault(); });
+      owner.webContents.once('destroyed', () => { surfaceContexts.unbind(senderId); backgroundOwners.delete(projectId); });
+      try { await owner.loadURL(opened.url); return owner; } catch (error) { owner.destroy(); throw error; }
+    })();
+    backgroundOwners.set(projectId, pending); void pending.catch(() => { if (backgroundOwners.get(projectId) === pending) backgroundOwners.delete(projectId); }); return pending;
+  };
+  for (const backpack of registry.list()) if (!backpack.archived) void backgroundOwner(backpack.id).catch(error => console.warn('Project background owner deferred', error));
   remoteDevices.replaceBackpack=async(share,projection)=>{
     if(share.kind!=='proxima'||await backpackProjects.sharedDataKind(share.projectId)!=='proxima')throw Error('This Backpack is not sharing Proxima data.');
+    const owner = await backgroundOwner(share.projectId);
+    if (owner && !owner.isDestroyed()) return owner.webContents.executeJavaScript(`(async()=>{for(let n=0;n<200&&!globalThis.__proximaReplaceAll;n++)await new Promise(resolve=>setTimeout(resolve,50));if(!globalThis.__proximaReplaceAll)throw Error('The project sync owner is starting.');return globalThis.__proximaReplaceAll(JSON.parse(${JSON.stringify(JSON.stringify(projection))}),'paired device');})()`);
     const runtime=papersWindows.all().flatMap(context=>context.owned.projectSurfaces.all()).find(surface=>surface.liveProjectId===share.projectId&&surface.webContents&&!surface.webContents.isDestroyed());
     if(!runtime)throw Error('Open Proxima on its owning computer first.');
     return runtime.replaceSharedData(projection,'another device');

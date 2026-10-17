@@ -768,6 +768,23 @@ export class BackpackProjectService {
   }
 
   /** Origins that a host project's CSP may embed. */
+  async workspaceTemplate(hostBackpackId: string): Promise<OpenBackpackProject | null> {
+    const host = await this.manifest(hostBackpackId);
+    const target = typeof host?.workspaceHost === 'string' ? host.workspaceHost : null;
+    if (!target || target === hostBackpackId) return null;
+    return this.open(target);
+  }
+  async background(backpackId: string): Promise<OpenBackpackProject | null> {
+    const manifest = await this.manifest(backpackId);
+    const entry = manifest?.['backgroundEntry'];
+    if (!manifest || typeof entry !== 'string') return null;
+    if (!entry.startsWith('public/')) throw Error('The project background entry is not public.');
+    await containedExistingPath(manifest.root, entry);
+    const url = new URL(`${BACKPACK_PROJECT_SCHEME}://${backpackId}/`);
+    url.pathname = `${openNamespace}/${randomUUID()}/${entry}`;
+    return { url: url.toString() };
+  }
+
   async embeddedProjectOrigins(backpackId: string): Promise<string[]> {
     const manifest = await this.manifest(backpackId);
     return typeof manifest?.workspaceHost === 'string'

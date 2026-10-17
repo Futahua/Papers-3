@@ -57,6 +57,7 @@ export interface FileCapabilityEntry {
   hidden?: boolean;
 }
 export interface FileCapabilityDeps {
+  workspaceFiles?: import('./workspaceFiles').WorkspaceFiles;
   fileTargets?: import('./fileTargetRegistry').TargetRegistry;
   remoteFiles?: (request: Record<string, unknown>) => Promise<unknown>;
   remotePaths?: RemotePaths;
@@ -878,6 +879,9 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'remote-files':
             return deps.remoteFiles ? { ok: true, result: await deps.remoteFiles(params) } : { ok: false, code: 'REMOTE_FILES_UNAVAILABLE' };
+          case 'workspace-files':
+            if (!deps.workspaceFiles) throw Error('Workspace storage is unavailable.');
+            return { ok: true, result: await deps.workspaceFiles.call(context.backpackId, params) };
           case 'runtime-snapshot':
             return { ok: true, ...deps.runtimeControl?.snapshot(), providers: (await service.call({ operation: 'providers' }, context)).providers };
           case 'runtime-configure':

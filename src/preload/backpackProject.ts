@@ -380,6 +380,9 @@ window.addEventListener('message', (event) => {
       request.projectName,
     ).then((workspaceScope) => ({ workspaceScope }));
   }
+  if (request.type === 'papers:project:workspace-template' && event.source === window) {
+    task = ipcRenderer.invoke('host:backpack-project:workspace-template').then(template => ({ template }));
+  }
   if (request.type === 'papers:project:workspace-scope-revoke' && event.source === window) {
     void ipcRenderer.invoke('host:backpack-project:workspace-scope-revoke');
     return;

@@ -1,12 +1,19 @@
 (async()=>{
  await ProximaPersistence.ready;
  globalThis.__proximaOwnerEngine=true; // proxima-sync.js: no page to refresh here
- for(const name of ['sync-core','proxima-sync','remote-domain','remote-follow','store'])await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=name+'.js';script.onload=resolve;script.onerror=reject;document.head.append(script);});
+ const workspaceCalls=new Map();globalThis.__proximaWorkspaceNativeReply=(id,reply)=>{const task=workspaceCalls.get(id);if(!task)return;workspaceCalls.delete(id);reply.ok?task.resolve(reply.result):task.reject(Error(reply.message));};
+ globalThis.__proximaWorkspaceNative=(operation,params={})=>new Promise((resolve,reject)=>{const id=crypto.randomUUID();workspaceCalls.set(id,{resolve,reject});PapersOwner.files(id,JSON.stringify({operation,params}));});
+ for(const name of ['sync-core','workspace-domain','workspace-replica','workspace-runtime','proxima-sync','remote-domain','remote-follow','store'])await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=name+'.js';script.onload=resolve;script.onerror=reject;document.head.append(script);});
  const backups=()=>new Promise((resolve,reject)=>{const r=indexedDB.open('proxima-backups',1);r.onupgradeneeded=()=>r.result.createObjectStore('backups',{keyPath:'at'});r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+ let workspaceSync=null;
  globalThis.phoneOwnerRequest=async(id,request)=>{try{
   const source=request.source;
   let result;
-  if(request.operation==='snapshot')result={snapshot:await Store.remoteProjection(source,null,true)};
+  if(request.operation==='workspace-reconcile'){
+    if(!workspaceSync)workspaceSync=(async()=>{await ProximaWorkspaces.reconcile();const status=await __proximaWorkspaceNative('devices');for(const peer of status.devices||[])try{await ProximaWorkspaces.syncWith(peer,message=>__proximaWorkspaceNative('workspace-exchange',{ownerId:peer.id,message}));}catch(error){console.warn('Workspace sync pending',peer.name,error.message);}})().finally(()=>{workspaceSync=null;});
+    await workspaceSync;result={ok:true};
+  }
+  else if(request.operation==='snapshot')result={snapshot:await Store.remoteProjection(source,null,true)};
   else if(request.operation==='command'){
    const c=request.command;if(!c||typeof c.commandId!=='string'||!Number.isSafeInteger(c.expectedSeq)||! /^(?:task|project|run|schedule-event|timeline-interval|timeline-queue)\.[a-z.-]+$|^timeline\.(?:undo|redo)$/.test(c.type))throw Error('Invalid Proxima command.');
    const command=await Store.command({...c,actor:'remote-device',client:'papers-remote'});result={command,snapshot:await Store.remoteProjection(source,null,true)};

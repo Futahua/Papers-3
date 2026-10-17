@@ -1116,6 +1116,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return scope;
   }
 
+  async resolveBackpackProjectWorkspaceTemplate(senderId: number): Promise<{ url: string } | null> {
+    return this.deps.backpackProjects.workspaceTemplate(this.requireProjectForSender(senderId));
+  }
+
   revokeBackpackProjectWorkspaceScope(senderId: number): void {
     this.releaseAllWriterLeasesForSender(senderId);
     this.workspaceScopes.delete(senderId);

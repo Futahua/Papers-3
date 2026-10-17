@@ -62,6 +62,17 @@ async function cacheKey(ownerId,entry){const data=new TextEncoder().encode(JSON.
 const inboxKey = (ownerId) => 'papers-phone-inbox:' + ownerId;
 
 async function fileCapability(operation, params) {
+  if(operation==='workspace-files'){
+    const request={...params};if(request.path)request.path=phoneUri(request.path)||request.path;
+    const result=await native({operation:'workspace-files',request});
+    if(result.path?.startsWith('/')){
+      const uri='content://com.android.externalstorage.documents/document/'+encodeURIComponent('primary:'+result.path.replace(/^\/storage\/emulated\/0\//,''));
+      result.path=phonePath(uri);
+      // The PC peer root uses the same display/storage address as ordinary phone paths.
+      result.transportPath??='Internal storage\\'+decodeURIComponent(uri.split('/document/')[1]).replace(/^primary:/,'').replace(/\//g,'\\');
+    }
+    return {ok:true,result};
+  }
   if(operation.startsWith('file-target-')){
     const own=phoneUri(params.path);
     if(own){const target=await native({operation:operation.replace('file-target-','phone-target-'),uri:own,targetId:params.targetId,expectedRevision:params.expectedRevision,commandId:params.commandId,oldUri:phoneUri(params.oldPath),newUri:phoneUri(params.newPath)});return {ok:true,target:{...target,...(target.uri?{path:phonePath(target.uri)}:{})}};}

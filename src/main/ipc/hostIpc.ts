@@ -127,6 +127,7 @@ export interface HostFacade {
   requestCloseBackpackProject(senderId: number): Promise<void>;
   runBackpackProjectAction(senderId: number, actionId: string): Promise<void>;
   resolveBackpackProjectWorkspaceScope(senderId: number, projectKey: string, projectName: string): Promise<unknown>;
+  resolveBackpackProjectWorkspaceTemplate(senderId: number): Promise<unknown>;
   revokeBackpackProjectWorkspaceScope(senderId: number): void;
   acquireBackpackProjectWriterLease(sender: WebContents, workspaceOrigin?: string): Promise<{ token: string }>;
   releaseBackpackProjectWriterLease(senderId: number, token: string): void;
@@ -358,6 +359,7 @@ export function registerHostIpc(facade: HostFacade, nativeDrag?: (sender: WebCon
       backpackProjectWorkspaceNameSchema.parse(projectName),
     ),
   );
+  handle('host:backpack-project:workspace-template', event => facade.resolveBackpackProjectWorkspaceTemplate(event.sender.id));
   handle('host:backpack-project:workspace-scope-revoke', (event) =>
     facade.revokeBackpackProjectWorkspaceScope(event.sender.id),
   );
