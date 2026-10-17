@@ -4,6 +4,8 @@ import path from 'node:path';
 import os from 'node:os';
 import assert from 'node:assert/strict';
 import {connectPapersControl,readDescriptor} from './papersControlClient.mjs';
+// Hidden-window acceptance for Proxima blob folders in the synced As you Go root, using the real
+// Papers host, the real Proxima page and the real embedded As you Go pane on an isolated profile.
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'papers-blob-pane-'));
 const data=path.join(root,'data'),documents=path.join(data,'PapersData');await fs.mkdir(documents,{recursive:true});
 const ids={proxima:'bp-759cd960-26ee-4560-90b0-1ef6678802c4',ayg:'bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d'},projects={},backpacks=[];
@@ -15,20 +17,55 @@ const original=path.join(root,'independent-original.txt');await fs.writeFile(ori
 const app=await _electron.launch({args:[process.cwd()],env:{...process.env,PAPERS_TEST_USER_DATA:data,PAPERS_TEST_HIDDEN_WINDOWS:'1',PAPERS_ENABLE_FIXTURES:'0',PAPERS_DEV_CONTROL:'1',PAPERS_DEV_CONTROL_DESCRIPTOR:descriptor}});
 app.on('window',page=>page.on('pageerror',error=>errors.push(error.message)));
 const wait=async run=>{for(let i=0;i<100;i++){const result=await run();if(result)return result;await new Promise(r=>setTimeout(r,100));}throw Error('Timed out waiting for fixture');};
+// The live pane's own saves can land between a load and a save; rebase like the pane does.
+const saveRetrying=(page,edit)=>page.evaluate(async source=>{const change=eval(source);for(let attempt=0;;attempt++){const current=await ProximaWorkspaces.frameCall('ayg-root','load');const doc=structuredClone(current.state);change(doc);const saved=await ProximaWorkspaces.frameCall('ayg-root','save',[doc,current.revision]);if(saved.ok||saved.code!=='STALE_REVISION'||attempt>=5)return saved;}},edit.toString());
 try{
  await wait(()=>fs.access(descriptor).then(()=>true,()=>false));const control=await connectPapersControl(await readDescriptor(descriptor));assert.equal((await control.call('workspace.open',{windowId:1,projectId:ids.proxima})).ok,true);control.close();
  const page=await wait(()=>app.context().pages().find(p=>p.url().includes('/public/index.html')));await page.waitForFunction(()=>typeof Store!=='undefined'&&typeof ProximaBlobWorkspaces!=='undefined');
- const seeded=await page.evaluate(async()=>{await Store.command({type:'timeline-interval.create',payload:{name:'Disposable blob pane acceptance',start:'2026-10-17T00:00:00Z',end:'2026-10-17T01:00:00Z'}});const item=Store.timelineIntervals().find(i=>i.name==='Disposable blob pane acceptance');const result=await Store.command({type:'timeline-interval.template',ifRev:item.rev,payload:{intervalId:item.id,template:'as-you-go'}});if(!result.ok)throw Error(JSON.stringify(result));await ProximaBlobWorkspaces.open(item.id);return Store.timelineIntervals().find(i=>i.id===item.id);});
+ const ROOT='ayg-root',name='Disposable blob pane acceptance';
+ const seeded=await page.evaluate(async name=>{await Store.command({type:'timeline-interval.create',payload:{name,start:new Date(Date.now()-3600000).toISOString(),end:new Date(Date.now()-60000).toISOString()}});const item=Store.timelineIntervals().find(i=>i.name===name);const result=await Store.command({type:'timeline-interval.template',ifRev:item.rev,payload:{intervalId:item.id,template:'as-you-go'}});if(!result.ok)throw Error(JSON.stringify(result));await ProximaBlobWorkspaces.open(item.id);return Store.timelineIntervals().find(i=>i.id===item.id);},name);
+ const folderId=seeded.template.folderId;assert.equal(seeded.template.workspaceId,ROOT);assert.ok(folderId);
+ // 1. The blob's folder exists in the synced root, named after the blob, and the pane opens inside it.
+ const folder=await page.evaluate(({ROOT,folderId})=>ProximaWorkspaces.folder(ROOT,folderId),{ROOT,folderId});assert.equal(folder.exists,true);assert.equal(folder.name,name);
  const child=await wait(()=>page.frames().find(f=>f.url().includes('papers-blob-workspace=')));
+ assert.ok(child.url().includes('as-you-go-folder='+folderId),child.url());
  await child.waitForFunction(()=>!!window.__papersFlushBeforeClose,{timeout:20000});
- const imported=await page.evaluate(async({workspaceId,original})=>{for(let attempt=0;;attempt++){const current=await ProximaWorkspaces.frameCall(workspaceId,'load');const saved=await ProximaWorkspaces.frameCall(workspaceId,'save',[{schemaVersion:1,groups:[],shortcuts:[{id:'fixture-file',name:'Independent copy',target:original,icon:null,placements:[{id:'fixture-placement',parentId:'root',order:0}]}],view:current.state.view},current.revision]);if(saved.ok||saved.code!=='STALE_REVISION'||attempt>=5)return saved;/* the live pane's own first save can land between load and save; rebase like the pane does */}},{workspaceId:seeded.template.workspaceId,original});assert.equal(imported.ok,true,JSON.stringify(imported));
- await wait(()=>child.evaluate(()=>document.body.textContent.includes('Independent copy')));
- const copy=await page.evaluate(async id=>(await ProximaWorkspaces.load(id)).state.shortcuts[0],seeded.template.workspaceId);assert.notEqual(copy.target,original);assert.equal(await fs.readFile(copy.target,'utf8'),'original bytes');await fs.writeFile(copy.target,'saved outside Papers');
- const history=await page.evaluate(async id=>{await ProximaWorkspaces.reconcile();return ProximaWorkspaces.history(id,'fixture-file');},seeded.template.workspaceId);assert.equal(history.versions.length,2);assert.equal(await fs.readFile(original,'utf8'),'original bytes');
+ const crumbs=()=>child.evaluate(()=>[...document.querySelectorAll('[class*="breadcrumb"],[class*="crumb"]')].map(n=>n.innerText).join(' | '));
+ const openedIn=await wait(async()=>{const c=await crumbs();return c.includes(name)?c:null;}).catch(async e=>{console.log("CRUMBS",JSON.stringify(await crumbs()));console.log("NAV",JSON.stringify(await child.evaluate(()=>[...document.querySelectorAll("[class*=navigator]")].slice(0,3).map(n=>n.className+": "+n.innerText.slice(0,300)))));console.log("DOC",JSON.stringify(await page.evaluate(async ROOT=>(await ProximaWorkspaces.load(ROOT)).state.groups,ROOT)));throw e;});
+ // 2. A file added in the folder becomes an independent managed copy.
+ const imported=await saveRetrying(page,`doc=>doc.shortcuts.push({id:'fixture-file',name:'Independent copy',target:${JSON.stringify(original)},icon:null,placements:[{id:'fixture-placement',parentId:${JSON.stringify(folderId)},order:0}]})`);assert.equal(imported.ok,true,JSON.stringify(imported));
+  await wait(()=>child.evaluate(()=>document.body.textContent.includes('Independent copy'))).catch(async e=>{console.log('OPENED',openedIn);console.log('TEXT',JSON.stringify(await child.evaluate(()=>document.body.innerText.slice(0,800))));console.log('DOC',JSON.stringify(await page.evaluate(async ROOT=>{const s=(await ProximaWorkspaces.load(ROOT)).state;return {groups:s.groups.map(g=>g.id+':'+g.name),shortcuts:s.shortcuts.map(x=>x.name+'@'+x.placements.map(p=>p.parentId))};},ROOT)));throw e;});
+ const copy=await page.evaluate(async ROOT=>(await ProximaWorkspaces.load(ROOT)).state.shortcuts.find(s=>s.id==='fixture-file'),ROOT);assert.notEqual(copy.target,original);assert.equal(await fs.readFile(copy.target,'utf8'),'original bytes');await fs.writeFile(copy.target,'saved outside Papers');
+ const history=await page.evaluate(async ROOT=>{await ProximaWorkspaces.reconcile();return ProximaWorkspaces.history(ROOT,'fixture-file');},ROOT);assert.equal(history.versions.length,2);assert.equal(await fs.readFile(original,'utf8'),'original bytes');
+ // 3. Only killing: the trash is gone, the skull stays, and holding the skull opens the Bin.
+ const tools=await child.evaluate(()=>{const visible=title=>[...document.querySelectorAll('button')].filter(b=>b.title===title).map(b=>getComputedStyle(b).display!=='none'&&!b.hidden);return {trash:visible('Delete entry · Right-click to open Bin'),skull:visible('Kill · Hold to open Bin')};});
+ assert.ok(tools.skull.includes(true),JSON.stringify(tools));assert.ok(!tools.trash.includes(true),JSON.stringify(tools));
+ const beforeHold=await crumbs();
+ await child.evaluate(async()=>{const all=[...document.querySelectorAll('button')].filter(b=>b.title==='Kill · Hold to open Bin');const skull=all.find(b=>b.offsetParent!==null)||all[0];skull.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}));await new Promise(r=>setTimeout(r,700));skull.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,button:0,pointerType:'mouse'}));skull.dispatchEvent(new MouseEvent('click',{bubbles:true,button:0}));});
+ const inBin=await wait(async()=>{const c=await crumbs();return c!==beforeHold&&/\bBin\b/.test(c)?c:null;});
+ const stillThere=await page.evaluate(ROOT=>ProximaWorkspaces.history(ROOT,'fixture-file').then(h=>!h.deleted),ROOT);assert.equal(stillThere,true,'holding the skull must not also kill');
+ // 4. Killing is a recoverable deletion; restoring the entry from the Bin brings the file back.
+ const killed=await page.evaluate(async({ROOT,target})=>{const r=await ProximaWorkspaces.frameCall(ROOT,'file',['delete',{paths:[target]}]);const h=await ProximaWorkspaces.history(ROOT,'fixture-file');const doc=(await ProximaWorkspaces.load(ROOT)).state;return {ok:r.ok,deleted:h.deleted,binned:!!doc.shortcuts.find(s=>s.id==='fixture-file').placements[0].bin};},{ROOT,target:copy.target});
+ assert.deepEqual(killed,{ok:true,deleted:true,binned:true});assert.equal(await fs.access(copy.target).then(()=>true,()=>false),false);
+ assert.equal((await saveRetrying(page,`doc=>{for(const p of doc.shortcuts.find(s=>s.id==='fixture-file').placements)delete p.bin;}`)).ok,true);
+ assert.equal(await page.evaluate(ROOT=>ProximaWorkspaces.history(ROOT,'fixture-file').then(h=>h.deleted),ROOT),false);assert.equal(await fs.readFile(copy.target,'utf8'),'saved outside Papers');
+ // 5. Renaming the blob renames its folder; deleting the folder leaves the blob without a template.
+ await page.evaluate(async id=>{const item=Store.timelineIntervals().find(i=>i.id===id);await Store.command({type:'timeline-interval.patch',ifRev:item.rev,payload:{intervalId:id,patch:{name:'Renamed acceptance blob'}}});},seeded.id);
+ await wait(()=>page.evaluate(({ROOT,folderId})=>ProximaWorkspaces.folder(ROOT,folderId).then(f=>f.name==='Renamed acceptance blob'),{ROOT,folderId}));
+ assert.equal((await page.evaluate(id=>ProximaBlobWorkspaces.button(Store.timelineIntervals().find(i=>i.id===id)),seeded.id)).propagated,true);
+ // A picture set on the folder becomes the blob's button.
+ const picture='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+ assert.equal((await saveRetrying(page,`doc=>{doc.groups.find(g=>g.id===${JSON.stringify(folderId)}).icon=${JSON.stringify(picture)};}`)).ok,true);
+ await wait(()=>page.evaluate(({id,picture})=>ProximaBlobWorkspaces.button(Store.timelineIntervals().find(i=>i.id===id)).icon===picture,{id:seeded.id,picture}));
+ await page.evaluate(()=>{const t=document.querySelector('.exact-timeline');ExactTimeline.mount(t,Store).configure({readOnly:false,remoteReadOnly:false});ExactTimeline.mount(t,Store).refresh();}); /* the hidden test window opens the timeline in read-only peek */
+ const buttonPicture=await wait(()=>page.evaluate(id=>{const b=document.querySelector('.exact-interval[data-interval-id="'+id+'"] .exact-blob-content');return b?.classList.contains('has-picture')&&b.style.backgroundImage.includes('data:image/png')?b.style.backgroundImage.slice(0,40):null;},seeded.id)).catch(async e=>{console.log('BAR',JSON.stringify(await page.evaluate(id=>{const bars=[...document.querySelectorAll('.exact-interval')];const b=document.querySelector('.exact-interval[data-interval-id="'+id+'"]');return {bars:bars.length,ids:bars.slice(0,5).map(x=>x.dataset.intervalId),found:!!b,button:b?.querySelector('.exact-blob-content')?.outerHTML?.slice(0,300),timelines:document.querySelectorAll('.exact-timeline').length};},seeded.id)));throw e;});
+ assert.equal((await saveRetrying(page,`doc=>{doc.groups.find(g=>g.id===${JSON.stringify(folderId)}).bin={parentId:'root',order:0,binnedAt:new Date().toISOString()};}`)).ok,true);
+ await wait(()=>page.evaluate(id=>!ProximaBlobWorkspaces.button(Store.timelineIntervals().find(i=>i.id===id)).propagated,seeded.id));
+ const renewed=await page.evaluate(async id=>{const item=Store.timelineIntervals().find(i=>i.id===id);return (await Store.command({type:'timeline-interval.template',ifRev:item.rev,payload:{intervalId:id,template:'as-you-go',renew:true}})).value.template;},seeded.id);
+ assert.notEqual(renewed.folderId,folderId);assert.equal((await page.evaluate(({ROOT,folderId})=>ProximaWorkspaces.folder(ROOT,folderId),{ROOT,folderId})).binned,true);
  await page.evaluate(()=>ProximaBlobWorkspaces.flush());
- const background=await app.evaluate(({webContents})=>webContents.getAllWebContents().filter(c=>c.getURL().includes('workspace-owner.html')).map(c=>({url:c.getURL(),type:c.getType()})));assert.equal(background.length,1);
- const owner=await app.evaluate(async({webContents})=>{const c=webContents.getAllWebContents().find(c=>c.getURL().includes('workspace-owner.html'));return c.executeJavaScript("({ready:typeof __proximaReplaceAll==='function',workspace:typeof ProximaWorkspaces==='object'})");});assert.equal(owner.ready,true);assert.equal(owner.workspace,true);
+ const background=await app.evaluate(({webContents})=>webContents.getAllWebContents().filter(c=>c.getURL().includes('workspace-owner.html')).length);assert.equal(background,1);
  const globalAyg=await fs.readdir(path.join(root,'ayg'));assert.ok(!globalAyg.includes('state.json'));
- console.log(JSON.stringify({ok:true,root,template:seeded.template,childUrl:child.url(),managedCopy:copy.target,versions:history.versions.length,backgroundOwner:owner,errors},null,2));
- assert.equal(errors.length,0);
+ console.log(JSON.stringify({ok:true,root,folderId,buttonPicture,openedIn,inBin,managedCopy:copy.target,versions:history.versions.length,killed,renewedFolder:renewed.folderId,errors},null,2));
+ assert.equal(errors.length,0,JSON.stringify(errors));
 }finally{await app.close();}
