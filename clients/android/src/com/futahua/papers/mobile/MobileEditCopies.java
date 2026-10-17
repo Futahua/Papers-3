@@ -11,8 +11,8 @@ import java.util.UUID;
 
 /** Phone-owned originals and editable copies, never the verified read cache. */
 final class MobileEditCopies {
-  private final File root;
-  MobileEditCopies(Context context) { root = new File(context.getFilesDir(), "remote-edits"); root.mkdirs(); }
+  private final File root,workingRoot;
+  MobileEditCopies(Context context) { root = new File(context.getFilesDir(), "remote-edits"); root.mkdirs();workingRoot=new File(context.getExternalFilesDir(null),"Papers/Working files");workingRoot.mkdirs(); }
   private File directory(String id) throws IOException {
     if (!id.matches("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}")) throw new IOException("Invalid local edit identity");
     return new File(root, id);
@@ -23,8 +23,9 @@ final class MobileEditCopies {
     if (!folder.mkdir()) throw new IOException("Working-copy folder could not be created");
     File original = new File(folder,"original.bin"); copy(download,original);
     if (!digest(original).equals(session.getString("sourceSha256"))) throw new IOException("Downloaded source changed; retained copy needs recovery");
-    copy(original,new File(folder,"working.bin"));
-    JSONObject record = new JSONObject().put("id",id).put("ownerId",owner).put("session",session).put("name",name).put("phase","editing");
+    String workingName=name.replaceAll("[<>:\"/\\\\|?*\\x00-\\x1f]","_");if(workingName.isEmpty()||workingName.equals(".")||workingName.equals(".."))workingName="Untitled";
+    File editable=new File(workingRoot,id);JSONArray folders=new JSONArray(),parts=session.optJSONArray("originalParts");if(parts!=null)for(int i=0;i<parts.length()-1;i++){String part=parts.getString(i).replaceAll("[<>:\"/\\\\|?*\\x00-\\x1f]","_");if(part.isEmpty()||part.equals(".")||part.equals(".."))part="_";folders.put(part);editable=new File(editable,part);}if(!editable.mkdirs())throw new IOException("Working folder unavailable");copy(original,new File(editable,workingName));
+    JSONObject record = new JSONObject().put("id",id).put("ownerId",owner).put("session",session).put("name",name).put("workingName",workingName).put("workingFolders",folders).put("phase","editing");
     retain(record); return record;
   }
   JSONObject read(String id) throws Exception {
@@ -36,23 +37,36 @@ final class MobileEditCopies {
       return record;
     }
   }
-  JSONArray list(String owner) throws Exception {
+  JSONArray list(String owner) throws Exception {return list(owner,true);}
+  JSONArray list(String owner,boolean verifyChanges) throws Exception {
     JSONArray records = new JSONArray(); File[] folders=root.listFiles(); if(folders==null)return records;
     for(File folder:folders)if(folder.isDirectory() && new File(folder,"edit.json").isFile()) {
-      JSONObject record=read(folder.getName()); if(owner.isEmpty()||owner.equals(record.getString("ownerId"))){if("saved".equals(record.getString("phase")))record.put("newerLocalEdits",!digest(working(record.getString("id"))).equals(record.optString("editedSha256")));records.put(record);}
+      JSONObject record=read(folder.getName()); if(owner.isEmpty()||owner.equals(record.getString("ownerId"))){if(verifyChanges&&"saved".equals(record.getString("phase")))record.put("newerLocalEdits",!digest(working(record.getString("id"))).equals(record.optString("editedSha256")));records.put(record);}
     }
     return records;
   }
   File working(String id) throws Exception {
-    if("preparing".equals(read(id).getString("phase")))throw new IOException("Working-copy preparation requires recovery"); File file=new File(directory(id),"working.bin");
-    File expected = new File(new File(root.getCanonicalFile(),id),"working.bin");
+    JSONObject record=read(id);if("preparing".equals(record.getString("phase")))throw new IOException("Working-copy preparation requires recovery");String name=record.optString("workingName","working.bin");if(!new File(name).getName().equals(name)||name.equals(".")||name.equals(".."))throw new IOException("Invalid working filename");File base=record.has("workingName")?workingRoot:root;File file=new File(new File(base,id),name);
+    File directory=new File(base,id);JSONArray folders=record.optJSONArray("workingFolders");if(folders!=null)for(int i=0;i<folders.length();i++){String part=folders.getString(i);if(part.equals(".")||part.equals("..")||part.contains("/")||part.contains("\\"))throw new IOException("Invalid working folder");directory=new File(directory,part);}file=new File(directory,name);
+    File expected = new File(base.getCanonicalFile(),id);expected=new File(expected,folders==null?"":String.join(File.separator,java.util.stream.IntStream.range(0,folders.length()).mapToObj(i->folders.optString(i)).toArray(String[]::new)));expected=new File(expected,name);
     if(!file.isFile() || !file.getCanonicalFile().equals(expected))throw new IOException("Working copy is unavailable");
     return file;
   }
+  void removeUnlinked(String id)throws Exception {
+    JSONObject record=read(id);File[] roots=record.has("workingName")?new File[]{new File(workingRoot,id),directory(id)}:new File[]{directory(id)};
+    for(File folder:roots){if(java.nio.file.Files.isSymbolicLink(folder.toPath()))throw new IOException("Working folder identity changed");if(!folder.exists())continue;java.util.List<java.nio.file.Path> entries;try(java.util.stream.Stream<java.nio.file.Path> stream=java.nio.file.Files.walk(folder.toPath())){entries=stream.sorted(java.util.Comparator.reverseOrder()).collect(java.util.stream.Collectors.toList());}for(java.nio.file.Path file:entries)java.nio.file.Files.delete(file);}
+  }
+  File workingRoot(){return workingRoot;}
   void retain(JSONObject record) throws Exception {
     AtomicFile file=new AtomicFile(new File(directory(record.getString("id")),"edit.json")); FileOutputStream stream=null;
     try { stream=file.startWrite(); stream.write(record.toString().getBytes(StandardCharsets.UTF_8));file.finishWrite(stream); }
     catch(Exception error){if(stream!=null)file.failWrite(stream);throw error;}
+  }
+  void nextRevision(String id,JSONObject session)throws Exception {
+    JSONObject record=read(id),previous=record.getJSONObject("session");
+    if(!record.getString("phase").equals("saved")||!session.getString("sourceVersion").equals(previous.getString("savedVersion"))||!session.getString("sourceSha256").equals(record.getString("editedSha256"))||!session.optString("assignmentId").equals(previous.optString("assignmentId")))throw new IOException("Next revision differs from save receipt");
+    File baseline=new File(directory(id),session.getString("id")+".baseline");copy(snapshot(id),baseline);
+    record.put("session",session).put("phase","editing").put("baseline",baseline.getName());for(String key:new String[]{"saveId","uploadId","editedSha256","editedBytes"})record.remove(key);retain(record);
   }
   JSONObject importCopy(String previousId,InputStream input) throws Exception {
     JSONObject previous=read(previousId);

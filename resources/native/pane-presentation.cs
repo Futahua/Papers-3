@@ -77,11 +77,15 @@ public sealed class PanePresentation {
         bool top=(Native.GetWindowLong(host,-20)&8)!=0;
         Native.SetWindowPos(host,IntPtr.Zero,0,0,0,0,0x213);
         // Raise EVERY main peer first: a popup from A must not be buried beneath B.
+        var anchor=host;
         foreach(var peer in peers) {
             var h=peer.Session.Handle;
             bool peerTop=(Native.GetWindowLong(h,-20)&8)!=0;
             if(top!=peerTop)Native.SetWindowPos(h,new IntPtr(top?-1:-2),0,0,0,0,0x213);
-            Native.SetWindowPos(h,IntPtr.Zero,0,0,0,0,0x213);
+            // HWND_TOP may succeed without crossing another process's foreground
+            // window. The host's cut-outs show peers immediately behind it, so
+            // explicitly join its z-order band instead of requesting activation.
+            Native.SetWindowPos(h,anchor,0,0,0,0,0x213);anchor=h;
         }
         var owned=peers.SelectMany(p=>OwnedPopups(p.Session.Handle)).Distinct().ToList();
         // Preserve the currently foreground dialog at the front when this is a non-focus pass.

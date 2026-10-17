@@ -7,6 +7,10 @@ import { AtomicJsonStore } from '../persistence/atomicStore';
 import type { RemoteFileEntry } from './remoteFileResources';
 import { RemoteFileOutbox } from './remoteFileOutbox';
 import { RemoteFileEditWorkingCopies } from './remoteFileEditWorkingCopies';
+import { uploadWithTus } from './remoteTusClient';
+import { watch, type FSWatcher } from 'chokidar';
+import * as os from 'node:os';
+import { UsbPeerTransport } from './usbPeerTransport';
 
 interface Connection { id: string; name: string; address: string; secret: string; deviceId: string; kind?: 'phone'; legacyPeerId?: string }
 interface SecretBox { seal: (value: string) => string; open: (value: string) => string }
@@ -31,7 +35,15 @@ function entry(value: unknown): RemoteFileEntry {
 
 /** Receiver owns connections and transfer bytes; AYG chooses pins and presentation. */
 export class RemoteFileClient {
+  private usb: UsbPeerTransport | null = null;
+  enableUsb(localAddress:()=>string|null) {
+    if(this.usb)return;
+    this.usb=new UsbPeerTransport(()=>this.connections.filter(peer=>peer.kind==='phone').map(peer=>({id:peer.id,address:peer.address,token:this.secrets.open(peer.secret)})),localAddress);
+    this.usb.start();
+  }
+  private transportFetch(input:string,options?:RequestInit) {return fetch(this.usb?.address(input)??input,options);}
   private connections: Connection[] = [];
+  private readonly ownerResponses = new Map<string, number>();
   private readonly jobs = new Map<string, RemoteDownloadJob>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly transfers = new Map<string, Promise<void>>();
@@ -44,10 +56,17 @@ export class RemoteFileClient {
   onOwnerChanged: ((ownerId: string) => void) | null = null;
   private readonly eventStreams = new Map<string, AbortController>();
   private readonly editSaves = new Map<string, Promise<unknown>>();
-  constructor(private readonly directory: string, private readonly secrets: SecretBox, private readonly allowLoopback = false) {
+  private assignmentTimer?: ReturnType<typeof setInterval>;
+  private assignmentPolling = false;
+  private readonly editWatchers = new Map<string, FSWatcher>();
+  private readonly automaticSaves = new Map<string, Promise<void>>();
+  private readonly editGenerations = new Map<string, string>();
+  private readonly dirtyEdits = new Set<string>();
+  onAssignedEdit?: (target: string) => Promise<void>;
+  constructor(private readonly directory: string, private readonly secrets: SecretBox, private readonly allowLoopback = false, workingDirectory?: string) {
     this.store = new AtomicJsonStore(path.join(directory, 'connections.json'), { recoveryDir: path.join(directory, 'recovery') });
     this.outbox = new RemoteFileOutbox(directory);
-    this.editCopies = new RemoteFileEditWorkingCopies(path.join(directory, 'edits'));
+    this.editCopies = new RemoteFileEditWorkingCopies(path.join(directory, 'edits'), workingDirectory);
     setTimeout(() => { void this.pruneContentCache().catch(() => {}); }, 60_000).unref?.();
   }
   async initialize(): Promise<void> {
@@ -62,8 +81,100 @@ export class RemoteFileClient {
       this.connections = report.value.connections;
       for (const connection of this.connections) if (connection.kind === 'phone') this.watchPhone(connection);
     }
+    this.assignmentTimer = setInterval(() => { void this.pollAssignments(); }, 5000); this.assignmentTimer.unref?.();
   }
-  snapshot() { return { capabilities: { edits: true, editRecovery: true, editContinue: true }, devices: this.connections.map(({ id, name, address, kind, legacyPeerId }) => ({ id, name, address, kind, legacyPeerId })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
+  async editingAssignments(ownerId: string) {
+    const copies = await this.editCopies.list(ownerId, false);
+    let status;
+    try { status = await (await this.request(ownerId, '/v1/files/edits/assignments')).json(); }
+    catch (error) { if (!copies.some(c=>c.session.assignmentId)) throw error;
+      const deviceId = this.connection(ownerId).deviceId;
+      status = {offline:true,editors:[{id:deviceId,name:os.hostname()}],assignments:copies.filter(c=>c.session.assignmentId).map(c=>({id:c.session.assignmentId,active:true,mine:true,editorDeviceId:deviceId,entry:{id:c.session.resourceId,name:c.name},offline:true}))};
+    }
+    status.localCopies = (await this.editCopies.list(ownerId, false)).filter(copy => copy.session.assignmentId).map(copy => ({ id: copy.id, assignmentId: copy.session.assignmentId, phase: copy.phase }));
+    return status;
+  }
+  async workingFolder() { const folder = this.editCopies.workingRoot(); await fs.mkdir(folder,{recursive:true}); return folder; }
+  async assignEditing(ownerId: string, raw: unknown, editorDeviceId: string) {
+    const file = entry(raw);
+    return (await (await this.request(ownerId, '/v1/files/edits/assignments', {}, undefined, { resourceId: file.id, sourceVersion: file.version, editorDeviceId })).json()).assignment;
+  }
+  async stopEditing(ownerId: string, id: string) {
+    return (await (await this.request(ownerId, '/v1/files/edits/assignments', {}, undefined, { action: 'stop', id })).json()).assignment;
+  }
+  private async pollAssignments() {
+    if (this.closing || this.assignmentPolling) return; this.assignmentPolling = true;
+    try {
+      const watched = new Set<string>();
+      for (const connection of this.connections) {
+        if (this.closing) break;
+        try {
+          const status = await this.editingAssignments(connection.id);
+          const copies = await this.editCopies.list(connection.id, false);
+          for (const copy of copies) if (copy.session.assignmentId && (status.assignments ?? []).some((a: {id:string;active:boolean}) => a.id === copy.session.assignmentId && !a.active)) {
+            await this.editWatchers.get(copy.id)?.close(); this.editWatchers.delete(copy.id);
+            try {
+              await this.automaticSaves.get(copy.id); await this.editSaves.get(copy.id);
+              await this.editCopies.removeUnlinked(copy.id);
+            } catch {
+              // An editor may still hold the stopped folder. Retry cleanup next poll;
+              // it must not prevent a different, active assignment from preparing.
+            } finally {
+              this.editGenerations.delete(copy.id); this.dirtyEdits.delete(copy.id);
+            }
+          }
+          if (status.offline) { for(const copy of copies)watched.add(copy.id); continue; }
+          for (const assignment of status.assignments ?? []) {
+            if (!assignment.active || !assignment.mine) continue;
+            let copy = copies.find(item => item.session.assignmentId === assignment.id);
+            if (!copy) {
+              copy = await this.beginEdit(connection.id, assignment.entry);
+              if (copy.session.assignmentId !== assignment.id) continue;
+              let parent: string|undefined;
+              for (const part of copy.session.originalParts?.slice(0,-1) ?? []) {
+                const listing = await this.browse(connection.id,parent);
+                const entry = listing.entries.find((e:RemoteFileEntry)=>e.name.toLowerCase()===part.toLowerCase());
+                if(!entry)break; parent=entry.id;
+              }
+              if(parent)await this.browse(connection.id,parent);
+              // Assignment prepares a copy; opening an editor is a separate user action.
+            }
+            watched.add(copy.id);
+            if (!this.editWatchers.has(copy.id)) {
+              const id = copy.id, watcher = watch(await this.editCopies.workingPath(id), { ignoreInitial: true, awaitWriteFinish: { stabilityThreshold: 1200, pollInterval: 200 } });
+              watcher.on('change', () => this.automaticSave(id, true)); watcher.on('add', () => this.automaticSave(id, true)); watcher.on('error', () => {});
+              this.editWatchers.set(id, watcher);
+            }
+            this.automaticSave(copy.id);
+          }
+        } catch { // An unreachable owner is unknown, never a reason to discard a copy or journal.
+          for (const copy of await this.editCopies.list(connection.id, false).catch(() => [])) if (copy.session.assignmentId) watched.add(copy.id);
+        }
+      }
+      for (const [id, watcher] of this.editWatchers) if (!watched.has(id)) { await watcher.close(); this.editWatchers.delete(id); }
+    } finally { this.assignmentPolling = false; }
+  }
+  private automaticSave(id: string, changed = false) {
+    if (changed) this.dirtyEdits.add(id);
+    if (this.closing || this.automaticSaves.has(id)) return;
+    const pending = (async () => {
+      let copy = await this.editCopies.read(id);
+      if (copy.phase === 'conflict' || !copy.session.assignmentId) return;
+      const stat = await fs.stat(await this.editCopies.workingPath(id));
+      const generation = [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
+      if (copy.phase === 'editing' && !this.dirtyEdits.has(id) && this.editGenerations.get(id) === generation) return;
+      this.dirtyEdits.delete(id);
+      this.editGenerations.set(id, generation);
+      if (copy.phase !== 'saved') copy = await this.saveEdit(id) as typeof copy;
+      if (copy.phase !== 'saved') return;
+      const file = (await (await this.request(copy.ownerId, `/v1/files/${copy.session.resourceId}/stat`)).json()).entry;
+      if (file.version !== copy.session.savedVersion) return;
+      const next = (await (await this.request(copy.ownerId, '/v1/files/edits', {}, undefined, { resourceId: file.id, sourceVersion: file.version })).json()).session;
+      await this.editCopies.nextRevision(id, next);
+    })().catch(() => { /* Local edits and immutable save snapshots remain available for retry. */ });
+    this.automaticSaves.set(id, pending); void pending.finally(() => this.automaticSaves.delete(id));
+  }
+  snapshot() { return { capabilities: { edits: true, editRecovery: true, editContinue: true }, devices: this.connections.map(({ id, name, address, kind, legacyPeerId }) => ({ id, name, address, kind, legacyPeerId,transport:this.usb&&this.usb.address(address)!==address?'usb':'network' })), jobs: structuredClone([...this.jobs.values()]), commandJobs: this.outbox.snapshot() }; }
   /** The gateway has already verified this request's Tailscale account and existing grant. Never trust a supplied address. */
   async acceptPhone(peerAddress: string, legacyPeerId: string, raw: unknown): Promise<void> {
     const value = raw as {owner?: {id?: string; name?: string; kind?: string}; token?: string; deviceId?: string};
@@ -123,7 +234,7 @@ export class RemoteFileClient {
       let delay = 1000;
       while (!controller.signal.aborted && !this.closing) {
         try {
-          const response = await fetch(`${connection.address}/v1/events`, {redirect: 'error', headers: {Authorization: `Bearer ${this.secrets.open(connection.secret)}`}, signal: controller.signal});
+          const response = await this.transportFetch(`${connection.address}/v1/events`, {redirect: 'error', headers: {Authorization: `Bearer ${this.secrets.open(connection.secret)}`}, signal: controller.signal});
           if (!response.ok || !response.body || !response.headers.get('content-type')?.startsWith('text/event-stream')) throw new Error('Phone event stream is unavailable.');
           delay = 1000; this.onOwnerChanged?.(connection.id);
           const reader = response.body.getReader(), decoder = new TextDecoder(); let buffer = '';
@@ -136,7 +247,8 @@ export class RemoteFileClient {
   }
   private async request(ownerId: string, route: string, headers: Record<string, string> = {}, signal?: AbortSignal, body?: unknown): Promise<Response> {
     const connection = this.connection(ownerId);
-    const response = await fetch(`${connection.address}${route}`, { redirect: 'error', method:body===undefined?'GET':'POST', ...(body===undefined?{}:{body:JSON.stringify(body)}),headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`,...(body===undefined?{}:{'Content-Type':'application/json'}), ...headers }, signal: signal ?? AbortSignal.timeout(30_000) });
+    const response = await this.transportFetch(`${connection.address}${route}`, { redirect: 'error', method:body===undefined?'GET':'POST', ...(body===undefined?{}:{body:JSON.stringify(body)}),headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`,...(body===undefined?{}:{'Content-Type':'application/json'}), ...headers }, signal: signal ?? AbortSignal.timeout(30_000) });
+    this.ownerResponses.set(ownerId, Date.now());
     if (response.status === 401) this.revoked.add(connection.address);
     if (!response.ok) throw new Error(response.status===503&&route.startsWith('/v1/backpacks/')?'Open Proxima on that computer, then refresh.':response.status === 412 ? 'Source changed. Refresh before downloading.' : response.status === 401 ? 'Access was revoked. Pair this device again.' : `Remote operation failed (${response.status}).`);
     return response;
@@ -157,7 +269,7 @@ export class RemoteFileClient {
     } catch (error) {
       const cached = await listing.load<{ entries: RemoteFileEntry[]; nextOffset: number | null }>();
       if (!cached.value) throw error;
-      return { ...cached.value, online: false, error: error instanceof Error ? error.message : 'Owner unavailable.' };
+      return { ...cached.value, online: Date.now() - (this.ownerResponses.get(ownerId) ?? 0) < 15000, stale: true, error: error instanceof Error ? error.message : 'Owner unavailable.' };
     }
   }
   download(ownerId: string, raw: unknown, scope?:string): RemoteDownloadJob {
@@ -254,7 +366,7 @@ export class RemoteFileClient {
           const buffer = Buffer.alloc(Math.min(4 * 1024 ** 2, record.editedBytes! - offset));
           const read = await file.read(buffer, 0, buffer.length, offset);
           if (read.bytesRead !== buffer.length) throw new Error('Retained save snapshot changed.');
-          const response = await fetch(`${connection.address}${uploadRoute}?offset=${offset}`, { method: 'PUT', redirect: 'error', headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}` }, body: buffer, signal: AbortSignal.timeout(60_000) });
+          const response = await this.transportFetch(`${connection.address}${uploadRoute}?offset=${offset}`, { method: 'PUT', redirect: 'error', headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}` }, body: buffer, signal: AbortSignal.timeout(60_000) });
           if (response.status === 401) this.revoked.add(connection.address);
           if (!response.ok || (await response.json()).receivedBytes !== offset + buffer.length) throw new Error('Upload was not confirmed. The retained snapshot can be resumed.');
           offset += buffer.length;
@@ -350,10 +462,18 @@ export class RemoteFileClient {
     await pipeline(createReadStream(localFile), hash);
     const query = new URLSearchParams({ name, size: String(stats.size), sha256: hash.digest('hex') });
     const connection = this.connection(ownerId);
+    const saved=await this.request(ownerId,`/v1/files/${folderId}/upload?${query}`).then(r=>r.json()).catch(error=>{if(connection.kind==='phone')throw error;return null;});
+    if(saved?.entry){const current=await fs.stat(localFile);if(current.size!==stats.size||current.mtimeMs!==stats.mtimeMs||current.ino!==stats.ino)throw Error('Local source changed before reuse.');return entry(saved.entry);}
+    const tus = await this.transportFetch(connection.address + '/v1/files/transfers', { method: 'OPTIONS', redirect: 'error', headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}` }, signal: AbortSignal.timeout(5000) }).then(response => response.ok && response.headers.get('tus-version')?.split(',').includes('1.0.0')).catch(() => false);
+    if (tus) {
+      const sha256 = query.get('sha256')!;
+      const key = createHash('sha256').update(JSON.stringify([ownerId, folderId, name, stats.dev, stats.ino, stats.ctimeMs, stats.size, sha256])).digest('hex');
+      const url = await uploadWithTus({ address: connection.address, token: this.secrets.open(connection.secret), file: localFile, folderId, name, size: stats.size, sha256, journal: path.join(this.directory, 'uploads', key + '.json'), httpStack:this.usb?.httpStack() });
+      const response = await this.request(ownerId, new URL(url).pathname + '/commit', {}, undefined, {});
+      return entry((await response.json()).entry);
+    }
     let offset = 0;
-    if (connection.kind === 'phone') {
-      const saved = await (await this.request(ownerId, `/v1/files/${folderId}/upload?${query}`)).json();
-      if (saved.entry) return entry(saved.entry);
+    if (connection.kind === 'phone'&&saved) {
       if (!Number.isSafeInteger(saved.receivedBytes) || saved.receivedBytes < 0 || saved.receivedBytes > stats.size || !/^[a-f0-9]{64}$/.test(saved.prefixSha256)) throw new Error('Invalid phone resume receipt.');
       const prefix = createHash('sha256');
       if (saved.receivedBytes) await pipeline(createReadStream(localFile, {start: 0, end: saved.receivedBytes - 1}), prefix);
@@ -361,7 +481,7 @@ export class RemoteFileClient {
     }
     const current = await fs.stat(localFile);
     if (current.size !== stats.size || current.mtimeMs !== stats.mtimeMs) throw new Error('Local source changed before upload.');
-    const response = await fetch(`${connection.address}/v1/files/${folderId}/upload?${query}`, {
+    const response = await this.transportFetch(`${connection.address}/v1/files/${folderId}/upload?${query}`, {
       method: 'PUT', redirect: 'error', duplex: 'half',
       headers: { Authorization: `Bearer ${this.secrets.open(connection.secret)}`, 'Content-Type': 'application/octet-stream', 'Content-Length': String(stats.size - offset), ...(connection.kind === 'phone' ? {'X-Papers-Offset': String(offset)} : {}) },
       body: offset === stats.size ? new Uint8Array() : Readable.toWeb(createReadStream(localFile, {start: offset})) as unknown as BodyInit,
@@ -402,6 +522,12 @@ export class RemoteFileClient {
     return response.save;
   }
   /** Runs a search on the owner (its own Everything); results come back as share-relative parts. */
+  async targets(ownerId:string,request:Record<string,unknown>):Promise<Record<string,unknown>>{
+    const response=await(await this.request(ownerId,'/v1/files/targets',{},undefined,request)).json();
+    const target=response.target;if(!target||typeof target.targetId!=='string'||typeof target.status!=='string')throw Error('Invalid file target response');
+    if(target.parts&&(!Array.isArray(target.parts)||!target.parts.every((p:unknown)=>typeof p==='string'&&p&&!/[\\/]/.test(p)&&p!=='.'&&p!=='..')))throw Error('Invalid target location');
+    return target;
+  }
   async search(ownerId: string, query: string, limit: number): Promise<{ parts: string[]; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[]> {
     const response = await (await this.request(ownerId, `/v1/files/search?${new URLSearchParams({ q: query, limit: String(limit) })}`)).json();
     if (!Array.isArray(response.results)) throw new Error('Invalid search results.');
@@ -427,6 +553,7 @@ export class RemoteFileClient {
     return this.cachedPath(ownerId, key);
   }
   cancel(id: string): void { this.controllers.get(id)?.abort(); }
+  async contentDigest(ownerId:string,raw:unknown):Promise<string>{const file=entry(raw);const result=await(await this.request(ownerId,`/v1/files/${file.id}/digest`,{'If-Match':`"${file.version}"`})).json();if(result.version!==file.version||result.size!==file.size||!/^[a-f0-9]{64}$/.test(result.sha256))throw Error('Source verification changed.');return result.sha256;}
   /** The owner's own rendering of a file when it is an image or text (a Revit or DWG thumbnail, a
    * picture, text): Preview shows it without downloading the file. Null when it needs the file itself. */
   async ownerPreview(ownerId: string, raw: unknown): Promise<Record<string, unknown> | null> {
@@ -434,6 +561,12 @@ export class RemoteFileClient {
     const response = await (await this.request(ownerId, `/v1/files/${file.id}/preview`, {}, AbortSignal.timeout(60_000))).json();
     const preview = response?.ok === true ? response.preview : null;
     return preview && (preview.kind === 'image' ? typeof preview.dataUrl === 'string' : preview.kind === 'text' && typeof preview.text === 'string') ? preview : null;
+  }
+  async ownerThumbnail(ownerId:string,raw:unknown):Promise<Record<string,unknown>|null>{
+    const file=entry(raw);
+    const response=await(await this.request(ownerId,`/v1/files/${file.id}/thumbnail`,{},AbortSignal.timeout(15_000))).json();
+    const preview=response?.ok===true?response.preview:null;
+    return preview?.kind==='image'&&typeof preview.dataUrl==='string'&&preview.dataUrl.startsWith('data:image/')&&preview.dataUrl.length<=180_000?preview:null;
   }
   /** Custom pictures of a folder's children, kept on the owner (customIconStore). A drive list has none. */
   async customIcons(ownerId: string, folderId: string | null): Promise<Record<string, string>> {
@@ -503,6 +636,10 @@ export class RemoteFileClient {
   }
   async close(): Promise<void> {
     this.closing = true;
+    await this.usb?.close();
+    clearInterval(this.assignmentTimer);
+    await Promise.allSettled([...this.editWatchers.values()].map(watcher => watcher.close()));
+    await Promise.allSettled([...this.automaticSaves.values()]);
     for (const controller of this.eventStreams.values()) controller.abort();
     for (const controller of this.controllers.values()) controller.abort();
     await Promise.allSettled([...this.transfers.values()]);

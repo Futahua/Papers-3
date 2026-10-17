@@ -28,6 +28,8 @@ final class PhoneUris {
     switch (request.getString("operation")) {
       case "uri-stat": return stat(uri);
       case "uri-preview": return preview(uri);
+      case "uri-thumbnail":return thumbnail(uri);
+      case "uri-icon":return new JSONObject().put("icon",appIcon(uri));
       case "uri-reveal": return reveal(uri);
       case "uri-storage-path": {java.io.File file=sharedFile(uri);if(file==null||!file.exists())throw new IOException("This document has no accessible Android storage location.");return new JSONObject().put("uri",storageUri(file).toString()).put("name",file.getName());}
       case "uri-open": {
@@ -115,4 +117,14 @@ final class PhoneUris {
     };
   }
   private JSONObject preview(Uri uri) throws Exception { return PhonePreview.preview(source(uri)); }
+  private String appIcon(Uri uri)throws Exception {
+    PhonePreview.Source source=source(uri);Intent intent=new Intent(Intent.ACTION_VIEW).setDataAndType(uri,PhonePreview.mimeFor(source.name(),source.mime()));android.content.pm.ResolveInfo app=context.getPackageManager().resolveActivity(intent,android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);if(app==null||app.activityInfo==null||app.activityInfo.packageName.equals("android")||app.activityInfo.packageName.equals(context.getPackageName()))return "";
+    android.graphics.drawable.Drawable icon=app.loadIcon(context.getPackageManager());Bitmap bitmap=Bitmap.createBitmap(48,48,Bitmap.Config.ARGB_8888);icon.setBounds(0,0,48,48);icon.draw(new android.graphics.Canvas(bitmap));ByteArrayOutputStream bytes=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.PNG,100,bytes);bitmap.recycle();return "data:image/png;base64,"+Base64.encodeToString(bytes.toByteArray(),Base64.NO_WRAP);
+  }
+  JSONObject thumbnailFile(java.io.File file)throws Exception{return thumbnail(storageUri(file));}
+  private JSONObject thumbnail(Uri uri)throws Exception {
+    String icon="";try{icon=appIcon(uri);}catch(Exception ignored){}JSONObject result;try{result=PhonePreview.thumbnail(source(uri));}catch(Exception ignored){result=new JSONObject().put("kind","none");}
+    if(result.optString("kind").equals("image")){result.put("renderKind","thumbnail");if(!icon.isEmpty())result.put("iconDataUrl",icon);return result;}
+    if(!icon.isEmpty()){byte[] bytes=Base64.decode(icon.substring(icon.indexOf(',')+1),Base64.DEFAULT);Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length);ByteArrayOutputStream jpeg=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.JPEG,75,jpeg);bitmap.recycle();return new JSONObject().put("kind","image").put("renderKind","icon").put("width",48).put("height",48).put("iconDataUrl",icon).put("dataUrl","data:image/jpeg;base64,"+Base64.encodeToString(jpeg.toByteArray(),Base64.NO_WRAP));}return result;
+  }
 }

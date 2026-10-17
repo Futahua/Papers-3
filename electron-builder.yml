@@ -11,6 +11,8 @@ files:
   - package.json
 
 extraResources:
+  - from: resources/adb
+    to: adb
   - from: programs
     to: programs
   - from: assets/icon.png

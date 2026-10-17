@@ -88,7 +88,7 @@ public sealed partial class PaneCoordinator {
             foreach(var saved in data.Groups){var g=Group(saved.Id);
                 g.SelectedTab=g.OrderedTabs.Contains(saved.Selected)?saved.Selected:g.OrderedTabs.FirstOrDefault();
                 g.Presentation=saved.Presentation=="minimized"||saved.Presentation=="maximized"?saved.Presentation:"normal";
-                if(g.OrderedTabs.Count>0&&g.OrderedTabs.All(id=>Dormant(id)!=null))g.Presentation="minimized";
+                // Restore the saved presentation even when every application is dormant.
             }
             // Attach temporarily selected each group's first peer. Suppress all before presenting final choices.
             foreach(var p in tabIndex.Values)ShowPeer(p,false);

@@ -42,6 +42,8 @@ public sealed class PaneCoordinatorHub:IDisposable {
         if(hwnd==Handle&&ev==0x800B&&obj==0&&HostGeometryChanged!=null)try{HostGeometryChanged();}catch{}
         foreach(var scope in scopes.Keys.ToArray())
             if(hwnd==Handle||scope.OwnsNativeEvent(hwnd))scope.SafeNativeEvent(hook,ev,hwnd,obj,child,thread,time);
+        // Every scope has refreshed its visible panes; stack once for the physical host.
+        if(hwnd==Handle&&ev==3&&Native.GetForegroundWindow()==Handle&&!Native.IsIconic(Handle))Stack(false,null);
         if((ev==0xA||ev==0xB)&&NativeGesture!=null)try{NativeGesture(ev,hwnd);}catch{}
     }
     internal void Apply(PaneCoordinator scope,List<Rectangle> frames){

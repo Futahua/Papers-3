@@ -84,7 +84,9 @@ it('downloads verified content and retains it and listings after owner disconnec
   expect(offline).toHaveLength(1);
   expect(await fs.readFile(await client.cachedPath(ownerId, offline[0]!.key))).toEqual(content);
   await closeGateway();
-  expect(await client.browse(ownerId, share.id)).toMatchObject({ online: false });
+  // A single failed listing is stale data; recent owner responses keep the
+  // accepted reachability grace period from flickering the entire pane offline.
+  expect(await client.browse(ownerId, share.id)).toMatchObject({ online: true, stale: true });
   const reopened = new RemoteFileClient(clientDir, box, true); await reopened.initialize();
   cleanups.push(() => reopened.close());
   expect(reopened.snapshot().devices[0]!.id).toBe(ownerId);

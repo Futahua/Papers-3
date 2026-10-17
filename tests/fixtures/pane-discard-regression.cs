@@ -32,6 +32,30 @@ public class DiscardRegression {
  Check(pane.DiscardDeadWindows(pane.Scope.BindingGeneration,pane.Scope.StateRevision)==0,"repeat cleanup idempotent");
  var mount=Path.Combine(dir,"mount.json");pane.SaveMount(mount);Check(!File.ReadAllText(mount).Contains("Dead"),"dead entry not persisted");
  Console.WriteLine("dead tabs removed; empty panes, sizes and documents preserved; saved cleanup verified");
- }finally{pane.Release();}}
+ }finally{pane.Release();}
+ var restorePath=Path.Combine(dir,"dormant-mount.json");
+ var first=new PaneCoordinator(host.Handle,Path.Combine(dir,"first.json"),Path.Combine(dir,"first-log"),s=>{},32,null,"restore-test",true);
+ try {
+ first.SetViewport(new Rectangle(-20000,-20000,1200,800),1);
+ first.CreateGroup("main","collapsed","right",first.Scope.BindingGeneration,first.Scope.StateRevision);
+ using(var app=new Form()){
+ app.MaximumSize=new Size(1200,800);app.ShowInTaskbar=false;app.StartPosition=FormStartPosition.Manual;app.Bounds=new Rectangle(-19000,-19000,400,400);app.CreateControl();uint pid;Native.GetWindowThreadProcessId(app.Handle,out pid);
+ first.AttachShiftDrop(app.Handle,pid,"main",first.Scope.BindingGeneration,first.Scope.StateRevision);
+ app.Dispose();first.ReconcileClosed();
+ Check(first.Group("main").Presentation=="normal","closing last app preserves expanded group");
+ }
+ first.AddDormant(new PaneMountPeer{TabId="already-closed",Title="Unavailable"},"collapsed");
+ first.Group("collapsed").Presentation="minimized";
+ first.SaveMount(restorePath);
+ } finally {first.Release();}
+ var restored=new PaneCoordinator(host.Handle,Path.Combine(dir,"second.json"),Path.Combine(dir,"second-log"),s=>{},32,null,"restore-test",true);
+ try {
+ restored.RestoreMount(restorePath,new Rectangle(-20000,-20000,1200,800));
+ Check(restored.Group("main").Presentation=="normal","reboot with absent apps preserves expanded group");
+ Check(restored.Group("main").OrderedTabs.All(id=>restored.Dormant(id)!=null),"missing app remains available as dormant tab");
+ Check(restored.Group("collapsed").Presentation=="minimized","explicitly minimized group stays minimized");
+ Console.WriteLine("dormant group presentation restored without auto-collapse");
+ } finally {restored.Release();}
+ }
  }
 }

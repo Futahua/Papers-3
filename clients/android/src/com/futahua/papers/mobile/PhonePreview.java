@@ -62,6 +62,11 @@ final class PhonePreview {
     if (mime.startsWith("text/") || "application/json".equals(mime)) return text(source);
     return new JSONObject().put("kind", "none");
   }
+  static JSONObject thumbnail(Source source)throws Exception {
+    String mime=mimeFor(source.name(),source.mime());if(mime.startsWith("image/"))return image(source,256);
+    if("application/pdf".equals(mime)){ParcelFileDescriptor fd=source.descriptor();if(fd==null)return new JSONObject().put("kind","none");try(PdfRenderer renderer=new PdfRenderer(fd)){if(renderer.getPageCount()==0)return new JSONObject().put("kind","none");try(PdfRenderer.Page page=renderer.openPage(0)){float factor=256f/Math.max(page.getWidth(),page.getHeight());Bitmap bitmap=Bitmap.createBitmap(Math.max(1,Math.round(page.getWidth()*factor)),Math.max(1,Math.round(page.getHeight()*factor)),Bitmap.Config.ARGB_8888);bitmap.eraseColor(Color.WHITE);page.render(bitmap,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);return jpeg(bitmap);}}}
+    return new JSONObject().put("kind","none");
+  }
 
   /** Audio and video go to the preview panel's player as data (WebView's player cannot be fed by the
    * app's own request hook), so they are previewed up to MEDIA_BYTES; larger ones have no preview. */
@@ -74,14 +79,17 @@ final class PhonePreview {
   }
 
   private static JSONObject image(Source source) throws Exception {
+    return image(source,IMAGE_EDGE);
+  }
+  private static JSONObject image(Source source,int edge) throws Exception {
     byte[] bytes; Stream stream = source.open(0);
     try { bytes = readAll(stream.input, 64 * 1024 * 1024); } finally { stream.close.run(); }
     BitmapFactory.Options bounds = new BitmapFactory.Options(); bounds.inJustDecodeBounds = true; BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
     BitmapFactory.Options options = new BitmapFactory.Options(); options.inSampleSize = 1;
-    while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > IMAGE_EDGE * 2) options.inSampleSize *= 2;
+    while (Math.max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > edge * 2) options.inSampleSize *= 2;
     Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
     if (bitmap == null) return new JSONObject().put("kind", "none");
-    return jpeg(scale(bitmap, IMAGE_EDGE));
+    return jpeg(scale(bitmap, edge));
   }
 
   private static JSONObject pdf(Source source) throws Exception {

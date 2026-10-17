@@ -8,8 +8,10 @@ import type { RemoteFileMutations } from './remoteFileMutations';
 import type { RemoteFileEditOwner } from './remoteFileEditOwner';
 import { logDevice, sameAccountNode } from './tailnetIdentity';
 import type { RemoteFileShare } from './remoteFileResources';
+import { RemoteFileResources } from './remoteFileResources';
 
 export class RemoteDeviceService {
+  fileTargets: import('./fileTargetRegistry').TargetRegistry|null=null;
   private devices: RemoteDeviceStore | null = null;
   private gateway: Awaited<ReturnType<typeof createRemoteFileGateway>> | null = null;
   private address: string | null = null;
@@ -45,6 +47,25 @@ export class RemoteDeviceService {
     const snapshot = this.devices?.snapshot();
     return { owner: snapshot?.owner ?? null, address: this.address, error: this.failure, devices: snapshot?.devices.map(device => ({ id: device.deviceId, name: device.name, pairedAt: device.pairedAt, folders: device.shares.map(share => share.name),backpacks:(device.backpacks??[]).map(share=>share.name) })) ?? [] };
   }
+  async editingControl(target: string, request: Record<string, unknown>) {
+    if (!this.devices || !this.edits || !this.defaultGrant) throw Error('File editing is unavailable');
+    const state = this.devices.snapshot(), grant = await this.defaultGrant();
+    const catalog = await RemoteFileResources.create(grant.shares, 'local-owner-editing');
+    const entry = await catalog.ownerEntry(target);
+    if (entry.kind !== 'file') throw Error('Choose a file');
+    const editors = state.devices.filter(item => item.canWrite).map(item => ({ id: item.deviceId, name: item.name }));
+    const status = await this.edits.assignments('local-owner', catalog);
+    const assignments = status.filter(item => item.entry.id === entry.id);
+    if (request.action === 'assign') {
+      const editor = String(request.editorDeviceId); if (!editors.some(item => item.id === editor)) throw Error('Choose an authorized device');
+      await this.edits.assign('local-owner', catalog, entry.id, entry.version, editor);
+    }
+    if (request.action === 'stop') {
+      const id = String(request.assignmentId); if (!assignments.some(item => item.id === id)) throw Error('Assignment does not belong to this file');
+      await this.edits.stopAssignment('local-owner', catalog, id);
+    }
+    return { ok: true, editors, assignments };
+  }
   private async start(): Promise<void> {
     if (this.gateway) return;
     if (!this.devices) throw new Error('Device identity is unavailable.');
@@ -55,6 +76,8 @@ export class RemoteDeviceService {
     const gateway = await createRemoteFileGateway({ owner: snapshot.owner, grants: snapshot.devices,
       inbox:{get:()=>{if(!this.inbox)throw Error('Inbox settings are unavailable.');return this.inbox.get();},set:parts=>{if(!this.inbox)throw Error('Inbox settings are unavailable.');return this.inbox.set(parts);}},
       edits: this.edits ?? undefined,
+      transfersDirectory: path.join(this.directory, 'transfers'),
+      fileTargets:{track:target=>{if(!this.fileTargets)throw Error('File tracking unavailable');return this.fileTargets.track(target);},resolve:id=>{if(!this.fileTargets)throw Error('File tracking unavailable');return this.fileTargets.resolve(id);},remove:(id,revision,commandId)=>{if(!this.fileTargets?.remove)throw Error('File tracking unavailable');return this.fileTargets.remove(id,revision,commandId);},restore:(id,revision,commandId)=>{if(!this.fileTargets?.restore)throw Error('File restoration unavailable');return this.fileTargets.restore(id,revision,commandId);},relocate:async()=>{throw Error('Use checked owner mutations');},deleted:async()=>{throw Error('Use checked owner mutations');}},
       workspaces:{list:()=>this.workspaces?.list()??Promise.resolve([]),load:projectId=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.load(projectId);},save:(projectId,raw,revision)=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.save(projectId,raw,revision);},icon:(projectId,name)=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.icon(projectId,name);}},
       thumbnail:target=>this.thumbnail?.(target)??Promise.resolve({kind:'none'}),
       customIcons:{inFolder:folder=>this.customIcons?this.customIcons.inFolder(folder):Promise.resolve({}),set:(paths,icon)=>{if(!this.customIcons)throw Error('Custom pictures are unavailable.');return this.customIcons.set(paths,icon);}},

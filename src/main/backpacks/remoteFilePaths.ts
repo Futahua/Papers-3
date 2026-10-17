@@ -21,6 +21,12 @@ export const isRemotePath = (value: unknown): boolean => parseRemotePath(value) 
 export const remotePath = (ownerId: string, parts: string[]): string => [`${REMOTE_PATH_PREFIX}${ownerId}`, ...parts].join('\\');
 
 export interface RemotePathClient {
+  editingAssignments?(ownerId: string): Promise<any>;
+  assignEditing?(ownerId: string, entry: unknown, editorDeviceId: string): Promise<unknown>;
+  stopEditing?(ownerId: string, id: string): Promise<unknown>;
+  editPath?(id: string): Promise<string>;
+  ownerThumbnail?(ownerId:string,entry:unknown):Promise<Record<string,unknown>|null>;
+  targets?(ownerId:string,request:Record<string,unknown>):Promise<Record<string,unknown>>;
   snapshot(): { devices: { id: string; name: string; address: string }[] };
   browse(ownerId: string, resourceId?: string, offset?: number): Promise<{ entries: RemoteFileEntry[]; nextOffset: number | null; online: boolean; error?: string }>;
   change(ownerId: string, command: unknown): Promise<unknown>;
@@ -36,11 +42,11 @@ export interface RemotePathClient {
   setCustomIcon?(ownerId: string, entryId: string, icon: string | null): Promise<void>;
   search(ownerId: string, query: string, limit: number): Promise<{ parts: string[]; name: string; kind: 'file' | 'folder'; size: number | null; modifiedAt: number | null }[]>;
 }
-type Resolved = { ownerId: string; parts: string[]; entry: RemoteFileEntry | null };
+type Resolved = { ownerId: string; parts: string[]; entry: RemoteFileEntry | null; online: boolean };
 type Call = (operation: string, params: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
 const LISTING_TTL_MS = 2_000;
-const UNSUPPORTED = new Set(['open', 'reveal', 'native-drag', 'office-editor-open', 'office-editor-save', 'preview-markdown-obsidian']);
+const UNSUPPORTED = new Set(['reveal', 'native-drag', 'office-editor-open', 'office-editor-save', 'preview-markdown-obsidian']);
 
 export function createRemotePaths(client: RemotePathClient, options: { iconDirectory: string; fileIcon: (target: string) => Promise<unknown>; settingsFile?: string }) {
   // Chosen inbox per device, as share-relative parts ("C:", "Users", ...). Missing means the device's default.
@@ -49,11 +55,16 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
     ? await fs.readFile(options.settingsFile, 'utf8').then(text => JSON.parse(text).inboxes ?? {}, () => ({}))
     : {};
   const listings = new Map<string, { at: number; entries: RemoteFileEntry[]; online: boolean }>();
+  const listingRequests=new Map<string,Promise<{at:number;entries:RemoteFileEntry[];online:boolean}>>();
+  const listingGenerations=new Map<string,number>();
   const deviceName = (ownerId: string) => client.snapshot().devices.find(device => device.id === ownerId)?.name ?? 'Device';
 
   async function listAll(ownerId: string, resourceId?: string) {
     const key = `${ownerId}|${resourceId ?? ''}`, cached = listings.get(key);
     if (cached && Date.now() - cached.at < LISTING_TTL_MS) return cached;
+    const pending=listingRequests.get(key);if(pending)return pending;
+    const generation=listingGenerations.get(ownerId)??0;
+    const request=(async()=>{
     const entries: RemoteFileEntry[] = [];
     let offset: number | null = 0, online = true;
     while (offset !== null) {
@@ -61,21 +72,24 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
       entries.push(...page.entries); online &&= page.online; offset = page.nextOffset;
     }
     const value = { at: Date.now(), entries, online };
-    listings.set(key, value);
+    if((listingGenerations.get(ownerId)??0)===generation)listings.set(key, value);
     return value;
+    })();
+    listingRequests.set(key,request);
+    try{return await request;}finally{if(listingRequests.get(key)===request)listingRequests.delete(key);}
   }
   async function resolve(target: unknown): Promise<Resolved> {
     const parsed = parseRemotePath(target);
     if (!parsed) throw new Error('Not a remote path.');
     if (!client.snapshot().devices.some(device => device.id === parsed.ownerId)) throw new Error('That device is not connected.');
-    let entry: RemoteFileEntry | null = null;
+    let entry: RemoteFileEntry | null = null, online = true;
     for (const part of parsed.parts) {
-      const { entries } = await listAll(parsed.ownerId, entry?.id);
+      const listing = await listAll(parsed.ownerId, entry?.id); online &&= listing.online; const { entries } = listing;
       const next = entries.find(item => item.name === part) ?? entries.find(item => item.name.toLowerCase() === part.toLowerCase());
       if (!next) throw Object.assign(new Error('That item is no longer on the device.'), { code: 'ENOENT' });
       entry = next;
     }
-    return { ...parsed, entry };
+    return { ...parsed, entry, online };
   }
   function describe(ownerId: string, parts: string[], entry: RemoteFileEntry | null) {
     const kind = entry?.kind ?? 'folder';
@@ -124,7 +138,7 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
     const extension = path.extname(name), stem = name.slice(0, name.length - extension.length);
     for (let attempt = 1; ; attempt++) { const next = attempt === 1 ? name : `${stem} (${attempt})${extension}`; if (!taken.has(next.toLowerCase())) return next; }
   }
-  function forget(ownerId: string) { for (const key of [...listings.keys()]) if (key.startsWith(ownerId + '|')) listings.delete(key); }
+  function forget(ownerId: string) { listingGenerations.set(ownerId,(listingGenerations.get(ownerId)??0)+1);for(const key of [...listingRequests.keys()])if(key.startsWith(ownerId+'|'))listingRequests.delete(key);for (const key of [...listings.keys()]) if (key.startsWith(ownerId + '|')) listings.delete(key); }
   /** Copies one file or folder into a folder on another side (this PC or a device). Never overwrites. */
   async function copyAcross(source: string, destination: string): Promise<string> {
     const from = parseRemotePath(source), to = parseRemotePath(destination);
@@ -231,6 +245,34 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
       if (![params.path, params.destination, ...paths].some(isRemotePath)) return null;
       if (UNSUPPORTED.has(operation)) return { ok: false, code: 'REMOTE_UNSUPPORTED', message: 'Not available for files on another device yet.' };
       switch (operation) {
+        case 'editing': {
+          const source = await resolve(params.path);
+          if (!source.entry || source.entry.kind !== 'file' || !client.editingAssignments) return { ok: false, message: 'Choose a remote file.' };
+          const status = await client.editingAssignments(source.ownerId);
+          const assignments = status.assignments.filter((item: {entry: {id: string}}) => item.entry.id === source.entry!.id);
+          const localCopy = status.localCopies?.find((copy: {assignmentId: string}) => assignments.some((item: {id: string; active: boolean}) => item.active && item.id === copy.assignmentId));
+          if (params.action === 'open') {
+            if (!localCopy || !client.editPath) throw Error('Working copy is not ready on this device');
+            return call('open', { path: await client.editPath(localCopy.id) });
+          }
+          if (params.action === 'assign') await client.assignEditing!(source.ownerId, source.entry, String(params.editorDeviceId));
+          if (params.action === 'stop') {
+            if (!assignments.some((item: {id: string}) => item.id === params.assignmentId)) throw Error('Assignment does not belong to this file');
+            await client.stopEditing!(source.ownerId, String(params.assignmentId));
+          }
+          return { ok: true, editors: status.editors, assignments, localCopy };
+        }
+        case 'file-target-track':
+        case 'file-target-delete':
+        case 'file-target-restore':
+        case 'file-target-resolve': {
+          if(!client.targets)return {ok:false,code:'UNSUPPORTED'};
+          const parsed=parseRemotePath(params.path)!;
+          let request:Record<string,unknown>={operation:operation==='file-target-delete'?'delete':operation==='file-target-restore'?'restore':'resolve',targetId:params.targetId,expectedRevision:params.expectedRevision,commandId:params.commandId};
+          if(operation==='file-target-track'){const source=await resolve(params.path);if(!source.entry)return {ok:false,code:'UNSUPPORTED'};request={operation:'track',resourceId:source.entry.id,expectedVersion:source.entry.version};}
+          const target=await client.targets(parsed.ownerId,request);return {ok:true,target:{...target,...(Array.isArray(target.parts)?{path:remotePath(parsed.ownerId,target.parts as string[])}:{})}};
+        }
+        case 'file-target-relocate':return {ok:true};
         case 'search': {
           // Searching while inside a device searches that device, with its own Everything.
           const { ownerId } = parseRemotePath(params.path)!;
@@ -239,15 +281,15 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
           return { ok: true, provider: 'everything', version: null, total: results.length, results };
         }
         case 'stat': {
-          const { ownerId, parts, entry } = await resolve(params.path);
+          const { ownerId, parts, entry, online } = await resolve(params.path);
           const cached = entry?.kind === 'file' && client.isCached ? await client.isCached(ownerId, entry).catch(() => false) : false;
-          return { ok: true, entry: { ...describe(ownerId, parts, entry), cached } };
+          return { ok: true, entry: { ...describe(ownerId, parts, entry), cached, offline: !online } };
         }
         case 'list': {
           const { ownerId, parts, entry } = await resolve(params.path);
           if (entry && entry.kind !== 'folder') throw new Error('That path is not a folder.');
           const listing = await listAll(ownerId, entry?.id);
-          const items = listing.entries.map(item => describe(ownerId, [...parts, item.name], item))
+          const items = listing.entries.map(item => ({...describe(ownerId, [...parts, item.name], item),offline:!listing.online}))
             .sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
           return { ok: true, entry: describe(ownerId, parts, entry), items, truncated: false, online: listing.online };
         }
@@ -265,7 +307,15 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
           }
           return { ok: true };
         }
+        case 'thumbnail': {
+          const {ownerId,entry}=await resolve(params.path);
+          const preview=entry&&client.ownerThumbnail?await client.ownerThumbnail(ownerId,entry).catch(()=>null):null;
+          return {ok:true,preview:preview??{kind:'none'}};
+        }
         case 'icon': {
+          const resolved=await resolve(params.path);
+          const rendered=resolved.entry&&client.ownerThumbnail?await client.ownerThumbnail(resolved.ownerId,resolved.entry).catch(()=>null):null;
+          if(rendered?.kind==='image')return {ok:true,icon:rendered.iconDataUrl??rendered.dataUrl};
           // The icon depends only on the kind and extension, so ask the shell about a local stand-in.
           const parsed = parseRemotePath(params.path)!;
           const name = parsed.parts.at(-1) ?? '';
@@ -316,6 +366,17 @@ export function createRemotePaths(client: RemotePathClient, options: { iconDirec
             await command(ownerId, { operation, resourceId: entry.id, expectedVersion: entry.version, destinationId: fresh.id, destinationVersion: fresh.version });
           }
           return { ok: true, operation };
+        }
+        case 'open': {
+          const source = await resolve(params.path);
+          if (source.entry && client.editingAssignments && client.editPath) {
+            const status = await client.editingAssignments(source.ownerId);
+            const assignment = status.assignments?.find((a: {active:boolean;entry:{id:string}}) => a.active && a.entry.id === source.entry!.id);
+            const copy = status.localCopies?.find((c: {assignmentId:string}) => c.assignmentId === assignment?.id);
+            if (copy) return call('open', { path: await client.editPath(copy.id) });
+          }
+          const local = await client.materialize(source.ownerId, source.entry);
+          return relabel(await call('open', { ...params, path: local }), local, String(params.path)) as Record<string, unknown>;
         }
         case 'preview': {
           if (isRemotePath(params.path) && params.skipWindowsPreview !== true) {

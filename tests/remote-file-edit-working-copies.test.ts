@@ -6,6 +6,37 @@ import { createHash, randomUUID } from 'node:crypto';
 import { RemoteFileEditWorkingCopies } from '../src/main/backpacks/remoteFileEditWorkingCopies';
 import type { EditSession } from '../src/main/backpacks/remoteFileEditSessions';
 
+it('advances an assigned revision without changing the path open in an editor or discarding newer edits', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-continuous-edit-'));
+  try {
+    const download = path.join(root, 'cached.txt'); await fs.writeFile(download, 'original');
+    const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+    const session: EditSession = { id: randomUUID(), assignmentId: randomUUID(), deviceId: randomUUID(), resourceId: randomUUID(), sourceVersion: 'a'.repeat(64), sourceSha256: sha('original'), phase: 'editing' };
+    const copies = new RemoteFileEditWorkingCopies(path.join(root, 'edits')), copy = await copies.create(randomUUID(), session, 'file.txt', download), working = await copies.workingPath(copy.id);
+    await fs.writeFile(working, 'first save'); const saved = await copies.prepare(copy.id); saved.phase = 'saved'; saved.session = { ...session, phase: 'saved', savedVersion: 'b'.repeat(64) }; await copies.retain(saved);
+    await fs.writeFile(working, 'newer edit during upload');
+    await copies.nextRevision(copy.id, { ...session, id: randomUUID(), sourceVersion: 'b'.repeat(64), sourceSha256: sha('first save') });
+    expect(await copies.workingPath(copy.id)).toBe(working); expect(await fs.readFile(working, 'utf8')).toBe('newer edit during upload');
+    expect(await fs.readFile(await copies.originalPath(copy.id), 'utf8')).toBe('first save');
+    expect((await copies.prepare(copy.id)).editedSha256).toBe(sha('newer edit during upload'));
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+it('keeps original location metadata, mirrors folders with the real filename, and deletes only its copy on unlink', async () => {
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'papers-edit-location-'));
+ try {
+  const original=path.join(root,'owner.txt');await fs.writeFile(original,'owner bytes');
+  const session:EditSession={id:randomUUID(),deviceId:randomUUID(),resourceId:randomUUID(),phase:'editing',sourceVersion:'a'.repeat(64),sourceSha256:createHash('sha256').update('owner bytes').digest('hex'),originalPath:'D:\\Plans\\House\\drawing.dwg',originalParts:['D:','Plans','House','drawing.dwg']};
+  const workingRoot=path.join(root,'Working files'),copies=new RemoteFileEditWorkingCopies(path.join(root,'journals'),workingRoot);
+  const copy=await copies.create(randomUUID(),session,'drawing.dwg',original),working=await copies.workingPath(copy.id);
+  expect(working).toBe(path.join(workingRoot,copy.id,'D_','Plans','House','drawing.dwg'));
+  expect((await copies.read(copy.id)).session.originalPath).toBe(session.originalPath);
+  await fs.writeFile(path.join(path.dirname(working),'drawing.dwl'),'editor sidecar');
+  await copies.removeUnlinked(copy.id);await expect(fs.stat(path.join(workingRoot,copy.id))).rejects.toMatchObject({code:'ENOENT'});
+  expect(await fs.readFile(original,'utf8')).toBe('owner bytes');
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
 it('keeps local edits independent of the retained original and download cache across restart', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-working-copy-'));
   const download = path.join(root, 'cached.txt'); await fs.writeFile(download, 'original');

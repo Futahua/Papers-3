@@ -500,6 +500,14 @@ public sealed partial class PaneCoordinator : IDisposable {
         if((ev==Location||ev==Destroy||ev==Show||ev==Hide)&&obj!=0)return;
         if(ev==Destroy&&hwnd==host){Release();return;}
         if(ev==Destroy){PanePeer dead;if(hwndIndex.TryGetValue(hwnd,out dead)){RetireClosed(dead);return;}if(popupOwners.Remove(hwnd))Paint();return;}
+        // Returning to Papers must raise the selected native panes over intervening apps.
+        // Reject delayed focus notifications; geometry events still never reorder windows.
+        if(hwnd==host&&ev==Foreground){
+            if(Native.GetForegroundWindow()==host&&!Native.IsIconic(host)&&Scope.Presented){
+                Paint();if(hub==null)Stack(false,null);
+            }
+            return;
+        }
         PanePeer p;if(!hwndIndex.TryGetValue(hwnd,out p)) {
             if(hwnd==host&&(ev==Location||ev==Show||ev==Hide)){
                 bool suspend=Native.IsIconic(host)||!Native.IsWindowVisible(host);
@@ -622,7 +630,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         documentGroups[peer.TabId]=group.Id;
         dormantPeers[peer.TabId]=new PaneMountPeer{TabId=peer.TabId,GroupId=group.Id,Title=peer.LastTitle,Icon=peer.LastIcon,Url=peer.RestoreUrl,
             Handle=peer.Session.Handle.ToInt64(),InstanceMark=peer.Session.Saved.InstanceMark,Pid=peer.Session.Saved.Pid,Started=Started(peer.Session.Saved.Pid)};
-        if(group.OrderedTabs.All(id=>dormantPeers.ContainsKey(id)))group.Presentation="minimized";
+        // Losing a window changes availability, never the user's group presentation.
         bool interrupted=group.Gesture!=null;group.Gesture=null;
         try{peer.Lease.ReleaseMutex();}catch(Exception error){Log("retire-lease",peer,null,null,error.Message);}
         try{peer.Lease.Dispose();}catch{}

@@ -15,9 +15,14 @@ export interface EditSession {
   saveId?: string;
   editedSha256?: string;
   savedVersion?: string;
+  assignmentId?: string;
+  targetId?: string;
+  originalPath?: string;
+  originalParts?: string[];
   message?: string;
 }
-export interface EditSaveReceipt { savedVersion: string; savedSha256: string }
+export interface EditSaveReceipt { savedVersion: string; savedSha256: string; savedResourceId?: string }
+export interface EditAssignment { id: string; targetPath: string; targetId?: string; editorDeviceId: string; name: string; active: boolean }
 type CheckedSave = (session: Readonly<EditSession>) => Promise<EditSaveReceipt>;
 const hash = /^[a-f0-9]{64}$/;
 const identity = /^[a-f0-9-]{36}$/;
@@ -26,6 +31,7 @@ const identity = /^[a-f0-9-]{36}$/;
  * A crash after dispatch is uncertain, never an instruction to overwrite again. */
 export class RemoteFileEditSessions {
   private readonly sessions = new Map<string, EditSession>();
+  private readonly assignments = new Map<string, EditAssignment>();
   private queue: Promise<unknown> = Promise.resolve();
   private accepting = true;
   private readonly revoked = new Set<string>();
@@ -34,7 +40,7 @@ export class RemoteFileEditSessions {
     this.store = new AtomicJsonStore(path.join(directory, 'edit-sessions.json'), { recoveryDir: path.join(directory, 'recovery') });
   }
   async initialize(): Promise<void> {
-    let raw: { sessions: EditSession[] };
+    let raw: { sessions: EditSession[]; assignments?: EditAssignment[] };
     try { raw = JSON.parse(await fs.readFile(path.join(this.directory, 'edit-sessions.json'), 'utf8')); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -43,6 +49,10 @@ export class RemoteFileEditSessions {
       throw new Error('Edit session journal requires explicit recovery.');
     }
     if (!Array.isArray(raw.sessions)) throw new Error('Invalid edit session journal.');
+    for (const assignment of raw.assignments ?? []) {
+      if (!identity.test(assignment.id) || typeof assignment.targetPath !== 'string' || !assignment.editorDeviceId || typeof assignment.active !== 'boolean' || typeof assignment.name !== 'string') throw Error('Invalid editing assignment journal');
+      this.assignments.set(assignment.id, assignment);
+    }
     for (const session of raw.sessions) {
       if (!identity.test(session.id) || !session.deviceId || !identity.test(session.resourceId) || !hash.test(session.sourceVersion) || !hash.test(session.sourceSha256) || !['editing','saving','saved','conflict','uncertain'].includes(session.phase) || this.sessions.has(session.id)) throw new Error('Invalid edit session journal.');
       if (session.phase !== 'editing' && (!identity.test(session.saveId ?? '') || !hash.test(session.editedSha256 ?? ''))) throw new Error('Invalid save receipt.');
@@ -61,18 +71,46 @@ export class RemoteFileEditSessions {
     this.queue = result.catch(() => {});
     return result;
   }
-  private persist() { return this.store.save({ sessions: [...this.sessions.values()] }); }
+  private persist() { return this.store.save({ sessions: [...this.sessions.values()], assignments: [...this.assignments.values()] }); }
+  assignmentList() { return structuredClone([...this.assignments.values()]); }
+  assertAssignment(id: string, deviceId: string) {
+    const assignment = this.assignments.get(id);
+    if (!assignment?.active || assignment.editorDeviceId !== deviceId) throw Error('Editing assignment stopped or changed. Your working copy is retained.');
+  }
+  assign(editorDeviceId: string, targetPath: string, name: string, targetId?: string) {
+    return this.serial(async () => {
+      this.available(editorDeviceId);
+      const before = structuredClone([...this.assignments.values()]);
+      for (const previous of this.assignments.values()) if (previous.targetPath === targetPath || (targetId && previous.targetId === targetId)) previous.active = false;
+      const assignment: EditAssignment = { id: randomUUID(), targetPath, targetId, editorDeviceId, name, active: true };
+      this.assignments.set(assignment.id, assignment);
+      try { await this.persist(); } catch (error) { this.assignments.clear(); for (const item of before) this.assignments.set(item.id, item); throw error; }
+      return structuredClone(assignment);
+    });
+  }
+  stopAssignment(id: string) {
+    return this.serial(async () => {
+      const assignment = this.assignments.get(id); if (!assignment) throw Error('Editing assignment unavailable');
+      const previous = assignment.active; assignment.active = false;
+      try { await this.persist(); } catch (error) { assignment.active = previous; throw error; }
+      return structuredClone(assignment);
+    });
+  }
   private available(deviceId: string) {
     if (!this.accepting || this.revoked.has(deviceId)) throw new Error('Device access is unavailable.');
   }
   list(deviceId: string): EditSession[] {
     return structuredClone([...this.sessions.values()].filter(session => session.deviceId === deviceId));
   }
-  begin(deviceId: string, source: Pick<EditSession, 'resourceId' | 'sourceVersion' | 'sourceSha256' | 'nativeRevision'>): Promise<EditSession> {
+  begin(deviceId: string, source: Pick<EditSession, 'resourceId' | 'sourceVersion' | 'sourceSha256' | 'nativeRevision' | 'assignmentId' | 'targetId' | 'originalPath' | 'originalParts'>): Promise<EditSession> {
     return this.serial(async () => {
       this.available(deviceId);
       if (!deviceId || !identity.test(source.resourceId) || !hash.test(source.sourceVersion) || !hash.test(source.sourceSha256)) throw new Error('A checked source revision is required.');
       const session: EditSession = { resourceId: source.resourceId, sourceVersion: source.sourceVersion, sourceSha256: source.sourceSha256, id: randomUUID(), deviceId, phase: 'editing' };
+      if (source.assignmentId) { this.assertAssignment(source.assignmentId, deviceId); session.assignmentId = source.assignmentId; }
+      if (source.targetId) session.targetId = source.targetId;
+      if (source.originalPath) session.originalPath = source.originalPath;
+      if (source.originalParts) session.originalParts = [...source.originalParts];
       if (source.nativeRevision !== undefined) {
         if (!hash.test(source.nativeRevision)) throw new Error('Invalid native source revision.');
         session.nativeRevision = source.nativeRevision;
@@ -93,6 +131,7 @@ export class RemoteFileEditSessions {
         if (session.saveId !== saveId || session.editedSha256 !== editedSha256 || session.uploadId !== uploadId) throw new Error('This session already has a save receipt. Retain the working copy and inspect its result.');
         return structuredClone(session);
       }
+      if (session.assignmentId) this.assertAssignment(session.assignmentId, deviceId);
       const original = structuredClone(session);
       Object.assign(session, { saveId, editedSha256, phase: 'saving' });
       if (uploadId !== undefined) session.uploadId = uploadId;
@@ -104,6 +143,7 @@ export class RemoteFileEditSessions {
         if (!hash.test(receipt.savedVersion) || receipt.savedSha256 !== editedSha256) throw new Error('The owner did not confirm the saved revision.');
         session.phase = 'saved';
         session.savedVersion = receipt.savedVersion;
+        if (receipt.savedResourceId) session.resourceId = receipt.savedResourceId;
       } catch (error) {
         const code = (error as { code?: string }).code;
         session.phase = code === 'VERSION_CHANGED' ? 'conflict' : 'uncertain';

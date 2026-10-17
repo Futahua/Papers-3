@@ -29,6 +29,37 @@ async function fixture() {
   return { root, catalog, entry, original, owner, provider, writes: () => writes };
 }
 describe('approved remote edit owner binding', () => {
+  it('lets a third authorized device stop an assignment and rejects delayed saves across restart', async () => {
+    const f = await fixture();
+    const assignment = await f.owner.assign('controller', f.catalog, f.entry.id, f.entry.version, 'editor');
+    await expect(f.owner.begin('other-editor', f.catalog, f.entry.id, f.entry.version)).rejects.toThrow('stopped or changed');
+    const session = await f.owner.begin('editor', f.catalog, f.entry.id, f.entry.version);
+    expect(session.assignmentId).toBe(assignment.id);
+    const bytes = Buffer.from('local saved edits'), upload = await f.owner.beginUpload('editor', session.id, bytes.length, hash(bytes));
+    await f.owner.uploads.append('editor', upload, 0, chunks(bytes)); await f.owner.uploads.seal('editor', upload);
+    await f.owner.stopAssignment('third-device', f.catalog, assignment.id);
+    await expect(f.owner.commit('editor', session.id, randomUUID(), upload, hash(bytes))).rejects.toThrow('stopped');
+    expect(f.writes()).toBe(0); expect(await fs.readFile(f.original, 'utf8')).toBe('original');
+    await f.owner.close(); const restarted = new RemoteFileEditOwner(path.join(f.root, 'edits'), f.provider); await restarted.initialize(); restarted.attach('editor', f.catalog);
+    await expect(restarted.commit('editor', session.id, randomUUID(), upload, hash(bytes))).rejects.toThrow('stopped');
+    const visible = await restarted.assignments('third-device', f.catalog);
+    expect(visible[0]).toMatchObject({ id: assignment.id, active: false, editorDeviceId: 'editor' }); expect(JSON.stringify(visible)).not.toContain(f.original);
+    await restarted.close();
+  });
+  it('serializes stop behind an already committing save, then fences the next revision', async () => {
+    const f = await fixture(), assignment = await f.owner.assign('controller', f.catalog, f.entry.id, f.entry.version, 'editor');
+    const session = await f.owner.begin('editor', f.catalog, f.entry.id, f.entry.version), bytes = Buffer.from('accepted save');
+    const upload = await f.owner.beginUpload('editor', session.id, bytes.length, hash(bytes)); await f.owner.uploads.append('editor', upload, 0, chunks(bytes)); await f.owner.uploads.seal('editor', upload);
+    const actual = f.provider.save; let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }), ready = new Promise<void>(resolve => { entered = resolve; });
+    f.provider.save = async (...args) => { entered(); await gate; return actual(...args); };
+    const saveId = randomUUID(), save = f.owner.commit('editor', session.id, saveId, upload, hash(bytes)); await ready;
+    let stopped = false; const stop = f.owner.stopAssignment('third-device', f.catalog, assignment.id).then(() => { stopped = true; });
+    await new Promise(resolve => setImmediate(resolve)); expect(stopped).toBe(false); release(); expect((await save).phase).toBe('saved'); await stop;
+    expect(await fs.readFile(f.original, 'utf8')).toBe('accepted save');
+    expect((await f.owner.commit('editor', session.id, saveId, upload, hash(bytes))).phase).toBe('saved'); expect(f.writes()).toBe(1);
+    await f.owner.close();
+  });
   it('waits for an in-flight source inspection on shutdown and refuses its late session', async () => {
     const f = await fixture();
     const inspect = f.provider.inspect;

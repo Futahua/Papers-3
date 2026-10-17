@@ -44,6 +44,7 @@ public final class CachedFilesProvider extends ContentProvider {
   @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
     if(!editable(uri) && !"r".equals(mode))throw new FileNotFoundException("Read-only offline copy");
     if(!java.util.Arrays.asList("r","w","wt","wa","rw","rwt").contains(mode))throw new FileNotFoundException("Unsupported file mode");
+    if(editable(uri)&&!"r".equals(mode))try{return ParcelFileDescriptor.open(file(uri),ParcelFileDescriptor.parseMode(mode),new android.os.Handler(android.os.Looper.getMainLooper()),error->MobileFiles.get(getContext()).editChanged(uri.getPathSegments().get(1)));}catch(IOException error){throw new FileNotFoundException(error.getMessage());}
     return ParcelFileDescriptor.open(file(uri), editable(uri)?ParcelFileDescriptor.parseMode(mode):ParcelFileDescriptor.MODE_READ_ONLY);
   }
   @Override public String getType(Uri uri) { return type(uri.getQueryParameter("name") == null ? "" : uri.getQueryParameter("name")); }

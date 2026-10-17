@@ -19,6 +19,7 @@ function text(value: unknown) { if (typeof value !== 'string') throw new Error('
 export async function handleRemoteFileEditRoute(request: IncomingMessage, response: ServerResponse, context: {
   deviceId: string; canWrite: boolean; catalog: RemoteFileResources;
   owner?: RemoteFileEditOwner; authorize: () => void;
+  editors?: { id: string; name: string }[];
   json: (response: ServerResponse, status: number, value: unknown) => void;
 }): Promise<boolean> {
   if (!request.url?.startsWith('/v1/files/edits')) return false;
@@ -35,6 +36,21 @@ export async function handleRemoteFileEditRoute(request: IncomingMessage, respon
   request.once('aborted', aborted); response.once('close', closed);
   try {
     context.authorize(); owner.attach(context.deviceId, context.catalog);
+    if (url.pathname === '/v1/files/edits/assignments') {
+      if (request.method === 'GET') {
+        send(200, { ok: true, assignments: await owner.assignments(context.deviceId, context.catalog), editors: context.editors ?? [] }); return true;
+      }
+      if (request.method === 'POST') {
+        const value = await body(request); context.authorize();
+        if (value.action === 'stop') {
+          send(200, { ok: true, assignment: await owner.stopAssignment(context.deviceId, context.catalog, text(value.id)) }); return true;
+        }
+        const editor = text(value.editorDeviceId);
+        if (!context.editors?.some(item => item.id === editor)) throw Error('Choose an authorized editing device');
+        const assignment = await owner.assign(context.deviceId, context.catalog, text(value.resourceId), text(value.sourceVersion), editor);
+        send(200, { ok: true, assignment: { id: assignment.id, editorDeviceId: assignment.editorDeviceId, active: assignment.active } }); return true;
+      }
+    }
     if (url.pathname === '/v1/files/edits' && request.method === 'GET') {
       send(200, { ok: true, sessions: owner.sessions.list(context.deviceId) }); return true;
     }

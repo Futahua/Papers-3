@@ -3,6 +3,7 @@ import {pipeline} from 'node:stream/promises';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {AtomicJsonStore} from '../persistence/atomicStore';
+import {findIdenticalDestination} from './fileContentReuse';
 import type {RemoteFileEntry} from './remoteFileResources';
 import type {RemoteFileClient,RemoteDownloadJob} from './remoteFileClient';
 import type {FileInbox} from './fileInbox';
@@ -60,6 +61,10 @@ export class InboxTransfers {
       };
       for(let index=0;index<job.plan.length;index++){
         const node=job.plan[index]!;if(job.results[index]){const count=(item:InboxNode):number=>item.entry.kind==='file'?item.entry.size:item.children.reduce((sum,c)=>sum+count(c),0);job.finishedBytes+=count(node);continue;}
+        if(!job.destinationOwnerId&&node.entry.kind==='file'){
+          const existing=await findIdenticalDestination(job.destination,safeName(node.entry.name),node.entry.size,()=>this.client.contentDigest(node.ownerId,node.entry));
+          if(existing){job.results.push({name:path.basename(existing),target:existing,kind:'file'});job.finishedBytes+=node.entry.size;await this.save();continue;}
+        }
         const slot=path.join(stage,String(index));await fs.mkdir(slot,{recursive:true});const staged=path.join(slot,safeName(node.entry.name));await fetchNode(node,staged);
         await this.assertDestination(job);job.phase='publishing';await this.save();
         let published='';

@@ -1,4 +1,5 @@
 import { hiddenNames } from './hiddenFiles';
+import {findIdenticalDestination,withDestinationLock} from './fileContentReuse';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
@@ -149,6 +150,10 @@ export class RemoteFileResources {
    * checked against the sender's size and SHA-256, then take a free name: an existing
    * file is never replaced ("note.txt" becomes "note (2).txt").
    */
+  async receivedFile(folderId:string,name:string,size:number,sha256:string):Promise<RemoteFileEntry|null>{
+    if(!name||/[<>:"/\\|?*\x00-\x1f]/.test(name)||name==='.'||name==='..'||!Number.isSafeInteger(size)||size<0||!/^[a-f0-9]{64}$/.test(sha256))throw new RemoteFileError('UPLOAD_INVALID','Invalid file verification.');
+    const folder=await this.resolve(folderId);const found=await findIdenticalDestination(folder.target,name,size,sha256);return found?this.describe(folder.shareId,found):null;
+  }
   async receive(folderId: string, name: string, size: number, sha256: string, body: AsyncIterable<Buffer>): Promise<RemoteFileEntry> {
     if (!name || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || name === '.' || name === '..' || Buffer.byteLength(name) > 255) throw new RemoteFileError('NAME_INVALID', 'Choose a valid file name.');
     if (!Number.isSafeInteger(size) || size < 0 || !/^[a-f0-9]{64}$/.test(sha256)) throw new RemoteFileError('UPLOAD_INVALID', 'Upload size and SHA-256 are required.');
@@ -166,8 +171,11 @@ export class RemoteFileResources {
           hash.update(chunk);
           await handle.write(chunk);
         }
+        await handle.sync();
       } finally { await handle.close(); }
       if (received !== size || hash.digest('hex') !== sha256) throw new RemoteFileError('UPLOAD_CORRUPT', 'The received file did not match what was sent.');
+      return await withDestinationLock(folder.target,name,async()=>{
+      const existing=await this.receivedFile(folderId,name,size,sha256);if(existing)return existing;
       const extension = path.extname(name), stem = name.slice(0, name.length - extension.length);
       for (let attempt = 1; attempt < 1000; attempt++) {
         const target = path.join(folder.target, attempt === 1 ? name : `${stem} (${attempt})${extension}`);
@@ -180,11 +188,17 @@ export class RemoteFileResources {
         if (placed) return this.describe(folder.shareId, target);
       }
       throw new RemoteFileError('NAME_TAKEN', 'No free name for the received file.');
+      });
     } finally { await fs.rm(partial, { force: true }); }
   }
 
   /** Owner-only: the real path of a resource, for previews run on this computer. Never sent to peers. */
   async ownerPath(id: string): Promise<string> { return (await this.resolve(id)).target; }
+  async ownerEntry(target: string): Promise<RemoteFileEntry> {
+    const actual = await fs.realpath(target);
+    for (const [shareId, root] of this.roots) if (contains(root.directory, actual)) return this.describe(shareId, actual);
+    throw new RemoteFileError('OUTSIDE_SHARE', 'File is outside this grant.');
+  }
 
   /** Share name plus the path inside it, when an owner path lies in this grant. */
   shareParts(target: string): string[] | null {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { FileInbox } from '../src/main/backpacks/fileInbox';
 import { InboxTransfers, type InboxNode } from '../src/main/backpacks/inboxTransfers';
 import type { RemoteFileClient } from '../src/main/backpacks/remoteFileClient';
@@ -20,6 +20,7 @@ async function setup(contents: Record<string, string | Error>) {
   const client = {
     snapshot: () => ({ jobs: [] }),
     cancel: () => {},
+    contentDigest: async (_owner: string, entry: {name: string}) => { const value = contents[entry.name]; if (value instanceof Error) throw value; return createHash('sha256').update(value ?? '').digest('hex'); },
     materialize: async (_owner: string, entry: { name: string }) => {
       const value = contents[entry.name];
       if (value instanceof Error) throw value;

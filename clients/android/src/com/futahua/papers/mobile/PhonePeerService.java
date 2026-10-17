@@ -23,11 +23,12 @@ public final class PhonePeerService extends Service {
     super.onCreate();
     NotificationManager notifications = getSystemService(NotificationManager.class);
     notifications.createNotificationChannel(new NotificationChannel("papers-sharing", "Papers sharing", NotificationManager.IMPORTANCE_LOW));
-    PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     Notification notification = new Notification.Builder(this, "papers-sharing")
       .setSmallIcon(android.R.drawable.stat_sys_upload).setContentTitle("Papers is sharing")
       .setContentText("Available to your computers over Tailscale").setContentIntent(open).setOngoing(true).build();
     startForeground(48240, notification);
+    MobileFiles.get(this).startEditingWorker();
     network.execute(() -> {
       try { PhonePeerServer peer = new PhonePeerServer(this); peer.start(); server = peer; peer.announce(); }
       catch (Exception error) { android.util.Log.e("PapersPeer", "Peer startup failed", error); stopSelf(); }
@@ -41,6 +42,7 @@ public final class PhonePeerService extends Service {
   @Override public int onStartCommand(Intent intent, int flags, int startId) { network.execute(() -> { PhonePeerServer peer = server; if (peer != null) peer.announce(); }); return START_STICKY; }
   @Override public IBinder onBind(Intent intent) { return null; }
   @Override public void onDestroy() {
+    MobileFiles.get(this).stopEditingWorker();
     if (callback != null) connectivity.unregisterNetworkCallback(callback);
     PhonePeerServer peer = server; server = null;
     if (peer != null) try { peer.close(); } catch (Exception ignored) {}

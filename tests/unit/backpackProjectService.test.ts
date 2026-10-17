@@ -68,6 +68,16 @@ afterEach(async () => {
 });
 
 describe('BackpackProjectService', () => {
+  it('launcher record invocation verifies bound identity and refuses replacement',async()=>{
+    await writeProject();const open=vi.fn(async()=>''),service=new BackpackProjectService(bindingsFile,open);
+    await service.saveState(backpackId,JSON.stringify({schemaVersion:1,groups:[],shortcuts:[{id:'shortcut-identity',name:'App',target,fileTarget:{id:'identity'}}]}));
+    const moved=path.join(root,'moved.lnk');await fs.writeFile(moved,'fixture');
+    service.setFileTargetResolver(async id=>{expect(id).toBe('identity');return{status:'present',path:moved};});
+    await service.launchShortcut(backpackId,'shortcut-identity');expect(open).toHaveBeenCalledWith(moved);
+    open.mockClear();service.setFileTargetResolver(async()=>({status:'replacement'}));
+    await expect(service.launchShortcut(backpackId,'shortcut-identity')).rejects.toThrow(/unavailable or replaced/);expect(open).not.toHaveBeenCalled();
+  });
+
   it('saves and reloads valid state beyond the former five-million-character cap', async () => {
     await writeProject();
     const service = new BackpackProjectService(bindingsFile);

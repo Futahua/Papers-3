@@ -19,6 +19,7 @@ import { RemoteDeviceService } from './backpacks/remoteDeviceService';
 import {snapPageBounds,pagePresentationSettled} from './backpacks/panePagePresentation';
 import { RemoteFileClient } from './backpacks/remoteFileClient';
 import { createRemotePaths } from './backpacks/remoteFilePaths';
+import {createFileTargetRegistry,windowsRecycleRestore,windowsTargetObserver,windowsTargetWatcher} from './backpacks/fileTargetRegistry';
 import { logDevice, setDeviceLog, tailnetAccount } from './backpacks/tailnetIdentity';
 import { RemoteFileMutations } from './backpacks/remoteFileMutations';
 import { RemoteFileEditOwner } from './backpacks/remoteFileEditOwner';
@@ -575,9 +576,11 @@ async function bootstrap(): Promise<void> {
       return safeStorage.encryptString(value).toString('base64');
     },
     open: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
-  });
+  }, false, path.resolve(paths.root, '..', '..', 'Working files'));
   let remoteFilesError: string | null = null;
   await remoteFiles.initialize().catch(error => { remoteFilesError = error instanceof Error ? error.message : 'Remote files are unavailable.'; });
+  remoteFiles.enableUsb(()=>remoteDevices.snapshot().address);
+  remoteFiles.onAssignedEdit = async target => { const failure = await shell.openPath(target); if (failure) throw Error(failure); };
   remoteDevices.peerConnect = (peer, grantId, invitation) => remoteFiles.acceptPhone(peer, grantId, invitation);
   remoteFiles.onOwnerChanged = ownerId => {
     const message = JSON.stringify({type: 'papers:device:changed', ownerId});
@@ -850,15 +853,22 @@ async function bootstrap(): Promise<void> {
     return [...known].map(peerProximaRead).filter((saved): saved is NonNullable<typeof saved> => !!saved && !remoteFiles.phoneForPeer(saved.deviceId)).map(saved => ({ id: saved.deviceId, name: saved.name, receivedAt: saved.receivedAt }));
   };
   const customIcons = createCustomIconStore(path.join(paths.root, 'custom-icons.json'));
+  const targetNativeSource=path.join(app.isPackaged?path.join(process.resourcesPath,'native'):path.join(app.getAppPath(),'resources','native'),'file-target-identity.cs');
+  const fileTargets=createFileTargetRegistry({file:path.join(paths.root,'file-targets.json'),observe:windowsTargetObserver(path.join(paths.root,'native-helpers'),targetNativeSource),watch:windowsTargetWatcher(path.join(paths.root,'native-helpers'),targetNativeSource),recycle:target=>shell.trashItem(target),restore:windowsRecycleRestore(path.join(paths.root,'native-helpers'))});
+  remoteDevices.fileTargets=fileTargets;
+  backpackProjects.setFileTargetResolver(id=>fileTargets.resolve(id));
+  remoteEdits.fileTargets=fileTargets;
   const remotePaths = createRemotePaths(remoteFiles, { iconDirectory: path.join(paths.root, 'remote-files', 'icon-stand-ins'), fileIcon, settingsFile: path.join(paths.root, 'remote-files', 'inboxes.json') });
   const inboxTransfers=new InboxTransfers(path.join(paths.root,'remote-files','inbox-transfers'),localInbox,remoteFiles,files=>remotePaths.planImport(files),{inbox:owner=>remotePaths.inbox(owner),copy:(source,destination)=>remotePaths.copyToFolder(source,destination)});
   await inboxTransfers.initialize();
   const fileCapability = createFileCapabilityService({
+    fileTargets,
     remoteFiles: async params => {
       if (remoteFilesError) throw new Error(remoteFilesError);
       const ownerId = typeof params.ownerId === 'string' ? params.ownerId : '';
       switch (params.operation) {
         case 'status': return { ...remoteFiles.snapshot(), inboxTransfers:inboxTransfers.snapshot(), owner: remoteDevices.snapshot().owner, peers: peerProximaList() };
+        case 'working-folder': return {path:await remoteFiles.workingFolder()};
         case 'backpack-replace': return remoteFiles.backpackReplace(ownerId, String(params.resourceId ?? ''), params.snapshot);
         case 'peer-proxima-replace': { const phoneId = remoteFiles.phoneForPeer(String(params.deviceId ?? '')); if (!phoneId) throw new Error('The phone must be connected to receive a replacement.'); const catalog = await remoteFiles.backpacks(phoneId); if (!catalog.online) throw new Error('The phone is offline.'); const share = catalog.entries.find((item: {kind:string}) => item.kind === 'proxima'); if (!share) throw new Error('Phone Proxima is unavailable.'); await remoteFiles.backpackReplace(phoneId, share.id, params.snapshot); return {delivered: true}; }
         case 'peer-proxima': { const saved = peerProximaRead(String(params.deviceId ?? '')); if (!saved) throw new Error('That device has not shared its Proxima with this computer yet.'); return saved; }
@@ -873,6 +883,9 @@ async function bootstrap(): Promise<void> {
         case 'backpack-command': return remoteFiles.backpackCommand(ownerId,String(params.resourceId??''),params.command);
         case 'backpack-view': return remoteFiles.backpackView(ownerId,String(params.resourceId??''));
         case 'edit-begin': return remoteFiles.beginEdit(ownerId, params.entry);
+        case 'edit-assignments': return remoteFiles.editingAssignments(ownerId);
+        case 'edit-assign': return remoteFiles.assignEditing(ownerId, params.entry, String(params.editorDeviceId ?? ''));
+        case 'edit-stop': return remoteFiles.stopEditing(ownerId, String(params.assignmentId ?? ''));
         case 'workspaces': return remoteFiles.workspaces(ownerId);
         case 'workspace-icon': return remoteFiles.workspaceIcon(ownerId, String(params.workspaceId ?? ''), String(params.name ?? ''));
         case 'workspace-load': return remoteFiles.workspaceLoad(ownerId, String(params.workspaceId ?? ''));
@@ -924,6 +937,7 @@ async function bootstrap(): Promise<void> {
     pdfPreview,
     revitPreview,
     shellThumbnail,
+    thumbnail:target=>remoteDevices.thumbnail?.(target)??Promise.resolve({kind:'none'}),
     calibrePreview,
     autoCadPreview,
     mlightCadPreview,
@@ -945,11 +959,12 @@ async function bootstrap(): Promise<void> {
     revealPath: (target) => shell.showItemInFolder(target),
     fileIcon,
     remotePaths,
+    editing: (target, request) => remoteDevices.editingControl(target, request),
     customIcons,
   });
 
   const permissionStore = new PermissionStore(paths);
-  const remoteMutations = new RemoteFileMutations(path.join(paths.root,'file-commands'),(operation,params,deviceId)=>fileCapability.call({operation,params},{backpackId:'remote:'+deviceId}));
+  const remoteMutations = new RemoteFileMutations(path.join(paths.root,'file-commands'),(operation,params,deviceId)=>fileCapability.call({operation,params},{backpackId:'remote:'+deviceId}),undefined,600,fileTargets);
   await remoteMutations.initialize().then(()=>{remoteDevices.mutations=remoteMutations;}).catch(error=>console.error('[remote-files] command recovery needed:',error));
   await permissionStore.initialize();
 
@@ -1975,7 +1990,7 @@ async function bootstrap(): Promise<void> {
     icon:(projectId,name)=>backpackProjects.sharedIcon(projectId,name),
   };
   remoteDevices.customIcons=customIcons;
-  remoteDevices.thumbnail=createRemoteThumbnailProvider({shell:shellThumbnail,encode:png=>{const image=nativeImage.createFromBuffer(png),size=image.getSize(),factor=Math.min(1,256/Math.max(size.width,size.height)),small=image.resize({width:Math.max(1,Math.round(size.width*factor)),height:Math.max(1,Math.round(size.height*factor)),quality:'good'});return {bytes:small.toJPEG(75),...small.getSize()};}});
+  remoteDevices.thumbnail=createRemoteThumbnailProvider({shell:shellThumbnail,icon:async target=>(await app.getFileIcon(target,{size:'large'})).toPNG(),encode:png=>{const image=nativeImage.createFromBuffer(png),size=image.getSize(),factor=Math.min(1,256/Math.max(size.width,size.height)),small=image.resize({width:Math.max(1,Math.round(size.width*factor)),height:Math.max(1,Math.round(size.height*factor)),quality:'good'});return {bytes:small.toJPEG(75),...small.getSize()};}});
   remoteDevices.preview=target=>fileCapability.call({operation:'preview',params:{path:target}},{backpackId:'remote:preview'} as never);
   remoteDevices.search=async(query,limit)=>{if(!everythingSearch)throw Error('Everything search is unavailable on this computer.');const result=await everythingSearch.search(query,limit);if(!result.ok)throw Error(result.error??'Search failed.');return result;};
   // A paired device without a gateway (the phone) publishes its own Proxima here; this computer keeps the

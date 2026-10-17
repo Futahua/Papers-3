@@ -26,3 +26,4 @@ err.txt
 electron.vite.config.*.mjs
 # Python bytecode from the companion connector
 __pycache__/
+resources/adb/

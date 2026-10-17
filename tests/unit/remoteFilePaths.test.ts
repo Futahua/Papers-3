@@ -30,6 +30,14 @@ function client() {
 const unused = async () => { throw new Error('not expected'); };
 
 describe('remote file paths', () => {
+  it('shares concurrent folder lookups across metadata and navigation requests',async()=>{
+    const fake=client(),counts=new Map<string,number>(),browse=fake.browse;
+    fake.browse=async(owner,id)=>{counts.set(id??'',(counts.get(id??'')??0)+1);await new Promise(r=>setTimeout(r,10));return browse(owner,id);};
+    const paths=createRemotePaths(fake,{iconDirectory:os.tmpdir(),fileIcon:unused});
+    const target=remotePath(owner,['C:','Users']);
+    await Promise.all(Array.from({length:24},(_,i)=>paths.handle(i%2?'stat':'list',{path:target},unused)));
+    expect([...counts.values()]).toEqual([1,1,1]);
+  });
   it('parses only Papers device paths', () => {
     expect(parseRemotePath(`\\\\papers~${owner}\\C:\\Users`)).toEqual({ ownerId: owner, parts: ['C:', 'Users'] });
     expect(parseRemotePath('\\\\server\\share\\x')).toBeNull();
@@ -73,3 +81,5 @@ describe('remote file paths', () => {
     expect(fake.uploads).toEqual([{ folderId: '00000000-0000-4000-8000-000000000001', localFile: local, name: 'note (2).txt' }]);
   });
 });
+
+it('uses owner thumbnails and app icons without materializing the remote file',async()=>{const base=client(),calls:string[]=[];const paths=createRemotePaths({...base,ownerThumbnail:async(ownerId,entry)=>{calls.push(ownerId);return{kind:'image',dataUrl:'data:image/jpeg;base64,YQ=='};},materialize:async()=>{throw Error('Original file must not download');}},{iconDirectory:os.tmpdir(),fileIcon:unused});expect(await paths.handle('thumbnail',{path:remotePath(owner,['C:','note.txt'])},unused)).toMatchObject({ok:true,preview:{kind:'image'}});expect(await paths.handle('icon',{path:remotePath(owner,['C:','note.txt'])},unused)).toEqual({ok:true,icon:'data:image/jpeg;base64,YQ=='});expect(calls).toEqual([owner,owner]);});

@@ -30,8 +30,24 @@ final class PhoneIndex {
   static synchronized PhoneIndex get(Context context) { if (instance == null) instance = new PhoneIndex(context.getApplicationContext()); return instance; }
   static boolean handles(String operation) { return Arrays.asList("phone-search","phone-index-status","phone-stat","phone-list","phone-roots","phone-index-refresh").contains(operation); }
   private final SQLiteDatabase db;
+  SQLiteDatabase targetDatabase(){return db;}
+  static final class ListedMetadata {
+    final boolean directory;final long size,modified;
+    ListedMetadata(boolean directory,long size,long modified){this.directory=directory;this.size=size;this.modified=modified;}
+  }
+  /** Indexed metadata is display-only; live names are enumerated independently and
+   * every mutation, download and preview revalidates the actual resource. */
+  Map<String,ListedMetadata> listedMetadata(File folder)throws Exception {
+    if(!ready)return Collections.emptyMap();
+    Map<String,ListedMetadata> found=new HashMap<>();
+    try(Cursor rows=db.rawQuery("SELECT path,dir,size,modified FROM files WHERE parent=?",new String[]{folder.getCanonicalPath()})){
+      while(rows.moveToNext())found.put(rows.getString(0),new ListedMetadata(rows.getInt(1)!=0,rows.getLong(2),rows.getLong(3)));
+    }
+    return found;
+  }
+  private final Context context;
   private final ScheduledExecutorService worker = Executors.newSingleThreadScheduledExecutor();
-  private final Map<String,FileObserver> watchers = new HashMap<>();
+  private final Map<String,FileObserver> watchers = new ConcurrentHashMap<>();
   private final Set<String> dirty = new HashSet<>();
   private volatile boolean ready, refreshing;
   private volatile long refreshedAt, passMs;
@@ -42,11 +58,14 @@ final class PhoneIndex {
   private int scanned;
   private long deadline;
   private PhoneIndex(Context context) {
+    this.context=context;
     rootSnapshot=PhoneStorage.roots();
     db = SQLiteDatabase.openOrCreateDatabase(new File(context.getFilesDir(), "phone-index.sqlite"), null);
     db.enableWriteAheadLogging();
     db.execSQL("CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY,parent TEXT NOT NULL,volume TEXT NOT NULL,rel TEXT NOT NULL,name TEXT NOT NULL,fold TEXT NOT NULL,foldpath TEXT NOT NULL,dir INTEGER NOT NULL,size INTEGER NOT NULL,modified INTEGER NOT NULL)");
     db.execSQL("CREATE INDEX IF NOT EXISTS file_parent ON files(parent)");
+    boolean hasIdentity=false;try(Cursor c=db.rawQuery("PRAGMA table_info(files)",null)){while(c.moveToNext())if(c.getString(1).equals("identity"))hasIdentity=true;}
+    if(!hasIdentity)db.execSQL("ALTER TABLE files ADD COLUMN identity TEXT");db.execSQL("CREATE INDEX IF NOT EXISTS file_identity ON files(identity)");
     db.execSQL("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value INTEGER)");
     refreshedAt=DatabaseUtils.longForQuery(db,"SELECT coalesce((SELECT value FROM meta WHERE key='refreshed'),0)",null);ready=refreshedAt>0;
     refreshSoon();
@@ -106,10 +125,11 @@ final class PhoneIndex {
   }
 
   // One strongly retained watch per directory; FileObserver is not recursive.
-  private void watch(File directory) {
+  void watchReferenced(File folder){if(folder!=null&&folder.isDirectory()){watch(folder);File parent=folder.getParentFile();if(parent!=null&&parent.isDirectory())try{place(parent);watch(parent);}catch(Exception ignored){}}}
+  private synchronized void watch(File directory) {
     String path=directory.getAbsolutePath();if(watchers.containsKey(path))return;
     FileObserver observer=new FileObserver(path,FileObserver.CREATE|FileObserver.DELETE|FileObserver.MOVED_FROM|FileObserver.MOVED_TO|FileObserver.CLOSE_WRITE|FileObserver.ATTRIB|FileObserver.DELETE_SELF|FileObserver.MOVE_SELF) {
-      @Override public void onEvent(int event,String name) { synchronized(dirty) { dirty.add(path);if(!dirtyQueued){dirtyQueued=true;worker.schedule(PhoneIndex.this::drain,350,TimeUnit.MILLISECONDS);} } }
+      @Override public void onEvent(int event,String name) { if((event&FileObserver.DELETE)!=0&&name!=null)PhoneTargets.notifyDeleted(context,new File(path,name));synchronized(dirty) { dirty.add(path);if(!dirtyQueued){dirtyQueued=true;worker.schedule(PhoneIndex.this::drain,350,TimeUnit.MILLISECONDS);} } }
     };
     watchers.put(path,observer);observer.startWatching();
   }
@@ -143,6 +163,7 @@ final class PhoneIndex {
       if(java.nio.file.Files.isSymbolicLink(child.toPath()))continue;
       String childPath=child.getCanonicalPath();if(!childPath.startsWith(path+"/"))throw new IOException("Phone index path escaped its folder.");String[] location=new String[]{at[0],at[1].isEmpty()?child.getName():at[1]+"/"+child.getName()};present.add(childPath);
       ContentValues row=new ContentValues();row.put("path",childPath);row.put("parent",path);row.put("volume",location[0]);row.put("rel",location[1]);row.put("name",child.getName());row.put("fold",fold(child.getName()));row.put("foldpath",fold(location[1]));boolean dir=child.isDirectory();row.put("dir",dir?1:0);row.put("size",dir?-1:child.length());row.put("modified",child.lastModified());if(db.insertWithOnConflict("files",null,row,SQLiteDatabase.CONFLICT_REPLACE)<0)throw new IOException("Phone catalogue could not be saved.");
+      db.execSQL("UPDATE files SET identity=? WHERE path=?",new Object[]{PhoneTargets.identity(child),childPath});
       if(dir)subdirectories.add(child);
     }
     List<String> absent=new ArrayList<>();try(Cursor c=db.rawQuery("SELECT path FROM files WHERE parent=?",new String[]{path})){while(c.moveToNext())if(!present.contains(c.getString(0)))absent.add(c.getString(0));}for(String removed:absent)prune(removed);

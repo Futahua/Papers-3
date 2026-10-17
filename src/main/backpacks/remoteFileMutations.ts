@@ -42,7 +42,7 @@ export class RemoteFileMutations {
   private accepting = true;
   private readonly revoked = new Set<string>();
   private readonly store: AtomicJsonStore;
-  constructor(private readonly directory: string, private readonly owner: Owner, private readonly wait = (ms:number) => new Promise(resolve=>setTimeout(resolve,ms)), private readonly attempts=600) {
+  constructor(private readonly directory: string, private readonly owner: Owner, private readonly wait = (ms:number) => new Promise(resolve=>setTimeout(resolve,ms)), private readonly attempts=600,private readonly targets?:import('./fileTargetRegistry').TargetRegistry) {
     this.store=new AtomicJsonStore(path.join(directory,'commands.json'),{recoveryDir:path.join(directory,'recovery')});
   }
   async initialize(): Promise<void> {
@@ -107,6 +107,8 @@ export class RemoteFileMutations {
           if(!matches){job.phase='waiting';await this.persist();await this.wait(500);continue;}
         }
         if(intent.operation==='copy')await catalog.checkedPath(intent.resourceId,intent.expectedVersion);
+        if(target&&['move','rename'].includes(intent.operation))await this.targets?.relocate(source.path,target);
+        if(intent.operation==='delete')await this.targets?.deleted(source.path);
         job.phase='completed';await this.persist();return;
       }
       await this.wait(500);

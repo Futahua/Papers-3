@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { RemoteFileError, RemoteFileResources, type RemoteFileShare } from './remoteFileResources';
 import type { RemoteFileEditOwner } from './remoteFileEditOwner';
 import { handleRemoteFileEditRoute } from './remoteFileEditRoutes';
+import { RemoteTusTransfers } from './remoteTusTransfers';
 
 export interface RemoteFileGrant {
   deviceId: string;
@@ -39,6 +40,8 @@ export async function createRemoteFileGateway(options: {
   changes?: (deviceId: string) => unknown;
   revokeChanges?: (deviceId: string) => void;
   edits?: RemoteFileEditOwner;
+  transfersDirectory?: string;
+  fileTargets?: import('./fileTargetRegistry').TargetRegistry;
   /** Where files dropped on this computer from another device land by default. */
   inboxDirectory?: string;
   inbox?:{get:()=>Promise<{path:string;chosen:boolean}>;set:(parts:string[]|null)=>Promise<{path:string;chosen:boolean}>};
@@ -66,6 +69,7 @@ export async function createRemoteFileGateway(options: {
   peerReplacement?: { take: (deviceId: string) => Promise<unknown>; clear: (deviceId: string) => Promise<void> };
 }): Promise<{ server: Server; revoke: (deviceId: string) => void; close: () => Promise<void> }> {
   const devices = new Map<string, { grant: RemoteFileGrant; catalog: RemoteFileResources; responses: Set<ServerResponse> }>();
+  const transfers = options.transfersDirectory ? new RemoteTusTransfers(options.transfersDirectory) : null;
   const tokenHashes = new Set<string>();
   for (const grant of options.grants) {
     if (!grant.deviceId || devices.has(grant.deviceId) || !/^[a-f0-9]{64}$/.test(grant.tokenHash) || tokenHashes.has(grant.tokenHash)) throw new Error('Invalid or duplicate device grant.');
@@ -130,9 +134,18 @@ export async function createRemoteFileGateway(options: {
       } catch (error) { json(response, 403, { ok: false, code: 'PEER_CONNECT_REFUSED', message: error instanceof Error ? error.message : 'Phone sharing was refused.' }); }
       return;
     }
+    if (request.url?.startsWith('/v1/files/transfers') && transfers) {
+      try {
+        if (!device.grant.canWrite) { json(response, 403, { ok: false, code: 'FILE_CHANGES_NOT_GRANTED' }); return; }
+        if (await transfers.handle(request, response, device.grant.deviceId, device.catalog, () => {
+          if (devices.get(device.grant.deviceId) !== device || response.destroyed) throw Error('Device access unavailable');
+        })) return;
+      } catch { if (!response.headersSent && !response.destroyed) json(response, 400, { ok: false, code: 'TRANSFER_UNCONFIRMED' }); else response.destroy(); return; }
+    }
     if (await handleRemoteFileEditRoute(request, response, {
       deviceId: device.grant.deviceId, canWrite: device.grant.canWrite === true,
       catalog: device.catalog, owner: options.edits, json,
+      editors: [...devices.values()].filter(item => item.grant.canWrite).map(item => ({ id: item.grant.deviceId, name: (item.grant as RemoteFileGrant & {name?: string}).name ?? 'Paired device' })),
       authorize: () => { if (devices.get(device.grant.deviceId) !== device || response.destroyed) throw new Error('Device access was revoked.'); },
     })) return;
     if(request.url==='/v1/peer/proxima'&&request.method==='PUT'){
@@ -167,6 +180,23 @@ export async function createRemoteFileGateway(options: {
         if(!response.destroyed)json(response,200,{ok:true,owner:options.owner,resourceId:share.id,kind:share.kind,result});
       }catch(error){if(!response.destroyed)json(response,503,{ok:false,code:'BACKPACK_REPLACE_UNCONFIRMED',message:error instanceof Error?error.message:'The owner did not replace its Proxima.'});}
       return;
+    }
+    if(request.url==='/v1/files/targets'&&request.method==='POST') {
+      try{
+      if(!options.fileTargets){json(response,503,{ok:false,code:'UNSUPPORTED'});return;}
+      let body='';for await(const chunk of request){body+=chunk.toString('utf8');if(Buffer.byteLength(body)>4096)throw Error('Target request too large');}
+      const value=JSON.parse(body);let target:import('./fileTargetRegistry').TargetResult;
+      if(value.operation==='track'){
+        const source=await device.catalog.checkedPath(String(value.resourceId),String(value.expectedVersion),true);
+        target=await options.fileTargets.track(source.path);
+      }else if(['resolve','delete','restore'].includes(value.operation)&&/^[a-f0-9-]{36}$/.test(value.targetId))target=await options.fileTargets.resolve(value.targetId);
+      else throw Error('Invalid target request');
+      const parts=target.path?device.catalog.shareParts(target.path):null;
+      if(!parts){json(response,200,{ok:true,target:{targetId:target.targetId,status:'unavailable',revision:target.revision}});return;}
+      if(value.operation==='restore'){if(parts.length===1||device.grant.canWrite!==true||!options.fileTargets.restore){json(response,403,{ok:false,code:'RESTORE_REFUSED'});return;}target=await options.fileTargets.restore(value.targetId,Number(value.expectedRevision),String(value.commandId));}
+      if(value.operation==='delete'){if(parts.length===1){json(response,403,{ok:false,code:'SHARE_ROOT_PROTECTED'});return;}if(device.grant.canWrite!==true||!options.fileTargets.remove){json(response,403,{ok:false,code:'READ_ONLY'});return;}target=await options.fileTargets.remove(value.targetId,Number(value.expectedRevision),String(value.commandId));}
+      json(response,200,{ok:true,target:{targetId:target.targetId,status:target.status,revision:target.revision,...(target.status==='present'?{parts}:{} )}});return;
+      }catch{json(response,400,{ok:false,code:'TARGET_UNAVAILABLE'});return;}
     }
     if(request.url==='/v1/files/changes'&&request.method==='GET') { json(response,200,{ok:true,jobs:options.changes?.(device.grant.deviceId)??[]});return; }
     if(request.url==='/v1/files/changes'&&request.method==='POST') {
@@ -221,6 +251,11 @@ export async function createRemoteFileGateway(options: {
           const selected=await options.inbox.set(body.parts);
           json(response,200,{ok:true,...await device.catalog.inbox(selected.path),chosen:selected.chosen});
           return;
+        }
+        if (upload[1] !== 'inbox' && request.method === 'GET') {
+          const query=new URL(request.url??'/','http://gateway.invalid').searchParams;
+          const entry=await device.catalog.receivedFile(upload[1]!.slice(0,36),query.get('name')??'',Number(query.get('size')),query.get('sha256')??'');
+          json(response,200,{ok:true,...(entry?{entry}:{}),receivedBytes:0,prefixSha256:createHash('sha256').digest('hex')});return;
         }
         if (upload[1] !== 'inbox' && request.method === 'PUT') {
           const query = new URL(request.url ?? '/', 'http://gateway.invalid').searchParams;
@@ -301,7 +336,8 @@ export async function createRemoteFileGateway(options: {
         const preview=options.thumbnail?await options.thumbnail(target):{kind:'none'};
         if(devices.get(device.grant.deviceId)!==device||response.destroyed)return;
         const portable=preview['kind']==='image'&&typeof preview['dataUrl']==='string'&&preview['dataUrl'].startsWith('data:image/jpeg;base64,')&&preview['dataUrl'].length<=180000&&Number(preview['width'])>=1&&Number(preview['width'])<=256&&Number(preview['height'])>=1&&Number(preview['height'])<=256;
-        json(response,200,{ok:true,preview:portable?{kind:'image',mime:'image/jpeg',dataUrl:preview['dataUrl'],width:preview['width'],height:preview['height']}:{kind:'none'}});return;
+        const icon=typeof preview['iconDataUrl']==='string'&&preview['iconDataUrl'].startsWith('data:image/png;base64,')&&preview['iconDataUrl'].length<=180000?preview['iconDataUrl']:null;
+        json(response,200,{ok:true,preview:portable?{kind:'image',renderKind:preview['renderKind']==='icon'?'icon':'thumbnail',...(icon?{iconDataUrl:icon}:{}),mime:'image/jpeg',dataUrl:preview['dataUrl'],width:preview['width'],height:preview['height']}:{kind:'none'}});return;
       }
       const previewMatch = /^\/v1\/files\/([a-f0-9-]{36})\/preview$/.exec(url.pathname);
       if (previewMatch) {

@@ -527,6 +527,8 @@ async function containedPublicPath(root: string, requested: string): Promise<str
 }
 
 export class BackpackProjectService {
+  private fileTargetResolver?: (id:string)=>Promise<{status:string;path?:string}>;
+  setFileTargetResolver(resolve:(id:string)=>Promise<{status:string;path?:string}>) { this.fileTargetResolver=resolve; }
   private readonly stateQueues = new Map<string, Promise<unknown>>();
   private readonly nativeSourceGrants = new Map<string, NativeSourceGrant>();
 
@@ -1017,7 +1019,7 @@ export class BackpackProjectService {
     }
   }
 
-  private async shortcutTarget(backpackId: string, shortcutId: string): Promise<string> {
+  private async shortcutTarget(backpackId: string, shortcutId: string, verifyIdentity=false): Promise<string> {
     if (!actionIdPattern.test(shortcutId)) {
       throw new Error('Backpack project shortcut was not found.');
     }
@@ -1026,6 +1028,12 @@ export class BackpackProjectService {
     const candidate = isRecord(shortcut) ? shortcut : null;
     if (!candidate || typeof candidate['target'] !== 'string' || !path.isAbsolute(candidate['target'])) {
       throw new Error('Backpack project shortcut was not found.');
+    }
+    if(verifyIdentity&&isRecord(candidate['fileTarget'])&&typeof candidate['fileTarget']['id']==='string'){
+      if(!this.fileTargetResolver)throw Error('File identity verification is unavailable.');
+      const current=await this.fileTargetResolver(candidate['fileTarget']['id']);
+      if(current.status!=='present'||!current.path||!path.isAbsolute(current.path))throw Error('This shortcut’s original file is unavailable or replaced.');
+      return path.resolve(current.path);
     }
     return path.resolve(candidate['target']);
   }
@@ -1142,7 +1150,7 @@ export class BackpackProjectService {
   }
 
   async launchShortcut(backpackId: string, shortcutId: string): Promise<void> {
-    const target = await this.shortcutTarget(backpackId, shortcutId);
+    const target = await this.shortcutTarget(backpackId, shortcutId, true);
     try {
       await fs.access(target);
     } catch {

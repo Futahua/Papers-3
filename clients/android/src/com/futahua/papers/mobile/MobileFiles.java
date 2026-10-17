@@ -22,6 +22,7 @@ import javax.crypto.spec.GCMParameterSpec;
 final class MobileFiles {
   private static MobileFiles instance;
   static synchronized MobileFiles get(Context context) { if (instance == null) instance = new MobileFiles(context.getApplicationContext()); return instance; }
+  private static final Map<String,Long> ownerResponses=new ConcurrentHashMap<>();
   private final Context context;
   private final File root;
   private final MobileCommandOutbox outbox;
@@ -31,21 +32,52 @@ final class MobileFiles {
   private final Map<String, Object> editLocks = new ConcurrentHashMap<>();
   private final Map<String, Object> transferLocks = new ConcurrentHashMap<>();
   private final ExecutorService downloads = Executors.newFixedThreadPool(2);
+  private ScheduledExecutorService editingWorker;
+  private final Map<String,String> editingGenerations=new ConcurrentHashMap<>();
+  private final Set<String> changedEdits=ConcurrentHashMap.newKeySet();
+  void editChanged(String id){changedEdits.add(id);}
+  synchronized void startEditingWorker(){if(editingWorker!=null)return;editingWorker=Executors.newSingleThreadScheduledExecutor();editingWorker.scheduleWithFixedDelay(()->{try{pollEditing();}catch(Exception error){Log.w(TAG,"Editing owner unavailable; local copies retained");}},3,5,TimeUnit.SECONDS);}
+  synchronized void stopEditingWorker(){if(editingWorker!=null)editingWorker.shutdownNow();editingWorker=null;}
+  private void pollEditing()throws Exception {
+    JSONArray connections=connections();
+    for(int i=0;i<connections.length();i++)try{
+      String owner=connections.getJSONObject(i).getString("id");JSONArray assignments=json(request(owner,"/v1/files/edits/assignments",null,null)).getJSONArray("assignments"),copies=editCopies.list(owner,false);
+      for(int k=0;k<copies.length();k++){JSONObject old=copies.getJSONObject(k);String assignmentId=old.getJSONObject("session").optString("assignmentId");for(int j=0;j<assignments.length();j++){JSONObject a=assignments.getJSONObject(j);if(a.getString("id").equals(assignmentId)&&!a.optBoolean("active")){String oldId=old.getString("id");try{synchronized(editLocks.computeIfAbsent(oldId,key->new Object())){editCopies.removeUnlinked(oldId);}}catch(Exception cleanupBlocked){/* Retry this stopped copy next poll without blocking active assignments. */}finally{editingGenerations.remove(oldId);changedEdits.remove(oldId);}break;}}}
+      for(int j=0;j<assignments.length();j++){
+        JSONObject assignment=assignments.getJSONObject(j);if(!assignment.optBoolean("active")||!assignment.optBoolean("mine"))continue;JSONObject copy=null;
+        for(int k=0;k<copies.length();k++)if(copies.getJSONObject(k).getJSONObject("session").optString("assignmentId").equals(assignment.getString("id")))copy=copies.getJSONObject(k);
+        if(copy==null){copy=beginEdit(owner,assignment.getJSONObject("entry"));if(!copy.getJSONObject("session").optString("assignmentId").equals(assignment.getString("id")))continue;/* Mark first; opening an editor requires a separate user action. */}
+        String id=copy.getString("id");Object lock=editLocks.computeIfAbsent(id,key->new Object());synchronized(lock){copy=editCopies.read(id);if(copy.getString("phase").equals("conflict"))continue;File working=editCopies.working(id);String generation=working.length()+":"+working.lastModified();boolean changed=changedEdits.remove(id);if(copy.getString("phase").equals("editing")&&!changed&&generation.equals(editingGenerations.get(id)))continue;editingGenerations.put(id,generation);
+          if(!copy.getString("phase").equals("saved")){try{copy=saveEditLocked(id);}catch(Exception unchangedOrOffline){continue;}}
+          if(copy.getString("phase").equals("saved")){JSONObject session=copy.getJSONObject("session"),source=json(request(owner,"/v1/files/"+session.getString("resourceId")+"/stat",null,null)).getJSONObject("entry");if(!source.getString("version").equals(session.getString("savedVersion")))continue;JSONObject next=json(editRequest(owner,"/v1/files/edits",new JSONObject().put("resourceId",source.getString("id")).put("sourceVersion",source.getString("version")))).getJSONObject("session");editCopies.nextRevision(id,next);}
+        }
+      }
+    }catch(Exception ownerUnavailable){/* Keep local bytes and pending saves across connection loss. */}
+  }
   MobileFiles(Context context) { this.context = context; root = new File(context.getFilesDir(), "remote-files"); root.mkdirs(); outbox=new MobileCommandOutbox(root); editCopies=new MobileEditCopies(context); PhoneIndex.get(context); }
 
   Object call(JSONObject request) throws Exception {
     String operation = request.getString("operation");
-    if (operation.equals("phone-change") || operation.equals("phone-change-status")) return PhonePeerService.localFiles(request);
+    if(operation.equals("phone-target-delete")){JSONObject target=PhoneTargets.get(context).resolve(request.getString("targetId"));if(!target.optString("status").equals("present")||target.getLong("revision")!=request.getLong("expectedRevision"))throw new IOException("The file changed; refresh before recycling it.");PhonePeerService.localFiles(new JSONObject().put("operation","phone-change").put("action","delete").put("uri",target.getString("uri")).put("targetId",request.getString("targetId")).put("expectedRevision",request.getLong("expectedRevision")).put("commandId",request.getString("commandId")));return target.put("status","pending");}
+    if(operation.startsWith("phone-target-"))return PhoneTargets.get(context).call(request);
+    if (operation.equals("phone-editing") || operation.equals("phone-change") || operation.equals("phone-change-status")) return PhonePeerService.localFiles(request);
     if (PhoneIndex.handles(operation)) return PhoneIndex.get(context).call(context,request);
     String owner = request.optString("ownerId");
     switch (operation) {
       case "pair": return pair(request.getString("address"), request.getString("code"));
       case "status": joinOwners(); return snapshot();
       case "browse": return browse(owner, request.optString("resourceId"), request.optInt("offset", 0));
+      case "targets": return json(http(address(connection(owner).getString("address"))+"/v1/files/targets",open(connection(owner).getString("secret")),null,request.getJSONObject("request"))).getJSONObject("target");
       case "download": return download(owner, request.getJSONObject("entry"));
+      case "phone-upload-start": return uploadPhone(owner, request);
+      case "phone-save-cache": return saveCacheToFolder(owner,request);
       case "download-job": {JSONObject job=jobs.get(request.getString("jobId"));if(job==null)throw new IOException("Download is unavailable.");synchronized(job){return new JSONObject(job.toString());}}
       case "download-folder": case "public-download-start": case "public-download-status": case "public-download-pause": case "public-download-resume": return PhoneDownloads.get(context).call(request);
       case "offline": return offline(owner);
+      case "working-folder": {File folder=editCopies.workingRoot();folder.mkdirs();String relative=android.os.Environment.getExternalStorageDirectory().toPath().relativize(folder.toPath()).toString();return new JSONObject().put("uri",android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents","primary:"+relative).toString());}
+      case "edit-assignments": {JSONArray copies=editCopies.list(owner,false),local=new JSONArray();JSONObject result;try{result=json(request(owner,"/v1/files/edits/assignments",null,null));}catch(Exception offline){if(copies.length()==0)throw offline;String editor=connection(owner).getString("deviceId");JSONArray assignments=new JSONArray();for(int i=0;i<copies.length();i++){JSONObject c=copies.getJSONObject(i),s=c.getJSONObject("session");if(s.has("assignmentId"))assignments.put(new JSONObject().put("id",s.getString("assignmentId")).put("active",true).put("mine",true).put("editorDeviceId",editor).put("entry",new JSONObject().put("id",s.getString("resourceId"))));}result=new JSONObject().put("offline",true).put("assignments",assignments).put("editors",new JSONArray().put(new JSONObject().put("id",editor).put("name",android.os.Build.MODEL)));}for(int i=0;i<copies.length();i++){JSONObject copy=copies.getJSONObject(i);if(copy.getJSONObject("session").has("assignmentId"))local.put(new JSONObject().put("id",copy.getString("id")).put("assignmentId",copy.getJSONObject("session").getString("assignmentId")).put("phase",copy.getString("phase")));}return result.put("localCopies",local);}
+      case "edit-assign": {JSONObject entry=request.getJSONObject("entry");return json(editRequest(owner,"/v1/files/edits/assignments",new JSONObject().put("resourceId",entry.getString("id")).put("sourceVersion",entry.getString("version")).put("editorDeviceId",request.getString("editorDeviceId"))));}
+      case "edit-stop": return json(editRequest(owner,"/v1/files/edits/assignments",new JSONObject().put("action","stop").put("id",request.getString("assignmentId"))));
       case "edit-list": return editCopies.list(owner);
       case "edit-begin": return beginEdit(owner,request.getJSONObject("entry"));
       case "edit-open": {String id=request.getString("editId");editCopies.working(id);CachedFilesProvider.edit(context,id,editCopies.read(id).getString("name"));return new JSONObject().put("opened",true);}
@@ -101,9 +133,16 @@ final class MobileFiles {
     for (int i = 0; i < devices.length(); i++) if (devices.getJSONObject(i).getString("id").equals(owner)) return devices.getJSONObject(i);
     throw new IOException("Device is not connected.");
   }
-  JSONArray peerInvitations(JSONObject phoneOwner)throws Exception {
+  private String peerGrantBasis=null;
+  private JSONArray peerGrantCache=null;
+  synchronized JSONArray peerInvitations(JSONObject phoneOwner)throws Exception {
     JSONArray result=new JSONArray(),all=connections();
-    for(int i=0;i<all.length();i++){JSONObject pc=all.getJSONObject(i);Mac mac=Mac.getInstance("HmacSHA256");mac.init(new javax.crypto.spec.SecretKeySpec(open(pc.getString("secret")).getBytes(StandardCharsets.UTF_8),"HmacSHA256"));String token=Base64.encodeToString(mac.doFinal(("papers-phone-peer-v1|"+phoneOwner.getString("id")+"|"+pc.getString("id")).getBytes(StandardCharsets.UTF_8)),Base64.URL_SAFE|Base64.NO_WRAP|Base64.NO_PADDING);result.put(new JSONObject().put("pc",pc).put("owner",phoneOwner).put("deviceId",UUID.nameUUIDFromBytes((phoneOwner.getString("id")+"|"+pc.getString("id")).getBytes(StandardCharsets.UTF_8)).toString()).put("token",token));}return result;
+    // Read current sealed pairings on every request so revocation is immediate.
+    // Hardware-keystore decryption/HMAC derivation is only needed when they change.
+    String basis=phoneOwner.getString("id")+"|"+all.toString();
+    if(basis.equals(peerGrantBasis)&&peerGrantCache!=null)return new JSONArray(peerGrantCache.toString());
+    for(int i=0;i<all.length();i++){JSONObject pc=all.getJSONObject(i);Mac mac=Mac.getInstance("HmacSHA256");mac.init(new javax.crypto.spec.SecretKeySpec(open(pc.getString("secret")).getBytes(StandardCharsets.UTF_8),"HmacSHA256"));String token=Base64.encodeToString(mac.doFinal(("papers-phone-peer-v1|"+phoneOwner.getString("id")+"|"+pc.getString("id")).getBytes(StandardCharsets.UTF_8)),Base64.URL_SAFE|Base64.NO_WRAP|Base64.NO_PADDING);result.put(new JSONObject().put("pc",pc).put("owner",phoneOwner).put("deviceId",UUID.nameUUIDFromBytes((phoneOwner.getString("id")+"|"+pc.getString("id")).getBytes(StandardCharsets.UTF_8)).toString()).put("token",token));}
+    peerGrantBasis=basis;peerGrantCache=new JSONArray(result.toString());return result;
   }
   void announcePeer(JSONObject phoneOwner)throws Exception {JSONArray invitations=peerInvitations(phoneOwner);for(int i=0;i<invitations.length();i++){JSONObject item=invitations.getJSONObject(i),pc=item.getJSONObject("pc");JSONObject invitation=new JSONObject(item.toString());invitation.remove("pc");try{exchange("PUT",address(pc.getString("address"))+"/v1/peer/connect",open(pc.getString("secret")),invitation.toString(),15000);}catch(Exception error){Log.w(TAG,"phone peer announce failed: "+error.getMessage());}}}
   private synchronized JSONObject pair(String address, String code) throws Exception {
@@ -148,6 +187,61 @@ final class MobileFiles {
     for (int i = 0; i < connections.length(); i++) { JSONObject c = connections.getJSONObject(i); devices.put(new JSONObject().put("id", c.getString("id")).put("name", c.getString("name")).put("address", c.getString("address"))); }
     for (JSONObject job : jobs.values()) synchronized (job) { transfers.put(new JSONObject(job.toString())); }
     return new JSONObject().put("capabilities",new JSONObject().put("edits",true).put("editImport",true).put("editContinue",true)).put("devices", devices).put("jobs", transfers).put("commandJobs",outbox.snapshot());
+  }
+  private JSONObject saveCacheToFolder(String owner,JSONObject request)throws Exception {
+    JSONObject entry=request.getJSONObject("entry");validate(entry);String name=entry.getString("name");
+    if(name.isEmpty()||name.equals(".")||name.equals("..")||name.indexOf('/')>=0||name.indexOf('\\')>=0)throw new IOException("Invalid downloaded filename.");
+    android.net.Uri uri=android.net.Uri.parse(request.getString("destinationUri"));
+    if(android.provider.DocumentsContract.isTreeUri(uri))uri=android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents",android.provider.DocumentsContract.getTreeDocumentId(uri));
+    File folder=PhoneStorage.file(uri);if(folder==null||!folder.isDirectory()||!folder.canWrite())throw new IOException("Choose a writable phone folder.");
+    String key=sha(new JSONArray().put(owner).put(entry.getString("id")).put(entry.getString("version")).toString().getBytes(StandardCharsets.UTF_8));File source=checkedFile(owner,key);
+    File identical=PhoneContentReuse.find(folder,name,source.length(),hashFile(source));if(identical!=null)return new JSONObject().put("path",PhoneStorage.inward(PhoneStorage.outward(uri.toString())+"\\"+identical.getName()));
+    int dot=name.lastIndexOf('.');File target=new File(folder,name);int n=1;
+    while(!target.createNewFile()){String next=dot>0?name.substring(0,dot)+" ("+n+")"+name.substring(dot):name+" ("+n+")";target=new File(folder,next);n++;}
+    try {try(InputStream in=new FileInputStream(source);OutputStream out=new FileOutputStream(target)){byte[] b=new byte[262144];int count;while((count=in.read(b))!=-1)out.write(b,0,count);}
+      if(target.length()!=source.length()||!hashFile(target).equals(hashFile(source)))throw new IOException("The phone copy could not be verified.");
+    }catch(Exception error){target.delete();throw error;}
+    return new JSONObject().put("path",PhoneStorage.inward(PhoneStorage.outward(uri.toString())+"\\"+target.getName()));
+  }
+  /** Upload through the paired PC's existing verified, keep-both receiver. Never removes the source. */
+  private JSONObject uploadPhone(String owner, JSONObject request) throws Exception {
+    String folder=request.getString("folderId"), name=request.getString("name");
+    if(!folder.matches("[a-f0-9-]{36}") || name.isEmpty() || name.equals(".") || name.equals("..") || name.indexOf('/')>=0 || name.indexOf('\\')>=0 || name.indexOf('\0')>=0)throw new IOException("Invalid upload destination.");
+    android.net.Uri uri=android.net.Uri.parse(request.getString("uri"));
+    if(!"content".equals(uri.getScheme()))throw new IOException("Choose a readable phone file.");
+    JSONObject device=connection(owner);String base=address(device.getString("address")),token=open(device.getString("secret"));
+    String id=UUID.randomUUID().toString();JSONObject job=new JSONObject().put("id",id).put("direction","upload").put("ownerId",owner).put("phase","preparing").put("bytes",0).put("name",name);
+    jobs.put(id,job);
+    workers.put(id,downloads.submit(()->{
+      File snapshot=new File(root,"upload-"+id+".part");
+      try {
+        MessageDigest hash=MessageDigest.getInstance("SHA-256");long size=0;
+        File source=PhoneStorage.file(uri);
+        try(InputStream input=source!=null?new FileInputStream(source):context.getContentResolver().openInputStream(uri);OutputStream out=new FileOutputStream(snapshot)){
+          if(input==null)throw new IOException("The phone file cannot be read.");byte[] buffer=new byte[262144];int read;
+          while((read=input.read(buffer))!=-1){out.write(buffer,0,read);hash.update(buffer,0,read);size+=read;}
+        }
+        StringBuilder digest=new StringBuilder();for(byte b:hash.digest())digest.append(String.format(java.util.Locale.ROOT,"%02x",b&255));
+        String query="?name="+URLEncoder.encode(name,"UTF-8")+"&size="+size+"&sha256="+digest;
+        JSONObject reused=null;try{reused=json(request(owner,"/v1/files/"+folder+"/upload"+query,null,null)).optJSONObject("entry");}catch(Exception unsupported){}if(reused!=null){synchronized(job){job.put("phase","completed").put("bytes",size).put("entry",reused);}return;}
+        if(PhoneTusClient.supported(base,token)){final long total=size;synchronized(job){job.put("phase","transferring").put("total",size);}URL location=PhoneTusClient.upload(context,base,token,snapshot,folder,name,digest.toString(),accepted->{synchronized(job){job.put("bytes",accepted);}});JSONObject result=json(http(location.toString()+"/commit",token,null,new JSONObject()));JSONObject received=result.getJSONObject("entry");validate(received);if(received.getLong("size")!=size)throw new IOException("Upload receipt differs");synchronized(job){job.put("phase","completed").put("bytes",total).put("entry",received);}return;}
+        HttpURLConnection upload=(HttpURLConnection)new URL(base+"/v1/files/"+folder+"/upload"+query).openConnection();
+        upload.setInstanceFollowRedirects(false);upload.setConnectTimeout(15000);upload.setReadTimeout(60000);upload.setRequestMethod("PUT");upload.setRequestProperty("Authorization","Bearer "+token);upload.setRequestProperty("Content-Type","application/octet-stream");upload.setDoOutput(true);upload.setFixedLengthStreamingMode(size);
+        synchronized(job){job.put("phase","transferring").put("total",size);}
+        try {
+          try(InputStream in=new FileInputStream(snapshot);OutputStream out=upload.getOutputStream()){
+            byte[] buffer=new byte[262144];int read;long sent=0;
+            while((read=in.read(buffer))!=-1){out.write(buffer,0,read);sent+=read;synchronized(job){job.put("bytes",sent);}}
+          }
+          synchronized(job){job.put("phase","verifying");}
+          JSONObject result=json(upload);if(upload.getResponseCode()!=201||!result.optBoolean("ok"))throw new IOException(result.optString("message","The PC did not confirm the upload."));
+          JSONObject entry=result.getJSONObject("entry");validate(entry);if(!"file".equals(entry.getString("kind"))||entry.getLong("size")!=size)throw new IOException("The upload receipt differs from the phone copy.");
+          synchronized(job){job.put("phase","completed").put("entry",entry).put("bytes",size);}
+        } finally {upload.disconnect();}
+      }catch(Exception error){try{synchronized(job){job.put("phase","failed").put("error",error.getMessage()==null?"Upload interrupted. The phone original is unchanged.":error.getMessage());}}catch(Exception ignored){}}
+      finally{snapshot.delete();}
+    }));
+    return new JSONObject().put("id",id);
   }
   private JSONObject dispatchChange(JSONObject device,JSONObject command) throws Exception { return json(http(address(device.getString("address"))+"/v1/files/changes",open(device.getString("secret")),null,command)).getJSONObject("job"); }
   private JSONObject beginEdit(String owner,JSONObject entry) throws Exception {
@@ -287,14 +381,14 @@ final class MobileFiles {
       write(cache, result); result.put("online", true); return result;
     } catch (Exception error) {
       if (!cache.exists()) throw error;
-      return read(cache).put("online", false).put("error", error.getMessage() == null ? "Owner unavailable." : error.getMessage());
+      return read(cache).put("online",System.currentTimeMillis()-ownerResponses.getOrDefault(new URL(address(connection(owner).getString("address"))).getAuthority(),0L)<15000).put("stale",true).put("error", error.getMessage() == null ? "Owner unavailable." : error.getMessage());
     }
   }
   private synchronized JSONObject download(String owner, JSONObject entry) throws Exception {
     validate(entry); connection(owner);
     if (!"file".equals(entry.getString("kind"))) throw new IOException("Choose a file.");
     for (JSONObject existing : jobs.values()) synchronized (existing) {
-      if (owner.equals(existing.getString("ownerId")) && entry.getString("id").equals(existing.getJSONObject("entry").getString("id")) && entry.getString("version").equals(existing.getJSONObject("entry").getString("version")) && !"failed".equals(existing.getString("phase"))) return new JSONObject(existing.toString());
+      if (!"upload".equals(existing.optString("direction")) && owner.equals(existing.optString("ownerId")) && entry.getString("id").equals(existing.getJSONObject("entry").getString("id")) && entry.getString("version").equals(existing.getJSONObject("entry").getString("version")) && !"failed".equals(existing.getString("phase"))) return new JSONObject(existing.toString());
     }
     String id = UUID.randomUUID().toString();
     JSONObject job = new JSONObject().put("id", id).put("ownerId", owner).put("entry", entry).put("phase", "queued").put("bytes", 0); jobs.put(id, job);
@@ -336,6 +430,7 @@ final class MobileFiles {
   }
   private JSONObject metadata(String key) throws Exception { if (!key.matches("[a-f0-9]{64}")) throw new IOException("Invalid cache identity."); return read(new File(root, key + ".json")); }
   private File checkedFile(String owner, String key) throws Exception { JSONObject metadata = metadata(key); File file = new File(root, key + ".bin"); if (!owner.equals(metadata.getString("ownerId")) || !hashFile(file).equals(metadata.getString("sha256"))) throw new IOException("Offline file is damaged or unavailable."); return file; }
+  private HttpURLConnection editRequest(String owner,String route,JSONObject body)throws Exception{JSONObject peer=connection(owner);return http(address(peer.getString("address"))+route,open(peer.getString("secret")),null,body);}
   private HttpURLConnection request(String owner, String route, String version, String range) throws Exception {
     JSONObject device = connection(owner);
     try { return http(address(device.getString("address")) + route, open(device.getString("secret")), version, null, range); }
@@ -355,7 +450,7 @@ final class MobileFiles {
     if (version != null) c.setRequestProperty("If-Match", '"' + version + '"');
     if (range != null) c.setRequestProperty("Range", range);
     if (body != null) { c.setRequestMethod("POST"); c.setDoOutput(true); c.setRequestProperty("Content-Type", "application/json"); try (OutputStream out = c.getOutputStream()) { out.write(body.toString().getBytes(StandardCharsets.UTF_8)); } }
-    int status = c.getResponseCode(); if (status < 200 || status >= 300) { c.disconnect(); throw new IOException(status == 412 ? "Source changed. Refresh before downloading." : status == 401 ? "Access revoked. Pair again." : "Remote operation failed (" + status + ")."); }
+    int status = c.getResponseCode();ownerResponses.put(new URL(url).getAuthority(),System.currentTimeMillis()); if (status < 200 || status >= 300) { c.disconnect(); throw new IOException(status == 412 ? "Source changed. Refresh before downloading." : status == 401 ? "Access revoked. Pair again." : "Remote operation failed (" + status + ")."); }
     return c;
   }
   /** Workspace documents and previews may carry embedded images, so they get a larger bound than metadata. */

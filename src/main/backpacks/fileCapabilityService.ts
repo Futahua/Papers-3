@@ -57,8 +57,10 @@ export interface FileCapabilityEntry {
   hidden?: boolean;
 }
 export interface FileCapabilityDeps {
+  fileTargets?: import('./fileTargetRegistry').TargetRegistry;
   remoteFiles?: (request: Record<string, unknown>) => Promise<unknown>;
   remotePaths?: RemotePaths;
+  editing?: (target: string, request: Record<string, unknown>) => Promise<Record<string, unknown>>;
   /** Custom pictures of real files and folders on this device (customIconStore). */
   customIcons?: import('./customIconStore').CustomIconStore;
   panePageDrag?:()=>string|null;
@@ -87,6 +89,7 @@ export interface FileCapabilityDeps {
   openPath: (target: string) => Promise<string | void>;
   revealPath: (target: string) => void;
   fileIcon: (target: string) => Promise<string | null>;
+  thumbnail?: (target:string)=>Promise<Record<string,unknown>>;
 }
 export interface FileCapabilityContext {
   backpackId: string;
@@ -847,6 +850,32 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
         const remote = operation === 'remote-files' ? null : await deps.remotePaths?.handle(operation, params, (next, nextParams) => service.call({ operation: next, params: nextParams }, context));
         if (remote) return remote;
         switch (operation) {
+          case 'editing':
+            if (!deps.editing || typeof params.path !== 'string') return { ok: false, message: 'Editing assignments are unavailable.' };
+            return deps.editing(params.path, params);
+          case 'file-target-track': {
+            if(!deps.fileTargets)return {ok:false,code:'UNSUPPORTED'};
+            const target=absolutePath(params.path);if((await fs.lstat(target)).isSymbolicLink())return {ok:false,code:'LINK_IDENTITY_UNSUPPORTED'};
+            return {ok:true,target:await deps.fileTargets.track(target)};
+          }
+          case 'file-target-restore': {
+            if(!deps.fileTargets?.restore)return {ok:false,code:'UNSUPPORTED'};
+            return {ok:true,target:await deps.fileTargets.restore(boundedString(params.targetId,'targetId',64),Number(params.expectedRevision),boundedString(params.commandId,'commandId',64))};
+          }
+          case 'file-target-delete': {
+            if(!deps.fileTargets?.remove)return {ok:false,code:'UNSUPPORTED'};
+            return {ok:true,target:await deps.fileTargets.remove(boundedString(params.targetId,'targetId',64),Number(params.expectedRevision),boundedString(params.commandId,'commandId',64))};
+          }
+          case 'file-target-resolve': {
+            if(!deps.fileTargets)return {ok:false,code:'UNSUPPORTED'};
+            return {ok:true,target:await deps.fileTargets.resolve(boundedString(params.targetId,'targetId',64))};
+          }
+          case 'file-target-relocate': {
+            if(!deps.fileTargets)return {ok:false,code:'UNSUPPORTED'};
+            const oldPath=absolutePath(params.oldPath),newPath=absolutePath(params.newPath);
+            try{await fs.lstat(oldPath);return {ok:false,message:'Source still exists; link update refused.'};}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+            await deps.fileTargets.relocate(oldPath,newPath);return {ok:true};
+          }
           case 'remote-files':
             return deps.remoteFiles ? { ok: true, result: await deps.remoteFiles(params) } : { ok: false, code: 'REMOTE_FILES_UNAVAILABLE' };
           case 'runtime-snapshot':
@@ -899,6 +928,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             const target = absolutePath(params.path);
             return { ok: true, icon: await deps.fileIcon(target) };
           }
+          case 'thumbnail':return {ok:true,preview:await deps.thumbnail?.(absolutePath(params.path))??{kind:'none'}};
           case 'search': {
             const query = boundedString(params.query, 'query', MAX_SEARCH_BYTES);
             const limit = boundedLimit(params.limit, 100, MAX_SEARCH);
@@ -1353,7 +1383,11 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'move':
           case 'rename':
           case 'delete':
-            return await operationViaOpus(deps, operation, params);
+          {
+            const result=await operationViaOpus(deps, operation, params);
+            if(result.ok===true&&operation==='delete'&&deps.fileTargets)for(const target of pathList(params.paths))await deps.fileTargets.deleted(target);
+            return result;
+          }
           default:
             return { ok: false, code: 'OPERATION_UNKNOWN', message: 'Unknown file capability operation.' };
         }
