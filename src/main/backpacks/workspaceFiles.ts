@@ -114,6 +114,24 @@ export class WorkspaceFiles {
     }
     this.verifiedContent.set(hash, after); return true;
   }
+  /** Two devices can push the same content at once; the transfer then keeps both, as "<hash> (2)".
+   * A copy whose bytes match its hash is removed when the original is verified, or becomes the
+   * original when that is missing. A copy whose bytes do not match moves to recovery, never deleted. */
+  private async tidyContent(): Promise<Record<string, unknown>> {
+    const directory = await this.safeDirectory('content'), result = { adopted: 0, removed: 0, quarantined: 0 };
+    for (const name of await fs.readdir(directory)) {
+      const match = /^([a-f0-9]{64}) \(\d+\)$/.exec(name); if (!match) continue;
+      const hash = match[1], copy = path.join(directory, name);
+      await this.queue('content:' + hash, async () => {
+        const stat = await fs.lstat(copy).catch(() => null); if (!stat?.isFile() || stat.isSymbolicLink()) return;
+        if (await fileHash(copy) !== hash) { await fs.rename(copy, path.join(await this.safeDirectory('recovery'), name + '-' + randomUUID())); result.quarantined++; return; }
+        if (await this.contentAvailable(hash)) { await fs.rm(copy); result.removed++; return; }
+        await replaceFileAtomically(copy, path.join(directory, hash)); this.verifiedContent.delete(hash);
+        if (await this.contentAvailable(hash)) result.adopted++;
+      });
+    }
+    return result;
+  }
   async call(project: string, request: Record<string, unknown>): Promise<Record<string, unknown>> {
     // Project identity is supplied by the verified host context, not the renderer.
     const projectKey = digest(project), operation = request.operation;
@@ -139,6 +157,7 @@ export class WorkspaceFiles {
       const entries = await fs.readdir(source, { withFileTypes: true });
       return { kind: 'folder', name: path.basename(source), entries: entries.filter(item => !item.isSymbolicLink() && (item.isFile() || item.isDirectory())).map(item => ({ path: path.join(source, item.name), name: item.name, kind: item.isDirectory() ? 'folder' : 'file' })) };
     }
+    if (operation === 'content-tidy') return this.tidyContent();
     if (operation === 'content-check') {
       const hash = hashValue(request.hash), target = path.join(await this.safeDirectory('content'), hash);
       return this.queue('content:' + hash, async () => { const available = await this.contentAvailable(hash); return { available, ...(available ? { path: target, size: (await fs.stat(target)).size } : {}) }; });

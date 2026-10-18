@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { WorkspaceFiles } from '../../src/main/backpacks/workspaceFiles';
@@ -60,4 +61,21 @@ it('rechecks modified immutable content, retains corrupt bytes and permits a ver
   expect(await fs.readdir(path.join(owner.root, 'recovery'))).toHaveLength(1);
   await new WorkspaceFiles(owner.root).call('project', { operation: 'capture', ...file });
   expect((await owner.call('project', { operation: 'content-check', hash: imported.hash })).available).toBe(true);
+});
+it('tidies duplicate content copies left by simultaneous pushes, never deleting unverified bytes', async () => {
+  const { directory, owner } = await fixture(), original = path.join(directory, 'original.dwg'); await fs.writeFile(original, 'pushed twice');
+  const imported = await owner.call('project', { operation: 'import', ...file, path: original });
+  const content = path.join(owner.root, 'content'), hash = String(imported.hash);
+  // A second push of the same bytes landed beside the original.
+  await fs.copyFile(path.join(content, hash), path.join(content, hash + ' (2)'));
+  // Another device's content arrived only as a copy.
+  const otherBytes = 'only the copy arrived', otherHash = createHash('sha256').update(otherBytes).digest('hex');
+  await fs.writeFile(path.join(content, otherHash + ' (2)'), otherBytes);
+  // A copy whose bytes do not match its name.
+  const wrongHash = createHash('sha256').update('expected').digest('hex');
+  await fs.writeFile(path.join(content, wrongHash + ' (3)'), 'damaged');
+  expect(await owner.call('project', { operation: 'content-tidy' })).toEqual({ adopted: 1, removed: 1, quarantined: 1 });
+  expect((await fs.readdir(content)).filter(name => !name.startsWith('.')).sort()).toEqual([hash, otherHash].sort());
+  expect((await owner.call('project', { operation: 'content-check', hash: otherHash })).available).toBe(true);
+  expect(await fs.readdir(path.join(owner.root, 'recovery'))).toHaveLength(1);
 });

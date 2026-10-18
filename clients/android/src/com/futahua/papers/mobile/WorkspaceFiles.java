@@ -42,6 +42,20 @@ final class WorkspaceFiles {
       verifiedContent.put(hash,stamp(target));return new JSONObject().put("hash",hash).put("size",size).put("stamp",before);
     }finally {temp.delete();}
   }
+  /** Same contract as workspaceFiles.ts tidyContent: "<hash> (n)" copies left by simultaneous pushes
+   * are removed once the original is verified, become the original when it is missing, and move to
+   * recovery (never deleted) when their bytes do not match their name. */
+  private JSONObject tidyContent()throws Exception {
+    File folder=directory("content");int adopted=0,removed=0,quarantined=0;File[] names=folder.listFiles();if(names==null)throw new IOException("Workspace content cannot be read.");
+    for(File copy:names){
+      java.util.regex.Matcher match=java.util.regex.Pattern.compile("^([a-f0-9]{64}) \\(\\d+\\)$").matcher(copy.getName());if(!match.matches()||!copy.isFile()||Files.isSymbolicLink(copy.toPath()))continue;
+      String hash=match.group(1);
+      if(!digest(copy).equals(hash)){Files.move(copy.toPath(),new File(directory("recovery"),copy.getName()+"-"+UUID.randomUUID()).toPath());quarantined++;continue;}
+      if(contentAvailable(hash)){if(!copy.delete())throw new IOException("A duplicate content copy could not be removed.");removed++;continue;}
+      Files.move(copy.toPath(),new File(folder,hash).toPath(),StandardCopyOption.ATOMIC_MOVE);verifiedContent.remove(hash);if(contentAvailable(hash))adopted++;
+    }
+    return new JSONObject().put("adopted",adopted).put("removed",removed).put("quarantined",quarantined);
+  }
   synchronized JSONObject call(JSONObject request)throws Exception {
     String operation=request.getString("operation");
     if(operation.equals("journal-load")||operation.equals("journal-save")){
@@ -53,6 +67,7 @@ final class WorkspaceFiles {
     if(operation.equals("content-root")){File folder=directory("content");String base=Environment.getExternalStorageDirectory().getCanonicalPath();String uri=android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents","primary:"+folder.getCanonicalPath().substring(base.length()+1)).toString();return new JSONObject().put("path",folder.getPath()).put("transportPath",PhoneStorage.outward(uri));}
     if(operation.equals("incoming-root"))return new JSONObject().put("path",directory("incoming").getPath());
     if(operation.equals("enumerate")){File file=source(request.getString("path"));if(Files.isSymbolicLink(file.toPath()))throw new IOException("Symbolic links are not imported recursively.");if(file.isFile())return new JSONObject().put("kind","file").put("name",file.getName());if(!file.isDirectory())throw new IOException("Choose a file or folder.");JSONArray entries=new JSONArray();File[] children=file.listFiles();if(children==null)throw new IOException("Folder cannot be read.");for(File child:children)if(!Files.isSymbolicLink(child.toPath())&&(child.isFile()||child.isDirectory()))entries.put(new JSONObject().put("path",child.getPath()).put("name",child.getName()).put("kind",child.isDirectory()?"folder":"file"));return new JSONObject().put("kind","folder").put("name",file.getName()).put("entries",entries);}
+    if(operation.equals("content-tidy"))return tidyContent();
     if(operation.equals("content-check")){String hash=hash(request.getString("hash"));File target=new File(directory("content"),hash);boolean available=contentAvailable(hash);JSONObject result=new JSONObject().put("available",available);if(available)result.put("path",target.getPath()).put("size",target.length());return result;}
     String workspace=id(request.getString("workspaceId")),entry=id(request.getString("entryId"));File folder=directory(workspace,"entries",entry),recordFile=new File(folder,".binding.json");JSONObject record;try{record=new JSONObject(read(recordFile));}catch(FileNotFoundException missing){record=null;}
     String name=name(record==null?request.getString("name"):record.getString("name"));File target=new File(folder,record==null?name:name(record.getString("name")));
