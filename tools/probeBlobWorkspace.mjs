@@ -114,6 +114,14 @@ try{
  const moved=await wait(async()=>{const c=await child2().evaluate(()=>[...document.querySelectorAll('[class*="crumb"]')].map(n=>n.innerText).join(' | '));return c.includes('Second acceptance blob')?c:null;});
  const visible=await page.evaluate(()=>getComputedStyle(document.querySelector('.blob-workspace-pane iframe')).visibility);
  assert.equal(framesNow,1);assert.equal(visible,'visible');console.log('REUSED',JSON.stringify({framesNow,visible,second}));
+ // 7. Opening a blob while the page is still preloading another blob's folder lands in the opened
+ // blob's folder (the request waits for the page instead of being lost).
+ await page.reload();await page.waitForFunction(()=>typeof Store!=='undefined'&&typeof ProximaBlobWorkspaces!=='undefined');
+ // Start the preload (hidden test windows throttle its idle timer) and open another blob at once.
+ // As on the phone, the preloading page exists but is not ready yet when the other blob opens.
+ await page.evaluate(async()=>{ProximaBlobWorkspaces.prewarm();for(let i=0;i<200&&!document.querySelector('.blob-workspace-pane iframe');i++)await new Promise(r=>setTimeout(r,10));return ProximaBlobWorkspaces.open(Store.timelineIntervals().find(i=>i.name==='Second acceptance blob').id);});
+ const raced=await wait(async()=>{const f=page.frames().filter(x=>x.url().includes('papers-blob-workspace=')).at(-1);if(!f)return null;const c=await f.evaluate(()=>[...document.querySelectorAll('[class*="crumb"]')].map(n=>n.innerText).join(' | ')).catch(()=>'');return c.includes('Second acceptance blob')?c.slice(0,80):null;},300);
+ console.log('RACE',JSON.stringify(raced));
  console.log('TIMED-OUT',JSON.stringify([...timedOut]));assert.deepEqual([...timedOut],[],'no blob-pane host request may hang until its timeout');
  assert.equal(errors.length,0,JSON.stringify(errors));
 }finally{await app.close();}
