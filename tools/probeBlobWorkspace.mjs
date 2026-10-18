@@ -122,6 +122,12 @@ try{
  await page.evaluate(async()=>{ProximaBlobWorkspaces.prewarm();for(let i=0;i<200&&!document.querySelector('.blob-workspace-pane iframe');i++)await new Promise(r=>setTimeout(r,10));return ProximaBlobWorkspaces.open(Store.timelineIntervals().find(i=>i.name==='Second acceptance blob').id);});
  const raced=await wait(async()=>{const f=page.frames().filter(x=>x.url().includes('papers-blob-workspace=')).at(-1);if(!f)return null;const c=await f.evaluate(()=>[...document.querySelectorAll('[class*="crumb"]')].map(n=>n.innerText).join(' | ')).catch(()=>'');return c.includes('Second acceptance blob')?c.slice(0,80):null;},300);
  console.log('RACE',JSON.stringify(raced));
+ // 8. A large folder picture is stored small in the synced records (they reach every device).
+ const big=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=800;const x=c.getContext('2d'),d=x.createImageData(800,800);for(let i=0;i<d.data.length;i++)d.data[i]=Math.random()*255|0;x.putImageData(d,0,0);return c.toDataURL('image/png');});
+ const secondFolder=await page.evaluate(()=>Store.timelineIntervals().find(i=>i.name==='Second acceptance blob').template.folderId);
+ assert.equal((await saveRetrying(page,`doc=>{doc.groups.find(g=>g.id===${JSON.stringify(secondFolder)}).icon=${JSON.stringify(big)};}`)).ok,true);
+ const stored=await page.evaluate(async id=>{const f=await ProximaWorkspaces.folder('ayg-root',id);return typeof f.icon==='string'?f.icon.length:JSON.stringify(f.icon).length;},secondFolder);
+ console.log('PICTURE',JSON.stringify({original:big.length,stored}));assert.ok(stored<60000&&big.length>500000); // random noise is the worst case; real photos at 128 px are a few KB
  console.log('TIMED-OUT',JSON.stringify([...timedOut]));assert.deepEqual([...timedOut],[],'no blob-pane host request may hang until its timeout');
  assert.equal(errors.length,0,JSON.stringify(errors));
 }finally{await app.close();}
