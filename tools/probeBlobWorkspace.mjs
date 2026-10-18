@@ -120,8 +120,8 @@ try{
  // Start the preload (hidden test windows throttle its idle timer) and open another blob at once.
  // As on the phone, the preloading page exists but is not ready yet when the other blob opens.
  await page.evaluate(async()=>{ProximaBlobWorkspaces.prewarm();for(let i=0;i<200&&!document.querySelector('.blob-workspace-pane iframe');i++)await new Promise(r=>setTimeout(r,10));return ProximaBlobWorkspaces.open(Store.timelineIntervals().find(i=>i.name==='Second acceptance blob').id);});
- const raced=await wait(async()=>{const f=page.frames().filter(x=>x.url().includes('papers-blob-workspace=')).at(-1);if(!f)return null;const c=await f.evaluate(()=>[...document.querySelectorAll('[class*="crumb"]')].map(n=>n.innerText).join(' | ')).catch(()=>'');return c.includes('Second acceptance blob')?c.slice(0,80):null;},300);
- console.log('RACE',JSON.stringify(raced));
+ const flashed=[];const raced=await wait(async()=>{const f=page.frames().filter(x=>x.url().includes('papers-blob-workspace=')).at(-1);if(!f)return null;const c=await f.evaluate(()=>[...document.querySelectorAll('[class*="crumb"]')].map(n=>n.innerText).join(' | ')).catch(()=>'');const shown=await page.evaluate(()=>getComputedStyle(document.querySelector('.blob-workspace-pane iframe')).visibility==='visible');if(shown&&c&&!c.includes('Second acceptance blob'))flashed.push(c.slice(0,60));return shown&&c.includes('Second acceptance blob')?c.slice(0,80):null;},300);
+ console.log('RACE',JSON.stringify({raced,flashed}));assert.deepEqual(flashed,[],'the preloaded folder must never show before the opened one');
  // 8. A large folder picture is stored small in the synced records (they reach every device).
  const big=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=800;const x=c.getContext('2d'),d=x.createImageData(800,800);for(let i=0;i<d.data.length;i++)d.data[i]=Math.random()*255|0;x.putImageData(d,0,0);return c.toDataURL('image/png');});
  const secondFolder=await page.evaluate(()=>Store.timelineIntervals().find(i=>i.name==='Second acceptance blob').template.folderId);
