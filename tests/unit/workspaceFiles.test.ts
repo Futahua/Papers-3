@@ -8,6 +8,16 @@ const roots: string[] = [];
 afterEach(async () => { for (const directory of roots.splice(0)) await fs.rm(directory, { recursive: true, force: true }); });
 async function fixture() { const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'papers-workspace-')); roots.push(directory); return { directory, owner: new WorkspaceFiles(path.join(directory, 'managed')) }; }
 const file = { workspaceId: 'workspace-one', entryId: 'entry-one', name: 'drawing.dwg' };
+it('isolates cached snapshots, notices journal replacement and keeps durable CAS across owners', async () => {
+  const { owner } = await fixture(), other = new WorkspaceFiles(owner.root);
+  await owner.call('project', { operation: 'journal-save', state: { value: 'one' }, revision: 'absent' });
+  const first = await owner.call('project', { operation: 'journal-load' });
+  (first.state as { value: string }).value = 'mutated caller';
+  expect((await owner.call('project', { operation: 'journal-load' })).state).toEqual({ value: 'one' });
+  await other.call('project', { operation: 'journal-save', state: { value: 'two' }, revision: first.revision });
+  expect((await owner.call('project', { operation: 'journal-load' })).state).toEqual({ value: 'two' });
+  expect((await owner.call('project', { operation: 'journal-save', state: { value: 'old' }, revision: first.revision })).code).toBe('STALE_REVISION');
+});
 it('imports an independent copy, detects external edits and preserves immutable history across restart', async () => {
   const { directory, owner } = await fixture(), original = path.join(directory, 'original.dwg'); await fs.writeFile(original, 'original');
   const imported = await owner.call('project', { operation: 'import', ...file, path: original });

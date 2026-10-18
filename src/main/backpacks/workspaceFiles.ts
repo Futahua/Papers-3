@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { replaceFileAtomically } from './backpackProjectService';
+import {evictCheckedFiles} from './workspaceCacheEviction';
 
 type Binding = { name: string; hash: string | null; versionId: string | null; pending?: { hash: string; versionId: string | null }; stamp?: string };
 const identity = (value: unknown): string => {
@@ -28,7 +29,26 @@ async function fileStamp(target: string): Promise<string> { const s = await fs.l
 export class WorkspaceFiles {
   private readonly tails = new Map<string, Promise<unknown>>();
   private readonly verifiedContent = new Map<string, string>();
+  private readonly journals = new Map<string, { stamp: string; raw: string; revision: string }>();
+  private storageReading: {at:number;value:Record<string,unknown>} | null = null;
   constructor(readonly root: string) {}
+  private async journalStamp(target: string): Promise<string> {
+    try {
+      const s = await fs.lstat(target, { bigint: true });
+      if (!s.isFile() || s.isSymbolicLink()) throw Error('Workspace journal was replaced.');
+      return [s.dev, s.ino, s.size, s.mtimeNs, s.ctimeNs].join(':');
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent'; throw error; }
+  }
+  private async journalRead(target: string, fresh: boolean): Promise<{ raw: string; revision: string }> {
+    const before = await this.journalStamp(target), cached = this.journals.get(target);
+    if (!fresh && cached?.stamp === before) return cached;
+    this.journals.delete(target);
+    const raw = await fs.readFile(target, 'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return ''; });
+    const revision = raw ? digest(raw) : 'absent';
+    // A racing replacement may be returned as a snapshot but must never be cached.
+    if (before === await this.journalStamp(target)) this.journals.set(target, { stamp: before, raw, revision });
+    return { raw, revision };
+  }
   private queue<T>(key: string, work: () => Promise<T>): Promise<T> {
     const current = (this.tails.get(key) ?? Promise.resolve()).catch(() => {}).then(work);
     this.tails.set(key, current);
@@ -133,18 +153,59 @@ export class WorkspaceFiles {
     return result;
   }
   async call(project: string, request: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if(['import','capture','publish','delete','content-tidy','cache-evict'].includes(String(request.operation)))return this.queue('cache-mutations',()=>this.dispatch(project,request));
+    return this.dispatch(project,request);
+  }
+  private async dispatch(project: string, request: Record<string, unknown>): Promise<Record<string, unknown>> {
     // Project identity is supplied by the verified host context, not the renderer.
     const projectKey = digest(project), operation = request.operation;
     if (operation === 'journal-load' || operation === 'journal-save') return this.queue('journal:' + projectKey, async () => {
       const directory = await this.safeDirectory('journals'), target = path.join(directory, projectKey + '.json');
-      const raw = await fs.readFile(target, 'utf8').catch(error => { if (error.code !== 'ENOENT') throw error; return ''; });
-      const revision = raw ? digest(raw) : 'absent';
+      // Reads reuse bytes only while the file generation matches. Writes always
+      // re-read and hash the durable file, preserving the existing CAS boundary.
+      const { raw, revision } = await this.journalRead(target, operation === 'journal-save');
       if (operation === 'journal-load') return { state: raw ? JSON.parse(raw) : null, revision };
       if (request.revision !== revision) return { ok: false, code: 'STALE_REVISION', revision };
       if (!request.state || typeof request.state !== 'object') throw Error('Invalid workspace journal.');
+      this.journals.delete(target);
       await this.atomic(target, request.state);
       return { ok: true, revision: digest(JSON.stringify(request.state)) };
     });
+    if (operation === 'storage-status') {
+      if(this.storageReading && Date.now()-this.storageReading.at<60000)return this.storageReading.value;
+      const content=await this.safeDirectory('content'),volume=await fs.statfs(content);
+      let syncBytes=0,syncFiles=0;
+      for(const entry of await fs.readdir(content,{withFileTypes:true}))if(entry.isFile()&&/^[a-f0-9]{64}$/.test(entry.name)){try{const s=await fs.lstat(path.join(content,entry.name));if(s.isFile()&&!s.isSymbolicLink()){syncBytes+=s.size;syncFiles++;}}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
+      const value={at:Date.now(),volume:path.parse(content).root,totalBytes:volume.blocks*volume.bsize,freeBytes:volume.bavail*volume.bsize,syncBytes,syncFiles};
+      this.storageReading={at:Date.now(),value};return value;
+    }
+    if(operation==='cache-list'){
+      const folder=await this.safeDirectory('content'),items=[];
+      for(const entry of await fs.readdir(folder,{withFileTypes:true}))if(entry.isFile()&&/^[a-f0-9]{64}$/.test(entry.name)){try{const s=await fs.lstat(path.join(folder,entry.name));if(s.isFile()&&!s.isSymbolicLink())items.push({hash:entry.name,size:s.size,at:s.birthtimeMs||s.mtimeMs});}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
+      return {items};
+    }
+    if(operation==='cache-evict'){
+      const hash=hashValue(request.hash),expected=Array.isArray(request.bindings)?request.bindings as Record<string,unknown>[]:[];
+      const content=path.join(await this.safeDirectory('content'),hash),targets:string[]=[];
+      for(const scope of await fs.readdir(this.root,{withFileTypes:true})){
+        if(!scope.isDirectory()||scope.isSymbolicLink()||!await fs.lstat(path.join(this.root,scope.name,'entries')).then(s=>s.isDirectory()&&!s.isSymbolicLink(),()=>false))continue;
+        for(const entry of await fs.readdir(path.join(this.root,scope.name,'entries'),{withFileTypes:true})){
+          if(!entry.isDirectory()||entry.isSymbolicLink())continue;
+          const binding=await this.binding(identity(scope.name),identity(entry.name));const record=binding.record;
+          if(record?.pending?.hash===hash)return {ok:false,error:'An unfinished save is protected.'};
+          if(record?.hash!==hash)continue;
+          const wanted=expected.find(e=>e.workspaceId===scope.name&&e.entryId===entry.name&&e.versionId===record.versionId);
+          if(!wanted||record.pending)return {ok:false,error:'A working copy is protected.'};
+          const target=path.join(binding.directory,nameValue(record.name));
+          try{const s=await fs.lstat(target);if(!s.isFile()||s.isSymbolicLink())return {ok:false,error:'File identity changed.'};targets.push(target);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+        }
+      }
+      try{const s=await fs.lstat(content);if(!s.isFile()||s.isSymbolicLink())throw Error('Invalid content file');targets.push(content);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+      if(!targets.length)return {ok:true,bytes:0};
+      const result=await evictCheckedFiles(this.root,targets,hash);
+      if(result.ok){this.verifiedContent.delete(hash);this.storageReading=null;}
+      return result;
+    }
     if (operation === 'content-root') return { path: await this.safeDirectory('content') };
     if (operation === 'incoming-root') return { path: await this.safeDirectory('incoming') };
     if (operation === 'enumerate') {

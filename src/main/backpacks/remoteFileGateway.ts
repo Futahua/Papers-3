@@ -280,7 +280,7 @@ export async function createRemoteFileGateway(options: {
       try{
         const chunks:Buffer[]=[];let size=0;for await(const chunk of request){const bytes=Buffer.from(chunk);size+=bytes.length;if(size>256*1024)throw Error('Backpack command is too large.');chunks.push(bytes);}
         const command=JSON.parse(Buffer.concat(chunks).toString('utf8'));
-        if(!command||typeof command!=='object'||Array.isArray(command)||typeof command.commandId!=='string'||!command.commandId||command.commandId.length>256||!Number.isSafeInteger(command.expectedSeq)||command.expectedSeq<0||typeof command.type!=='string'||! /^(?:task|project|run|schedule-event|timeline-interval|timeline-queue)\.[a-z.-]+$|^timeline\.(?:undo|redo)$/.test(command.type))throw Error('Invalid Proxima command.');
+        if(!command||typeof command!=='object'||Array.isArray(command)||typeof command.commandId!=='string'||!command.commandId||command.commandId.length>256||!Number.isSafeInteger(command.expectedSeq)||command.expectedSeq<0||typeof command.type!=='string'||! /^(?:task|project|run|schedule-event|timeline-interval|timeline-queue|timeline-group)\.[a-z.-]+$|^timeline\.(?:undo|redo)$/.test(command.type))throw Error('Invalid Proxima command.');
         if(devices.get(device.grant.deviceId)!==device)return;
         const result=await options.backpackCommand(share,command);
         if(devices.get(device.grant.deviceId)===device&&!response.destroyed)json(response,200,{ok:true,owner:options.owner,resourceId:share.id,kind:share.kind,...result as Record<string,unknown>});
