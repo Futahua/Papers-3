@@ -107,6 +107,13 @@ try{
  const closed=await wait(()=>page.evaluate(()=>document.querySelector('.blob-workspace-pane').hidden));
  assert.equal(strip,true);assert.equal(closed,true);
  console.log('CHROME',JSON.stringify(chrome));assert.equal(chrome.header,'none');
+ // 6. One As you Go page serves every blob: it shows only once rendered, and opening another blob
+ // moves it to that folder instead of loading As you Go again.
+ const second=await page.evaluate(async()=>{await Store.command({type:'timeline-interval.create',payload:{name:'Second acceptance blob',start:new Date(Date.now()-7200000).toISOString(),end:new Date(Date.now()-3600000).toISOString()}});const item=Store.timelineIntervals().find(i=>i.name==='Second acceptance blob');const r=await Store.command({type:'timeline-interval.template',ifRev:item.rev,payload:{intervalId:item.id,template:'as-you-go'}});await ProximaBlobWorkspaces.open(item.id);return r.value.template.folderId;});
+ const framesNow=await page.evaluate(()=>document.querySelectorAll('.blob-workspace-pane iframe').length);
+ const moved=await wait(async()=>{const c=await child2().evaluate(()=>[...document.querySelectorAll('[class*="crumb"]')].map(n=>n.innerText).join(' | '));return c.includes('Second acceptance blob')?c:null;});
+ const visible=await page.evaluate(()=>getComputedStyle(document.querySelector('.blob-workspace-pane iframe')).visibility);
+ assert.equal(framesNow,1);assert.equal(visible,'visible');console.log('REUSED',JSON.stringify({framesNow,visible,second}));
  console.log('TIMED-OUT',JSON.stringify([...timedOut]));assert.deepEqual([...timedOut],[],'no blob-pane host request may hang until its timeout');
  assert.equal(errors.length,0,JSON.stringify(errors));
 }finally{await app.close();}
