@@ -46,6 +46,13 @@ try{
  await child.evaluate(link=>{const target=document.querySelector('.workspace-navigator-body,.workspace-navigator .workspace-navigator-row')||document.querySelector('.workspace-navigator');const data=new DataTransfer();data.setData('text/plain',link);target.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));},link);
  const pastedLink=await wait(()=>page.evaluate(async({ROOT,link,folderId})=>{const s=(await ProximaWorkspaces.load(ROOT)).state.shortcuts.find(x=>x.target===link);return s&&s.placements.some(p=>p.parentId===folderId)?s.name:null;},{ROOT,link,folderId}),300) /* saving fetches the page title first */.catch(async e=>{console.log('PASTE-STATUS',JSON.stringify(await child.evaluate(()=>[...document.querySelectorAll('[id*=status],[class*=status],[role=status]')].map(n=>n.textContent.trim()).filter(Boolean))));throw e;});
  console.log('STEP 3');
+ // 2c. A file dragged from this computer's own Files pane (navigator items carrying its path) is
+ // imported by that path; an embedded pane cannot turn dropped File objects into paths.
+ const dragged=path.join(root,'dragged-from-files.txt');await fs.writeFile(dragged,'dragged bytes');
+ await child.evaluate(source=>{const body=document.querySelector('.workspace-navigator-body');const data=new DataTransfer();data.setData('application/x-papers-machine-navigator-items',JSON.stringify([source]));for(const type of ['dragenter','dragover','drop'])body.dispatchEvent(new DragEvent(type,{dataTransfer:data,bubbles:true,cancelable:true}));},dragged);
+ const droppedCopy=await wait(()=>page.evaluate(async({ROOT,folderId})=>{const s=(await ProximaWorkspaces.load(ROOT)).state.shortcuts.find(x=>x.name==='dragged-from-files.txt'&&x.placements.some(p=>p.parentId===folderId));return s?.workspaceFileId?s.target:null;},{ROOT,folderId}),150);
+ assert.notEqual(droppedCopy,dragged);assert.equal(await fs.readFile(droppedCopy,'utf8'),'dragged bytes');
+ console.log('STEP 3');
  // 3. Only killing: the trash is gone, the skull stays, and holding the skull opens the Bin.
  const tools=await child.evaluate(()=>{const visible=title=>[...document.querySelectorAll('button')].filter(b=>b.title===title).map(b=>getComputedStyle(b).display!=='none'&&!b.hidden);return {trash:visible('Delete entry · Right-click to open Bin'),skull:visible('Kill · Hold to open Bin')};});
  assert.ok(tools.skull.includes(true),JSON.stringify(tools));assert.ok(!tools.trash.includes(true),JSON.stringify(tools));
