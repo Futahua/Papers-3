@@ -80,9 +80,14 @@ export function registerBackpackProjectSchemePrivileges(): void {
  * service refuses, and a page cannot read a credential file. The credential and
  * the request itself travel through `localServiceBridge` in the main process.
  */
-export function contentSecurityPolicy(origin: string, frameOrigins: readonly string[] = []): string {
+export function contentSecurityPolicy(
+  origin: string,
+  frameOrigins: readonly string[] = [],
+  hostPreviewOrigins: readonly string[] = [],
+): string {
   const allowedFrames = [origin, ...frameOrigins].join(' ');
-  const previewOrigin = `${FILE_PREVIEW_SCHEME}://${new URL(origin).hostname}`;
+  // Its own previews, plus those of a Backpack that embeds it as its workspace (see embeddingPreviewOrigins).
+  const previewOrigin = [`${FILE_PREVIEW_SCHEME}://${new URL(origin).hostname}`, ...hostPreviewOrigins].join(' ');
   return [
     `default-src 'none'`,
     `script-src ${origin}`,
@@ -116,6 +121,7 @@ export function installBackpackProjectProtocol(service: BackpackProjectService):
       const fileResponse = await net.fetch(pathToFileURL(file).toString());
       if (!fileResponse.ok) return denied(404, 'not found');
       const embeddedOrigins = await service.embeddedProjectOrigins(backpackId);
+      const hostPreviewOrigins = await service.embeddingPreviewOrigins(backpackId);
       return new Response(await fileResponse.arrayBuffer(), {
         status: 200,
         headers: {
@@ -123,6 +129,7 @@ export function installBackpackProjectProtocol(service: BackpackProjectService):
           'content-security-policy': contentSecurityPolicy(
             `${BACKPACK_PROJECT_SCHEME}://${backpackId}`,
             embeddedOrigins,
+            hostPreviewOrigins,
           ),
           'x-content-type-options': 'nosniff',
         },

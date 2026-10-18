@@ -90,3 +90,19 @@ describe('backpack project content security policy', () => {
     expect(policy).toContain(PREVIEW_ORIGIN);
   });
 });
+
+describe('previews of a Backpack that embeds this one', () => {
+  const HOST_PREVIEW = 'papers-file-preview://bp-99999999-2222-4333-8444-555555555555';
+  it('adds exactly the embedding host preview origin to image, media and frame sources', () => {
+    const policy = contentSecurityPolicy(ORIGIN, [], [HOST_PREVIEW]);
+    for (const name of ['img-src', 'media-src', 'frame-src']) {
+      expect(directive(policy, name)).toContain(PREVIEW_ORIGIN);
+      expect(directive(policy, name)).toContain(HOST_PREVIEW);
+    }
+    expect(directive(policy, 'connect-src')).not.toContain('papers-file-preview');
+    expect(policy).not.toMatch(/papers-file-preview:(?!\/\/bp-)/);
+  });
+  it('adds nothing without an embedding host', () => {
+    expect(directive(contentSecurityPolicy(ORIGIN), 'img-src')).toBe(`img-src ${ORIGIN} ${PREVIEW_ORIGIN} data: blob:`);
+  });
+});

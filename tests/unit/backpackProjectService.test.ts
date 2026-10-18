@@ -866,3 +866,24 @@ describe('BackpackProjectService', () => {
     ).resolves.toMatchObject({ ok: false, code: 'SCOPE_VIOLATION' });
   });
 });
+
+describe('previews from an embedding Backpack', () => {
+  it('lists only the Backpacks that declare this one as their workspace host', async () => {
+    const hostId = 'bp-759cd960-26ee-4560-90b0-1ef6678802c4', otherId = 'bp-11111111-2222-4333-8444-555555555555';
+    const write = async (id: string, extra: Record<string, unknown>) => {
+      const dir = path.join(root, id);
+      await fs.mkdir(path.join(dir, 'public'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'project.json'), JSON.stringify({ schemaVersion: 1, backpackId: id, entry: 'public/index.html', ...extra }), 'utf8');
+      return dir;
+    };
+    const projects = {
+      [backpackId]: { root: await write(backpackId, {}) },
+      [hostId]: { root: await write(hostId, { workspaceHost: backpackId }) },
+      [otherId]: { root: await write(otherId, {}) },
+    };
+    await fs.writeFile(bindingsFile, JSON.stringify({ schemaVersion: 1, projects }), 'utf8');
+    const service = new BackpackProjectService(bindingsFile);
+    expect(await service.embeddingPreviewOrigins(backpackId)).toEqual([`papers-file-preview://${hostId}`]);
+    expect(await service.embeddingPreviewOrigins(hostId)).toEqual([]);
+  });
+});

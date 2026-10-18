@@ -4,6 +4,7 @@
  * Papers owns only a machine-local binding, static-project loading and action
  * mediation. Project HTML, labels, prompts and behavior stay outside app.asar.
  */
+import { FILE_PREVIEW_SCHEME } from './filePreviewResources';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -790,6 +791,28 @@ export class BackpackProjectService {
     return typeof manifest?.workspaceHost === 'string'
       ? [`${BACKPACK_PROJECT_SCHEME}://${manifest.workspaceHost}`]
       : [];
+  }
+
+  /**
+   * Preview origins of the Backpacks that embed this one as their workspace (Proxima embeds As you Go in
+   * its blob panes). Such a host asks for previews on the embedded page's behalf, so the preview address
+   * is the host's; the embedded page may show exactly those hosts' previews and no others.
+   */
+  async embeddingPreviewOrigins(backpackId: string): Promise<string[]> {
+    let projects: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.bindingsFile, 'utf8')) as unknown;
+      projects = isRecord(parsed) && isRecord(parsed['projects']) ? parsed['projects'] : {};
+    } catch {
+      return [];
+    }
+    const origins: string[] = [];
+    for (const hostId of Object.keys(projects)) {
+      if (hostId === backpackId || !backpackIdPattern.test(hostId)) continue;
+      const manifest = await this.manifest(hostId).catch(() => null);
+      if (manifest?.workspaceHost === backpackId) origins.push(`${FILE_PREVIEW_SCHEME}://${hostId}`);
+    }
+    return origins;
   }
 
   async resolveAsset(backpackId: string, requestPath: string): Promise<string> {
