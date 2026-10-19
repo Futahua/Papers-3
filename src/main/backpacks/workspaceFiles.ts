@@ -234,6 +234,9 @@ export class WorkspaceFiles {
         if (!path.isAbsolute(source)) throw Error('An absolute local source is required.');
         const cached = record?.hash && record.stamp && record.stamp === await fileStamp(source) && await this.queue('content:' + record.hash, () => this.contentAvailable(record.hash!));
         const captured = cached ? { hash: record.hash!, size: (await fs.stat(source)).size, stamp: record.stamp! } : await this.snapshot(source);
+        // Same bytes, new file times (a permissions change, a drive reconnect): remember them, or every later
+        // check copies the whole file again (BOP re-copied a 290 MB file on every check for a day).
+        if (!cached && operation === 'capture' && record?.hash === captured.hash && !record.pending && captured.stamp !== record.stamp) await this.atomic(path.join(directory, '.binding.json'), { ...record, stamp: captured.stamp });
         if (operation === 'import' && !record) {
           // Commit intent first. A restart can finish this import from immutable
           // content without rereading (or altering) the independent original.

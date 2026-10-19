@@ -100,3 +100,17 @@ it('answers unchanged instead of sending a journal the page already holds, and s
   expect(changed.state).toEqual({ value: 'two' });
   expect(changed.unchanged).toBeUndefined();
 });
+it('remembers new file times for unchanged bytes instead of copying the file on every check', async () => {
+  const { directory, owner } = await fixture(), original = path.join(directory, 'original.dwg'); await fs.writeFile(original, 'same bytes');
+  const imported = await owner.call('project', { operation: 'import', ...file, path: original });
+  await owner.call('project', { operation: 'publish', ...file, hash: imported.hash, versionId: 'v1' });
+  const later = new Date(Date.now() + 60_000); await fs.utimes(String(imported.path), later, later);
+  const binding = path.join(path.dirname(String(imported.path)), '.binding.json'), stale = JSON.parse(await fs.readFile(binding, 'utf8')).stamp;
+  const checked = await owner.call('project', { operation: 'capture', ...file });
+  expect(checked.hash).toBe(imported.hash);
+  const remembered = JSON.parse(await fs.readFile(binding, 'utf8'));
+  expect(remembered.stamp).not.toBe(stale); expect(remembered.versionId).toBe('v1');
+  const contents = path.join(owner.root, 'content'), before = (await fs.readdir(contents)).length;
+  await new WorkspaceFiles(owner.root).call('project', { operation: 'capture', ...file });
+  expect((await fs.readdir(contents)).length).toBe(before);
+});
