@@ -59,11 +59,13 @@ final class PhonePreview {
     if (isMedia(mime)) return media(source, mime);
     if ("application/pdf".equals(mime)) return pdf(source);
     if (mime.startsWith("image/")) return image(source);
+    if (EmbeddedPreview.supports(source.name())) return embedded(source, IMAGE_EDGE);
     if (mime.startsWith("text/") || "application/json".equals(mime)) return text(source);
     return new JSONObject().put("kind", "none");
   }
   static JSONObject thumbnail(Source source)throws Exception {
     String mime=mimeFor(source.name(),source.mime());if(mime.startsWith("image/"))return image(source,256);
+    if(EmbeddedPreview.supports(source.name()))return embedded(source,256);
     if("application/pdf".equals(mime)){ParcelFileDescriptor fd=source.descriptor();if(fd==null)return new JSONObject().put("kind","none");try(PdfRenderer renderer=new PdfRenderer(fd)){if(renderer.getPageCount()==0)return new JSONObject().put("kind","none");try(PdfRenderer.Page page=renderer.openPage(0)){float factor=256f/Math.max(page.getWidth(),page.getHeight());Bitmap bitmap=Bitmap.createBitmap(Math.max(1,Math.round(page.getWidth()*factor)),Math.max(1,Math.round(page.getHeight()*factor)),Bitmap.Config.ARGB_8888);bitmap.eraseColor(Color.WHITE);page.render(bitmap,null,null,PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY);return jpeg(bitmap);}}}
     return new JSONObject().put("kind","none");
   }
@@ -124,6 +126,12 @@ final class PhonePreview {
     return new JSONObject().put("kind", "text").put("text", new String(data, 0, length, StandardCharsets.UTF_8)).put("byteOffset", 0).put("nextOffset", length).put("eof", eof && length == data.length);
   }
 
+  /** The picture a Revit, AutoCAD or SketchUp file stores inside itself (see EmbeddedPreview). */
+  private static JSONObject embedded(Source source, int edge) throws Exception {
+    byte[] picture = EmbeddedPreview.extract(source);
+    Bitmap bitmap = picture == null ? null : BitmapFactory.decodeByteArray(picture, 0, picture.length);
+    return bitmap == null ? new JSONObject().put("kind", "none") : jpeg(scale(bitmap, edge));
+  }
   private static Bitmap scale(Bitmap bitmap, int edge) {
     float factor = Math.min(1f, (float) edge / Math.max(bitmap.getWidth(), bitmap.getHeight()));
     return factor < 1f ? Bitmap.createScaledBitmap(bitmap, Math.round(bitmap.getWidth() * factor), Math.round(bitmap.getHeight() * factor), true) : bitmap;
