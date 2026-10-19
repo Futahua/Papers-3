@@ -357,7 +357,11 @@ export async function createRemoteFileGateway(options: {
       if (!match) { json(response, 404, { ok: false, code: 'OPERATION_UNKNOWN' }); return; }
       const id = match[1]!;
       if (match[2] === 'list') {
-        json(response, 200, { ok: true, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate),edits:Boolean(device.grant.canWrite===true&&options.edits)},folder:await device.catalog.stat(id), ...await device.catalog.list(id, Number(url.searchParams.get('offset') ?? 0), Number(url.searchParams.get('limit') ?? 200)) });
+        const listed = { ok: true, capabilities:{changes:Boolean(device.grant.canWrite===true&&options.mutate),edits:Boolean(device.grant.canWrite===true&&options.edits)},folder:await device.catalog.stat(id), ...await device.catalog.list(id, Number(url.searchParams.get('offset') ?? 0), Number(url.searchParams.get('limit') ?? 200)) };
+        // A client that already holds this exact listing gets 'unchanged' instead of it again.
+        const listing = createHash('sha256').update(JSON.stringify(listed)).digest('hex');
+        if (request.headers['x-papers-known-listing'] === listing) { json(response, 200, { ok: true, unchanged: true, listing }); return; }
+        json(response, 200, { ...listed, listing });
         return;
       }
       if (match[2] === 'stat') { json(response, 200, { ok: true, entry: await device.catalog.stat(id) }); return; }

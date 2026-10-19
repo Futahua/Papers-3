@@ -44,6 +44,7 @@ export class RemoteFileClient {
   private transportFetch(input:string,options?:RequestInit) {return fetch(this.usb?.address(input)??input,options);}
   private connections: Connection[] = [];
   private readonly ownerResponses = new Map<string, number>();
+  private readonly heldListings = new Map<string, { listing: string; result: { entries: RemoteFileEntry[]; nextOffset: number | null; capabilities: unknown; folder: RemoteFileEntry | null } }>();
   private readonly workspaceDocuments = new Map<string, { state: unknown; revision: string; sharedRoots?: string[] }>();
   private readonly jobs = new Map<string, RemoteDownloadJob>();
   private readonly controllers = new Map<string, AbortController>();
@@ -261,11 +262,16 @@ export class RemoteFileClient {
     const key = createHash('sha256').update(JSON.stringify([ownerId, resourceId ?? '', offset])).digest('hex');
     const listing = new AtomicJsonStore(path.join(this.directory, 'listings', `${key}.json`), { recoveryDir: path.join(this.directory, 'recovery') });
     try {
-      const response = await (await this.request(ownerId, route)).json();
+      // Folders are re-checked every couple of seconds: send the listing already held, and an updated owner
+      // answers 'unchanged' instead of the whole listing (older owners ignore the header).
+      const held = this.heldListings.get(key);
+      const response = await (await this.request(ownerId, route, held ? { 'X-Papers-Known-Listing': held.listing } : {})).json();
+      if (response.unchanged === true && held && response.listing === held.listing) return { ...held.result, online: true };
       if (response.owner && response.owner.id !== ownerId) throw new Error('Owner identity changed; pair again.');
       if (!Array.isArray(response.entries)) throw new Error('Invalid listing.');
       const result = { entries: response.entries.map(entry), nextOffset: response.nextOffset ?? null,capabilities:response.capabilities??{},folder:response.folder?entry(response.folder):null };
       await listing.save(result);
+      if (typeof response.listing === 'string') this.heldListings.set(key, { listing: response.listing, result }); else this.heldListings.delete(key);
       return { ...result, online: true };
     } catch (error) {
       const cached = await listing.load<{ entries: RemoteFileEntry[]; nextOffset: number | null }>();
