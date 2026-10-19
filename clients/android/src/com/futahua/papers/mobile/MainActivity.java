@@ -44,23 +44,31 @@ public final class MainActivity extends Activity {
     view.getSettings().setDomStorageEnabled(true);
     view.getSettings().setAllowFileAccess(false);
     view.getSettings().setAllowContentAccess(false);
-    view.getSettings().setBlockNetworkLoads(true);
+    // Network loads stay off except where shouldInterceptRequest lets one through (only the AppFlowy frame);
+    // every other outside request is answered empty there.
+    view.getSettings().setBlockNetworkLoads(false);
     view.addJavascriptInterface(new Bridge(), "PapersNative");
     view.setWebChromeClient(new WebChromeClient() {
       @Override public boolean onConsoleMessage(ConsoleMessage message) { android.util.Log.i("PapersWeb", message.messageLevel() + " " + message.sourceId() + ":" + message.lineNumber() + " " + message.message()); return true; }
     });
+    // AppFlowy keeps its session in its own frame; allow its cookies there (only that origin may load, see appFlowy()).
+    android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
     view.setWebViewClient(new WebViewClient() {
       @Override public boolean shouldOverrideUrlLoading(WebView webView, WebResourceRequest request) {
+        if (!request.isForMainFrame() && appFlowy(request.getUrl())) return false;
         String route = request.getUrl().getPath(); return request.isForMainFrame() || !"https".equals(request.getUrl().getScheme()) || !"papers.local".equals(request.getUrl().getHost()) || route == null || !(route.equals("/app/remote-overview.html") || route.startsWith("/ayg/") || route.startsWith("/proxima/"));
       }
       @Override public WebResourceResponse shouldInterceptRequest(WebView webView, WebResourceRequest request) {
         String name = request.getUrl().getPath();
+        // The blob pane's AppFlowy frame is the one outside page allowed: BOP's private (Tailscale) address.
+        if (appFlowy(request.getUrl())) return null;
         if (!"https".equals(request.getUrl().getScheme()) || !"papers.local".equals(request.getUrl().getHost()) || name == null || name.contains("..") || !name.matches("/[a-zA-Z0-9/_-]+\\.(html|js|css)")) return empty();
         try {
           String type = name.endsWith(".js") ? "text/javascript" : name.endsWith(".css") ? "text/css" : "text/html";
           return new WebResourceResponse(type, "UTF-8", getAssets().open(name.substring(1)));
         } catch (Exception error) { return empty(); }
       }
+      private boolean appFlowy(android.net.Uri url) { return "https".equals(url.getScheme()) && "bop.taild88607.ts.net".equals(url.getHost()) && url.getPort() == 8443; }
       private WebResourceResponse empty() { return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0])); }
     });
     setContentView(view);
