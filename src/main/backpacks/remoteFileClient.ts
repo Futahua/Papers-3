@@ -44,6 +44,7 @@ export class RemoteFileClient {
   private transportFetch(input:string,options?:RequestInit) {return fetch(this.usb?.address(input)??input,options);}
   private connections: Connection[] = [];
   private readonly ownerResponses = new Map<string, number>();
+  private readonly workspaceDocuments = new Map<string, { state: unknown; revision: string; sharedRoots?: string[] }>();
   private readonly jobs = new Map<string, RemoteDownloadJob>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly transfers = new Map<string, Promise<void>>();
@@ -500,9 +501,15 @@ export class RemoteFileClient {
   /** The owner's current document and the revision it is at. */
   async workspaceLoad(ownerId: string, id: string): Promise<{ state: unknown; revision: string; sharedRoots?: string[] }> {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('Invalid workspace identity.');
-    const response = await (await this.request(ownerId, `/v1/workspaces/${id}/state`)).json();
+    // Device panes ask every few seconds: send the revision already held, and an updated owner answers
+    // 'unchanged' instead of the whole document (owners that predate this ignore the header).
+    const key = ownerId + '|' + id, held = this.workspaceDocuments.get(key);
+    const response = await (await this.request(ownerId, `/v1/workspaces/${id}/state`, held ? { 'X-Papers-Known-Revision': held.revision } : {})).json();
+    if (response.unchanged === true && held && response.revision === held.revision) return held;
     if (typeof response.revision !== 'string') throw new Error('Invalid workspace document.');
-    return { state: response.state, revision: response.revision, ...(Array.isArray(response.sharedRoots) && response.sharedRoots.every((name: unknown) => typeof name === 'string' && !/[\\/]/.test(name)) ? {sharedRoots: response.sharedRoots} : {}) };
+    const loaded = { state: response.state, revision: response.revision, ...(Array.isArray(response.sharedRoots) && response.sharedRoots.every((name: unknown) => typeof name === 'string' && !/[\\/]/.test(name)) ? {sharedRoots: response.sharedRoots} : {}) };
+    this.workspaceDocuments.set(key, loaded);
+    return loaded;
   }
   /** One of the owner's As you Go icon files, as a data URL for display. */
   async workspaceIcon(ownerId: string, id: string, name: string): Promise<string> {

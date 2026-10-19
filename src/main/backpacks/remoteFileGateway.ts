@@ -222,7 +222,12 @@ export async function createRemoteFileGateway(options: {
           response.writeHead(200, { 'Content-Type': icon.type, 'Content-Length': icon.bytes.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
           response.end(icon.bytes); return;
         }
-        if (request.method === 'GET') { json(response, 200, { ok: true, ...await options.workspaces.load(target.projectId) }); return; }
+        if (request.method === 'GET') {
+          const loaded = await options.workspaces.load(target.projectId), known = request.headers['x-papers-known-revision'];
+          // The client already holds this revision: say so instead of resending the whole document.
+          if (typeof known === 'string' && known === (loaded as { revision?: unknown }).revision) { json(response, 200, { ok: true, unchanged: true, revision: known }); return; }
+          json(response, 200, { ok: true, ...loaded }); return;
+        }
         if (request.method !== 'POST') { json(response, 405, { ok: false, code: 'OPERATION_UNSUPPORTED' }); return; }
         const chunks: Buffer[] = []; let bytes = 0;
         for await (const chunk of request) { bytes += chunk.length; if (bytes > 64 * 1024 * 1024) throw new Error('Workspace document is too large.'); chunks.push(chunk); }

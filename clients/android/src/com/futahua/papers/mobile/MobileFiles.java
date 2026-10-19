@@ -92,7 +92,10 @@ final class MobileFiles {
       case "edit-save": return saveEdit(request.getString("editId"));
       case "edit-continue": return continueEdit(request.getString("editId"));
       case "workspaces": { JSONObject result = json(request(owner, "/v1/workspaces", null, null)); if (!owner.equals(result.getJSONObject("owner").getString("id"))) throw new IOException("Owner identity changed."); return result.getJSONArray("entries"); }
-      case "workspace-load": { String id = request.getString("workspaceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid workspace identity."); return largeJson(request(owner, "/v1/workspaces/" + id + "/state", null, null)); }
+      case "workspace-load": { String id = request.getString("workspaceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid workspace identity."); String key = owner + "|" + id; JSONObject held = workspaceDocuments.get(key); JSONObject device = connection(owner); JSONObject loaded; try { loaded = largeJson(http(address(device.getString("address")) + "/v1/workspaces/" + id + "/state", open(device.getString("secret")), null, null, null, held == null ? null : held.optString("revision", null))); } catch (IOException error) { if (String.valueOf(error.getMessage()).startsWith("Access revoked")) forget(owner); throw error; }
+        // Device panes ask every few seconds: an updated owner answers "unchanged" for the revision already held.
+        if (loaded.optBoolean("unchanged") && held != null && held.optString("revision").equals(loaded.optString("revision"))) return held;
+        if (loaded.has("revision") && loaded.has("state")) workspaceDocuments.put(key, loaded); return loaded; }
       case "workspace-save": { String id = request.getString("workspaceId"); if (!id.matches("[a-f0-9-]{36}")) throw new IOException("Invalid workspace identity."); JSONObject device = connection(owner); return largeJson(http(address(device.getString("address")) + "/v1/workspaces/" + id + "/state", open(device.getString("secret")), null, new JSONObject().put("state", request.getString("state")).put("revision", request.getString("revision")))).getJSONObject("save"); }
       case "workspace-icon": {
         String id = request.getString("workspaceId"), name = request.getString("name");
@@ -439,6 +442,7 @@ final class MobileFiles {
   private JSONObject metadata(String key) throws Exception { if (!key.matches("[a-f0-9]{64}")) throw new IOException("Invalid cache identity."); return read(new File(root, key + ".json")); }
   private File checkedFile(String owner, String key) throws Exception { JSONObject metadata = metadata(key); File file = new File(root, key + ".bin"); if (!owner.equals(metadata.getString("ownerId")) || !hashFile(file).equals(metadata.getString("sha256"))) throw new IOException("Offline file is damaged or unavailable."); return file; }
   private HttpURLConnection editRequest(String owner,String route,JSONObject body)throws Exception{JSONObject peer=connection(owner);return http(address(peer.getString("address"))+route,open(peer.getString("secret")),null,body);}
+  private final java.util.Map<String, JSONObject> workspaceDocuments = new java.util.concurrent.ConcurrentHashMap<>();
   private HttpURLConnection request(String owner, String route, String version, String range) throws Exception {
     JSONObject device = connection(owner);
     try { return http(address(device.getString("address")) + route, open(device.getString("secret")), version, null, range); }
@@ -452,8 +456,10 @@ final class MobileFiles {
     Log.i(TAG, "grant revoked by " + owner + "; will rejoin");
   }
   private HttpURLConnection http(String url, String token, String version, JSONObject body) throws Exception { return http(url, token, version, body, null); }
-  private HttpURLConnection http(String url, String token, String version, JSONObject body, String range) throws Exception {
+  private HttpURLConnection http(String url, String token, String version, JSONObject body, String range) throws Exception { return http(url, token, version, body, range, null); }
+  private HttpURLConnection http(String url, String token, String version, JSONObject body, String range, String knownRevision) throws Exception {
     HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection(); c.setInstanceFollowRedirects(false); c.setConnectTimeout(15000); c.setReadTimeout(30000);
+    if (knownRevision != null) c.setRequestProperty("X-Papers-Known-Revision", knownRevision);
     if (token != null) c.setRequestProperty("Authorization", "Bearer " + token);
     if (version != null) c.setRequestProperty("If-Match", '"' + version + '"');
     if (range != null) c.setRequestProperty("Range", range);
