@@ -89,3 +89,14 @@ it('tidies duplicate content copies left by simultaneous pushes, never deleting 
   expect((await owner.call('project', { operation: 'content-check', hash: otherHash })).available).toBe(true);
   expect(await fs.readdir(path.join(owner.root, 'recovery'))).toHaveLength(1);
 });
+
+it('answers unchanged instead of sending a journal the page already holds, and sends it again once it changed', async () => {
+  const { owner } = await fixture(), other = new WorkspaceFiles(owner.root);
+  await owner.call('project', { operation: 'journal-save', state: { value: 'one' }, revision: 'absent' });
+  const first = await owner.call('project', { operation: 'journal-load' });
+  expect(await owner.call('project', { operation: 'journal-load', known: first.revision })).toEqual({ unchanged: true, revision: first.revision });
+  await other.call('project', { operation: 'journal-save', state: { value: 'two' }, revision: first.revision });
+  const changed = await owner.call('project', { operation: 'journal-load', known: first.revision });
+  expect(changed.state).toEqual({ value: 'two' });
+  expect(changed.unchanged).toBeUndefined();
+});

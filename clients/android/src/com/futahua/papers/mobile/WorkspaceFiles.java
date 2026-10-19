@@ -80,6 +80,8 @@ final class WorkspaceFiles {
         revision=raw.isEmpty()?"absent":PhonePeerServer.hash(raw.getBytes(StandardCharsets.UTF_8));
         if(before!=null&&before.equals(journalStamp(target))){journalRaw=raw;journalRevision=revision;journalStamp=before;}
       }
+      // The page keeps its last copy: when it already holds this revision, nothing is rebuilt or sent.
+      if(operation.equals("journal-load")&&revision.equals(request.optString("known",null)))return new JSONObject().put("unchanged",true).put("revision",revision);
       if(operation.equals("journal-load"))return new JSONObject().put("state",raw.isEmpty()?JSONObject.NULL:new JSONObject(raw)).put("revision",revision);
       if(!revision.equals(request.getString("revision")))return new JSONObject().put("ok",false).put("code","STALE_REVISION").put("revision",revision);
       JSONObject value=request.getJSONObject("state");journalStamp=null;write(target,value);return new JSONObject().put("ok",true).put("revision",PhonePeerServer.hash(value.toString().getBytes(StandardCharsets.UTF_8)));

@@ -164,6 +164,8 @@ export class WorkspaceFiles {
       // Reads reuse bytes only while the file generation matches. Writes always
       // re-read and hash the durable file, preserving the existing CAS boundary.
       const { raw, revision } = await this.journalRead(target, operation === 'journal-save');
+      // The page keeps its last copy: when it already holds this revision, nothing is parsed or sent.
+      if (operation === 'journal-load' && typeof request.known === 'string' && request.known === revision) return { unchanged: true, revision };
       if (operation === 'journal-load') return { state: raw ? JSON.parse(raw) : null, revision };
       if (request.revision !== revision) return { ok: false, code: 'STALE_REVISION', revision };
       if (!request.state || typeof request.state !== 'object') throw Error('Invalid workspace journal.');
