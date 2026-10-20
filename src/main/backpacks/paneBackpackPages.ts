@@ -253,5 +253,7 @@ export function createPaneBackpackPages(input: {
             return undo;
         } catch (error) { await undo(); throw error; }
     }
-    return { accept, refresh, syncTitles, check, attach, removePage, checkTransfers, applyTransfers, controls: (id: string) => { const p = locate(id); return Boolean(p && placement(p) && input.outer(placement(p)!.parent).visible); } };
+    return { accept, refresh, syncTitles, check, attach, removePage, checkTransfers, applyTransfers,
+      siblingDestination:(id:string)=>{const page=locate(id),place=page&&placement(page);return place?{parentSurfaceId:place.parent.surfaceId,groupId:place.group.id}:null;},
+      controls: (id: string) => { const p = locate(id); return Boolean(p && placement(p) && input.outer(placement(p)!.parent).visible); } };
 }

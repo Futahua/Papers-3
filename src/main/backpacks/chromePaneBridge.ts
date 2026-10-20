@@ -27,7 +27,7 @@ export interface ChromePaneBridge {
   listTabs?(owner: string): void;
   /** Dock one program window over a rectangle of `context`'s page, in its own host (see programWindowService). */
   programOpen?(context: LayoutHostContext, template: string, handle: number, pid: number, rect: LayoutRect): Promise<Reply>;
-  programMove?(owner: string, template: string, rect: LayoutRect): void;
+  programMove?(owner: string, template: string, rect: LayoutRect): void | Promise<unknown>;
   programVisible?(owner: string, template: string, visible: boolean): void;
   programClose?(owner: string, template: string): void | Promise<void>;
   open(context: LayoutHostContext, source: string, url: string, rect: LayoutRect): Promise<Reply>;
@@ -224,7 +224,7 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
     },
     programMove(owner, template, bounds) {
       const entry = dockedProgram(owner, template); if (!entry) return;
-      if (entry.coordinated) void coordinator?.move(entry.key, bounds); else bridge.move(entry.key, bounds);
+      if (entry.coordinated) return coordinator?.move(entry.key, bounds); bridge.move(entry.key, bounds);
     },
     programVisible(owner, template, visible) {
       const entry = dockedProgram(owner, template); if (!entry) return;

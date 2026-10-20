@@ -44,7 +44,8 @@ const WINDOW_WAIT_MS = 25_000;
 export interface ProgramWindowService {
   templates(): Array<Pick<ProgramTemplate, 'id' | 'label'>>;
   open(context: HostContext, template: string, target: string, rect: Rect): Promise<Reply>;
-  move(owner: string, template: string, rect: Rect): void;
+  /** Resolves once the window is placed, so a page can send only its newest rectangle. */
+  move(owner: string, template: string, rect: Rect): Promise<void>;
   setVisible(owner: string, template: string, visible: boolean): void;
   close(owner: string, template: string): Promise<void>;
 }
@@ -134,7 +135,7 @@ export function createProgramWindowService(input: { bridge: ChromePaneBridge | n
         return reply.ok ? { ok: true } : { ok: false, message: reply.error ?? `${definition.label} could not be placed here.` };
       } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
     },
-    move: (owner, id, rect) => bridge.programMove?.(owner, id, rect),
+    move: async (owner, id, rect) => { await bridge.programMove?.(owner, id, rect); },
     setVisible: (owner, id, visible) => bridge.programVisible?.(owner, id, visible),
     close: async (owner, id) => { await bridge.programClose?.(owner, id); },
   };

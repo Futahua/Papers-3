@@ -1687,6 +1687,7 @@ async function bootstrap(): Promise<void> {
     },
     flushAttachedProjectSurface:async(windowId,surfaceId)=>{await papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.flushBeforeClose();},
     inlineDeviceName:deviceId=>remoteFiles.snapshot().devices.find(device=>device.id===deviceId)?.name??null,
+    projectSiblingDestination:surfaceId=>panePages?.siblingDestination(surfaceId)??null,
     attachInlineDevicePage:async(parentSurfaceId,surfaceId,groupId)=>{
       const parent=logicalSurfaces.get(parentSurfaceId);if(!parent||!panePages)throw Error('The parent layout closed.');
       return panePages.attach(`${parent.windowId}:${parentSurfaceId}`,surfaceId,groupId,'center');

@@ -434,6 +434,12 @@ export function App(): React.JSX.Element {
       for (const group of snapshot.groups) {
         const existing = next.groups.find((candidate) => candidate.groupId === group.groupId);
         if (!existing || existing.surfaceIds.length !== group.surfaceIds.length) continue;
+        // Dockview may finish a layout callback after main has moved/replaced a
+        // page. Equal counts do not make that older membership a valid reorder.
+        // Keep canonical membership; a stale presentation must not throw from
+        // React's state updater and unmount the entire Papers window.
+        if (new Set(group.surfaceIds).size !== group.surfaceIds.length
+          || group.surfaceIds.some((surface) => !existing.surfaceIds.includes(surface))) continue;
         if (existing.surfaceIds.every((surface, index) => surface === group.surfaceIds[index])) continue;
         next = reorderWorkspaceGroup(next, group.groupId, group.surfaceIds);
       }

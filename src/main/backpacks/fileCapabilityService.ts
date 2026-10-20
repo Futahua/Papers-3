@@ -1235,7 +1235,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'program-window-move': {
             if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE' };
-            deps.programWindows.move(context.nativePreviewHost.ownerKey, boundedString(params.template, 'template', 32), chromePaneRect(params.rect));
+            await deps.programWindows.move(context.nativePreviewHost.ownerKey, boundedString(params.template, 'template', 32), chromePaneRect(params.rect));
             return { ok: true };
           }
           case 'program-window-visible': {
