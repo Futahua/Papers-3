@@ -104,8 +104,9 @@ export function createProgramWindowService(input: { bridge: ChromePaneBridge | n
     if (!executable || !fs.existsSync(executable)) throw new Error(`${definition.label} is not installed on this computer.`);
     const previous = known.get(definition.id);
     const running = previous && previous.executable === executable && alive(previous.pid) ? previous : undefined;
-    // Showing the same target again needs no link: the program is already there.
-    if (running?.target === target) return running;
+    // The link is sent on every open, so opening a blob always shows its target even if the
+    // person moved elsewhere in the program since (a running program takes it over its own
+    // single-instance handoff, without a new window).
     const argument = definition.launch.split('{target}').join(encodeURIComponent(target));
     // A running program receives the link through its own single-instance handoff;
     // otherwise this starts it. Either way it opens the target.
