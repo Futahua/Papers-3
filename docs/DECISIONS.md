@@ -296,3 +296,25 @@ files can use the existing cached LibreOffice PDF conversion. Navigation fences
 discard stale results and release their resources. A failed handler does not leave
 the pane at a permanent hosting error or implicitly open an editor. The creator's
 EXCHANGE.xlsx converted successfully without changing its source hash.
+
+## Creator-directed — 2026-10-20: a blob template's program window lives inside the blob
+
+The creator will add many blob templates and wants "whatever program's window I created
+to live inside that blob", switching between a blob's templates (tabs) without leaving
+it. AppFlowy is the first: on desktop the native AppFlowy app (the Papers fork) is docked
+over the blob pane's AppFlowy tab; the phone keeps the web app.
+
+Decision: a **program-window template** is a Papers capability, not an AppFlowy special
+case. `programWindowService.ts` owns the template list (built-in, plus the creator's
+`PapersData/program-templates.json`), launches the program with its target (a link or
+argument checked against the template's pattern; pages never name executables), finds
+its window and docks it. Docking reuses the chrome-pane host's window follower in its own
+isolated host per page and template (`program~<template>~<page owner>`), so it follows the
+page's position, visibility and lifetime without claiming the page's own window tabs. Per
+D-012 the program stays its own top-level window. One window per template: docking it into
+another page, or a blob taking a window that is a pane tab, releases it from there first.
+Hidden blob tabs minimize the window and keep it running, so switching back is instant;
+leaving the page releases it to the desktop.
+
+Page operations: `program-window-templates`, `program-window-open {template, target,
+rect}`, `program-window-move`, `program-window-visible`, `program-window-close`.

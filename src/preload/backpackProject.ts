@@ -226,6 +226,8 @@ const POSITIONED_PREVIEW_OPERATIONS = new Set([
   'pane-layout-mount',
   'pane-layout-viewport',
   'pane-window-attach',
+  'program-window-open',
+  'program-window-move',
   'pane-window-tabs',
   'chrome-pane-open',
   'chrome-pane-move',

@@ -18,6 +18,7 @@ import type { WebBrowserHostBridge } from './webBrowserHostBridge';
 import type { PowerPointPreviewBridge } from './powerPointPreviewBridge';
 import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
 import type { LibreOfficeEditorBridge } from './libreOfficeEditorBridge';
+import type { ProgramWindowService } from './programWindowService';
 import type { ChromePaneBridge } from './chromePaneBridge';
 import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 import { capabilityForOperation, type createCapabilityRuntimeService } from './capabilityRuntimeService';
@@ -80,6 +81,7 @@ export interface FileCapabilityDeps {
   htmlPreview: HtmlPreviewHostBridge | null;
   webBrowser: WebBrowserHostBridge | null;
   chromePane?: ChromePaneBridge | null;
+  programWindows?: ProgramWindowService | null;
   resolvePaneWindow?: (bindingId: string) => Promise<{ handle: number; pid: number } | null>;
   powerPointPreview: PowerPointPreviewBridge | null;
   windowsPreview: WindowsPreviewHandlerBridge | null;
@@ -1222,6 +1224,28 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'chrome-pane-visible': {
             if (context.nativePreviewHost) deps.chromePane?.setPaneVisible(context.nativePreviewHost.ownerKey, params.visible === true);
+            return { ok: true };
+          }
+          case 'program-window-templates': {
+            return { ok: true, templates: deps.programWindows?.templates() ?? [] };
+          }
+          case 'program-window-open': {
+            if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE', message: 'Program windows are unavailable here.' };
+            return await deps.programWindows.open(context.nativePreviewHost, boundedString(params.template, 'template', 32), boundedString(params.target, 'target', 512), chromePaneRect(params.rect));
+          }
+          case 'program-window-move': {
+            if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE' };
+            deps.programWindows.move(context.nativePreviewHost.ownerKey, boundedString(params.template, 'template', 32), chromePaneRect(params.rect));
+            return { ok: true };
+          }
+          case 'program-window-visible': {
+            if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE' };
+            deps.programWindows.setVisible(context.nativePreviewHost.ownerKey, boundedString(params.template, 'template', 32), params.visible === true);
+            return { ok: true };
+          }
+          case 'program-window-close': {
+            if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE' };
+            await deps.programWindows.close(context.nativePreviewHost.ownerKey, boundedString(params.template, 'template', 32));
             return { ok: true };
           }
           case 'browser-open': {

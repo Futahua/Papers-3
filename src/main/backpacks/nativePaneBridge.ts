@@ -37,6 +37,8 @@ export interface NativePaneBridge {
   move(owner: string, rect: PaneRect): Promise<PaneReply>;
   snapshot(owner: string): NativePaneSnapshot | undefined;
   ownership(instanceId: string, callerOwner?: string): PaneWindowOwnership | undefined;
+  /** Detach a native window from every pane tab that holds it, so another host can take it. Returns how many tabs released it. */
+  releaseWindow(handle: number): Promise<number>;
   reveal(owner: string, transferId: string): Promise<PaneReply>;
   transfer(owner: string, transferId: string, groupId: string, side?: string): Promise<PaneReply>;
   transferCheck(owner:string,groupId:string,side:string):Promise<PaneReply>;
@@ -303,6 +305,14 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
           label: samePage ? 'another group' : input.ownerLabel?.(scope.context.ownerKey) ?? 'another Papers page' };
       }
       return undefined;
+    },
+    async releaseWindow(handle) {
+      let released = 0;
+      for (const scope of [...owners.values()]) for (const group of scope.snapshot?.groups ?? []) for (const tab of group.tabs) {
+        if (tab.handle !== handle) continue;
+        const reply = await queued(scope, 'detach', { tabId: tab.id }); if (reply.ok) released++;
+      }
+      return released;
     },
     async reveal(owner, id) {
       if (!owners.has(owner)) return unavailable();

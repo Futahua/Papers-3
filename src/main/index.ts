@@ -31,6 +31,7 @@ import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
 import { createHtmlPreviewHostBridge } from './backpacks/htmlPreviewHostBridge';
 import {createPaneBackpackPages,type PanePage} from './backpacks/paneBackpackPages';
 import { createChromePaneBridge } from './backpacks/chromePaneBridge';
+import { createProgramWindowService } from './backpacks/programWindowService';
 import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
@@ -792,6 +793,7 @@ async function bootstrap(): Promise<void> {
     },
   });
   app.once('will-quit', () => chromePane?.dispose());
+  const programWindows = createProgramWindowService({ bridge: chromePane, dataDirectory: paths.root });
   const webBrowser = createWebBrowserHostBridge({
     nativeDrag: nativeFileDrag,
     resolveWindow: (ownerKey) => {
@@ -946,6 +948,7 @@ async function bootstrap(): Promise<void> {
     htmlPreview,
     webBrowser,
     chromePane,
+    programWindows,
     resolvePaneWindow: async bindingId => {
       const result = await windowCapabilityService.observeCapability({ version: 1, bindingId }, { seedFrame: false });
       const observed = result.observation;
