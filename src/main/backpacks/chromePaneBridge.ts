@@ -199,6 +199,8 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
       if (live && docked.get(key) === handle) { live.rect = bounds; void rect(live); visibility(key); return { ok: true }; }
       const reply = await this.attachWindow!({ ...context, ownerKey: key, paneGroup: 'program:' + template }, handle, pid, bounds);
       if (reply.ok) { docked.set(key, handle); visibility(key); }
+      // A failed dock must not leave its helper running without a window.
+      else { if (!docked.size) programs.delete(context.ownerKey); await this.closeOwner(key); }
       return reply;
     },
     programMove(owner, template, bounds) { this.move(programKey(owner, template), bounds); },
