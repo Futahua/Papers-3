@@ -23,6 +23,8 @@ import type { ChromePaneBridge } from './chromePaneBridge';
 import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 import { capabilityForOperation, type createCapabilityRuntimeService } from './capabilityRuntimeService';
 import type { RemotePaths } from './remoteFilePaths';
+import type { FindFileLockers } from './fileLockerBridge';
+import { recycleTargets } from './fileRecycle';
 
 const MAX_PATH_BYTES = 32_768;
 const MAX_SEARCH_BYTES = 2_048;
@@ -69,6 +71,10 @@ export interface FileCapabilityDeps {
   panePages?:{check:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>;attach:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>};
   closeInlineDevice?: (owner:string)=>Promise<void>;
   trashPath?: (target: string) => Promise<void>;
+  /** Restart Manager lookup naming the processes that hold a file open; read-only. */
+  findFileLockers?: FindFileLockers | null;
+  /** Test seam for the short per-item retry before a recycle failure is reported. */
+  recycleRetryDelaysMs?: readonly number[];
   runtimeControl?: ReturnType<typeof createCapabilityRuntimeService>;
   everythingSearch: EverythingSearchBridge | null;
   previewResources: FilePreviewResourceRegistry;
@@ -796,8 +802,12 @@ async function operationViaOpus(
 
   const targets = pathList(params.paths);
   if (deps.trashPath) {
-    for (const target of targets) await deps.trashPath(target);
-    return { ok: true, provider: 'windows-recycle-bin', operation, recycle: true };
+    // Per item, like Explorer: partial success is reported and locked files name their holder.
+    return await recycleTargets(targets, {
+      trash: deps.trashPath,
+      findLockers: deps.findFileLockers ?? null,
+      ...(deps.recycleRetryDelaysMs ? { retryDelaysMs: deps.recycleRetryDelaysMs } : {}),
+    });
   }
   if (!deps.dopusrtPath) return { ok: false, code: 'DOPUS_UNAVAILABLE', message: 'Directory Opus is unavailable.' };
   await runOpus(deps.dopusrtPath, ['Delete', ...targets, 'RECYCLE', 'QUIET']);

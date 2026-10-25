@@ -35,6 +35,7 @@ import { createProgramWindowService } from './backpacks/programWindowService';
 import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
+import { createFileLockerBridge, resolveFileLockerSourcePath } from './backpacks/fileLockerBridge';
 import { createCalibrePreviewBridge } from './backpacks/calibrePreviewBridge';
 import { createAutoCadPreviewBridge } from './backpacks/autoCadPreviewBridge';
 import { createMlightCadPreviewBridge } from './backpacks/mlightCadPreviewBridge';
@@ -934,6 +935,10 @@ async function bootstrap(): Promise<void> {
     }},
     closeInlineDevice:async owner=>{const colon=owner.indexOf(':'),windowId=Number(owner.slice(0,colon)),surfaceId=owner.slice(colon+1),topology=currentWorkspaceTopology(windowId);if(!topology?.surfaces.find(surface=>surface.surfaceId===surfaceId)?.inlineParentKey)throw Error('This page is not an inline device view.');await facade.closeWorkspaceSurfaceFromControl(windowId,surfaceId,topology);},
     trashPath: target => shell.trashItem(target),
+    findFileLockers: createFileLockerBridge({
+      cacheDirectory: fileCapabilityCacheDirectory,
+      sourcePath: resolveFileLockerSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
+    }),
     runtimeControl: capabilityRuntimes,
     cacheDirectory: fileCapabilityCacheDirectory,
     everythingSearch,
