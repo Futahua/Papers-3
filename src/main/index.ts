@@ -18,6 +18,7 @@ import { createChromePaneBridge } from './backpacks/chromePaneBridge';
 import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
+import { createFileLockerBridge, resolveFileLockerSourcePath } from './backpacks/fileLockerBridge';
 import { createCalibrePreviewBridge } from './backpacks/calibrePreviewBridge';
 import { createAutoCadPreviewBridge } from './backpacks/autoCadPreviewBridge';
 import { createMlightCadPreviewBridge } from './backpacks/mlightCadPreviewBridge';
@@ -791,6 +792,10 @@ async function bootstrap(): Promise<void> {
       const result=await panePages!.attach(...args);if(!result.ok&&source){const wc=papersWindows.get(source.id)?.owned.hostView.webContents;if(wc&&!wc.isDestroyed())wc.send('host:event:move-rejected',{surfaceId:source.page!.surfaceId});}return result;
     }},
     trashPath: target => shell.trashItem(target),
+    findFileLockers: createFileLockerBridge({
+      cacheDirectory: fileCapabilityCacheDirectory,
+      sourcePath: resolveFileLockerSourcePath({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, packaged: app.isPackaged }),
+    }),
     runtimeControl: capabilityRuntimes,
     cacheDirectory: fileCapabilityCacheDirectory,
     everythingSearch,

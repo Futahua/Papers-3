@@ -44,6 +44,7 @@ function service(
   mlightCadPreview: MlightCadPreviewBridge | null = null,
   chromePane: ChromePaneBridge | null = null,
   trashPath?: (target: string) => Promise<void>,
+  extra: Partial<Parameters<typeof createFileCapabilityService>[0]> = {},
 ) {
   const previewResources = createFilePreviewResourceRegistry();
   const inner = createFileCapabilityService({
@@ -66,6 +67,7 @@ function service(
     openPath: vi.fn(async () => ''),
     revealPath: vi.fn(),
     fileIcon,
+    ...extra,
   });
   return {
     call: (request: unknown) => inner.call(request, context as typeof CONTEXT),
@@ -83,14 +85,74 @@ describe('file capability service', () => {
     const instance = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,trash);
     let completed = false;
     const pending = instance.call({operation:'delete',params:{paths:[target]}}).then(result => { completed=true;return result; });
-    await Promise.resolve();
+    // The item's presence is checked first, so the shell call starts after one filesystem turn.
+    await vi.waitFor(() => expect(trash).toHaveBeenCalledWith(target));
     expect(completed).toBe(false);
-    expect(trash).toHaveBeenCalledWith(target);
     finish();
     expect(await pending).toMatchObject({ok:true,provider:'windows-recycle-bin',recycle:true});
-    const rejected = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,async()=>{throw new Error('File is in use');});
-    expect(await rejected.call({operation:'delete',params:{paths:[target]}})).toMatchObject({ok:false,message:'File is in use'});
+    const rejected = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,async()=>{throw new Error('File is in use');},{recycleRetryDelaysMs:[]});
+    expect(await rejected.call({operation:'delete',params:{paths:[target]}})).toMatchObject({ok:false,code:'DELETE_FAILED',message:'keep-until-recycled.txt could not be recycled: File is in use',failed:[target],recycled:[]});
     expect(await fs.readFile(target,'utf8')).toBe('creator data');
+  });
+
+  it('recycles a batch per item, reports partial success and names the process holding a locked file', async () => {
+    const free = path.join(root, 'free.txt'), held = path.join(root, 'held.docx'), gone = path.join(root, 'gone.txt');
+    await fs.writeFile(free, 'a'); await fs.writeFile(held, 'b');
+    const trash = vi.fn(async (target: string) => {
+      if (target === held) throw new Error('Failed to move item to trash');
+      await fs.rm(target);
+    });
+    const findFileLockers = vi.fn(async () => [{ pid: 4312, name: 'Microsoft Word', processName: 'WINWORD.EXE', imagePath: 'C:\\Office\\WINWORD.EXE', applicationType: 1 }]);
+    const instance = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,trash,{findFileLockers,recycleRetryDelaysMs:[1,1]});
+    const result = await instance.call({ operation: 'delete', params: { paths: [free, held, gone] } });
+    expect(result).toMatchObject({
+      ok: false, code: 'DELETE_PARTIAL', recycle: true, recycled: [free], failed: [held, gone],
+      message: 'Recycled 1 of 3. held.docx is open in Microsoft Word (WINWORD.EXE, pid 4312). gone.txt is no longer there.',
+    });
+    expect(result.results).toEqual([
+      { path: free, name: 'free.txt', ok: true },
+      { path: held, name: 'held.docx', ok: false, code: 'FILE_LOCKED', reason: 'Open in Microsoft Word (WINWORD.EXE, pid 4312)', lockers: [expect.objectContaining({ pid: 4312 })] },
+      { path: gone, name: 'gone.txt', ok: false, code: 'NOT_FOUND', reason: 'It was moved or deleted already.' },
+    ]);
+    // Three attempts for the locked file (first try plus two short retries); the missing file is never handed to the shell.
+    expect(trash.mock.calls.map(([target]) => target)).toEqual([free, held, held, held]);
+    expect(findFileLockers).toHaveBeenCalledTimes(1);
+    expect(findFileLockers).toHaveBeenCalledWith(held);
+    expect(await fs.readFile(held, 'utf8')).toBe('b');
+  });
+
+  it('succeeds after a transient lock clears and reports FILE_LOCKED when every item stays held', async () => {
+    const target = path.join(root, 'indexing.txt');
+    await fs.writeFile(target, 'x');
+    let failures = 1;
+    const trash = vi.fn(async (item: string) => { if (failures-- > 0) throw new Error('busy'); await fs.rm(item); });
+    const findFileLockers = vi.fn(async () => []);
+    const transient = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,trash,{findFileLockers,recycleRetryDelaysMs:[1]});
+    expect(await transient.call({ operation: 'delete', params: { paths: [target] } })).toMatchObject({ ok: true, recycled: [target], failed: [] });
+    expect(findFileLockers).not.toHaveBeenCalled();
+
+    await fs.writeFile(target, 'y');
+    const locked = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,async()=>{throw new Error('busy');},{
+      recycleRetryDelaysMs:[],
+      findFileLockers: async () => [{ pid: 7, name: 'notepad', processName: 'notepad.exe', imagePath: '', applicationType: 1 },
+        { pid: 9, name: 'Windows Explorer', processName: 'explorer.exe', imagePath: '', applicationType: 4 }],
+    });
+    expect(await locked.call({ operation: 'delete', params: { paths: [target] } })).toMatchObject({
+      ok: false, code: 'FILE_LOCKED', message: 'indexing.txt is open in notepad (pid 7), Windows Explorer (explorer.exe, pid 9).',
+    });
+  });
+
+  it('treats a shell error after the item already left as success and survives a failing locker lookup', async () => {
+    const vanished = path.join(root, 'vanished.txt'), stuck = path.join(root, 'stuck.txt');
+    await fs.writeFile(vanished, 'v'); await fs.writeFile(stuck, 's');
+    const trash = async (item: string) => { if (item === vanished) await fs.rm(item); throw new Error('late shell error'); };
+    const instance = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,trash,{
+      recycleRetryDelaysMs:[], findFileLockers: async () => { throw new Error('helper missing'); },
+    });
+    expect(await instance.call({ operation: 'delete', params: { paths: [vanished, stuck] } })).toMatchObject({
+      ok: false, code: 'DELETE_PARTIAL', recycled: [vanished], failed: [stuck],
+      message: 'Recycled 1 of 2. stuck.txt could not be recycled: late shell error',
+    });
   });
 
   it('routes Chrome through the calling pane and refuses malformed geometry before touching Chrome', async () => {
