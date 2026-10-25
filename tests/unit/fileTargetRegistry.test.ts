@@ -39,3 +39,13 @@ it.skipIf(process.platform!=='win32')('real Windows recycle and restore preserve
  const recycle=async(p:string)=>{const quote="'"+p.replaceAll("'","''")+"'";execFileSync('powershell.exe',['-NoProfile','-Command',`Add-Type -AssemblyName Microsoft.VisualBasic;[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(${quote},[Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin)`],{windowsHide:true,timeout:15000});};
  const registry=createFileTargetRegistry({file:path.join(dir,'registry.json'),observe,recycle,restore:windowsRecycleRestore(helper)});try{const ref=await registry.track(file),deleted=await registry.remove!(ref.targetId,ref.revision,'12345678-1234-4234-8234-123456789abc');expect(deleted.status).toBe('deleted');const result=await registry.restore!(ref.targetId,deleted.revision,'12345678-1234-4234-8234-123456789abd');expect(result.status).toBe('present');expect(await fs.readFile(file,'utf8')).toBe('recover these exact bytes');}finally{observe.close();await wait(150);await fs.rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
 },30000);
+
+it.skipIf(process.platform!=='win32')('real Windows IDs enroll and follow non-ASCII names (Vietnamese, U+202F) moved into a dated folder',async()=>{
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'papers-target-unicode-'));const source=path.resolve('resources/native/file-target-identity.cs');const observe=windowsTargetObserver(path.join(dir,'helper'),source);
+ try{const root=path.join(dir,'sort');await fs.mkdir(root);const names=['B5 TRẦN VÀ SÀN-20261005_180141-Meeting Recording.mp4','B7 THANG-20261012_61314 pm-Meeting Recording.mp4'];
+ const owner=createFileTargetRegistry({file:path.join(dir,'targets.json'),observe});const refs=[];
+ for(const name of names){await fs.writeFile(path.join(root,name),name);const ref=await owner.track(path.join(root,name));expect(ref.status).toBe('present');expect(ref.path).toBe(path.join(root,name));refs.push(ref);}
+ const dated=path.join(root,'Oct 24 2026');await fs.mkdir(dated);for(const name of names)await fs.rename(path.join(root,name),path.join(dated,name));
+ for(const [n,ref] of refs.entries()){const found=await owner.resolve(ref.targetId);expect(found.status).toBe('present');expect(found.path).toBe(path.join(dated,names[n]!));}
+ }finally{observe.close();await wait(150);expect(path.basename(dir).startsWith('papers-target-unicode-')).toBe(true);await fs.rm(dir,{recursive:true,force:true,maxRetries:10,retryDelay:100});}
+},20000);
