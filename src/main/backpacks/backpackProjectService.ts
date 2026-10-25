@@ -4,6 +4,7 @@
  * Papers owns only a machine-local binding, static-project loading and action
  * mediation. Project HTML, labels, prompts and behavior stay outside app.asar.
  */
+import { FILE_PREVIEW_SCHEME } from './filePreviewResources';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -527,6 +528,8 @@ async function containedPublicPath(root: string, requested: string): Promise<str
 }
 
 export class BackpackProjectService {
+  private fileTargetResolver?: (id:string)=>Promise<{status:string;path?:string}>;
+  setFileTargetResolver(resolve:(id:string)=>Promise<{status:string;path?:string}>) { this.fileTargetResolver=resolve; }
   private readonly stateQueues = new Map<string, Promise<unknown>>();
   private readonly nativeSourceGrants = new Map<string, NativeSourceGrant>();
 
@@ -616,6 +619,15 @@ export class BackpackProjectService {
     const manifest = await this.manifest(backpackId);
     return manifest?.root ?? null;
   }
+  /** An As you Go icon file (public/icons/<sha256>.<ext>) for a paired device's view of this workspace. */
+  async sharedIcon(backpackId:string,name:string):Promise<{bytes:Buffer;type:string}>{
+    const match=/^[a-f0-9]{64}\.(png|webp|jpe?g|gif|svg|ico)$/.exec(name);
+    if(!match)throw new Error('Invalid icon name.');
+    const manifest=await this.manifest(backpackId);if(!manifest)throw new Error('Backpack project is not bound on this machine.');
+    const types:Record<string,string>={png:'image/png',webp:'image/webp',jpg:'image/jpeg',jpeg:'image/jpeg',gif:'image/gif',svg:'image/svg+xml',ico:'image/x-icon'};
+    return {bytes:await fs.readFile(path.join(manifest.root,'public','icons',name)),type:types[match[1]!]!};
+  }
+  async sharedDataKind(backpackId:string):Promise<'proxima'|'as-you-go'|null>{const manifest=await this.manifest(backpackId),declaration=manifest?.['remoteData'];return isRecord(declaration)&&declaration['version']===1&&(declaration['kind']==='proxima'||declaration['kind']==='as-you-go')?declaration['kind']:null;}
 
   async isProtectedRoot(backpackId: string): Promise<boolean> {
     const manifest = await this.manifest(backpackId);
@@ -757,11 +769,50 @@ export class BackpackProjectService {
   }
 
   /** Origins that a host project's CSP may embed. */
+  async workspaceTemplate(hostBackpackId: string): Promise<OpenBackpackProject | null> {
+    const host = await this.manifest(hostBackpackId);
+    const target = typeof host?.workspaceHost === 'string' ? host.workspaceHost : null;
+    if (!target || target === hostBackpackId) return null;
+    return this.open(target);
+  }
+  async background(backpackId: string): Promise<OpenBackpackProject | null> {
+    const manifest = await this.manifest(backpackId);
+    const entry = manifest?.['backgroundEntry'];
+    if (!manifest || typeof entry !== 'string') return null;
+    if (!entry.startsWith('public/')) throw Error('The project background entry is not public.');
+    await containedExistingPath(manifest.root, entry);
+    const url = new URL(`${BACKPACK_PROJECT_SCHEME}://${backpackId}/`);
+    url.pathname = `${openNamespace}/${randomUUID()}/${entry}`;
+    return { url: url.toString() };
+  }
+
   async embeddedProjectOrigins(backpackId: string): Promise<string[]> {
     const manifest = await this.manifest(backpackId);
     return typeof manifest?.workspaceHost === 'string'
       ? [`${BACKPACK_PROJECT_SCHEME}://${manifest.workspaceHost}`]
       : [];
+  }
+
+  /**
+   * Preview origins of the Backpacks that embed this one as their workspace (Proxima embeds As you Go in
+   * its blob panes). Such a host asks for previews on the embedded page's behalf, so the preview address
+   * is the host's; the embedded page may show exactly those hosts' previews and no others.
+   */
+  async embeddingPreviewOrigins(backpackId: string): Promise<string[]> {
+    let projects: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(await fs.readFile(this.bindingsFile, 'utf8')) as unknown;
+      projects = isRecord(parsed) && isRecord(parsed['projects']) ? parsed['projects'] : {};
+    } catch {
+      return [];
+    }
+    const origins: string[] = [];
+    for (const hostId of Object.keys(projects)) {
+      if (hostId === backpackId || !backpackIdPattern.test(hostId)) continue;
+      const manifest = await this.manifest(hostId).catch(() => null);
+      if (manifest?.workspaceHost === backpackId) origins.push(`${FILE_PREVIEW_SCHEME}://${hostId}`);
+    }
+    return origins;
   }
 
   async resolveAsset(backpackId: string, requestPath: string): Promise<string> {
@@ -1008,7 +1059,7 @@ export class BackpackProjectService {
     }
   }
 
-  private async shortcutTarget(backpackId: string, shortcutId: string): Promise<string> {
+  private async shortcutTarget(backpackId: string, shortcutId: string, verifyIdentity=false): Promise<string> {
     if (!actionIdPattern.test(shortcutId)) {
       throw new Error('Backpack project shortcut was not found.');
     }
@@ -1017,6 +1068,12 @@ export class BackpackProjectService {
     const candidate = isRecord(shortcut) ? shortcut : null;
     if (!candidate || typeof candidate['target'] !== 'string' || !path.isAbsolute(candidate['target'])) {
       throw new Error('Backpack project shortcut was not found.');
+    }
+    if(verifyIdentity&&isRecord(candidate['fileTarget'])&&typeof candidate['fileTarget']['id']==='string'){
+      if(!this.fileTargetResolver)throw Error('File identity verification is unavailable.');
+      const current=await this.fileTargetResolver(candidate['fileTarget']['id']);
+      if(current.status!=='present'||!current.path||!path.isAbsolute(current.path))throw Error('This shortcut’s original file is unavailable or replaced.');
+      return path.resolve(current.path);
     }
     return path.resolve(candidate['target']);
   }
@@ -1133,7 +1190,7 @@ export class BackpackProjectService {
   }
 
   async launchShortcut(backpackId: string, shortcutId: string): Promise<void> {
-    const target = await this.shortcutTarget(backpackId, shortcutId);
+    const target = await this.shortcutTarget(backpackId, shortcutId, true);
     try {
       await fs.access(target);
     } catch {

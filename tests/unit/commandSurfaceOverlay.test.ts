@@ -74,6 +74,14 @@ function harness(overrides: Partial<CommandSurfaceOverlayDependencies> = {}) {
 }
 
 describe('commandSurfaceOverlay opening', () => {
+  it('does not inherit remote Files presentation from the active pane', async()=>{
+    const h=harness({resolveEntryUrl:()=>({entryUrl:'papers-backpack://project-a/public/index.html?theme=dark&papers-device=lapdog&papers-files=1&papers-scope=folder&papers-surface-key=remote#selection',ownerWindowId:7})});
+    const overlay=createCommandSurfaceOverlay(h.deps);await overlay.warm();
+    const loaded=new URL(h.created.calls.find(c=>c.startsWith('loadURL:'))!.slice(8));
+    expect(loaded.host).toBe('project-a');expect(loaded.searchParams.get('theme')).toBe('dark');
+    expect([...loaded.searchParams.keys()].filter(key=>key.startsWith('papers-'))).toEqual([COMMAND_SURFACE_MARKER]);
+    expect(loaded.hash).toBe('');
+  });
   it('can warm the renderer without showing it or taking focus', async () => {
     const h = harness();
     const overlay = createCommandSurfaceOverlay(h.deps);

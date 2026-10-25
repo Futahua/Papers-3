@@ -1,0 +1,134 @@
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { AtomicJsonStore } from '../persistence/atomicStore';
+import { RemoteDeviceStore } from './remoteDeviceStore';
+import { createRemoteFileGateway, type RemoteBackpackShare } from './remoteFileGateway';
+import { randomUUID } from 'node:crypto';
+import type { RemoteFileMutations } from './remoteFileMutations';
+import type { RemoteFileEditOwner } from './remoteFileEditOwner';
+import { logDevice, sameAccountNode } from './tailnetIdentity';
+import type { RemoteFileShare } from './remoteFileResources';
+import { RemoteFileResources } from './remoteFileResources';
+
+export class RemoteDeviceService {
+  fileTargets: import('./fileTargetRegistry').TargetRegistry|null=null;
+  private devices: RemoteDeviceStore | null = null;
+  private gateway: Awaited<ReturnType<typeof createRemoteFileGateway>> | null = null;
+  private address: string | null = null;
+  private failure: string | null = null;
+  mutations: RemoteFileMutations | null = null;
+  edits: RemoteFileEditOwner | null = null;
+  readBackpack: ((share:RemoteBackpackShare,control?:boolean)=>Promise<unknown>) | null = null;
+  commandBackpack: ((share:RemoteBackpackShare,command:Record<string,unknown>)=>Promise<unknown>) | null = null;
+  peerProxima: ((deviceId:string,snapshot:Record<string,unknown>)=>Promise<void>) | null = null;
+  peerConnect: ((peerAddress:string,grantDeviceId:string,invitation:unknown)=>Promise<void>) | null = null;
+  replaceBackpack: ((share:RemoteBackpackShare,projection:Record<string,unknown>)=>Promise<unknown>) | null = null;
+  peerReplacement: { take:(deviceId:string)=>Promise<unknown>; clear:(deviceId:string)=>Promise<void> } | null = null;
+  workspaces: Parameters<typeof createRemoteFileGateway>[0]['workspaces'] | null = null;
+  thumbnail: ((target:string)=>Promise<Record<string,unknown>>) | null = null;
+  customIcons: import('./customIconStore').CustomIconStore | null = null;
+  preview: ((target:string)=>Promise<Record<string,unknown>>) | null = null;
+  search: ((query:string,limit:number)=>Promise<{results:{path:string;name:string;kind:'file'|'folder';size:number|null;modifiedAt:number|null}[]}>) | null = null;
+  inbox:Parameters<typeof createRemoteFileGateway>[0]['inbox']|null=null;
+  /** What a device on the creator's own Tailscale account receives when it joins. */
+  defaultGrant: (() => Promise<{ shares: RemoteFileShare[]; canWrite: boolean; backpacks: RemoteBackpackShare[] }>) | null = null;
+  private readonly configuration: AtomicJsonStore;
+  constructor(private readonly directory: string,private readonly port=48240) {
+    this.configuration = new AtomicJsonStore(path.join(directory, 'connection.json'), { recoveryDir: path.join(directory, 'recovery') });
+  }
+  async initialize(): Promise<void> {
+    try {
+      this.devices = await RemoteDeviceStore.open(this.directory, os.hostname());
+      // Always listen when Tailscale is up; access is still limited to the creator's own account.
+      await this.start().then(() => logDevice('owner-listening', { address: this.address }), error => logDevice('owner-not-listening', { reason: error instanceof Error ? error.message : String(error) }));
+    } catch (error) { this.failure = error instanceof Error ? error.message : 'Device connection is unavailable.'; }
+  }
+  snapshot() {
+    const snapshot = this.devices?.snapshot();
+    return { owner: snapshot?.owner ?? null, address: this.address, error: this.failure, devices: snapshot?.devices.map(device => ({ id: device.deviceId, name: device.name, pairedAt: device.pairedAt, folders: device.shares.map(share => share.name),backpacks:(device.backpacks??[]).map(share=>share.name) })) ?? [] };
+  }
+  async editingControl(target: string, request: Record<string, unknown>) {
+    if (!this.devices || !this.edits || !this.defaultGrant) throw Error('File editing is unavailable');
+    const state = this.devices.snapshot(), grant = await this.defaultGrant();
+    const catalog = await RemoteFileResources.create(grant.shares, 'local-owner-editing');
+    const entry = await catalog.ownerEntry(target);
+    if (entry.kind !== 'file') throw Error('Choose a file');
+    const editors = state.devices.filter(item => item.canWrite).map(item => ({ id: item.deviceId, name: item.name }));
+    const status = await this.edits.assignments('local-owner', catalog);
+    const assignments = status.filter(item => item.entry.id === entry.id);
+    if (request.action === 'assign') {
+      const editor = String(request.editorDeviceId); if (!editors.some(item => item.id === editor)) throw Error('Choose an authorized device');
+      await this.edits.assign('local-owner', catalog, entry.id, entry.version, editor);
+    }
+    if (request.action === 'stop') {
+      const id = String(request.assignmentId); if (!assignments.some(item => item.id === id)) throw Error('Assignment does not belong to this file');
+      await this.edits.stopAssignment('local-owner', catalog, id);
+    }
+    return { ok: true, editors, assignments };
+  }
+  private async start(): Promise<void> {
+    if (this.gateway) return;
+    if (!this.devices) throw new Error('Device identity is unavailable.');
+    const address = Object.entries(os.networkInterfaces()).filter(([name]) => /tailscale/i.test(name)).flatMap(([, entries]) => entries ?? []).find(entry => entry.family === 'IPv4' && !entry.internal)?.address;
+    if (!address) throw new Error('Connect Tailscale on this computer first.');
+    const devices = this.devices;
+    const snapshot = devices.snapshot();
+    const gateway = await createRemoteFileGateway({ owner: snapshot.owner, grants: snapshot.devices,
+      inbox:{get:()=>{if(!this.inbox)throw Error('Inbox settings are unavailable.');return this.inbox.get();},set:parts=>{if(!this.inbox)throw Error('Inbox settings are unavailable.');return this.inbox.set(parts);}},
+      edits: this.edits ?? undefined,
+      transfersDirectory: path.join(this.directory, 'transfers'),
+      fileTargets:{track:target=>{if(!this.fileTargets)throw Error('File tracking unavailable');return this.fileTargets.track(target);},resolve:id=>{if(!this.fileTargets)throw Error('File tracking unavailable');return this.fileTargets.resolve(id);},remove:(id,revision,commandId)=>{if(!this.fileTargets?.remove)throw Error('File tracking unavailable');return this.fileTargets.remove(id,revision,commandId);},restore:(id,revision,commandId)=>{if(!this.fileTargets?.restore)throw Error('File restoration unavailable');return this.fileTargets.restore(id,revision,commandId);},relocate:async()=>{throw Error('Use checked owner mutations');},deleted:async()=>{throw Error('Use checked owner mutations');}},
+      workspaces:{list:()=>this.workspaces?.list()??Promise.resolve([]),load:projectId=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.load(projectId);},save:(projectId,raw,revision)=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.save(projectId,raw,revision);},icon:(projectId,name)=>{if(!this.workspaces)throw Error('Workspaces are unavailable.');return this.workspaces.icon(projectId,name);}},
+      thumbnail:target=>this.thumbnail?.(target)??Promise.resolve({kind:'none'}),
+      customIcons:{inFolder:folder=>this.customIcons?this.customIcons.inFolder(folder):Promise.resolve({}),set:(paths,icon)=>{if(!this.customIcons)throw Error('Custom pictures are unavailable.');return this.customIcons.set(paths,icon);}},
+      preview:target=>{if(!this.preview)throw Error('Previews are unavailable.');return this.preview(target);},
+      search:(query,limit)=>{if(!this.search)throw Error('Search is unavailable on this computer.');return this.search(query,limit);},
+      backpackSnapshot:(share,control)=>{if(!this.readBackpack)throw Error('Backpack execution owner is unavailable.');return this.readBackpack(share,control);},
+      backpackCommand:(share,command)=>{if(!this.commandBackpack)throw Error('Backpack execution owner is unavailable.');return this.commandBackpack(share,command);},
+      peerProxima:(deviceId,snapshot)=>{if(!this.peerProxima)throw Error('Peer Proxima storage is unavailable.');return this.peerProxima(deviceId,snapshot);},
+      peerConnect:async(peer,deviceId,invitation)=>{await sameAccountNode(peer);if(!this.peerConnect)throw Error('Phone sharing is not ready.');await this.peerConnect(peer,deviceId,invitation);},
+      backpackReplace:(share,projection)=>{if(!this.replaceBackpack)throw Error('Backpack execution owner is unavailable.');return this.replaceBackpack(share,projection);},
+      peerReplacement:{take:deviceId=>this.peerReplacement?this.peerReplacement.take(deviceId):Promise.resolve(null),clear:deviceId=>this.peerReplacement?this.peerReplacement.clear(deviceId):Promise.resolve()},
+      mutate:async(deviceId,catalog,request)=>{if(!this.mutations)throw new Error('File changes are unavailable.');return this.mutations.submit(deviceId,catalog,request);},
+      changes:deviceId=>this.mutations?.list(deviceId)??[],revokeChanges:deviceId=>this.mutations?.revoke(deviceId),
+      join: async (peer, name) => {
+      // Papers wires the grant a moment after the listener opens at startup; wait briefly rather than refuse.
+      for (let attempt = 0; !this.defaultGrant && attempt < 40; attempt++) await new Promise(resolve => setTimeout(resolve, 250));
+      if (!this.defaultGrant) throw new Error('Device sharing is not ready.');
+      const node = await sameAccountNode(peer);
+      const grant = await this.defaultGrant();
+      const joined = await devices.admit(node, name, grant.shares, grant.canWrite, grant.backpacks);
+      return { ...joined, grant: devices.snapshot().devices.find(device => device.deviceId === joined.deviceId)! };
+    },
+      pair: async (code, name) => {
+      const paired = await devices.redeem(code, name);
+      return { ...paired, grant: devices.snapshot().devices.find(device => device.deviceId === paired.deviceId)! };
+    } });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        gateway.server.once('error', reject);
+        gateway.server.listen(this.port, address, () => { gateway.server.removeListener('error', reject); resolve(); });
+      });
+      this.gateway = gateway;
+      this.address = `http://${address}:${(gateway.server.address() as {port:number}).port}`;
+      this.failure = null;
+    } catch (error) { await gateway.close().catch(() => {}); throw error; }
+  }
+  async invite(directories: string[], canWrite = false, backpacks:RemoteBackpackShare[]=[]) {
+    if (!this.devices) throw new Error(this.failure ?? 'Device identity is unavailable.');
+    await this.start();
+    const invitation = await this.devices.invite(directories.map(directory => ({ id: randomUUID(), name: path.basename(directory) || directory, directory })),canWrite,backpacks);
+    await this.configuration.save({ enabled: true });
+    return { ...invitation, address: this.address, owner: this.devices.snapshot().owner };
+  }
+  async revoke(id: string): Promise<void> {
+    await this.devices?.revoke(id);
+    this.gateway?.revoke(id);
+  }
+  async close(): Promise<void> {
+    const gateway = this.gateway;
+    this.gateway = null;
+    this.address = null;
+    await gateway?.close();
+  }
+}

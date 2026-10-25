@@ -53,10 +53,12 @@ export function registerBackpackProjectSchemePrivileges(): void {
 }
 
 /**
- * `connect-src` is the ONE relaxation, and it is deliberately narrow.
+ * Local content composition and loopback connections are deliberately narrow.
  *
  * Remote scripts/styles/forms/base remain denied. Project pages may connect
- * only to loopback services. Rich local previews may use in-memory `blob:` URLs;
+ * only to loopback services. Local frames may load the same bound project's
+ * authored assets, without granting another project or network origin access.
+ * Rich local previews may use in-memory `blob:` URLs;
  * `data:` frames and remote frame origins remain denied
  * unless an embedded Backpack origin was explicitly registered.
  *
@@ -78,9 +80,14 @@ export function registerBackpackProjectSchemePrivileges(): void {
  * service refuses, and a page cannot read a credential file. The credential and
  * the request itself travel through `localServiceBridge` in the main process.
  */
-export function contentSecurityPolicy(origin: string, frameOrigins: readonly string[] = []): string {
-  const allowedFrames = frameOrigins.length > 0 ? frameOrigins.join(' ') : "'none'";
-  const previewOrigin = `${FILE_PREVIEW_SCHEME}://${new URL(origin).hostname}`;
+export function contentSecurityPolicy(
+  origin: string,
+  frameOrigins: readonly string[] = [],
+  hostPreviewOrigins: readonly string[] = [],
+): string {
+  const allowedFrames = [origin, ...frameOrigins].join(' ');
+  // Its own previews, plus those of a Backpack that embeds it as its workspace (see embeddingPreviewOrigins).
+  const previewOrigin = [`${FILE_PREVIEW_SCHEME}://${new URL(origin).hostname}`, ...hostPreviewOrigins].join(' ');
   return [
     `default-src 'none'`,
     `script-src ${origin}`,
@@ -92,7 +99,7 @@ export function contentSecurityPolicy(origin: string, frameOrigins: readonly str
     `object-src 'none'`,
     `base-uri 'none'`,
     `form-action 'none'`,
-    `frame-src ${allowedFrames === "'none'" ? `${previewOrigin} blob:` : `${allowedFrames} ${previewOrigin} blob:`}`,
+    `frame-src ${allowedFrames} ${previewOrigin} blob:`,
   ].join('; ');
 }
 
@@ -114,6 +121,7 @@ export function installBackpackProjectProtocol(service: BackpackProjectService):
       const fileResponse = await net.fetch(pathToFileURL(file).toString());
       if (!fileResponse.ok) return denied(404, 'not found');
       const embeddedOrigins = await service.embeddedProjectOrigins(backpackId);
+      const hostPreviewOrigins = await service.embeddingPreviewOrigins(backpackId);
       return new Response(await fileResponse.arrayBuffer(), {
         status: 200,
         headers: {
@@ -121,6 +129,7 @@ export function installBackpackProjectProtocol(service: BackpackProjectService):
           'content-security-policy': contentSecurityPolicy(
             `${BACKPACK_PROJECT_SCHEME}://${backpackId}`,
             embeddedOrigins,
+            hostPreviewOrigins,
           ),
           'x-content-type-options': 'nosniff',
         },

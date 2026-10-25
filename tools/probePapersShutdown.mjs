@@ -1,0 +1,31 @@
+import { _electron } from 'playwright-core';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { connectPapersControl, readDescriptor } from './papersControlClient.mjs';
+const root=await fs.mkdtemp(path.join(os.tmpdir(),'papers-shutdown-probe-'));
+const id='bp-4c43caab-6fc6-44e9-ab87-25b291d1cc0d';
+const project=path.join(root,'project');await fs.mkdir(path.join(root,'PapersData'),{recursive:true});
+await fs.mkdir(project,{recursive:true});
+await fs.cp(path.join(process.env.PAPERS_AYG_SOURCE??'D:/Programs/CodexTemp/AYGCrossDeviceSource','public'),path.join(project,'public'),{recursive:true});
+await fs.writeFile(path.join(project,'project.json'),JSON.stringify({schemaVersion:1,backpackId:id,entry:'public/workspace-20260730b.html',launcherSurface:'command-surface'}));
+await fs.writeFile(path.join(project,'state.json'),JSON.stringify({schemaVersion:1,groups:[{id:'group-root',name:'Fixture',parentId:null}],shortcuts:[],windowLayouts:[],view:{currentGroupId:'group-root'}}));
+await fs.writeFile(path.join(root,'PapersData/backpack-projects.json'),JSON.stringify({schemaVersion:1,projects:{[id]:{root:project}}}));
+await fs.writeFile(path.join(root,'PapersData/registry.json'),JSON.stringify({schemaVersion:1,backpacks:[{id,name:'Fixture',type:'environment',createdAt:new Date().toISOString(),lastEnteredAt:null,archived:false,workspacePath:null}],lastActiveBackpackId:id}));
+const descriptor=path.join(root,'control.json');
+const app=await _electron.launch({args:[process.cwd()],env:{...process.env,PAPERS_TEST_USER_DATA:root,PAPERS_TEST_HIDDEN_WINDOWS:'1',PAPERS_ENABLE_FIXTURES:'0',PAPERS_DEV_CONTROL:'1',PAPERS_DEV_CONTROL_DESCRIPTOR:descriptor}});
+try{
+ await new Promise(resolve=>setTimeout(resolve,2500));
+ const client=await connectPapersControl(await readDescriptor(descriptor));
+ const opened=await client.call('workspace.open',{windowId:1,projectId:id});
+ if(!opened.ok)throw Error(opened.error);
+ client.close();
+ await new Promise(resolve=>setTimeout(resolve,1500));
+ console.log('Before',await app.evaluate(({BaseWindow,BrowserWindow})=>BaseWindow.getAllWindows().map(w=>({id:w.id,visible:w.isVisible(),browser:w instanceof BrowserWindow}))));
+ const closed=app.waitForEvent('close',{timeout:8000}).then(()=>true,()=>false);
+ await app.evaluate(({BaseWindow})=>{const main=BaseWindow.getAllWindows().find(w=>w.getTitle()==='Papers');if(!main)throw Error('Main missing');main.close();});
+ const exited=await closed;
+ console.log('Exited',exited);
+ if(!exited)console.log('Remaining',await app.evaluate(({BaseWindow,BrowserWindow})=>BaseWindow.getAllWindows().map(w=>({id:w.id,visible:w.isVisible(),browser:w instanceof BrowserWindow}))));
+ console.log(await fs.readFile(path.join(root,'diagnostics/shutdown.ndjson'),'utf8').catch(()=>''));
+}finally{await app.close().catch(()=>{});}

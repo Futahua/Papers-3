@@ -1,3 +1,5 @@
+import { zoomedRect } from './zoomedRect';
+import {restoredDeviceUrl} from '../shared/inlineDeviceTopology';
 
 import { randomUUID } from 'node:crypto';
 import { withProjectSurfaceKey } from './backpacks/projectSurfaceUrl';
@@ -184,6 +186,10 @@ export interface FacadeDeps {
   /** Phase 1B: both take the asking sender, so they act on THAT window's
    * project runtime instead of implicitly meaning "the one runtime". */
   showBackpackProjectSurface: (senderId: number, surfaceId: string, url: string, present?: boolean) => Promise<void>;
+  inlineDeviceName?: (deviceId:string)=>string|null;
+  attachInlineDevicePage?: (parentSurfaceId:string,surfaceId:string,groupId:string)=>Promise<{ok:boolean;error?:string}>;
+  projectSiblingDestination?: (surfaceId:string)=>{parentSurfaceId:string;groupId:string}|null;
+  flushAttachedProjectSurface?: (windowId:number,surfaceId:string)=>Promise<void>;
   hideBackpackProjectSurface: (senderId: number, surfaceId: string) => void;
   setBackpackProjectSurfaceBounds: (
     senderId: number,
@@ -263,6 +269,8 @@ export interface WorkspaceSurfaceMoveProjection {
 }
 
 export class PapersHostFacade implements HostFacade, PermissionPrompter {
+  private readonly closingInlineSurfaces = new Set<string>();
+  isClosingWorkspaceSurface(surfaceId:string):boolean{return this.closingInlineSurfaces.has(surfaceId);}
   private readonly pendingPermissionPrompts = new Map<string, (d: PermissionDecision) => void>();
   private workspaceMoveTail: Promise<void> = Promise.resolve();
   private readonly workspaceMutationLocks = new Set<number>();
@@ -832,7 +840,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   /** Project-owned request for another Papers tab. A nested authorized
    * workspace may open another tab on the scoped Backpack origin; otherwise
    * the sender may choose only its own authenticated Backpack origin. */
-  async openBackpackProjectNewSurface(senderId: number, url: string, workspaceOrigin?: string): Promise<unknown> {
+  async openBackpackProjectNewSurface(senderId: number, url: string, workspaceOrigin?: string, inlineGroupId?: string): Promise<unknown> {
     const scope = this.scopedWorkspaceForSender(senderId, workspaceOrigin);
     const projectId = scope?.backpackId ?? this.requireProjectForSender(senderId);
     const context = this.deps.surfaces.contextForSender(senderId);
@@ -841,6 +849,27 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     try { parsed = new URL(url); } catch { throw new Error('Backpack project surface URL is not valid.'); }
     if (parsed.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || parsed.host !== projectId) {
       throw new Error('This project may open only its own Papers tab.');
+    }
+    const deviceId=parsed.searchParams.get('papers-device');
+    if(inlineGroupId==='sibling'){
+      const destination=this.deps.projectSiblingDestination?.(context.surfaceId);
+      if(!destination)return this.runProjectOwnership(projectId,()=>this.openWorkspaceSurfaceFromControlUngated(context.windowId,projectId,parsed.toString()));
+      const topology=this.deps.workspaceTopology?.(context.windowId),parent=topology?.surfaces.find(surface=>surface.surfaceId===destination.parentSurfaceId);
+      if(!parent||!this.deps.attachInlineDevicePage)throw Error('The containing Papers page closed.');
+      const title=(parsed.searchParams.get('blob-title')||'Blob project').slice(0,200);
+      const opened=await this.runProjectOwnership(projectId,()=>this.openWorkspaceSurfaceFromControlUngated(context.windowId,projectId,parsed.toString(),undefined,{parentKey:parent.surfaceKey??parent.surfaceId,parentId:parent.surfaceId,groupId:destination.groupId,title}));
+      try{const attached=await this.deps.attachInlineDevicePage(parent.surfaceId,opened.surfaceId,destination.groupId);if(!attached.ok)throw Error(attached.error||'The project tab could not open.');return opened;}
+      catch(error){await this.closeLogicalProjectSurface(context.windowId,opened.surfaceId);throw error;}
+    }
+    if(inlineGroupId){
+      if(!deviceId||!/^[a-f0-9-]{36}$/.test(deviceId)||!this.deps.inlineDeviceName?.(deviceId)||!this.deps.attachInlineDevicePage)throw Error('Choose a connected device.');
+      const topology=this.deps.workspaceTopology?.(context.windowId),caller=topology?.surfaces.find(surface=>surface.surfaceId===context.surfaceId);
+      const parent=caller?.inlineParentKey?topology?.surfaces.find(surface=>(surface.surfaceKey??surface.surfaceId)===caller.inlineParentKey):caller;
+      if(!parent||parent.projectId!==projectId)throw Error('The parent page is unavailable.');
+      parsed.searchParams.set('papers-inline-device','1');
+      const opened=await this.runProjectOwnership(projectId,()=>this.openWorkspaceSurfaceFromControlUngated(context.windowId,projectId,parsed.toString(),undefined,{parentKey:parent.surfaceKey??parent.surfaceId,parentId:parent.surfaceId,deviceId,groupId:inlineGroupId,title:this.deps.inlineDeviceName!(deviceId)!}));
+      try{const attached=await this.deps.attachInlineDevicePage(parent.surfaceId,opened.surfaceId,inlineGroupId);if(!attached.ok)throw Error(attached.error||'The device view could not enter this group.');return opened;}
+      catch(error){await this.closeLogicalProjectSurface(context.windowId,opened.surfaceId);throw error;}
     }
     return this.runProjectOwnership(projectId, () =>
       this.openWorkspaceSurfaceFromControlUngated(context.windowId, projectId, parsed.toString()));
@@ -1098,6 +1127,10 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     return scope;
   }
 
+  async resolveBackpackProjectWorkspaceTemplate(senderId: number): Promise<{ url: string } | null> {
+    return this.deps.backpackProjects.workspaceTemplate(this.requireProjectForSender(senderId));
+  }
+
   revokeBackpackProjectWorkspaceScope(senderId: number): void {
     this.releaseAllWriterLeasesForSender(senderId);
     this.workspaceScopes.delete(senderId);
@@ -1267,7 +1300,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
     const baseHost = this.deps.filePreviewHostForSender?.(senderId);
     const nativePreviewHost = baseHost && scope ? { ...baseHost,
       layoutKey: `${baseHost.layoutKey ?? baseHost.ownerKey}:embedded:${scope.backpackId}:${scope.rootGroupId}` } : baseHost ?? undefined;
-    return this.deps.fileCapability.call(request, { backpackId, ...(nativePreviewHost ? { nativePreviewHost } : {}) });
+    return this.deps.fileCapability.call(zoomedRect(request, webContents.fromId(senderId)?.getZoomFactor?.() ?? 1), { backpackId, ...(nativePreviewHost ? { nativePreviewHost } : {}) });
   }
 
   async openBackpackProjectWebLink(senderId: number, url: string, workspaceOrigin?: string): Promise<void> {
@@ -1460,7 +1493,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       if (!backpack || backpack.archived) throw new Error(`Backpack ${savedSurface.projectId} is not available.`);
       const project = await this.deps.backpackProjects.open(savedSurface.projectId);
       if (!project) throw new Error(`Backpack ${savedSurface.projectId} has no usable project surface.`);
-      return { savedSurface, url: project.url };
+      return { savedSurface, url: restoredDeviceUrl(project.url,savedSurface) };
     }));
 
     // Project resolution crosses the filesystem/manifest await. Recheck all
@@ -1537,7 +1570,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         ?? null;
       const project = preferred ? { url: preferred } : await this.deps.backpackProjects.open(surface.projectId);
       if (!project) throw new Error(`Backpack ${surface.projectId} has no usable project surface.`);
-      return { ...surface, url: withProjectSurfaceKey(project.url, surface.surfaceKey ?? surface.surfaceId) };
+      return { ...surface, url: withProjectSurfaceKey(restoredDeviceUrl(project.url,surface), surface.surfaceKey ?? surface.surfaceId) };
     }));
     return { projects, topology };
   }
@@ -2033,7 +2066,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
   private async openWorkspaceSurfaceFromControlUngated(windowId: number, projectId: string, requestedUrl?: string, saved?: {
     page:{surfaceKey:string;title:string};destination:{groupId:string;side:string};
     commit:(topology:WorkspaceTopologyV1)=>Promise<void>;rollback:()=>Promise<void>;
-  }): Promise<{
+  }, inline?: {parentKey:string;parentId:string;deviceId?:string;groupId:string;title:string}): Promise<{
     windowId: number; surfaceId: string; projectId: string; topology: WorkspaceTopologyV1;
   }> {
     const initialBackpack = this.deps.registry.find(projectId);
@@ -2069,9 +2102,14 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         surfaceId: surface.surfaceId,
         surfaceKey,
         projectId,
-        title: saved?.page.title ?? backpack.name,
+        title: inline?.title ?? saved?.page.title ?? backpack.name,
+        ...(new URL(keyedUrl).searchParams.get('papers-device') ? {deviceId:new URL(keyedUrl).searchParams.get('papers-device')!} : {}),
+        ...(inline ? {inlineParentKey:inline.parentKey} : {}),
       };
-      let next = saved ? insertWorkspaceSurface(latest,descriptor,saved.destination.groupId) : openWorkspaceSurface(latest,descriptor);
+      const parentGroup=inline?latest.groups.find(group=>group.surfaceIds.includes(inline.parentId)):null;
+      if(inline&&!parentGroup)throw Error('Parent group closed.');
+      let next = inline ? insertWorkspaceSurface(latest,descriptor,parentGroup!.groupId) : saved ? insertWorkspaceSurface(latest,descriptor,saved.destination.groupId) : openWorkspaceSurface(latest,descriptor);
+      if(inline)next=activateWorkspaceSurface(next,inline.parentId);
       if(saved && saved.destination.side!=='center') next=splitWorkspaceGroup(next,{
         groupId:saved.destination.groupId,newGroupId:'group-'+randomUUID(),surfaceId:surface.surfaceId,
         orientation:['left','right'].includes(saved.destination.side)?'horizontal':'vertical',
@@ -2088,7 +2126,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
         project: { surfaceId: surface.surfaceId, projectId, title: descriptor.title, url: keyedUrl },
         topology: next,
       });
-      this.deps.setActiveSurfaceId(windowId, surface.surfaceId);
+      this.deps.setActiveSurfaceId(windowId, inline?.parentId ?? surface.surfaceId);
       this.deps.setEnteredBackpack(windowId, projectId);
       this.deps.setWorkspaceTopology(windowId, next);
       return { windowId, surfaceId: surface.surfaceId, projectId, topology: next };
@@ -2112,14 +2150,20 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
 
   /** One main-owned terminal close transaction for every close producer. */
   private async closeLogicalProjectSurface(
-    windowId: number,
-    surfaceId: string,
+    windowId: number, surfaceId: string,
     topology = this.deps.workspaceTopology?.(windowId) ?? null,
     mutationAlreadyHeld = false,
   ): Promise<WorkspaceTopologyV1> {
     if (!topology) throw new Error('That Papers window has not committed workspace topology.');
-    const releaseMutation = mutationAlreadyHeld ? null : this.acquireWorkspaceMutation([windowId]);
+    if(this.closingInlineSurfaces.has(surfaceId))throw Error('This page is already closing.');
+    this.closingInlineSurfaces.add(surfaceId);
+    let releaseMutation:(()=>void)|null=null;
     try {
+      const closing=topology.surfaces.find(surface=>surface.surfaceId===surfaceId),parentKey=closing?.surfaceKey??surfaceId;
+      const children=topology.surfaces.filter(surface=>surface.inlineParentKey===parentKey);
+      if(closing?.inlineParentKey||children.length){await this.deps.flushAttachedProjectSurface?.(windowId,surfaceId);for(const child of children)await this.deps.flushAttachedProjectSurface?.(windowId,child.surfaceId);}
+      for(const child of children)topology=await this.closeLogicalProjectSurface(windowId,child.surfaceId,topology,mutationAlreadyHeld);
+      releaseMutation=mutationAlreadyHeld?null:this.acquireWorkspaceMutation([windowId]);
       this.validateWorkspaceTopology(windowId, topology);
       await this.deps.pageClosed?.(surfaceId);
       await this.deps.closeAttachedProjectSurface(windowId, surfaceId);
@@ -2129,9 +2173,7 @@ export class PapersHostFacade implements HostFacade, PermissionPrompter {
       this.restoreWorkspaceTopology(windowId, next, true);
       this.deps.sendToWindow(windowId, 'host:event:backpack-project-close-request', { surfaceId });
       return next;
-    } finally {
-      releaseMutation?.();
-    }
+    } finally {releaseMutation?.();this.closingInlineSurfaces.delete(surfaceId);}
   }
 
   private validateWorkspaceTopology(windowId: number, topology: WorkspaceTopologyV1): void {

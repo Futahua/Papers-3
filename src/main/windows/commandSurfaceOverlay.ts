@@ -165,6 +165,12 @@ function overlayUrl(rawEntryUrl: string, projectId: string): string {
   if (url.protocol !== `${BACKPACK_PROJECT_SCHEME}:` || url.host !== projectId) {
     throw new Error('overlay entry is not the bound project surface');
   }
+  // A launcher is project-wide. A Files/device pane URL is a presentation,
+  // and its remote query would request file capabilities a launcher cannot use.
+  for (const key of [...url.searchParams.keys()]) {
+    if (key.startsWith('papers-')) url.searchParams.delete(key);
+  }
+  url.hash = '';
   url.searchParams.set(COMMAND_SURFACE_MARKER, COMMAND_SURFACE_MODE);
   return url.toString();
 }

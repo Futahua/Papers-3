@@ -36,7 +36,7 @@
  * granted anything: adding one here is a deliberate act with a capability
  * consequence, not a label.
  */
-export type SurfaceKind = 'host' | 'project' | 'detached' | 'widget' | 'launcher';
+export type SurfaceKind = 'host' | 'project' | 'detached' | 'widget' | 'launcher' | 'background';
 
 export interface SurfaceContext {
   /**

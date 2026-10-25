@@ -1,3 +1,4 @@
+import { hiddenNames } from './hiddenFiles';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs, statSync } from 'node:fs';
@@ -17,9 +18,11 @@ import type { WebBrowserHostBridge } from './webBrowserHostBridge';
 import type { PowerPointPreviewBridge } from './powerPointPreviewBridge';
 import type { PreviewHostContext, PreviewRect, WindowsPreviewHandlerBridge } from './windowsPreviewHandlerBridge';
 import type { LibreOfficeEditorBridge } from './libreOfficeEditorBridge';
+import type { ProgramWindowService } from './programWindowService';
 import type { ChromePaneBridge } from './chromePaneBridge';
 import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derivedPreviewCache';
 import { capabilityForOperation, type createCapabilityRuntimeService } from './capabilityRuntimeService';
+import type { RemotePaths } from './remoteFilePaths';
 
 const MAX_PATH_BYTES = 32_768;
 const MAX_SEARCH_BYTES = 2_048;
@@ -51,10 +54,20 @@ const VIDEO_MIME = new Map([['.mp4','video/mp4'],['.m4v','video/mp4'],['.webm','
 export interface FileCapabilityEntry {
   path: string; name: string; parent: string; kind: 'file' | 'folder'; extension: string;
   size: number | null; createdAt: number | null; modifiedAt: number | null; identity: string | null;
+  /** Hidden in Explorer (Windows' Hidden attribute); the Files view leaves these out unless asked. */
+  hidden?: boolean;
 }
 export interface FileCapabilityDeps {
+  workspaceFiles?: import('./workspaceFiles').WorkspaceFiles;
+  fileTargets?: import('./fileTargetRegistry').TargetRegistry;
+  remoteFiles?: (request: Record<string, unknown>) => Promise<unknown>;
+  remotePaths?: RemotePaths;
+  editing?: (target: string, request: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /** Custom pictures of real files and folders on this device (customIconStore). */
+  customIcons?: import('./customIconStore').CustomIconStore;
   panePageDrag?:()=>string|null;
   panePages?:{check:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>;attach:(owner:string,id:string,groupId:string,side:string)=>Promise<Record<string,unknown>>};
+  closeInlineDevice?: (owner:string)=>Promise<void>;
   trashPath?: (target: string) => Promise<void>;
   runtimeControl?: ReturnType<typeof createCapabilityRuntimeService>;
   everythingSearch: EverythingSearchBridge | null;
@@ -68,6 +81,7 @@ export interface FileCapabilityDeps {
   htmlPreview: HtmlPreviewHostBridge | null;
   webBrowser: WebBrowserHostBridge | null;
   chromePane?: ChromePaneBridge | null;
+  programWindows?: ProgramWindowService | null;
   resolvePaneWindow?: (bindingId: string) => Promise<{ handle: number; pid: number } | null>;
   powerPointPreview: PowerPointPreviewBridge | null;
   windowsPreview: WindowsPreviewHandlerBridge | null;
@@ -78,6 +92,7 @@ export interface FileCapabilityDeps {
   openPath: (target: string) => Promise<string | void>;
   revealPath: (target: string) => void;
   fileIcon: (target: string) => Promise<string | null>;
+  thumbnail?: (target:string)=>Promise<Record<string,unknown>>;
 }
 export interface FileCapabilityContext {
   backpackId: string;
@@ -270,8 +285,8 @@ async function listDirectory(target: string, limit: number) {
   const names = await fs.readdir(target);
   names.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
   const selected = names.slice(0, limit);
-  const settled = await Promise.allSettled(selected.map((name) => describe(path.join(target, name))));
-  const items = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+  const [settled, hidden] = await Promise.all([Promise.allSettled(selected.map((name) => describe(path.join(target, name)))), hiddenNames(target, selected)]);
+  const items = settled.flatMap((result) => result.status === 'fulfilled' ? [hidden.has(result.value.name) ? { ...result.value, hidden: true } : result.value] : []);
   items.sort((a, b) => Number(b.kind === 'folder') - Number(a.kind === 'folder') || a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
   return { entry, items, truncated: names.length > selected.length };
 }
@@ -761,7 +776,7 @@ async function operationViaOpus(
     if (!deps.dopusrtPath) return { ok: false, code: 'DOPUS_UNAVAILABLE', message: 'Directory Opus is unavailable.' };
     const command = ['Copy', ...sources];
     if (operation === 'move') command.push('MOVE');
-    command.push('TO', destination, 'WHENEXISTS=ask');
+    command.push('TO', destination, params.neverOverwrite === true ? 'WHENEXISTS=skip' : 'WHENEXISTS=ask');
     await runOpus(deps.dopusrtPath, command);
     return { ok: true, provider: 'directory-opus', operation };
   }
@@ -770,7 +785,7 @@ async function operationViaOpus(
     const target = absolutePath(params.path);
     const newName = safeName(params.newName);
     if (!deps.dopusrtPath) return { ok: false, code: 'DOPUS_UNAVAILABLE', message: 'Directory Opus is unavailable.' };
-    await runOpus(deps.dopusrtPath, ['Rename', target, 'TO', newName, 'WHENEXISTS=ask']);
+    await runOpus(deps.dopusrtPath, ['Rename', target, 'TO', newName, params.neverOverwrite === true ? 'WHENEXISTS=skip' : 'WHENEXISTS=ask']);
     return {
       ok: true,
       provider: 'directory-opus',
@@ -834,7 +849,41 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
       const operation = typeof raw.operation === 'string' ? raw.operation : '';
       const params = isRecord(raw.params) ? raw.params : {};
       try {
+        // remote-files requests name device paths as data (an inbox download), not as files to act on here.
+        const remote = operation === 'remote-files' ? null : await deps.remotePaths?.handle(operation, params, (next, nextParams) => service.call({ operation: next, params: nextParams }, context));
+        if (remote) return remote;
         switch (operation) {
+          case 'editing':
+            if (!deps.editing || typeof params.path !== 'string') return { ok: false, message: 'Editing assignments are unavailable.' };
+            return deps.editing(params.path, params);
+          case 'file-target-track': {
+            if(!deps.fileTargets)return {ok:false,code:'UNSUPPORTED'};
+            const target=absolutePath(params.path);if((await fs.lstat(target)).isSymbolicLink())return {ok:false,code:'LINK_IDENTITY_UNSUPPORTED'};
+            return {ok:true,target:await deps.fileTargets.track(target)};
+          }
+          case 'file-target-restore': {
+            if(!deps.fileTargets?.restore)return {ok:false,code:'UNSUPPORTED'};
+            return {ok:true,target:await deps.fileTargets.restore(boundedString(params.targetId,'targetId',64),Number(params.expectedRevision),boundedString(params.commandId,'commandId',64))};
+          }
+          case 'file-target-delete': {
+            if(!deps.fileTargets?.remove)return {ok:false,code:'UNSUPPORTED'};
+            return {ok:true,target:await deps.fileTargets.remove(boundedString(params.targetId,'targetId',64),Number(params.expectedRevision),boundedString(params.commandId,'commandId',64))};
+          }
+          case 'file-target-resolve': {
+            if(!deps.fileTargets)return {ok:false,code:'UNSUPPORTED'};
+            return {ok:true,target:await deps.fileTargets.resolve(boundedString(params.targetId,'targetId',64))};
+          }
+          case 'file-target-relocate': {
+            if(!deps.fileTargets)return {ok:false,code:'UNSUPPORTED'};
+            const oldPath=absolutePath(params.oldPath),newPath=absolutePath(params.newPath);
+            try{await fs.lstat(oldPath);return {ok:false,message:'Source still exists; link update refused.'};}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+            await deps.fileTargets.relocate(oldPath,newPath);return {ok:true};
+          }
+          case 'remote-files':
+            return deps.remoteFiles ? { ok: true, result: await deps.remoteFiles(params) } : { ok: false, code: 'REMOTE_FILES_UNAVAILABLE' };
+          case 'workspace-files':
+            if (!deps.workspaceFiles) throw Error('Workspace storage is unavailable.');
+            return { ok: true, result: await deps.workspaceFiles.call(context.backpackId, params) };
           case 'runtime-snapshot':
             return { ok: true, ...deps.runtimeControl?.snapshot(), providers: (await service.call({ operation: 'providers' }, context)).providers };
           case 'runtime-configure':
@@ -885,6 +934,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             const target = absolutePath(params.path);
             return { ok: true, icon: await deps.fileIcon(target) };
           }
+          case 'thumbnail':return {ok:true,preview:await deps.thumbnail?.(absolutePath(params.path))??{kind:'none'}};
           case 'search': {
             const query = boundedString(params.query, 'query', MAX_SEARCH_BYTES);
             const limit = boundedLimit(params.limit, 100, MAX_SEARCH);
@@ -929,6 +979,15 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
               workspaceTitle: entry.workspaceTitle,
               workspaceIcon: entry.workspaceIcon,
             };
+          }
+          case 'custom-icons':
+            return { ok: true, icons: deps.customIcons ? await deps.customIcons.inFolder(absolutePath(params.path)) : {} };
+          case 'custom-icon-set': {
+            if (!deps.customIcons) return { ok: false, code: 'CUSTOM_ICONS_UNAVAILABLE', message: 'Custom pictures are unavailable.' };
+            const targets = (Array.isArray(params.paths) ? params.paths : []).map(item => absolutePath(item));
+            if (!targets.length) return { ok: false, code: 'REQUEST_INVALID', message: 'Choose files or folders.' };
+            await deps.customIcons.set(targets, (params.icon ?? null) as string | null);
+            return { ok: true };
           }
           case 'preview':
             return await previewFile(absolutePath(params.path), deps, context, params.skipWindowsPreview === true);
@@ -1055,6 +1114,10 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             if (!bridge || !owner || !bridge.has(owner)) return { ok: false, message: 'Window layout is not mounted.' };
             return bridge.open(owner, boundedString(params.source, 'source', 8192), boundedString(params.url, 'url', 8192), boundedString(params.groupId, 'groupId', 64));
           }
+          case 'pane-inline-device-close': {
+            const owner=context.nativePreviewHost?.ownerKey;if(!owner||!deps.closeInlineDevice)return {ok:false,message:'The inline device view is unavailable.'};
+            await deps.closeInlineDevice(owner);return {ok:true};
+          }
           case 'pane-layout-viewport': {
             const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;
             if (!bridge || !owner || !bridge.has(owner)) return { ok: false, message: 'Window layout is not mounted.' };
@@ -1161,6 +1224,28 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'chrome-pane-visible': {
             if (context.nativePreviewHost) deps.chromePane?.setPaneVisible(context.nativePreviewHost.ownerKey, params.visible === true);
+            return { ok: true };
+          }
+          case 'program-window-templates': {
+            return { ok: true, templates: deps.programWindows?.templates() ?? [] };
+          }
+          case 'program-window-open': {
+            if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE', message: 'Program windows are unavailable here.' };
+            return await deps.programWindows.open(context.nativePreviewHost, boundedString(params.template, 'template', 32), boundedString(params.target, 'target', 512), chromePaneRect(params.rect));
+          }
+          case 'program-window-move': {
+            if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE' };
+            await deps.programWindows.move(context.nativePreviewHost.ownerKey, boundedString(params.template, 'template', 32), chromePaneRect(params.rect));
+            return { ok: true };
+          }
+          case 'program-window-visible': {
+            if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE' };
+            deps.programWindows.setVisible(context.nativePreviewHost.ownerKey, boundedString(params.template, 'template', 32), params.visible === true);
+            return { ok: true };
+          }
+          case 'program-window-close': {
+            if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE' };
+            await deps.programWindows.close(context.nativePreviewHost.ownerKey, boundedString(params.template, 'template', 32));
             return { ok: true };
           }
           case 'browser-open': {
@@ -1326,7 +1411,11 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'move':
           case 'rename':
           case 'delete':
-            return await operationViaOpus(deps, operation, params);
+          {
+            const result=await operationViaOpus(deps, operation, params);
+            if(result.ok===true&&operation==='delete'&&deps.fileTargets)for(const target of pathList(params.paths))await deps.fileTargets.deleted(target);
+            return result;
+          }
           default:
             return { ok: false, code: 'OPERATION_UNKNOWN', message: 'Unknown file capability operation.' };
         }

@@ -1,0 +1,27 @@
+import { build } from 'esbuild';
+import { mkdir } from 'node:fs/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import path from 'node:path';
+const repository=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const [directory,address,mode='online']=process.argv.slice(2);
+if(!['online','loss','conflict'].includes(mode))throw Error('Invalid fixture mode');
+if(!directory||!path.isAbsolute(directory)||!/^100\.(?:\d{1,3}\.){2}\d{1,3}$/.test(address||''))throw Error('Supply an isolated absolute fixture directory and private device address.');
+await mkdir(directory,{recursive:true});
+const entry=`
+import {promises as fs} from 'node:fs';import path from 'node:path';
+import {RemoteDeviceStore} from ${JSON.stringify(path.join(repository,'src/main/backpacks/remoteDeviceStore.ts'))};
+import {createRemoteFileGateway} from ${JSON.stringify(path.join(repository,'src/main/backpacks/remoteFileGateway.ts'))};
+import {RemoteFileEditOwner} from ${JSON.stringify(path.join(repository,'src/main/backpacks/remoteFileEditOwner.ts'))};
+import {RemoteFileEditNativeProvider} from ${JSON.stringify(path.join(repository,'src/main/backpacks/remoteFileEditNativeProvider.ts'))};
+const root=${JSON.stringify(directory)},shared=path.join(root,'shared');await fs.mkdir(shared,{recursive:true});await fs.writeFile(path.join(shared,'generated.txt'),'Generated original phone fixture');
+const edits=new RemoteFileEditOwner(path.join(root,'edits'),new RemoteFileEditNativeProvider(${JSON.stringify(path.join(repository,'resources/native/conditional-file-save.ps1'))},${JSON.stringify(path.join(repository,'resources/native/conditional-file-save.cs'))}));await edits.initialize();
+const devices=await RemoteDeviceStore.open(path.join(root,'owner'),'Generated edit owner');const invite=await devices.invite([{id:'fixture',name:'Generated files',directory:shared}],true);
+const gateway=await createRemoteFileGateway({owner:devices.snapshot().owner,grants:[],edits,pair:async(code,name)=>{const paired=await devices.redeem(code,name);return {...paired,grant:devices.snapshot().devices.find(item=>item.deviceId===paired.deviceId)};}});
+const responses=new Map();gateway.server.prependListener('request',(request,response)=>{if(request.method==='PUT'){const id=/uploads\\/([a-f0-9-]{36})/.exec(request.url||'')?.[1];if(id){responses.set(id,response);response.once('close',()=>responses.delete(id));}}});
+const append=edits.uploads.append.bind(edits.uploads);let triggered=false;
+edits.uploads.append=async(...args)=>{const received=await append(...args);if(!triggered){triggered=true;if(${JSON.stringify(mode)}==='loss'){responses.get(args[1])?.destroy();throw Error('Generated lost acknowledgement');}if(${JSON.stringify(mode)}==='conflict')await fs.writeFile(path.join(shared,'generated.txt'),'Generated external owner edit');}return received;};
+await new Promise(resolve=>gateway.server.listen(48243,${JSON.stringify(address)},resolve));
+await fs.writeFile(path.join(root,'fixture-private.json'),JSON.stringify({address:'http://'+${JSON.stringify(address)}+':48243',code:invite.code}));console.log('Generated native edit fixture ready');
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await gateway.close();await edits.close();process.exit(0);});
+`;
+const output=path.join(directory,'gateway.mjs');await build({stdin:{contents:entry,resolveDir:repository},outfile:output,bundle:true,platform:'node',format:'esm',target:'node24'});await import(pathToFileURL(output).href);

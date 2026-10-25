@@ -1,8 +1,13 @@
+import {createCustomIconStore} from './backpacks/customIconStore';
+import {createRemoteThumbnailProvider} from './backpacks/remoteThumbnailProvider';
+import {FileInbox} from './backpacks/fileInbox';
+import {InboxTransfers} from './backpacks/inboxTransfers';
 import {consumeReloadWindows,createPapersReload,shouldFlushReloadSurface} from './windows/papersReload';
 /**
  * Papers — Electron main process bootstrap and composition root.
  */
 import { BaseWindow, BrowserWindow, Menu, Notification, WebContentsView, app, dialog, globalShortcut, ipcMain, nativeImage, net, protocol, screen, session, shell, webContents, type WebContents } from 'electron';
+import * as os from 'node:os';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 
@@ -10,11 +15,23 @@ import { BackpackRegistry } from './backpacks/backpackRegistry';
 import { BackpackProjectService } from './backpacks/backpackProjectService';
 import { createEverythingSearchBridge, resolveEverythingSearchBridgePaths } from './backpacks/everythingSearchBridge';
 import { createFileCapabilityService, resolveDirectoryOpusRtPath, resolveLibreOfficePath } from './backpacks/fileCapabilityService';
+import { WorkspaceFiles } from './backpacks/workspaceFiles';
+import { RemoteDeviceService } from './backpacks/remoteDeviceService';
+import {snapPageBounds,pagePresentationSettled} from './backpacks/panePagePresentation';
+import { RemoteFileClient } from './backpacks/remoteFileClient';
+import { createRemotePaths } from './backpacks/remoteFilePaths';
+import {createFileTargetRegistry,windowsRecycleRestore,windowsTargetObserver,windowsTargetWatcher} from './backpacks/fileTargetRegistry';
+import { logDevice, setDeviceLog, tailnetAccount } from './backpacks/tailnetIdentity';
+import { RemoteFileMutations } from './backpacks/remoteFileMutations';
+import { RemoteFileEditOwner } from './backpacks/remoteFileEditOwner';
+import { RemoteFileEditNativeProvider } from './backpacks/remoteFileEditNativeProvider';
+import { safeStorage } from 'electron';
 import { FILE_PREVIEW_SCHEME, createFilePreviewProtocolHandler, createFilePreviewResourceRegistry } from './backpacks/filePreviewResources';
 import { createPdfPreviewHostBridge } from './backpacks/pdfPreviewHostBridge';
 import { createHtmlPreviewHostBridge } from './backpacks/htmlPreviewHostBridge';
 import {createPaneBackpackPages,type PanePage} from './backpacks/paneBackpackPages';
 import { createChromePaneBridge } from './backpacks/chromePaneBridge';
+import { createProgramWindowService } from './backpacks/programWindowService';
 import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
@@ -544,6 +561,36 @@ async function bootstrap(): Promise<void> {
 
   const baseDir = app.getPath('userData');
   const paths = papersPaths(baseDir);
+  const localInbox=new FileInbox(path.join(paths.root,'devices','inbox.json'),path.join(app.getPath('downloads'),'Papers Inbox'));
+  await localInbox.initialize();
+  const remoteDevices = new RemoteDeviceService(path.join(paths.root, 'devices'),process.env['PAPERS_TEST_USER_DATA']?0:48240);
+  const editNativeRoot = app.isPackaged ? path.join(process.resourcesPath, 'native') : path.join(app.getAppPath(), 'resources', 'native');
+  const remoteEdits = new RemoteFileEditOwner(path.join(paths.root, 'file-edits'), new RemoteFileEditNativeProvider(path.join(editNativeRoot, 'conditional-file-save.ps1'), path.join(editNativeRoot, 'conditional-file-save.cs')));
+  if (process.platform === 'win32') {
+    await remoteEdits.initialize().then(() => { remoteDevices.edits = remoteEdits; }).catch(error => console.error('[remote-files] edit recovery needed:', error));
+  }
+  remoteDevices.inbox={get:()=>localInbox.get(),set:parts=>{if(parts!==null&&(!/^[A-Za-z]:$/.test(parts[0]??'')||parts.slice(1).some(part=>/[<>:"|?*]/.test(part))))throw Error('Choose a folder on a shared drive.');return localInbox.set(parts===null?null:path.win32.join(parts[0]!+'\\',...parts.slice(1)));}};
+  setDeviceLog(path.join(paths.root, 'diagnostics', 'devices.ndjson'));
+  await remoteDevices.initialize();
+  const remoteFiles = new RemoteFileClient(path.join(paths.root, 'remote-files'), {
+    seal: value => {
+      if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows credential protection is unavailable.');
+      return safeStorage.encryptString(value).toString('base64');
+    },
+    open: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
+  }, false, path.resolve(paths.root, '..', '..', 'Working files'));
+  let remoteFilesError: string | null = null;
+  await remoteFiles.initialize().catch(error => { remoteFilesError = error instanceof Error ? error.message : 'Remote files are unavailable.'; });
+  remoteFiles.enableUsb(()=>remoteDevices.snapshot().address);
+  remoteFiles.onAssignedEdit = async target => { const failure = await shell.openPath(target); if (failure) throw Error(failure); };
+  remoteDevices.peerConnect = (peer, grantId, invitation) => remoteFiles.acceptPhone(peer, grantId, invitation);
+  remoteFiles.onOwnerChanged = ownerId => {
+    const message = JSON.stringify({type: 'papers:device:changed', ownerId});
+    for (const runtime of papersWindows.all().flatMap(context => context.owned.projectSurfaces.all())) {
+      const contents = runtime.webContents;
+      if (contents && !contents.isDestroyed()) void contents.executeJavaScript(`window.postMessage(${message},location.origin)`).catch(() => {});
+    }
+  };
   const workspaceTopologyStore = new WorkspaceTopologyStore(paths);
   await workspaceTopologyStore.initialize();
   const oldSessionPages = await workspaceTopologyStore.sessionSnapshots();
@@ -692,6 +739,12 @@ async function bootstrap(): Promise<void> {
   let panePages:ReturnType<typeof createPaneBackpackPages>|undefined;
   const outerPagePresentation=new Map<string,{bounds:import('./backpacks/nativePaneBridge').PaneRect|null;visible:boolean}>();
   const chromePane = createChromePaneBridge({
+    // Chromium includes Windows accessibility text scaling in its DIP scale.
+    // GetDpiForWindow alone does not describe these renderer coordinates.
+    coordinateScale: owner => {
+      const window = papersWindows.get(Number(owner.split(':')[0]))?.owned.window;
+      return window && !window.isDestroyed() ? screen.getDisplayMatching(window.getBounds()).scaleFactor : NaN;
+    },
     pageTransfers: {
       check: moves => panePages ? panePages.checkTransfers(moves) : Promise.resolve({ok:false,error:'Backpack pages are unavailable.'}),
       apply: moves => { if (!panePages) throw Error('Backpack pages are unavailable.'); return panePages.applyTransfers(moves); },
@@ -740,6 +793,7 @@ async function bootstrap(): Promise<void> {
     },
   });
   app.once('will-quit', () => chromePane?.dispose());
+  const programWindows = createProgramWindowService({ bridge: chromePane, dataDirectory: paths.root });
   const webBrowser = createWebBrowserHostBridge({
     nativeDrag: nativeFileDrag,
     resolveWindow: (ownerKey) => {
@@ -768,28 +822,117 @@ async function bootstrap(): Promise<void> {
   await capabilityRuntimes.initialize();
   app.once('will-quit', () => { void capabilityRuntimes.stopRecording(); });
   const presentPanePage=(page:PanePage,bounds:import('./backpacks/nativePaneBridge').PaneRect|null,visible:boolean):void=>{
+    const context=papersWindows.get(page.windowId);if(!context||context.owned.window.isDestroyed()||closingPapersWindows.has(page.windowId))return;
     const runtime=papersWindows.get(page.windowId)?.owned.projectSurfaces.get(page.surfaceId);if(!runtime)return;
-    if(runtime.isPresented===visible&&(!bounds||JSON.stringify(runtime.currentBounds)===JSON.stringify({x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height})))return;
+    if(pagePresentationSettled(runtime.currentBounds,runtime.isPresented,bounds,visible))return;
+    if(bounds)bounds=snapPageBounds(bounds);
     if(bounds)runtime.setBounds(bounds);if(visible)runtime.present();else runtime.conceal();
     const owner=`${page.windowId}:${page.surfaceId}`;
     officeEditor?.setOwnerVisible(owner,visible);windowsPreview?.setOwnerVisible(owner,visible);pdfPreview.setOwnerVisible(owner,visible);htmlPreview.setOwnerVisible(owner,visible);webBrowser.setOwnerVisible(owner,visible);chromePane?.setOwnerVisible(owner,visible);
     if(bounds){officeEditor?.setOwnerSurfaceBounds(owner,bounds);windowsPreview?.setOwnerSurfaceBounds(owner,bounds);pdfPreview.setOwnerSurfaceBounds(owner,bounds);htmlPreview.setOwnerSurfaceBounds(owner,bounds);webBrowser.setOwnerSurfaceBounds(owner,bounds);chromePane?.setOwnerSurfaceBounds(owner,bounds);}
   };
-  panePages=createPaneBackpackPages({exists:async key=>(await workspaceTopologyStore.sessionSnapshots()).some(record=>record.topology.surfaces.some(page=>(page.surfaceKey??page.surfaceId)===key)),bridge:()=>chromePane?.coordinator,pages:()=>papersWindows.windowIds.flatMap(windowId=>(currentWorkspaceTopology(windowId)?.surfaces??[]).map(p=>({windowId,surfaceId:p.surfaceId,key:p.surfaceKey??p.surfaceId,projectId:p.projectId,title:p.title,tabStyle:registry.list().find(b=>b.id===p.projectId)?.name.toLowerCase().includes('proxima')?'proxima':undefined}))),
+  panePages=createPaneBackpackPages({exists:async key=>(await workspaceTopologyStore.sessionSnapshots()).some(record=>record.topology.surfaces.some(page=>(page.surfaceKey??page.surfaceId)===key)),bridge:()=>chromePane?.coordinator,pages:()=>papersWindows.windowIds.flatMap(windowId=>(currentWorkspaceTopology(windowId)?.surfaces??[]).map(p=>({windowId,surfaceId:p.surfaceId,key:p.surfaceKey??p.surfaceId,projectId:p.projectId,title:p.title,deviceId:p.deviceId,inlineParentKey:p.inlineParentKey,tabStyle:registry.list().find(b=>b.id===p.projectId)?.name.toLowerCase().includes('proxima')?'proxima':undefined}))),
     outer:page=>outerPagePresentation.get(`${page.windowId}:${page.surfaceId}`)??{bounds:papersWindows.get(page.windowId)?.owned.projectSurfaces.get(page.surfaceId)?.currentBounds??null,visible:false},present:presentPanePage,
+    closeInline:async page=>{if(facade.isClosingWorkspaceSurface(page.surfaceId))return;const topology=currentWorkspaceTopology(page.windowId);if(topology?.surfaces.some(surface=>surface.surfaceId===page.surfaceId))await facade.closeWorkspaceSurfaceFromControl(page.windowId,page.surfaceId,topology);},
     adopt:async(page,parent)=>{
+      if(page.inlineParentKey===parent.key&&page.windowId===parent.windowId){panePages?.refresh();return;}
       const windowId=parent.windowId, hostId=papersWindows.get(windowId)?.owned.hostView.webContents.id;
       const group=currentWorkspaceTopology(windowId)?.groups.find(g=>g.surfaceIds.includes(parent.surfaceId));
       if(hostId===undefined||!group)throw Error('Destination page closed.');
       await facade.adoptWorkspaceSurfaceFromHost(hostId,page.surfaceId,group.groupId,2147483647);
       facade.activateBackpackProjectSurface(hostId,parent.surfaceId);
     }});
+  const fileIcon = async (target: string) => {
+    const icon = await app.getFileIcon(target, { size: 'small' });
+    return icon.isEmpty() ? null : icon.toDataURL();
+  };
+  const peerProximaDirectory = path.join(paths.root, 'remote-files', 'peer-proxima');
+  const peerProximaRead = (deviceId: string): { deviceId: string; name: string; receivedAt: number; snapshot: unknown } | null => {
+    if (!/^[0-9a-f-]{36}$/i.test(deviceId)) return null;
+    try { return JSON.parse(readFileSync(path.join(peerProximaDirectory, deviceId.toLowerCase() + '.json'), 'utf8')); } catch { return null; }
+  };
+  const peerProximaList = (): { id: string; name: string; receivedAt: number }[] => {
+    const known = new Set(remoteDevices.snapshot().devices.map(device => device.id.toLowerCase()));
+    return [...known].map(peerProximaRead).filter((saved): saved is NonNullable<typeof saved> => !!saved && !remoteFiles.phoneForPeer(saved.deviceId)).map(saved => ({ id: saved.deviceId, name: saved.name, receivedAt: saved.receivedAt }));
+  };
+  const customIcons = createCustomIconStore(path.join(paths.root, 'custom-icons.json'));
+  const targetNativeSource=path.join(app.isPackaged?path.join(process.resourcesPath,'native'):path.join(app.getAppPath(),'resources','native'),'file-target-identity.cs');
+  const fileTargets=createFileTargetRegistry({file:path.join(paths.root,'file-targets.json'),observe:windowsTargetObserver(path.join(paths.root,'native-helpers'),targetNativeSource),watch:windowsTargetWatcher(path.join(paths.root,'native-helpers'),targetNativeSource),recycle:target=>shell.trashItem(target),restore:windowsRecycleRestore(path.join(paths.root,'native-helpers'))});
+  remoteDevices.fileTargets=fileTargets;
+  backpackProjects.setFileTargetResolver(id=>fileTargets.resolve(id));
+  remoteEdits.fileTargets=fileTargets;
+  const remotePaths = createRemotePaths(remoteFiles, { iconDirectory: path.join(paths.root, 'remote-files', 'icon-stand-ins'), fileIcon, settingsFile: path.join(paths.root, 'remote-files', 'inboxes.json') });
+  const inboxTransfers=new InboxTransfers(path.join(paths.root,'remote-files','inbox-transfers'),localInbox,remoteFiles,files=>remotePaths.planImport(files),{inbox:owner=>remotePaths.inbox(owner),copy:(source,destination)=>remotePaths.copyToFolder(source,destination)});
+  await inboxTransfers.initialize();
   const fileCapability = createFileCapabilityService({
+    workspaceFiles: new WorkspaceFiles(path.join(paths.root, 'Workspace files')),
+    fileTargets,
+    remoteFiles: async params => {
+      if (remoteFilesError) throw new Error(remoteFilesError);
+      const ownerId = typeof params.ownerId === 'string' ? params.ownerId : '';
+      switch (params.operation) {
+        case 'status': return { ...remoteFiles.snapshot(), inboxTransfers:inboxTransfers.snapshot(), owner: remoteDevices.snapshot().owner, peers: peerProximaList() };
+        case 'working-folder': return {path:await remoteFiles.workingFolder()};
+        case 'backpack-replace': return remoteFiles.backpackReplace(ownerId, String(params.resourceId ?? ''), params.snapshot);
+        case 'peer-proxima-replace': { const phoneId = remoteFiles.phoneForPeer(String(params.deviceId ?? '')); if (!phoneId) throw new Error('The phone must be connected to receive a replacement.'); const catalog = await remoteFiles.backpacks(phoneId); if (!catalog.online) throw new Error('The phone is offline.'); const share = catalog.entries.find((item: {kind:string}) => item.kind === 'proxima'); if (!share) throw new Error('Phone Proxima is unavailable.'); await remoteFiles.backpackReplace(phoneId, share.id, params.snapshot); return {delivered: true}; }
+        case 'peer-proxima': { const saved = peerProximaRead(String(params.deviceId ?? '')); if (!saved) throw new Error('That device has not shared its Proxima with this computer yet.'); return saved; }
+        case 'browse': return remoteFiles.browse(ownerId, typeof params.resourceId === 'string' ? params.resourceId : undefined, typeof params.offset === 'number' ? params.offset : 0);
+        case 'download': return remoteFiles.download(ownerId, params.entry);
+        case 'offline': return remoteFiles.offline(ownerId);
+        case 'change': return remoteFiles.change(ownerId,params.command);
+        case 'change-retry': return remoteFiles.retryChange(ownerId,String(params.commandId??''));
+        case 'changes': return remoteFiles.changes(ownerId);
+        case 'backpacks': return remoteFiles.backpacks(ownerId);
+        case 'backpack-snapshot': return remoteFiles.backpackSnapshot(ownerId,String(params.resourceId??''));
+        case 'backpack-command': return remoteFiles.backpackCommand(ownerId,String(params.resourceId??''),params.command);
+        case 'backpack-view': return remoteFiles.backpackView(ownerId,String(params.resourceId??''));
+        case 'edit-begin': return remoteFiles.beginEdit(ownerId, params.entry);
+        case 'edit-assignments': return remoteFiles.editingAssignments(ownerId);
+        case 'edit-assign': return remoteFiles.assignEditing(ownerId, params.entry, String(params.editorDeviceId ?? ''));
+        case 'edit-stop': return remoteFiles.stopEditing(ownerId, String(params.assignmentId ?? ''));
+        case 'workspaces': return remoteFiles.workspaces(ownerId);
+        case 'workspace-icon': return remoteFiles.workspaceIcon(ownerId, String(params.workspaceId ?? ''), String(params.name ?? ''));
+        case 'workspace-load': return remoteFiles.workspaceLoad(ownerId, String(params.workspaceId ?? ''));
+        case 'workspace-save': if (typeof params.state !== 'string' || typeof params.revision !== 'string') throw new Error('A document and its revision are required.'); return remoteFiles.workspaceSave(ownerId, String(params.workspaceId ?? ''), params.state, params.revision);
+        case 'inbox': return ownerId===remoteDevices.snapshot().owner?.id||!ownerId?localInbox.get().then(selected=>({...selected,parts:selected.path.split(/[\\/]/).filter(Boolean)})):remotePaths.inbox(ownerId);
+        case 'inbox-set': return ownerId===remoteDevices.snapshot().owner?.id||!ownerId?localInbox.set(typeof params.path==='string'?params.path:null).then(selected=>({...selected,parts:selected.path.split(/[\\/]/).filter(Boolean)})):remotePaths.setInbox(ownerId,typeof params.path==='string'?params.path:null);
+        case 'inbox-import': return inboxTransfers.start(String(params.commandId??''),Array.isArray(params.paths)?params.paths as string[]:[],typeof params.destinationOwnerId==='string'&&params.destinationOwnerId!==remoteDevices.snapshot().owner?.id?params.destinationOwnerId:undefined);
+        case 'inbox-pause': return inboxTransfers.pause(String(params.jobId??''));
+        case 'inbox-resume': return inboxTransfers.resume(String(params.jobId??''));
+        case 'send-to-inbox': return remotePaths.sendToInbox(ownerId, Array.isArray(params.paths) ? params.paths.filter((item): item is string => typeof item === 'string' && path.isAbsolute(item)) : []);
+        case 'edit-list': return remoteFiles.localEdits(ownerId || undefined);
+        case 'edit-recovery': return remoteFiles.editRecovery(ownerId || undefined);
+        case 'edit-recovery-open': {
+          const target = await remoteFiles.editRecoveryPath(String(params.editId ?? ''));
+          const failure = await shell.openPath(target);
+          if (failure) throw new Error(failure);
+          return { opened: true };
+        }
+        case 'edit-save': return remoteFiles.saveEdit(String(params.editId ?? ''));
+        case 'edit-continue': return remoteFiles.continueEdit(String(params.editId ?? ''));
+        case 'edit-open': {
+          const target = await remoteFiles.editPath(String(params.editId ?? ''));
+          const failure = await shell.openPath(target);
+          if (failure) throw new Error(failure);
+          return { opened: true };
+        }
+        case 'cancel': if (typeof params.jobId === 'string') remoteFiles.cancel(params.jobId); return { canceled: true };
+        case 'open-cache': {
+          if (typeof params.key !== 'string') throw new Error('Choose an offline file.');
+          const target = await remoteFiles.cachedPath(ownerId, params.key);
+          const failure = await shell.openPath(target);
+          if (failure) throw new Error(failure);
+          return { opened: true };
+        }
+        default: throw new Error('Unknown remote file operation.');
+      }
+    },
     panePageDrag:()=>pageDragId,
     panePages:{check:(...args)=>panePages!.check(...args),attach:async(...args)=>{
       const source=papersWindows.windowIds.map(id=>({id,page:currentWorkspaceTopology(id)?.surfaces.find(p=>p.surfaceId===args[1]||(p.surfaceKey??p.surfaceId)===args[1])})).find(p=>p.page);
       const result=await panePages!.attach(...args);if(!result.ok&&source){const wc=papersWindows.get(source.id)?.owned.hostView.webContents;if(wc&&!wc.isDestroyed())wc.send('host:event:move-rejected',{surfaceId:source.page!.surfaceId});}return result;
     }},
+    closeInlineDevice:async owner=>{const colon=owner.indexOf(':'),windowId=Number(owner.slice(0,colon)),surfaceId=owner.slice(colon+1),topology=currentWorkspaceTopology(windowId);if(!topology?.surfaces.find(surface=>surface.surfaceId===surfaceId)?.inlineParentKey)throw Error('This page is not an inline device view.');await facade.closeWorkspaceSurfaceFromControl(windowId,surfaceId,topology);},
     trashPath: target => shell.trashItem(target),
     runtimeControl: capabilityRuntimes,
     cacheDirectory: fileCapabilityCacheDirectory,
@@ -798,12 +941,14 @@ async function bootstrap(): Promise<void> {
     pdfPreview,
     revitPreview,
     shellThumbnail,
+    thumbnail:target=>remoteDevices.thumbnail?.(target)??Promise.resolve({kind:'none'}),
     calibrePreview,
     autoCadPreview,
     mlightCadPreview,
     htmlPreview,
     webBrowser,
     chromePane,
+    programWindows,
     resolvePaneWindow: async bindingId => {
       const result = await windowCapabilityService.observeCapability({ version: 1, bindingId }, { seedFrame: false });
       const observed = result.observation;
@@ -817,13 +962,15 @@ async function bootstrap(): Promise<void> {
     libreOfficePath: resolveLibreOfficePath(),
     openPath: (target) => shell.openPath(target),
     revealPath: (target) => shell.showItemInFolder(target),
-    fileIcon: async (target) => {
-      const icon = await app.getFileIcon(target, { size: 'small' });
-      return icon.isEmpty() ? null : icon.toDataURL();
-    },
+    fileIcon,
+    remotePaths,
+    editing: (target, request) => remoteDevices.editingControl(target, request),
+    customIcons,
   });
 
   const permissionStore = new PermissionStore(paths);
+  const remoteMutations = new RemoteFileMutations(path.join(paths.root,'file-commands'),(operation,params,deviceId)=>fileCapability.call({operation,params},{backpackId:'remote:'+deviceId}),undefined,600,fileTargets);
+  await remoteMutations.initialize().then(()=>{remoteDevices.mutations=remoteMutations;}).catch(error=>console.error('[remote-files] command recovery needed:',error));
   await permissionStore.initialize();
 
   const programsRoot = defaultProgramsRoot(app.getAppPath(), app.isPackaged, process.resourcesPath);
@@ -1082,9 +1229,25 @@ async function bootstrap(): Promise<void> {
       if (timer) clearTimeout(timer);
       saveTimers.delete(instance.window.id);
       await facade.waitForWorkspaceMutation(instance.window.id);
-      await instance.projectSurfaces.hideAll();
+      await instance.projectSurfaces.flushBeforeClose();
       await saveSessionWindow(instance, !preservingShutdown);
+      await instance.projectSurfaces.hideAll({ strict: true });
       traceQuit('window:' + instance.window.id + ':flush:done');
+    },
+    onCloseRejected: (instance: Parameters<typeof preparePapersWindow>[0], error: unknown) => {
+      closingPapersWindows.delete(instance.window.id);
+      // Record why: a refused close is otherwise invisible in a packaged build.
+      traceQuit('window:' + instance.window.id + ':flush:failed:' + (error instanceof Error ? error.message : String(error)).slice(0, 300));
+      console.error('[papers] window close save failed:', error);
+      if (!instance.hostView.webContents.isDestroyed()) instance.hostView.webContents.send('host:event:host-error', {
+        component: 'Saving work',
+        what: 'Papers could not finish saving this window.',
+        known: 'The close operation was stopped.',
+        intact: 'The window and its work remain open.',
+        retryUseful: true,
+        inspect: 'Check that the project files and data folder are available.',
+        recover: 'Try closing the window again after resolving the save problem.',
+      });
     },
     finalize: async (windowId: number) => {
       traceQuit('window:' + windowId + ':finalize:start');
@@ -1522,6 +1685,13 @@ async function bootstrap(): Promise<void> {
       webBrowser.closeOwner(`${windowId}:${surfaceId}`); await chromePane?.closeOwner(`${windowId}:${surfaceId}`);
       await papersWindows.get(windowId)?.owned.projectSurfaces.close(surfaceId, options);
     },
+    flushAttachedProjectSurface:async(windowId,surfaceId)=>{await papersWindows.get(windowId)?.owned.projectSurfaces.get(surfaceId)?.flushBeforeClose();},
+    inlineDeviceName:deviceId=>remoteFiles.snapshot().devices.find(device=>device.id===deviceId)?.name??null,
+    projectSiblingDestination:surfaceId=>panePages?.siblingDestination(surfaceId)??null,
+    attachInlineDevicePage:async(parentSurfaceId,surfaceId,groupId)=>{
+      const parent=logicalSurfaces.get(parentSurfaceId);if(!parent||!panePages)throw Error('The parent layout closed.');
+      return panePages.attach(`${parent.windowId}:${parentSurfaceId}`,surfaceId,groupId,'center');
+    },
     projectEntryUrlForSurface: (windowId, surfaceId) =>
       papersWindows.get(windowId)?.owned.projectSurfaces.entryUrlForSurface(surfaceId) ?? null,
     closeBackpackProjectSurface: async (senderId, surfaceId) => {
@@ -1765,6 +1935,121 @@ async function bootstrap(): Promise<void> {
     const id = papersWindows.windowForSender(sender.id);
     return nativeFileDrag(id === null ? BrowserWindow.fromWebContents(sender) : papersWindows.get(id)?.owned.window ?? null, start);
   });
+  for (const operation of ['status', 'invite', 'revoke', 'pair'] as const) {
+    ipcMain.handle(`host:devices:${operation}`, async (event, deviceId: unknown) => {
+      if (!facade.isHostSender(event.sender)) throw new Error('Device management requires the trusted Papers frame.');
+      if (operation === 'status') return { ...remoteDevices.snapshot(), incoming: remoteFiles.snapshot().devices, clientError: remoteFilesError };
+      if (operation === 'pair') {
+        if (!deviceId || typeof deviceId !== 'object') throw new Error('Enter an address and pairing code.');
+        const fields = deviceId as Record<string, unknown>;
+        if (typeof fields.address !== 'string' || typeof fields.code !== 'string') throw new Error('Enter an address and pairing code.');
+        if (remoteFilesError) throw new Error(remoteFilesError);
+        await remoteFiles.pair(fields.address, fields.code, remoteDevices.snapshot().owner?.name ?? 'Computer');
+        return { ...remoteDevices.snapshot(), incoming: remoteFiles.snapshot().devices, clientError: remoteFilesError };
+      }
+      if (operation === 'revoke') {
+        if (typeof deviceId !== 'string' || !/^[a-f0-9-]{36}$/.test(deviceId)) throw new Error('Invalid device identity.');
+        await remoteDevices.revoke(deviceId);
+        return remoteDevices.snapshot();
+      }
+      const choices=typeof deviceId==='object'&&deviceId!==null?deviceId as Record<string,unknown>:{canWrite:deviceId===true,shareFiles:true,shareProxima:false};
+      let folders:string[]=[];
+      if(choices.shareFiles!==false){const chosen=await dialog.showOpenDialog({title:'Choose folders this device may access',properties:['openDirectory','multiSelections']});if(chosen.canceled||!chosen.filePaths.length)return null;folders=chosen.filePaths;}
+      const backpacks=[];
+      if(choices.shareProxima===true)for(const backpack of registry.list())if(await backpackProjects.sharedDataKind(backpack.id)==='proxima')backpacks.push({id:randomUUID(),projectId:backpack.id,name:backpack.name,kind:'proxima' as const});
+      return remoteDevices.invite(folders,choices.canWrite===true,backpacks);
+    });
+  }
+  const proximaShares=async()=>{const backpacks=[];for(const backpack of registry.list())if(await backpackProjects.sharedDataKind(backpack.id)==='proxima')backpacks.push({id:randomUUID(),projectId:backpack.id,name:backpack.name,kind:'proxima' as const});return backpacks;};
+  // Devices on the creator's own Tailscale account get every local drive, with changes, plus Proxima.
+  remoteDevices.defaultGrant=async()=>{
+    const drives=process.platform==='win32'?'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(letter=>`${letter}:\\`).filter(drive=>existsSync(drive)):[os.homedir()];
+    return {shares:drives.map(directory=>({id:randomUUID(),name:directory.replace(/\\$/,'')||directory,directory})),canWrite:true,backpacks:await proximaShares()};
+  };
+  // Join every other computer on the same Tailscale account that is running Papers. No codes, no clicks.
+  const lastJoinFailure=new Map<string,string>();
+  const joinTailnetOwners=async()=>{
+    // Isolated test instances join only under their own name, so they never replace this computer's grant.
+    const testJoinName=process.env['PAPERS_TEST_JOIN_NAME'];
+    if(remoteFilesError||(process.env['PAPERS_TEST_USER_DATA']&&!testJoinName))return;
+    const {peers}=await tailnetAccount();
+    for (const peer of peers.filter(item => item.online && /android/i.test(item.os))) {
+      const base = `http://${peer.address}:48240`;
+      if (!remoteFiles.connectedAddresses().includes(base)) await remoteFiles.requestPhoneAnnouncement(base).catch(() => {});
+    }
+    const known=new Set(remoteFiles.connectedAddresses());
+    // Phones and tablets only browse; they never run an owner gateway.
+    for(const peer of peers.filter(item=>item.online&&/^(windows|macOS|linux)$/.test(item.os))){
+      const base=`http://${peer.address}:48240`;
+      if(known.has(base))continue;
+      await remoteFiles.join(base,testJoinName??remoteDevices.snapshot().owner?.name??os.hostname()).then(()=>logDevice('client-joined',{peer:peer.name,base}),error=>{const reason=error instanceof Error?error.message:String(error);if(lastJoinFailure.get(base)!==reason){lastJoinFailure.set(base,reason);logDevice('client-join-failed',{peer:peer.name,base,reason});}});
+    }
+  };
+  const joinQuietly=()=>{void joinTailnetOwners().catch(error=>logDevice('client-discovery-failed',{reason:error instanceof Error?error.message:String(error)}));};
+  joinQuietly();
+  const tailnetJoinTimer=setInterval(joinQuietly,60_000);
+  tailnetJoinTimer.unref();
+  remoteDevices.workspaces={
+    list:async()=>{const found=[];for(const backpack of registry.list())if(await backpackProjects.sharedDataKind(backpack.id)==='as-you-go')found.push({projectId:backpack.id,name:backpack.name});return found;},
+    load:async projectId=>{const loaded=await backpackProjects.loadStateVersioned(projectId);return {state:loaded.state,revision:loaded.revision};},
+    save:(projectId,raw,revision)=>backpackProjects.saveState(projectId,raw,revision as never),
+    icon:(projectId,name)=>backpackProjects.sharedIcon(projectId,name),
+  };
+  remoteDevices.customIcons=customIcons;
+  remoteDevices.thumbnail=createRemoteThumbnailProvider({shell:shellThumbnail,icon:async target=>(await app.getFileIcon(target,{size:'large'})).toPNG(),encode:png=>{const image=nativeImage.createFromBuffer(png),size=image.getSize(),factor=Math.min(1,256/Math.max(size.width,size.height)),small=image.resize({width:Math.max(1,Math.round(size.width*factor)),height:Math.max(1,Math.round(size.height*factor)),quality:'good'});return {bytes:small.toJPEG(75),...small.getSize()};}});
+  remoteDevices.preview=target=>fileCapability.call({operation:'preview',params:{path:target}},{backpackId:'remote:preview'} as never);
+  remoteDevices.search=async(query,limit)=>{if(!everythingSearch)throw Error('Everything search is unavailable on this computer.');const result=await everythingSearch.search(query,limit);if(!result.ok)throw Error(result.error??'Search failed.');return result;};
+  // A paired device without a gateway (the phone) publishes its own Proxima here; this computer keeps the
+  // latest copy per device for its Proxima to view read-only.
+  remoteDevices.peerProxima=async(deviceId,snapshot)=>{
+    if(!/^[0-9a-f-]{36}$/i.test(deviceId))throw Error('Invalid device identity.');
+    const name=remoteDevices.snapshot().devices.find(device=>device.id===deviceId)?.name??'Device';
+    mkdirSync(peerProximaDirectory,{recursive:true});
+    const file=path.join(peerProximaDirectory,deviceId.toLowerCase()+'.json'),temporary=file+'.tmp';
+    writeFileSync(temporary,JSON.stringify({deviceId:deviceId.toLowerCase(),name,receivedAt:Date.now(),snapshot}));renameSync(temporary,file);
+  };
+  const backgroundOwners = new Map<string, Promise<BrowserWindow | null>>();
+  const backgroundOwner = (projectId: string): Promise<BrowserWindow | null> => {
+    const existing = backgroundOwners.get(projectId); if (existing) return existing;
+    const pending = (async () => {
+      const opened = await backpackProjects.background(projectId); if (!opened) return null;
+      const owner = new BrowserWindow({ show: false, skipTaskbar: true, webPreferences: { preload: path.join(preloadDir, 'backpackProject.cjs'), sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
+      surfaceContexts.bind(owner.webContents.id, { projectId, windowId: -1, kind: 'background' });
+      const senderId = owner.webContents.id;
+      owner.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      owner.webContents.on('will-navigate', (event, target) => { if (new URL(target).host !== projectId) event.preventDefault(); });
+      owner.webContents.once('destroyed', () => { surfaceContexts.unbind(senderId); backgroundOwners.delete(projectId); });
+      try { await owner.loadURL(opened.url); return owner; } catch (error) { owner.destroy(); throw error; }
+    })();
+    backgroundOwners.set(projectId, pending); void pending.catch(() => { if (backgroundOwners.get(projectId) === pending) backgroundOwners.delete(projectId); }); return pending;
+  };
+  for (const backpack of registry.list()) if (!backpack.archived) void backgroundOwner(backpack.id).catch(error => console.warn('Project background owner deferred', error));
+  remoteDevices.replaceBackpack=async(share,projection)=>{
+    if(share.kind!=='proxima'||await backpackProjects.sharedDataKind(share.projectId)!=='proxima')throw Error('This Backpack is not sharing Proxima data.');
+    const owner = await backgroundOwner(share.projectId);
+    if (owner && !owner.isDestroyed()) return owner.webContents.executeJavaScript(`(async()=>{for(let n=0;n<200&&!globalThis.__proximaReplaceAll;n++)await new Promise(resolve=>setTimeout(resolve,50));if(!globalThis.__proximaReplaceAll)throw Error('The project sync owner is starting.');return globalThis.__proximaReplaceAll(JSON.parse(${JSON.stringify(JSON.stringify(projection))}),'paired device');})()`);
+    const runtime=papersWindows.all().flatMap(context=>context.owned.projectSurfaces.all()).find(surface=>surface.liveProjectId===share.projectId&&surface.webContents&&!surface.webContents.isDestroyed());
+    if(!runtime)throw Error('Open Proxima on its owning computer first.');
+    return runtime.replaceSharedData(projection,'another device');
+  };
+  remoteDevices.peerReplacement={
+    take:async deviceId=>{try{return JSON.parse(readFileSync(path.join(peerProximaDirectory,deviceId.toLowerCase()+'.replacement.json'),'utf8'));}catch{return null;}},
+    clear:async deviceId=>{try{unlinkSync(path.join(peerProximaDirectory,deviceId.toLowerCase()+'.replacement.json'));}catch{}},
+  };
+  remoteDevices.readBackpack=async(share,control)=>{
+    const owner=remoteDevices.snapshot().owner;
+    if(!owner||await backpackProjects.sharedDataKind(share.projectId)!==share.kind)throw Error('This Backpack is not sharing data.');
+    const runtime=papersWindows.all().flatMap(context=>context.owned.projectSurfaces.all()).find(surface=>surface.liveProjectId===share.projectId&&surface.webContents&&!surface.webContents.isDestroyed());
+    if(!runtime)throw Error('Open this Backpack on its owning computer first.');
+    return runtime.readSharedData({ownerId:owner.id,backpackId:share.projectId},control);
+  };
+  remoteDevices.commandBackpack=async(share,command)=>{
+    const owner=remoteDevices.snapshot().owner;
+    if(!owner||share.kind!=='proxima'||await backpackProjects.sharedDataKind(share.projectId)!=='proxima')throw Error('This Backpack is not sharing Proxima data.');
+    const runtime=papersWindows.all().flatMap(context=>context.owned.projectSurfaces.all()).find(surface=>surface.liveProjectId===share.projectId&&surface.webContents&&!surface.webContents.isDestroyed());
+    if(!runtime)throw Error('Open Proxima on its owning computer first.');
+    return runtime.commandSharedData({ownerId:owner.id,backpackId:share.projectId},command);
+  };
   const windowCapabilityService = createWindowCapabilityService({
     // Papers itself is a useful saved layout member. Admit only the real main
     // shell by its fixed native title; same-process picker, widget, preview and
@@ -2485,7 +2770,8 @@ async function bootstrap(): Promise<void> {
       previewWindow.on('closed', () => {
         if (widgetPreviewWindows.get(sender.id) === previewWindow) widgetPreviewWindows.delete(sender.id);
       });
-      sender.once('destroyed', () => hideWidgetPreview(sender.id));
+      const previewSenderId = sender.id;
+      sender.once('destroyed', () => hideWidgetPreview(previewSenderId));
       lastPreviewSignature.set(sender.id, previewSignature);
       void previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).then(async () => {
         if (previewWindow.isDestroyed() || widgetPreviewWindows.get(sender.id) !== previewWindow) return;
@@ -3408,6 +3694,11 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // the developer command plane is fully quiet before global shutdown
       // begins.
       capabilityQuitPromise = quitStage('control', () => papersControlServer?.close())
+        .then(() => quitStage('remote-devices', () => remoteDevices.close()))
+        .then(() => quitStage('remote-file-commands', () => remoteMutations.close()))
+        .then(() => quitStage('remote-file-edits', () => remoteEdits.close()))
+        .then(() => quitStage('inbox-transfers',()=>inboxTransfers.close()))
+        .then(() => quitStage('remote-files', () => remoteFiles.close()))
         .then(() => quitStage('native-panes', () => chromePane?.coordinator?.dispose()))
         .then(async () => { await commandSurfaceOverlay?.destroy().catch(() => undefined); commandSurfaceOverlay = null; })
         .then(() => Promise.all([
@@ -3420,6 +3711,7 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
         ]))
         .then(() => {
         traceQuit('complete');
+        traceQuit('remaining-windows:' + JSON.stringify(BaseWindow.getAllWindows().map(window => ({ id: window.id, visible: window.isVisible(), browser: window instanceof BrowserWindow }))));
         capabilityQuitComplete = true;
       });
     }
@@ -3699,9 +3991,12 @@ const setExclusiveFilter=(selected,other)=>{if(selected.checked)other.checked=fa
       // It has its own kind because a reader of a kind is entitled to a
       // different answer for a launcher.
       bindOwnedProjectSurface(overlayWindow, projectId, 'launcher', papersWindows.windowIds[0] ?? 0);
-      commandSurfaceSenderId = overlayWindow.webContents.id;
+      const overlaySenderId = overlayWindow.webContents.id;
+      commandSurfaceSenderId = overlaySenderId;
+      // The window is already destroyed here; reading overlayWindow.webContents throws and
+      // blocks shutdown behind an error dialog.
       overlayWindow.webContents.once('destroyed', () => {
-        if (commandSurfaceSenderId === overlayWindow.webContents.id) commandSurfaceSenderId = null;
+        if (commandSurfaceSenderId === overlaySenderId) commandSurfaceSenderId = null;
       });
       return overlayWindow;
     },

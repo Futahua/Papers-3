@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { host, type BuildIdentity, type UpdateState } from './bridge';
+import { DevicesCard } from './DevicesCard';
 
 /**
  * "Updates" — Papers keeping itself current.
@@ -222,6 +223,7 @@ export function SettingsPane(): React.JSX.Element {
           <UpdatesCard />
 
           <ThisBuildCard />
+          <DevicesCard />
 
           <div className="settings-card">
             <span className="label">Appearance</span>

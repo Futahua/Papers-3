@@ -61,7 +61,7 @@ describe('backpack project content security policy', () => {
     expect(directive(policy, 'form-action')).toBe("form-action 'none'");
     expect(directive(policy, 'img-src')).toBe(`img-src ${ORIGIN} ${PREVIEW_ORIGIN} data: blob:`);
     expect(directive(policy, 'media-src')).toBe(`media-src ${PREVIEW_ORIGIN} blob:`);
-    expect(directive(policy, 'frame-src')).toBe(`frame-src ${PREVIEW_ORIGIN} blob:`);
+    expect(directive(policy, 'frame-src')).toBe(`frame-src ${ORIGIN} ${PREVIEW_ORIGIN} blob:`);
     expect(directive(policy, 'frame-src')).not.toContain('data:');
     expect(directive(policy, 'media-src')).not.toContain('data:');
     // style-src keeps unsafe-inline, as it always had, and nothing more.
@@ -74,7 +74,7 @@ describe('backpack project content security policy', () => {
   it('keeps an explicitly embedded Backpack origin plus local blob previews, and nothing wider', () => {
     const child = 'papers-backpack://bp-22222222-3333-4444-8555-666666666666';
     const policy = contentSecurityPolicy(ORIGIN, [child]);
-    expect(directive(policy, 'frame-src')).toBe(`frame-src ${child} ${PREVIEW_ORIGIN} blob:`);
+    expect(directive(policy, 'frame-src')).toBe(`frame-src ${ORIGIN} ${child} ${PREVIEW_ORIGIN} blob:`);
     expect(directive(policy, 'frame-src')).not.toMatch(/\bhttps?:/);
     expect(directive(policy, 'frame-src')).not.toContain('data:');
   });
@@ -88,5 +88,21 @@ describe('backpack project content security policy', () => {
     expect(policy).not.toContain('bp-99999999');
     expect(other).not.toContain('bp-11111111');
     expect(policy).toContain(PREVIEW_ORIGIN);
+  });
+});
+
+describe('previews of a Backpack that embeds this one', () => {
+  const HOST_PREVIEW = 'papers-file-preview://bp-99999999-2222-4333-8444-555555555555';
+  it('adds exactly the embedding host preview origin to image, media and frame sources', () => {
+    const policy = contentSecurityPolicy(ORIGIN, [], [HOST_PREVIEW]);
+    for (const name of ['img-src', 'media-src', 'frame-src']) {
+      expect(directive(policy, name)).toContain(PREVIEW_ORIGIN);
+      expect(directive(policy, name)).toContain(HOST_PREVIEW);
+    }
+    expect(directive(policy, 'connect-src')).not.toContain('papers-file-preview');
+    expect(policy).not.toMatch(/papers-file-preview:(?!\/\/bp-)/);
+  });
+  it('adds nothing without an embedding host', () => {
+    expect(directive(contentSecurityPolicy(ORIGIN), 'img-src')).toBe(`img-src ${ORIGIN} ${PREVIEW_ORIGIN} data: blob:`);
   });
 });

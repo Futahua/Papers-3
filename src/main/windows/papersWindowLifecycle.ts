@@ -5,6 +5,7 @@ export interface PapersWindowLifecycleDependencies {
   register(instance: PapersWindowInstance): void;
   install?(instance: PapersWindowInstance): void;
   onClose?(instance: PapersWindowInstance): void | Promise<void>;
+  onCloseRejected?(instance: PapersWindowInstance, error: unknown): void;
   finalize(windowId: number): void | Promise<void>;
 }
 
@@ -44,9 +45,15 @@ export function preparePapersWindow(
     event?.preventDefault?.();
     if (closePreparationStarted) return;
     closePreparationStarted = true;
-    void Promise.resolve(dependencies.onClose?.(instance)).catch(() => undefined).finally(() => {
+    let preparation: Promise<void>;
+    try { preparation = Promise.resolve(dependencies.onClose?.(instance)); }
+    catch (error) { preparation = Promise.reject(error); }
+    void preparation.then(() => {
       closePreparationFinished = true;
       if (!instance.window.isDestroyed()) instance.window.destroy();
+    }).catch(error => {
+      closePreparationStarted = false;
+      dependencies.onCloseRejected?.(instance, error);
     });
   });
   instance.window.once('closed', () => { void finalize().catch(() => undefined); });

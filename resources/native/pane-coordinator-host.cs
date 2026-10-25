@@ -66,7 +66,20 @@ public sealed class PaneCoordinatorHost:Form {
             target.Pane.SelectTab(group,tab,target.Pane.Scope.BindingGeneration,target.Pane.Scope.StateRevision);
         }catch(Exception error){Console.Error.WriteLine("Native drop rejected: "+error.Message);}
     }
-    double DpiScale{get{var dpi=GetDpiForWindow(owner);return dpi==0?1:dpi/96.0;}}
+    double? rendererScale;
+    // The trusted Electron host supplies its actual DIP-to-physical scale,
+    // including accessibility text scaling. Win32 DPI is a legacy fallback.
+    double DpiScale{get{if(rendererScale.HasValue)return rendererScale.Value;var dpi=GetDpiForWindow(owner);return dpi==0?1:dpi/96.0;}}
+    void SetCoordinateScale(Dictionary<string,object> request){
+        if(!request.ContainsKey("coordinateScale"))return;
+        double next=Convert.ToDouble(request["coordinateScale"]);
+        if(double.IsNaN(next)||double.IsInfinity(next)||next<=0)throw new Exception("Invalid host coordinate scale.");
+        if(rendererScale==next)return;rendererScale=next;
+        foreach(var binding in scopes.Values.ToArray())if(!binding.Loading){
+            binding.Pane.SetHeaderHeight((int)Math.Round(binding.HeaderDip*DpiScale));
+            binding.Pane.SetViewport(ScreenRect(binding.Rect),++binding.ViewportRevision);
+        }
+    }
     PaneCoordinatorHost(string[] args){
         owner=new IntPtr(long.Parse(args[0]));ownerPid=uint.Parse(args[1]);cache=args[2];chrome=args[3];
         uint pid;Native.GetWindowThreadProcessId(owner,out pid);if(pid!=ownerPid)throw new Exception("Physical host identity changed.");
@@ -138,6 +151,8 @@ public sealed class PaneCoordinatorHost:Form {
         string op=ReadText(r,"op"),key=ReadText(r,"scope");Binding binding;
         if(op=="release-host"){Release();return new{ok=true};}
         if(!System.Text.RegularExpressions.Regex.IsMatch(key,"^[a-f0-9]{64}$"))throw new Exception("Invalid authorized scope identity.");
+        if(op!="mount"&&(!scopes.TryGetValue(key,out binding)||binding.Token!=ReadText(r,"binding")))throw new Exception("Stale surface binding.");
+        SetCoordinateScale(r);
         if(op=="mount"){
             if(!scopes.TryGetValue(key,out binding)){
                 binding=new Binding{Loading=true,HeaderDip=(int)Number(r,"headerHeight",32),Token=ReadText(r,"binding"),Mount=Path.Combine(cache,"pane-mount-"+key+".json")};

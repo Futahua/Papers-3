@@ -59,6 +59,7 @@ const CHANNEL_CAPABILITY: Readonly<Record<string, ProjectCapability>> = Object.f
   'host:backpack-project:state-load': 'read',
   'host:backpack-project:state-load-versioned': 'read',
   'host:backpack-project:workspace-scope': 'read',
+  'host:backpack-project:workspace-template': 'read',
   'host:backpack-project:workspace-scope-revoke': 'read',
   'host:backpack-project:shortcut-icon': 'read',
   'host:backpack-project:resolve-web-link-icon': 'read',
@@ -113,6 +114,7 @@ const KIND_CAPABILITIES: Readonly<Record<string, readonly ProjectCapability[] | 
   // The live workspace frame and the surfaces the 018 detach and compact-widget
   // paths create are full project surfaces, and keep every capability.
   project: 'all',
+  background: ['read', 'file'] as const,
   detached: 'all',
   widget: 'all',
   // The launcher reads the project so it has something to search, runs the item

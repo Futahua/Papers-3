@@ -195,7 +195,12 @@ export class BackpackProjectSurfaceCollection {
     return this.runtimes.get(surfaceId)?.focus() ?? false;
   }
 
-  hideAll(): Promise<void> {
+  flushBeforeClose(): Promise<void> {
+    return Promise.all([...this.runtimes.values()].map(runtime => runtime.flushBeforeClose())).then(() => undefined);
+  }
+
+  hideAll(options: { strict?: boolean } = {}): Promise<void> {
+    if (options.strict) return Promise.all([...this.runtimes.values()].map(runtime => runtime.hide({ restoreOnFlushFailure: true }))).then(() => undefined);
     // Window teardown is terminal, unlike hiding one inactive tab.
     return Promise.all([...this.runtimes.values()].map((runtime) => {
       try {

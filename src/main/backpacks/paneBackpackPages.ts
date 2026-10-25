@@ -7,6 +7,8 @@ export interface PanePage {
     projectId: string;
     title: string;
     tabStyle?: string;
+    deviceId?: string;
+    inlineParentKey?: string;
 }
 interface Presentation {
     bounds: PaneRect | null;
@@ -21,6 +23,7 @@ export function createPaneBackpackPages(input: {
     present: (page: PanePage, rect: PaneRect | null, visible: boolean) => void;
     adopt: (page: PanePage, parent: PanePage) => Promise<void>;
     exists: (key: string) => Promise<boolean>;
+    closeInline?: (page:PanePage)=>Promise<void>;
 }) {
     const layouts = new Map<string, NativePaneSnapshot>(), checking = new Set<string>();
     const titleUpdates = new Map<string, Promise<void>>();
@@ -85,6 +88,13 @@ export function createPaneBackpackPages(input: {
             if (!next.has(key)) {
                 const page = locate(key!);
                 if (page) {
+                    if(page.inlineParentKey && input.closeInline){
+                        const identity='close-inline:'+page.key,priorGroup=old?.groups.find(group=>group.tabs.some(tab=>tab.preview?.PageKey===page.key))?.id;
+                        if(!checking.has(identity)){checking.add(identity);void input.closeInline(page).catch(async()=>{
+                          const bridge=input.bridge();if(bridge?.has(owner))await bridge.command(owner,'document-add',{groupId:snapshot.groups.some(group=>group.id===priorGroup)?priorGroup:snapshot.groups[0]?.id,tabId:'preview:page-'+createHash('sha256').update(page.key).digest('hex').slice(0,24),preview:{Id:'preview:page-'+createHash('sha256').update(page.key).digest('hex').slice(0,24),PageKey:page.key,Name:page.title}});
+                        }).finally(()=>checking.delete(identity));}
+                        continue;
+                    }
                     const outer = input.outer(page);
                     input.present(page, outer.bounds, outer.visible);
                 }
@@ -132,7 +142,7 @@ export function createPaneBackpackPages(input: {
         const page = locate(id), parent = locate(owner.slice(owner.indexOf(':') + 1)), bridge = input.bridge(), snapshot = bridge?.snapshot(owner);
         if (!page || !parent || !bridge || !snapshot)
             return { ok: false, error: 'That page or layout is unavailable.' };
-        if (page.surfaceId === parent.surfaceId || page.projectId === parent.projectId)
+        if (page.surfaceId === parent.surfaceId || page.projectId === parent.projectId && !(page.deviceId && page.inlineParentKey === parent.key && page.deviceId !== parent.deviceId))
             return { ok: false, error: 'An AYG page cannot enter its own layout.' };
         if (placement(page))
             return { ok: false, error: 'That page is already in a layout group.' };
@@ -243,5 +253,7 @@ export function createPaneBackpackPages(input: {
             return undo;
         } catch (error) { await undo(); throw error; }
     }
-    return { accept, refresh, syncTitles, check, attach, removePage, checkTransfers, applyTransfers, controls: (id: string) => { const p = locate(id); return Boolean(p && placement(p) && input.outer(placement(p)!.parent).visible); } };
+    return { accept, refresh, syncTitles, check, attach, removePage, checkTransfers, applyTransfers,
+      siblingDestination:(id:string)=>{const page=locate(id),place=page&&placement(page);return place?{parentSurfaceId:place.parent.surfaceId,groupId:place.group.id}:null;},
+      controls: (id: string) => { const p = locate(id); return Boolean(p && placement(p) && input.outer(placement(p)!.parent).visible); } };
 }

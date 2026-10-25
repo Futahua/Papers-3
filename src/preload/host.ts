@@ -121,6 +121,9 @@ const api = {
     clearWindowBounds: () => ipcRenderer.invoke('host:settings:clear-window-bounds'),
   },
 
+  // Keep sandboxed preload entry points self-contained: local require chunks are unavailable.
+  devices:{pair:(address:string,code:string)=>ipcRenderer.invoke('host:devices:pair',{address,code}),status:()=>ipcRenderer.invoke('host:devices:status'),invite:(canWrite=false,shareProxima=false,shareFiles=true)=>ipcRenderer.invoke('host:devices:invite',{canWrite,shareProxima,shareFiles}),revoke:(id:string)=>ipcRenderer.invoke('host:devices:revoke',id)},
+
   permissions: {
     list: () => ipcRenderer.invoke('host:permissions:list'),
     revoke: (backpackId: string, programId: string, capability: string) =>

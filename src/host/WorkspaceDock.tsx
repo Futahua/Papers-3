@@ -12,6 +12,7 @@ import 'dockview-react/dist/styles/dockview.css';
 import { BackpackProjectFrame } from './BackpackProjectFrame';
 import type { HostOverlayOwner } from './bridge';
 import type { WorkspaceLayoutNode, WorkspaceTopologyV1 } from '@shared/workspaceTopology';
+import {outerDeviceTopology,retainInlineGroupMembers} from '@shared/inlineDeviceTopology';
 import { rebuildWorkspaceGroupMap } from './workspaceGroupMapping';
 import { createWorkspaceReconciliationFeedbackGate } from './workspaceReconciliationFeedback';
 import { serializedRootForTopology, workspaceRootFromDockview } from './workspaceDockLayout';
@@ -167,8 +168,10 @@ export function WorkspaceDock(props: {
     rootWeights?: number[];
   }) => void;
 }): React.JSX.Element {
-  const { projects, topology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onOverlayActiveChange, splitNotice, onCommitLayout,
+  const { projects: allProjects, topology: fullTopology, activeSurfaceId, onActivate, onClose, onSplit, onMove, onOverlayActiveChange, splitNotice, onCommitLayout,
     interactionDisabled = false } = props;
+  const topology = useMemo(() => outerDeviceTopology(fullTopology), [fullTopology]);
+  const projects = useMemo(() => allProjects.filter(project => topology.surfaces.some(surface => surface.surfaceId === project.surfaceId)), [allProjects, topology]);
   const apiRef = useRef<DockviewApi | null>(null);
   const projectsRef = useRef(projects);
   const topologyRef = useRef(topology);
@@ -487,8 +490,8 @@ export function WorkspaceDock(props: {
         rootWeights = sizes.map((size) => size / total);
       }
     }
-    onCommitLayout({ groups, ...(root ? { root } : {}), ...(rootWeights ? { rootWeights } : {}) });
-  }, [onCommitLayout, refreshGroupIds]);
+    onCommitLayout({ groups: retainInlineGroupMembers(fullTopology, groups), ...(root ? { root } : {}), ...(rootWeights ? { rootWeights } : {}) });
+  }, [fullTopology, onCommitLayout, refreshGroupIds]);
 
   const reconcileFromTopology = useCallback((api: DockviewApi): void => {
     refreshGroupIds(api);
@@ -1546,6 +1549,7 @@ export function WorkspaceDock(props: {
         disableFloatingGroups
         dropPositionResolver={resolveWorkspaceDropPosition}
       />
+      <div hidden>{allProjects.filter(project => fullTopology.surfaces.some(surface => surface.surfaceId === project.surfaceId && surface.inlineParentKey)).map(project => <BackpackProjectFrame key={project.surfaceId} url={project.url} surfaceId={project.surfaceId} visible={false} />)}</div>
       {resizeActive && <div className="workspace-resize-shield" aria-hidden="true" />}
       {interactionDisabled && <div className="workspace-interaction-shield" aria-hidden="true" />}
     </section>

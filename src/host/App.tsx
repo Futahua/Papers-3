@@ -164,10 +164,13 @@ export function App(): React.JSX.Element {
           candidate.surfaceId === previousSurfaceId ? project : candidate);
         setOpenProjects(openProjectsRef.current);
         setWorkspaceTopology(topology);
-        surfaceIdRef.current = project.surfaceId;
-        setSurfaceId(project.surfaceId);
-        setProjectUrl(project.url);
-        setEntered(project.projectId);
+        const inline=topology.surfaces.find(surface=>surface.surfaceId===project.surfaceId)?.inlineParentKey;
+        const focused=topology.groups.find(group=>group.groupId===topology.focusedGroupId);
+        const active=inline?openProjectsRef.current.find(surface=>surface.surfaceId===focused?.activeSurfaceId)??project:project;
+        surfaceIdRef.current = active.surfaceId;
+        setSurfaceId(active.surfaceId);
+        setProjectUrl(active.url);
+        setEntered(active.projectId);
       }),
       bridge.events.onWorkspaceHydrated(({ projects, topology }) => {
         topologyCommitArmed.current = true;
@@ -431,6 +434,12 @@ export function App(): React.JSX.Element {
       for (const group of snapshot.groups) {
         const existing = next.groups.find((candidate) => candidate.groupId === group.groupId);
         if (!existing || existing.surfaceIds.length !== group.surfaceIds.length) continue;
+        // Dockview may finish a layout callback after main has moved/replaced a
+        // page. Equal counts do not make that older membership a valid reorder.
+        // Keep canonical membership; a stale presentation must not throw from
+        // React's state updater and unmount the entire Papers window.
+        if (new Set(group.surfaceIds).size !== group.surfaceIds.length
+          || group.surfaceIds.some((surface) => !existing.surfaceIds.includes(surface))) continue;
         if (existing.surfaceIds.every((surface, index) => surface === group.surfaceIds[index])) continue;
         next = reorderWorkspaceGroup(next, group.groupId, group.surfaceIds);
       }
@@ -493,7 +502,7 @@ export function App(): React.JSX.Element {
           >
             {VIEW_LABEL[view]}
           </button>
-          {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack}
+          {sidebarOpen && <BackpackSidebar list={backpacks} activeId={entered} onEnter={enterBackpack} onSettings={() => goto('settings')}
             onMouseEnter={cancelSidebarClose} onMouseLeave={scheduleSidebarClose} onReload={reloadPapers} reloading={reloading} reloadError={reloadError} onDiscardDeadWindows={discardDeadWindows} cleaning={cleaning} />}
           {basicOpen && (
             <div id="basic-menu" className="basic-menu" role="menu">
@@ -560,7 +569,7 @@ export function App(): React.JSX.Element {
       {view === 'backpacks' && entered === null && (
         <BackpacksPane list={backpacks} onChanged={refreshBackpacks} onEnter={enterBackpack} />
       )}
-      {view === 'settings' && <SettingsPane />}
+      {view === 'settings' && <section className="settings-overlay" aria-label="Papers Settings"><button type="button" className="secondary settings-return" onClick={() => goto('backpacks')}>Back to workspace</button><SettingsPane /></section>}
 
       {openProjects.length > 0 && entered !== null && projectUrl !== null && (
         <WorkspaceDock

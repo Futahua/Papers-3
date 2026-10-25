@@ -137,6 +137,37 @@ beforeEach(() => {
 });
 
 describe('web browser preview session leases', () => {
+  it('waits for the replacement document when the initial navigation is aborted',async()=>{
+    const bridge=createWebBrowserHostBridge({resolveWindow:()=>new BaseWindow()});
+    await bridge.open(context,url,rect);
+    const contents=harness.views[0]!.webContents;
+    contents.loadURL.mockRejectedValue(Object.assign(new Error('ERR_ABORTED'),{code:'ERR_ABORTED',errno:-3}));
+    const opening=bridge.open(context,'https://example.com/redirect',rect);
+    await Promise.resolve();await Promise.resolve();
+    expect(contents.close).not.toHaveBeenCalled();
+    const ready=contents.once.mock.calls.filter(([event])=>event==='dom-ready').at(-1)![1] as ()=>void;
+    ready();expect((await opening).ok).toBe(true);
+  });
+  it('reports a replacement navigation failure instead of treating abort as success',async()=>{
+    const bridge=createWebBrowserHostBridge({resolveWindow:()=>new BaseWindow()});await bridge.open(context,url,rect);
+    const contents=harness.views[0]!.webContents;
+    contents.loadURL.mockRejectedValue(Object.assign(new Error('ERR_ABORTED'),{code:'ERR_ABORTED',errno:-3}));
+    const opening=bridge.open(context,'https://example.com/redirect',rect);
+    await Promise.resolve();
+    const fail=contents.on.mock.calls.filter(([event])=>event==='did-fail-load').at(-1)![1] as (...args:unknown[])=>void;
+    fail({},-105,'ERR_NAME_NOT_RESOLVED','https://example.com/redirect',true);
+    expect(await opening).toMatchObject({ok:false,error:'ERR_NAME_NOT_RESOLVED'});expect(contents.close).toHaveBeenCalled();
+  });
+  it('bounds an aborted navigation that never produces a document',async()=>{
+    vi.useFakeTimers();try{
+      const bridge=createWebBrowserHostBridge({resolveWindow:()=>new BaseWindow()});await bridge.open(context,url,rect);
+      const contents=harness.views[0]!.webContents;
+      contents.loadURL.mockRejectedValue(Object.assign(new Error('ERR_ABORTED'),{code:'ERR_ABORTED'}));
+      const opening=bridge.open(context,'https://example.com/stopped',rect);
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(await opening).toMatchObject({ok:false,error:'Link preview did not finish navigating.'});
+    }finally{vi.useRealTimers();}
+  });
   it('keeps the loading surface exposed until DOM readiness and returns before slow trailing resources', async () => {
     const bridge = createWebBrowserHostBridge({ resolveWindow: () => new BaseWindow() });
     const opening = bridge.open(context, url, rect);

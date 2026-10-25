@@ -571,15 +571,32 @@ async function submitLensCrop(contents: WebContents, crop: LensCrop): Promise<st
 }
 
 async function loadPreviewDocument(contents: WebContents, url: string): Promise<void> {
-  let ready!: () => void;
-  const documentReady = new Promise<void>(resolve => { ready = resolve; });
-  contents.once('dom-ready', ready);
-  try {
-    // A usable document need not wait for every image, tracker or long-running request.
-    await Promise.race([documentReady, contents.loadURL(url)]);
-  } finally {
-    contents.removeListener?.('dom-ready', ready);
-  }
+  return new Promise<void>((resolve,reject)=>{
+    let settled=false;
+    const finish=(error?:Error)=>{
+      if(settled)return;settled=true;clearTimeout(timer);
+      contents.removeListener?.('dom-ready',ready);
+      contents.removeListener?.('destroyed',closed);
+      contents.removeListener?.('did-fail-load',failed);
+      error?reject(error):resolve();
+    };
+    const ready=()=>finish();
+    const closed=()=>finish(new Error('Link preview was closed.'));
+    const failed=(_event:unknown,code:number,description:string,_url:string,mainFrame:boolean)=>{
+      if(mainFrame&&code!==-3)finish(new Error(description||'Link preview failed to load.'));
+    };
+    const timer=setTimeout(()=>finish(new Error('Link preview did not finish navigating.')),20000);
+    timer.unref?.();
+    contents.once('dom-ready',ready);
+    contents.once('destroyed',closed);
+    contents.on('did-fail-load',failed);
+    // A page may replace its initial navigation before DOM readiness. ERR_ABORTED
+    // ends that navigation, not necessarily the replacement document's load.
+    try{void contents.loadURL(url).then(ready,error=>{
+      if((error as {code?:string;errno?:number})?.code==='ERR_ABORTED'||(error as {errno?:number})?.errno===-3)return;
+      finish(error instanceof Error?error:new Error(String(error)));
+    });}catch(error){finish(error instanceof Error?error:new Error(String(error)));}
+  });
 }
 
 export function createWebBrowserHostBridge(input: {

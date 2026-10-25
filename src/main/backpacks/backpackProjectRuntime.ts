@@ -256,6 +256,41 @@ export class BackpackProjectRuntime {
     this.fit();
   }
 
+  async flushBeforeClose(): Promise<void> {
+    const view = this.view;
+    if (!view || view.webContents.isDestroyed()) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const outcome = await Promise.race([
+        view.webContents.executeJavaScript('globalThis.__papersFlushBeforeClose?.()', true).then(() => 'flushed' as const),
+        new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), 2500); }),
+      ]);
+      if (outcome === 'timeout') throw new Error('project close flush timed out before renderer close');
+    } finally { if (timer) clearTimeout(timer); }
+  }
+  async readSharedData(source:{ownerId:string;backpackId:string},control=false):Promise<unknown>{
+    const view=this.view;
+    if(!view||view.webContents.isDestroyed()||this.projectId!==source.backpackId)throw Error('Open this Backpack on its owning computer first.');
+    const contents=view.webContents,url=contents.getURL();let timer:ReturnType<typeof setTimeout>|undefined;
+    try{const snapshot=await Promise.race([contents.executeJavaScript(`(async()=>{if(typeof globalThis.__papersSharedData!=='function')throw Error('Data owner is not ready');return globalThis.__papersSharedData(${JSON.stringify(source)},${control===true});})()`),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Data owner did not respond.')),8000);})]);if(this.view!==view||contents.isDestroyed()||contents.getURL()!==url)throw Error('Data owner changed during the read.');return snapshot;}
+    finally{if(timer)clearTimeout(timer);}
+  }
+
+  /** Replaces the open Proxima's data with another device's (it backs up first, then reloads itself). */
+  async replaceSharedData(projection:Record<string,unknown>,from:string):Promise<unknown>{
+    const view=this.view;
+    if(!view||view.webContents.isDestroyed())throw Error('Open Proxima on its owning computer first.');
+    return view.webContents.executeJavaScript(`(async()=>{if(typeof globalThis.__proximaReplaceAll!=='function')throw Error('This Proxima cannot be replaced remotely');return globalThis.__proximaReplaceAll(${JSON.stringify(projection)},${JSON.stringify(from)});})()`,true);
+  }
+
+  async commandSharedData(source:{ownerId:string;backpackId:string},command:Record<string,unknown>):Promise<unknown>{
+    const view=this.view;
+    if(!view||view.webContents.isDestroyed()||this.projectId!==source.backpackId)throw Error('Open this Backpack on its owning computer first.');
+    const contents=view.webContents,url=contents.getURL();let timer:ReturnType<typeof setTimeout>|undefined;
+    try{const result=await Promise.race([contents.executeJavaScript(`(async()=>{if(typeof globalThis.__papersSharedCommand!=='function')throw Error('Data owner cannot accept remote commands');return globalThis.__papersSharedCommand(${JSON.stringify(source)},${JSON.stringify(command)});})()`),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Owner did not confirm the command. Refresh before trying again.')),15000);})]);if(this.view!==view||contents.isDestroyed()||contents.getURL()!==url)throw Error('Data owner changed before confirmation.');return result;}
+    finally{if(timer)clearTimeout(timer);}
+  }
+
   async hide(options: { restoreOnFlushFailure?: boolean } = {}): Promise<void> {
     if (this.hidePromise) return this.hidePromise;
     const view = this.view;
@@ -277,20 +312,7 @@ export class BackpackProjectRuntime {
       // Keep the live sender identity until the page has completed its own
       // checked save. Project IPC authorization is sender-based, so retiring
       // this.view before the hook would make the close flush fail closed.
-      if (!view.webContents.isDestroyed()) {
-        try {
-          const outcome = await Promise.race([
-            view.webContents.executeJavaScript(
-              'globalThis.__papersFlushBeforeClose?.()',
-              true,
-            ).then(() => 'flushed' as const),
-            new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2500)),
-          ]);
-          if (outcome === 'timeout') throw new Error('project close flush timed out before renderer close');
-        } catch (caught) {
-          throw caught instanceof Error ? caught : new Error(String(caught));
-        }
-      }
+      await this.flushBeforeClose();
       if (this.view === view) {
         this.view = null;
         this.projectId = null;

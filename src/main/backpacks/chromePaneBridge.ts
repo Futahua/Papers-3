@@ -25,6 +25,11 @@ export interface ChromePaneBridge {
   selectTab?(owner: string, tabId: string): Promise<Reply>;
   detachTab?(owner: string, tabId: string): Promise<Reply>;
   listTabs?(owner: string): void;
+  /** Dock one program window over a rectangle of `context`'s page, in its own host (see programWindowService). */
+  programOpen?(context: LayoutHostContext, template: string, handle: number, pid: number, rect: LayoutRect): Promise<Reply>;
+  programMove?(owner: string, template: string, rect: LayoutRect): void | Promise<unknown>;
+  programVisible?(owner: string, template: string, visible: boolean): void;
+  programClose?(owner: string, template: string): void | Promise<void>;
   open(context: LayoutHostContext, source: string, url: string, rect: LayoutRect): Promise<Reply>;
   move(owner: string, rect: LayoutRect): void;
   setPaneVisible(owner: string, visible: boolean): void;
@@ -34,7 +39,7 @@ export interface ChromePaneBridge {
   raiseWindow(windowId: number): void;
   dispose(): void;
 }
-export function createChromePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; onLayout?: (owner: string, rect: LayoutRect) => void; onTabs?: (owner: string, tabs: PaneWindowTab[]) => void; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined; ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void>; pageTransfers?: PanePageTransfers }): ChromePaneBridge | null {
+export function createChromePaneBridge(input: { cacheDirectory: string; nativeDirectory: string; coordinateScale?: (owner: string) => number; onLayout?: (owner: string, rect: LayoutRect) => void; onTabs?: (owner: string, tabs: PaneWindowTab[]) => void; onSnapshot?: (owner: string, snapshot: NativePaneSnapshot) => void; windowInstanceId?: (handle: number, pid: number) => string | undefined; ownerLabel?: (owner: string) => string; revealOwner?: (owner: string) => Promise<void>; pageTransfers?: PanePageTransfers }): ChromePaneBridge | null {
   if (process.platform !== 'win32') return null;
   const chrome = [process.env['PROGRAMFILES'], process.env['PROGRAMFILES(X86)'], process.env['LOCALAPPDATA']]
     .filter((v): v is string => Boolean(v)).map(v => path.join(v, 'Google', 'Chrome', 'Application', 'chrome.exe')).find(v => fs.existsSync(v));
@@ -52,7 +57,7 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
     execFileSync(compiler, ['/nologo', '/target:exe', `/out:${executable}`, '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Web.Extensions.dll', ...['UIAutomationClient.dll', 'UIAutomationTypes.dll', 'WindowsBase.dll'].map(f => `/r:${path.join(wpf, f)}`), ...sources], { windowsHide: true, timeout: 15000, stdio: 'pipe' });
     fs.writeFileSync(stamp, digest);
   };
-  const coordinator = createNativePaneBridge({ cacheDirectory: input.cacheDirectory, nativeDirectory: input.nativeDirectory, onSnapshot: input.onSnapshot, windowInstanceId: input.windowInstanceId, ownerLabel:input.ownerLabel,revealOwner:input.revealOwner,pageTransfers:input.pageTransfers });
+  const coordinator = createNativePaneBridge({ cacheDirectory: input.cacheDirectory, nativeDirectory: input.nativeDirectory, coordinateScale: input.coordinateScale, onSnapshot: input.onSnapshot, windowInstanceId: input.windowInstanceId, ownerLabel:input.ownerLabel,revealOwner:input.revealOwner,pageTransfers:input.pageTransfers });
   const nativeGroup = (owner: string, tab: string): string => coordinator?.snapshot(owner)?.groups.find(g => g.tabs.some(t => t.id === tab))?.id ?? 'main';
   const owners = new Map<string, Live>();
   const viewLayouts = new Map<string, { context: LayoutHostContext; rect: LayoutRect }>();
@@ -91,7 +96,24 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
     }
     return undefined;
   };
-  return {
+  // Program windows docked into a page (programWindowService). With the pane
+  // coordinator each is a scope of it, keyed `<page owner>~program~<template>`,
+  // so the coordinator's one host per Papers window orders it together with the
+  // page's own window tabs. Without the coordinator an isolated legacy host keyed
+  // `program~<template>~<page owner>` is used, so it never claims or hides the
+  // page's own host. Either way it follows its page's visibility, bounds and
+  // lifetime. One window per template: docking it elsewhere releases it here.
+  interface DockedProgram { key: string; template: string; handle: number; shown: boolean; coordinated: boolean }
+  const programs = new Map<string, Map<string, DockedProgram>>();
+  const pageVisible = new Map<string, boolean>();
+  const programKey = (owner: string, template: string, coordinated: boolean): string => coordinated ? `${owner}~program~${template}` : `program~${template}~${owner}`;
+  const dockedProgram = (owner: string, template: string): DockedProgram | undefined => [...(programs.get(owner)?.values() ?? [])].find(entry => entry.template === template);
+  const showProgram = (entry: DockedProgram, owner: string): void => {
+    const page = pageVisible.get(owner) !== false;
+    if (entry.coordinated) { coordinator?.setOwnerVisible(entry.key, page && entry.shown); return; }
+    ownerVisibility.set(entry.key, page); paneVisibility.set(entry.key, entry.shown); visibility(entry.key);
+  };
+  const bridge: ChromePaneBridge = {
     coordinator,
     async releaseForCoordinator(owner) {
       const live = claim(owner); if (!live) return [];
@@ -171,6 +193,48 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
       const live = owners.get(context.ownerKey);
       return live ? send(live, 'attach', { handle, pid }) : { ok: false, error: 'Pane unavailable.' };
     },
+    async programOpen(context, template, handle, pid, bounds) {
+      const coordinated = Boolean(coordinator), key = programKey(context.ownerKey, template, coordinated);
+      for (const [page, docked] of programs) for (const other of [...docked.values()]) {
+        if (other.key === key || other.template !== template) continue;
+        docked.delete(other.key); if (!docked.size) programs.delete(page); await releaseProgram(other);
+      }
+      const docked = programs.get(context.ownerKey) ?? new Map<string, DockedProgram>(); programs.set(context.ownerKey, docked);
+      const existing = docked.get(key);
+      if (existing && existing.handle === handle) { existing.shown = true; bridge.programMove!(context.ownerKey, template, bounds); showProgram(existing, context.ownerKey); return { ok: true }; }
+      const entry: DockedProgram = { key, template, handle, shown: true, coordinated };
+      let reply: Reply;
+      if (coordinator) {
+        if (!coordinator.has(key)) {
+          const mounted = await coordinator.mount({ ...context, ownerKey: key, layoutKey: key }, bounds, 0);
+          if (!mounted.ok) { await coordinator.closeOwner(key); return { ok: false, error: mounted.error ?? 'The program window could not be placed here.' }; }
+        } else await coordinator.move(key, bounds);
+        coordinator.setOwnerVisible(key, pageVisible.get(context.ownerKey) !== false);
+        // The window may be a tab of a pane's own layout; a window has one host, so the blob takes it from there.
+        if (coordinator.snapshot(key)?.groups.some(group => group.tabs.some(tab => tab.handle === handle))) reply = { ok: true };
+        else { await coordinator.releaseWindow(handle); const attached = await coordinator.attach(key, handle, pid, 'main'); reply = { ok: attached.ok, ...(attached.error ? { error: attached.error } : {}) }; }
+      } else {
+        ownerVisibility.set(key, pageVisible.get(context.ownerKey) !== false); paneVisibility.set(key, true);
+        reply = await bridge.attachWindow!({ ...context, ownerKey: key, paneGroup: 'program:' + template }, handle, pid, bounds);
+      }
+      if (reply.ok) { docked.set(key, entry); showProgram(entry, context.ownerKey); }
+      // A failed dock must not leave a host or scope behind without a window.
+      else { if (!docked.size) programs.delete(context.ownerKey); await releaseProgram(entry); }
+      return reply;
+    },
+    programMove(owner, template, bounds) {
+      const entry = dockedProgram(owner, template); if (!entry) return;
+      if (entry.coordinated) return coordinator?.move(entry.key, bounds); bridge.move(entry.key, bounds);
+    },
+    programVisible(owner, template, visible) {
+      const entry = dockedProgram(owner, template); if (!entry) return;
+      entry.shown = visible; showProgram(entry, owner);
+    },
+    programClose(owner, template) {
+      const entry = dockedProgram(owner, template), docked = programs.get(owner); if (!entry) return;
+      docked?.delete(entry.key); if (docked && !docked.size) programs.delete(owner);
+      return releaseProgram(entry);
+    },
     async dropTab(owner, tabId, beforeId, shiftHeld) { if (coordinator?.has(owner)) return coordinator.command(owner, shiftHeld ? 'detach' : 'reorder', { tabId, beforeId, groupId: nativeGroup(owner, tabId) }); const live = claim(owner); return live ? send(live, 'tab-drop', { tabId, beforeId, shiftHeld: shiftHeld === true }) : { ok: false, error: 'Pane unavailable.' }; },
     async reorderTab(owner, tabId, beforeId) { if (coordinator?.has(owner)) return coordinator.command(owner, 'reorder', { tabId, beforeId, groupId: nativeGroup(owner, tabId) }); const live = claim(owner); return live ? send(live, 'reorder', { tabId, beforeId }) : { ok: false, error: 'Pane unavailable.' }; },
     async selectTab(owner, tabId) { if (coordinator?.has(owner)) return coordinator.command(owner, 'select', { tabId, groupId: nativeGroup(owner, tabId) }); const live = claim(owner); return live ? send(live, 'select', { tabId }) : { ok: false, error: 'Pane unavailable.' }; },
@@ -186,6 +250,7 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
       if (ownerVisibility.get(owner) !== false) { claim(owner); visibility(owner); }
     },
     setOwnerVisible(owner, visible) {
+      pageVisible.set(owner, visible); for (const entry of programs.get(owner)?.values() ?? []) showProgram(entry, owner);
       coordinator?.setOwnerVisible(owner, visible);
       if (coordinator?.has(owner)) { ownerVisibility.set(owner, visible); return; }
       ownerVisibility.set(owner, visible);
@@ -196,13 +261,28 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
         else { visibility(owner); void send(live, 'tabs'); }
       } else visibility(owner);
     },
-    setOwnerSurfaceBounds(owner, bounds) { coordinator?.setOwnerSurfaceBounds(owner, bounds); if (coordinator?.has(owner)) return; const layout = viewLayouts.get(owner); if (layout) layout.context = { ...layout.context, surfaceBounds: bounds }; const live = owners.get(owner); if (live) { live.context = { ...live.context, surfaceBounds: bounds }; void rect(live); } },
-    closeOwner(owner) { const released=coordinator?.has(owner)?coordinator.closeOwner(owner):Promise.resolve(); viewLayouts.delete(owner); const live = owners.get(owner);
+    setOwnerSurfaceBounds(owner, bounds) {
+      for (const entry of programs.get(owner)?.values() ?? []) {
+        if (entry.coordinated) { coordinator?.setOwnerSurfaceBounds(entry.key, bounds); continue; }
+        const live = owners.get(entry.key); const layout = viewLayouts.get(entry.key); if (layout) layout.context = { ...layout.context, surfaceBounds: bounds }; if (live) { live.context = { ...live.context, surfaceBounds: bounds }; void rect(live); }
+      }
+      coordinator?.setOwnerSurfaceBounds(owner, bounds); if (coordinator?.has(owner)) return; const layout = viewLayouts.get(owner); if (layout) layout.context = { ...layout.context, surfaceBounds: bounds }; const live = owners.get(owner); if (live) { live.context = { ...live.context, surfaceBounds: bounds }; void rect(live); } },
+    closeOwner(owner) {
+      const docked = programs.get(owner); if (docked) { programs.delete(owner); for (const entry of docked.values()) void releaseProgram(entry); } pageVisible.delete(owner);
+      const released=coordinator?.has(owner)?coordinator.closeOwner(owner):Promise.resolve(); viewLayouts.delete(owner); const live = owners.get(owner);
       if (live && [...viewLayouts.values()].some(other => groupKey(other.context) === groupKey(live.context))) {
         ownerVisibility.set(owner, false); paneVisibility.delete(owner); void send(live, 'visible', { visible: false }); return released;
       }
       owners.delete(owner); ownerVisibility.delete(owner); paneVisibility.delete(owner); if (live) { void send(live, 'release'); live.child.stdin.end(); } return released; },
-    raiseWindow(windowId) { for (const owner of ownerVisibility.keys()) if (owner.startsWith(`${windowId}:`) && ownerVisibility.get(owner) !== false && coordinator?.has(owner)) void coordinator.command(owner, 'raise'); for (const [owner, live] of owners) if (owner.startsWith(`${windowId}:`) && ownerVisibility.get(owner) !== false && paneVisibility.get(owner) !== false) void send(live, 'raise'); },
+    raiseWindow(windowId) { for (const owner of ownerVisibility.keys()) if (owner.startsWith(`${windowId}:`) && ownerVisibility.get(owner) !== false && coordinator?.has(owner)) void coordinator.command(owner, 'raise'); for (const [owner, live] of owners) if (owner.startsWith(`${windowId}:`) && ownerVisibility.get(owner) !== false && paneVisibility.get(owner) !== false) void send(live, 'raise');
+      for (const [page, docked] of programs) if (page.startsWith(`${windowId}:`) && pageVisible.get(page) !== false) for (const entry of docked.values()) {
+        if (!entry.shown) continue;
+        if (entry.coordinated) void coordinator?.command(entry.key, 'raise'); else { const live = owners.get(entry.key); if (live) void send(live, 'raise'); }
+      } },
     dispose() { void coordinator?.dispose(); viewLayouts.clear(); for (const owner of [...owners.keys()]) this.closeOwner(owner); },
   };
+  async function releaseProgram(entry: DockedProgram): Promise<void> {
+    if (entry.coordinated) await coordinator?.closeOwner(entry.key); else await bridge.closeOwner(entry.key);
+  }
+  return bridge;
 }

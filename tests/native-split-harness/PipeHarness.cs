@@ -14,6 +14,8 @@ using System.Windows.Forms;
 public sealed class PipeHarness:Form {
     sealed class Fixture:Form{protected override bool ShowWithoutActivation{get{return true;}}}
     [DllImport("user32.dll")]static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+    [DllImport("user32.dll")]static extern bool ClientToScreen(IntPtr hwnd,ref Native.Point point);
+    [DllImport("user32.dll")]static extern bool GetClientRect(IntPtr hwnd,out Native.Rect rect);
     [DllImport("user32.dll")]static extern void NotifyWinEvent(uint ev,IntPtr hwnd,int obj,int child);
     readonly JavaScriptSerializer json=new JavaScriptSerializer();
     readonly List<string> checks=new List<string>();
@@ -43,6 +45,9 @@ public sealed class PipeHarness:Form {
         Handle.ToInt64()+" "+Process.GetCurrentProcess().Id+" \""+cache+"\" \"\""){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true});}
     Dictionary<string,object> Call(string op,Dictionary<string,object> args=null,bool okay=true){
         var r=args??new Dictionary<string,object>();string id=(++requestId).ToString();r["id"]=id;r["op"]=op;r["scope"]=scope;r["binding"]=token;
+        // The fixture's existing geometry assertions use one physical pixel per
+        // logical unit, regardless of the machine running this offscreen test.
+        if(!r.ContainsKey("coordinateScale"))r["coordinateScale"]=1.0;
         if(snapshots.ContainsKey(scope)&&!r.ContainsKey("revision"))r["revision"]=N(State,"stateRevision");
         endpoint.StandardInput.WriteLine(json.Serialize(r));endpoint.StandardInput.Flush();
         while(true){var read=endpoint.StandardOutput.ReadLineAsync();if(!read.Wait(15000))throw new Exception("Pipe response timed out: "+op);
@@ -64,6 +69,16 @@ public sealed class PipeHarness:Form {
         StartEndpoint();Call("mount",Args("rect",Rect(),"headerHeight",32,"legacyMount",legacy));
         Check(Groups.Length==1&&(string)Group("main")["id"]=="main","production mount begins with one group");
         Check(Tabs("main").SequenceEqual(new[]{"legacy-peer"})&&(string)Group("main")["selected"]=="legacy-peer","first production mount migrates legacy membership and stable active identity");
+        var unscaled=Frame(0);
+        Call("viewport",Args("rect",Rect(),"coordinateScale",1.4));
+        var origin=new Native.Point();ClientToScreen(Handle,ref origin);Native.Rect client;GetClientRect(Handle,out client);
+        var scaled=Frame(0);
+        Check(scaled.L==origin.X+630&&scaled.T==origin.Y+56+45&&scaled.R==origin.X+client.R-28&&scaled.B==origin.Y+client.B-56,
+            "Chromium 1.40 scale fits physical client origin, header and insets despite different Win32 DPI");
+        Check(Math.Abs(Convert.ToDouble(D(Group("main")["content"])["y"])-(40+45/1.4))<.001,
+            "physical snapshot returns through the same Chromium scale without renderer drift");
+        Call("viewport",Args("rect",Rect(),"coordinateScale",1.0));
+        Check(Frame(0).Box==unscaled.Box,"changing coordinate scale restores the original physical viewport");
         var ids=new List<string>{"legacy-peer"};foreach(var f in fixtures.Skip(1))ids.Add((string)Call("attach",Args("handle",f.Handle.ToInt64(),"pid",Process.GetCurrentProcess().Id,"groupId","main"))["tabId"]);
         Check(Tabs("main").Length==3&&Native.IsIconic(fixtures[0].Handle)&&!Native.IsIconic(fixtures[2].Handle),"attach retains all peers and minimizes inactive tabs");
         Call("select",Args("groupId","main","tabId",ids[0]));Check(!Native.IsIconic(fixtures[0].Handle)&&Native.IsIconic(fixtures[2].Handle),"actual pipe selection changes native show states");
