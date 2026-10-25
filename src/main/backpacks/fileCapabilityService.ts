@@ -24,7 +24,7 @@ import { getOrCreateDerivedArtifact, getOrCreateSourceSnapshot } from './derived
 import { capabilityForOperation, type createCapabilityRuntimeService } from './capabilityRuntimeService';
 import type { RemotePaths } from './remoteFilePaths';
 import type { FindFileLockers } from './fileLockerBridge';
-import { recycleTargets } from './fileRecycle';
+import { RecycleFailure, recycleTargets } from './fileRecycle';
 
 const MAX_PATH_BYTES = 32_768;
 const MAX_SEARCH_BYTES = 2_048;
@@ -877,7 +877,11 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           }
           case 'file-target-delete': {
             if(!deps.fileTargets?.remove)return {ok:false,code:'UNSUPPORTED'};
-            return {ok:true,target:await deps.fileTargets.remove(boundedString(params.targetId,'targetId',64),Number(params.expectedRevision),boundedString(params.commandId,'commandId',64))};
+            const targetId=boundedString(params.targetId,'targetId',64);
+            // The registry recycles through recycleOneOrThrow, so a locked file comes back with the
+            // same per-item results/lockers as the `delete` capability instead of a bare error.
+            try{return {ok:true,target:await deps.fileTargets.remove(targetId,Number(params.expectedRevision),boundedString(params.commandId,'commandId',64))};}
+            catch(error){if(error instanceof RecycleFailure)return {...error.result,operation:'file-target-delete',targetId};throw error;}
           }
           case 'file-target-resolve': {
             if(!deps.fileTargets)return {ok:false,code:'UNSUPPORTED'};

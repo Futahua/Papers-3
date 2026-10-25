@@ -102,3 +102,22 @@ export async function recycleTargets(targets: string[], options: RecycleOptions)
   }
   return summarizeRecycle(results);
 }
+
+/** A recycle that did not happen, carrying the same per-item result the `delete` capability returns. */
+export class RecycleFailure extends Error {
+  readonly code: string;
+  constructor(readonly result: Record<string, unknown>) {
+    super(typeof result.message === 'string' ? result.message : 'The item was not recycled.');
+    this.name = 'RecycleFailure';
+    this.code = typeof result.code === 'string' ? result.code : 'DELETE_FAILED';
+  }
+}
+
+/**
+ * Single-item recycle with the same retry and locker lookup as `recycleTargets`, for owners
+ * (the file-target registry) whose contract is "resolve on success, throw on failure".
+ */
+export async function recycleOneOrThrow(target: string, options: RecycleOptions): Promise<void> {
+  const result = await recycleTargets([target], options);
+  if (!result.ok) throw new RecycleFailure(result);
+}

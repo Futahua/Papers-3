@@ -5,6 +5,8 @@ import * as path from 'node:path';
 
 import { createFileCapabilityService } from '../../src/main/backpacks/fileCapabilityService';
 import { createFilePreviewResourceRegistry } from '../../src/main/backpacks/filePreviewResources';
+import { createFileTargetRegistry } from '../../src/main/backpacks/fileTargetRegistry';
+import { recycleOneOrThrow } from '../../src/main/backpacks/fileRecycle';
 import type { EverythingSearchBridge } from '../../src/main/backpacks/everythingSearchBridge';
 import type { PdfPreviewHostBridge } from '../../src/main/backpacks/pdfPreviewHostBridge';
 import type { RevitPreviewBridge } from '../../src/main/backpacks/revitPreviewBridge';
@@ -153,6 +155,34 @@ describe('file capability service', () => {
       ok: false, code: 'DELETE_PARTIAL', recycled: [vanished], failed: [stuck],
       message: 'Recycled 1 of 2. stuck.txt could not be recycled: late shell error',
     });
+  });
+
+  it('file-target-delete (AYG Kill) reports a locked file with the same per-item result as delete, and can be retried', async () => {
+    const target = path.join(root, 'report.docx');
+    await fs.writeFile(target, 'r');
+    let locked = true;
+    const trash = vi.fn(async (item: string) => { if (locked) throw new Error('Failed to move item to trash'); await fs.rm(item); });
+    const findLockers = vi.fn(async () => [{ pid: 4312, name: 'Microsoft Word', processName: 'WINWORD.EXE', imagePath: '', applicationType: 1 }]);
+    const fileTargets = createFileTargetRegistry({
+      file: path.join(root, 'targets.json'),
+      observe: async () => [{ status: 'present', path: target, fileId: 'f1', volume: 'disk', serial: '1' }],
+      recycle: item => recycleOneOrThrow(item, { trash, findLockers, retryDelaysMs: [1] }),
+    });
+    const instance = service(null,null,null,CONTEXT,null,null,null,null,null,null,null,null,undefined,{ fileTargets });
+    const ref = await fileTargets.track(target);
+    const command = '12345678-1234-4234-8234-123456789abc';
+    const refused = await instance.call({ operation: 'file-target-delete', params: { targetId: ref.targetId, expectedRevision: ref.revision, commandId: command } });
+    expect(refused).toMatchObject({
+      ok: false, code: 'FILE_LOCKED', operation: 'file-target-delete', targetId: ref.targetId, recycled: [], failed: [target],
+      message: 'report.docx is open in Microsoft Word (WINWORD.EXE, pid 4312).',
+      results: [{ path: target, name: 'report.docx', ok: false, code: 'FILE_LOCKED', lockers: [expect.objectContaining({ pid: 4312 })] }],
+    });
+    expect(trash).toHaveBeenCalledTimes(2);
+    expect(await fs.readFile(target, 'utf8')).toBe('r');
+
+    locked = false;
+    const done = await instance.call({ operation: 'file-target-delete', params: { targetId: ref.targetId, expectedRevision: ref.revision, commandId: command } });
+    expect(done).toMatchObject({ ok: true, target: { status: 'deleted' } });
   });
 
   it('routes Chrome through the calling pane and refuses malformed geometry before touching Chrome', async () => {
