@@ -64,6 +64,11 @@ const inboxKey = (ownerId) => 'papers-phone-inbox:' + ownerId;
 async function fileCapability(operation, params) {
   if(operation==='workspace-files'){
     const request={...params};if(request.path)request.path=phoneUri(request.path)||request.path;
+    // The media picker returns provider IDs, while the managed-file owner
+    // imports verified shared-storage paths. Reuse the native URI resolver.
+    if(['enumerate','import'].includes(request.operation)&&request.path?.startsWith('content://')&&!request.path.startsWith('content://com.android.externalstorage.documents/')){
+      request.path=(await native({operation:'uri-storage-path',uri:request.path})).uri;
+    }
     const result=await native({operation:'workspace-files',request});
     if(result.path?.startsWith('/')){
       const uri='content://com.android.externalstorage.documents/document/'+encodeURIComponent('primary:'+result.path.replace(/^\/storage\/emulated\/0\//,''));
