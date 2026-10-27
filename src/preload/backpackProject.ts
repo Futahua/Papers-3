@@ -249,6 +249,9 @@ let paneLayoutTarget: { source: Window; origin: string } | null = null;
 let chromeLayoutTarget: { source: Window; origin: string } | null = null;
 
 function paneSnapshotForSource(snapshot: NativePaneSnapshot, source: Window): NativePaneSnapshot {
+  const zoom=webFrame.getZoomFactor();
+  const css=(rect:NativePaneSnapshot['viewport'])=>({...rect,x:rect.x/zoom,y:rect.y/zoom,width:rect.width/zoom,height:rect.height/zoom});
+  snapshot={...snapshot,viewport:css(snapshot.viewport),groups:snapshot.groups.map(g=>({...g,slot:css(g.slot),content:css(g.content)}))};
   if (source === window) return snapshot;
   const frame = Array.from(document.querySelectorAll('iframe')).find(node => node.contentWindow === source);
   if (!frame) throw new Error('Window layout source frame is unavailable.');
@@ -258,6 +261,7 @@ function paneSnapshotForSource(snapshot: NativePaneSnapshot, source: Window): Na
 }
 
 function panePreviewForSource(rect: NativePaneSnapshot['viewport'], source: Window): NativePaneSnapshot['viewport'] {
+  const zoom=webFrame.getZoomFactor();rect={...rect,x:rect.x/zoom,y:rect.y/zoom,width:rect.width/zoom,height:rect.height/zoom};
   if (source === window) return rect;
   const frame=Array.from(document.querySelectorAll('iframe')).find(node=>node.contentWindow===source);
   if(!frame)throw new Error('Window layout source frame is unavailable.');
@@ -419,7 +423,7 @@ window.addEventListener('message', (event) => {
       operation: request.operation,
       params,
     }, ...workspaceOriginArgs).then((result) => {
-        if (request.operation?.toString().startsWith('pane-') && isPlainObject(result) && event.source) {
+        if ((request.operation?.toString().startsWith('pane-')||request.operation?.toString().startsWith('program-window-')) && isPlainObject(result) && event.source) {
         return { fileCapability: { ...result,
           ...(result['snapshot']?{snapshot:paneSnapshotForSource(result['snapshot'] as NativePaneSnapshot,event.source as Window)}:{}),
           ...(result['preview']?{preview:panePreviewForSource(result['preview'] as NativePaneSnapshot['viewport'],event.source as Window)}:{}) } };

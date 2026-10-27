@@ -9,7 +9,7 @@ import { resolveWindowsCscPath } from '../windows/foregroundBridge';
 interface LayoutRect { x: number; y: number; width: number; height: number; rightInset?: number; bottomInset?: number }
 interface LayoutHostContext { paneGroup?: string; layoutKey?: string; ownerKey: string; parentHwnd: string; surfaceBounds: LayoutRect }
 
-type Reply = { ok: boolean; error?: string; reused?: boolean; title?: string };
+type Reply = { ok: boolean; error?: string; reused?: boolean; title?: string; snapshot?: NativePaneSnapshot; tabId?: string };
 interface Live {
   child: ChildProcessWithoutNullStreams; context: LayoutHostContext; rect: LayoutRect;
   tabs?: PaneWindowTab[];
@@ -26,7 +26,7 @@ export interface ChromePaneBridge {
   detachTab?(owner: string, tabId: string): Promise<Reply>;
   listTabs?(owner: string): void;
   /** Dock one program window over a rectangle of `context`'s page, in its own host (see programWindowService). */
-  programOpen?(context: LayoutHostContext, template: string, handle: number, pid: number, rect: LayoutRect): Promise<Reply>;
+  programOpen?(context: LayoutHostContext, template: string, handle: number, pid: number, rect: LayoutRect, layout?: boolean): Promise<Reply>;
   programMove?(owner: string, template: string, rect: LayoutRect): void | Promise<unknown>;
   programVisible?(owner: string, template: string, visible: boolean): void;
   programClose?(owner: string, template: string): void | Promise<void>;
@@ -193,7 +193,19 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
       const live = owners.get(context.ownerKey);
       return live ? send(live, 'attach', { handle, pid }) : { ok: false, error: 'Pane unavailable.' };
     },
-    async programOpen(context, template, handle, pid, bounds) {
+    async programOpen(context, template, handle, pid, bounds, layout = false) {
+      if (layout) {
+        if (!coordinator?.has(context.ownerKey)) return {ok:false,error:'The containing window layout is not ready.'};
+        const snapshot=coordinator.snapshot(context.ownerKey);
+        const existing=snapshot?.groups.find(g=>g.tabs.some(t=>t.handle===handle));
+        const tab=existing?.tabs.find(t=>t.handle===handle);
+        if(existing&&tab)return coordinator.command(context.ownerKey,'select',{groupId:existing.id,tabId:tab.id});
+        for(const [page,docked] of programs)for(const entry of [...docked.values()]){
+          if(entry.template!==template)continue;docked.delete(entry.key);if(!docked.size)programs.delete(page);await releaseProgram(entry);
+        }
+        await coordinator.releaseWindow(handle);
+        return coordinator.attach(context.ownerKey,handle,pid,snapshot?.groups.find(g=>g.presentation!=='minimized')?.id);
+      }
       const coordinated = Boolean(coordinator), key = programKey(context.ownerKey, template, coordinated);
       for (const [page, docked] of programs) for (const other of [...docked.values()]) {
         if (other.key === key || other.template !== template) continue;
@@ -201,7 +213,7 @@ export function createChromePaneBridge(input: { cacheDirectory: string; nativeDi
       }
       const docked = programs.get(context.ownerKey) ?? new Map<string, DockedProgram>(); programs.set(context.ownerKey, docked);
       const existing = docked.get(key);
-      if (existing && existing.handle === handle) { existing.shown = true; bridge.programMove!(context.ownerKey, template, bounds); showProgram(existing, context.ownerKey); return { ok: true }; }
+      if (existing && existing.handle === handle) { existing.shown = true; await bridge.programMove!(context.ownerKey, template, bounds); showProgram(existing, context.ownerKey); return { ok: true }; }
       const entry: DockedProgram = { key, template, handle, shown: true, coordinated };
       let reply: Reply;
       if (coordinator) {

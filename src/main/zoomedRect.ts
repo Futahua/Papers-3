@@ -5,6 +5,8 @@ export function zoomedRect(request: unknown, zoom: number): unknown {
   if (!Number.isFinite(zoom) || zoom <= 0 || Math.abs(zoom - 1) < 0.001) return request;
   if (!request || typeof request !== 'object') return request;
   const params = (request as { params?: unknown }).params;
+  if(params&&typeof params==='object'&&(request as {operation?:unknown}).operation==='pane-layout-command'&&(params as {command?:unknown}).command==='document-edge'&&typeof (params as {position?:unknown}).position==='number')
+    return {...(request as object),params:{...(params as object),position:(params as {position:number}).position*zoom}};
   const rect = params && typeof params === 'object' ? (params as { rect?: unknown }).rect : null;
   if (!rect || typeof rect !== 'object') return request;
   const scaled: Record<string, unknown> = { ...(rect as Record<string, unknown>) };

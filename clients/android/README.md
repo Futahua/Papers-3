@@ -33,3 +33,22 @@ fixture description there; do not publish pairing codes, addresses or metadata.
 Run the separate instrumentation against that fixture. Retire its owned listener
 after checking offline behavior. A passed fixture is not complete product
 acceptance; outstanding gates are tracked in the cross-device implementation doc.
+
+## Flow embeds on the phone
+
+`FlowEmbedServer` lets native Flow on this phone open files embedded in Flow pages and keep
+interactive embed data. It listens on `127.0.0.1:47812` only (bound to IPv4 explicitly; some
+phones resolve the loopback address to `::1`), and every request needs the pairing token: a
+loopback port is reachable by every app on the phone. Pairing is creator-approved: Flow opens
+`papers-mobile://pair-flow`, Papers asks for confirmation, then sends
+`appflowy-flutter://papers-embeds?port=…&token=…` to Flow's package (`io.appflowy.appflowy`)
+only. Routes: `POST /flow-embeds/exchange` (wants/docs, answered by the owner page's
+`flow-embed-bridge.js`), `GET /flow-embeds/file` (managed working copy, `X-Embed-Hash`), and
+`POST /flow-embeds/import` (bytes of a phone file Flow embeds, received into `flow-embeds`).
+The server stores no content or sync state. The peer service now also restarts after this app
+is updated (`MY_PACKAGE_REPLACED`); previously an update left sharing stopped until Papers was
+opened. Build with `PAPERS_PROXIMA_SOURCE` pointing at the live Proxima project so the owner
+page includes the bridge.
+The owner engine starts with the peer service (not on the first request), because it also
+fetches embedded Flow files as soon as they sync: the owner page runs the bridge's
+`prefetch()` every 20 s, downloading any `flow-embeds` file not yet on the phone.

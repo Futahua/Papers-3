@@ -267,7 +267,8 @@ public sealed partial class PaneCoordinator : IDisposable {
         Scope.StateRevision=state+1;Scope.GeometryRevision=geometry+1;
         Stack(false,null);Notify(cause);
     }
-    public void SetViewport(Rectangle box,long revision) {
+    public void SetViewport(Rectangle box,long revision,bool rootBoundary=false) {
+        if(rootBoundary)authoredLeftOffset=null;
         Native.Rect hostBox;
         if(authoredLeftOffset.HasValue&&Native.GetWindowRect(host,out hostBox))
             box=Rectangle.FromLTRB(hostBox.L+authoredLeftOffset.Value,box.Top,box.Right,box.Bottom);

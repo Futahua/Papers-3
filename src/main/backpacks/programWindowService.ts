@@ -29,7 +29,7 @@ export interface ProgramTemplate {
 
 interface Rect { x: number; y: number; width: number; height: number; rightInset?: number; bottomInset?: number }
 interface HostContext { ownerKey: string; parentHwnd: string; paneGroup?: string; layoutKey?: string; surfaceBounds: Rect }
-type Reply = { ok: boolean; error?: string; message?: string; code?: string };
+type Reply = { ok: boolean; error?: string; message?: string; code?: string; snapshot?: import('./nativePaneBridge').NativePaneSnapshot; tabId?: string };
 
 const BUILT_IN: ProgramTemplate[] = [{
   id: 'appflowy',
@@ -42,8 +42,9 @@ const ID = /^[a-z][a-z0-9-]{0,31}$/;
 const WINDOW_WAIT_MS = 25_000;
 
 export interface ProgramWindowService {
+  follow(id:string,pages:unknown): Reply;
   templates(): Array<Pick<ProgramTemplate, 'id' | 'label'>>;
-  open(context: HostContext, template: string, target: string, rect: Rect): Promise<Reply>;
+  open(context: HostContext, template: string, target: string, rect: Rect, layout?: boolean): Promise<Reply>;
   /** Resolves once the window is placed, so a page can send only its newest rectangle. */
   move(owner: string, template: string, rect: Rect): Promise<void>;
   setVisible(owner: string, template: string, visible: boolean): void;
@@ -124,15 +125,29 @@ export function createProgramWindowService(input: { bridge: ChromePaneBridge | n
   }
 
   return {
+    follow(id: string, pages: unknown) {
+      if (id !== 'appflowy' || !Array.isArray(pages) || pages.length > 5000) throw Error('Invalid Flow page projection.');
+      const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const normalized = pages.map(row => {
+        if (!row || !uuid.test(row.workspaceId) || !uuid.test(row.viewId) || typeof row.live !== 'boolean') throw Error('Invalid Flow page identity.');
+        return {workspaceId:row.workspaceId,viewId:row.viewId,live:row.live};
+      }).sort((a,b)=>a.viewId.localeCompare(b.viewId));
+      const directory = path.join(process.env.APPDATA || '', 'io.appflowy', 'Flow');
+      if (!process.env.APPDATA) throw Error('Local Flow profile is unavailable.');
+      fs.mkdirSync(directory,{recursive:true});
+      const file = path.join(directory,'papers-blob-spaces.json'),text=JSON.stringify({version:1,pages:normalized});
+      if (!fs.existsSync(file) || fs.readFileSync(file,'utf8') !== text) { const temp=file+'.tmp';fs.writeFileSync(temp,text,'utf8');fs.renameSync(temp,file); }
+      return {ok:true};
+    },
     templates: () => [...load().values()].map(({ id, label }) => ({ id, label })),
-    async open(context, id, target, rect) {
+    async open(context, id, target, rect, layout = false) {
       const definition = template(id);
       if (!new RegExp(definition.target).test(target)) return { ok: false, code: 'PROGRAM_TARGET_INVALID', message: 'This template target is not valid.' };
       try {
         const found = await window(definition, target);
-        const reply = await bridge.programOpen!(context, id, found.handle, found.pid, rect);
+        const reply = await bridge.programOpen!(context, id, found.handle, found.pid, rect, layout);
         if (!reply.ok) known.delete(id);
-        return reply.ok ? { ok: true } : { ok: false, message: reply.error ?? `${definition.label} could not be placed here.` };
+        return reply.ok ? { ok: true, ...(layout ? {snapshot:reply.snapshot,tabId:reply.tabId}: {}) } : { ok: false, message: reply.error ?? `${definition.label} could not be placed here.` };
       } catch (error) { return { ok: false, message: error instanceof Error ? error.message : String(error) }; }
     },
     move: async (owner, id, rect) => { await bridge.programMove?.(owner, id, rect); },

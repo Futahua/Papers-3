@@ -82,6 +82,8 @@ export interface FileCapabilityDeps {
   webBrowser: WebBrowserHostBridge | null;
   chromePane?: ChromePaneBridge | null;
   programWindows?: ProgramWindowService | null;
+  /** Native Flow's portable embed requests and Proxima's answers (see flowEmbedExchange.ts). */
+  flowEmbeds?: import('./flowEmbedExchange').FlowEmbedExchange | null;
   resolvePaneWindow?: (bindingId: string) => Promise<{ handle: number; pid: number } | null>;
   powerPointPreview: PowerPointPreviewBridge | null;
   windowsPreview: WindowsPreviewHandlerBridge | null;
@@ -1121,7 +1123,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
           case 'pane-layout-viewport': {
             const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;
             if (!bridge || !owner || !bridge.has(owner)) return { ok: false, message: 'Window layout is not mounted.' };
-            return bridge.move(owner, chromePaneRect(params.rect));
+            return bridge.move(owner, chromePaneRect(params.rect), params.rootBoundary === true);
           }
           case 'pane-layout-command': {
             const bridge = deps.chromePane?.coordinator, owner = context.nativePreviewHost?.ownerKey;
@@ -1148,7 +1150,7 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             const bridge=deps.chromePane?.coordinator,owner=context.nativePreviewHost?.ownerKey;
             if(!bridge||!owner)return {ok:false,message:'Window layout is unavailable.'};
             if(typeof params.active!=='boolean')throw new Error('active must be a boolean.');
-            return bridge.dragOverlay(owner,params.active,params.transferId===undefined?undefined:boundedString(params.transferId,'transferId',64),params.cancelled===true);
+            return bridge.dragOverlay(owner,params.active,params.transferId===undefined?undefined:boundedString(params.transferId,'transferId',64),params.cancelled===true,params.local===true);
           }
           case 'pane-page-check':
           case 'pane-page-attach': {
@@ -1226,12 +1228,23 @@ export function createFileCapabilityService(deps: FileCapabilityDeps): {
             if (context.nativePreviewHost) deps.chromePane?.setPaneVisible(context.nativePreviewHost.ownerKey, params.visible === true);
             return { ok: true };
           }
+          case 'program-window-follow': {
+            if (!deps.programWindows || !context.nativePreviewHost) return {ok:false,code:'PROGRAM_WINDOWS_UNAVAILABLE'};
+            return deps.programWindows.follow(boundedString(params.template,'template',32),params.pages);
+          }
+          case 'flow-embed-exchange': {
+            // Same gate as program-window-follow: only a hosted project page with a native preview host.
+            if (!deps.flowEmbeds || !context.nativePreviewHost) return { ok: false, code: 'FLOW_EMBEDS_UNAVAILABLE' };
+            if (params.action === 'take') return deps.flowEmbeds.take();
+            if (params.action === 'publish') return deps.flowEmbeds.publish(params.resolutions);
+            return { ok: false, code: 'INVALID_FLOW_EMBED_ACTION' };
+          }
           case 'program-window-templates': {
             return { ok: true, templates: deps.programWindows?.templates() ?? [] };
           }
           case 'program-window-open': {
             if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE', message: 'Program windows are unavailable here.' };
-            return await deps.programWindows.open(context.nativePreviewHost, boundedString(params.template, 'template', 32), boundedString(params.target, 'target', 512), chromePaneRect(params.rect));
+            return await deps.programWindows.open(context.nativePreviewHost, boundedString(params.template, 'template', 32), boundedString(params.target, 'target', 512), chromePaneRect(params.rect), params.layout === true);
           }
           case 'program-window-move': {
             if (!deps.programWindows || !context.nativePreviewHost) return { ok: false, code: 'PROGRAM_WINDOWS_UNAVAILABLE' };

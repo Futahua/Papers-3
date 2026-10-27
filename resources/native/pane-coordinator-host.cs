@@ -199,7 +199,7 @@ public sealed class PaneCoordinatorHost:Form {
         if(op=="can-relocate-group"){var preview=pane.PreviewRelocateGroup(ReadText(r,"source"),ReadText(r,"groupId"),ReadText(r,"side"));return new{ok=preview.HasValue,preview=preview.HasValue?Local(preview.Value):null};}
         if(op=="raise"){pane.Raise();return new{ok=true,snapshot=Snapshot(binding)};}
         if(op=="viewport"){
-            var nextRect=(Dictionary<string,object>)r["rect"];pane.SetViewport(ScreenRect(nextRect),++binding.ViewportRevision);binding.Rect=nextRect;
+            var nextRect=(Dictionary<string,object>)r["rect"];pane.SetViewport(ScreenRect(nextRect),++binding.ViewportRevision,r.ContainsKey("rootBoundary")&&Convert.ToBoolean(r["rootBoundary"]));binding.Rect=nextRect;
             return new{ok=true,snapshot=Snapshot(binding)};
         }
         if(op=="present"){

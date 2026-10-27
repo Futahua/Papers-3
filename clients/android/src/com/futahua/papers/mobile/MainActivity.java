@@ -27,7 +27,35 @@ public final class MainActivity extends Activity {
   private static final int IMPORT_EDIT = 201, PICK_FILES = 202, PICK_DOWNLOAD_FOLDER = 203;
   private String downloadFolderRequest;
   private String pickRequest;
+  private android.webkit.ValueCallback<android.net.Uri[]> webFileCallback;
+  private static final int WEB_FILES = 204;
   private PhoneUris uris;
+
+  @Override protected void onNewIntent(android.content.Intent intent) {
+    super.onNewIntent(intent);
+    setIntent(intent);
+    handleFlowPairing(intent);
+  }
+
+  /** Flow asks to pair (papers-mobile://pair-flow). The creator approves here, and the token goes
+   * only to Flow's own package, never to whichever app claims a link. */
+  private void handleFlowPairing(android.content.Intent intent) {
+    android.net.Uri data = intent == null ? null : intent.getData();
+    if (data == null || !"papers-mobile".equals(data.getScheme()) || !"pair-flow".equals(data.getHost())) return;
+    intent.setData(null);
+    new android.app.AlertDialog.Builder(this)
+      .setTitle("Connect Flow?")
+      .setMessage("Flow will be able to open files embedded in your Flow pages and keep the data of interactive embeds in Proxima on this phone. Other apps cannot use this connection.")
+      .setNegativeButton("Not now", null)
+      .setPositiveButton("Connect", (dialog, which) -> {
+        android.net.Uri reply = android.net.Uri.parse("appflowy-flutter://papers-embeds").buildUpon()
+          .appendQueryParameter("port", String.valueOf(FlowEmbedServer.PORT))
+          .appendQueryParameter("token", FlowEmbedServer.token(this)).build();
+        try { startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW, reply).setPackage("io.appflowy.appflowy").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)); }
+        catch (Exception e) { android.widget.Toast.makeText(this, "Flow is not installed.", android.widget.Toast.LENGTH_LONG).show(); }
+      })
+      .show();
+  }
 
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
@@ -35,6 +63,7 @@ public final class MainActivity extends Activity {
     PhonePeerService.start(this);
     files = MobileFiles.get(getApplicationContext());
     uris = new PhoneUris(getApplicationContext());
+    handleFlowPairing(getIntent());
     // Personal app: always inspectable (chrome://inspect) and console mirrored to logcat tag PapersWeb.
     WebView.setWebContentsDebuggingEnabled(true);
     view = new WebView(this);
@@ -43,13 +72,23 @@ public final class MainActivity extends Activity {
     // As you Go and Proxima keep view settings (and the phone its inbox choices) in localStorage.
     view.getSettings().setDomStorageEnabled(true);
     view.getSettings().setAllowFileAccess(false);
-    view.getSettings().setAllowContentAccess(false);
+    // HTML upload inputs receive only the content URIs explicitly chosen through Android's picker.
+    view.getSettings().setAllowContentAccess(true);
     // Network loads stay off except where shouldInterceptRequest lets one through (only the AppFlowy frame);
     // every other outside request is answered empty there.
     view.getSettings().setBlockNetworkLoads(false);
     view.addJavascriptInterface(new Bridge(), "PapersNative");
     view.setWebChromeClient(new WebChromeClient() {
       @Override public boolean onConsoleMessage(ConsoleMessage message) { android.util.Log.i("PapersWeb", message.messageLevel() + " " + message.sourceId() + ":" + message.lineNumber() + " " + message.message()); return true; }
+      @Override public boolean onShowFileChooser(WebView webView, android.webkit.ValueCallback<android.net.Uri[]> callback, WebChromeClient.FileChooserParams params) {
+        if(webFileCallback!=null||pickRequest!=null||importRequest!=null||downloadFolderRequest!=null){callback.onReceiveValue(null);return true;}
+        webFileCallback=callback;
+        try {
+          android.content.Intent choose=params.createIntent().addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+          startActivityForResult(choose,WEB_FILES);
+        } catch(Exception error){webFileCallback=null;callback.onReceiveValue(null);android.widget.Toast.makeText(MainActivity.this,"The file chooser is unavailable.",android.widget.Toast.LENGTH_SHORT).show();}
+        return true;
+      }
     });
     // AppFlowy keeps its session in its own frame; allow its cookies there (only that origin may load, see appFlowy()).
     android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
@@ -148,6 +187,11 @@ public final class MainActivity extends Activity {
   }
   @Override protected void onActivityResult(int requestCode,int resultCode,android.content.Intent data) {
     super.onActivityResult(requestCode,resultCode,data);
+    if(requestCode==WEB_FILES){
+      android.webkit.ValueCallback<android.net.Uri[]> callback=webFileCallback;webFileCallback=null;
+      if(callback!=null){java.util.ArrayList<android.net.Uri> chosen=new java.util.ArrayList<>();if(resultCode==RESULT_OK&&data!=null){if(data.getClipData()!=null){for(int i=0;i<data.getClipData().getItemCount();i++){android.net.Uri uri=data.getClipData().getItemAt(i).getUri();if(uri!=null&&"content".equals(uri.getScheme()))chosen.add(uri);}}else if(data.getData()!=null&&"content".equals(data.getData().getScheme()))chosen.add(data.getData());}callback.onReceiveValue(chosen.isEmpty()?null:chosen.toArray(new android.net.Uri[0]));}
+      return;
+    }
     if(requestCode==PICK_DOWNLOAD_FOLDER&&downloadFolderRequest!=null){String replyId=downloadFolderRequest;downloadFolderRequest=null;if(resultCode!=RESULT_OK||data==null||data.getData()==null){try{sendReply(replyId,true,PhoneDownloads.get(this).folder());}catch(Exception e){sendReply(replyId,false,"Download folder unavailable.");}return;}android.net.Uri tree=data.getData();int flags=data.getFlags();requests.execute(()->{try{JSONObject folder=PhoneDownloads.get(this).keepFolder(tree,flags);runOnUiThread(()->sendReply(replyId,true,folder));}catch(Exception e){runOnUiThread(()->sendReply(replyId,false,e.getMessage()));}});return;}
     if(requestCode==PICK_FILES&&pickRequest!=null){
       String replyId=pickRequest;pickRequest=null;
@@ -180,6 +224,7 @@ public final class MainActivity extends Activity {
     view.evaluateJavascript("Boolean(window.papersBack && window.papersBack())", handled -> { if (!"true".equals(handled)) finish(); });
   }
   @Override public void onDestroy() {
+    if(webFileCallback!=null){webFileCallback.onReceiveValue(null);webFileCallback=null;}
     if(current.get() == this) current.clear();
     requests.shutdownNow();
     if (view != null) { view.removeJavascriptInterface("PapersNative"); view.destroy(); view = null; }

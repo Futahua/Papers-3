@@ -3,16 +3,29 @@
  globalThis.__proximaOwnerEngine=true; // proxima-sync.js: no page to refresh here
  const workspaceCalls=new Map();globalThis.__proximaWorkspaceNativeReply=(id,reply)=>{const task=workspaceCalls.get(id);if(!task)return;workspaceCalls.delete(id);reply.ok?task.resolve(reply.result):task.reject(Error(reply.message));};
  globalThis.__proximaWorkspaceNative=(operation,params={})=>new Promise((resolve,reject)=>{const id=crypto.randomUUID();workspaceCalls.set(id,{resolve,reject});PapersOwner.files(id,JSON.stringify({operation,params}));});
- for(const name of ['sync-core','workspace-domain','workspace-replica','workspace-runtime','proxima-sync','remote-domain','remote-follow','store'])await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=name+'.js';script.onload=resolve;script.onerror=reject;document.head.append(script);});
+ for(const name of ['sync-core','workspace-domain','workspace-replica','workspace-runtime','proxima-sync','remote-domain','remote-follow','store','flow-embed-bridge'])await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=name+'.js';script.onload=resolve;script.onerror=reject;document.head.append(script);});
  const backups=()=>new Promise((resolve,reject)=>{const r=indexedDB.open('proxima-backups',1);r.onupgradeneeded=()=>r.result.createObjectStore('backups',{keyPath:'at'});r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
  let workspaceSync=null;
+ // Reconcile, then exchange with every reachable device: how this phone receives content.
+ const syncWorkspaces=()=>workspaceSync??=(async()=>{await ProximaWorkspaces.reconcile();const status=await __proximaWorkspaceNative('devices');for(const peer of status.devices||[])try{await ProximaWorkspaces.syncWith(peer,message=>__proximaWorkspaceNative('workspace-exchange',{ownerId:peer.id,message}));}catch(error){console.warn('Workspace sync pending',peer.name,error.message);}})().finally(()=>{workspaceSync=null;});
+ // Native Flow on this phone (FlowEmbedServer): the same bridge as the desktop Proxima page.
+ // A missing file is marked wanted, then fetched by the ordinary device exchange.
+ let deviceName='';
+ const flowEmbeds=ProximaFlowEmbedBridge.create({
+  workspaces:{...ProximaWorkspaces,frameCall:async(workspaceId,method,args)=>{
+   if(method==='file'&&args?.[0]==='workspace-download'){await ProximaWorkspaces.requestLocal(workspaceId,args[1].targetId);await syncWorkspaces();await ProximaWorkspaces.reconcile();return {ok:true};}
+   return ProximaWorkspaces.frameCall(workspaceId,method,args);
+  }},
+  device:async()=>{if(!deviceName)deviceName=await __proximaWorkspaceNative('devices').then(s=>s?.self?.name||s?.name||'Phone',()=>'Phone');return deviceName;},
+  storage:localStorage,
+ });
  globalThis.phoneOwnerRequest=async(id,request)=>{try{
   const source=request.source;
   let result;
   if(request.operation==='workspace-reconcile'){
-    if(!workspaceSync)workspaceSync=(async()=>{await ProximaWorkspaces.reconcile();const status=await __proximaWorkspaceNative('devices');for(const peer of status.devices||[])try{await ProximaWorkspaces.syncWith(peer,message=>__proximaWorkspaceNative('workspace-exchange',{ownerId:peer.id,message}));}catch(error){console.warn('Workspace sync pending',peer.name,error.message);}})().finally(()=>{workspaceSync=null;});
-    await workspaceSync;result={ok:true};
+    await syncWorkspaces();result={ok:true};
   }
+  else if(request.operation==='flow-embeds')result=await flowEmbeds.answer({imports:request.imports||[],wants:request.wants||[],docs:request.docs||[],lookups:request.lookups||[]});
   else if(request.operation==='snapshot')result={snapshot:await Store.remoteProjection(source,null,true)};
   else if(request.operation==='command'){
    const c=request.command;if(!c||typeof c.commandId!=='string'||!Number.isSafeInteger(c.expectedSeq)||! /^(?:task|project|run|schedule-event|timeline-interval|timeline-queue)\.[a-z.-]+$|^timeline\.(?:undo|redo)$/.test(c.type))throw Error('Invalid Proxima command.');
@@ -31,5 +44,7 @@
   }else throw Error('Unsupported Proxima owner operation.');
   PapersOwner.reply(String(id),JSON.stringify({ok:true,result}));
  }catch(error){PapersOwner.reply(String(id),JSON.stringify({ok:false,message:error.message||String(error)}));}};
+ // Embedded Flow files are downloaded to the phone as soon as they sync.
+ setInterval(()=>void flowEmbeds.prefetch().catch(()=>{}),20000);void flowEmbeds.prefetch().catch(()=>{});
  PapersOwner.ready();
 })().catch(error=>PapersOwner.failed(error.message||String(error)));

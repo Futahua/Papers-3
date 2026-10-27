@@ -15,6 +15,10 @@ const library=path.join(sdk,'platforms','android-36','android.jar');
 const classes=path.join(output,'classes'),assets=path.join(output,'assets'),dex=path.join(output,'dex');
 await Promise.all([classes,assets,dex,path.join(assets,'app')].map(directory=>mkdir(directory,{recursive:true})));
 for(const name of await readdir(path.join(root,'assets')))await cp(path.join(root,'assets',name),path.join(assets,name),{recursive:true});
+// Flow on this phone connects to FlowEmbedServer with no pairing step: both apps are built here
+// with the same secret, kept beside the signing identity (never in the repository).
+{const secret=path.join(process.env.LOCALAPPDATA||'','PapersMobileSigning','flow-embeds.secret');
+ try{await copyFile(secret,path.join(assets,'flow-embeds.secret'));}catch{console.warn('No Flow embed secret; Flow will need the pairing link.');}}
 // The phone cannot list Tailscale peers, so bake in the creator's own computers (same account) at build time.
 {const status=JSON.parse(spawnSync(process.platform==='win32'?'C:/Program Files/Tailscale/tailscale.exe':'tailscale',['status','--json'],{encoding:'utf8',windowsHide:true}).stdout||'{}');
 const user=status.Self?.UserID,computers=[status.Self,...Object.values(status.Peer??{})].filter(node=>node&&node.UserID===user&&/^(windows|macOS|linux)$/.test(node.OS));

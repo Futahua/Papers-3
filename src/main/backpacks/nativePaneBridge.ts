@@ -34,7 +34,7 @@ export interface NativePaneBridge {
   command(owner: string, op: string, params?: Record<string, unknown>, revision?: number): Promise<PaneReply>;
   attach(owner: string, handle: number, pid: number, groupId?: string, retainedId?: string): Promise<PaneReply>;
   open(owner: string, source: string, url: string, groupId?: string): Promise<PaneReply>;
-  move(owner: string, rect: PaneRect): Promise<PaneReply>;
+  move(owner: string, rect: PaneRect, rootBoundary?: boolean): Promise<PaneReply>;
   snapshot(owner: string): NativePaneSnapshot | undefined;
   ownership(instanceId: string, callerOwner?: string): PaneWindowOwnership | undefined;
   /** Detach a native window from every pane tab that holds it, so another host can take it. Returns how many tabs released it. */
@@ -42,7 +42,7 @@ export interface NativePaneBridge {
   reveal(owner: string, transferId: string): Promise<PaneReply>;
   transfer(owner: string, transferId: string, groupId: string, side?: string): Promise<PaneReply>;
   transferCheck(owner:string,groupId:string,side:string):Promise<PaneReply>;
-  dragOverlay(owner: string, active: boolean,transferId?:string,cancelled?:boolean): Promise<PaneReply>;
+  dragOverlay(owner: string, active: boolean,transferId?:string,cancelled?:boolean,local?:boolean): Promise<PaneReply>;
   setHostOverlayActive?(windowId: number, active: boolean): Promise<void>;
   setOwnerVisible(owner: string, visible: boolean): void;
   setOwnerSurfaceBounds(owner: string, bounds: PaneRect): void;
@@ -73,7 +73,8 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
   const hosts = new Map<string, Host>(), owners = new Map<string, Scope>(), scopes = new Map<string, Scope>(), visibility = new Map<string, boolean>();
   let disposing = false;
   const dragOwners = new Map<string,ReturnType<typeof setTimeout>>();
-  let draggedTransfer:{owner:string;id:string}|undefined;
+  const localDragOwners=new Map<string,ReturnType<typeof setTimeout>>();
+  let draggedTransfer:{owner:string;id:string;local:boolean}|undefined;
   let refusedDrag:string|undefined;
   const hostOverlays = new Set<number>();
   const hostOverlayActive = (owner: string): boolean => hostOverlays.has(Number(owner.split(':')[0]));
@@ -264,7 +265,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
         return result;
       } catch (error) { return { ok: false, error: String(error) }; }
     },
-    command(owner, op, params = {}, revision) {if(['move','split','relocate-group'].includes(op))refusedDrag=undefined; if(op==='present'&&params.visible===true&&dragOwners.size)params={...params,visible:false}; const scope = owners.get(owner); return scope && commandNames.has(op) ? queued(scope, op, params, revision) : Promise.resolve(unavailable()); },
+    command(owner, op, params = {}, revision) {if(['move','split','relocate-group'].includes(op))refusedDrag=undefined; if(op==='present'&&params.visible===true&&(dragOwners.size||localDragOwners.has(owner)))params={...params,visible:false}; const scope = owners.get(owner); return scope && commandNames.has(op) ? queued(scope, op, params, revision) : Promise.resolve(unavailable()); },
     async discardDeadWindows() {
       await transferTail;
       let removed=0;
@@ -277,8 +278,8 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     },
     attach(owner, handle, pid, groupId = 'main', retainedId) { const scope = owners.get(owner); return scope ? queued(scope, 'attach', { handle, pid, groupId, ...(retainedId ? { retainedId } : {}) }) : Promise.resolve(unavailable()); },
     open(owner, source, url, groupId) { const scope = owners.get(owner); return scope ? queued(scope, 'open', { source, url, ...(groupId ? { groupId } : {}) }) : Promise.resolve(unavailable()); },
-    async move(owner, rect) { const scope = owners.get(owner); if (!scope) return unavailable();
-      const result = await queued(scope, 'viewport', { rect: absolute(scope, rect) });
+    async move(owner, rect, rootBoundary = false) { const scope = owners.get(owner); if (!scope) return unavailable();
+      const result = await queued(scope, 'viewport', { rect: absolute(scope, rect), rootBoundary });
       if (result.ok) scope.rect = { ...rect, ...result.snapshot?.viewport };
       return result;
     },
@@ -325,6 +326,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       const drag=draggedTransfer?.id;return (async():Promise<PaneReply>=>{
       const target=owners.get(owner),source=draggedTransfer&&claimFor(draggedTransfer.id);
       if(!target||!source)return {ok:false,error:'That group drag is no longer active.'};
+      if(draggedTransfer?.local&&target!==source.scope)return {ok:false,error:'Hold Shift while dragging to move outside the blob workspace.'};
       if(source.tabId)return {ok:true};
       if(target===source.scope){const result=await queued(target,'can-relocate-group',{source:source.groupId,groupId,side});return result.ok?result:{ok:false,error:'The group cannot fit in that position.'};}
       if(side==='center')return checkSwap(source.scope,source.groupId,target,groupId);
@@ -342,6 +344,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       const origin=claimFor(id);refusedDrag=undefined;
       const task = transferTail.then(async (): Promise<PaneReply> => {
         const target = owners.get(owner), source = claimFor(id);
+        if(draggedTransfer?.id===id&&draggedTransfer.local&&source&&target!==source.scope)return {ok:false,error:'Hold Shift while dragging to move outside the blob workspace.'};
         if (!target || !source) return { ok: false, error: 'That window or group is no longer available.' };
         if (target === source.scope) {
           if (!source.tabId) return queued(target, 'relocate-group', { groupId: source.groupId, destination: groupId, side });
@@ -463,18 +466,20 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
       transferTail = task.catch(() => undefined);
       return task.then(reply=>{if(!reply.ok&&origin?.scope.snapshot)input.onSnapshot?.(origin.scope.context.ownerKey,{...localSnapshot(origin.scope,origin.scope.snapshot),moveRejected:{id:randomUUID(),groupId:origin.groupId,tabId:origin.tabId}});return reply;});
     },
-    dragOverlay(owner,active,transferId,cancelled=false) {
+    dragOverlay(owner,active,transferId,cancelled=false,local=false) {
       const task=overlayTail.then(async()=>{
       if(active&&!owners.has(owner))return unavailable();
       // The source DOM can disappear during a foreign drop, so its dragend is
       // not a completion guarantee. The destination may end that exact ticket.
       const overlayOwner = !active && transferId && draggedTransfer?.id === transferId
         ? draggedTransfer.owner : owner;
-      if(active&&transferId){const claim=claimFor(transferId);if(!claim||claim.scope!==owners.get(owner))return unavailable();if(draggedTransfer?.id!==transferId)refusedDrag=undefined;draggedTransfer={owner,id:transferId};}
+      if(active&&transferId){const claim=claimFor(transferId);if(!claim||claim.scope!==owners.get(owner))return unavailable();if(draggedTransfer?.id!==transferId)refusedDrag=undefined;draggedTransfer={owner,id:transferId,local};}
       if(!active&&draggedTransfer?.owner===overlayOwner){const source=refusedDrag===draggedTransfer.id?claimFor(draggedTransfer.id):undefined;if(!cancelled&&source?.scope.snapshot)input.onSnapshot?.(overlayOwner,{...localSnapshot(source.scope,source.scope.snapshot),moveRejected:{id:randomUUID(),groupId:source.groupId,tabId:source.tabId}});draggedTransfer=undefined;refusedDrag=undefined;}
-      const previous=dragOwners.size, timer=dragOwners.get(overlayOwner);if(timer)clearTimeout(timer);
-      if(active)dragOwners.set(owner,setTimeout(()=>{void api.dragOverlay(owner,false);},10000));else dragOwners.delete(overlayOwner);
-      if(Boolean(previous)!==Boolean(dragOwners.size))await Promise.all([...owners.values()].map(scope=>queued(scope,'present',{visible:dragOwners.size===0&&visibility.get(scope.context.ownerKey)!==false})));
+      const previous=dragOwners.size;
+      for(const map of [dragOwners,localDragOwners]){const timer=map.get(overlayOwner);if(timer)clearTimeout(timer);map.delete(overlayOwner);}
+      if(active)(local?localDragOwners:dragOwners).set(owner,setTimeout(()=>{void api.dragOverlay(owner,false);},10000));
+      const affected=Boolean(previous)!==Boolean(dragOwners.size)?[...owners.values()]:[owners.get(overlayOwner)].filter((scope):scope is Scope=>!!scope);
+      await Promise.all(affected.map(scope=>queued(scope,'present',{visible:dragOwners.size===0&&!localDragOwners.has(scope.context.ownerKey)&&visibility.get(scope.context.ownerKey)!==false})));
       const scope=owners.get(owner);
       return {ok:true,...(scope?.snapshot?{snapshot:localSnapshot(scope,scope.snapshot)}:{})};
       });
@@ -492,7 +497,7 @@ export function createNativePaneBridge(input: { cacheDirectory: string; nativeDi
     },
     async dispose() {
       disposing = true;
-      for(const timer of dragOwners.values())clearTimeout(timer);dragOwners.clear();
+      for(const map of [dragOwners,localDragOwners]){for(const timer of map.values())clearTimeout(timer);map.clear();}
       const all = [...hosts.values()];
       let deadline:ReturnType<typeof setTimeout>|undefined;
       const drain=(async()=>{await transferTail;await overlayTail;await Promise.all(all.map(async live=>{await live.queue.catch(()=>undefined);await send(live,{op:'release-host'});live.child.stdin.end();}));})();

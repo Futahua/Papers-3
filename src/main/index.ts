@@ -33,6 +33,7 @@ import {createPaneBackpackPages,type PanePage} from './backpacks/paneBackpackPag
 import { createChromePaneBridge } from './backpacks/chromePaneBridge';
 import { createProgramWindowService } from './backpacks/programWindowService';
 import { createWebBrowserHostBridge } from './backpacks/webBrowserHostBridge';
+import { createFlowEmbedExchange } from './backpacks/flowEmbedExchange';
 import { createRevitPreviewBridge, resolveRevitPreviewBridgeSourcePath } from './backpacks/revitPreviewBridge';
 import { createShellThumbnailBridge, resolveShellThumbnailSourcePath } from './backpacks/shellThumbnailBridge';
 import { createCalibrePreviewBridge } from './backpacks/calibrePreviewBridge';
@@ -949,6 +950,10 @@ async function bootstrap(): Promise<void> {
     webBrowser,
     chromePane,
     programWindows,
+    flowEmbeds: createFlowEmbedExchange({
+      flowDirectory: process.env.APPDATA ? path.join(process.env.APPDATA, 'io.appflowy', 'Flow') : null,
+      storageRoot: path.join(paths.root, 'Workspace files'),
+    }),
     resolvePaneWindow: async bindingId => {
       const result = await windowCapabilityService.observeCapability({ version: 1, bindingId }, { seedFrame: false });
       const observed = result.observation;

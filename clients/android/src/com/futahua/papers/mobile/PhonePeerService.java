@@ -8,6 +8,7 @@ import android.os.*;
 /** Android, rather than an Activity or WebView, owns peer reachability. */
 public final class PhonePeerService extends Service {
   private static volatile PhonePeerServer server;
+  private static volatile FlowEmbedServer flowEmbeds;
   private final java.util.concurrent.ExecutorService network = java.util.concurrent.Executors.newSingleThreadExecutor();
   private ConnectivityManager connectivity;
   private ConnectivityManager.NetworkCallback callback;
@@ -30,7 +31,10 @@ public final class PhonePeerService extends Service {
     startForeground(48240, notification);
     MobileFiles.get(this).startEditingWorker();
     network.execute(() -> {
-      try { PhonePeerServer peer = new PhonePeerServer(this); peer.start(); server = peer; peer.announce(); }
+      try { PhonePeerServer peer = new PhonePeerServer(this); peer.start(); server = peer; peer.announce();
+        peer.startOwner();
+        try { FlowEmbedServer flow = new FlowEmbedServer(this, peer); flow.start(); flowEmbeds = flow; }
+        catch (Exception error) { android.util.Log.e("PapersFlow", "Flow embed endpoint failed", error); } }
       catch (Exception error) { android.util.Log.e("PapersPeer", "Peer startup failed", error); stopSelf(); }
     });
     connectivity = getSystemService(ConnectivityManager.class);
@@ -44,11 +48,15 @@ public final class PhonePeerService extends Service {
   @Override public void onDestroy() {
     MobileFiles.get(this).stopEditingWorker();
     if (callback != null) connectivity.unregisterNetworkCallback(callback);
+    FlowEmbedServer flow = flowEmbeds; flowEmbeds = null;
+    if (flow != null) flow.close();
     PhonePeerServer peer = server; server = null;
     if (peer != null) try { peer.close(); } catch (Exception ignored) {}
     network.shutdownNow(); super.onDestroy();
   }
   public static final class Boot extends BroadcastReceiver {
-    @Override public void onReceive(Context context, Intent intent) { if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) start(context); }
+    // After a boot, and after this app is updated: an update otherwise leaves sharing and the
+    // Flow embed endpoint stopped until Papers is opened by hand.
+    @Override public void onReceive(Context context, Intent intent) { String action = intent.getAction(); if (Intent.ACTION_BOOT_COMPLETED.equals(action) || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) start(context); }
   }
 }
