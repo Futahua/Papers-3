@@ -1,0 +1,26 @@
+{
+  "owner": "out/main/index.js",
+  "reason": "Flow returns to the group it last had in each blob layout (remembered group identity) instead of the first group.",
+  "patches": [
+    {
+      "before": "    async releaseWindow(handle) {\n      let released = 0;",
+      "after": "    // Which group of each layout holds this window (Flow remembers its home group by it).\n    windowGroups(handle) {\n      const found = [];\n      for (const scope of owners.values()) for (const group of scope.snapshot?.groups ?? []) if (group.tabs.some((tab) => tab.handle === handle)) found.push({ owner: scope.context.ownerKey, groupId: group.id });\n      return found;\n    },\n    async releaseWindow(handle) {\n      let released = 0;"
+    },
+    {
+      "before": "  const programs = /* @__PURE__ */ new Map();\n  const pageVisible = /* @__PURE__ */ new Map();",
+      "after": "  const programs = /* @__PURE__ */ new Map();\n  const pageVisible = /* @__PURE__ */ new Map();\n  // A program template's group in each layout it has left, so it returns to the same group.\n  const programGroups = /* @__PURE__ */ new Map();"
+    },
+    {
+      "before": "          await releaseProgram(entry22);\n        }\n        await coordinator.releaseWindow(handle);\n        // Flow is an explicit managed template",
+      "after": "          await releaseProgram(entry22);\n        }\n        for (const held of coordinator.windowGroups?.(handle) ?? []) programGroups.set(held.owner + \"\u0000\" + template, held.groupId);\n        await coordinator.releaseWindow(handle);\n        // Flow is an explicit managed template"
+    },
+    {
+      "before": "        return coordinator.attach(context.ownerKey, handle, pid, snapshot?.groups.find((g) => g.presentation !== \"minimized\")?.id);\n      }",
+      "after": "        const remembered = programGroups.get(context.ownerKey + \"\u0000\" + template);\n        const home = snapshot?.groups.find((g) => g.id === remembered && g.presentation !== \"minimized\") ?? snapshot?.groups.find((g) => g.presentation !== \"minimized\");\n        return coordinator.attach(context.ownerKey, handle, pid, home?.id);\n      }"
+    },
+    {
+      "before": "        else {\n          await coordinator.releaseWindow(handle);\n          const attached = await coordinator.attach(key2, handle, pid, \"main\");",
+      "after": "        else {\n          for (const held of coordinator.windowGroups?.(handle) ?? []) programGroups.set(held.owner + \"\\0\" + template, held.groupId);\n          await coordinator.releaseWindow(handle);\n          const attached = await coordinator.attach(key2, handle, pid, \"main\");"
+    }
+  ]
+}

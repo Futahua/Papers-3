@@ -90,17 +90,27 @@ public sealed class PaneCoordinatorHost:Form {
         try{SetProcessDpiAwarenessContext(new IntPtr(-4));}catch(EntryPointNotFoundException){}
         if(args.Length==2&&args[0]=="--guard"){PaneCoordinator.Guard(args[1]);return;}
         if(args.Length!=4)return;
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException+=(sender,eventArgs)=>Console.Error.WriteLine("Native UI callback failed: "+eventArgs.Exception);
         Application.EnableVisualStyles();var endpoint=new PaneCoordinatorHost(args);
         Application.Run(new ApplicationContext());GC.KeepAlive(endpoint);
     }
     void Emit(object data){lock(output)Console.WriteLine(json.Serialize(data));}
     T UI<T>(Func<T> task){
-        T result=default(T);Exception failure=null;
-        using(var done=new ManualResetEvent(false)){
-            BeginInvoke((Action)(()=>{try{result=task();}catch(Exception error){failure=error;}finally{done.Set();}}));
-            if(!done.WaitOne(12000))throw new Exception("Native command timed out.");
-        }
-        if(failure!=null)throw failure;return result;
+        // A timed-out caller must never dispose a signal still owned by the UI callback.
+        var completion=new System.Threading.Tasks.TaskCompletionSource<T>();
+        int state=0; // queued, running, abandoned
+        BeginInvoke((Action)(()=>{
+            if(Interlocked.CompareExchange(ref state,1,0)!=0)return;
+            try{completion.TrySetResult(task());}catch(Exception error){completion.TrySetException(error);}
+        }));
+        try{
+            if(!completion.Task.Wait(12000)){
+                Interlocked.CompareExchange(ref state,2,0);
+                throw new Exception("Native command timed out.");
+            }
+            return completion.Task.Result;
+        }catch(AggregateException error){throw error.GetBaseException();}
     }
     static string ReadText(Dictionary<string,object> r,string key,string fallback=""){object value;return r.TryGetValue(key,out value)&&value is string?(string)value:fallback;}
     static long Number(Dictionary<string,object> r,string key,long fallback=0){object value;return r.TryGetValue(key,out value)?Convert.ToInt64(value):fallback;}
@@ -126,7 +136,7 @@ public sealed class PaneCoordinatorHost:Form {
                 tabs=g.OrderedTabs.Select(tab=>{var dormant=pane.Dormant(tab);if(dormant!=null)return (object)new{id=tab,kind="dormant",active=g.SelectedTab==tab,title=dormant.Title??"Unavailable application",icon=dormant.Icon,canOpen=!string.IsNullOrEmpty(dormant.Url)};
                     if(pane.IsDocument(tab))return (object)new{id=tab,kind="document",active=g.SelectedTab==tab,preview=pane.DocumentReference(tab)};
                     var p=pane.Find(tab);var text=new System.Text.StringBuilder(512);GetWindowText(p.Session.Handle,text,text.Capacity);p.LastTitle=text.ToString();p.LastIcon=PeerIcon(p.Session.Saved.Pid);
-                    return new{id=tab,kind="native",active=g.SelectedTab==tab,title=text.ToString(),icon=PeerIcon(p.Session.Saved.Pid),handle=p.Session.Handle.ToInt64(),pid=p.Session.Saved.Pid};}).ToArray()};}).ToArray()};
+                    return new{id=tab,kind="native",active=g.SelectedTab==tab,title=text.ToString()+(Native.IsHungAppWindow(p.Session.Handle)?" · Not responding":""),icon=PeerIcon(p.Session.Saved.Pid),handle=p.Session.Handle.ToInt64(),pid=p.Session.Saved.Pid};}).ToArray()};}).ToArray()};
     }
     void Publish(string key,Binding binding){
         if(binding.Pane==null||binding.Pane.Released||binding.Loading)return;

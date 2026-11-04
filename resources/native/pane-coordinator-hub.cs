@@ -28,7 +28,7 @@ public sealed class PaneCoordinatorHub:IDisposable {
                 var hook=Native.SetWinEventHook(range[0],range[1],IntPtr.Zero,callback,0,0,0);
                 if(hook==IntPtr.Zero)throw new Exception("Physical event subscription failed.");hooks.Add(hook);
             }
-            liveness.Interval=350;liveness.Tick+=(s,e)=>{foreach(var scope in scopes.Keys.ToArray())try{scope.ReconcileClosed();}catch{}};liveness.Start();
+            liveness.Interval=350;liveness.Tick+=(s,e)=>{foreach(var scope in scopes.Keys.ToArray())try{scope.ReconcileClosed();}catch{}try{Presentation.KeepOwnedDialogsAboveHost(scopes.Keys.SelectMany(scope=>scope.Visible()));}catch{}};liveness.Start();
         }catch{foreach(var hook in hooks)Native.UnhookWinEvent(hook);liveness.Dispose();PaneCoordinator.ReleasePhysicalHost(owner,lease);throw;}
     }
     internal void Register(PaneCoordinator scope){

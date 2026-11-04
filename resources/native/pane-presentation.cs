@@ -75,28 +75,48 @@ public sealed class PanePresentation {
         if(peers.Length==0)return;
         // A single host-wide pass. No z-order calls on normal size/move events.
         bool top=(Native.GetWindowLong(host,-20)&8)!=0;
-        Native.SetWindowPos(host,IntPtr.Zero,0,0,0,0,0x213);
+        Native.SetWindowPos(host,IntPtr.Zero,0,0,0,0,0x4213);
         // Raise EVERY main peer first: a popup from A must not be buried beneath B.
         foreach(var peer in peers) {
             var h=peer.Session.Handle;
             bool peerTop=(Native.GetWindowLong(h,-20)&8)!=0;
-            if(top!=peerTop)Native.SetWindowPos(h,new IntPtr(top?-1:-2),0,0,0,0,0x213);
-            Native.SetWindowPos(h,IntPtr.Zero,0,0,0,0,0x213);
+            if(top!=peerTop)Native.SetWindowPos(h,new IntPtr(top?-1:-2),0,0,0,0,0x4213);
+            Native.SetWindowPos(h,IntPtr.Zero,0,0,0,0,0x4213);
         }
         var owned=peers.SelectMany(p=>OwnedPopups(p.Session.Handle)).Distinct().ToList();
         // Preserve the currently foreground dialog at the front when this is a non-focus pass.
         var foreground=Native.GetForegroundWindow();
         if(owned.Remove(foreground))owned.Add(foreground);
         if(target!=null){var targeted=OwnedPopups(target.Session.Handle);foreach(var popup in targeted){owned.Remove(popup);owned.Add(popup);}}
-        foreach(var popup in owned)Native.SetWindowPos(popup,IntPtr.Zero,0,0,0,0,0x13);
-        // Explicit relative order also works when the modal's process cannot become foreground.
-        if(owned.Count>0){var below=owned[0];foreach(var peer in peers){
-            Native.SetWindowPos(peer.Session.Handle,below,0,0,0,0,0x213);below=peer.Session.Handle;
-        }}
+        foreach(var popup in owned)Native.SetWindowPos(popup,IntPtr.Zero,0,0,0,0,0x4213);
+        // Never anchor the physical workspace below an application's transient popup.
+        // Office may sink/dismiss its NUIDialog while asynchronous moves are pending;
+        // following that HWND pulls the entire workspace behind unrelated desktop apps.
+        // Paint already cuts owned-popup rectangles out of the host. Keep the host as
+        // the stable stacking anchor, and let each popup rise independently above it.
+        var below=host;foreach(var peer in peers){
+            Native.SetWindowPos(peer.Session.Handle,below,0,0,0,0,0x4213);below=peer.Session.Handle;
+        }
         StackDiagnostic="peers="+string.Join(",",peers.Select(p=>p.Session.Handle.ToString()).ToArray())+" owned="+string.Join(",",owned.Select(h=>h.ToString()).ToArray());
         if(focus&&target!=null) {
             var dialogs=OwnedPopups(target.Session.Handle);
             SetForegroundWindow(dialogs.Count>0?dialogs[0]:target.Session.Handle);
+        }
+    }
+    public void KeepOwnedDialogsAboveHost(IEnumerable<PanePeer> selected) {
+        var peers=selected.Where(p=>p.Session.Valid()&&!p.Session.Fullscreen&&!Native.IsIconic(p.Session.Handle)).ToArray();
+        var foreground=Native.GetForegroundWindow();
+        // Never pull this workspace over an unrelated foreground application.
+        if(foreground!=host&&!peers.Any(p=>foreground==p.Session.Handle||OwnedBy(foreground,p.Session.Handle)))return;
+        var owned=peers.SelectMany(p=>OwnedPopups(p.Session.Handle)).Distinct().ToArray();
+        if(owned.Length==0)return;
+        var order=new Dictionary<IntPtr,int>();int index=0;
+        EnumWindows((h,data)=>{order[h]=index++;return true;},IntPtr.Zero);
+        int hostIndex;if(!order.TryGetValue(host,out hostIndex))return;
+        foreach(var popup in owned){int popupIndex;if(!order.TryGetValue(popup,out popupIndex))continue;
+            if(popupIndex>hostIndex||peers.Any(p=>OwnedBy(popup,p.Session.Handle)&&order.ContainsKey(p.Session.Handle)&&popupIndex>order[p.Session.Handle])){
+                Stack(peers,false,null);return;
+            }
         }
     }
 }

@@ -12,6 +12,8 @@ public static class Native {
  [DllImport("user32.dll")]public static extern int GetWindowLong(IntPtr h,int i);
  [DllImport("user32.dll")]public static extern bool SetWindowPos(IntPtr h,IntPtr z,int x,int y,int w,int height,uint flags);
  [DllImport("user32.dll")]public static extern bool ShowWindow(IntPtr h,int n);
+ [DllImport("user32.dll")]public static extern bool ShowWindowAsync(IntPtr h,int n);
+ [DllImport("user32.dll")]public static extern bool IsHungAppWindow(IntPtr h);
  [DllImport("user32.dll")]public static extern bool IsWindowVisible(IntPtr h);
  [DllImport("user32.dll")]public static extern bool IsIconic(IntPtr h);
  [DllImport("user32.dll")]public static extern bool IsZoomed(IntPtr h);
@@ -36,11 +38,11 @@ public sealed class WindowSession:IDisposable{
  // Presentation inside Papers uses normal windows. A minimized maximized app
  // retains WPF_RESTORETOMAXIMIZED; clear that only on the live placement, never
  // on Saved, which still owns exact restoration when the app is released.
- public void NormalizeManaged(){if(!Valid())return;var p=new Native.Placement{Length=Marshal.SizeOf(typeof(Native.Placement))};if(!Native.GetWindowPlacement(Handle,ref p))throw new Exception("Cannot read managed placement.");if(!Native.IsZoomed(Handle)&&(p.Flags&2)==0&&p.Show!=3)return;p.Flags&=~2;p.Show=4;if(!Native.SetWindowPlacement(Handle,ref p))throw new Exception("Cannot normalize managed placement.");}
- public void Show(bool show){Visible=show;if(!Valid())return;if(show)NormalizeManaged();if(show&&Native.IsWindowVisible(Handle)&&!Native.IsIconic(Handle))return;if(!show&&Native.IsIconic(Handle))return;Native.ShowWindow(Handle,show?4:7);}
- public void Fit(Rectangle box,bool top){Requested=box;if(!Valid()||Fullscreen)return;Native.Rect current;Native.GetWindowRect(Handle,out current);if(current.Box!=box)Native.SetWindowPos(Handle,top?new IntPtr(-1):IntPtr.Zero,box.X,box.Y,box.Width,box.Height,top?0x10u:0x14u);}
+ public void NormalizeManaged(){if(!Valid()||Native.IsHungAppWindow(Handle))return;var p=new Native.Placement{Length=Marshal.SizeOf(typeof(Native.Placement))};if(!Native.GetWindowPlacement(Handle,ref p))throw new Exception("Cannot read managed placement.");if(!Native.IsZoomed(Handle)&&(p.Flags&2)==0&&p.Show!=3)return;p.Flags=(p.Flags&~2)|4;p.Show=4;if(!Native.SetWindowPlacement(Handle,ref p))throw new Exception("Cannot normalize managed placement.");}
+ public void Show(bool show){Visible=show;if(!Valid())return;if(Native.IsHungAppWindow(Handle)){Native.ShowWindowAsync(Handle,show?4:7);return;}if(show)NormalizeManaged();if(show&&Native.IsWindowVisible(Handle)&&!Native.IsIconic(Handle))return;if(!show&&Native.IsIconic(Handle))return;Native.ShowWindowAsync(Handle,show?4:7);}
+ public void Fit(Rectangle box,bool top){Requested=box;if(!Valid()||Fullscreen||Native.IsHungAppWindow(Handle))return;Native.Rect current;Native.GetWindowRect(Handle,out current);if(current.Box!=box)Native.SetWindowPos(Handle,top?new IntPtr(-1):IntPtr.Zero,box.X,box.Y,box.Width,box.Height,top?0x4010u:0x4014u);}
  public Rectangle Frame(){Native.Rect r;if(Native.DwmGetWindowAttribute(Handle,9,out r,16)!=0)Native.GetWindowRect(Handle,out r);return r.Box;}
- public void Top(bool top){if(Valid())Native.SetWindowPos(Handle,new IntPtr(top||(Saved.ExStyle&8)!=0?-1:-2),0,0,0,0,0x13);}
- public static void Restore(SavedWindow w){var h=new IntPtr(w.Handle);uint pid;Native.GetWindowThreadProcessId(h,out pid);if(pid!=w.Pid||!SameInstance(w))return;Native.SetWindowPos(h,new IntPtr((w.ExStyle&8)!=0?-1:-2),0,0,0,0,0x13);var p=w.Placement;if(p.Show==0)p.Show=1;Native.SetWindowPlacement(h,ref p);Native.ShowWindow(h,p.Show==2||p.Show==6||p.Show==7?7:4);}
+ public void Top(bool top){if(Valid())Native.SetWindowPos(Handle,new IntPtr(top||(Saved.ExStyle&8)!=0?-1:-2),0,0,0,0,0x4013);}
+ public static void Restore(SavedWindow w){var h=new IntPtr(w.Handle);uint pid;Native.GetWindowThreadProcessId(h,out pid);if(pid!=w.Pid||!SameInstance(w))return;Native.SetWindowPos(h,new IntPtr((w.ExStyle&8)!=0?-1:-2),0,0,0,0,0x13);var p=w.Placement;p.Flags|=4;if(p.Show==0)p.Show=1;Native.SetWindowPlacement(h,ref p);Native.ShowWindowAsync(h,p.Show==2||p.Show==6||p.Show==7?7:4);}
  public void Dispose(){Restore(Saved);}
 }
