@@ -153,7 +153,7 @@ public sealed partial class PaneCoordinator : IDisposable {
                 bool held=false;
                 try{try{held=lease.WaitOne(0);}catch(AbandonedMutexException){held=true;}
                     if(!held)throw new Exception("Native window belongs to another live pane; recovery deferred.");
-                    RestoreSavedWindow(peer.Window);
+                    RestoreSavedWindow(peer.Window,true);
                 }catch(Exception error){failures.Add(error.Message);}
                 finally{if(held)try{lease.ReleaseMutex();}catch{}}
             }
@@ -376,7 +376,15 @@ public sealed partial class PaneCoordinator : IDisposable {
     public void MoveTab(string tabId,string destination,long binding,long state) {
         Check(binding,state);PaneGroup from=Group(TabGroup(tabId)),to=Group(destination);
         if(from==to)return;
-        Change("moveTab",()=>MoveMembership(tabId,from,to));
+        Change("moveTab",()=>{MoveMembership(tabId,from,to);RemoveEmptiedGroup(from);});
+    }
+    // Only retire the source after its last tab leaves. New empty destination
+    // groups remain valid during staged transfers; dormant tabs are members.
+    void RemoveEmptiedGroup(PaneGroup group){
+        if(group.OrderedTabs.Count!=0||Scope.Groups.Count<=1)return;
+        Scope.Root=PaneLayout.Remove(Scope.Root,group.Id);
+        Scope.Groups.Remove(group.Id);Scope.Order.Remove(group.Id);
+        Scope.Order.Clear();Scope.Order.AddRange(PaneLayout.Leaves(Scope.Root));
     }
     void MoveMembership(string id,PaneGroup from,PaneGroup to){
         bool active=from.SelectedTab==id;from.OrderedTabs.Remove(id);to.OrderedTabs.Add(id);
@@ -392,7 +400,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         Change("splitAndMove",()=>{
             var to=Scope.Add(added);
             if(!PaneLayout.Split(Scope.Root,target,added,side))throw new Exception("Missing split target.");
-            MoveMembership(tabId,from,to);Scope.Order.Clear();Scope.Order.AddRange(PaneLayout.Leaves(Scope.Root));
+            MoveMembership(tabId,from,to);RemoveEmptiedGroup(from);Scope.Order.Clear();Scope.Order.AddRange(PaneLayout.Leaves(Scope.Root));
         });
     }
     public void CreateGroup(string target,string added,string side,long binding,long state){
@@ -422,7 +430,7 @@ public sealed partial class PaneCoordinator : IDisposable {
         g.OrderedTabs.Remove(tabId);if(g.SelectedTab==tabId)g.SelectedTab=g.OrderedTabs.FirstOrDefault();
         tabIndex.Remove(tabId);hwndIndex.Remove(p.Session.Handle);
         try{RestorePeer(p);}finally{try{p.Lease.ReleaseMutex();}finally{p.Lease.Dispose();ForgetLease(p);}}
-        RecoverWrite();RefreshGroupVisibility();
+        RemoveEmptiedGroup(g);RecoverWrite();RefreshGroupVisibility();
         Scope.StateRevision++;Reflow(null,"detach");Notify("detachWindow");
     }
     public void CloseGroup(string fromId,string toId,long binding,long state){
@@ -683,7 +691,7 @@ public sealed partial class PaneCoordinator : IDisposable {
             placement.Equals(saved.Placement)&&Native.IsWindowVisible(hwnd)==saved.Visible&&
             (Native.GetWindowLong(hwnd,-20)&8)==(saved.ExStyle&8);
     }
-    static void RestoreSavedWindow(SavedWindow saved){
+    static void RestoreSavedWindow(SavedWindow saved,bool allowAdjustedBounds=false){
         var hwnd=new IntPtr(saved.Handle);uint pid;Native.GetWindowThreadProcessId(hwnd,out pid);
         if(pid!=saved.Pid||!WindowSession.SameInstance(saved))return;
         if(!Native.SetWindowPos(hwnd,new IntPtr((saved.ExStyle&8)!=0?-1:-2),0,0,0,0,0x13))throw new Exception("Cannot restore native topmost state.");
@@ -697,9 +705,9 @@ public sealed partial class PaneCoordinator : IDisposable {
         // would normalize an originally maximized window after SetWindowPlacement.
         Native.ShowWindow(hwnd,saved.Visible?8:0);
         var result=new Native.Placement{Length=Marshal.SizeOf(typeof(Native.Placement))};
-        if(!Native.GetWindowPlacement(hwnd,ref result)||result.Normal.L!=saved.Placement.Normal.L||
+        if(!Native.GetWindowPlacement(hwnd,ref result)||(!allowAdjustedBounds&&(result.Normal.L!=saved.Placement.Normal.L||
           result.Normal.T!=saved.Placement.Normal.T||result.Normal.R!=saved.Placement.Normal.R||
-          result.Normal.B!=saved.Placement.Normal.B||result.Show!=saved.Placement.Show||
+          result.Normal.B!=saved.Placement.Normal.B))||result.Normal.R<=result.Normal.L||result.Normal.B<=result.Normal.T||result.Show!=saved.Placement.Show||
           Native.IsWindowVisible(hwnd)!=saved.Visible||
           (Native.GetWindowLong(hwnd,-20)&8)!=(saved.ExStyle&8))
             throw new Exception("Native window restoration mismatch for HWND "+saved.Handle+": "+new JavaScriptSerializer().Serialize(new{expected=saved.Placement,actual=result,visible=Native.IsWindowVisible(hwnd),expectedVisible=saved.Visible}));

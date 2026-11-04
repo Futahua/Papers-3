@@ -135,6 +135,6 @@ public sealed partial class PaneCoordinator {
         Check(binding,state);if(!documentGroups.ContainsKey(id))return;
         var group=Group(documentGroups[id]);
         Change("removeDocument",()=>{group.OrderedTabs.Remove(id);documentGroups.Remove(id);dormantPeers.Remove(id);documentReferences.Remove(id);
-            if(group.SelectedTab==id)group.SelectedTab=group.OrderedTabs.FirstOrDefault();});
+            if(group.SelectedTab==id)group.SelectedTab=group.OrderedTabs.FirstOrDefault();RemoveEmptiedGroup(group);});
     }
 }
