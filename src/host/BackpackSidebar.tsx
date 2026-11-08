@@ -22,7 +22,8 @@ export function BackpackSidebar({ list, activeId, onEnter, onMouseEnter, onMouse
         key={backpack.id}
         type="button"
         aria-current={backpack.id === activeId ? 'page' : undefined}
-        onClick={() => onEnter(backpack.id)}
+        // A click adds the Backpack as a new page instead of replacing the current one (creator, 2026-11-08).
+        onClick={() => onEnter(backpack.id, true)}
         onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
         onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); onEnter(backpack.id, true); } }}
         onKeyDown={(event) => {
