@@ -221,7 +221,7 @@ public sealed class PaneCoordinatorHost:Form {
         else if(op=="create-group")pane.CreateGroup(group,ReadText(r,"newGroupId"),ReadText(r,"side"),generation,state);
         else if(op=="relocate-group")pane.RelocateGroup(group,ReadText(r,"destination"),ReadText(r,"side"),generation,state);
         else if(op=="close-group")pane.CloseGroup(group,ReadText(r,"destination"),generation,state);
-        else if(op=="presentation")pane.SetGroupPresentation(group,ReadText(r,"mode"),generation,state);
+        else if(op=="presentation"){var linked=ReadText(r,"side");if(linked.StartsWith("link:"))pane.SetLinkedPresentation(group,ReadText(r,"mode"),linked,generation,state);else pane.SetGroupPresentation(group,ReadText(r,"mode"),generation,state);}
         else if(op=="document-edge")pane.ResizeDocumentEdge(group,ReadText(r,"edge"),(int)Math.Round(Convert.ToDouble(r["position"])*DpiScale),generation,state);
         else if(op=="detach")pane.DetachTab(tab,generation,state);
         else if(op=="release"){pane.SaveMount(binding.Mount);pane.Release();scopes.Remove(key);return new{ok=true};}

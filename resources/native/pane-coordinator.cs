@@ -450,6 +450,42 @@ public sealed partial class PaneCoordinator : IDisposable {
             g.Presentation=mode;
         },mode!="minimized");
     }
+    // Linked groups (As you Go grab-handle links, 2026-11-08). Maximizing a link gives its groups the page
+    // while keeping their sizes relative to each other: the other groups are minimized and each split between
+    // linked groups is re-weighted by their previous areas. Restoring the same link puts back the saved split
+    // ratios (when the topology is unchanged) and every group's presentation. spec is "link:<id>,<id>,...".
+    PaneSplit linkedSavedRoot;string linkedSavedShape,linkedSavedKey;Dictionary<string,string> linkedSavedModes;
+    public void SetLinkedPresentation(string id,string mode,string spec,long binding,long state){
+        Check(binding,state);Group(id);
+        var members=new HashSet<string>(spec.Substring(5).Split(new[]{','},StringSplitOptions.RemoveEmptyEntries).Where(m=>Scope.Groups.ContainsKey(m)));members.Add(id);
+        var key=string.Join(",",members.OrderBy(m=>m,StringComparer.Ordinal));
+        if(mode=="maximized"){
+            PaneLayout.Ensure(Scope);
+            var shown=members.Where(m=>Group(m).Presentation!="minimized").ToArray();
+            double typical=shown.Length>0?shown.Average(m=>Area(Group(m).ResolvedFrame)):1.0;
+            var areas=members.ToDictionary(m=>m,m=>Group(m).Presentation=="minimized"?typical:Area(Group(m).ResolvedFrame));
+            Change("setLinkedPresentation",()=>{
+                linkedSavedRoot=Scope.Root==null?null:Scope.Root.Copy();linkedSavedShape=LinkShape(Scope.Root);linkedSavedKey=key;
+                linkedSavedModes=Scope.Groups.ToDictionary(p=>p.Key,p=>p.Value.Presentation);
+                foreach(var pair in Scope.Groups)pair.Value.Presentation=members.Contains(pair.Key)?"normal":"minimized";
+                Reweigh(Scope.Root,areas);
+            },true);
+        }else if(mode=="normal"&&linkedSavedKey==key&&linkedSavedModes!=null){
+            Change("restoreLinkedPresentation",()=>{
+                if(linkedSavedRoot!=null&&LinkShape(Scope.Root)==linkedSavedShape)Scope.Root=linkedSavedRoot.Copy();
+                foreach(var pair in linkedSavedModes)if(Scope.Groups.ContainsKey(pair.Key))Scope.Groups[pair.Key].Presentation=pair.Value=="maximized"?"normal":pair.Value;
+                linkedSavedRoot=null;linkedSavedShape=null;linkedSavedKey=null;linkedSavedModes=null;
+            },true);
+        }else SetGroupPresentation(id,mode,binding,state);
+    }
+    static double Area(Rectangle r){return Math.Max(1.0,(double)r.Width*r.Height);}
+    static string LinkShape(PaneSplit n){if(n==null)return "";if(n.Leaf)return n.GroupId;return "("+(n.Span?"S"+n.SpanEdge:n.Axis)+LinkShape(n.First)+"|"+LinkShape(n.Second)+")";}
+    static double Reweigh(PaneSplit n,Dictionary<string,double> areas){
+        if(n==null)return 0;if(n.Leaf){double a;return areas.TryGetValue(n.GroupId,out a)?a:0;}
+        double first=Reweigh(n.First,areas),second=Reweigh(n.Second,areas);
+        if(!n.Span&&first>0&&second>0)n.Ratio=Math.Max(0.1,Math.Min(0.9,first/(first+second)));
+        return first+second;
+    }
     bool Fullscreen(PanePeer p) {
         if(IsZoomed(p.Session.Handle))return true;
         int style=Native.GetWindowLong(p.Session.Handle,-16);
