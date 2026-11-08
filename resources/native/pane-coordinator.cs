@@ -457,7 +457,10 @@ public sealed partial class PaneCoordinator : IDisposable {
     PaneSplit linkedSavedRoot;string linkedSavedShape,linkedSavedKey;Dictionary<string,string> linkedSavedModes;
     public void SetLinkedPresentation(string id,string mode,string spec,long binding,long state){
         Check(binding,state);Group(id);
-        var members=new HashSet<string>(spec.Substring(5).Split(new[]{','},StringSplitOptions.RemoveEmptyEntries).Where(m=>Scope.Groups.ContainsKey(m)));members.Add(id);
+        var parts=spec.Substring(5).Split(new[]{"|keep:"},StringSplitOptions.None);
+        var members=new HashSet<string>(parts[0].Split(new[]{','},StringSplitOptions.RemoveEmptyEntries).Where(m=>Scope.Groups.ContainsKey(m)));members.Add(id);
+        // keep: linked groups the creator set on their own (Ctrl-click); a linked action leaves them as they are.
+        var keep=new HashSet<string>(parts.Length>1?parts[1].Split(new[]{','},StringSplitOptions.RemoveEmptyEntries):new string[0]);keep.ExceptWith(members);
         var key=string.Join(",",members.OrderBy(m=>m,StringComparer.Ordinal));
         if(mode=="maximized"){
             PaneLayout.Ensure(Scope);
@@ -467,13 +470,13 @@ public sealed partial class PaneCoordinator : IDisposable {
             Change("setLinkedPresentation",()=>{
                 linkedSavedRoot=Scope.Root==null?null:Scope.Root.Copy();linkedSavedShape=LinkShape(Scope.Root);linkedSavedKey=key;
                 linkedSavedModes=Scope.Groups.ToDictionary(p=>p.Key,p=>p.Value.Presentation);
-                foreach(var pair in Scope.Groups)pair.Value.Presentation=members.Contains(pair.Key)?"normal":"minimized";
+                foreach(var pair in Scope.Groups)if(!keep.Contains(pair.Key))pair.Value.Presentation=members.Contains(pair.Key)?"normal":"minimized";
                 Reweigh(Scope.Root,areas);
             },true);
         }else if(mode=="normal"&&linkedSavedKey==key&&linkedSavedModes!=null){
             Change("restoreLinkedPresentation",()=>{
                 if(linkedSavedRoot!=null&&LinkShape(Scope.Root)==linkedSavedShape)Scope.Root=linkedSavedRoot.Copy();
-                foreach(var pair in linkedSavedModes)if(Scope.Groups.ContainsKey(pair.Key))Scope.Groups[pair.Key].Presentation=pair.Value=="maximized"?"normal":pair.Value;
+                foreach(var pair in linkedSavedModes)if(Scope.Groups.ContainsKey(pair.Key)&&!keep.Contains(pair.Key))Scope.Groups[pair.Key].Presentation=pair.Value=="maximized"?"normal":pair.Value;
                 linkedSavedRoot=null;linkedSavedShape=null;linkedSavedKey=null;linkedSavedModes=null;
             },true);
         }else SetGroupPresentation(id,mode,binding,state);
