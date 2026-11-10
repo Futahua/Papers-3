@@ -10,6 +10,13 @@ import { logDevice, sameAccountNode } from './tailnetIdentity';
 import type { RemoteFileShare } from './remoteFileResources';
 import { RemoteFileResources } from './remoteFileResources';
 
+/** This computer's Tailscale IPv4 address (100.64.0.0/10). Before Tailscale connects its adapter
+ * carries a link-local 169.254.x address, which other devices cannot reach; that is not accepted. */
+function tailnetAddress(): string | undefined {
+  return Object.entries(os.networkInterfaces()).filter(([name]) => /tailscale/i.test(name)).flatMap(([, entries]) => entries ?? [])
+    .find(entry => entry.family === 'IPv4' && !entry.internal && /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(entry.address))?.address;
+}
+
 export class RemoteDeviceService {
   fileTargets: import('./fileTargetRegistry').TargetRegistry|null=null;
   private devices: RemoteDeviceStore | null = null;
@@ -41,6 +48,7 @@ export class RemoteDeviceService {
       this.devices = await RemoteDeviceStore.open(this.directory, os.hostname());
       // Always listen when Tailscale is up; access is still limited to the creator's own account.
       await this.start().then(() => logDevice('owner-listening', { address: this.address }), error => logDevice('owner-not-listening', { reason: error instanceof Error ? error.message : String(error) }));
+      this.watchTailnet();
     } catch (error) { this.failure = error instanceof Error ? error.message : 'Device connection is unavailable.'; }
   }
   snapshot() {
@@ -69,7 +77,7 @@ export class RemoteDeviceService {
   private async start(): Promise<void> {
     if (this.gateway) return;
     if (!this.devices) throw new Error('Device identity is unavailable.');
-    const address = Object.entries(os.networkInterfaces()).filter(([name]) => /tailscale/i.test(name)).flatMap(([, entries]) => entries ?? []).find(entry => entry.family === 'IPv4' && !entry.internal)?.address;
+    const address = tailnetAddress();
     if (!address) throw new Error('Connect Tailscale on this computer first.');
     const devices = this.devices;
     const snapshot = devices.snapshot();
@@ -125,7 +133,34 @@ export class RemoteDeviceService {
     await this.devices?.revoke(id);
     this.gateway?.revoke(id);
   }
+  private tailnetTimer: NodeJS.Timeout | null = null;
+  private tailnetBusy = false;
+  /** Tailscale may connect after Papers starts, or its address may change. Follow it:
+   * start listening once a tailnet address exists, and move the listener when it changes. */
+  private watchTailnet(): void {
+    if (this.tailnetTimer) return;
+    this.tailnetTimer = setInterval(() => { void this.checkTailnet(); }, 15_000);
+    this.tailnetTimer.unref?.();
+  }
+  private async checkTailnet(): Promise<void> {
+    if (this.tailnetBusy || !this.devices) return;
+    this.tailnetBusy = true;
+    try {
+      const current = tailnetAddress();
+      const bound = this.address ? new URL(this.address).hostname : null;
+      if (!current || current === bound) return;
+      const previous = this.gateway;
+      this.gateway = null; this.address = null;
+      if (previous) await Promise.race([previous.close().catch(() => {}), new Promise(resolve => setTimeout(resolve, 5000))]);
+      await this.start();
+      this.failure = null;
+      logDevice('owner-listening', { address: this.address, reason: bound ? 'tailscale-address-changed' : 'tailscale-connected' });
+    } catch (error) {
+      logDevice('owner-not-listening', { reason: error instanceof Error ? error.message : String(error) });
+    } finally { this.tailnetBusy = false; }
+  }
   async close(): Promise<void> {
+    if (this.tailnetTimer) { clearInterval(this.tailnetTimer); this.tailnetTimer = null; }
     const gateway = this.gateway;
     this.gateway = null;
     this.address = null;
